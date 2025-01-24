@@ -75,6 +75,7 @@ ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
     CLUSTER ON <replaceable class="parameter">index_name</replaceable>
     SET WITHOUT CLUSTER
     SET WITHOUT OIDS
+    SET ACCESS METHOD <replaceable class="parameter">new_access_method</replaceable>
     SET TABLESPACE <replaceable class="parameter">new_tablespace</replaceable>
     SET { LOGGED | UNLOGGED }
     SET ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] )
@@ -102,7 +103,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
   DEFAULT <replaceable>default_expr</replaceable> |
   GENERATED ALWAYS AS ( <replaceable>generation_expr</replaceable> ) STORED |
   GENERATED { ALWAYS | BY DEFAULT } AS IDENTITY [ ( <replaceable>sequence_options</replaceable> ) ] |
-  UNIQUE <replaceable class="parameter">index_parameters</replaceable> |
+  UNIQUE [ NULLS [ NOT ] DISTINCT ] <replaceable class="parameter">index_parameters</replaceable> |
   PRIMARY KEY <replaceable class="parameter">index_parameters</replaceable> |
   REFERENCES <replaceable class="parameter">reftable</replaceable> [ ( <replaceable class="parameter">refcolumn</replaceable> ) ] [ MATCH FULL | MATCH PARTIAL | MATCH SIMPLE ]
     [ ON DELETE <replaceable class="parameter">referential_action</replaceable> ] [ ON UPDATE <replaceable class="parameter">referential_action</replaceable> ] }
@@ -112,7 +113,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
 
 [ CONSTRAINT <replaceable class="parameter">constraint_name</replaceable> ]
 { CHECK ( <replaceable class="parameter">expression</replaceable> ) [ NO INHERIT ] |
-  UNIQUE ( <replaceable class="parameter">column_name</replaceable> [, ... ] ) <replaceable class="parameter">index_parameters</replaceable> |
+  UNIQUE [ NULLS [ NOT ] DISTINCT ] ( <replaceable class="parameter">column_name</replaceable> [, ... ] ) <replaceable class="parameter">index_parameters</replaceable> |
   PRIMARY KEY ( <replaceable class="parameter">column_name</replaceable> [, ... ] ) <replaceable class="parameter">index_parameters</replaceable> |
   EXCLUDE [ USING <replaceable class="parameter">index_method</replaceable> ] ( <replaceable class="parameter">exclude_element</replaceable> WITH <replaceable class="parameter">operator</replaceable> [, ... ] ) <replaceable class="parameter">index_parameters</replaceable> [ WHERE ( <replaceable class="parameter">predicate</replaceable> ) ] |
   FOREIGN KEY ( <replaceable class="parameter">column_name</replaceable> [, ... ] ) REFERENCES <replaceable class="parameter">reftable</replaceable> [ ( <replaceable class="parameter">refcolumn</replaceable> [, ... ] ) ]
@@ -134,6 +135,10 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
 <phrase><replaceable class="parameter">exclude_element</replaceable> in an <literal>EXCLUDE</literal> constraint is:</phrase>
 
 { <replaceable class="parameter">column_name</replaceable> | ( <replaceable class="parameter">expression</replaceable> ) } [ <replaceable class="parameter">opclass</replaceable> ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ]
+
+<phrase><replaceable class="parameter">referential_action</replaceable> in a <literal>FOREIGN KEY</literal>/<literal>REFERENCES</literal> constraint is:</phrase>
+
+{ NO ACTION | RESTRICT | CASCADE | SET NULL [ ( <replaceable class="parameter">column_name</replaceable> [, ... ] ) ] | SET DEFAULT [ ( <replaceable class="parameter">column_name</replaceable> [, ... ] ) ] }
 </synopsis>
  </refsynopsisdiv>
 
@@ -196,6 +201,12 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       cast from old data type to new.  A  <literal>USING</literal>
       clause must be provided if there is no implicit or assignment
       cast from old to new type.
+     </para>
+
+     <para>
+      When this form is used, the column's statistics are removed,
+      so running <link linkend="sql-analyze"><command>ANALYZE</command></link>
+      on the table afterwards is recommended.
      </para>
     </listitem>
    </varlistentry>
@@ -693,6 +704,16 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
    </varlistentry>
 
    <varlistentry>
+    <term><literal>SET ACCESS METHOD</literal></term>
+    <listitem>
+     <para>
+      This form changes the access method of the table by rewriting it. See
+      <xref linkend="tableam"/> for more information.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
     <term><literal>SET TABLESPACE</literal></term>
     <listitem>
      <para>
@@ -731,6 +752,12 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       This form changes the table from unlogged to logged or vice-versa
       (see <xref linkend="sql-createtable-unlogged"/>).  It cannot be applied
       to a temporary table.
+     </para>
+
+     <para>
+      This also changes the persistence of any sequences linked to the table
+      (for identity or serial columns).  However, it is also possible to
+      change the persistence of such sequences separately.
      </para>
     </listitem>
    </varlistentry>
@@ -850,18 +877,53 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     <listitem>
      <para>
       This form changes the information which is written to the write-ahead log
-      to identify rows which are updated or deleted.  This option has no effect
-      except when logical replication is in use.  <literal>DEFAULT</literal>
-      (the default for non-system tables) records the
-      old values of the columns of the primary key, if any.  <literal>USING INDEX</literal>
-      records the old values of the columns covered by the named index, which
-      must be unique, not partial, not deferrable, and include only columns marked
-      <literal>NOT NULL</literal>.  <literal>FULL</literal> records the old values of all columns
-      in the row.  <literal>NOTHING</literal> records no information about the old row.
-      (This is the default for system tables.)
-      In all cases, no old values are logged unless at least one of the columns
-      that would be logged differs between the old and new versions of the row.
-     </para>
+      to identify rows which are updated or deleted.
+      In most cases, the old value of each column is only logged if it differs
+      from the new value; however, if the old value is stored externally, it is
+      always logged regardless of whether it changed.
+      This option has no effect except when logical replication is in use.
+     <variablelist>
+      <varlistentry>
+       <term><literal>DEFAULT</literal></term>
+       <listitem>
+        <para>
+         Records the old values of the columns of the primary key, if any.
+         This is the default for non-system tables.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><literal>USING INDEX <replaceable class="parameter">index_name</replaceable></literal></term>
+       <listitem>
+        <para>
+         Records the old values of the columns covered by the named index,
+         that must be unique, not partial, not deferrable, and include only
+         columns marked <literal>NOT NULL</literal>. If this index is
+         dropped, the behavior is the same as <literal>NOTHING</literal>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><literal>FULL</literal></term>
+       <listitem>
+        <para>
+         Records the old values of all columns in the row.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><literal>NOTHING</literal></term>
+       <listitem>
+        <para>
+         Records no information about the old row. This is the default for
+         system tables.
+        </para>
+       </listitem>
+      </varlistentry>
+     </variablelist></para>
     </listitem>
    </varlistentry>
 
@@ -965,8 +1027,17 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      <para>
       Attaching a partition acquires a
       <literal>SHARE UPDATE EXCLUSIVE</literal> lock on the parent table,
-      in addition to <literal>ACCESS EXCLUSIVE</literal> locks on the table
-      to be attached and on the default partition (if any).
+      in addition to the <literal>ACCESS EXCLUSIVE</literal> locks on the table
+      being attached and on the default partition (if any).
+     </para>
+
+     <para>
+      Further locks must also be held on all sub-partitions if the table being
+      attached is itself a partitioned table.  Likewise if the default
+      partition is itself a partitioned table.  The locking of the
+      sub-partitions can be avoided by adding a <literal>CHECK</literal>
+      constraint as described in
+      <xref linkend="ddl-partitioning-declarative-maintenance"/>.
      </para>
     </listitem>
    </varlistentry>
@@ -1002,7 +1073,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      </para>
      <para>
       If <literal>FINALIZE</literal> is specified, a previous
-      <literal>DETACH CONCURRENTLY</literal> invocation that was cancelled or
+      <literal>DETACH CONCURRENTLY</literal> invocation that was canceled or
       interrupted is completed.
       At most one partition in a partitioned table can be pending detach at
       a time.
@@ -1229,6 +1300,15 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      </varlistentry>
 
      <varlistentry>
+      <term><replaceable class="parameter">new_access_method</replaceable></term>
+      <listitem>
+       <para>
+        The name of the access method to which the table will be converted.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><replaceable class="parameter">new_tablespace</replaceable></term>
       <listitem>
        <para>
@@ -1291,7 +1371,13 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     existing column, if the <literal>USING</literal> clause does not change
     the column contents and the old type is either binary coercible to the new
     type or an unconstrained domain over the new type, a table rewrite is not
-    needed; but any indexes on the affected columns must still be rebuilt.
+    needed. However, indexes must always be rebuilt unless the system can
+    verify that the new index would be logically equivalent to the existing
+    one.  For example, if the collation for a column has been changed an index
+    rebuild is always required because the new sort order might be different.
+    However, in the absence of a collation change, a column can be changed
+    from <type>text</type> to <type>varchar</type> (or vice versa) without
+    rebuilding the indexes because these data types sort identically.
     Table and/or index rebuilds may take a
     significant amount of time for a large table; and will temporarily require
     as much as double the disk space.

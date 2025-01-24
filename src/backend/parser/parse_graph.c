@@ -6102,7 +6102,7 @@ makeNullAConst(void)
 	A_Const    *nullconst;
 
 	nullconst = makeNode(A_Const);
-	nullconst->val.type = T_Null;
+	nullconst->isnull = true;
 	nullconst->location = -1;
 
 	return nullconst;
@@ -6117,7 +6117,7 @@ IsNullAConst(Node *arg)
 	{
 		A_Const    *con = (A_Const *) arg;
 
-		if (con->val.type == T_Null)
+		if (con->isnull)
 			return true;
 	}
 	return false;

@@ -116,49 +116,49 @@ MATCH (v1:v {id: 2}), (v2:v {id: 3})
 CREATE (v1)-[:e {weight: 2}]->(v2);
 
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
-      path=dijkstra((v1)-[e:e]->(v2), e.weight)
-RETURN nodes(path);
+      p=dijkstra((v1)-[e:e]->(v2), e.weight)
+RETURN nodes(p);
 
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
-      path=dijkstra((v2)<-[e:e]-(v1), e.weight)
-RETURN nodes(path);
+      p=dijkstra((v2)<-[e:e]-(v1), e.weight)
+RETURN nodes(p);
 
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
-      path=dijkstra((v1)-[e:e]-(v2), e.weight)
-RETURN nodes(path);
+      p=dijkstra((v1)-[e:e]-(v2), e.weight)
+RETURN nodes(p);
 
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
-      path=dijkstra((v2)-[e:e]-(v1), e.weight)
-RETURN nodes(path);
+      p=dijkstra((v2)-[e:e]-(v1), e.weight)
+RETURN nodes(p);
 
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
-      path=dijkstra((v1)-[e:e]->(v2), e.weight + 1)
-RETURN nodes(path);
+      p=dijkstra((v1)-[e:e]->(v2), e.weight + 1)
+RETURN nodes(p);
 
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
-      path=dijkstra((v1)-[e:e]->(v2), e.weight, e.weight >= 5)
-RETURN nodes(path);
+      p=dijkstra((v1)-[e:e]->(v2), e.weight, e.weight >= 5)
+RETURN nodes(p);
 
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
-      path=dijkstra((v1)-[e:e]->(v2), e.weight, e.weight)
-RETURN nodes(path);
+      p=dijkstra((v1)-[e:e]->(v2), e.weight, e.weight)
+RETURN nodes(p);
 
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
-      path=dijkstra((v1:v {id: 0})-[e:e]->(v2), e.weight)
-RETURN nodes(path);
+      p=dijkstra((v1:v {id: 0})-[e:e]->(v2), e.weight)
+RETURN nodes(p);
 
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
-      path=dijkstra((v1:v)-[e:e*1..]->(v2), e.weight)
-RETURN nodes(path);
+      p=dijkstra((v1:v)-[e:e*1..]->(v2), e.weight)
+RETURN nodes(p);
 
 MATCH (v1:v {id: 6}), (v2:v {id: 2}),
-      path=dijkstra((v1:v)-[e:e]->(v2), e.weight)
-RETURN nodes(path);
+      p=dijkstra((v1:v)-[e:e]->(v2), e.weight)
+RETURN nodes(p);
 
 MATCH (v1:v), (v2:v),
-      path=dijkstra((v1:v)-[e:e]->(v2), e.weight)
+      p=dijkstra((v1:v)-[e:e]->(v2), e.weight)
 WHERE v1.id = 6 AND v2.id = 2
-RETURN nodes(path);
+RETURN nodes(p);
 
 MATCH (v1:v {id: 0}), (v2:v {id: 3})
 RETURN dijkstra((v1)-[e:e]->(v2), e.weight);
@@ -178,26 +178,26 @@ MATCH (:v {id: 4})-[e:e]-(:v {id: 6})
 SET e.weight = 4;
 
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
-	  (path, x)=dijkstra((v1)-[e:e]->(v2), e.weight, LIMIT 2)
-RETURN nodes(path), x;
+	  (p, x)=dijkstra((v1)-[e:e]->(v2), e.weight, LIMIT 2)
+RETURN nodes(p), x;
 
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
-	  (path, x)=dijkstra((v2)<-[e:e]->(v1), e.weight, LIMIT 2)
-RETURN nodes(path), x;
+	  (p, x)=dijkstra((v2)<-[e:e]->(v1), e.weight, LIMIT 2)
+RETURN nodes(p), x;
 
 MATCH (v1:v {id: 0}), (v2:v {id: 3})
 RETURN dijkstra((v1)-[e:e]->(v2), e.weight, LIMIT 2);
 
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
-	  (path, x)=dijkstra((v1)-[e:e]->(v2), e.weight, LIMIT 0)
-RETURN nodes(path), x;
+	  (p, x)=dijkstra((v1)-[e:e]->(v2), e.weight, LIMIT 0)
+RETURN nodes(p), x;
 
 MATCH (:v {id: 4})-[e:e]-(:v {id: 6})
 SET e.weight = -1;
 
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
-	  (path, x)=dijkstra((v1)-[e:e]->(v2), e.weight, LIMIT 10)
-return nodes(path), x;
+	  (p, x)=dijkstra((v1)-[e:e]->(v2), e.weight, LIMIT 10)
+return nodes(p), x;
 
 -- AG-81
 MATCH p= DIJKSTRA((a:v)-[:e]->(b:v), 1) WHERE a.id = 1

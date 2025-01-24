@@ -63,8 +63,8 @@ select * from test_regex('ab', 'ab', 'b');
 
 -- expectMatch	4.1  -		(a)e		ae	ae	a
 select * from test_regex('(a)e', 'ae', '-');
--- expectMatch	4.2  o		(a)e		ae
-select * from test_regex('(a)e', 'ae', 'o');
+-- expectMatch	4.2  oPR	(.)\1e		abeaae	aae	{}
+select * from test_regex('(.)\1e', 'abeaae', 'oPR');
 -- expectMatch	4.3  b		{\(a\)b}	ab	ab	a
 select * from test_regex('\(a\)b', 'ab', 'b');
 -- expectMatch	4.4  -		a((b)c)		abc	abc	bc	b
@@ -304,6 +304,12 @@ select * from test_regex('a[[=x=]]', 'ay', '+Lb');
 -- expectNomatch	9.9  &+L	{a[[=x=]]}	az
 select * from test_regex('a[[=x=]]', 'az', '+L');
 select * from test_regex('a[[=x=]]', 'az', '+Lb');
+-- expectMatch	9.9b  &iL	{a[[=Y=]]}	ay	ay
+select * from test_regex('a[[=Y=]]', 'ay', 'iL');
+select * from test_regex('a[[=Y=]]', 'ay', 'iLb');
+-- expectNomatch	9.9c  &L	{a[[=Y=]]}	ay
+select * from test_regex('a[[=Y=]]', 'ay', 'L');
+select * from test_regex('a[[=Y=]]', 'ay', 'Lb');
 -- expectError	9.10 &		{a[0-[=x=]]}	ERANGE
 select * from test_regex('a[0-[=x=]]', '', '');
 select * from test_regex('a[0-[=x=]]', '', 'b');
@@ -769,11 +775,20 @@ select * from test_regex('^(.+)( \1)+$', 'abc abc abc', 'RP');
 select * from test_regex('^(.+)( \1)+$', 'abc abd abc', 'RP');
 -- expectNomatch	14.29 RP	{^(.+)( \1)+$}	{abc abc abd}
 select * from test_regex('^(.+)( \1)+$', 'abc abc abd', 'RP');
+-- expectNomatch	14.30 RP	{^(.)\1|\1.}	{abcdef}
+select * from test_regex('^(.)\1|\1.', 'abcdef', 'RP');
+-- expectNomatch	14.31 RP	{^((.)\2|..)\2}	{abadef}
+select * from test_regex('^((.)\2|..)\2', 'abadef', 'RP');
 
 -- back reference only matches the string, not any constraints
 select * from test_regex('(^\w+).*\1', 'abc abc abc', 'LRP');
 select * from test_regex('(^\w+\M).*\1', 'abc abcd abd', 'LRP');
 select * from test_regex('(\w+(?= )).*\1', 'abc abcd abd', 'HLRP');
+
+-- exercise oversize-regmatch_t-array paths in regexec()
+-- (that case is not reachable via test_regex, sadly)
+select substring('fffoooooooooooooooooooooooooooooooo', '^(.)\1(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)');
+select regexp_split_to_array('abcxxxdefyyyghi', '((.))(\1\2)');
 
 -- doing 15 "octal escapes vs back references"
 
@@ -859,6 +874,12 @@ select * from test_regex('a[b-d]', 'aC', 'iMb');
 -- expectNomatch	19.5 &iM	{a[^b-d]}	aC
 select * from test_regex('a[^b-d]', 'aC', 'iM');
 select * from test_regex('a[^b-d]', 'aC', 'iMb');
+-- expectMatch	19.6 &iM	{a[B-Z]}	aC	aC
+select * from test_regex('a[B-Z]', 'aC', 'iM');
+select * from test_regex('a[B-Z]', 'aC', 'iMb');
+-- expectNomatch	19.7 &iM	{a[^B-Z]}	aC
+select * from test_regex('a[^B-Z]', 'aC', 'iM');
+select * from test_regex('a[^B-Z]', 'aC', 'iMb');
 
 -- doing 20 "directors and embedded options"
 
@@ -1009,6 +1030,18 @@ select * from test_regex('(.*).*', 'abc', 'N');
 select * from test_regex('(a*)*', 'bc', 'N');
 -- expectMatch	21.35 M		{ TO (([a-z0-9._]+|"([^"]+|"")+")+)}	{asd TO foo}	{ TO foo} foo o {}
 select * from test_regex(' TO (([a-z0-9._]+|"([^"]+|"")+")+)', 'asd TO foo', 'M');
+-- expectMatch	21.36 RPQ	((.))(\2){0}	xy	x	x	x	{}
+select * from test_regex('((.))(\2){0}', 'xy', 'RPQ');
+-- expectMatch	21.37 RP	((.))(\2)	xyy	yy	y	y	y
+select * from test_regex('((.))(\2)', 'xyy', 'RP');
+-- expectMatch	21.38 oRP	((.))(\2)	xyy	yy	{}	{}	{}
+select * from test_regex('((.))(\2)', 'xyy', 'oRP');
+-- expectNomatch	21.39 PQR	{(.){0}(\1)}	xxx
+select * from test_regex('(.){0}(\1)', 'xxx', 'PQR');
+-- expectNomatch	21.40 PQR	{((.)){0}(\2)}	xxx
+select * from test_regex('((.)){0}(\2)', 'xxx', 'PQR');
+-- expectMatch	21.41 NPQR	{((.)){0}(\2){0}}	xyz	{}	{}	{}	{}
+select * from test_regex('((.)){0}(\2){0}', 'xyz', 'NPQR');
 
 -- doing 22 "multicharacter collating elements"
 -- # again ugh
@@ -1160,6 +1193,8 @@ select * from test_regex('z*4', '123zzzz456', '-');
 select * from test_regex('z*?4', '123zzzz456', 'PT');
 -- expectMatch	24.13 PT	{^([^/]+?)(?:/([^/]+?))(?:/([^/]+?))?$}	{foo/bar/baz}	{foo/bar/baz} {foo} {bar} {baz}
 select * from test_regex('^([^/]+?)(?:/([^/]+?))(?:/([^/]+?))?$', 'foo/bar/baz', 'PT');
+-- expectMatch	24.14 PRT	{^(.+?)(?:/(.+?))(?:/(.+?)\3)?$}	{foo/bar/baz/quux}	{foo/bar/baz/quux}	{foo}	{bar/baz/quux}	{}
+select * from test_regex('^(.+?)(?:/(.+?))(?:/(.+?)\3)?$', 'foo/bar/baz/quux', 'PRT');
 
 -- doing 25 "mixed quantifiers"
 -- # this is very incomplete as yet
@@ -1730,3 +1765,21 @@ select * from test_regex(repeat('x*y*z*', 200), 'x', 'N');
 --     regexp {(\Y)+} foo
 -- } 1
 select * from test_regex('(\Y)+', 'foo', 'LNP');
+
+
+-- and now, tests not from either Spencer or the Tcl project
+
+-- These cases exercise additional code paths in pushfwd()/push()/combine()
+select * from test_regex('a\Y(?=45)', 'a45', 'HLP');
+select * from test_regex('a(?=.)c', 'ac', 'HP');
+select * from test_regex('a(?=.).*(?=3)3*', 'azz33', 'HP');
+select * from test_regex('a(?=\w)\w*(?=.).*', 'az3%', 'HLP');
+
+-- These exercise the bulk-arc-movement paths in moveins() and moveouts();
+-- you may need to make them longer if you change BULK_ARC_OP_USE_SORT()
+select * from test_regex('ABCDEFGHIJKLMNOPQRSTUVWXYZ(?:\w|a|b|c|d|e|f|0|1|2|3|4|5|6|Q)',
+                         'ABCDEFGHIJKLMNOPQRSTUVWXYZ3', 'LP');
+select * from test_regex('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789(\Y\Y)+',
+                         'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789Z', 'LP');
+select * from test_regex('((x|xabcdefghijklmnopqrstuvwxyz0123456789)x*|[^y]z)$',
+                         'az', '');

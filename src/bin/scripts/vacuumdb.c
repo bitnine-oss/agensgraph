@@ -2,7 +2,7 @@
  *
  * vacuumdb
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/scripts/vacuumdb.c
@@ -12,8 +12,9 @@
 
 #include "postgres_fe.h"
 
-#include "catalog/pg_class_d.h"
+#include <limits.h>
 
+#include "catalog/pg_class_d.h"
 #include "common.h"
 #include "common/connect.h"
 #include "common/logging.h"
@@ -192,20 +193,14 @@ main(int argc, char *argv[])
 				vacopts.verbose = true;
 				break;
 			case 'j':
-				concurrentCons = atoi(optarg);
-				if (concurrentCons <= 0)
-				{
-					pg_log_error("number of parallel jobs must be at least 1");
+				if (!option_parse_int(optarg, "-j/--jobs", 1, INT_MAX,
+									  &concurrentCons))
 					exit(1);
-				}
 				break;
 			case 'P':
-				vacopts.parallel_workers = atoi(optarg);
-				if (vacopts.parallel_workers < 0)
-				{
-					pg_log_error("parallel workers for vacuum must be greater than or equal to zero");
+				if (!option_parse_int(optarg, "-P/--parallel", 0, INT_MAX,
+									  &vacopts.parallel_workers))
 					exit(1);
-				}
 				break;
 			case 2:
 				maintenance_db = pg_strdup(optarg);
@@ -220,20 +215,14 @@ main(int argc, char *argv[])
 				vacopts.skip_locked = true;
 				break;
 			case 6:
-				vacopts.min_xid_age = atoi(optarg);
-				if (vacopts.min_xid_age <= 0)
-				{
-					pg_log_error("minimum transaction ID age must be at least 1");
+				if (!option_parse_int(optarg, "--min-xid-age", 1, INT_MAX,
+									  &vacopts.min_xid_age))
 					exit(1);
-				}
 				break;
 			case 7:
-				vacopts.min_mxid_age = atoi(optarg);
-				if (vacopts.min_mxid_age <= 0)
-				{
-					pg_log_error("minimum multixact ID age must be at least 1");
+				if (!option_parse_int(optarg, "--min-mxid-age", 1, INT_MAX,
+									  &vacopts.min_mxid_age))
 					exit(1);
-				}
 				break;
 			case 8:
 				vacopts.no_index_cleanup = true;
@@ -248,7 +237,8 @@ main(int argc, char *argv[])
 				vacopts.process_toast = false;
 				break;
 			default:
-				fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+				/* getopt_long already emitted a complaint */
+				pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 				exit(1);
 		}
 	}
@@ -267,54 +257,33 @@ main(int argc, char *argv[])
 	{
 		pg_log_error("too many command-line arguments (first is \"%s\")",
 					 argv[optind]);
-		fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+		pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 		exit(1);
 	}
 
 	if (vacopts.analyze_only)
 	{
 		if (vacopts.full)
-		{
-			pg_log_error("cannot use the \"%s\" option when performing only analyze",
-						 "full");
-			exit(1);
-		}
+			pg_fatal("cannot use the \"%s\" option when performing only analyze",
+					 "full");
 		if (vacopts.freeze)
-		{
-			pg_log_error("cannot use the \"%s\" option when performing only analyze",
-						 "freeze");
-			exit(1);
-		}
+			pg_fatal("cannot use the \"%s\" option when performing only analyze",
+					 "freeze");
 		if (vacopts.disable_page_skipping)
-		{
-			pg_log_error("cannot use the \"%s\" option when performing only analyze",
-						 "disable-page-skipping");
-			exit(1);
-		}
+			pg_fatal("cannot use the \"%s\" option when performing only analyze",
+					 "disable-page-skipping");
 		if (vacopts.no_index_cleanup)
-		{
-			pg_log_error("cannot use the \"%s\" option when performing only analyze",
-						 "no-index-cleanup");
-			exit(1);
-		}
+			pg_fatal("cannot use the \"%s\" option when performing only analyze",
+					 "no-index-cleanup");
 		if (vacopts.force_index_cleanup)
-		{
-			pg_log_error("cannot use the \"%s\" option when performing only analyze",
-						 "force-index-cleanup");
-			exit(1);
-		}
+			pg_fatal("cannot use the \"%s\" option when performing only analyze",
+					 "force-index-cleanup");
 		if (!vacopts.do_truncate)
-		{
-			pg_log_error("cannot use the \"%s\" option when performing only analyze",
-						 "no-truncate");
-			exit(1);
-		}
+			pg_fatal("cannot use the \"%s\" option when performing only analyze",
+					 "no-truncate");
 		if (!vacopts.process_toast)
-		{
-			pg_log_error("cannot use the \"%s\" option when performing only analyze",
-						 "no-process-toast");
-			exit(1);
-		}
+			pg_fatal("cannot use the \"%s\" option when performing only analyze",
+					 "no-process-toast");
 		/* allow 'and_analyze' with 'analyze_only' */
 	}
 
@@ -322,26 +291,17 @@ main(int argc, char *argv[])
 	if (vacopts.parallel_workers >= 0)
 	{
 		if (vacopts.analyze_only)
-		{
-			pg_log_error("cannot use the \"%s\" option when performing only analyze",
-						 "parallel");
-			exit(1);
-		}
+			pg_fatal("cannot use the \"%s\" option when performing only analyze",
+					 "parallel");
 		if (vacopts.full)
-		{
-			pg_log_error("cannot use the \"%s\" option when performing full vacuum",
-						 "parallel");
-			exit(1);
-		}
+			pg_fatal("cannot use the \"%s\" option when performing full vacuum",
+					 "parallel");
 	}
 
 	/* Prohibit --no-index-cleanup and --force-index-cleanup together */
 	if (vacopts.no_index_cleanup && vacopts.force_index_cleanup)
-	{
-		pg_log_error("cannot use the \"%s\" option with the \"%s\" option",
-					 "no-index-cleanup", "force-index-cleanup");
-		exit(1);
-	}
+		pg_fatal("cannot use the \"%s\" option with the \"%s\" option",
+				 "no-index-cleanup", "force-index-cleanup");
 
 	/* fill cparams except for dbname, which is set below */
 	cparams.pghost = host;
@@ -359,15 +319,9 @@ main(int argc, char *argv[])
 	if (alldb)
 	{
 		if (dbname)
-		{
-			pg_log_error("cannot vacuum all databases and a specific one at the same time");
-			exit(1);
-		}
+			pg_fatal("cannot vacuum all databases and a specific one at the same time");
 		if (tables.head != NULL)
-		{
-			pg_log_error("cannot vacuum specific table(s) in all databases");
-			exit(1);
-		}
+			pg_fatal("cannot vacuum specific table(s) in all databases");
 
 		cparams.dbname = maintenance_db;
 
@@ -468,71 +422,56 @@ vacuum_one_database(ConnParams *cparams,
 	if (vacopts->disable_page_skipping && PQserverVersion(conn) < 90600)
 	{
 		PQfinish(conn);
-		pg_log_error("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
-					 "disable-page-skipping", "9.6");
-		exit(1);
+		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
+				 "disable-page-skipping", "9.6");
 	}
 
 	if (vacopts->no_index_cleanup && PQserverVersion(conn) < 120000)
 	{
 		PQfinish(conn);
-		pg_log_error("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
-					 "no-index-cleanup", "12");
-		exit(1);
+		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
+				 "no-index-cleanup", "12");
 	}
 
 	if (vacopts->force_index_cleanup && PQserverVersion(conn) < 120000)
 	{
 		PQfinish(conn);
-		pg_log_error("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
-					 "force-index-cleanup", "12");
-		exit(1);
+		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
+				 "force-index-cleanup", "12");
 	}
 
 	if (!vacopts->do_truncate && PQserverVersion(conn) < 120000)
 	{
 		PQfinish(conn);
-		pg_log_error("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
-					 "no-truncate", "12");
-		exit(1);
+		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
+				 "no-truncate", "12");
 	}
 
 	if (!vacopts->process_toast && PQserverVersion(conn) < 140000)
 	{
 		PQfinish(conn);
-		pg_log_error("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
-					 "no-process-toast", "14");
-		exit(1);
+		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
+				 "no-process-toast", "14");
 	}
 
 	if (vacopts->skip_locked && PQserverVersion(conn) < 120000)
 	{
 		PQfinish(conn);
-		pg_log_error("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
-					 "skip-locked", "12");
-		exit(1);
+		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
+				 "skip-locked", "12");
 	}
 
 	if (vacopts->min_xid_age != 0 && PQserverVersion(conn) < 90600)
-	{
-		pg_log_error("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
-					 "--min-xid-age", "9.6");
-		exit(1);
-	}
+		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
+				 "--min-xid-age", "9.6");
 
 	if (vacopts->min_mxid_age != 0 && PQserverVersion(conn) < 90600)
-	{
-		pg_log_error("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
-					 "--min-mxid-age", "9.6");
-		exit(1);
-	}
+		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
+				 "--min-mxid-age", "9.6");
 
 	if (vacopts->parallel_workers >= 0 && PQserverVersion(conn) < 130000)
-	{
-		pg_log_error("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
-					 "--parallel", "13");
-		exit(1);
-	}
+		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
+				 "--parallel", "13");
 
 	if (!quiet)
 	{
@@ -916,14 +855,7 @@ prepare_vacuum_command(PQExpBuffer sql, int serverVersion,
 			}
 			if (vacopts->force_index_cleanup)
 			{
-				/*
-				 * "INDEX_CLEANUP TRUE" has been supported since v12.
-				 *
-				 * Though --force-index-cleanup was added to vacuumdb in v14,
-				 * the "INDEX_CLEANUP TRUE" server/VACUUM behavior has never
-				 * changed.  No reason not to support --force-index-cleanup on
-				 * v12+.
-				 */
+				/* "INDEX_CLEANUP TRUE" has been supported since v12 */
 				Assert(serverVersion >= 120000);
 				Assert(!vacopts->no_index_cleanup);
 				appendPQExpBuffer(sql, "%sINDEX_CLEANUP TRUE", sep);

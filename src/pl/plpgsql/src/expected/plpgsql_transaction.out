@@ -430,6 +430,34 @@ SELECT * FROM test1;
 ---+---
 (0 rows)
 
+-- test commit/rollback inside exception handler, too
+TRUNCATE test1;
+DO LANGUAGE plpgsql $$
+BEGIN
+    FOR i IN 1..10 LOOP
+      BEGIN
+        INSERT INTO test1 VALUES (i, 'good');
+        INSERT INTO test1 VALUES (i/0, 'bad');
+      EXCEPTION
+        WHEN division_by_zero THEN
+            INSERT INTO test1 VALUES (i, 'exception');
+            IF (i % 3) > 0 THEN COMMIT; ELSE ROLLBACK; END IF;
+      END;
+    END LOOP;
+END;
+$$;
+SELECT * FROM test1;
+ a  |     b     
+----+-----------
+  1 | exception
+  2 | exception
+  4 | exception
+  5 | exception
+  7 | exception
+  8 | exception
+ 10 | exception
+(7 rows)
+
 -- detoast result of simple expression after commit
 CREATE TEMP TABLE test4(f1 text);
 ALTER TABLE test4 ALTER COLUMN f1 SET STORAGE EXTERNAL; -- disable compression
@@ -600,6 +628,27 @@ SELECT * FROM test2;
  42
 (1 row)
 
+-- another snapshot handling case: argument expressions of a CALL need
+-- to be evaluated with an up-to-date snapshot
+CREATE FUNCTION report_count() RETURNS int
+STABLE LANGUAGE sql
+AS $$ SELECT COUNT(*) FROM test2 $$;
+CREATE PROCEDURE transaction_test9b(cnt int)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE NOTICE 'count = %', cnt;
+END
+$$;
+DO $$
+BEGIN
+    CALL transaction_test9b(report_count());
+    INSERT INTO test2 VALUES(43);
+    CALL transaction_test9b(report_count());
+END
+$$;
+NOTICE:  count = 1
+NOTICE:  count = 2
 -- Test transaction in procedure with output parameters.  This uses a
 -- different portal strategy and different code paths in pquery.c.
 CREATE PROCEDURE transaction_test10a(INOUT x int)

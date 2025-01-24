@@ -387,7 +387,7 @@ PostgreSQL documentation
         but to abort the dump.
        </para>
        <para>
-        For a consistent backup, the database server needs to support
+        To perform a parallel dump, the database server needs to support
         synchronized snapshots, a feature that was introduced in
         <productname>PostgreSQL</productname> 9.2 for primary servers and 10
         for standbys. With this feature, database clients can ensure they see
@@ -397,16 +397,6 @@ PostgreSQL documentation
         for each worker job. Without the synchronized snapshot feature, the
         different worker jobs wouldn't be guaranteed to see the same data in
         each connection, which could lead to an inconsistent backup.
-       </para>
-       <para>
-        If you want to run a parallel dump of a pre-9.2 server, you need to make sure that the
-        database content doesn't change from between the time the leader connects to the
-        database until the last worker job has connected to the database. The easiest way to
-        do this is to halt any data modifying processes (DDL and DML) accessing the database
-        before starting the backup. You also need to specify the
-        <option>--no-synchronized-snapshots</option> parameter when running
-        <command>pg_dump -j</command> against a pre-9.2 <productname>PostgreSQL</productname>
-        server.
        </para>
       </listitem>
      </varlistentry>
@@ -942,12 +932,18 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
-      <term><option>--no-synchronized-snapshots</option></term>
+      <term><option>--no-table-access-method</option></term>
       <listitem>
        <para>
-        This option allows running <command>pg_dump -j</command> against a pre-9.2
-        server, see the documentation of the <option>-j</option> parameter
-        for more details.
+        Do not output commands to select table access methods.
+        With this option, all objects will be created with whichever
+        table access method is the default during restore.
+       </para>
+
+       <para>
+        This option is ignored when emitting an archive (non-text) output
+        file.  For the archive formats, you can specify the option when you
+        call <command>pg_restore</command>.
        </para>
       </listitem>
      </varlistentry>
@@ -985,9 +981,10 @@ PostgreSQL documentation
       <term><option>--no-unlogged-table-data</option></term>
       <listitem>
        <para>
-        Do not dump the contents of unlogged tables.  This option has no
-        effect on whether or not the table definitions (schema) are dumped;
-        it only suppresses dumping the table data. Data in unlogged tables
+        Do not dump the contents of unlogged tables and sequences.  This
+        option has no effect on whether or not the table and sequence
+        definitions (schema) are dumped; it only suppresses dumping the table
+        and sequence data. Data in unlogged tables and sequences
         is always excluded when dumping from a standby server.
        </para>
       </listitem>
@@ -1332,7 +1329,7 @@ PostgreSQL documentation
 
   <para>
    The database activity of <application>pg_dump</application> is
-   normally collected by the statistics collector.  If this is
+   normally collected by the cumulative statistics system.  If this is
    undesirable, you can set parameter <varname>track_counts</varname>
    to false via <envar>PGOPTIONS</envar> or the <literal>ALTER
    USER</literal> command.
@@ -1381,7 +1378,7 @@ CREATE DATABASE foo WITH TEMPLATE template0;
    <productname>PostgreSQL</productname> server versions newer than
    <application>pg_dump</application>'s version.  <application>pg_dump</application> can also
    dump from <productname>PostgreSQL</productname> servers older than its own version.
-   (Currently, servers back to version 8.0 are supported.)
+   (Currently, servers back to version 9.2 are supported.)
    However, <application>pg_dump</application> cannot dump from
    <productname>PostgreSQL</productname> servers newer than its own major version;
    it will refuse to even try, rather than risk making an invalid dump.
@@ -1405,7 +1402,12 @@ CREATE DATABASE foo WITH TEMPLATE template0;
    servers.  It is then up to the user to reactivate the subscriptions in a
    suitable way.  If the involved hosts have changed, the connection
    information might have to be changed.  It might also be appropriate to
-   truncate the target tables before initiating a new full table copy.
+   truncate the target tables before initiating a new full table copy.  If users
+   intend to copy initial data during refresh they must create the slot with
+   <literal>two_phase = false</literal>.  After the initial sync, the
+   <literal>two_phase</literal> option will be automatically enabled by the
+   subscriber if the subscription had been originally created with
+   <literal>two_phase = true</literal> option.
   </para>
  </refsect1>
 

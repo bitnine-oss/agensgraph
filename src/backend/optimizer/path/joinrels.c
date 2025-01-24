@@ -3,7 +3,7 @@
  * joinrels.c
  *	  Routines to determine which relations should be joined
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -362,7 +362,7 @@ is_graph_join_rel(RelOptInfo *rel)
 	{
 		nlpath = castNode(NestPath, rel->cheapest_total_path);
 
-		if (IS_GRAPH_JOIN(nlpath->jointype))
+		if (IS_GRAPH_JOIN(nlpath->jpath.jointype))
 			return true;
 	}
 
@@ -1595,6 +1595,7 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 												 child_sjinfo,
 												 child_sjinfo->jointype);
 			joinrel->part_rels[cnt_parts] = child_joinrel;
+			joinrel->live_parts = bms_add_member(joinrel->live_parts, cnt_parts);
 			joinrel->all_partrels = bms_add_members(joinrel->all_partrels,
 													child_joinrel->relids);
 		}
@@ -1674,9 +1675,9 @@ compute_partition_bounds(PlannerInfo *root, RelOptInfo *rel1,
 
 		/*
 		 * See if the partition bounds for inputs are exactly the same, in
-		 * which case we don't need to work hard: the join rel have the same
-		 * partition bounds as inputs, and the partitions with the same
-		 * cardinal positions form the pairs.
+		 * which case we don't need to work hard: the join rel will have the
+		 * same partition bounds as inputs, and the partitions with the same
+		 * cardinal positions will form the pairs.
 		 *
 		 * Note: even in cases where one or both inputs have merged bounds, it
 		 * would be possible for both the bounds to be exactly the same, but

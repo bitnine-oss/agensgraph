@@ -74,10 +74,10 @@
    which is meant as a default database for use by utilities, users and third
    party applications.  The database server itself does not require the
    <literal>postgres</literal> database to exist, but many external utility
-   programs assume it exists.  Another database created within each cluster
-   during initialization is called
-   <literal>template1</literal>.  As the name suggests, this will be used
-   as a template for subsequently created databases; it should not be
+   programs assume it exists.  There are two more databases created within
+   each cluster during initialization, named <literal>template1</literal>
+   and <literal>template0</literal>.  As the names suggest, these will be
+   used as templates for subsequently-created databases; they should not be
    used for actual work.  (See <xref linkend="managing-databases"/> for
    information about creating new databases within a cluster.)
   </para>
@@ -199,8 +199,8 @@ postgres$ <userinput>initdb -D /usr/local/pgsql/data</userinput>
      <primary>password</primary>
      <secondary>of the superuser</secondary>
    </indexterm>
-   Also, specify <option>-A md5</option> or
-   <option>-A password</option> so that the default <literal>trust</literal> authentication
+   Also, specify <option>-A scram-sha-256</option>
+   so that the default <literal>trust</literal> authentication
    mode is not used; or modify the generated <filename>pg_hba.conf</filename>
    file after running <command>initdb</command>, but
    <emphasis>before</emphasis> you start the server for the first time. (Other
@@ -488,7 +488,7 @@ ExecStart=/usr/local/pgsql/bin/postgres -D /usr/local/pgsql/data
 ExecReload=/bin/kill -HUP $MAINPID
 KillMode=mixed
 KillSignal=SIGINT
-TimeoutSec=0
+TimeoutSec=infinity
 
 [Install]
 WantedBy=multi-user.target
@@ -500,11 +500,11 @@ WantedBy=multi-user.target
      <para>
       Consider carefully the timeout
       setting.  <application>systemd</application> has a default timeout of 90
-      seconds as of this writing and will kill a process that does not notify
+      seconds as of this writing and will kill a process that does not report
       readiness within that time.  But a <productname>PostgreSQL</productname>
       server that might have to perform crash recovery at startup could take
-      much longer to become ready.  The suggested value of 0 disables the
-      timeout logic.
+      much longer to become ready.  The suggested value
+      of <literal>infinity</literal> disables the timeout logic.
      </para>
     </listitem>
 
@@ -1442,17 +1442,14 @@ export PG_OOM_ADJUST_VALUE=0
     with <varname>CONFIG_HUGETLBFS=y</varname> and
     <varname>CONFIG_HUGETLB_PAGE=y</varname>. You will also have to configure
     the operating system to provide enough huge pages of the desired size.
-    To estimate the number of huge pages needed, start
-    <productname>PostgreSQL</productname> without huge pages enabled and check
-    the postmaster's anonymous shared memory segment size, as well as the
-    system's default and supported huge page sizes, using the
-    <filename>/proc</filename> and <filename>/sys</filename> file systems.
+    To determine the number of huge pages needed, use the
+    <command>postgres</command> command to see the value of
+    <xref linkend="guc-shared-memory-size-in-huge-pages"/>.  Note that the
+    server must be shut down to view this runtime-computed parameter.
     This might look like:
 <programlisting>
-$ <userinput>head -1 $PGDATA/postmaster.pid</userinput>
-4170
-$ <userinput>pmap 4170 | awk '/rw-s/ &amp;&amp; /zero/ {print $2}'</userinput>
-6490428K
+$ <userinput>postgres -D $PGDATA -C shared_memory_size_in_huge_pages</userinput>
+3170
 $ <userinput>grep ^Hugepagesize /proc/meminfo</userinput>
 Hugepagesize:       2048 kB
 $ <userinput>ls /sys/kernel/mm/hugepages</userinput>
@@ -1460,13 +1457,13 @@ hugepages-1048576kB  hugepages-2048kB
 </programlisting>
 
      In this example the default is 2MB, but you can also explicitly request
-     either 2MB or 1GB with <xref linkend="guc-huge-page-size"/>.
+     either 2MB or 1GB with <xref linkend="guc-huge-page-size"/> to adapt
+     the number of pages calculated by
+     <varname>shared_memory_size_in_huge_pages</varname>.
 
-     Assuming <literal>2MB</literal> huge pages,
-     <literal>6490428</literal> / <literal>2048</literal> gives approximately
-     <literal>3169.154</literal>, so in this example we need at
-     least <literal>3170</literal> huge pages.  A larger setting would be
-     appropriate if other programs on the machine also need huge pages.
+     While we need at least <literal>3170</literal> huge pages in this example,
+     a larger setting would be appropriate if other programs on the machine
+     also need huge pages.
      We can set this with:
 <programlisting>
 # <userinput>sysctl -w vm.nr_hugepages=3170</userinput>
@@ -1555,11 +1552,7 @@ $ <userinput>cat /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages</userinp
        After receiving <systemitem>SIGTERM</systemitem>, the server
        disallows new connections, but lets existing sessions end their
        work normally. It shuts down only after all of the sessions terminate.
-       If the server is in online backup mode, it additionally waits
-       until online backup mode is no longer active.  While backup mode is
-       active, new connections will still be allowed, but only to superusers
-       (this exception allows a superuser to connect to terminate
-       online backup mode).  If the server is in recovery when a smart
+       If the server is in recovery when a smart
        shutdown is requested, recovery and streaming replication will be
        stopped only after all regular sessions have terminated.
       </para>
@@ -1575,8 +1568,6 @@ $ <userinput>cat /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages</userinp
        server processes <systemitem>SIGTERM</systemitem>, which will cause them
        to abort their current transactions and exit promptly. It then
        waits for all server processes to exit and finally shuts down.
-       If the server is in online backup mode, backup mode will be
-       terminated, rendering the backup useless.
       </para>
      </listitem>
     </varlistentry>
@@ -1779,7 +1770,7 @@ $ <userinput>kill -INT `head -1 /usr/local/pgsql/data/postmaster.pid`</userinput
     version of
     <productname>PostgreSQL</productname>, to take advantage of enhancements
     that might have been made in these programs.  Current releases of the
-    dump programs can read data from any server version back to 7.0.
+    dump programs can read data from any server version back to 9.2.
    </para>
 
    <para>
@@ -2185,6 +2176,7 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
 
   <indexterm zone="ssl-tcp">
    <primary>SSL</primary>
+   <secondary>TLS</secondary>
   </indexterm>
 
   <para>
@@ -2196,13 +2188,25 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
    enabled at build time (see <xref linkend="installation"/>).
   </para>
 
+  <para>
+   The terms <acronym>SSL</acronym> and <acronym>TLS</acronym> are often used
+   interchangeably to mean a secure encrypted connection using a
+   <acronym>TLS</acronym> protocol. <acronym>SSL</acronym> protocols are the
+   precursors to <acronym>TLS</acronym> protocols, and the term
+   <acronym>SSL</acronym> is still used for encrypted connections even though
+   <acronym>SSL</acronym> protocols are no longer supported.
+   <acronym>SSL</acronym> is used interchangeably with <acronym>TLS</acronym>
+   in <productname>PostgreSQL</productname>.
+
+  </para>
   <sect2 id="ssl-setup">
    <title>Basic Setup</title>
 
   <para>
    With <acronym>SSL</acronym> support compiled in, the
    <productname>PostgreSQL</productname> server can be started with
-   <acronym>SSL</acronym> enabled by setting the parameter
+   support for encrypted connections using <acronym>TLS</acronym> protocols
+   enabled by by setting the parameter
    <xref linkend="guc-ssl"/> to <literal>on</literal> in
    <filename>postgresql.conf</filename>.  The server will listen for both normal
    and <acronym>SSL</acronym> connections on the same TCP port, and will negotiate
@@ -2340,7 +2344,8 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
    you wish to avoid storing them on clients (assuming the root and
    intermediate certificates were created with <literal>v3_ca</literal>
    extensions).  Certificate Revocation List (CRL) entries are also
-   checked if the parameter <xref linkend="guc-ssl-crl-file"/> is set.
+   checked if the parameter <xref linkend="guc-ssl-crl-file"/> or
+   <xref linkend="guc-ssl-crl-dir"/> is set.
   </para>
 
   <para>

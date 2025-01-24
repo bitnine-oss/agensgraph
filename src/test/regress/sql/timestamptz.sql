@@ -238,6 +238,12 @@ SELECT date_bin('5 min'::interval, timestamptz '2020-02-01 01:01:01+00', timesta
 SELECT date_bin('5 months'::interval, timestamp with time zone '2020-02-01 01:01:01+00', timestamp with time zone '2001-01-01+00');
 SELECT date_bin('5 years'::interval,  timestamp with time zone '2020-02-01 01:01:01+00', timestamp with time zone '2001-01-01+00');
 
+-- disallow zero intervals
+SELECT date_bin('0 days'::interval, timestamp with time zone '1970-01-01 01:00:00+00' , timestamp with time zone '1970-01-01 00:00:00+00');
+
+-- disallow negative intervals
+SELECT date_bin('-2 days'::interval, timestamp with time zone '1970-01-01 01:00:00+00' , timestamp with time zone '1970-01-01 00:00:00+00');
+
 -- Test casting within a BETWEEN qualifier
 SELECT d1 - timestamp with time zone '1997-01-02' AS diff
   FROM TIMESTAMPTZ_TBL
@@ -354,6 +360,28 @@ SET timezone = '04:15';
 SELECT to_char(now(), 'OF') as "OF", to_char(now(), 'TZH:TZM') as "TZH:TZM";
 RESET timezone;
 
+-- Check of, tzh, tzm with various zone offsets.
+SET timezone = '00:00';
+SELECT to_char(now(), 'of') as "Of", to_char(now(), 'tzh:tzm') as "tzh:tzm";
+SET timezone = '+02:00';
+SELECT to_char(now(), 'of') as "of", to_char(now(), 'tzh:tzm') as "tzh:tzm";
+SET timezone = '-13:00';
+SELECT to_char(now(), 'of') as "of", to_char(now(), 'tzh:tzm') as "tzh:tzm";
+SET timezone = '-00:30';
+SELECT to_char(now(), 'of') as "of", to_char(now(), 'tzh:tzm') as "tzh:tzm";
+SET timezone = '00:30';
+SELECT to_char(now(), 'of') as "of", to_char(now(), 'tzh:tzm') as "tzh:tzm";
+SET timezone = '-04:30';
+SELECT to_char(now(), 'of') as "of", to_char(now(), 'tzh:tzm') as "tzh:tzm";
+SET timezone = '04:30';
+SELECT to_char(now(), 'of') as "of", to_char(now(), 'tzh:tzm') as "tzh:tzm";
+SET timezone = '-04:15';
+SELECT to_char(now(), 'of') as "of", to_char(now(), 'tzh:tzm') as "tzh:tzm";
+SET timezone = '04:15';
+SELECT to_char(now(), 'of') as "of", to_char(now(), 'tzh:tzm') as "tzh:tzm";
+RESET timezone;
+
+
 CREATE TABLE TIMESTAMPTZ_TST (a int , b timestamptz);
 
 -- Test year field value with len > 4
@@ -403,6 +431,20 @@ SELECT make_timestamptz(2008, 12, 10, 10, 10, 10, 'EDT');
 SELECT make_timestamptz(2014, 12, 10, 10, 10, 10, 'PST8PDT');
 
 RESET TimeZone;
+
+-- generate_series for timestamptz
+select * from generate_series('2020-01-01 00:00'::timestamptz,
+                              '2020-01-02 03:00'::timestamptz,
+                              '1 hour'::interval);
+-- the LIMIT should allow this to terminate in a reasonable amount of time
+-- (but that unfortunately doesn't work yet for SELECT * FROM ...)
+select generate_series('2022-01-01 00:00'::timestamptz,
+                       'infinity'::timestamptz,
+                       '1 month'::interval) limit 10;
+-- errors
+select * from generate_series('2020-01-01 00:00'::timestamptz,
+                              '2020-01-02 03:00'::timestamptz,
+                              '0 hour'::interval);
 
 --
 -- Test behavior with a dynamic (time-varying) timezone abbreviation.

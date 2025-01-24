@@ -12,10 +12,28 @@
 #
 # Add new entries by adding the output of the following to the top of the file:
 #
-# $ git log --pretty=format:"%H # %cd %n# %s" $PGINDENTGITHASH -1
+# $ git log --pretty=format:"%H # %cd %n# %s" $PGINDENTGITHASH -1 --date=iso
+
+82d0ffae3219e4bc153a1306ce23013d168e04a2 # 2022-06-30 11:03:03 -0400
+# pgindent run prior to branching v15.
+
+23e7b38bfe396f919fdb66057174d29e17086418 # 2022-05-12 15:17:30 -0400
+# Pre-beta mechanical code beautification.
+
+a3a75b982b5bb6fba95ad8b3d48e70439dcd2329 # 2022-03-19 11:42:22 -0700
+# pgstat: run pgindent on pgstat.c/h.
+
+d231be00cbf29bf24e5b4fc79e587982bbc00ebb # 2022-02-16 09:22:34 +0200
+# Run pgindent on xlog.c.
+
+e1c1c30f635390b6a3ae4993e8cac213a33e6e3f # 2021-06-28 11:05:54 -0400
+# Pre branch pgindent / pgperltidy run
 
 def5b065ff22a16a80084587613599fe15627213 # 2021-05-12 13:14:10 -0400
 # Initial pgindent and pgperltidy run for v14.
+
+ed43677e20369040ca4e50c698010c39d5ac0f47 # 2021-01-19 08:10:13 +0530
+# pgindent worker.c.
 
 8b411b8ff41566a1aa601d1f05aeebbebbdb4a54 # 2021-01-13 16:14:38 -0500
 # Run reformat-dat-files to declutter the catalog data files.
@@ -101,8 +119,14 @@ b5bce6c1ec6061c8a4f730d927e162db7e2ce365 # 2016-08-15 13:42:51 -0400
 de94e2af184e25576b13cbda8cf825118835d1cd # 2016-04-06 11:34:02 -0400
 # Run pgindent on a batch of (mostly-planner-related) source files.
 
+be060cbcd42737693f6fd425db4c139121181cce # 2016-03-09 13:51:11 -0500
+# Re-pgindent vacuumlazy.c.
+
 d0cd7bda97a626049aa7d247374909c52399c413 # 2016-02-04 22:30:08 -0500
 # postgres_fdw: pgindent run.
+
+8d290c8ec6c182a4df1d089c21fe84c7912f01fe # 2016-01-17 19:13:18 -0500
+# Re-pgindent a few files.
 
 befa3e648ce018d84cd2a0df701927c56fe3da4e # 2015-05-24 21:44:57 -0400
 # Revert 9.5 pgindent changes to atomics directory files

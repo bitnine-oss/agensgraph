@@ -3,7 +3,7 @@
  * dropcmds.c
  *	  handle various "DROP" operations
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -136,7 +136,7 @@ RemoveObjects(DropStmt *stmt)
 		else if (stmt->removeType == OBJECT_GRAPH)
 		{
 			if (stmt->behavior == DROP_CASCADE)
-				agstat_drop_graph(strVal((Value *) object));
+				agstat_drop_graph(strVal(object));
 		}
 
 		/*
@@ -307,7 +307,7 @@ does_not_exist_skipping(ObjectType objtype, Node *object)
 	{
 		case OBJECT_ACCESS_METHOD:
 			msg = gettext_noop("access method \"%s\" does not exist, skipping");
-			name = strVal((Value *) object);
+			name = strVal(object);
 			break;
 		case OBJECT_TYPE:
 		case OBJECT_DOMAIN:
@@ -337,7 +337,7 @@ does_not_exist_skipping(ObjectType objtype, Node *object)
 			break;
 		case OBJECT_SCHEMA:
 			msg = gettext_noop("schema \"%s\" does not exist, skipping");
-			name = strVal((Value *) object);
+			name = strVal(object);
 			break;
 		case OBJECT_STATISTIC_EXT:
 			if (!schema_does_not_exist_skipping(castNode(List, object), &msg, &name))
@@ -376,7 +376,7 @@ does_not_exist_skipping(ObjectType objtype, Node *object)
 			break;
 		case OBJECT_EXTENSION:
 			msg = gettext_noop("extension \"%s\" does not exist, skipping");
-			name = strVal((Value *) object);
+			name = strVal(object);
 			break;
 		case OBJECT_FUNCTION:
 			{
@@ -444,7 +444,7 @@ does_not_exist_skipping(ObjectType objtype, Node *object)
 			}
 		case OBJECT_LANGUAGE:
 			msg = gettext_noop("language \"%s\" does not exist, skipping");
-			name = strVal((Value *) object);
+			name = strVal(object);
 			break;
 		case OBJECT_CAST:
 			{
@@ -486,7 +486,7 @@ does_not_exist_skipping(ObjectType objtype, Node *object)
 			break;
 		case OBJECT_EVENT_TRIGGER:
 			msg = gettext_noop("event trigger \"%s\" does not exist, skipping");
-			name = strVal((Value *) object);
+			name = strVal(object);
 			break;
 		case OBJECT_RULE:
 			if (!owningrel_does_not_exist_skipping(castNode(List, object), &msg, &name))
@@ -499,11 +499,11 @@ does_not_exist_skipping(ObjectType objtype, Node *object)
 			break;
 		case OBJECT_FDW:
 			msg = gettext_noop("foreign-data wrapper \"%s\" does not exist, skipping");
-			name = strVal((Value *) object);
+			name = strVal(object);
 			break;
 		case OBJECT_FOREIGN_SERVER:
 			msg = gettext_noop("server \"%s\" does not exist, skipping");
-			name = strVal((Value *) object);
+			name = strVal(object);
 			break;
 		case OBJECT_OPCLASS:
 			{
@@ -531,11 +531,11 @@ does_not_exist_skipping(ObjectType objtype, Node *object)
 			break;
 		case OBJECT_PUBLICATION:
 			msg = gettext_noop("publication \"%s\" does not exist, skipping");
-			name = strVal((Value *) object);
+			name = strVal(object);
 			break;
 		case OBJECT_GRAPH:
 			msg = gettext_noop("graph \"%s\" does not exist, skipping");
-			name = strVal((Value *) object);
+			name = strVal(object);
 			break;
 		case OBJECT_VLABEL:
 			msg = gettext_noop("vlabel \"%s\" does not exist, skipping");

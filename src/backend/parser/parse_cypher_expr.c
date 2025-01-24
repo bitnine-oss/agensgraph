@@ -142,12 +142,7 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 		case T_ParamRef:
 			return transformParamRef(pstate, (ParamRef *) expr);
 		case T_A_Const:
-			{
-				A_Const    *a_con = (A_Const *) expr;
-				Value	   *value = &a_con->val;
-
-				return (Node *) make_const(pstate, value, a_con->location);
-			}
+				return (Node *) make_const(pstate, (A_Const *) expr);
 		case T_TypeCast:
 			return transformTypeCast(pstate, (TypeCast *) expr);
 		case T_CypherMapExpr:
@@ -493,7 +488,7 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 	Node	   *res;
 	Oid			restype;
 	ListCell   *lf;
-	Value	   *field;
+	Node	   *field;
 	List	   *path = NIL;
 
 	res = basenode;
@@ -817,7 +812,7 @@ transformCaseExpr(ParseState *pstate, CaseExpr *c)
 		A_Const    *n;
 
 		n = makeNode(A_Const);
-		n->val.type = T_Null;
+		n->isnull = true;
 		n->location = -1;
 		rdefresult = (Node *) n;
 	}
@@ -952,8 +947,8 @@ preprocess_func_args(ParseState *pstate, FuncCall *fn)
 			A_Const    *aconst = makeNode(A_Const);
 
 			/* constant value 1 */
-			aconst->val.type = T_Integer;
-			aconst->val.val.ival = 1;
+			aconst->val.ival.type = T_Integer;
+			aconst->val.ival.ival = 1;
 			aconst->location = -1;
 
 			/* replace the second argument with `second_arg + 1` */
@@ -2657,6 +2652,7 @@ transformA_Star(ParseState *pstate, int location)
 							  expandNSItemAttrs(pstate,
 												nsitem,
 												0,
+												true,
 												location));
 	}
 

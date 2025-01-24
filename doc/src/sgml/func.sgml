@@ -988,16 +988,23 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>double precision</returnvalue>
        </para>
        <para>
-        Exponentiation (unlike typical mathematical practice, multiple uses of
-        <literal>^</literal> will associate left to right)
+        Exponentiation
        </para>
        <para>
         <literal>2 ^ 3</literal>
         <returnvalue>8</returnvalue>
        </para>
        <para>
+        Unlike typical mathematical practice, multiple uses of
+        <literal>^</literal> will associate left to right by default:
+       </para>
+       <para>
         <literal>2 ^ 3 ^ 3</literal>
         <returnvalue>512</returnvalue>
+       </para>
+       <para>
+        <literal>2 ^ (3 ^ 3)</literal>
+        <returnvalue>134217728</returnvalue>
        </para></entry>
       </row>
 
@@ -1039,7 +1046,7 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
        </para>
        <para>
         <literal>@ -5.0</literal>
-        <returnvalue>5</returnvalue>
+        <returnvalue>5.0</returnvalue>
        </para></entry>
       </row>
 
@@ -1456,7 +1463,7 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
        </para>
        <para>
        <literal>log(2.0, 64.0)</literal>
-       <returnvalue>6.0000000000</returnvalue>
+       <returnvalue>6.0000000000000000</returnvalue>
        </para></entry>
       </row>
 
@@ -1825,8 +1832,9 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
    </table>
 
   <para>
-   The <function>random()</function> function uses a simple linear
-   congruential algorithm.  It is fast but not suitable for cryptographic
+   The <function>random()</function> function uses a deterministic
+   pseudo-random number generator.
+   It is fast but not suitable for cryptographic
    applications; see the <xref linkend="pgcrypto"/> module for a more
    secure alternative.
    If <function>setseed()</function> is called, the series of results of
@@ -2566,8 +2574,9 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>integer</returnvalue>
        </para>
        <para>
-        Returns starting index of specified <parameter>substring</parameter>
-        within <parameter>string</parameter>, or zero if it's not present.
+        Returns first starting index of the specified
+        <parameter>substring</parameter> within
+        <parameter>string</parameter>, or zero if it's not present.
        </para>
        <para>
         <literal>position('om' in 'Thomas')</literal>
@@ -2610,7 +2619,7 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>text</returnvalue>
        </para>
        <para>
-        Extracts substring matching POSIX regular expression; see
+        Extracts the first substring matching POSIX regular expression; see
         <xref linkend="functions-posix-regexp"/>.
        </para>
        <para>
@@ -2629,7 +2638,7 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>text</returnvalue>
        </para>
        <para>
-        Extracts substring matching <acronym>SQL</acronym> regular expression;
+        Extracts the first substring matching <acronym>SQL</acronym> regular expression;
         see <xref linkend="functions-similarto-regexp"/>.  The first form has
         been specified since SQL:2003; the second form was only in SQL:1999
         and should be considered obsolete.
@@ -2700,18 +2709,23 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
    </table>
 
    <para>
-    Additional string manipulation functions are available and are
-    listed in <xref linkend="functions-string-other"/>.  Some of them are used internally to implement the
-    <acronym>SQL</acronym>-standard string functions listed in <xref linkend="functions-string-sql"/>.
+    Additional string manipulation functions and operators are available
+    and are listed in <xref linkend="functions-string-other"/>.  (Some of
+    these are used internally to implement
+    the <acronym>SQL</acronym>-standard string functions listed in
+    <xref linkend="functions-string-sql"/>.)
+    There are also pattern-matching operators, which are described in
+    <xref linkend="functions-matching"/>, and operators for full-text
+    search, which are described in <xref linkend="textsearch"/>.
    </para>
 
    <table id="functions-string-other">
-    <title>Other String Functions</title>
+    <title>Other String Functions and Operators</title>
     <tgroup cols="1">
      <thead>
       <row>
        <entry role="func_table_entry"><para role="func_signature">
-        Function
+        Function/Operator
        </para>
        <para>
         Description
@@ -2723,6 +2737,25 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
      </thead>
 
      <tbody>
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>character string</primary>
+         <secondary>prefix test</secondary>
+        </indexterm>
+        <type>text</type> <literal>^@</literal> <type>text</type>
+        <returnvalue>boolean</returnvalue>
+       </para>
+       <para>
+        Returns true if the first string starts with the second string
+        (equivalent to the <function>starts_with()</function> function).
+       </para>
+       <para>
+        <literal>'alphabet' ^@ 'alph'</literal>
+        <returnvalue>t</returnvalue>
+       </para></entry>
+      </row>
+
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
@@ -3103,14 +3136,87 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
+         <primary>regexp_count</primary>
+        </indexterm>
+        <function>regexp_count</function> ( <parameter>string</parameter> <type>text</type>, <parameter>pattern</parameter> <type>text</type>
+         [, <parameter>start</parameter> <type>integer</type>
+         [, <parameter>flags</parameter> <type>text</type> ] ] )
+        <returnvalue>integer</returnvalue>
+       </para>
+       <para>
+        Returns the number of times the POSIX regular
+        expression <parameter>pattern</parameter> matches in
+        the <parameter>string</parameter>; see
+        <xref linkend="functions-posix-regexp"/>.
+       </para>
+       <para>
+        <literal>regexp_count('123456789012', '\d\d\d', 2)</literal>
+        <returnvalue>3</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>regexp_instr</primary>
+        </indexterm>
+        <function>regexp_instr</function> ( <parameter>string</parameter> <type>text</type>, <parameter>pattern</parameter> <type>text</type>
+         [, <parameter>start</parameter> <type>integer</type>
+         [, <parameter>N</parameter> <type>integer</type>
+         [, <parameter>endoption</parameter> <type>integer</type>
+         [, <parameter>flags</parameter> <type>text</type>
+         [, <parameter>subexpr</parameter> <type>integer</type> ] ] ] ] ] )
+        <returnvalue>integer</returnvalue>
+       </para>
+       <para>
+        Returns the position within <parameter>string</parameter> where
+        the <parameter>N</parameter>'th match of the POSIX regular
+        expression <parameter>pattern</parameter> occurs, or zero if there is
+        no such match; see <xref linkend="functions-posix-regexp"/>.
+       </para>
+       <para>
+        <literal>regexp_instr('ABCDEF', 'c(.)(..)', 1, 1, 0, 'i')</literal>
+        <returnvalue>3</returnvalue>
+       </para>
+       <para>
+        <literal>regexp_instr('ABCDEF', 'c(.)(..)', 1, 1, 0, 'i', 2)</literal>
+        <returnvalue>5</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>regexp_like</primary>
+        </indexterm>
+        <function>regexp_like</function> ( <parameter>string</parameter> <type>text</type>, <parameter>pattern</parameter> <type>text</type>
+         [, <parameter>flags</parameter> <type>text</type> ] )
+        <returnvalue>boolean</returnvalue>
+       </para>
+       <para>
+        Checks whether a match of the POSIX regular
+        expression <parameter>pattern</parameter> occurs
+        within <parameter>string</parameter>; see
+        <xref linkend="functions-posix-regexp"/>.
+       </para>
+       <para>
+        <literal>regexp_like('Hello World', 'world$', 'i')</literal>
+        <returnvalue>t</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
          <primary>regexp_match</primary>
         </indexterm>
         <function>regexp_match</function> ( <parameter>string</parameter> <type>text</type>, <parameter>pattern</parameter> <type>text</type> [, <parameter>flags</parameter> <type>text</type> ] )
         <returnvalue>text[]</returnvalue>
        </para>
        <para>
-        Returns captured substring(s) resulting from the first match of a POSIX
-        regular expression to the <parameter>string</parameter>; see
+        Returns substrings within the first match of the POSIX regular
+        expression <parameter>pattern</parameter> to
+        the <parameter>string</parameter>; see
         <xref linkend="functions-posix-regexp"/>.
        </para>
        <para>
@@ -3128,9 +3234,11 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>setof text[]</returnvalue>
        </para>
        <para>
-        Returns captured substring(s) resulting from matching a POSIX regular
-        expression to the <parameter>string</parameter>; see
-        <xref linkend="functions-posix-regexp"/>.
+        Returns substrings within the first match of the POSIX regular
+        expression <parameter>pattern</parameter> to
+        the <parameter>string</parameter>, or substrings within all
+        such matches if the <literal>g</literal> flag is used;
+        see <xref linkend="functions-posix-regexp"/>.
        </para>
        <para>
         <literal>regexp_matches('foobarbequebaz', 'ba.', 'g')</literal>
@@ -3147,16 +3255,40 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <indexterm>
          <primary>regexp_replace</primary>
         </indexterm>
-        <function>regexp_replace</function> ( <parameter>string</parameter> <type>text</type>, <parameter>pattern</parameter> <type>text</type>, <parameter>replacement</parameter> <type>text</type> [, <parameter>flags</parameter> <type>text</type> ] )
+        <function>regexp_replace</function> ( <parameter>string</parameter> <type>text</type>, <parameter>pattern</parameter> <type>text</type>, <parameter>replacement</parameter> <type>text</type>
+         [, <parameter>start</parameter> <type>integer</type> ]
+         [, <parameter>flags</parameter> <type>text</type> ] )
         <returnvalue>text</returnvalue>
        </para>
        <para>
-        Replaces substring(s) matching a POSIX regular expression; see
+        Replaces the substring that is the first match to the POSIX
+        regular expression <parameter>pattern</parameter>, or all such
+        matches if the <literal>g</literal> flag is used; see
         <xref linkend="functions-posix-regexp"/>.
        </para>
        <para>
         <literal>regexp_replace('Thomas', '.[mN]a.', 'M')</literal>
         <returnvalue>ThM</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <function>regexp_replace</function> ( <parameter>string</parameter> <type>text</type>, <parameter>pattern</parameter> <type>text</type>, <parameter>replacement</parameter> <type>text</type>,
+         <parameter>start</parameter> <type>integer</type>,
+         <parameter>N</parameter> <type>integer</type>
+         [, <parameter>flags</parameter> <type>text</type> ] )
+        <returnvalue>text</returnvalue>
+       </para>
+       <para>
+        Replaces the substring that is the <parameter>N</parameter>'th
+        match to the POSIX regular expression <parameter>pattern</parameter>,
+        or all such matches if <parameter>N</parameter> is zero; see
+        <xref linkend="functions-posix-regexp"/>.
+       </para>
+       <para>
+        <literal>regexp_replace('Thomas', '.', 'X', 3, 2)</literal>
+        <returnvalue>ThoXas</returnvalue>
        </para></entry>
       </row>
 
@@ -3199,6 +3331,35 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
  hello
  world
 </programlisting>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>regexp_substr</primary>
+        </indexterm>
+        <function>regexp_substr</function> ( <parameter>string</parameter> <type>text</type>, <parameter>pattern</parameter> <type>text</type>
+         [, <parameter>start</parameter> <type>integer</type>
+         [, <parameter>N</parameter> <type>integer</type>
+         [, <parameter>flags</parameter> <type>text</type>
+         [, <parameter>subexpr</parameter> <type>integer</type> ] ] ] ] )
+        <returnvalue>text</returnvalue>
+       </para>
+       <para>
+        Returns the substring within <parameter>string</parameter> that
+        matches the <parameter>N</parameter>'th occurrence of the POSIX
+        regular expression <parameter>pattern</parameter>,
+        or <literal>NULL</literal> if there is no such match; see
+        <xref linkend="functions-posix-regexp"/>.
+       </para>
+       <para>
+        <literal>regexp_substr('ABCDEF', 'c(.)(..)', 1, 1, 'i')</literal>
+        <returnvalue>CDEF</returnvalue>
+       </para>
+       <para>
+        <literal>regexp_substr('ABCDEF', 'c(.)(..)', 1, 1, 'i', 2)</literal>
+        <returnvalue>EF</returnvalue>
        </para></entry>
       </row>
 
@@ -3351,54 +3512,6 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
-         <primary>strpos</primary>
-        </indexterm>
-        <function>strpos</function> ( <parameter>string</parameter> <type>text</type>, <parameter>substring</parameter> <type>text</type> )
-        <returnvalue>integer</returnvalue>
-       </para>
-       <para>
-        Returns starting index of specified <parameter>substring</parameter>
-        within <parameter>string</parameter>, or zero if it's not present.
-        (Same as <literal>position(<parameter>substring</parameter> in
-        <parameter>string</parameter>)</literal>, but note the reversed
-        argument order.)
-       </para>
-       <para>
-        <literal>strpos('high', 'ig')</literal>
-        <returnvalue>2</returnvalue>
-       </para></entry>
-      </row>
-
-      <row>
-       <entry role="func_table_entry"><para role="func_signature">
-        <indexterm>
-         <primary>substr</primary>
-        </indexterm>
-        <function>substr</function> ( <parameter>string</parameter> <type>text</type>, <parameter>start</parameter> <type>integer</type> <optional>, <parameter>count</parameter> <type>integer</type> </optional> )
-        <returnvalue>text</returnvalue>
-       </para>
-       <para>
-        Extracts the substring of <parameter>string</parameter> starting at
-        the <parameter>start</parameter>'th character,
-        and extending for <parameter>count</parameter> characters if that is
-        specified.  (Same
-        as <literal>substring(<parameter>string</parameter>
-        from <parameter>start</parameter>
-        for <parameter>count</parameter>)</literal>.)
-       </para>
-       <para>
-        <literal>substr('alphabet', 3)</literal>
-        <returnvalue>phabet</returnvalue>
-       </para>
-       <para>
-        <literal>substr('alphabet', 3, 2)</literal>
-        <returnvalue>ph</returnvalue>
-       </para></entry>
-      </row>
-
-      <row>
-       <entry role="func_table_entry"><para role="func_signature">
-        <indexterm>
          <primary>starts_with</primary>
         </indexterm>
         <function>starts_with</function> ( <parameter>string</parameter> <type>text</type>, <parameter>prefix</parameter> <type>text</type> )
@@ -3416,7 +3529,7 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
 
       <row>
        <entry role="func_table_entry"><para role="func_signature">
-        <indexterm>
+        <indexterm id="function-string-to-array">
          <primary>string_to_array</primary>
         </indexterm>
         <function>string_to_array</function> ( <parameter>string</parameter> <type>text</type>, <parameter>delimiter</parameter> <type>text</type> <optional>, <parameter>null_string</parameter> <type>text</type> </optional> )
@@ -3434,6 +3547,7 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         If <parameter>null_string</parameter> is supplied and is
         not <literal>NULL</literal>, fields matching that string are
         replaced by <literal>NULL</literal>.
+        See also <link linkend="function-array-to-string"><function>array_to_string</function></link>.
        </para>
        <para>
         <literal>string_to_array('xx~~yy~~zz', '~~', 'yy')</literal>
@@ -3470,6 +3584,54 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
  NULL
  zz
 </programlisting>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>strpos</primary>
+        </indexterm>
+        <function>strpos</function> ( <parameter>string</parameter> <type>text</type>, <parameter>substring</parameter> <type>text</type> )
+        <returnvalue>integer</returnvalue>
+       </para>
+       <para>
+        Returns first starting index of the specified <parameter>substring</parameter>
+        within <parameter>string</parameter>, or zero if it's not present.
+        (Same as <literal>position(<parameter>substring</parameter> in
+        <parameter>string</parameter>)</literal>, but note the reversed
+        argument order.)
+       </para>
+       <para>
+        <literal>strpos('high', 'ig')</literal>
+        <returnvalue>2</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>substr</primary>
+        </indexterm>
+        <function>substr</function> ( <parameter>string</parameter> <type>text</type>, <parameter>start</parameter> <type>integer</type> <optional>, <parameter>count</parameter> <type>integer</type> </optional> )
+        <returnvalue>text</returnvalue>
+       </para>
+       <para>
+        Extracts the substring of <parameter>string</parameter> starting at
+        the <parameter>start</parameter>'th character,
+        and extending for <parameter>count</parameter> characters if that is
+        specified.  (Same
+        as <literal>substring(<parameter>string</parameter>
+        from <parameter>start</parameter>
+        for <parameter>count</parameter>)</literal>.)
+       </para>
+       <para>
+        <literal>substr('alphabet', 3)</literal>
+        <returnvalue>phabet</returnvalue>
+       </para>
+       <para>
+        <literal>substr('alphabet', 3, 2)</literal>
+        <returnvalue>ph</returnvalue>
        </para></entry>
       </row>
 
@@ -3958,8 +4120,9 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
         <returnvalue>integer</returnvalue>
        </para>
        <para>
-        Returns starting index of specified <parameter>substring</parameter>
-        within <parameter>bytes</parameter>, or zero if it's not present.
+        Returns first starting index of the specified
+        <parameter>substring</parameter> within
+        <parameter>bytes</parameter>, or zero if it's not present.
        </para>
        <para>
         <literal>position('\x5678'::bytea in '\x1234567890'::bytea)</literal>
@@ -4073,7 +4236,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
        </para>
        <para>
         <literal>bit_count('\x1234567890'::bytea)</literal>
-        <returnvalue>31</returnvalue>
+        <returnvalue>15</returnvalue>
        </para></entry>
       </row>
 
@@ -4885,7 +5048,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
         <returnvalue>integer</returnvalue>
        </para>
        <para>
-        Returns starting index of specified <parameter>substring</parameter>
+        Returns first starting index of the specified <parameter>substring</parameter>
         within <parameter>bits</parameter>, or zero if it's not present.
        </para>
        <para>
@@ -5148,9 +5311,10 @@ cast(-44 as bit(12))           <lineannotation>111111010100</lineannotation>
    </para>
 
    <para>
-    Also see the prefix operator <literal>^@</literal> and corresponding
-    <function>starts_with</function> function, which are useful in cases
-    where simply matching the beginning of a string is needed.
+    Also see the starts-with operator <literal>^@</literal> and the
+    corresponding <function>starts_with()</function> function, which are
+    useful in cases where simply matching the beginning of a string is
+    needed.
    </para>
   </sect2>
 
@@ -5366,7 +5530,13 @@ substring('foobar' similar '#"o_b#"%' escape '#')    <lineannotation>NULL</linea
     <primary>substring</primary>
    </indexterm>
    <indexterm>
-    <primary>regexp_replace</primary>
+    <primary>regexp_count</primary>
+   </indexterm>
+   <indexterm>
+    <primary>regexp_instr</primary>
+   </indexterm>
+   <indexterm>
+    <primary>regexp_like</primary>
    </indexterm>
    <indexterm>
     <primary>regexp_match</primary>
@@ -5375,10 +5545,16 @@ substring('foobar' similar '#"o_b#"%' escape '#')    <lineannotation>NULL</linea
     <primary>regexp_matches</primary>
    </indexterm>
    <indexterm>
+    <primary>regexp_replace</primary>
+   </indexterm>
+   <indexterm>
     <primary>regexp_split_to_table</primary>
    </indexterm>
    <indexterm>
     <primary>regexp_split_to_array</primary>
+   </indexterm>
+   <indexterm>
+    <primary>regexp_substr</primary>
    </indexterm>
 
    <para>
@@ -5511,7 +5687,7 @@ substring('foobar' similar '#"o_b#"%' escape '#')    <lineannotation>NULL</linea
      <replaceable>pattern</replaceable>)</function>, provides extraction of a
      substring
      that matches a POSIX regular expression pattern.  It returns null if
-     there is no match, otherwise the portion of the text that matched the
+     there is no match, otherwise the first portion of the text that matched the
      pattern.  But if the pattern contains any parentheses, the portion
      of the text that matched the first parenthesized subexpression (the
      one whose left parenthesis comes first) is
@@ -5531,48 +5707,111 @@ substring('foobar' from 'o(.)b')   <lineannotation>o</lineannotation>
    </para>
 
     <para>
-     The <function>regexp_replace</function> function provides substitution of
-     new text for substrings that match POSIX regular expression patterns.
+     The <function>regexp_count</function> function counts the number of
+     places where a POSIX regular expression pattern matches a string.
      It has the syntax
-     <function>regexp_replace</function>(<replaceable>source</replaceable>,
-     <replaceable>pattern</replaceable>, <replaceable>replacement</replaceable>
-     <optional>, <replaceable>flags</replaceable> </optional>).
-     The <replaceable>source</replaceable> string is returned unchanged if
-     there is no match to the <replaceable>pattern</replaceable>.  If there is a
-     match, the <replaceable>source</replaceable> string is returned with the
-     <replaceable>replacement</replaceable> string substituted for the matching
-     substring.  The <replaceable>replacement</replaceable> string can contain
-     <literal>\</literal><replaceable>n</replaceable>, where <replaceable>n</replaceable> is 1
-     through 9, to indicate that the source substring matching the
-     <replaceable>n</replaceable>'th parenthesized subexpression of the pattern should be
-     inserted, and it can contain <literal>\&amp;</literal> to indicate that the
-     substring matching the entire pattern should be inserted.  Write
-     <literal>\\</literal> if you need to put a literal backslash in the replacement
-     text.
+     <function>regexp_count</function>(<replaceable>string</replaceable>,
+     <replaceable>pattern</replaceable>
+     <optional>, <replaceable>start</replaceable>
+     <optional>, <replaceable>flags</replaceable>
+     </optional></optional>).
+     <replaceable>pattern</replaceable> is searched for
+     in <replaceable>string</replaceable>, normally from the beginning of
+     the string, but if the <replaceable>start</replaceable> parameter is
+     provided then beginning from that character index.
      The <replaceable>flags</replaceable> parameter is an optional text
      string containing zero or more single-letter flags that change the
-     function's behavior.  Flag <literal>i</literal> specifies case-insensitive
-     matching, while flag <literal>g</literal> specifies replacement of each matching
-     substring rather than only the first one.  Supported flags (though
-     not <literal>g</literal>) are
-     described in <xref linkend="posix-embedded-options-table"/>.
+     function's behavior.  For example, including <literal>i</literal> in
+     <replaceable>flags</replaceable> specifies case-insensitive matching.
+     Supported flags are described in
+     <xref linkend="posix-embedded-options-table"/>.
     </para>
 
-   <para>
-    Some examples:
+    <para>
+     Some examples:
 <programlisting>
-regexp_replace('foobarbaz', 'b..', 'X')
-                                   <lineannotation>fooXbaz</lineannotation>
-regexp_replace('foobarbaz', 'b..', 'X', 'g')
-                                   <lineannotation>fooXX</lineannotation>
-regexp_replace('foobarbaz', 'b(..)', 'X\1Y', 'g')
-                                   <lineannotation>fooXarYXazY</lineannotation>
+regexp_count('ABCABCAXYaxy', 'A.')          <lineannotation>3</lineannotation>
+regexp_count('ABCABCAXYaxy', 'A.', 1, 'i')  <lineannotation>4</lineannotation>
 </programlisting>
-   </para>
+    </para>
+
+    <para>
+     The <function>regexp_instr</function> function returns the starting or
+     ending position of the <replaceable>N</replaceable>'th match of a
+     POSIX regular expression pattern to a string, or zero if there is no
+     such match.  It has the syntax
+     <function>regexp_instr</function>(<replaceable>string</replaceable>,
+     <replaceable>pattern</replaceable>
+     <optional>, <replaceable>start</replaceable>
+     <optional>, <replaceable>N</replaceable>
+     <optional>, <replaceable>endoption</replaceable>
+     <optional>, <replaceable>flags</replaceable>
+     <optional>, <replaceable>subexpr</replaceable>
+     </optional></optional></optional></optional></optional>).
+     <replaceable>pattern</replaceable> is searched for
+     in <replaceable>string</replaceable>, normally from the beginning of
+     the string, but if the <replaceable>start</replaceable> parameter is
+     provided then beginning from that character index.
+     If <replaceable>N</replaceable> is specified
+     then the <replaceable>N</replaceable>'th match of the pattern
+     is located, otherwise the first match is located.
+     If the <replaceable>endoption</replaceable> parameter is omitted or
+     specified as zero, the function returns the position of the first
+     character of the match.  Otherwise, <replaceable>endoption</replaceable>
+     must be one, and the function returns the position of the character
+     following the match.
+     The <replaceable>flags</replaceable> parameter is an optional text
+     string containing zero or more single-letter flags that change the
+     function's behavior.  Supported flags are described
+     in <xref linkend="posix-embedded-options-table"/>.
+     For a pattern containing parenthesized
+     subexpressions, <replaceable>subexpr</replaceable> is an integer
+     indicating which subexpression is of interest: the result identifies
+     the position of the substring matching that subexpression.
+     Subexpressions are numbered in the order of their leading parentheses.
+     When <replaceable>subexpr</replaceable> is omitted or zero, the result
+     identifies the position of the whole match regardless of
+     parenthesized subexpressions.
+    </para>
+
+    <para>
+     Some examples:
+<programlisting>
+regexp_instr('number of your street, town zip, FR', '[^,]+', 1, 2)
+                                   <lineannotation>23</lineannotation>
+regexp_instr('ABCDEFGHI', '(c..)(...)', 1, 1, 0, 'i', 2)
+                                   <lineannotation>6</lineannotation>
+</programlisting>
+    </para>
+
+    <para>
+     The <function>regexp_like</function> function checks whether a match
+     of a POSIX regular expression pattern occurs within a string,
+     returning boolean true or false.  It has the syntax
+     <function>regexp_like</function>(<replaceable>string</replaceable>,
+     <replaceable>pattern</replaceable>
+     <optional>, <replaceable>flags</replaceable> </optional>).
+     The <replaceable>flags</replaceable> parameter is an optional text
+     string containing zero or more single-letter flags that change the
+     function's behavior.  Supported flags are described
+     in <xref linkend="posix-embedded-options-table"/>.
+     This function has the same results as the <literal>~</literal>
+     operator if no flags are specified.  If only the <literal>i</literal>
+     flag is specified, it has the same results as
+     the <literal>~*</literal> operator.
+    </para>
+
+    <para>
+     Some examples:
+<programlisting>
+regexp_like('Hello World', 'world')       <lineannotation>false</lineannotation>
+regexp_like('Hello World', 'world', 'i')  <lineannotation>true</lineannotation>
+</programlisting>
+    </para>
 
     <para>
      The <function>regexp_match</function> function returns a text array of
-     captured substring(s) resulting from the first match of a POSIX
+     matching substring(s) within the first match of a POSIX
      regular expression pattern to a string.  It has the syntax
      <function>regexp_match</function>(<replaceable>string</replaceable>,
      <replaceable>pattern</replaceable> <optional>, <replaceable>flags</replaceable> </optional>).
@@ -5607,8 +5846,17 @@ SELECT regexp_match('foobarbequebaz', '(bar)(beque)');
  {bar,beque}
 (1 row)
 </programlisting>
-    In the common case where you just want the whole matching substring
-    or <literal>NULL</literal> for no match, write something like
+   </para>
+
+    <tip>
+     <para>
+      In the common case where you just want the whole matching substring
+      or <literal>NULL</literal> for no match, the best solution is to
+      use <function>regexp_substr()</function>.
+      However, <function>regexp_substr()</function> only exists
+      in <productname>PostgreSQL</productname> version 15 and up.  When
+      working in older versions, you can extract the first element
+      of <function>regexp_match()</function>'s result, for example:
 <programlisting>
 SELECT (regexp_match('foobarbequebaz', 'bar.*que'))[1];
  regexp_match
@@ -5616,11 +5864,12 @@ SELECT (regexp_match('foobarbequebaz', 'bar.*que'))[1];
  barbeque
 (1 row)
 </programlisting>
-   </para>
+     </para>
+    </tip>
 
     <para>
      The <function>regexp_matches</function> function returns a set of text arrays
-     of captured substring(s) resulting from matching a POSIX regular
+     of matching substring(s) within matches of a POSIX regular
      expression pattern to a string.  It has the same syntax as
      <function>regexp_match</function>.
      This function returns no rows if there is no match, one row if there is
@@ -5673,6 +5922,67 @@ SELECT col1, (SELECT regexp_matches(col2, '(bar)(beque)')) FROM tab;
    </tip>
 
     <para>
+     The <function>regexp_replace</function> function provides substitution of
+     new text for substrings that match POSIX regular expression patterns.
+     It has the syntax
+     <function>regexp_replace</function>(<replaceable>source</replaceable>,
+     <replaceable>pattern</replaceable>, <replaceable>replacement</replaceable>
+     <optional>, <replaceable>start</replaceable>
+     <optional>, <replaceable>N</replaceable>
+     </optional></optional>
+     <optional>, <replaceable>flags</replaceable> </optional>).
+     (Notice that <replaceable>N</replaceable> cannot be specified
+     unless <replaceable>start</replaceable> is,
+     but <replaceable>flags</replaceable> can be given in any case.)
+     The <replaceable>source</replaceable> string is returned unchanged if
+     there is no match to the <replaceable>pattern</replaceable>.  If there is a
+     match, the <replaceable>source</replaceable> string is returned with the
+     <replaceable>replacement</replaceable> string substituted for the matching
+     substring.  The <replaceable>replacement</replaceable> string can contain
+     <literal>\</literal><replaceable>n</replaceable>, where <replaceable>n</replaceable> is 1
+     through 9, to indicate that the source substring matching the
+     <replaceable>n</replaceable>'th parenthesized subexpression of the pattern should be
+     inserted, and it can contain <literal>\&amp;</literal> to indicate that the
+     substring matching the entire pattern should be inserted.  Write
+     <literal>\\</literal> if you need to put a literal backslash in the replacement
+     text.
+     <replaceable>pattern</replaceable> is searched for
+     in <replaceable>string</replaceable>, normally from the beginning of
+     the string, but if the <replaceable>start</replaceable> parameter is
+     provided then beginning from that character index.
+     By default, only the first match of the pattern is replaced.
+     If <replaceable>N</replaceable> is specified and is greater than zero,
+     then the <replaceable>N</replaceable>'th match of the pattern
+     is replaced.
+     If the <literal>g</literal> flag is given, or
+     if <replaceable>N</replaceable> is specified and is zero, then all
+     matches at or after the <replaceable>start</replaceable> position are
+     replaced.  (The <literal>g</literal> flag is ignored
+     when <replaceable>N</replaceable> is specified.)
+     The <replaceable>flags</replaceable> parameter is an optional text
+     string containing zero or more single-letter flags that change the
+     function's behavior.  Supported flags (though
+     not <literal>g</literal>) are
+     described in <xref linkend="posix-embedded-options-table"/>.
+    </para>
+
+   <para>
+    Some examples:
+<programlisting>
+regexp_replace('foobarbaz', 'b..', 'X')
+                                   <lineannotation>fooXbaz</lineannotation>
+regexp_replace('foobarbaz', 'b..', 'X', 'g')
+                                   <lineannotation>fooXX</lineannotation>
+regexp_replace('foobarbaz', 'b(..)', 'X\1Y', 'g')
+                                   <lineannotation>fooXarYXazY</lineannotation>
+regexp_replace('A PostgreSQL function', 'a|e|i|o|u', 'X', 1, 0, 'i')
+                                   <lineannotation>X PXstgrXSQL fXnctXXn</lineannotation>
+regexp_replace('A PostgreSQL function', 'a|e|i|o|u', 'X', 1, 3, 'i')
+                                   <lineannotation>A PostgrXSQL function</lineannotation>
+</programlisting>
+   </para>
+
+    <para>
      The <function>regexp_split_to_table</function> function splits a string using a POSIX
      regular expression pattern as a delimiter.  It has the syntax
      <function>regexp_split_to_table</function>(<replaceable>string</replaceable>, <replaceable>pattern</replaceable>
@@ -5700,46 +6010,45 @@ SELECT col1, (SELECT regexp_matches(col2, '(bar)(beque)')) FROM tab;
    <para>
     Some examples:
 <programlisting>
-
 SELECT foo FROM regexp_split_to_table('the quick brown fox jumps over the lazy dog', '\s+') AS foo;
-  foo   
+  foo
 -------
- the    
- quick  
- brown  
- fox    
- jumps 
- over   
- the    
- lazy   
- dog    
+ the
+ quick
+ brown
+ fox
+ jumps
+ over
+ the
+ lazy
+ dog
 (9 rows)
 
 SELECT regexp_split_to_array('the quick brown fox jumps over the lazy dog', '\s+');
-              regexp_split_to_array             
+              regexp_split_to_array
 -----------------------------------------------
  {the,quick,brown,fox,jumps,over,the,lazy,dog}
 (1 row)
 
 SELECT foo FROM regexp_split_to_table('the quick brown fox', '\s*') AS foo;
- foo 
+ foo
 -----
- t         
- h         
- e         
- q         
- u         
- i         
- c         
- k         
- b         
- r         
- o         
- w         
- n         
- f         
- o         
- x         
+ t
+ h
+ e
+ q
+ u
+ i
+ c
+ k
+ b
+ r
+ o
+ w
+ n
+ f
+ o
+ x
 (16 rows)
 </programlisting>
    </para>
@@ -5749,10 +6058,50 @@ SELECT foo FROM regexp_split_to_table('the quick brown fox', '\s*') AS foo;
     zero-length matches that occur at the start or end of the string
     or immediately after a previous match.  This is contrary to the strict
     definition of regexp matching that is implemented by
-    <function>regexp_match</function> and
-    <function>regexp_matches</function>, but is usually the most convenient behavior
+    the other regexp functions, but is usually the most convenient behavior
     in practice.  Other software systems such as Perl use similar definitions.
    </para>
+
+    <para>
+     The <function>regexp_substr</function> function returns the substring
+     that matches a POSIX regular expression pattern,
+     or <literal>NULL</literal> if there is no match.  It has the syntax
+     <function>regexp_substr</function>(<replaceable>string</replaceable>,
+     <replaceable>pattern</replaceable>
+     <optional>, <replaceable>start</replaceable>
+     <optional>, <replaceable>N</replaceable>
+     <optional>, <replaceable>flags</replaceable>
+     <optional>, <replaceable>subexpr</replaceable>
+     </optional></optional></optional></optional>).
+     <replaceable>pattern</replaceable> is searched for
+     in <replaceable>string</replaceable>, normally from the beginning of
+     the string, but if the <replaceable>start</replaceable> parameter is
+     provided then beginning from that character index.
+     If <replaceable>N</replaceable> is specified
+     then the <replaceable>N</replaceable>'th match of the pattern
+     is returned, otherwise the first match is returned.
+     The <replaceable>flags</replaceable> parameter is an optional text
+     string containing zero or more single-letter flags that change the
+     function's behavior.  Supported flags are described
+     in <xref linkend="posix-embedded-options-table"/>.
+     For a pattern containing parenthesized
+     subexpressions, <replaceable>subexpr</replaceable> is an integer
+     indicating which subexpression is of interest: the result is the
+     substring matching that subexpression.
+     Subexpressions are numbered in the order of their leading parentheses.
+     When <replaceable>subexpr</replaceable> is omitted or zero, the result
+     is the whole match regardless of parenthesized subexpressions.
+    </para>
+
+    <para>
+     Some examples:
+<programlisting>
+regexp_substr('number of your street, town zip, FR', '[^,]+', 1, 2)
+                                   <lineannotation> town zip</lineannotation>
+regexp_substr('ABCDEFGHI', '(c..)(...)', 1, 1, 'i', 2)
+                                   <lineannotation>FGH</lineannotation>
+</programlisting>
+    </para>
 
 <!-- derived from the re_syntax.n man page -->
 
@@ -5807,7 +6156,7 @@ SELECT foo FROM regexp_split_to_table('the quick brown fox', '\s*') AS foo;
    <para>
     A branch is zero or more <firstterm>quantified atoms</firstterm> or
     <firstterm>constraints</firstterm>, concatenated.
-    It matches a match for the first, followed by a match for the second, etc;
+    It matches a match for the first, followed by a match for the second, etc.;
     an empty branch matches the empty string.
    </para>
 
@@ -7006,10 +7355,26 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
 <!-- end re_syntax.n man page -->
 
    <sect3 id="posix-vs-xquery">
-   <title>Differences from XQuery (<literal>LIKE_REGEX</literal>)</title>
+   <title>Differences from SQL Standard and XQuery</title>
 
    <indexterm zone="posix-vs-xquery">
-    <primary><literal>LIKE_REGEX</literal></primary>
+    <primary>LIKE_REGEX</primary>
+   </indexterm>
+
+   <indexterm zone="posix-vs-xquery">
+    <primary>OCCURRENCES_REGEX</primary>
+   </indexterm>
+
+   <indexterm zone="posix-vs-xquery">
+    <primary>POSITION_REGEX</primary>
+   </indexterm>
+
+   <indexterm zone="posix-vs-xquery">
+    <primary>SUBSTRING_REGEX</primary>
+   </indexterm>
+
+   <indexterm zone="posix-vs-xquery">
+    <primary>TRANSLATE_REGEX</primary>
    </indexterm>
 
    <indexterm zone="posix-vs-xquery">
@@ -7017,16 +7382,75 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
    </indexterm>
 
     <para>
-     Since SQL:2008, the SQL standard includes
-     a <literal>LIKE_REGEX</literal> operator that performs pattern
+     Since SQL:2008, the SQL standard includes regular expression operators
+     and functions that performs pattern
      matching according to the XQuery regular expression
-     standard.  <productname>PostgreSQL</productname> does not yet
-     implement this operator, but you can get very similar behavior using
-     the <function>regexp_match()</function> function, since XQuery
-     regular expressions are quite close to the ARE syntax described above.
+     standard:
+     <itemizedlist>
+      <listitem><para><literal>LIKE_REGEX</literal></para></listitem>
+      <listitem><para><literal>OCCURRENCES_REGEX</literal></para></listitem>
+      <listitem><para><literal>POSITION_REGEX</literal></para></listitem>
+      <listitem><para><literal>SUBSTRING_REGEX</literal></para></listitem>
+      <listitem><para><literal>TRANSLATE_REGEX</literal></para></listitem>
+     </itemizedlist>
+     <productname>PostgreSQL</productname> does not currently implement these
+     operators and functions.  You can get approximately equivalent
+     functionality in each case as shown in <xref
+     linkend="functions-regexp-sql-table"/>.  (Various optional clauses on
+     both sides have been omitted in this table.)
+    </para>
+
+    <table id="functions-regexp-sql-table">
+     <title>Regular Expression Functions Equivalencies</title>
+
+     <tgroup cols="2">
+      <thead>
+       <row>
+        <entry>SQL standard</entry>
+        <entry>PostgreSQL</entry>
+       </row>
+      </thead>
+
+      <tbody>
+       <row>
+        <entry><literal><replaceable>string</replaceable> LIKE_REGEX <replaceable>pattern</replaceable></literal></entry>
+        <entry><literal>regexp_like(<replaceable>string</replaceable>, <replaceable>pattern</replaceable>)</literal> or <literal><replaceable>string</replaceable> ~ <replaceable>pattern</replaceable></literal></entry>
+       </row>
+
+       <row>
+        <entry><literal>OCCURRENCES_REGEX(<replaceable>pattern</replaceable> IN <replaceable>string</replaceable>)</literal></entry>
+        <entry><literal>regexp_count(<replaceable>string</replaceable>, <replaceable>pattern</replaceable>)</literal></entry>
+       </row>
+
+       <row>
+        <entry><literal>POSITION_REGEX(<replaceable>pattern</replaceable> IN <replaceable>string</replaceable>)</literal></entry>
+        <entry><literal>regexp_instr(<replaceable>string</replaceable>, <replaceable>pattern</replaceable>)</literal></entry>
+       </row>
+
+       <row>
+        <entry><literal>SUBSTRING_REGEX(<replaceable>pattern</replaceable> IN <replaceable>string</replaceable>)</literal></entry>
+        <entry><literal>regexp_substr(<replaceable>string</replaceable>, <replaceable>pattern</replaceable>)</literal></entry>
+       </row>
+
+       <row>
+        <entry><literal>TRANSLATE_REGEX(<replaceable>pattern</replaceable> IN <replaceable>string</replaceable> WITH <replaceable>replacement</replaceable>)</literal></entry>
+        <entry><literal>regexp_replace(<replaceable>string</replaceable>, <replaceable>pattern</replaceable>, <replaceable>replacement</replaceable>)</literal></entry>
+       </row>
+      </tbody>
+     </tgroup>
+    </table>
+
+    <para>
+     Regular expression functions similar to those provided by PostgreSQL are
+     also available in a number of other SQL implementations, whereas the
+     SQL-standard functions are not as widely implemented.  Some of the
+     details of the regular expression syntax will likely differ in each
+     implementation.
     </para>
 
     <para>
+     The SQL-standard operators and functions use XQuery regular expressions,
+     which are quite close to the ARE syntax described above.
      Notable differences between the existing POSIX-based
      regular-expression feature and XQuery regular expressions include:
 
@@ -9996,12 +10420,8 @@ SELECT date_bin('15 minutes', TIMESTAMP '2020-02-11 15:44:17', TIMESTAMP '2001-0
    </para>
 
    <para>
-    Negative intervals are allowed and are treated the same as positive intervals.
-   </para>
-
-   <para>
-    The <parameter>stride</parameter> interval cannot contain units of month
-    or larger.
+    The <parameter>stride</parameter> interval must be greater than zero and
+    cannot contain units of month or larger.
    </para>
   </sect2>
 
@@ -10633,7 +11053,7 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
        </para>
        <para>
         Computes the center point.
-        Available for <type>box</type>, <type>lseg</type>, <type>path</type>,
+        Available for <type>box</type>, <type>lseg</type>,
         <type>polygon</type>, <type>circle</type>.
        </para>
        <para>
@@ -10699,8 +11119,6 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
         (<type>point</type>, <type>line</type>),
         (<type>lseg</type>, <type>box</type>),
         (<type>lseg</type>, <type>lseg</type>),
-        (<type>lseg</type>, <type>line</type>),
-        (<type>line</type>, <type>box</type>),
         (<type>line</type>, <type>lseg</type>).
        </para>
        <para>
@@ -10720,7 +11138,6 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
         of <type>point</type> with another geometric type, and for
         these additional pairs of types:
         (<type>box</type>, <type>lseg</type>),
-        (<type>box</type>, <type>line</type>),
         (<type>lseg</type>, <type>line</type>),
         (<type>polygon</type>, <type>circle</type>)
         (and the commutator cases).
@@ -12577,8 +12994,10 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
         <returnvalue>tsvector</returnvalue>
        </para>
        <para>
-        Converts an array of lexemes to a <type>tsvector</type>.
-        The given strings are used as-is without further processing.
+        Converts an array of text strings to a <type>tsvector</type>.
+        The given strings are used as lexemes as-is, without further
+        processing.  Array elements must not be empty strings
+        or <literal>NULL</literal>.
        </para>
        <para>
         <literal>array_to_tsvector('{fat,cat,rat}'::text[])</literal>
@@ -12761,6 +13180,9 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
         Assigns the specified <parameter>weight</parameter> to elements
         of the <parameter>vector</parameter> that are listed
         in <parameter>lexemes</parameter>.
+        The strings in <parameter>lexemes</parameter> are taken as lexemes
+        as-is, without further processing.  Strings that do not match any
+        lexeme in <parameter>vector</parameter> are ignored.
        </para>
        <para>
         <literal>setweight('fat:2,4 cat:3 rat:5,6B'::tsvector, 'A', '{cat,rat}')</literal>
@@ -12922,6 +13344,8 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
        <para>
         Removes any occurrence of the given <parameter>lexeme</parameter>
         from the <parameter>vector</parameter>.
+        The <parameter>lexeme</parameter> string is treated as a lexeme as-is,
+        without further processing.
        </para>
        <para>
         <literal>ts_delete('fat:2,4 cat:3 rat:5A'::tsvector, 'fat')</literal>
@@ -12938,6 +13362,9 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
         Removes any occurrences of the lexemes
         in <parameter>lexemes</parameter>
         from the <parameter>vector</parameter>.
+        The strings in <parameter>lexemes</parameter> are taken as lexemes
+        as-is, without further processing.  Strings that do not match any
+        lexeme in <parameter>vector</parameter> are ignored.
        </para>
        <para>
         <literal>ts_delete('fat:2,4 cat:3 rat:5A'::tsvector, ARRAY['fat','rat'])</literal>
@@ -13973,32 +14400,32 @@ SELECT xmlexists('//town[text() = ''Toronto'']' PASSING BY VALUE '<towns><town>T
 <screen><![CDATA[
 SET xmloption TO DOCUMENT;
 SELECT xml_is_well_formed('<>');
- xml_is_well_formed 
+ xml_is_well_formed
 --------------------
  f
 (1 row)
 
 SELECT xml_is_well_formed('<abc/>');
- xml_is_well_formed 
+ xml_is_well_formed
 --------------------
  t
 (1 row)
 
 SET xmloption TO CONTENT;
 SELECT xml_is_well_formed('abc');
- xml_is_well_formed 
+ xml_is_well_formed
 --------------------
  t
 (1 row)
 
 SELECT xml_is_well_formed_document('<pg:foo xmlns:pg="http://postgresql.org/stuff">bar</pg:foo>');
- xml_is_well_formed_document 
+ xml_is_well_formed_document
 -----------------------------
  t
 (1 row)
 
 SELECT xml_is_well_formed_document('<pg:foo xmlns:pg="http://postgresql.org/stuff">bar</my:foo>');
- xml_is_well_formed_document 
+ xml_is_well_formed_document
 -----------------------------
  f
 (1 row)
@@ -14065,7 +14492,7 @@ SELECT xml_is_well_formed_document('<pg:foo xmlns:pg="http://postgresql.org/stuf
 SELECT xpath('/my:a/text()', '<my:a xmlns:my="http://example.com">test</my:a>',
              ARRAY[ARRAY['my', 'http://example.com']]);
 
- xpath  
+ xpath
 --------
  {test}
 (1 row)
@@ -14113,7 +14540,7 @@ SELECT xpath('//mydefns:b/text()', '<a xmlns="http://example.com"><b>test</b></a
 SELECT xpath_exists('/my:a/text()', '<my:a xmlns:my="http://example.com">test</my:a>',
                      ARRAY[ARRAY['my', 'http://example.com']]);
 
- xpath_exists  
+ xpath_exists
 --------------
  t
 (1 row)
@@ -14346,7 +14773,7 @@ SELECT xmltable.*
                              'concat(SIZE[@unit!="sq_km"], " ", SIZE[@unit!="sq_km"]/@unit)',
                         premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified');
 
- id | ordinality | COUNTRY_NAME | country_id | size_sq_km |  size_other  | premier_name  
+ id | ordinality | COUNTRY_NAME | country_id | size_sq_km |  size_other  | premier_name
 ----+------------+--------------+------------+------------+--------------+---------------
   1 |          1 | Australia    | AU         |            |              | not specified
   5 |          2 | Japan        | JP         |            | 145935 sq_mi | Shinzo Abe
@@ -14367,9 +14794,9 @@ $$ AS data;
 
 SELECT xmltable.*
   FROM xmlelements, XMLTABLE('/root' PASSING data COLUMNS element text);
-         element         
+         element
 -------------------------
-   Hello2a2   bbbxxxCC  
+   Hello2a2   bbbxxxCC
 ]]></screen>
     </para>
 
@@ -15860,7 +16287,7 @@ table2-mapping
        </para>
        <para>
         <literal>jsonb_set_lax('[{"f1":1,"f2":null},2,null,3]', '{0,f1}', null)</literal>
-        <returnvalue>[{"f1":null,"f2":null},2,null,3]</returnvalue>
+        <returnvalue>[{"f1": null, "f2": null}, 2, null, 3]</returnvalue>
        </para>
        <para>
         <literal>jsonb_set_lax('[{"f1":99,"f2":null},2]', '{0,f3}', null, true, 'return_target')</literal>
@@ -16099,7 +16526,7 @@ table2-mapping
         comparisons.
        </para>
        <para>
-        <literal>jsonb_path_exists_tz('["2015-08-01 12:00:00 -05"]', '$[*] ? (@.datetime() &lt; "2015-08-02".datetime())')</literal>
+        <literal>jsonb_path_exists_tz('["2015-08-01 12:00:00-05"]', '$[*] ? (@.datetime() &lt; "2015-08-02".datetime())')</literal>
         <returnvalue>t</returnvalue>
        </para></entry>
       </row>
@@ -17137,7 +17564,937 @@ $.* ? (@ like_regex "^\\d+$")
 </programlisting>
     </para>
    </sect3>
-  </sect2>
+ </sect2>
+
+ <sect2 id="functions-sqljson">
+  <title>SQL/JSON Functions and Expressions</title>
+  <indexterm zone="functions-json">
+   <primary>SQL/JSON</primary>
+   <secondary>functions and expressions</secondary>
+  </indexterm>
+
+  <para>
+   To provide native support for JSON data types within the SQL environment,
+   <productname>PostgreSQL</productname> implements the
+   <firstterm>SQL/JSON data model</firstterm>.
+   This model comprises sequences of items. Each item can hold SQL scalar
+   values, with an additional SQL/JSON null value, and composite data structures
+   that use JSON arrays and objects. The model is a formalization of the implied
+   data model in the JSON specification
+   <ulink url="https://tools.ietf.org/html/rfc7159">RFC 7159</ulink>.
+  </para>
+
+  <para>
+   SQL/JSON allows you to handle JSON data alongside regular SQL data,
+   with transaction support, including:
+  </para>
+
+  <itemizedlist>
+   <listitem>
+    <para>
+     Uploading JSON data into the database and storing it in
+     regular SQL columns as character or binary strings.
+    </para>
+   </listitem>
+   <listitem>
+    <para>
+     Generating JSON objects and arrays from relational data.
+    </para>
+   </listitem>
+   <listitem>
+    <para>
+     Querying JSON data using SQL/JSON query functions and
+     SQL/JSON path language expressions.
+    </para>
+   </listitem>
+  </itemizedlist>
+
+  <para>
+   There are two groups of SQL/JSON functions.
+   <link linkend="functions-sqljson-producing">Constructor functions</link>
+   generate JSON data from values of SQL types.
+   <link linkend="functions-sqljson-querying">Query functions</link>
+   evaluate SQL/JSON path language expressions against JSON values
+   and produce values of SQL/JSON types, which are converted to SQL types.
+  </para>
+
+  <para>
+   Many SQL/JSON functions have an optional <literal>FORMAT</literal>
+   clause. This is provided to conform with the SQL standard, but has no
+   effect except where noted otherwise.
+  </para>
+
+  <para>
+   <xref linkend="functions-sqljson-producing" /> lists the SQL/JSON
+   Constructor functions. Each function has a <literal>RETURNING</literal>
+   clause specifying the data type returned. For the <function>json</function> and
+   <function>json_scalar</function> functions, this needs to be either <type>json</type> or
+   <type>jsonb</type>. For the other constructor functions it must be one of <type>json</type>,
+   <type>jsonb</type>, <type>bytea</type>, a character string type (<type>text</type>, <type>char</type>,
+   <type>varchar</type>, or <type>nchar</type>), or a type for which there is a cast
+   from <type>json</type> to that type.
+   By default, the <type>json</type> type is returned.
+  </para>
+
+  <note>
+   <para>
+    Many of the results that can be obtained from the SQL/JSON Constructor
+    functions can also be obtained by calling
+    <productname>PostgreSQL</productname>-specific functions detailed in
+    <xref linkend="functions-json-creation-table" /> and
+    <xref linkend="functions-aggregate-table"/>.
+   </para>
+  </note>
+
+  <table id="functions-sqljson-producing">
+   <title>SQL/JSON Constructor Functions</title>
+   <tgroup cols="1">
+    <thead>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        Function signature
+       </para>
+       <para>
+        Description
+       </para>
+       <para>
+        Example(s)
+      </para></entry>
+     </row>
+    </thead>
+    <tbody>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        <indexterm><primary>json constructor</primary></indexterm>
+          <function>json</function> (
+          <parameter>expression</parameter>
+          <optional> <literal>FORMAT JSON</literal> <optional> <literal>ENCODING UTF8</literal> </optional></optional>
+          <optional> { <literal>WITH</literal> | <literal>WITHOUT</literal> } <literal>UNIQUE</literal> <optional> <literal>KEYS</literal> </optional></optional>
+          <optional> <literal>RETURNING</literal> <replaceable>json_data_type</replaceable> </optional>)
+       </para>
+       <para>
+        The <parameter>expression</parameter> can be any text type or a
+        <type>bytea</type> in UTF8 encoding. If the
+        <parameter>expression</parameter> is NULL, an
+        <acronym>SQL</acronym> null value is returned.
+        If <literal>WITH UNIQUE</literal> is specified, the
+        <parameter>expression</parameter> must not contain any duplicate
+        object keys.
+       </para>
+       <para>
+        <literal>json('{"a":123, "b":[true,"foo"], "a":"bar"}')</literal>
+        <returnvalue>{"a":123, "b":[true,"foo"], "a":"bar"}</returnvalue>
+       </para>
+       <para>
+        <literal>json('{"a":123,"b":[true,"foo"],"a":"bar"}' returning jsonb)</literal>
+        <returnvalue>{"a": "bar", "b": [true, "foo"]}</returnvalue>
+      </para></entry>
+     </row>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        <indexterm><primary>json_scalar</primary></indexterm>
+        <function>json_scalar</function> (<parameter>expression</parameter>
+        <optional> <literal>RETURNING</literal> <replaceable>json_data_type</replaceable> </optional>)
+       </para>
+       <para>
+        Returns a JSON scalar value representing
+        <parameter>expression</parameter>.
+        If the input is NULL, an SQL NULL is returned. If the input is a number
+        or a boolean value, a corresponding JSON number or boolean value is
+        returned. For any other value a JSON string is returned.
+       </para>
+       <para>
+        <literal>json_scalar(123.45)</literal>
+        <returnvalue>123.45</returnvalue>
+       </para>
+       <para>
+        <literal>json_scalar(CURRENT_TIMESTAMP)</literal>
+        <returnvalue>"2022-05-10T10:51:04.62128-04:00"</returnvalue>
+      </para></entry>
+     </row>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        <indexterm><primary>json_object</primary></indexterm>
+        <function>json_object</function> (
+        <optional> { <parameter>key_expression</parameter> { <literal>VALUE</literal> | ':' }
+         <parameter>value_expression</parameter> <optional> <literal>FORMAT JSON</literal> <optional> <literal>ENCODING UTF8</literal> </optional> </optional> }<optional>, ...</optional> </optional>
+        <optional> { <literal>NULL</literal> | <literal>ABSENT</literal> } <literal>ON NULL</literal> </optional>
+        <optional> { <literal>WITH</literal> | <literal>WITHOUT</literal> } <literal>UNIQUE</literal> <optional> <literal>KEYS</literal> </optional> </optional>
+        <optional> <literal>RETURNING</literal> <replaceable>data_type</replaceable> <optional> <literal>FORMAT JSON</literal> <optional> <literal>ENCODING UTF8</literal> </optional> </optional> </optional>)
+       </para>
+       <para>
+        Constructs a JSON object of all the key value pairs given,
+        or an empty object if none are given.
+        <parameter>key_expression</parameter> is a scalar expression
+        defining the <acronym>JSON</acronym> key, which is
+        converted to the <type>text</type> type.
+        It cannot be <literal>NULL</literal> nor can it
+        belong to a type that has a cast to the <type>json</type>.
+        If <literal>WITH UNIQUE</literal> is specified, there must not
+        be any duplicate <parameter>key_expression</parameter>.
+        If <literal>ABSENT ON NULL</literal> is specified, the entire
+        pair is omitted if the <parameter>value_expression</parameter>
+        is <literal>NULL</literal>.
+       </para>
+       <para>
+        <literal>json_object('code' VALUE 'P123', 'title': 'Jaws')</literal>
+        <returnvalue>{"code" : "P123", "title" : "Jaws"}</returnvalue>
+      </para></entry>
+     </row>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        <indexterm><primary>json_objectagg</primary></indexterm>
+        <function>json_objectagg</function> (
+        <optional> { <parameter>key_expression</parameter> { <literal>VALUE</literal> | ':' } <parameter>value_expression</parameter> } </optional>
+        <optional> { <literal>NULL</literal> | <literal>ABSENT</literal> } <literal>ON NULL</literal> </optional>
+        <optional> { <literal>WITH</literal> | <literal>WITHOUT</literal> } <literal>UNIQUE</literal> <optional> <literal>KEYS</literal> </optional> </optional>
+        <optional> <literal>RETURNING</literal> <replaceable>data_type</replaceable> <optional> <literal>FORMAT JSON</literal> <optional> <literal>ENCODING UTF8</literal> </optional> </optional> </optional>)
+       </para>
+       <para>
+        Behaves like <function>json_object</function> above, but as an
+        aggregate function, so it only takes one
+        <parameter>key_expression</parameter> and one
+        <parameter>value_expression</parameter> parameter.
+       </para>
+       <para>
+        <literal>SELECT json_objectagg(k:v) FROM (VALUES ('a'::text,current_date),('b',current_date + 1)) AS t(k,v)</literal>
+        <returnvalue>{ "a" : "2022-05-10", "b" : "2022-05-11" }</returnvalue>
+      </para></entry>
+     </row>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        <indexterm><primary>json_array</primary></indexterm>
+        <function>json_array</function> (
+        <optional> { <parameter>value_expression</parameter> <optional> <literal>FORMAT JSON</literal> </optional> } <optional>, ...</optional> </optional>
+        <optional> { <literal>NULL</literal> | <literal>ABSENT</literal> } <literal>ON NULL</literal> </optional>
+        <optional> <literal>RETURNING</literal> <replaceable>data_type</replaceable> <optional> <literal>FORMAT JSON</literal> <optional> <literal>ENCODING UTF8</literal> </optional> </optional> </optional>)
+       </para>
+       <para role="func_signature">
+        <function>json_array</function> (
+        <optional> <replaceable>query_expression</replaceable> </optional>
+        <optional> <literal>RETURNING</literal> <replaceable>data_type</replaceable> <optional> <literal>FORMAT JSON</literal> <optional> <literal>ENCODING UTF8</literal> </optional> </optional> </optional>)
+        </para>
+       <para>
+        Constructs a JSON array from either a series of
+        <parameter>value_expression</parameter> parameters or from the results
+        of <replaceable>query_expression</replaceable>,
+        which must be a SELECT query returning a single column. If
+        <literal>ABSENT ON NULL</literal> is specified, NULL values are ignored.
+        This is always the case if a
+        <replaceable>query_expression</replaceable> is used.
+       </para>
+       <para>
+        <literal>json_array(1,true,json '{"a":null}')</literal>
+        <returnvalue>[1, true, {"a":null}]</returnvalue>
+       </para>
+       <para>
+        <literal>json_array(SELECT * FROM (VALUES(1),(2)) t)</literal>
+        <returnvalue>[1, 2]</returnvalue>
+      </para></entry>
+     </row>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        <indexterm><primary>json_arrayagg</primary></indexterm>
+        <function>json_arrayagg</function> (
+        <optional> <parameter>value_expression</parameter> </optional>
+        <optional> <literal>ORDER BY</literal> <replaceable>sort_expression</replaceable> </optional>
+        <optional> { <literal>NULL</literal> | <literal>ABSENT</literal> } <literal>ON NULL</literal> </optional>
+        <optional> <literal>RETURNING</literal> <replaceable>data_type</replaceable> <optional> <literal>FORMAT JSON</literal> <optional> <literal>ENCODING UTF8</literal> </optional> </optional> </optional>)
+       </para>
+       <para>
+        Behaves in the same way as <function>json_array</function>
+        but as an aggregate function so it only takes one
+        <parameter>value_expression</parameter> parameter.
+        If <literal>ABSENT ON NULL</literal> is specified, any NULL
+        values are omitted.
+        If <literal>ORDER BY</literal> is specified, the elements will
+        appear in the array in that order rather than in the input order.
+       </para>
+       <para>
+        <literal>SELECT json_arrayagg(v) FROM (VALUES(2),(1)) t(v)</literal>
+        <returnvalue>[2, 1]</returnvalue>
+      </para></entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
+
+  <para>
+   <xref linkend="functions-sqljson-misc" /> details SQL/JSON
+   facilities for testing and serializing JSON.
+  </para>
+
+  <table id="functions-sqljson-misc">
+   <title>SQL/JSON Testing and Serializing Functions</title>
+   <tgroup cols="1">
+    <thead>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        Function signature
+       </para>
+       <para>
+        Description
+       </para>
+       <para>
+        Example(s)
+      </para></entry>
+     </row>
+    </thead>
+    <tbody>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        <indexterm><primary>IS JSON</primary></indexterm>
+        <parameter>expression</parameter> <literal>IS</literal> <optional> <literal>NOT</literal> </optional> <literal>JSON</literal>
+        <optional> { <literal>VALUE</literal> | <literal>SCALAR</literal> | <literal>ARRAY</literal> | <literal>OBJECT</literal> } </optional>
+        <optional> { <literal>WITH</literal> | <literal>WITHOUT</literal> } <literal>UNIQUE</literal> <optional> <literal>KEYS</literal> </optional> </optional>
+       </para>
+       <para>
+        This predicate tests whether <parameter>expression</parameter> can be
+        parsed as JSON, possibly of a specified type.
+        If <literal>SCALAR</literal> or <literal>ARRAY</literal> or
+        <literal>OBJECT</literal> is specified, the
+        test is whether or not the JSON is of that particular type. If
+        <literal>WITH UNIQUE</literal> is specified, then an any object in the
+        <parameter>expression</parameter> is also tested to see if it
+        has duplicate keys.
+       </para>
+       <para>
+<screen>
+SELECT js,
+  js IS JSON "json?",
+  js IS JSON SCALAR "scalar?",
+  js IS JSON OBJECT "object?",
+  js IS JSON ARRAY "array?"
+FROM
+(VALUES ('123'), ('"abc"'), ('{"a": "b"}'),
+('[1,2]'),('abc')) foo(js);
+     js     | json? | scalar? | object? | array?
+------------+-------+---------+---------+--------
+ 123        | t     | t       | f       | f
+ "abc"      | t     | t       | f       | f
+ {"a": "b"} | t     | f       | t       | f
+ [1,2]      | t     | f       | f       | t
+ abc        | f     | f       | f       | f
+</screen>
+      </para></entry>
+     </row>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        <function>json_serialize</function> (
+        <parameter>expression</parameter> <optional> <literal>FORMAT JSON</literal> <optional> <literal>ENCODING UTF8</literal> </optional> </optional>
+        <optional> <literal>RETURNING</literal> <parameter>data_type</parameter> <optional> <literal>FORMAT JSON</literal> <optional> <literal>ENCODING UTF8</literal> </optional> </optional> </optional>)
+       </para>
+       <para>
+        Transforms an SQL/JSON value into a character or binary string. The
+        <parameter>expression</parameter> can be of any JSON type, any
+        character string type, or <type>bytea</type> in UTF8 encoding.
+        The returned type can be any character string type or
+        <type>bytea</type>. The default is <type>text</type>.
+       </para>
+       <para>
+        <literal>json_serialize('{ "a" : 1 } ' RETURNING bytea)</literal>
+        <returnvalue>\x7b20226122203a2031207d20</returnvalue>
+      </para></entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
+
+  <para>
+   <xref linkend="functions-sqljson-querying"/> details the SQL/JSON
+   functions that can be used to query JSON data, except
+   for <function>json_table</function>.
+  </para>
+
+  <note>
+   <para>
+    SQL/JSON paths can only be applied to the <type>jsonb</type> type, so it
+    might be necessary to cast the <parameter>context_item</parameter>
+    argument of these functions to <type>jsonb</type>.
+   </para>
+  </note>
+
+  <table id="functions-sqljson-querying">
+   <title>SQL/JSON Query Functions</title>
+   <tgroup cols="1">
+    <thead>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        Function signature
+       </para>
+       <para>
+        Description
+       </para>
+       <para>
+        Example(s)
+      </para></entry>
+     </row>
+    </thead>
+    <tbody>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        <indexterm><primary>json_exists</primary></indexterm>
+        <function>json_exists</function> (
+        <parameter>context_item</parameter>, <parameter>path_expression</parameter> <optional> <literal>PASSING</literal> { <parameter>value</parameter> <literal>AS</literal> <replaceable>varname</replaceable> } <optional>, ...</optional></optional>
+        <optional> <literal>RETURNING</literal> <replaceable>data_type</replaceable> </optional>
+        <optional> { <literal>TRUE</literal> | <literal>FALSE</literal> |<literal> UNKNOWN</literal> | <literal>ERROR</literal> } <literal>ON ERROR</literal> </optional>)
+       </para>
+       <para>
+        Returns true if the SQL/JSON <parameter>path_expression</parameter>
+        applied to the <parameter>context_item</parameter> using the
+        <parameter>value</parameter>s yields any items.
+        The <literal>ON ERROR</literal> clause specifies what is returned if
+        an error occurs. Note that if the <parameter>path_expression</parameter>
+        is <literal>strict</literal>, an error is generated if it yields no items.
+        The default value is <literal>UNKNOWN</literal> which causes a NULL
+        result.
+       </para>
+       <para>
+        <literal>json_exists(jsonb '{"key1": [1,2,3]}', 'strict $.key1[*] ? (@ > 2)')</literal>
+        <returnvalue>t</returnvalue>
+       </para>
+       <para>
+        <literal>json_exists(jsonb '{"a": [1,2,3]}', 'lax $.a[5]' ERROR ON ERROR)</literal>
+        <returnvalue>f</returnvalue>
+       </para>
+       <para>
+        <literal>json_exists(jsonb '{"a": [1,2,3]}', 'strict $.a[5]' ERROR ON ERROR)</literal>
+        <returnvalue>ERROR:  jsonpath array subscript is out of bounds</returnvalue>
+      </para></entry>
+     </row>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        <indexterm><primary>json_value</primary></indexterm>
+        <function>json_value</function> (
+        <parameter>context_item</parameter>, <parameter>path_expression</parameter>
+        <optional> <literal>PASSING</literal> { <parameter>value</parameter> <literal>AS</literal> <parameter>varname</parameter> } <optional>, ...</optional></optional>
+        <optional> <literal>RETURNING</literal> <parameter>data_type</parameter> </optional>
+        <optional> { <literal>ERROR</literal> | <literal>NULL</literal> | <literal>DEFAULT</literal> <parameter>expression</parameter> } <literal>ON EMPTY</literal> </optional>
+        <optional> { <literal>ERROR</literal> | <literal>NULL</literal> | <literal>DEFAULT</literal> <parameter>expression</parameter> } <literal>ON ERROR</literal> </optional>)
+       </para>
+       <para>
+        Returns the result of applying the
+        <parameter>path_expression</parameter> to the
+        <parameter>context_item</parameter> using the
+        <parameter>value</parameter>s. The extracted value must be
+        a single <acronym>SQL/JSON</acronym> scalar item. For results that
+        are objects or arrays, use the <function>json_query</function>
+        instead.
+        The returned <parameter>data_type</parameter> has the same semantics
+        as for constructor functions like <function>json_objectagg</function>.
+        The default returned type is <type>text</type>.
+        The <literal>ON EMPTY</literal> clause specifies the behavior if the
+        <parameter>path_expression</parameter> yields no value at all.
+        The <literal>ON ERROR</literal> clause specifies the behavior if an
+        error occurs, as a result of either the evaluation or the application
+        of the <literal>ON EMPTY</literal> clause.
+       </para>
+       <para>
+        <literal>json_value(jsonb '"123.45"', '$' RETURNING float)</literal>
+        <returnvalue>123.45</returnvalue>
+       </para>
+       <para>
+        <literal>json_value(jsonb '"03:04 2015-02-01"', '$.datetime("HH24:MI&nbsp;YYYY-MM-DD")' RETURNING date)</literal>
+        <returnvalue>2015-02-01</returnvalue>
+       </para>
+       <para>
+        <literal>json_value(jsonb '[1,2]', 'strict $[*]' DEFAULT 9 ON ERROR)</literal>
+        <returnvalue>9</returnvalue>
+      </para></entry>
+     </row>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        <indexterm><primary>json_query</primary></indexterm>
+        <function>json_query</function> (
+        <parameter>context_item</parameter>, <parameter>path_expression</parameter> <optional> <literal>PASSING</literal> { <parameter>value</parameter> <literal>AS</literal> <parameter>varname</parameter> } <optional>, ...</optional></optional>
+        <optional> <literal>RETURNING</literal> <parameter>data_type</parameter> <optional> <literal>FORMAT JSON</literal> <optional> <literal>ENCODING UTF8</literal> </optional> </optional> </optional>
+        <optional> { <literal>WITHOUT</literal> | <literal>WITH</literal> { <literal>CONDITIONAL</literal> | <optional><literal>UNCONDITIONAL</literal></optional> } } <optional> <literal>ARRAY</literal> </optional> <literal>WRAPPER</literal> </optional>
+        <optional> { <literal>KEEP</literal> | <literal>OMIT</literal> } <literal>QUOTES</literal> <optional> <literal>ON SCALAR STRING</literal> </optional> </optional>
+        <optional> { <literal>ERROR</literal> | <literal>NULL</literal> | <literal>EMPTY</literal> { <optional> <literal>ARRAY</literal> </optional> | <literal>OBJECT</literal> } | <literal>DEFAULT</literal> <parameter>expression</parameter> } <literal>ON EMPTY</literal> </optional>
+        <optional> { <literal>ERROR</literal> | <literal>NULL</literal> | <literal>EMPTY</literal> { <optional> <literal>ARRAY</literal> </optional> | <literal>OBJECT</literal> } | <literal>DEFAULT</literal> <parameter>expression</parameter> } <literal>ON ERROR</literal> </optional>)
+      </para>
+       <para>
+        Returns the result of applying the
+        <parameter>path_expression</parameter> to the
+        <parameter>context_item</parameter> using the
+        <parameter>value</parameter>s.
+        This function must return a JSON string, so if the path expression
+        returns multiple SQL/JSON items, you must wrap the result using the
+        <literal>WITH WRAPPER</literal> clause. If the wrapper is
+        <literal>UNCONDITIONAL</literal>, an array wrapper will always
+        be applied, even if the returned value is already a single JSON object
+        or array, but if it is <literal>CONDITIONAL</literal> it will not be
+        applied to a single array or object. <literal>UNCONDITIONAL</literal>
+        is the default.
+        If the result is a a scalar string, by default the value returned will have
+        surrounding quotes making it a valid JSON value. However, this behavior
+        is reversed if <literal>OMIT QUOTES</literal> is specified.
+        The <literal>ON ERROR</literal> and <literal>ON EMPTY</literal>
+        clauses have similar semantics to those clauses for
+        <function>json_value</function>.
+        The returned <parameter>data_type</parameter> has the same semantics
+        as for constructor functions like <function>json_objectagg</function>.
+        The default returned type is <type>text</type>.
+       </para>
+       <para>
+        <literal>json_query(jsonb '[1,[2,3],null]', 'lax $[*][1]' WITH CONDITIONAL WRAPPER)</literal>
+        <returnvalue>[3]</returnvalue>
+      </para></entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
+
+ </sect2>
+
+ <sect2 id="functions-sqljson-table">
+  <title>JSON_TABLE</title>
+  <indexterm>
+   <primary>json_table</primary>
+  </indexterm>
+
+  <para>
+   <function>json_table</function> is an SQL/JSON function which
+   queries <acronym>JSON</acronym> data
+   and presents the results as a relational view, which can be accessed as a
+   regular SQL table. You can only use <function>json_table</function> inside the
+   <literal>FROM</literal> clause of a <literal>SELECT</literal> statement.
+  </para>
+
+  <para>
+   Taking JSON data as input, <function>json_table</function> uses
+   a path expression to extract a part of the provided data that
+   will be used as a <firstterm>row pattern</firstterm> for the
+   constructed view. Each SQL/JSON item at the top level of the row pattern serves
+   as the source for a separate row in the constructed relational view.
+  </para>
+
+  <para>
+   To split the row pattern into columns, <function>json_table</function>
+   provides the <literal>COLUMNS</literal> clause that defines the
+   schema of the created view. For each column to be constructed,
+   this clause provides a separate path expression that evaluates
+   the row pattern, extracts a JSON item, and returns it as a
+   separate SQL value for the specified column. If the required value
+   is stored in a nested level of the row pattern, it can be extracted
+   using the <literal>NESTED PATH</literal> subclause. Joining the
+   columns returned by <literal>NESTED PATH</literal> can add multiple
+   new rows to the constructed view. Such rows are called
+   <firstterm>child rows</firstterm>, as opposed to the <firstterm>parent row</firstterm>
+   that generates them.
+  </para>
+
+  <para>
+   The rows produced by <function>JSON_TABLE</function> are laterally
+   joined to the row that generated them, so you do not have to explicitly join
+   the constructed view with the original table holding <acronym>JSON</acronym>
+   data. Optionally, you can specify how to join the columns returned
+   by <literal>NESTED PATH</literal> using the <literal>PLAN</literal> clause.
+  </para>
+
+  <para>
+   Each <literal>NESTED PATH</literal> clause can generate one or more
+   columns. Columns produced by <literal>NESTED PATH</literal>s at the
+   same level are considered to be <firstterm>siblings</firstterm>,
+   while a column produced by a <literal>NESTED PATH</literal> is
+   considered to be a child of the column produced by and
+   <literal>NESTED PATH</literal> or row expression at a higher level.
+   Sibling columns are always joined first. Once they are processed,
+   the resulting rows are joined to the parent row.
+  </para>
+
+  <variablelist>
+   <varlistentry>
+    <term>
+     <literal><parameter>context_item</parameter>, <parameter>path_expression</parameter> <optional> <literal>AS</literal> <parameter>json_path_name</parameter> </optional> <optional> <literal>PASSING</literal> { <parameter>value</parameter> <literal>AS</literal> <parameter>varname</parameter> } <optional>, ...</optional></optional></literal>
+    </term>
+    <listitem>
+    <para>
+     The input data to query, the JSON path expression defining the query,
+     and an optional <literal>PASSING</literal> clause, which can provide data
+     values to the <parameter>path_expression</parameter>.
+     The result of the input data
+     evaluation is called the <firstterm>row pattern</firstterm>. The row
+     pattern is used as the source for row values in the constructed view.
+    </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <literal>COLUMNS</literal>( <parameter>json_table_column</parameter> <optional>, ...</optional> )
+    </term>
+    <listitem>
+
+    <para>
+     The <literal>COLUMNS</literal> clause defining the schema of the
+     constructed view. In this clause, you must specify all the columns
+     to be filled with SQL/JSON items.
+     The <parameter>json_table_column</parameter>
+     expression has the following syntax variants:
+    </para>
+
+  <variablelist>
+   <varlistentry>
+    <term>
+     <literal><parameter>name</parameter> <parameter>type</parameter>
+          <optional> <literal>PATH</literal> <parameter>json_path_specification</parameter> </optional></literal>
+    </term>
+    <listitem>
+
+    <para>
+     Inserts a single SQL/JSON item into each row of
+     the specified column.
+    </para>
+    <para>
+     The provided <literal>PATH</literal> expression parses the
+     row pattern defined by <parameter>json_api_common_syntax</parameter>
+     and fills the column with produced SQL/JSON items, one for each row.
+     If the <literal>PATH</literal> expression is omitted,
+     <function>JSON_TABLE</function> uses the
+     <literal>$.<replaceable>name</replaceable></literal> path expression,
+     where <replaceable>name</replaceable> is the provided column name.
+     In this case, the column name must correspond to one of the
+     keys within the SQL/JSON item produced by the row pattern.
+    </para>
+    <para>
+     Optionally, you can add <literal>ON EMPTY</literal> and
+     <literal>ON ERROR</literal> clauses to define how to handle missing values
+     or structural errors.
+     <literal>WRAPPER</literal> and <literal>QUOTES</literal> clauses can only
+     be used with JSON, array, and composite types.
+     These clauses have the same syntax and semantics as for
+     <function>json_value</function> and <function>json_query</function>.
+    </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <parameter>name</parameter> <parameter>type</parameter> <literal>FORMAT</literal> <parameter>json_representation</parameter>
+          <optional> <literal>PATH</literal> <parameter>json_path_specification</parameter> </optional>
+    </term>
+    <listitem>
+
+    <para>
+     Generates a column and inserts a composite SQL/JSON
+     item into each row of this column.
+    </para>
+    <para>
+     The provided <literal>PATH</literal> expression parses the
+     row pattern defined by <parameter>json_api_common_syntax</parameter>
+     and fills the column with produced SQL/JSON items, one for each row.
+     If the <literal>PATH</literal> expression is omitted,
+     <function>JSON_TABLE</function> uses the
+     <literal>$.<parameter>name</parameter></literal> path expression,
+     where <parameter>name</parameter> is the provided column name.
+     In this case, the column name must correspond to one of the
+     keys within the SQL/JSON item produced by the row pattern.
+    </para>
+    <para>
+     Optionally, you can add <literal>WRAPPER</literal>, <literal>QUOTES</literal>,
+     <literal>ON EMPTY</literal> and <literal>ON ERROR</literal> clauses
+     to define additional settings for the returned SQL/JSON items.
+     These clauses have the same syntax and semantics as
+     for <function>json_query</function>.
+    </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+       <parameter>name</parameter> <parameter>type</parameter>
+       <literal>EXISTS</literal> <optional> <literal>PATH</literal> <parameter>json_path_specification</parameter> </optional>
+    </term>
+    <listitem>
+
+    <para>
+     Generates a column and inserts a boolean item into each row of this column.
+    </para>
+    <para>
+     The provided <literal>PATH</literal> expression parses the
+     row pattern defined by <parameter>json_api_common_syntax</parameter>,
+     checks whether any SQL/JSON items were returned, and fills the column with
+     resulting boolean value, one for each row.
+     The specified <parameter>type</parameter> should have cast from
+     <type>boolean</type>.
+     If the <literal>PATH</literal> expression is omitted,
+     <function>JSON_TABLE</function> uses the
+     <literal>$.<replaceable>name</replaceable></literal> path expression,
+     where <replaceable>name</replaceable> is the provided column name.
+    </para>
+    <para>
+     Optionally, you can add <literal>ON ERROR</literal> clause to define
+     error behavior.  This clause has the same syntax and semantics as
+     for <function>json_exists</function>.
+    </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <literal>NESTED PATH</literal> <parameter>json_path_specification</parameter> <optional> <literal>AS</literal> <parameter>json_path_name</parameter> </optional>
+          <literal>COLUMNS</literal> ( <parameter>json_table_column</parameter> <optional>, ...</optional> )
+    </term>
+    <listitem>
+
+    <para>
+     Extracts SQL/JSON items from nested levels of the row pattern,
+     generates one or more columns as defined by the <literal>COLUMNS</literal>
+     subclause, and inserts the extracted SQL/JSON items into each row of these columns.
+     The <parameter>json_table_column</parameter> expression in the
+     <literal>COLUMNS</literal> subclause uses the same syntax as in the
+     parent <literal>COLUMNS</literal> clause.
+    </para>
+
+    <para>
+     The <literal>NESTED PATH</literal> syntax is recursive,
+     so you can go down multiple nested levels by specifying several
+     <literal>NESTED PATH</literal> subclauses within each other.
+     It allows to unnest the hierarchy of JSON objects and arrays
+     in a single function invocation rather than chaining several
+     <function>JSON_TABLE</function> expressions in an SQL statement.
+    </para>
+
+    <para>
+     You can use the <literal>PLAN</literal> clause to define how
+     to join the columns returned by <parameter>NESTED PATH</parameter> clauses.
+    </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <parameter>name</parameter> <literal>FOR ORDINALITY</literal>
+    </term>
+    <listitem>
+
+    <para>
+     Adds an ordinality column that provides sequential row numbering.
+     You can have only one ordinality column per table. Row numbering
+     is 1-based. For child rows that result from the <literal>NESTED PATH</literal>
+     clauses, the parent row number is repeated.
+    </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <literal>AS</literal> <parameter>json_path_name</parameter>
+    </term>
+    <listitem>
+
+    <para>
+     The optional <parameter>json_path_name</parameter> serves as an
+     identifier of the provided <parameter>json_path_specification</parameter>.
+     The path name must be unique and distinct from the column names.
+     When using the <literal>PLAN</literal> clause, you must specify the names
+     for all the paths, including the row pattern. Each path name can appear in
+     the <literal>PLAN</literal> clause only once.
+    </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <literal>PLAN</literal> ( <parameter>json_table_plan</parameter> )
+    </term>
+    <listitem>
+
+    <para>
+     Defines how to join the data returned by <literal>NESTED PATH</literal>
+     clauses to the constructed view.
+    </para>
+    <para>
+     To join columns with parent/child relationship, you can use:
+    </para>
+  <variablelist>
+   <varlistentry>
+    <term>
+     <literal>INNER</literal>
+    </term>
+    <listitem>
+
+    <para>
+     Use <literal>INNER JOIN</literal>, so that the parent row
+     is omitted from the output if it does not have any child rows
+     after joining the data returned by <literal>NESTED PATH</literal>.
+    </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <literal>OUTER</literal>
+    </term>
+    <listitem>
+
+    <para>
+     Use <literal>LEFT OUTER JOIN</literal>, so that the parent row
+     is always included into the output even if it does not have any child rows
+     after joining the data returned by <literal>NESTED PATH</literal>, with NULL values
+     inserted into the child columns if the corresponding
+     values are missing.
+    </para>
+    <para>
+     This is the default option for joining columns with parent/child relationship.
+    </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+
+     <para>
+     To join sibling columns, you can use:
+    </para>
+
+  <variablelist>
+   <varlistentry>
+    <term>
+     <literal>UNION</literal>
+    </term>
+    <listitem>
+
+    <para>
+     Generate one row for each value produced by each of the sibling
+     columns. The columns from the other siblings are set to null.
+    </para>
+    <para>
+     This is the default option for joining sibling columns.
+    </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <literal>CROSS</literal>
+    </term>
+    <listitem>
+
+    <para>
+     Generate one row for each combination of values from the sibling columns.
+    </para>
+    </listitem>
+   </varlistentry>
+
+  </variablelist>
+
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <literal>PLAN DEFAULT</literal> ( <replaceable>OUTER | INNER</replaceable> <optional>, <replaceable>UNION | CROSS</replaceable> </optional> )
+    </term>
+    <listitem>
+     <para>
+      The terms can also be specified in reverse order. The
+      <literal>INNER</literal> or <literal>OUTER</literal> option defines the
+      joining plan for parent/child columns, while <literal>UNION</literal> or
+      <literal>CROSS</literal> affects joins of sibling columns. This form
+      of <literal>PLAN</literal> overrides the default plan for
+      all columns at once. Even though the path names are not included in the
+      <literal>PLAN DEFAULT</literal> form, to conform to the SQL/JSON standard
+      they must be provided for all the paths if the <literal>PLAN</literal>
+      clause is used.
+     </para>
+     <para>
+      <literal>PLAN DEFAULT</literal> is simpler than specifying a complete
+      <literal>PLAN</literal>, and is often all that is required to get the desired
+      output.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+
+  <para>Examples</para>
+
+     <para>
+     In these examples the following small table storing some JSON data will be used:
+<programlisting>
+CREATE TABLE my_films ( js jsonb );
+
+INSERT INTO my_films VALUES (
+'{ "favorites" : [
+   { "kind" : "comedy", "films" : [
+     { "title" : "Bananas",
+       "director" : "Woody Allen"},
+     { "title" : "The Dinner Game",
+       "director" : "Francis Veber" } ] },
+   { "kind" : "horror", "films" : [
+     { "title" : "Psycho",
+       "director" : "Alfred Hitchcock" } ] },
+   { "kind" : "thriller", "films" : [
+     { "title" : "Vertigo",
+       "director" : "Alfred Hitchcock" } ] },
+   { "kind" : "drama", "films" : [
+     { "title" : "Yojimbo",
+       "director" : "Akira Kurosawa" } ] }
+  ] }');
+</programlisting>
+     </para>
+     <para>
+      Query the <structname>my_films</structname> table holding
+      some JSON data about the films and create a view that
+      distributes the film genre, title, and director between separate columns:
+<screen>
+SELECT jt.* FROM
+ my_films,
+ JSON_TABLE ( js, '$.favorites[*]' COLUMNS (
+   id FOR ORDINALITY,
+   kind text PATH '$.kind',
+   NESTED PATH '$.films[*]' COLUMNS (
+     title text PATH '$.title',
+     director text PATH '$.director'))) AS jt;
+----+----------+------------------+-------------------
+ id |   kind   |       title      |    director
+----+----------+------------------+-------------------
+ 1  | comedy   | Bananas          | Woody Allen
+ 1  | comedy   | The Dinner Game  | Francis Veber
+ 2  | horror   | Psycho           | Alfred Hitchcock
+ 3  | thriller | Vertigo          | Alfred Hitchcock
+ 4  | drama    | Yojimbo          | Akira Kurosawa
+ (5 rows)
+</screen>
+     </para>
+
+     <para>
+      Find a director that has done films in two different genres:
+<screen>
+SELECT
+  director1 AS director, title1, kind1, title2, kind2
+FROM
+  my_films,
+  JSON_TABLE ( js, '$.favorites' AS favs COLUMNS (
+    NESTED PATH '$[*]' AS films1 COLUMNS (
+      kind1 text PATH '$.kind',
+      NESTED PATH '$.films[*]' AS film1 COLUMNS (
+        title1 text PATH '$.title',
+        director1 text PATH '$.director')
+    ),
+    NESTED PATH '$[*]' AS films2 COLUMNS (
+      kind2 text PATH '$.kind',
+      NESTED PATH '$.films[*]' AS film2 COLUMNS (
+        title2 text PATH '$.title',
+        director2 text PATH '$.director'
+      )
+    )
+   )
+   PLAN (favs OUTER ((films1 INNER film1) CROSS (films2 INNER film2)))
+  ) AS jt
+ WHERE kind1 > kind2 AND director1 = director2;
+
+     director     | title1  |  kind1   | title2 | kind2
+------------------+---------+----------+--------+--------
+ Alfred Hitchcock | Vertigo | thriller | Psycho | horror
+(1 row)
+</screen>
+     </para>
+ </sect2>
+
  </sect1>
 
  <sect1 id="functions-sequence">
@@ -17292,24 +18649,37 @@ SELECT setval('myseq', 42, false);    <lineannotation>Next <function>nextval</fu
   <caution>
    <para>
     To avoid blocking concurrent transactions that obtain numbers from
-    the same sequence, a <function>nextval</function> operation is never
-    rolled back; that is, once a value has been fetched it is considered
-    used and will not be returned again.  This is true even if the
-    surrounding transaction later aborts, or if the calling query ends
-    up not using the value.  For example an <command>INSERT</command> with
+    the same sequence, the value obtained by <function>nextval</function>
+    is not reclaimed for re-use if the calling transaction later aborts.
+    This means that transaction aborts or database crashes can result in
+    gaps in the sequence of assigned values.  That can happen without a
+    transaction abort, too.  For example an <command>INSERT</command> with
     an <literal>ON CONFLICT</literal> clause will compute the to-be-inserted
     tuple, including doing any required <function>nextval</function>
     calls, before detecting any conflict that would cause it to follow
-    the <literal>ON CONFLICT</literal> rule instead.  Such cases will leave
-    unused <quote>holes</quote> in the sequence of assigned values.
+    the <literal>ON CONFLICT</literal> rule instead.
     Thus, <productname>PostgreSQL</productname> sequence
     objects <emphasis>cannot be used to obtain <quote>gapless</quote>
     sequences</emphasis>.
    </para>
 
    <para>
-    Likewise, any sequence state changes made by <function>setval</function>
-    are not undone if the transaction rolls back.
+    Likewise, sequence state changes made by <function>setval</function>
+    are immediately visible to other transactions, and are not undone if
+    the calling transaction rolls back.
+   </para>
+
+   <para>
+    If the database cluster crashes before committing a transaction
+    containing a <function>nextval</function>
+    or <function>setval</function> call, the sequence state change might
+    not have made its way to persistent storage, so that it is uncertain
+    whether the sequence will have its original or updated state after the
+    cluster restarts.  This is harmless for usage of the sequence within
+    the database, since other effects of uncommitted transactions will not
+    be visible either.  However, if you wish to use a sequence value for
+    persistent outside-the-database purposes, make sure that the
+    <function>nextval</function> call has been committed before doing so.
    </para>
   </caution>
 
@@ -18014,7 +19384,7 @@ SELECT NULLIF(value, '(none)') ...
 
       <row>
        <entry role="func_table_entry"><para role="func_signature">
-        <indexterm>
+        <indexterm id="function-array-to-string">
          <primary>array_to_string</primary>
         </indexterm>
         <function>array_to_string</function> ( <parameter>array</parameter> <type>anyarray</type>, <parameter>delimiter</parameter> <type>text</type> <optional>, <parameter>null_string</parameter> <type>text</type> </optional> )
@@ -18027,6 +19397,7 @@ SELECT NULLIF(value, '(none)') ...
         If <parameter>null_string</parameter> is given and is
         not <literal>NULL</literal>, then <literal>NULL</literal> array
         entries are represented by that string; otherwise, they are omitted.
+        See also <link linkend="function-string-to-array"><function>string_to_array</function></link>.
        </para>
        <para>
         <literal>array_to_string(ARRAY[1, 2, 3, NULL, 5], ',', '*')</literal>
@@ -18145,18 +19516,6 @@ SELECT NULLIF(value, '(none)') ...
      </tbody>
     </tgroup>
    </table>
-
-   <note>
-    <para>
-     There are two differences in the behavior of <function>string_to_array</function>
-     from pre-9.1 versions of <productname>PostgreSQL</productname>.
-     First, it will return an empty (zero-element) array rather
-     than <literal>NULL</literal> when the input string is of zero length.
-     Second, if the delimiter string is <literal>NULL</literal>, the function
-     splits the input into individual characters, rather than
-     returning <literal>NULL</literal> as before.
-    </para>
-   </note>
 
    <para>
     See also <xref linkend="functions-aggregate"/> about the aggregate
@@ -18517,7 +19876,7 @@ SELECT NULLIF(value, '(none)') ...
         Is the element contained by the multirange?
        </para>
        <para>
-        <literal>42 &lt;@ '{[1,7)}'::int4multirange</literal>
+        <literal>4 &lt;@ '{[1,7)}'::int4multirange</literal>
         <returnvalue>t</returnvalue>
        </para></entry>
       </row>
@@ -19181,6 +20540,29 @@ SELECT NULLIF(value, '(none)') ...
         <returnvalue>{[1,2)}</returnvalue>
        </para></entry>
       </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>unnest</primary>
+         <secondary>for multirange</secondary>
+        </indexterm>
+        <function>unnest</function> ( <type>anymultirange</type> )
+        <returnvalue>setof anyrange</returnvalue>
+       </para>
+       <para>
+        Expands a multirange into a set of ranges.
+        The ranges are read out in storage order (ascending).
+       </para>
+       <para>
+        <literal>unnest('{[1,2), [3,4)}'::int4multirange)</literal>
+        <returnvalue></returnvalue>
+<programlisting>
+ [1,2)
+ [3,4)
+</programlisting>
+       </para></entry>
+      </row>
      </tbody>
     </tgroup>
    </table>
@@ -19484,6 +20866,29 @@ SELECT NULLIF(value, '(none)') ...
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
+         <primary>json_agg_strict</primary>
+        </indexterm>
+        <function>json_agg_strict</function> ( <type>anyelement</type> )
+        <returnvalue>json</returnvalue>
+       </para>
+       <para role="func_signature">
+        <indexterm>
+         <primary>jsonb_agg_strict</primary>
+        </indexterm>
+        <function>jsonb_agg_strict</function> ( <type>anyelement</type> )
+        <returnvalue>jsonb</returnvalue>
+       </para>
+       <para>
+        Collects all the input values, skipping nulls, into a JSON array.
+        Values are converted to JSON as per <function>to_json</function>
+        or <function>to_jsonb</function>.
+       </para></entry>
+       <entry>No</entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
          <primary>json_object_agg</primary>
         </indexterm>
         <function>json_object_agg</function> ( <parameter>key</parameter>
@@ -19502,9 +20907,97 @@ SELECT NULLIF(value, '(none)') ...
        </para>
        <para>
         Collects all the key/value pairs into a JSON object.  Key arguments
-        are coerced to text; value arguments are converted as
-        per <function>to_json</function> or <function>to_jsonb</function>.
-        Values can be null, but not keys.
+        are coerced to text; value arguments are converted as per
+        <function>to_json</function> or <function>to_jsonb</function>
+        Values can be null, but keys cannot.
+       </para></entry>
+       <entry>No</entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>json_object_agg_strict</primary>
+        </indexterm>
+        <function>json_object_agg_strict</function> (
+         <parameter>key</parameter> <type>"any"</type>,
+         <parameter>value</parameter> <type>"any"</type> )
+        <returnvalue>json</returnvalue>
+       </para>
+       <para role="func_signature">
+        <indexterm>
+         <primary>jsonb_object_agg_strict</primary>
+        </indexterm>
+        <function>jsonb_object_agg_strict</function> (
+         <parameter>key</parameter> <type>"any"</type>,
+         <parameter>value</parameter> <type>"any"</type> )
+        <returnvalue>jsonb</returnvalue>
+       </para>
+       <para>
+        Collects all the key/value pairs into a JSON object.  Key arguments
+        are coerced to text; value arguments are converted as per
+        <function>to_json</function> or <function>to_jsonb</function>.
+        The <parameter>key</parameter> can not be null. If the
+        <parameter>value</parameter> is null then the entry is skipped,
+       </para></entry>
+       <entry>No</entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>json_object_agg_unique</primary>
+        </indexterm>
+        <function>json_object_agg_unique</function> (
+         <parameter>key</parameter> <type>"any"</type>,
+         <parameter>value</parameter> <type>"any"</type> )
+        <returnvalue>json</returnvalue>
+       </para>
+       <para role="func_signature">
+        <indexterm>
+         <primary>jsonb_object_agg_unique</primary>
+        </indexterm>
+        <function>jsonb_object_agg_unique</function> (
+         <parameter>key</parameter> <type>"any"</type>,
+         <parameter>value</parameter> <type>"any"</type> )
+        <returnvalue>jsonb</returnvalue>
+       </para>
+       <para>
+        Collects all the key/value pairs into a JSON object.  Key arguments
+        are coerced to text; value arguments are converted as per
+        <function>to_json</function> or <function>to_jsonb</function>.
+        Values can be null, but keys cannot.
+        If there is a duplicate key an error is thrown.
+       </para></entry>
+       <entry>No</entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>json_object_agg_unique_strict</primary>
+        </indexterm>
+        <function>json_object_agg_unique_strict</function> (
+         <parameter>key</parameter> <type>"any"</type>,
+         <parameter>value</parameter> <type>"any"</type> )
+        <returnvalue>json</returnvalue>
+       </para>
+       <para role="func_signature">
+        <indexterm>
+         <primary>jsonb_object_agg_unique_strict</primary>
+        </indexterm>
+        <function>jsonb_object_agg_unique_strict</function> (
+         <parameter>key</parameter> <type>"any"</type>,
+         <parameter>value</parameter> <type>"any"</type> )
+        <returnvalue>jsonb</returnvalue>
+       </para>
+       <para>
+        Collects all the key/value pairs into a JSON object.  Key arguments
+        are coerced to text; value arguments are converted as per
+        <function>to_json</function> or <function>to_jsonb</function>.
+        The <parameter>key</parameter> can not be null. If the
+        <parameter>value</parameter> is null then the entry is skipped,
+        If there is a duplicate key an error is thrown.
        </para></entry>
        <entry>No</entry>
       </row>
@@ -19522,7 +21015,7 @@ SELECT NULLIF(value, '(none)') ...
         values.  Available for any numeric, string, date/time, or enum type,
         as well as <type>inet</type>, <type>interval</type>,
         <type>money</type>, <type>oid</type>, <type>pg_lsn</type>,
-        <type>tid</type>,
+        <type>tid</type>, <type>xid8</type>,
         and arrays of any of these types.
        </para></entry>
        <entry>Yes</entry>
@@ -19541,7 +21034,7 @@ SELECT NULLIF(value, '(none)') ...
         values.  Available for any numeric, string, date/time, or enum type,
         as well as <type>inet</type>, <type>interval</type>,
         <type>money</type>, <type>oid</type>, <type>pg_lsn</type>,
-        <type>tid</type>,
+        <type>tid</type>, <type>xid8</type>,
         and arrays of any of these types.
        </para></entry>
        <entry>Yes</entry>
@@ -19554,6 +21047,11 @@ SELECT NULLIF(value, '(none)') ...
         </indexterm>
         <function>range_agg</function> ( <parameter>value</parameter>
          <type>anyrange</type> )
+        <returnvalue>anymultirange</returnvalue>
+       </para>
+       <para role="func_signature">
+        <function>range_agg</function> ( <parameter>value</parameter>
+         <type>anymultirange</type> )
         <returnvalue>anymultirange</returnvalue>
        </para>
        <para>
@@ -19569,6 +21067,11 @@ SELECT NULLIF(value, '(none)') ...
         </indexterm>
         <function>range_intersect_agg</function> ( <parameter>value</parameter>
          <type>anyrange</type> )
+        <returnvalue>anyrange</returnvalue>
+       </para>
+       <para role="func_signature">
+        <function>range_intersect_agg</function> ( <parameter>value</parameter>
+         <type>anymultirange</type> )
         <returnvalue>anymultirange</returnvalue>
        </para>
        <para>
@@ -19672,7 +21175,12 @@ SELECT NULLIF(value, '(none)') ...
   <para>
    The aggregate functions <function>array_agg</function>,
    <function>json_agg</function>, <function>jsonb_agg</function>,
+   <function>json_agg_strict</function>, <function>jsonb_agg_strict</function>,
    <function>json_object_agg</function>, <function>jsonb_object_agg</function>,
+   <function>json_object_agg_strict</function>, <function>jsonb_object_agg_strict</function>,
+   <function>json_object_agg_unique</function>, <function>jsonb_object_agg_unique</function>,
+   <function>json_object_agg_unique_strict</function>,
+   <function>jsonb_object_agg_unique_strict</function>,
    <function>string_agg</function>,
    and <function>xmlagg</function>, as well as similar user-defined
    aggregate functions, produce meaningfully different result values
@@ -19691,6 +21199,13 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
    additional processing, such as a join, because that might cause the
    subquery's output to be reordered before the aggregate is computed.
   </para>
+
+  <note>
+   <para>
+    In addition to the JSON aggregates shown here, see the <function>json_objectagg</function>
+    and <function>json_arrayagg</function> constructors in <xref linkend="functions-sqljson"/>.
+   </para>
+  </note>
 
   <note>
     <indexterm>
@@ -21985,10 +23500,12 @@ SELECT * FROM pg_ls_dir('.') WITH ORDINALITY AS t(ls,n);
         format, <function>pg_current_logfile</function> without an argument
         returns the path of the file having the first format found in the
         ordered list: <literal>stderr</literal>,
-        <literal>csvlog</literal>.  <literal>NULL</literal> is returned
-        if no log file has any of these formats.
+        <literal>csvlog</literal>, <literal>jsonlog</literal>.
+        <literal>NULL</literal> is returned if no log file has any of these
+        formats.
         To request information about a specific log file format, supply
-        either <literal>csvlog</literal> or <literal>stderr</literal> as the
+        either <literal>csvlog</literal>, <literal>jsonlog</literal> or
+        <literal>stderr</literal> as the
         value of the optional parameter. The result is <literal>NULL</literal>
         if the log format requested is not configured in
         <xref linkend="guc-log-destination"/>.
@@ -22393,6 +23910,25 @@ SELECT has_function_privilege('joeuser', 'myfunc(int, text)', 'execute');
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
+         <primary>has_parameter_privilege</primary>
+        </indexterm>
+        <function>has_parameter_privilege</function> (
+          <optional> <parameter>user</parameter> <type>name</type> or <type>oid</type>, </optional>
+          <parameter>parameter</parameter> <type>text</type>,
+          <parameter>privilege</parameter> <type>text</type> )
+        <returnvalue>boolean</returnvalue>
+       </para>
+       <para>
+        Does user have privilege for configuration parameter?
+        The parameter name is case-insensitive.
+        Allowable privilege types are <literal>SET</literal>
+        and <literal>ALTER SYSTEM</literal>.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
          <primary>has_schema_privilege</primary>
         </indexterm>
         <function>has_schema_privilege</function> (
@@ -22674,6 +24210,7 @@ SELECT has_function_privilege('joeuser', 'myfunc(int, text)', 'execute');
         'l' for <literal>LANGUAGE</literal>,
         'L' for <literal>LARGE OBJECT</literal>,
         'n' for <literal>SCHEMA</literal>,
+        'p' for <literal>PARAMETER</literal>,
         't' for <literal>TABLESPACE</literal>,
         'F' for <literal>FOREIGN DATA WRAPPER</literal>,
         'S' for <literal>FOREIGN SERVER</literal>,
@@ -22984,6 +24521,36 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
         Returns the SQL name for a data type that is identified by its type
         OID and possibly a type modifier.  Pass NULL for the type modifier if
         no specific modifier is known.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry id="pg-char-to-encoding" role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_char_to_encoding</primary>
+        </indexterm>
+        <function>pg_char_to_encoding</function> ( <parameter>encoding</parameter> <type>name</type> )
+        <returnvalue>integer</returnvalue>
+       </para>
+       <para>
+        Converts the supplied encoding name into an integer representing the
+        internal identifier used in some system catalog tables.
+        Returns <literal>-1</literal> if an unknown encoding name is provided.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry id="pg-encoding-to-char" role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_encoding_to_char</primary>
+        </indexterm>
+        <function>pg_encoding_to_char</function> ( <parameter>encoding</parameter> <type>integer</type> )
+        <returnvalue>name</returnvalue>
+       </para>
+       <para>
+        Converts the integer used as the internal identifier of an encoding in some
+        system catalog tables into a human-readable string.
+        Returns an empty string if an invalid encoding number is provided.
        </para></entry>
       </row>
 
@@ -23373,6 +24940,43 @@ SELECT currval(pg_get_serial_sequence('sometable', 'id'));
         Returns the set of storage options represented by a value from
         <structname>pg_class</structname>.<structfield>reloptions</structfield> or
         <structname>pg_attribute</structname>.<structfield>attoptions</structfield>.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_settings_get_flags</primary>
+        </indexterm>
+        <function>pg_settings_get_flags</function> ( <parameter>guc</parameter> <type>text</type> )
+        <returnvalue>text[]</returnvalue>
+       </para>
+       <para>
+        Returns an array of the flags associated with the given GUC, or
+        <literal>NULL</literal> if it does not exist. The result is
+        an empty array if the GUC exists but there are no flags to show.
+        Only the most useful flags are exposed, as of the following:
+        <simplelist>
+         <member>
+          <literal>EXPLAIN</literal>: parameters included in
+          <command>EXPLAIN (SETTINGS)</command> commands.
+         </member>
+         <member>
+          <literal>NO_SHOW_ALL</literal>: parameters excluded from
+          <command>SHOW ALL</command> commands.
+         </member>
+         <member>
+          <literal>NO_RESET_ALL</literal>: parameters excluded from
+          <command>RESET ALL</command> commands.
+         </member>
+         <member>
+          <literal>NOT_IN_SAMPLE</literal>: parameters not included in
+          <filename>postgresql.conf</filename> by default.
+         </member>
+         <member>
+          <literal>RUNTIME_COMPUTED</literal>: runtime-computed parameters.
+         </member>
+        </simplelist>
        </para></entry>
       </row>
 
@@ -24915,7 +26519,7 @@ SELECT collation for ('foo' COLLATE "de_DE");
         Cancels the current query of the session whose backend process has the
         specified process ID.  This is also allowed if the
         calling role is a member of the role whose backend is being canceled or
-        the calling role has been granted <literal>pg_signal_backend</literal>,
+        the calling role has privileges of <literal>pg_signal_backend</literal>,
         however only superusers can cancel superuser backends.
        </para></entry>
       </row>
@@ -24930,13 +26534,14 @@ SELECT collation for ('foo' COLLATE "de_DE");
        </para>
        <para>
         Requests to log the memory contexts of the backend with the
-        specified process ID.  These memory contexts will be logged at
+        specified process ID.  This function can send the request to
+        backends and auxiliary processes except logger.  These memory contexts
+        will be logged at
         <literal>LOG</literal> message level. They will appear in
         the server log based on the log configuration set
         (See <xref linkend="runtime-config-logging"/> for more information),
         but will not be sent to the client regardless of
         <xref linkend="guc-client-min-messages"/>.
-        Only superusers can request to log the memory contexts.
        </para></entry>
       </row>
 
@@ -24954,8 +26559,9 @@ SELECT collation for ('foo' COLLATE "de_DE");
         sending a <systemitem>SIGHUP</systemitem> signal to the postmaster
         process, which in turn sends <systemitem>SIGHUP</systemitem> to each
         of its children.) You can use the
-        <link linkend="view-pg-file-settings">pg_file_settings</link> and
-        <link linkend="view-pg-hba-file-rules">pg_hba_file_rules</link> views
+        <link linkend="view-pg-file-settings"><structname>pg_file_settings</structname></link>,
+        <link linkend="view-pg-hba-file-rules"><structname>pg_hba_file_rules</structname></link> and
+        <link linkend="view-pg-hba-file-rules"><structname>pg_ident_file_mappings</structname></link> views
         to check the configuration files for possible errors, before reloading.
        </para></entry>
       </row>
@@ -24987,7 +26593,7 @@ SELECT collation for ('foo' COLLATE "de_DE");
         Terminates the session whose backend process has the
         specified process ID.  This is also allowed if the calling role
         is a member of the role whose backend is being terminated or the
-        calling role has been granted <literal>pg_signal_backend</literal>,
+        calling role has privileges of <literal>pg_signal_backend</literal>,
         however only superusers can terminate superuser backends.
        </para>
        <para>
@@ -25026,7 +26632,7 @@ SELECT collation for ('foo' COLLATE "de_DE");
     to log the memory contexts of a backend process. For example:
 <programlisting>
 postgres=# SELECT pg_log_backend_memory_contexts(pg_backend_pid());
- pg_log_backend_memory_contexts 
+ pg_log_backend_memory_contexts
 --------------------------------
  t
 (1 row)
@@ -25066,9 +26672,8 @@ LOG:  Grand total: 1651920 bytes in 201 blocks; 622360 free (88 chunks); 1029560
     The functions shown in <xref
     linkend="functions-admin-backup-table"/> assist in making on-line backups.
     These functions cannot be executed during recovery (except
-    non-exclusive <function>pg_start_backup</function>,
-    non-exclusive <function>pg_stop_backup</function>,
-    <function>pg_is_in_backup</function>, <function>pg_backup_start_time</function>
+    <function>pg_backup_start</function>,
+    <function>pg_backup_stop</function>,
     and <function>pg_wal_lsn_diff</function>).
    </para>
 
@@ -25157,13 +26762,12 @@ LOG:  Grand total: 1651920 bytes in 201 blocks; 622360 free (88 chunks); 1029560
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
-         <primary>pg_start_backup</primary>
+         <primary>pg_backup_start</primary>
         </indexterm>
-        <function>pg_start_backup</function> (
+        <function>pg_backup_start</function> (
           <parameter>label</parameter> <type>text</type>
           <optional>, <parameter>fast</parameter> <type>boolean</type>
-          <optional>, <parameter>exclusive</parameter> <type>boolean</type>
-          </optional></optional> )
+          </optional> )
         <returnvalue>pg_lsn</returnvalue>
        </para>
        <para>
@@ -25172,23 +26776,9 @@ LOG:  Grand total: 1651920 bytes in 201 blocks; 622360 free (88 chunks); 1029560
         (Typically this would be the name under which the backup dump file
         will be stored.)
         If the optional second parameter is given as <literal>true</literal>,
-        it specifies executing <function>pg_start_backup</function> as quickly
+        it specifies executing <function>pg_backup_start</function> as quickly
         as possible.  This forces an immediate checkpoint which will cause a
         spike in I/O operations, slowing any concurrently executing queries.
-        The optional third parameter specifies whether to perform an exclusive
-        or non-exclusive backup (default is exclusive).
-       </para>
-       <para>
-        When used in exclusive mode, this function writes a backup label file
-        (<filename>backup_label</filename>) and, if there are any links in
-        the <filename>pg_tblspc/</filename> directory, a tablespace map file
-        (<filename>tablespace_map</filename>) into the database cluster's data
-        directory, then performs a checkpoint, and then returns the backup's
-        starting write-ahead log location.  (The user can ignore this
-        result value, but it is provided in case it is useful.)  When used in
-        non-exclusive mode, the contents of these files are instead returned
-        by the <function>pg_stop_backup</function> function, and should be
-        copied to the backup area by the user.
        </para>
        <para>
         This function is restricted to superusers by default, but other users
@@ -25199,36 +26789,32 @@ LOG:  Grand total: 1651920 bytes in 201 blocks; 622360 free (88 chunks); 1029560
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
-         <primary>pg_stop_backup</primary>
+         <primary>pg_backup_stop</primary>
         </indexterm>
-        <function>pg_stop_backup</function> (
-          <parameter>exclusive</parameter> <type>boolean</type>
-          <optional>, <parameter>wait_for_archive</parameter> <type>boolean</type>
+        <function>pg_backup_stop</function> (
+          <optional><parameter>wait_for_archive</parameter> <type>boolean</type>
           </optional> )
-        <returnvalue>setof record</returnvalue>
+        <returnvalue>record</returnvalue>
         ( <parameter>lsn</parameter> <type>pg_lsn</type>,
         <parameter>labelfile</parameter> <type>text</type>,
         <parameter>spcmapfile</parameter> <type>text</type> )
        </para>
        <para>
-        Finishes performing an exclusive or non-exclusive on-line backup.
-        The <parameter>exclusive</parameter> parameter must match the
-        previous <function>pg_start_backup</function> call.
-        In an exclusive backup, <function>pg_stop_backup</function> removes
-        the backup label file and, if it exists, the tablespace map file
-        created by <function>pg_start_backup</function>.  In a non-exclusive
-        backup, the desired contents of these files are returned as part of
-        the result of the function, and should be written to files in the
-        backup area (not in the data directory).
+        Finishes performing an on-line backup.  The desired contents of the
+        backup label file and the tablespace map file are returned as part of
+        the result of the function and must be written to files in the
+        backup area.  These files must not be written to the live data directory
+        (doing so will cause PostgreSQL to fail to restart in the event of a
+        crash).
        </para>
        <para>
-        There is an optional second parameter of type <type>boolean</type>.
+        There is an optional parameter of type <type>boolean</type>.
         If false, the function will return immediately after the backup is
         completed, without waiting for WAL to be archived.  This behavior is
         only useful with backup software that independently monitors WAL
         archiving.  Otherwise, WAL required to make the backup consistent might
         be missing and make the backup useless.  By default or when this
-        parameter is true, <function>pg_stop_backup</function> will wait for
+        parameter is true, <function>pg_backup_stop</function> will wait for
         WAL to be archived when archiving is enabled.  (On a standby, this
         means that it will wait only when <varname>archive_mode</varname> =
         <literal>always</literal>.  If write activity on the primary is low,
@@ -25238,7 +26824,7 @@ LOG:  Grand total: 1651920 bytes in 201 blocks; 622360 free (88 chunks); 1029560
        <para>
         When executed on a primary, this function also creates a backup
         history file in the write-ahead log archive area.  The history file
-        includes the label given to <function>pg_start_backup</function>, the
+        includes the label given to <function>pg_backup_start</function>, the
         starting and ending write-ahead log locations for the backup, and the
         starting and ending times of the backup.  After recording the ending
         location, the current write-ahead log insertion point is automatically
@@ -25249,58 +26835,15 @@ LOG:  Grand total: 1651920 bytes in 201 blocks; 622360 free (88 chunks); 1029560
        <para>
         The result of the function is a single record.
         The <parameter>lsn</parameter> column holds the backup's ending
-        write-ahead log location (which again can be ignored).  The second and
-        third columns are <literal>NULL</literal> when ending an exclusive
-        backup; after a non-exclusive backup they hold the desired contents of
-        the label and tablespace map files.
+        write-ahead log location (which again can be ignored).  The second
+        column returns the contents of the backup label file, and the third
+        column returns the contents of the tablespace map file.  These must be
+        stored as part of the backup and are required as part of the restore
+        process.
        </para>
        <para>
         This function is restricted to superusers by default, but other users
         can be granted EXECUTE to run the function.
-       </para></entry>
-      </row>
-
-      <row>
-       <entry role="func_table_entry"><para role="func_signature">
-        <function>pg_stop_backup</function> ()
-        <returnvalue>pg_lsn</returnvalue>
-       </para>
-       <para>
-        Finishes performing an exclusive on-line backup.  This simplified
-        version is equivalent to <literal>pg_stop_backup(true,
-        true)</literal>, except that it only returns the <type>pg_lsn</type>
-        result.
-       </para>
-       <para>
-        This function is restricted to superusers by default, but other users
-        can be granted EXECUTE to run the function.
-       </para></entry>
-      </row>
-
-      <row>
-       <entry role="func_table_entry"><para role="func_signature">
-        <indexterm>
-         <primary>pg_is_in_backup</primary>
-        </indexterm>
-        <function>pg_is_in_backup</function> ()
-        <returnvalue>boolean</returnvalue>
-       </para>
-       <para>
-        Returns true if an on-line exclusive backup is in progress.
-       </para></entry>
-      </row>
-
-      <row>
-       <entry role="func_table_entry"><para role="func_signature">
-        <indexterm>
-         <primary>pg_backup_start_time</primary>
-        </indexterm>
-        <function>pg_backup_start_time</function> ()
-        <returnvalue>timestamp with time zone</returnvalue>
-       </para>
-       <para>
-        Returns the start time of the current on-line exclusive backup if one
-        is in progress, otherwise <literal>NULL</literal>.
        </para></entry>
       </row>
 
@@ -25401,7 +26944,7 @@ LOG:  Grand total: 1651920 bytes in 201 blocks; 622360 free (88 chunks); 1029560
     corresponding write-ahead log file name and byte offset from
     a <type>pg_lsn</type> value.  For example:
 <programlisting>
-postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
+postgres=# SELECT * FROM pg_walfile_name_offset((pg_backup_stop()).lsn);
         file_name         | file_offset
 --------------------------+-------------
  00000001000000000000000D |     4039624
@@ -25510,6 +27053,25 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
         then this will remain static at the time of the last transaction
         applied during recovery.  When the server has been started normally
         without recovery, the function returns <literal>NULL</literal>.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_get_wal_resource_managers</primary>
+        </indexterm>
+        <function>pg_get_wal_resource_managers</function> ()
+        <returnvalue>setof record</returnvalue>
+        ( <parameter>rm_id</parameter> <type>integer</type>,
+        <parameter>rm_name</parameter> <type>text</type>,
+        <parameter>rm_builtin</parameter> <type>boolean</type> )
+       </para>
+       <para>
+        Returns the currently-loaded WAL resource managers in the system. The
+        column <parameter>rm_builtin</parameter> indicates whether it's a
+        built-in resource manager, or a custom resource manager loaded by an
+        extension.
        </para></entry>
       </row>
      </tbody>
@@ -26030,7 +27592,8 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
        </para>
        <para>
         Looks up a replication origin by name and returns the internal ID. If
-        no such replication origin is found an error is thrown.
+        no such replication origin is found, <literal>NULL</literal> is
+        returned.
        </para></entry>
       </row>
 
@@ -26158,7 +27721,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
       </row>
 
       <row>
-       <entry role="func_table_entry"><para role="func_signature">
+       <entry id="pg-logical-emit-message" role="func_table_entry"><para role="func_signature">
         <indexterm>
          <primary>pg_logical_emit_message</primary>
         </indexterm>
@@ -26261,7 +27824,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
         Computes the total disk space used by the database with the specified
         name or OID.  To use this function, you must
         have <literal>CONNECT</literal> privilege on the specified database
-        (which is granted by default) or be a member of
+        (which is granted by default) or have privileges of
         the <literal>pg_read_all_stats</literal> role.
        </para></entry>
       </row>
@@ -26391,7 +27954,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
         Computes the total disk space used in the tablespace with the
         specified name or OID. To use this function, you must
         have <literal>CREATE</literal> privilege on the specified tablespace
-        or be a member of the <literal>pg_read_all_stats</literal> role,
+        or have privileges of the <literal>pg_read_all_stats</literal> role,
         unless it is the default tablespace for the current database.
        </para></entry>
       </row>
@@ -26542,6 +28105,24 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
+         <primary>pg_database_collation_actual_version</primary>
+        </indexterm>
+        <function>pg_database_collation_actual_version</function> ( <type>oid</type> )
+        <returnvalue>text</returnvalue>
+       </para>
+       <para>
+        Returns the actual version of the database's collation as it is currently
+        installed in the operating system.  If this is different from the
+        value in
+        <structname>pg_database</structname>.<structfield>datcollversion</structfield>,
+        then objects depending on the collation might need to be rebuilt.  See
+        also <xref linkend="sql-alterdatabase"/>.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
          <primary>pg_import_system_collations</primary>
         </indexterm>
         <function>pg_import_system_collations</function> ( <parameter>schema</parameter> <type>regnamespace</type> )
@@ -26563,6 +28144,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
         be <literal>pg_catalog</literal>, but that is not a requirement; the
         collations could be installed into some other schema as well.  The
         function returns the number of new collation objects it created.
+        Use of this function is restricted to superusers.
        </para></entry>
       </row>
      </tbody>
@@ -26851,7 +28433,7 @@ SELECT pg_size_pretty(sum(pg_relation_size(relid))) AS total_size
         a dot, directories, and other special files are excluded.
        </para>
        <para>
-        This function is restricted to superusers and members of
+        This function is restricted to superusers and roles with privileges of
         the <literal>pg_monitor</literal> role by default, but other users can
         be granted EXECUTE to run the function.
        </para></entry>
@@ -26873,6 +28455,79 @@ SELECT pg_size_pretty(sum(pg_relation_size(relid))) AS total_size
         ordinary file in the server's write-ahead log (WAL) directory.
         Filenames beginning with a dot, directories, and other special files
         are excluded.
+       </para>
+       <para>
+        This function is restricted to superusers and roles with privileges of
+        the <literal>pg_monitor</literal> role by default, but other users can
+        be granted EXECUTE to run the function.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_ls_logicalmapdir</primary>
+        </indexterm>
+        <function>pg_ls_logicalmapdir</function> ()
+        <returnvalue>setof record</returnvalue>
+        ( <parameter>name</parameter> <type>text</type>,
+        <parameter>size</parameter> <type>bigint</type>,
+        <parameter>modification</parameter> <type>timestamp with time zone</type> )
+       </para>
+       <para>
+        Returns the name, size, and last modification time (mtime) of each
+        ordinary file in the server's <filename>pg_logical/mappings</filename>
+        directory. Filenames beginning with a dot, directories, and other
+        special files are excluded.
+       </para>
+       <para>
+        This function is restricted to superusers and members of
+        the <literal>pg_monitor</literal> role by default, but other users can
+        be granted EXECUTE to run the function.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_ls_logicalsnapdir</primary>
+        </indexterm>
+        <function>pg_ls_logicalsnapdir</function> ()
+        <returnvalue>setof record</returnvalue>
+        ( <parameter>name</parameter> <type>text</type>,
+        <parameter>size</parameter> <type>bigint</type>,
+        <parameter>modification</parameter> <type>timestamp with time zone</type> )
+       </para>
+       <para>
+        Returns the name, size, and last modification time (mtime) of each
+        ordinary file in the server's <filename>pg_logical/snapshots</filename>
+        directory. Filenames beginning with a dot, directories, and other
+        special files are excluded.
+       </para>
+       <para>
+        This function is restricted to superusers and members of
+        the <literal>pg_monitor</literal> role by default, but other users can
+        be granted EXECUTE to run the function.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_ls_replslotdir</primary>
+        </indexterm>
+        <function>pg_ls_replslotdir</function> ( <parameter>slot_name</parameter> <type>text</type> )
+        <returnvalue>setof record</returnvalue>
+        ( <parameter>name</parameter> <type>text</type>,
+        <parameter>size</parameter> <type>bigint</type>,
+        <parameter>modification</parameter> <type>timestamp with time zone</type> )
+       </para>
+       <para>
+        Returns the name, size, and last modification time (mtime) of each
+        ordinary file in the server's <filename>pg_replslot/slot_name</filename>
+        directory, where <parameter>slot_name</parameter> is the name of the
+        replication slot provided as input of the function. Filenames beginning
+        with a dot, directories, and other special files are excluded.
        </para>
        <para>
         This function is restricted to superusers and members of
@@ -27011,6 +28666,7 @@ SELECT convert_from(pg_read_binary_file('file_in_utf8.txt'), 'UTF8');
         can be granted EXECUTE to run the function.
        </para></entry>
       </row>
+
      </tbody>
     </tgroup>
    </table>

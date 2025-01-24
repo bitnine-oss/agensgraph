@@ -1,23 +1,23 @@
 
-# Copyright (c) 2021, PostgreSQL Global Development Group
+# Copyright (c) 2021-2022, PostgreSQL Global Development Group
 
 # Test streaming of large transaction with subtransactions, DDLs, DMLs, and
 # rollbacks
 use strict;
 use warnings;
-use PostgresNode;
-use TestLib;
-use Test::More tests => 2;
+use PostgreSQL::Test::Cluster;
+use PostgreSQL::Test::Utils;
+use Test::More;
 
 # Create publisher node
-my $node_publisher = get_new_node('publisher');
+my $node_publisher = PostgreSQL::Test::Cluster->new('publisher');
 $node_publisher->init(allows_streaming => 'logical');
 $node_publisher->append_conf('postgresql.conf',
 	'logical_decoding_work_mem = 64kB');
 $node_publisher->start;
 
 # Create subscriber node
-my $node_subscriber = get_new_node('subscriber');
+my $node_subscriber = PostgreSQL::Test::Cluster->new('subscriber');
 $node_subscriber->init(allows_streaming => 'logical');
 $node_subscriber->start;
 
@@ -85,3 +85,5 @@ is($result, qq(1000|500),
 
 $node_subscriber->stop;
 $node_publisher->stop;
+
+done_testing();

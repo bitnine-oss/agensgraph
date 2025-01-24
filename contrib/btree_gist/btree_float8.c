@@ -5,6 +5,7 @@
 
 #include "btree_gist.h"
 #include "btree_utils_num.h"
+#include "utils/float.h"
 
 typedef struct float8key
 {
@@ -76,8 +77,8 @@ gbt_float8_dist(const void *a, const void *b, FmgrInfo *flinfo)
 	float8		r;
 
 	r = arg1 - arg2;
-	CHECKFLOATVAL(r, isinf(arg1) || isinf(arg2), true);
-
+	if (unlikely(isinf(r)) && !isinf(arg1) && !isinf(arg2))
+		float_overflow_error();
 	return Abs(r);
 }
 
@@ -106,7 +107,8 @@ float8_dist(PG_FUNCTION_ARGS)
 	float8		r;
 
 	r = a - b;
-	CHECKFLOATVAL(r, isinf(a) || isinf(b), true);
+	if (unlikely(isinf(r)) && !isinf(a) && !isinf(b))
+		float_overflow_error();
 
 	PG_RETURN_FLOAT8(Abs(r));
 }
@@ -195,7 +197,6 @@ gbt_float8_penalty(PG_FUNCTION_ARGS)
 	penalty_num(result, origentry->lower, origentry->upper, newentry->lower, newentry->upper);
 
 	PG_RETURN_POINTER(result);
-
 }
 
 Datum

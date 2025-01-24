@@ -1,21 +1,21 @@
 
-# Copyright (c) 2021, PostgreSQL Global Development Group
+# Copyright (c) 2021-2022, PostgreSQL Global Development Group
 
 # Tests that logical decoding messages
 use strict;
 use warnings;
-use PostgresNode;
-use TestLib;
-use Test::More tests => 5;
+use PostgreSQL::Test::Cluster;
+use PostgreSQL::Test::Utils;
+use Test::More;
 
 # Create publisher node
-my $node_publisher = get_new_node('publisher');
+my $node_publisher = PostgreSQL::Test::Cluster->new('publisher');
 $node_publisher->init(allows_streaming => 'logical');
 $node_publisher->append_conf('postgresql.conf', 'autovacuum = off');
 $node_publisher->start;
 
 # Create subscriber node
-my $node_subscriber = get_new_node('subscriber');
+my $node_subscriber = PostgreSQL::Test::Cluster->new('subscriber');
 $node_subscriber->init(allows_streaming => 'logical');
 $node_subscriber->start;
 
@@ -87,9 +87,8 @@ $result = $node_publisher->safe_psql(
 			'publication_names', 'tap_pub')
 ));
 
-# 66 67 == B C == BEGIN COMMIT
-is( $result, qq(66
-67),
+# no message and no BEGIN and COMMIT because of empty transaction optimization
+is($result, qq(),
 	'option messages defaults to false so message (M) is not available on slot'
 );
 
@@ -146,3 +145,5 @@ is( $result, qq(77|0
 
 $node_subscriber->stop('fast');
 $node_publisher->stop('fast');
+
+done_testing();

@@ -354,6 +354,27 @@ $$;
 SELECT * FROM test1;
 
 
+-- test commit/rollback inside exception handler, too
+TRUNCATE test1;
+
+DO LANGUAGE plpgsql $$
+BEGIN
+    FOR i IN 1..10 LOOP
+      BEGIN
+        INSERT INTO test1 VALUES (i, 'good');
+        INSERT INTO test1 VALUES (i/0, 'bad');
+      EXCEPTION
+        WHEN division_by_zero THEN
+            INSERT INTO test1 VALUES (i, 'exception');
+            IF (i % 3) > 0 THEN COMMIT; ELSE ROLLBACK; END IF;
+      END;
+    END LOOP;
+END;
+$$;
+
+SELECT * FROM test1;
+
+
 -- detoast result of simple expression after commit
 CREATE TEMP TABLE test4(f1 text);
 ALTER TABLE test4 ALTER COLUMN f1 SET STORAGE EXTERNAL; -- disable compression
@@ -505,6 +526,29 @@ END
 $$;
 
 SELECT * FROM test2;
+
+
+-- another snapshot handling case: argument expressions of a CALL need
+-- to be evaluated with an up-to-date snapshot
+CREATE FUNCTION report_count() RETURNS int
+STABLE LANGUAGE sql
+AS $$ SELECT COUNT(*) FROM test2 $$;
+
+CREATE PROCEDURE transaction_test9b(cnt int)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE NOTICE 'count = %', cnt;
+END
+$$;
+
+DO $$
+BEGIN
+    CALL transaction_test9b(report_count());
+    INSERT INTO test2 VALUES(43);
+    CALL transaction_test9b(report_count());
+END
+$$;
 
 
 -- Test transaction in procedure with output parameters.  This uses a

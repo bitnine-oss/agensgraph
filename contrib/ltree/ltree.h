@@ -17,6 +17,19 @@
  */
 #define LTREE_LABEL_MAX_CHARS 255
 
+/*
+ * LOWER_NODE used to be defined in the Makefile via the compile flags.
+ * However the MSVC build scripts neglected to do the same which resulted in
+ * MSVC builds not using LOWER_NODE.  Since then, the MSVC scripts have been
+ * modified to look for -D compile flags in Makefiles, so here, in order to
+ * get the historic behavior of LOWER_NODE not being defined on MSVC, we only
+ * define it when not building in that environment.  This is important as we
+ * want to maintain the same LOWER_NODE behavior after a pg_upgrade.
+ */
+#ifndef _MSC_VER
+#define LOWER_NODE
+#endif
+
 typedef struct
 {
 	uint16		len;			/* label string length in bytes */
@@ -216,11 +229,13 @@ int			ltree_strncasecmp(const char *a, const char *b, size_t s);
 
 /* GiST support for ltree */
 
-#define SIGLEN_MAX		GISTMaxIndexKeySize
-#define SIGLEN_DEFAULT	(2 * sizeof(int32))
 #define BITBYTE 8
-#define SIGLEN	(sizeof(int32) * SIGLENINT)
 #define SIGLENBIT(siglen) ((siglen) * BITBYTE)
+#define LTREE_SIGLEN_DEFAULT	(2 * sizeof(int32))
+#define LTREE_SIGLEN_MAX		GISTMaxIndexKeySize
+#define LTREE_GET_SIGLEN()		(PG_HAS_OPCLASS_OPTIONS() ? \
+								 ((LtreeGistOptions *) PG_GET_OPCLASS_OPTIONS())->siglen : \
+								 LTREE_SIGLEN_DEFAULT)
 
 typedef unsigned char *BITVECP;
 

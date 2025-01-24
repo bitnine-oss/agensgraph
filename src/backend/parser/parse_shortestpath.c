@@ -240,7 +240,7 @@ checkRelFormat(ParseState *pstate, CypherRel *crel, bool is_match)
 		A_Indices  *indices = (A_Indices *) crel->varlen;
 		A_Const    *lidx = (A_Const *) indices->lidx;
 
-		if (lidx->val.val.ival > 1)
+		if (lidx->val.ival.ival > 1)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					 errmsg("only 0 or 1 is allowed for minimal length"),
@@ -460,12 +460,12 @@ makeShortestPathFrom(ParseState *parentParseState, CypherPath *cpath)
 		if (indices->lidx != NULL)
 		{
 			idx = (A_Const *) indices->lidx;
-			qry->shortestpathMinhops = idx->val.val.ival;
+			qry->shortestpathMinhops = idx->val.ival.ival;
 		}
 		if (indices->uidx != NULL)
 		{
 			idx = (A_Const *) indices->uidx;
-			qry->shortestpathMaxhops = idx->val.val.ival;
+			qry->shortestpathMaxhops = idx->val.ival.ival;
 		}
 	}
 

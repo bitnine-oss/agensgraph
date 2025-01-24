@@ -4,7 +4,7 @@
  *	  handle clauses in parser
  *
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/parser/parse_clause.h
@@ -50,6 +50,9 @@ extern List *addTargetToSortList(ParseState *pstate, TargetEntry *tle,
 								 List *sortlist, List *targetlist, SortBy *sortby);
 extern Index assignSortGroupRef(TargetEntry *tle, List *tlist);
 extern bool targetIsInSortList(TargetEntry *tle, Oid sortop, List *sortList);
+
+/* functions in parse_jsontable.c */
+extern ParseNamespaceItem *transformJsonTable(ParseState *pstate, JsonTable *jt);
 
 /* used from agensgraph */
 extern List *generateGroupClause(ParseState *pstate, List **targetlist,

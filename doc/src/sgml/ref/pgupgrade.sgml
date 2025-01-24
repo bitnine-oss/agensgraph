@@ -24,8 +24,7 @@ PostgreSQL documentation
    <command>pg_upgrade</command>
    <arg choice="plain"><option>-b</option></arg>
    <arg choice="plain"><replaceable>oldbindir</replaceable></arg>
-   <arg choice="plain"><option>-B</option></arg>
-   <arg choice="plain"><replaceable>newbindir</replaceable></arg>
+   <arg choice="opt"><option>-B</option> <replaceable>newbindir</replaceable></arg>
    <arg choice="plain"><option>-d</option></arg>
    <arg choice="plain"><replaceable>oldconfigdir</replaceable></arg>
    <arg choice="plain"><option>-D</option></arg>
@@ -68,7 +67,7 @@ PostgreSQL documentation
  </para>
 
   <para>
-   pg_upgrade supports upgrades from 8.4.X and later to the current
+   pg_upgrade supports upgrades from 9.2.X and later to the current
    major release of <productname>PostgreSQL</productname>, including snapshot and beta releases.
   </para>
  </refsect1>
@@ -128,6 +127,22 @@ PostgreSQL documentation
       <term><option>--link</option></term>
       <listitem><para>use hard links instead of copying files to the new
       cluster</para></listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-N</option></term>
+      <term><option>--no-sync</option></term>
+      <listitem>
+       <para>
+        By default, <command>pg_upgrade</command> will wait for all files
+        of the upgraded cluster to be written safely to disk.  This option
+        causes <command>pg_upgrade</command> to return without waiting, which
+        is faster, but means that a subsequent operating system crash can leave
+        the data directory corrupt.  Generally, this option is
+        useful for testing but should not be used on a production
+        installation.
+       </para>
+      </listitem>
      </varlistentry>
 
      <varlistentry>
@@ -299,17 +314,28 @@ make prefix=/usr/local/pgsql.new install
    </step>
 
    <step>
-    <title>Install custom shared object files</title>
+    <title>Install extension shared object files</title>
 
     <para>
-     Install any custom shared object files (or DLLs) used by the old cluster
-     into the new cluster, e.g., <filename>pgcrypto.so</filename>,
-     whether they are from <filename>contrib</filename>
-     or some other source. Do not install the schema definitions, e.g.,
-     <command>CREATE EXTENSION pgcrypto</command>, because these will be upgraded
-     from the old cluster.
-     Also, any custom full text search files (dictionary, synonym,
-     thesaurus, stop words) must also be copied to the new cluster.
+     Many extensions and custom modules, whether from
+     <filename>contrib</filename> or another source, use shared object
+     files (or DLLs), e.g., <filename>pgcrypto.so</filename>.  If the old
+     cluster used these, shared object files matching the new server binary
+     must be installed in the new cluster, usually via operating system
+     commands.  Do not load the schema definitions, e.g., <command>CREATE
+     EXTENSION pgcrypto</command>, because these will be duplicated from
+     the old cluster.  If extension updates are available,
+     <application>pg_upgrade</application> will report this and create
+     a script that can be run later to update them.
+    </para>
+   </step>
+
+   <step>
+    <title>Copy custom full-text search files</title>
+
+    <para>
+     Copy any custom full text search files (dictionary, synonym,
+     thesaurus, stop words) from the old to the new cluster.
     </para>
    </step>
 
@@ -472,7 +498,7 @@ pg_upgrade.exe
      is running.
     </para>
 
-    <substeps>
+    <procedure>
 
      <step>
       <title>Install the new PostgreSQL binaries on standby servers</title>
@@ -494,10 +520,10 @@ pg_upgrade.exe
      </step>
 
      <step>
-      <title>Install custom shared object files</title>
+      <title>Install extension shared object files</title>
 
       <para>
-       Install the same custom shared object files on the new standbys
+       Install the same extension shared object files on the new standbys
        that you installed in the new primary cluster.
       </para>
      </step>
@@ -591,13 +617,13 @@ rsync --archive --delete --hard-links --size-only --no-inc-recursive /vol1/pg_tb
 
       <para>
        Configure the servers for log shipping.  (You do not need to run
-       <function>pg_start_backup()</function> and <function>pg_stop_backup()</function>
+       <function>pg_backup_start()</function> and <function>pg_backup_stop()</function>
        or take a file system backup as the standbys are still synchronized
        with the primary.)
       </para>
      </step>
 
-    </substeps>
+    </procedure>
 
    </step>
 
@@ -741,8 +767,11 @@ psql --username=postgres --file=script.sql postgres
 
   <para>
    <application>pg_upgrade</application> creates various working files, such
-   as schema dumps, in the current working directory.  For security, be sure
-   that that directory is not readable or writable by any other users.
+   as schema dumps, stored within <literal>pg_upgrade_output.d</literal> in
+   the directory of the new cluster. Each run creates a new subdirectory named
+   with a timestamp formatted as per ISO 8601
+   (<literal>%Y%m%dT%H%M%S</literal>), where all the generated files are
+   stored.
   </para>
 
   <para>
@@ -787,21 +816,6 @@ psql --username=postgres --file=script.sql postgres
     <member><type>regprocedure</type></member>
    </simplelist>
    (<type>regclass</type>, <type>regrole</type>, and <type>regtype</type> can be upgraded.)
-  </para>
-
-  <para>
-   If you are upgrading a pre-<productname>PostgreSQL</productname> 9.2 cluster
-   that uses a configuration-file-only directory, you must pass the
-   real data directory location to <application>pg_upgrade</application>, and
-   pass the configuration directory location to the server, e.g.,
-   <literal>-d /real-data-directory -o '-D /configuration-directory'</literal>.
-  </para>
-
-  <para>
-   If using a pre-9.1 old server that is using a non-default Unix-domain
-   socket directory or a default that differs from the default of the
-   new cluster, set <envar>PGHOST</envar> to point to the old server's socket
-   location.  (This is not relevant on Windows.)
   </para>
 
   <para>

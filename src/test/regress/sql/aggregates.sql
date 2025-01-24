@@ -2,8 +2,23 @@
 -- AGGREGATES
 --
 
+-- directory paths are passed to us in environment variables
+\getenv abs_srcdir PG_ABS_SRCDIR
+
 -- avoid bit-exact output here because operations may not be bit-exact.
 SET extra_float_digits = 0;
+
+-- prepare some test data
+CREATE TABLE aggtest (
+	a 			int2,
+	b			float4
+);
+
+\set filename :abs_srcdir '/data/agg.data'
+COPY aggtest FROM :'filename';
+
+ANALYZE aggtest;
+
 
 SELECT avg(four) AS avg_1 FROM onek;
 
@@ -682,6 +697,17 @@ select aggfns(distinct a,b,c order by a,c using ~<~,b) filter (where a > 1)
     from (values (1,3,'foo'),(0,null,null),(2,2,'bar'),(3,1,'baz')) v(a,b,c),
     generate_series(1,2) i;
 
+-- check handling of bare boolean Var in FILTER
+select max(0) filter (where b1) from bool_test;
+select (select max(0) filter (where b1)) from bool_test;
+
+-- check for correct detection of nested-aggregate errors in FILTER
+select max(unique1) filter (where sum(ten) > 0) from tenk1;
+select (select max(unique1) filter (where sum(ten) > 0) from int8_tbl) from tenk1;
+select max(unique1) filter (where bool_or(ten > 0)) from tenk1;
+select (select max(unique1) filter (where bool_or(ten > 0)) from int8_tbl) from tenk1;
+
+
 -- ordered-set aggregates
 
 select p, percentile_cont(p) within group (order by x::float8)
@@ -999,6 +1025,105 @@ SELECT balk(hundred) FROM tenk1;
 
 ROLLBACK;
 
+-- GROUP BY optimization by reorder columns
+
+SELECT
+	i AS id,
+	i/2 AS p,
+	format('%60s', i%2) AS v,
+	i/4 AS c,
+	i/8 AS d,
+	(random() * (10000/8))::int as e --the same as d but no correlation with p
+	INTO btg
+FROM
+	generate_series(1, 10000) i;
+
+VACUUM btg;
+ANALYZE btg;
+
+-- GROUP BY optimization by reorder columns by frequency
+
+SET enable_hashagg=off;
+SET max_parallel_workers= 0;
+SET max_parallel_workers_per_gather = 0;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY p, v;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY v, p;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY v, p, c;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY v, p, c ORDER BY v, p, c;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY v, p, d, c;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY v, p, d, c ORDER BY v, p, d ,c;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY v, p, d, c ORDER BY p, v, d ,c;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY p, d, e;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY p, e, d;
+
+CREATE STATISTICS btg_dep ON d, e, p FROM btg;
+ANALYZE btg;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY p, d, e;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY p, e, d;
+
+
+-- GROUP BY optimization by reorder columns by index scan
+
+CREATE INDEX ON btg(p, v);
+SET enable_seqscan=off;
+SET enable_bitmapscan=off;
+VACUUM btg;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY p, v;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY p, v ORDER BY p, v;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY v, p;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY v, p ORDER BY p, v;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY v, p, c;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY v, p, c ORDER BY p, v;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY v, c, p, d;
+
+EXPLAIN (COSTS off)
+SELECT count(*) FROM btg GROUP BY v, c, p, d ORDER BY p, v;
+
+DROP TABLE btg;
+
+RESET enable_hashagg;
+RESET max_parallel_workers;
+RESET max_parallel_workers_per_gather;
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+
+
 -- Secondly test the case of a parallel aggregate combiner function
 -- returning NULL. For that use normal transition function, but a
 -- combiner function returning NULL.
@@ -1098,11 +1223,11 @@ select v||'a', case when v||'a' = 'aa' then 1 else 0 end, count(*)
 -- Make sure that generation of HashAggregate for uniqification purposes
 -- does not lead to array overflow due to unexpected duplicate hash keys
 -- see CAFeeJoKKu0u+A_A9R9316djW-YW3-+Gtgvy3ju655qRHR3jtdA@mail.gmail.com
-set enable_resultcache to off;
+set enable_memoize to off;
 explain (costs off)
   select 1 from tenk1
    where (hundred, thousand) in (select twothousand, twothousand from onek);
-reset enable_resultcache;
+reset enable_memoize;
 
 --
 -- Hash Aggregation Spill tests

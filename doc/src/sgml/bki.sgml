@@ -175,19 +175,21 @@
     will demonstrate the key features:
    </para>
 
-<programlisting>
+<!-- The "slight modification" is the apostrophe in the description. -->
+<programlisting><![CDATA[
 [
 
 # A comment could appear here.
-{ oid =&gt; '1', oid_symbol =&gt; 'TemplateDbOid',
-  descr =&gt; 'database\'s default template',
-  datname =&gt; 'template1', encoding =&gt; 'ENCODING', datcollate =&gt; 'LC_COLLATE',
-  datctype =&gt; 'LC_CTYPE', datistemplate =&gt; 't', datallowconn =&gt; 't',
-  datconnlimit =&gt; '-1', datlastsysoid =&gt; '0', datfrozenxid =&gt; '0',
-  datminmxid =&gt; '1', dattablespace =&gt; 'pg_default', datacl =&gt; '_null_' },
+{ oid => '1', oid_symbol => 'Template1DbOid',
+  descr => 'database\'s default template',
+  datname => 'template1', encoding => 'ENCODING',
+  datlocprovider => 'LOCALE_PROVIDER', datistemplate => 't',
+  datallowconn => 't', datconnlimit => '-1', datfrozenxid => '0',
+  datminmxid => '1', dattablespace => 'pg_default', datcollate => 'LC_COLLATE',
+  datctype => 'LC_CTYPE', daticulocale => 'ICU_LOCALE', datacl => '_null_' },
 
 ]
-</programlisting>
+]]></programlisting>
 
    <para>
     Points to note:
@@ -418,19 +420,33 @@
    <para>
     If <filename>genbki.pl</filename> needs to assign an OID to a catalog
     entry that does not have a manually-assigned OID, it will use a value in
-    the range 10000&mdash;11999.  The server's OID counter is set to 12000
-    at the start of a bootstrap run.  Thus objects created by regular SQL
-    commands during the later phases of bootstrap, such as objects created
-    while running the <filename>information_schema.sql</filename> script,
-    receive OIDs of 12000 or above.
+    the range 10000&mdash;11999.  The server's OID counter is set to 10000
+    at the start of a bootstrap run, so that any objects created on-the-fly
+    during bootstrap processing also receive OIDs in this range.  (The
+    usual OID assignment mechanism takes care of preventing any conflicts.)
+   </para>
+
+   <para>
+    Objects with OIDs below <symbol>FirstUnpinnedObjectId</symbol> (12000)
+    are considered <quote>pinned</quote>, preventing them from being
+    deleted.  (There are a small number of exceptions, which are
+    hard-wired into <function>IsPinnedObject()</function>.)
+    <application>initdb</application> forces the OID counter up
+    to <symbol>FirstUnpinnedObjectId</symbol> as soon as it's ready to
+    create unpinned objects.  Thus objects created during the later phases
+    of <application>initdb</application>, such as objects created while
+    running the <filename>information_schema.sql</filename> script, will
+    not be pinned, while all objects known
+    to <filename>genbki.pl</filename> will be.
    </para>
 
    <para>
     OIDs assigned during normal database operation are constrained to be
     16384 or higher.  This ensures that the range 10000&mdash;16383 is free
     for OIDs assigned automatically by <filename>genbki.pl</filename> or
-    during bootstrap.  These automatically-assigned OIDs are not considered
-    stable, and may change from one installation to another.
+    during <application>initdb</application>.  These
+    automatically-assigned OIDs are not considered stable, and may change
+    from one installation to another.
    </para>
   </sect2>
 
@@ -655,7 +671,7 @@
      <filename>reformat_dat_file.pl</filename> can be adapted to perform
      many kinds of bulk changes.  Look for its block comments showing where
      one-off code can be inserted.  In the following example, we are going
-     to consolidate two boolean fields in <structname>pg_proc</structname>
+     to consolidate two Boolean fields in <structname>pg_proc</structname>
      into a char field:
 
      <orderedlist>
@@ -820,11 +836,11 @@ $ perl  rewrite_dat_with_prokind.pl  pg_proc.dat
       When <literal>bootstrap</literal> is specified,
       the table will only be created on disk; nothing is entered into
       <structname>pg_class</structname>,
-      <structname>pg_attribute</structname>, etc, for it.  Thus the
+      <structname>pg_attribute</structname>, etc., for it.  Thus the
       table will not be accessible by ordinary SQL operations until
       such entries are made the hard way (with <literal>insert</literal>
       commands).  This option is used for creating
-      <structname>pg_class</structname> etc themselves.
+      <structname>pg_class</structname> etc. themselves.
      </para>
 
      <para>

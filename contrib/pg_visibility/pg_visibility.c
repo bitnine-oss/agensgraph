@@ -3,7 +3,7 @@
  * pg_visibility.c
  *	  display visibility map information and page-level visibility bits
  *
- * Copyright (c) 2016-2021, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2022, PostgreSQL Global Development Group
  *
  *	  contrib/pg_visibility/pg_visibility.c
  *-------------------------------------------------------------------------
@@ -13,6 +13,7 @@
 #include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/visibilitymap.h"
+#include "access/xloginsert.h"
 #include "catalog/pg_type.h"
 #include "catalog/storage_xlog.h"
 #include "funcapi.h"
@@ -391,14 +392,14 @@ pg_truncate_visibility_map(PG_FUNCTION_ARGS)
 	/* Only some relkinds have a visibility map */
 	check_relation_relkind(rel);
 
-	RelationOpenSmgr(rel);
-	rel->rd_smgr->smgr_cached_nblocks[VISIBILITYMAP_FORKNUM] = InvalidBlockNumber;
+	/* Forcibly reset cached file size */
+	RelationGetSmgr(rel)->smgr_cached_nblocks[VISIBILITYMAP_FORKNUM] = InvalidBlockNumber;
 
 	block = visibilitymap_prepare_truncate(rel, 0);
 	if (BlockNumberIsValid(block))
 	{
 		fork = VISIBILITYMAP_FORKNUM;
-		smgrtruncate(rel->rd_smgr, &fork, 1, &block);
+		smgrtruncate(RelationGetSmgr(rel), &fork, 1, &block);
 	}
 
 	if (RelationNeedsWAL(rel))
@@ -776,11 +777,10 @@ tuple_all_visible(HeapTuple tup, TransactionId OldestXmin, Buffer buffer)
 static void
 check_relation_relkind(Relation rel)
 {
-	if (rel->rd_rel->relkind != RELKIND_RELATION &&
-		rel->rd_rel->relkind != RELKIND_MATVIEW &&
-		rel->rd_rel->relkind != RELKIND_TOASTVALUE)
+	if (!RELKIND_HAS_TABLE_AM(rel->rd_rel->relkind))
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("\"%s\" is not a table, materialized view, or TOAST table",
-						RelationGetRelationName(rel))));
+				 errmsg("relation \"%s\" is of wrong relation kind",
+						RelationGetRelationName(rel)),
+				 errdetail_relkind_not_supported(rel->rd_rel->relkind)));
 }

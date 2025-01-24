@@ -2,6 +2,39 @@
 -- TRIGGERS
 --
 
+-- directory paths and dlsuffix are passed to us in environment variables
+\getenv libdir PG_LIBDIR
+\getenv dlsuffix PG_DLSUFFIX
+
+\set autoinclib :libdir '/autoinc' :dlsuffix
+\set refintlib :libdir '/refint' :dlsuffix
+\set regresslib :libdir '/regress' :dlsuffix
+
+CREATE FUNCTION autoinc ()
+	RETURNS trigger
+	AS :'autoinclib'
+	LANGUAGE C;
+
+CREATE FUNCTION check_primary_key ()
+	RETURNS trigger
+	AS :'refintlib'
+	LANGUAGE C;
+
+CREATE FUNCTION check_foreign_key ()
+	RETURNS trigger
+	AS :'refintlib'
+	LANGUAGE C;
+
+CREATE FUNCTION trigger_return_old ()
+        RETURNS trigger
+        AS :'regresslib'
+        LANGUAGE C;
+
+CREATE FUNCTION set_ttdummy (int4)
+        RETURNS int4
+        AS :'regresslib'
+        LANGUAGE C STRICT;
+
 create table pkeys (pkey1 int4 not null, pkey2 text not null);
 create table fkeys (fkey1 int4, fkey2 text, fkey3 int);
 create table fkeys2 (fkey21 int4, fkey22 text, pkey23 int not null);
@@ -1428,6 +1461,11 @@ create trigger trg1 after insert on trigpart3 for each row execute procedure tri
 alter table trigpart attach partition trigpart3 FOR VALUES FROM (2000) to (3000); -- fail
 drop table trigpart3;
 
+-- check display of unrelated triggers
+create trigger samename after delete on trigpart execute function trigger_nothing();
+create trigger samename after delete on trigpart1 execute function trigger_nothing();
+\d trigpart1
+
 drop table trigpart;
 drop function trigger_nothing();
 
@@ -1836,6 +1874,38 @@ select tgrelid::regclass, tgname, tgenabled from pg_trigger
   order by tgrelid::regclass::text;
 drop table parent, child1;
 
+-- Verify that firing state propagates correctly on creation, too
+CREATE TABLE trgfire (i int) PARTITION BY RANGE (i);
+CREATE TABLE trgfire1 PARTITION OF trgfire FOR VALUES FROM (1) TO (10);
+CREATE OR REPLACE FUNCTION tgf() RETURNS trigger LANGUAGE plpgsql
+  AS $$ begin raise exception 'except'; end $$;
+CREATE TRIGGER tg AFTER INSERT ON trgfire FOR EACH ROW EXECUTE FUNCTION tgf();
+INSERT INTO trgfire VALUES (1);
+ALTER TABLE trgfire DISABLE TRIGGER tg;
+INSERT INTO trgfire VALUES (1);
+CREATE TABLE trgfire2 PARTITION OF trgfire FOR VALUES FROM (10) TO (20);
+INSERT INTO trgfire VALUES (11);
+CREATE TABLE trgfire3 (LIKE trgfire);
+ALTER TABLE trgfire ATTACH PARTITION trgfire3 FOR VALUES FROM (20) TO (30);
+INSERT INTO trgfire VALUES (21);
+CREATE TABLE trgfire4 PARTITION OF trgfire FOR VALUES FROM (30) TO (40) PARTITION BY LIST (i);
+CREATE TABLE trgfire4_30 PARTITION OF trgfire4 FOR VALUES IN (30);
+INSERT INTO trgfire VALUES (30);
+CREATE TABLE trgfire5 (LIKE trgfire) PARTITION BY LIST (i);
+CREATE TABLE trgfire5_40 PARTITION OF trgfire5 FOR VALUES IN (40);
+ALTER TABLE trgfire ATTACH PARTITION trgfire5 FOR VALUES FROM (40) TO (50);
+INSERT INTO trgfire VALUES (40);
+SELECT tgrelid::regclass, tgenabled FROM pg_trigger
+  WHERE tgrelid::regclass IN (SELECT oid from pg_class where relname LIKE 'trgfire%')
+  ORDER BY tgrelid::regclass::text;
+ALTER TABLE trgfire ENABLE TRIGGER tg;
+INSERT INTO trgfire VALUES (1);
+INSERT INTO trgfire VALUES (11);
+INSERT INTO trgfire VALUES (21);
+INSERT INTO trgfire VALUES (30);
+INSERT INTO trgfire VALUES (40);
+DROP TABLE trgfire;
+DROP FUNCTION tgf();
 
 --
 -- Test the interaction between transition tables and both kinds of
@@ -2369,6 +2439,53 @@ delete from self_ref where a = 1;
 
 drop table self_ref;
 
+--
+-- test transition tables with MERGE
+--
+create table merge_target_table (a int primary key, b text);
+create trigger merge_target_table_insert_trig
+  after insert on merge_target_table referencing new table as new_table
+  for each statement execute procedure dump_insert();
+create trigger merge_target_table_update_trig
+  after update on merge_target_table referencing old table as old_table new table as new_table
+  for each statement execute procedure dump_update();
+create trigger merge_target_table_delete_trig
+  after delete on merge_target_table referencing old table as old_table
+  for each statement execute procedure dump_delete();
+
+create table merge_source_table (a int, b text);
+insert into merge_source_table
+  values (1, 'initial1'), (2, 'initial2'),
+		 (3, 'initial3'), (4, 'initial4');
+
+merge into merge_target_table t
+using merge_source_table s
+on t.a = s.a
+when not matched then
+  insert values (a, b);
+
+merge into merge_target_table t
+using merge_source_table s
+on t.a = s.a
+when matched and s.a <= 2 then
+	update set b = t.b || ' updated by merge'
+when matched and s.a > 2 then
+	delete
+when not matched then
+  insert values (a, b);
+
+merge into merge_target_table t
+using merge_source_table s
+on t.a = s.a
+when matched and s.a <= 2 then
+	update set b = t.b || ' updated again by merge'
+when matched and s.a > 2 then
+	delete
+when not matched then
+  insert values (a, b);
+
+drop table merge_source_table, merge_target_table;
+
 -- cleanup
 drop function dump_insert();
 drop function dump_update();
@@ -2470,6 +2587,11 @@ create trigger aft_row after insert or update on trigger_parted
 create table trigger_parted_p1 partition of trigger_parted for values in (1)
   partition by list (a);
 create table trigger_parted_p1_1 partition of trigger_parted_p1 for values in (1);
+create table trigger_parted_p2 partition of trigger_parted for values in (2)
+  partition by list (a);
+create table trigger_parted_p2_2 partition of trigger_parted_p2 for values in (2);
+alter table only trigger_parted_p2 disable trigger aft_row;
+alter table trigger_parted_p2_2 enable always trigger aft_row;
 
 -- verify transition table conversion slot's lifetime
 -- https://postgr.es/m/39a71864-b120-5a5c-8cc5-c632b6f16761@amazon.com
@@ -2535,3 +2657,50 @@ for each statement execute function trigger_function1();
 delete from convslot_test_parent;
 
 drop table convslot_test_child, convslot_test_parent;
+
+-- Test trigger renaming on partitioned tables
+create table grandparent (id int, primary key (id)) partition by range (id);
+create table middle partition of grandparent for values from (1) to (10)
+partition by range (id);
+create table chi partition of middle for values from (1) to (5);
+create table cho partition of middle for values from (6) to (10);
+create function f () returns trigger as
+$$ begin return new; end; $$
+language plpgsql;
+create trigger a after insert on grandparent
+for each row execute procedure f();
+
+alter trigger a on grandparent rename to b;
+select tgrelid::regclass, tgname,
+(select tgname from pg_trigger tr where tr.oid = pg_trigger.tgparentid) parent_tgname
+from pg_trigger where tgrelid in (select relid from pg_partition_tree('grandparent'))
+order by tgname, tgrelid::regclass::text COLLATE "C";
+alter trigger a on only grandparent rename to b;	-- ONLY not supported
+alter trigger b on middle rename to c;	-- can't rename trigger on partition
+create trigger c after insert on middle
+for each row execute procedure f();
+alter trigger b on grandparent rename to c;
+
+-- Rename cascading does not affect statement triggers
+create trigger p after insert on grandparent for each statement execute function f();
+create trigger p after insert on middle for each statement execute function f();
+alter trigger p on grandparent rename to q;
+select tgrelid::regclass, tgname,
+(select tgname from pg_trigger tr where tr.oid = pg_trigger.tgparentid) parent_tgname
+from pg_trigger where tgrelid in (select relid from pg_partition_tree('grandparent'))
+order by tgname, tgrelid::regclass::text COLLATE "C";
+
+drop table grandparent;
+
+-- Trigger renaming does not recurse on legacy inheritance
+create table parent (a int);
+create table child () inherits (parent);
+create trigger parenttrig after insert on parent
+for each row execute procedure f();
+create trigger parenttrig after insert on child
+for each row execute procedure f();
+alter trigger parenttrig on parent rename to anothertrig;
+\d+ child
+
+drop table parent, child;
+drop function f();

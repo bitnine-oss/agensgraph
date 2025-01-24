@@ -3,7 +3,7 @@
 --
 
 --
--- Tests for SQLVAlueFunction
+-- Tests for SQLValueFunction
 --
 
 
@@ -39,32 +39,56 @@ RESET search_path;
 
 
 --
--- Tests for BETWEEN
+-- Test parsing of a no-op cast to a type with unspecified typmod
 --
+begin;
 
-explain (costs off)
-select count(*) from date_tbl
-  where f1 between '1997-01-01' and '1998-01-01';
-select count(*) from date_tbl
-  where f1 between '1997-01-01' and '1998-01-01';
+create table numeric_tbl (f1 numeric(18,3), f2 numeric);
 
-explain (costs off)
-select count(*) from date_tbl
-  where f1 not between '1997-01-01' and '1998-01-01';
-select count(*) from date_tbl
-  where f1 not between '1997-01-01' and '1998-01-01';
+create view numeric_view as
+  select
+    f1, f1::numeric(16,4) as f1164, f1::numeric as f1n,
+    f2, f2::numeric(16,4) as f2164, f2::numeric as f2n
+  from numeric_tbl;
 
-explain (costs off)
-select count(*) from date_tbl
-  where f1 between symmetric '1997-01-01' and '1998-01-01';
-select count(*) from date_tbl
-  where f1 between symmetric '1997-01-01' and '1998-01-01';
+\d+ numeric_view
 
-explain (costs off)
-select count(*) from date_tbl
-  where f1 not between symmetric '1997-01-01' and '1998-01-01';
-select count(*) from date_tbl
-  where f1 not between symmetric '1997-01-01' and '1998-01-01';
+explain (verbose, costs off) select * from numeric_view;
+
+-- bpchar, lacking planner support for its length coercion function,
+-- could behave differently
+
+create table bpchar_tbl (f1 character(16) unique, f2 bpchar);
+
+create view bpchar_view as
+  select
+    f1, f1::character(14) as f114, f1::bpchar as f1n,
+    f2, f2::character(14) as f214, f2::bpchar as f2n
+  from bpchar_tbl;
+
+\d+ bpchar_view
+
+explain (verbose, costs off) select * from bpchar_view
+  where f1::bpchar = 'foo';
+
+rollback;
+
+
+--
+-- Ordinarily, IN/NOT IN can be converted to a ScalarArrayOpExpr
+-- with a suitably-chosen array type.
+--
+explain (verbose, costs off)
+select random() IN (1, 4, 8.0);
+explain (verbose, costs off)
+select random()::int IN (1, 4, 8.0);
+-- However, if there's not a common supertype for the IN elements,
+-- we should instead try to produce "x = v1 OR x = v2 OR ...".
+-- In most cases that'll fail for lack of all the requisite = operators,
+-- but it can succeed sometimes.  So this should complain about lack of
+-- an = operator, not about cast failure.
+select '(0,0)'::point in ('(0,0,0,0)'::box, point(0,0));
+
 
 --
 -- Tests for ScalarArrayOpExpr with a hashfn
@@ -93,6 +117,15 @@ select return_int_input(1) in (10, 9, 2, 8, 3, 7, 4, 6, 5, 1, null);
 select return_int_input(null::int) in (10, 9, 2, 8, 3, 7, 4, 6, 5, 1);
 select return_int_input(null::int) in (10, 9, 2, 8, 3, 7, 4, 6, 5, null);
 select return_text_input('a') in ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j');
+-- NOT IN
+select return_int_input(1) not in (10, 9, 2, 8, 3, 7, 4, 6, 5, 1);
+select return_int_input(1) not in (10, 9, 2, 8, 3, 7, 4, 6, 5, 0);
+select return_int_input(1) not in (10, 9, 2, 8, 3, 7, 4, 6, 5, 2, null);
+select return_int_input(1) not in (10, 9, 2, 8, 3, 7, 4, 6, 5, 1, null);
+select return_int_input(1) not in (null, null, null, null, null, null, null, null, null, null, null);
+select return_int_input(null::int) not in (10, 9, 2, 8, 3, 7, 4, 6, 5, 1);
+select return_int_input(null::int) not in (10, 9, 2, 8, 3, 7, 4, 6, 5, null);
+select return_text_input('a') not in ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j');
 
 rollback;
 
@@ -124,12 +157,29 @@ begin
 end;
 $$ language plpgsql immutable;
 
+create function myintne(myint, myint) returns bool as $$
+begin
+  return not myinteq($1, $2);
+end;
+$$ language plpgsql immutable;
+
 create operator = (
   leftarg    = myint,
   rightarg   = myint,
   commutator = =,
   negator    = <>,
   procedure  = myinteq,
+  restrict   = eqsel,
+  join       = eqjoinsel,
+  merges
+);
+
+create operator <> (
+  leftarg    = myint,
+  rightarg   = myint,
+  commutator = <>,
+  negator    = =,
+  procedure  = myintne,
   restrict   = eqsel,
   join       = eqjoinsel,
   merges
@@ -145,8 +195,12 @@ insert into inttest values(1::myint),(null);
 
 -- try an array with enough elements to cause hashing
 select * from inttest where a in (1::myint,2::myint,3::myint,4::myint,5::myint,6::myint,7::myint,8::myint,9::myint, null);
+select * from inttest where a not in (1::myint,2::myint,3::myint,4::myint,5::myint,6::myint,7::myint,8::myint,9::myint, null);
+select * from inttest where a not in (0::myint,2::myint,3::myint,4::myint,5::myint,6::myint,7::myint,8::myint,9::myint, null);
 -- ensure the result matched with the non-hashed version.  We simply remove
 -- some array elements so that we don't reach the hashing threshold.
 select * from inttest where a in (1::myint,2::myint,3::myint,4::myint,5::myint, null);
+select * from inttest where a not in (1::myint,2::myint,3::myint,4::myint,5::myint, null);
+select * from inttest where a not in (0::myint,2::myint,3::myint,4::myint,5::myint, null);
 
 rollback;

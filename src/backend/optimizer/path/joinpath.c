@@ -3,7 +3,7 @@
  * joinpath.c
  *	  Routines to find all possible paths for processing a set of joins
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -179,7 +179,7 @@ add_paths_to_joinrel(PlannerInfo *root,
 		case JOIN_ANTI:
 
 			/*
-			 * XXX it may be worth proving this to allow a ResultCache to be
+			 * XXX it may be worth proving this to allow a Memoize to be
 			 * considered for Nested Loop Semi/Anti Joins.
 			 */
 			extra.inner_unique = false; /* well, unproven */
@@ -460,19 +460,21 @@ allow_star_schema_join(PlannerInfo *root,
  *		Returns true the hashing is possible, otherwise return false.
  *
  * Additionally we also collect the outer exprs and the hash operators for
- * each parameter to innerrel.  These set in 'param_exprs' and 'operators'
- * when we return true.
+ * each parameter to innerrel.  These set in 'param_exprs', 'operators' and
+ * 'binary_mode' when we return true.
  */
 static bool
 paraminfo_get_equal_hashops(PlannerInfo *root, ParamPathInfo *param_info,
 							RelOptInfo *outerrel, RelOptInfo *innerrel,
-							List **param_exprs, List **operators)
+							List **param_exprs, List **operators,
+							bool *binary_mode)
 
 {
 	ListCell   *lc;
 
 	*param_exprs = NIL;
 	*operators = NIL;
+	*binary_mode = false;
 
 	if (param_info != NULL)
 	{
@@ -483,9 +485,15 @@ paraminfo_get_equal_hashops(PlannerInfo *root, ParamPathInfo *param_info,
 			RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
 			OpExpr	   *opexpr;
 			Node	   *expr;
+			Oid			hasheqoperator;
 
-			/* can't use result cache without a valid hash equals operator */
-			if (!OidIsValid(rinfo->hasheqoperator) ||
+			opexpr = (OpExpr *) rinfo->clause;
+
+			/*
+			 * Bail if the rinfo is not compatible.  We need a join OpExpr
+			 * with 2 args.
+			 */
+			if (!IsA(opexpr, OpExpr) || list_length(opexpr->args) != 2 ||
 				!clause_sides_match_join(rinfo, outerrel, innerrel))
 			{
 				list_free(*operators);
@@ -493,18 +501,41 @@ paraminfo_get_equal_hashops(PlannerInfo *root, ParamPathInfo *param_info,
 				return false;
 			}
 
-			/*
-			 * We already checked that this is an OpExpr with 2 args when
-			 * setting hasheqoperator.
-			 */
-			opexpr = (OpExpr *) rinfo->clause;
 			if (rinfo->outer_is_left)
+			{
 				expr = (Node *) linitial(opexpr->args);
+				hasheqoperator = rinfo->left_hasheqoperator;
+			}
 			else
+			{
 				expr = (Node *) lsecond(opexpr->args);
+				hasheqoperator = rinfo->right_hasheqoperator;
+			}
 
-			*operators = lappend_oid(*operators, rinfo->hasheqoperator);
+			/* can't do memoize if we can't hash the outer type */
+			if (!OidIsValid(hasheqoperator))
+			{
+				list_free(*operators);
+				list_free(*param_exprs);
+				return false;
+			}
+
+			*operators = lappend_oid(*operators, hasheqoperator);
 			*param_exprs = lappend(*param_exprs, expr);
+
+			/*
+			 * When the join operator is not hashable then it's possible that
+			 * the operator will be able to distinguish something that the
+			 * hash equality operator could not. For example with floating
+			 * point types -0.0 and +0.0 are classed as equal by the hash
+			 * function and equality function, but some other operator may be
+			 * able to tell those values apart.  This means that we must put
+			 * memoize into binary comparison mode so that it does bit-by-bit
+			 * comparisons rather than a "logical" comparison as it would
+			 * using the hash equality operator.
+			 */
+			if (!OidIsValid(rinfo->hashjoinoperator))
+				*binary_mode = true;
 		}
 	}
 
@@ -525,7 +556,7 @@ paraminfo_get_equal_hashops(PlannerInfo *root, ParamPathInfo *param_info,
 		typentry = lookup_type_cache(exprType(expr),
 									 TYPECACHE_HASH_PROC | TYPECACHE_EQ_OPR);
 
-		/* can't use result cache without a valid hash equals operator */
+		/* can't use a memoize node without a valid hash equals operator */
 		if (!OidIsValid(typentry->hash_proc) || !OidIsValid(typentry->eq_opr))
 		{
 			list_free(*operators);
@@ -535,29 +566,41 @@ paraminfo_get_equal_hashops(PlannerInfo *root, ParamPathInfo *param_info,
 
 		*operators = lappend_oid(*operators, typentry->eq_opr);
 		*param_exprs = lappend(*param_exprs, expr);
+
+		/*
+		 * We must go into binary mode as we don't have too much of an idea of
+		 * how these lateral Vars are being used.  See comment above when we
+		 * set *binary_mode for the non-lateral Var case. This could be
+		 * relaxed a bit if we had the RestrictInfos and knew the operators
+		 * being used, however for cases like Vars that are arguments to
+		 * functions we must operate in binary mode as we don't have
+		 * visibility into what the function is doing with the Vars.
+		 */
+		*binary_mode = true;
 	}
 
-	/* We're okay to use result cache */
+	/* We're okay to use memoize */
 	return true;
 }
 
 /*
- * get_resultcache_path
- *		If possible, make and return a Result Cache path atop of 'inner_path'.
+ * get_memoize_path
+ *		If possible, make and return a Memoize path atop of 'inner_path'.
  *		Otherwise return NULL.
  */
 static Path *
-get_resultcache_path(PlannerInfo *root, RelOptInfo *innerrel,
-					 RelOptInfo *outerrel, Path *inner_path,
-					 Path *outer_path, JoinType jointype,
-					 JoinPathExtraData *extra)
+get_memoize_path(PlannerInfo *root, RelOptInfo *innerrel,
+				 RelOptInfo *outerrel, Path *inner_path,
+				 Path *outer_path, JoinType jointype,
+				 JoinPathExtraData *extra)
 {
 	List	   *param_exprs;
 	List	   *hash_operators;
 	ListCell   *lc;
+	bool		binary_mode;
 
 	/* Obviously not if it's disabled */
-	if (!enable_resultcache)
+	if (!enable_memoize)
 		return NULL;
 
 	/*
@@ -570,7 +613,7 @@ get_resultcache_path(PlannerInfo *root, RelOptInfo *innerrel,
 		return NULL;
 
 	/*
-	 * We can only have a result cache when there's some kind of cache key,
+	 * We can only have a memoize node when there's some kind of cache key,
 	 * either parameterized path clauses or lateral Vars.  No cache key sounds
 	 * more like something a Materialize node might be more useful for.
 	 */
@@ -582,8 +625,8 @@ get_resultcache_path(PlannerInfo *root, RelOptInfo *innerrel,
 	/*
 	 * Currently we don't do this for SEMI and ANTI joins unless they're
 	 * marked as inner_unique.  This is because nested loop SEMI/ANTI joins
-	 * don't scan the inner node to completion, which will mean result cache
-	 * cannot mark the cache entry as complete.
+	 * don't scan the inner node to completion, which will mean memoize cannot
+	 * mark the cache entry as complete.
 	 *
 	 * XXX Currently we don't attempt to mark SEMI/ANTI joins as inner_unique
 	 * = true.  Should we?  See add_paths_to_joinrel()
@@ -593,8 +636,8 @@ get_resultcache_path(PlannerInfo *root, RelOptInfo *innerrel,
 		return NULL;
 
 	/*
-	 * Result Cache normally marks cache entries as complete when it runs out
-	 * of tuples to read from its subplan.  However, with unique joins, Nested
+	 * Memoize normally marks cache entries as complete when it runs out of
+	 * tuples to read from its subplan.  However, with unique joins, Nested
 	 * Loop will skip to the next outer tuple after finding the first matching
 	 * inner tuple.  This means that we may not read the inner side of the
 	 * join to completion which leaves no opportunity to mark the cache entry
@@ -605,11 +648,11 @@ get_resultcache_path(PlannerInfo *root, RelOptInfo *innerrel,
 	 * condition, we can't be sure which part of it causes the join to be
 	 * unique.  This means there are no guarantees that only 1 tuple will be
 	 * read.  We cannot mark the cache entry as complete after reading the
-	 * first tuple without that guarantee.  This means the scope of Result
-	 * Cache's usefulness is limited to only outer rows that have no join
+	 * first tuple without that guarantee.  This means the scope of Memoize
+	 * node's usefulness is limited to only outer rows that have no join
 	 * partner as this is the only case where Nested Loop would exhaust the
 	 * inner scan of a unique join.  Since the scope is limited to that, we
-	 * just don't bother making a result cache path in this case.
+	 * just don't bother making a memoize path in this case.
 	 *
 	 * Lateral vars needn't be considered here as they're not considered when
 	 * determining if the join is unique.
@@ -625,7 +668,7 @@ get_resultcache_path(PlannerInfo *root, RelOptInfo *innerrel,
 		return NULL;
 
 	/*
-	 * We can't use a result cache if there are volatile functions in the
+	 * We can't use a memoize node if there are volatile functions in the
 	 * inner rel's target list or restrict list.  A cache hit could reduce the
 	 * number of calls to these functions.
 	 */
@@ -646,15 +689,17 @@ get_resultcache_path(PlannerInfo *root, RelOptInfo *innerrel,
 									outerrel,
 									innerrel,
 									&param_exprs,
-									&hash_operators))
+									&hash_operators,
+									&binary_mode))
 	{
-		return (Path *) create_resultcache_path(root,
-												innerrel,
-												inner_path,
-												param_exprs,
-												hash_operators,
-												extra->inner_unique,
-												outer_path->parent->rows);
+		return (Path *) create_memoize_path(root,
+											innerrel,
+											inner_path,
+											param_exprs,
+											hash_operators,
+											extra->inner_unique,
+											binary_mode,
+											outer_path->rows);
 	}
 
 	return NULL;
@@ -1323,7 +1368,7 @@ sort_inner_and_outer(PlannerInfo *root,
 
 	foreach(l, all_pathkeys)
 	{
-		List	   *front_pathkey = (List *) lfirst(l);
+		PathKey    *front_pathkey = (PathKey *) lfirst(l);
 		List	   *cur_mergeclauses;
 		List	   *outerkeys;
 		List	   *innerkeys;
@@ -1800,7 +1845,7 @@ match_unsorted_outer(PlannerInfo *root,
 			foreach(lc2, innerrel->cheapest_parameterized_paths)
 			{
 				Path	   *innerpath = (Path *) lfirst(lc2);
-				Path	   *rcpath;
+				Path	   *mpath;
 
 				try_nestloop_path(root,
 								  joinrel,
@@ -1811,17 +1856,17 @@ match_unsorted_outer(PlannerInfo *root,
 								  extra);
 
 				/*
-				 * Try generating a result cache path and see if that makes
-				 * the nested loop any cheaper.
+				 * Try generating a memoize path and see if that makes the
+				 * nested loop any cheaper.
 				 */
-				rcpath = get_resultcache_path(root, innerrel, outerrel,
-											  innerpath, outerpath, jointype,
-											  extra);
-				if (rcpath != NULL)
+				mpath = get_memoize_path(root, innerrel, outerrel,
+										 innerpath, outerpath, jointype,
+										 extra);
+				if (mpath != NULL)
 					try_nestloop_path(root,
 									  joinrel,
 									  outerpath,
-									  rcpath,
+									  mpath,
 									  merge_pathkeys,
 									  jointype,
 									  extra);
@@ -1979,7 +2024,7 @@ consider_parallel_nestloop(PlannerInfo *root,
 		foreach(lc2, innerrel->cheapest_parameterized_paths)
 		{
 			Path	   *innerpath = (Path *) lfirst(lc2);
-			Path	   *rcpath;
+			Path	   *mpath;
 
 			/* Can't join to an inner path that is not parallel-safe */
 			if (!innerpath->parallel_safe)
@@ -2006,14 +2051,14 @@ consider_parallel_nestloop(PlannerInfo *root,
 									  pathkeys, jointype, extra);
 
 			/*
-			 * Try generating a result cache path and see if that makes the
-			 * nested loop any cheaper.
+			 * Try generating a memoize path and see if that makes the nested
+			 * loop any cheaper.
 			 */
-			rcpath = get_resultcache_path(root, innerrel, outerrel,
-										  innerpath, outerpath, jointype,
-										  extra);
-			if (rcpath != NULL)
-				try_partial_nestloop_path(root, joinrel, outerpath, rcpath,
+			mpath = get_memoize_path(root, innerrel, outerrel,
+									 innerpath, outerpath, jointype,
+									 extra);
+			if (mpath != NULL)
+				try_partial_nestloop_path(root, joinrel, outerpath, mpath,
 										  pathkeys, jointype, extra);
 		}
 	}

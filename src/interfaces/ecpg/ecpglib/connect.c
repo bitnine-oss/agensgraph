@@ -40,6 +40,8 @@ ecpg_get_connection_nr(const char *connection_name)
 	if ((connection_name == NULL) || (strcmp(connection_name, "CURRENT") == 0))
 	{
 #ifdef ENABLE_THREAD_SAFETY
+		ecpg_pthreads_init();	/* ensure actual_connection_key is valid */
+
 		ret = pthread_getspecific(actual_connection_key);
 
 		/*
@@ -47,8 +49,7 @@ ecpg_get_connection_nr(const char *connection_name)
 		 * connection and hope the user knows what they're doing (i.e. using
 		 * their own mutex to protect that connection from concurrent accesses
 		 */
-		/* if !ret then  we  got the connection from TSD */
-		if (NULL == ret)
+		if (ret == NULL)
 			/* no TSD connection, going for global */
 			ret = actual_connection;
 #else
@@ -78,6 +79,8 @@ ecpg_get_connection(const char *connection_name)
 	if ((connection_name == NULL) || (strcmp(connection_name, "CURRENT") == 0))
 	{
 #ifdef ENABLE_THREAD_SAFETY
+		ecpg_pthreads_init();	/* ensure actual_connection_key is valid */
+
 		ret = pthread_getspecific(actual_connection_key);
 
 		/*
@@ -85,8 +88,7 @@ ecpg_get_connection(const char *connection_name)
 		 * connection and hope the user knows what they're doing (i.e. using
 		 * their own mutex to protect that connection from concurrent accesses
 		 */
-		/* if !ret then  we  got the connection from TSD */
-		if (NULL == ret)
+		if (ret == NULL)
 			/* no TSD connection here either, using global */
 			ret = actual_connection;
 #else
@@ -315,7 +317,6 @@ ECPGconnect(int lineno, int c, const char *name, const char *user, const char *p
 			ecpg_free(dbname);
 			dbname = ecpg_strdup(envname, lineno);
 		}
-
 	}
 
 	if (dbname == NULL && connection_name == NULL)
@@ -458,6 +459,47 @@ ECPGconnect(int lineno, int c, const char *name, const char *user, const char *p
 	else
 		realname = NULL;
 
+	/*
+	 * Count options for the allocation done below (this may produce an
+	 * overestimate, it's ok).
+	 */
+	if (options)
+		for (i = 0; options[i]; i++)
+			if (options[i] == '=')
+				connect_params++;
+
+	if (user && strlen(user) > 0)
+		connect_params++;
+	if (passwd && strlen(passwd) > 0)
+		connect_params++;
+
+	/*
+	 * Allocate enough space for all connection parameters.  These allocations
+	 * are done before manipulating the list of connections to ease the error
+	 * handling on failure.
+	 */
+	conn_keywords = (const char **) ecpg_alloc((connect_params + 1) * sizeof(char *), lineno);
+	conn_values = (const char **) ecpg_alloc(connect_params * sizeof(char *), lineno);
+	if (conn_keywords == NULL || conn_values == NULL)
+	{
+		if (host)
+			ecpg_free(host);
+		if (port)
+			ecpg_free(port);
+		if (options)
+			ecpg_free(options);
+		if (realname)
+			ecpg_free(realname);
+		if (dbname)
+			ecpg_free(dbname);
+		if (conn_keywords)
+			ecpg_free(conn_keywords);
+		if (conn_values)
+			ecpg_free(conn_values);
+		free(this);
+		return false;
+	}
+
 	/* add connection to our list */
 #ifdef ENABLE_THREAD_SAFETY
 	pthread_mutex_lock(&connections_mutex);
@@ -487,40 +529,6 @@ ECPGconnect(int lineno, int c, const char *name, const char *user, const char *p
 			 port ? (ecpg_internal_regression_mode ? "<REGRESSION_PORT>" : port) : "<DEFAULT>",
 			 options ? "with options " : "", options ? options : "",
 			 (user && strlen(user) > 0) ? "for user " : "", user ? user : "");
-
-	/* count options (this may produce an overestimate, it's ok) */
-	if (options)
-		for (i = 0; options[i]; i++)
-			if (options[i] == '=')
-				connect_params++;
-
-	if (user && strlen(user) > 0)
-		connect_params++;
-	if (passwd && strlen(passwd) > 0)
-		connect_params++;
-
-	/* allocate enough space for all connection parameters */
-	conn_keywords = (const char **) ecpg_alloc((connect_params + 1) * sizeof(char *), lineno);
-	conn_values = (const char **) ecpg_alloc(connect_params * sizeof(char *), lineno);
-	if (conn_keywords == NULL || conn_values == NULL)
-	{
-		if (host)
-			ecpg_free(host);
-		if (port)
-			ecpg_free(port);
-		if (options)
-			ecpg_free(options);
-		if (realname)
-			ecpg_free(realname);
-		if (dbname)
-			ecpg_free(dbname);
-		if (conn_keywords)
-			ecpg_free(conn_keywords);
-		if (conn_values)
-			ecpg_free(conn_values);
-		free(this);
-		return false;
-	}
 
 	i = 0;
 	if (realname)

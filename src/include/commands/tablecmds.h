@@ -4,7 +4,7 @@
  *	  prototypes for tablecmds.c.
  *
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/tablecmds.h
@@ -77,6 +77,8 @@ extern ObjectAddress RenameRelation(RenameStmt *stmt);
 extern void RenameRelationInternal(Oid myrelid,
 								   const char *newrelname, bool is_internal,
 								   bool is_index);
+
+extern void ResetRelRewrite(Oid myrelid);
 
 extern void find_composite_type_dependencies(Oid typeOid,
 											 Relation origRelation,

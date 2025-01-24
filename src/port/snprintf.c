@@ -2,7 +2,7 @@
  * Copyright (c) 1983, 1995, 1996 Eric P. Allman
  * Copyright (c) 1988, 1993
  *	The Regents of the University of California.  All rights reserved.
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -320,7 +320,7 @@ static bool find_arguments(const char *format, va_list args,
 						   PrintfArgValue *argvalues);
 static void fmtstr(const char *value, int leftjust, int minlen, int maxwidth,
 				   int pointflag, PrintfTarget *target);
-static void fmtptr(void *value, PrintfTarget *target);
+static void fmtptr(const void *value, PrintfTarget *target);
 static void fmtint(long long value, char type, int forcesign,
 				   int leftjust, int minlen, int zpad, int precision, int pointflag,
 				   PrintfTarget *target);
@@ -394,7 +394,7 @@ dopr(PrintfTarget *target, const char *format, va_list args)
 	int			cvalue;
 	long long	numvalue;
 	double		fvalue;
-	char	   *strvalue;
+	const char *strvalue;
 	PrintfArgValue argvalues[PG_NL_ARGMAX + 1];
 
 	/*
@@ -439,7 +439,8 @@ dopr(PrintfTarget *target, const char *format, va_list args)
 		{
 			format++;
 			strvalue = va_arg(args, char *);
-			Assert(strvalue != NULL);
+			if (strvalue == NULL)
+				strvalue = "(null)";
 			dostr(strvalue, strlen(strvalue), target);
 			if (target->failed)
 				break;
@@ -670,8 +671,9 @@ nextch2:
 					strvalue = argvalues[fmtpos].cptr;
 				else
 					strvalue = va_arg(args, char *);
-				/* Whine if someone tries to print a NULL string */
-				Assert(strvalue != NULL);
+				/* If string is NULL, silently substitute "(null)" */
+				if (strvalue == NULL)
+					strvalue = "(null)";
 				fmtstr(strvalue, leftjust, fieldwidth, precision, pointflag,
 					   target);
 				break;
@@ -681,7 +683,7 @@ nextch2:
 					strvalue = argvalues[fmtpos].cptr;
 				else
 					strvalue = va_arg(args, char *);
-				fmtptr((void *) strvalue, target);
+				fmtptr((const void *) strvalue, target);
 				break;
 			case 'e':
 			case 'E':
@@ -995,7 +997,7 @@ fmtstr(const char *value, int leftjust, int minlen, int maxwidth,
 }
 
 static void
-fmtptr(void *value, PrintfTarget *target)
+fmtptr(const void *value, PrintfTarget *target)
 {
 	int			vallen;
 	char		convert[64];
@@ -1013,8 +1015,8 @@ fmtint(long long value, char type, int forcesign, int leftjust,
 	   int minlen, int zpad, int precision, int pointflag,
 	   PrintfTarget *target)
 {
-	unsigned long long base;
 	unsigned long long uvalue;
+	int			base;
 	int			dosign;
 	const char *cvt = "0123456789abcdef";
 	int			signvalue = 0;
@@ -1073,12 +1075,36 @@ fmtint(long long value, char type, int forcesign, int leftjust,
 		vallen = 0;
 	else
 	{
-		/* make integer string */
-		do
+		/*
+		 * Convert integer to string.  We special-case each of the possible
+		 * base values so as to avoid general-purpose divisions.  On most
+		 * machines, division by a fixed constant can be done much more
+		 * cheaply than a general divide.
+		 */
+		if (base == 10)
 		{
-			convert[sizeof(convert) - (++vallen)] = cvt[uvalue % base];
-			uvalue = uvalue / base;
-		} while (uvalue);
+			do
+			{
+				convert[sizeof(convert) - (++vallen)] = cvt[uvalue % 10];
+				uvalue = uvalue / 10;
+			} while (uvalue);
+		}
+		else if (base == 16)
+		{
+			do
+			{
+				convert[sizeof(convert) - (++vallen)] = cvt[uvalue % 16];
+				uvalue = uvalue / 16;
+			} while (uvalue);
+		}
+		else					/* base == 8 */
+		{
+			do
+			{
+				convert[sizeof(convert) - (++vallen)] = cvt[uvalue % 8];
+				uvalue = uvalue / 8;
+			} while (uvalue);
+		}
 	}
 
 	zeropad = Max(0, precision - vallen);

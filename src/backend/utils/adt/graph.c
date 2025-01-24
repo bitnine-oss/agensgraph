@@ -126,7 +126,7 @@ graphid_in(PG_FUNCTION_ARGS)
 	labid = (uint16) labid_ul;
 
 	next = endptr + 1;
-	locid = pg_strtouint64(next, &endptr, 10);
+	locid = strtoull(next, &endptr, 10);
 	if (errno != 0 || endptr == next || *endptr != '\0')
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),

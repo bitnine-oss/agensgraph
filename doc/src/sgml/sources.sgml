@@ -13,9 +13,9 @@
    </para>
 
    <para>
-    Layout rules (brace positioning, etc) follow BSD conventions.  In
+    Layout rules (brace positioning, etc.) follow BSD conventions.  In
     particular, curly braces for the controlled blocks of <literal>if</literal>,
-    <literal>while</literal>, <literal>switch</literal>, etc go on their own lines.
+    <literal>while</literal>, <literal>switch</literal>, etc. go on their own lines.
    </para>
 
    <para>
@@ -62,11 +62,17 @@
    </para>
 
    <para>
-    The <filename>src/tools</filename> directory contains sample settings
-    files that can be used with the <productname>emacs</productname>,
+    The <filename>src/tools/editors</filename> directory contains sample settings
+    files that can be used with the <productname>Emacs</productname>,
     <productname>xemacs</productname> or <productname>vim</productname>
     editors to help ensure that they format code according to these
     conventions.
+   </para>
+
+   <para>
+    If you'd like to run <application>pgindent</application> locally
+    to help make your code match project style, see
+    the <filename>src/tools/pgindent</filename> directory.
    </para>
 
    <para>
@@ -825,6 +831,16 @@ BETTER: unrecognized node type: 42
    <para>
     Avoid contractions, like <quote>can't</quote>;  use
     <quote>cannot</quote> instead.
+   </para>
+  </formalpara>
+
+  <formalpara>
+    <title>Non-negative</title>
+   <para>
+    Avoid <quote>non-negative</quote> as it is ambiguous
+    about whether it accepts zero.  It's better to use
+    <quote>greater than zero</quote> or
+    <quote>greater than or equal to zero</quote>.
    </para>
   </formalpara>
 

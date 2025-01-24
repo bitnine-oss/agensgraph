@@ -4,11 +4,11 @@
  *	  PostgreSQL logical replay/reorder buffer management
  *
  *
- * Copyright (c) 2012-2021, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2022, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
- *	  src/backend/replication/reorderbuffer.c
+ *	  src/backend/replication/logical/reorderbuffer.c
  *
  * NOTES
  *	  This module gets handed individual pieces of transactions in the order
@@ -182,9 +182,10 @@ typedef struct ReorderBufferDiskChange
 ( \
 	((action) == REORDER_BUFFER_CHANGE_INTERNAL_SPEC_INSERT) \
 )
-#define IsSpecConfirm(action) \
+#define IsSpecConfirmOrAbort(action) \
 ( \
-	((action) == REORDER_BUFFER_CHANGE_INTERNAL_SPEC_CONFIRM) \
+	(((action) == REORDER_BUFFER_CHANGE_INTERNAL_SPEC_CONFIRM) || \
+	((action) == REORDER_BUFFER_CHANGE_INTERNAL_SPEC_ABORT)) \
 )
 #define IsInsertOrUpdate(action) \
 ( \
@@ -289,7 +290,8 @@ static void ReorderBufferToastAppendChunk(ReorderBuffer *rb, ReorderBufferTXN *t
  */
 static Size ReorderBufferChangeSize(ReorderBufferChange *change);
 static void ReorderBufferChangeMemoryUpdate(ReorderBuffer *rb,
-											ReorderBufferChange *change, bool addition);
+											ReorderBufferChange *change,
+											bool addition, Size sz);
 
 /*
  * Allocate a new ReorderBuffer and clean out any old serialized state from
@@ -326,8 +328,15 @@ ReorderBufferAllocate(void)
 											SLAB_DEFAULT_BLOCK_SIZE,
 											sizeof(ReorderBufferTXN));
 
+	/*
+	 * XXX the allocation sizes used below pre-date generation context's block
+	 * growing code.  These values should likely be benchmarked and set to
+	 * more suitable values.
+	 */
 	buffer->tup_context = GenerationContextCreate(new_ctx,
 												  "Tuples",
+												  SLAB_LARGE_BLOCK_SIZE,
+												  SLAB_LARGE_BLOCK_SIZE,
 												  SLAB_LARGE_BLOCK_SIZE);
 
 	hash_ctl.keysize = sizeof(TransactionId);
@@ -450,7 +459,7 @@ ReorderBufferReturnTXN(ReorderBuffer *rb, ReorderBufferTXN *txn)
 }
 
 /*
- * Get an fresh ReorderBufferChange.
+ * Get a fresh ReorderBufferChange.
  */
 ReorderBufferChange *
 ReorderBufferGetChange(ReorderBuffer *rb)
@@ -473,7 +482,8 @@ ReorderBufferReturnChange(ReorderBuffer *rb, ReorderBufferChange *change,
 {
 	/* update memory accounting info */
 	if (upd_mem)
-		ReorderBufferChangeMemoryUpdate(rb, change, false);
+		ReorderBufferChangeMemoryUpdate(rb, change, false,
+										ReorderBufferChangeSize(change));
 
 	/* free contained data */
 	switch (change->action)
@@ -555,7 +565,7 @@ ReorderBufferGetTupleBuf(ReorderBuffer *rb, Size tuple_len)
 }
 
 /*
- * Free an ReorderBufferTupleBuf.
+ * Free a ReorderBufferTupleBuf.
  */
 void
 ReorderBufferReturnTupleBuf(ReorderBuffer *rb, ReorderBufferTupleBuf *tuple)
@@ -636,8 +646,8 @@ ReorderBufferTXNByXid(ReorderBuffer *rb, TransactionId xid, bool create,
 	}
 
 	/*
-	 * If the cache wasn't hit or it yielded an "does-not-exist" and we want
-	 * to create an entry.
+	 * If the cache wasn't hit or it yielded a "does-not-exist" and we want to
+	 * create an entry.
 	 */
 
 	/* search the lookup table */
@@ -731,12 +741,13 @@ ReorderBufferProcessPartialChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 	/*
 	 * Indicate a partial change for speculative inserts.  The change will be
-	 * considered as complete once we get the speculative confirm token.
+	 * considered as complete once we get the speculative confirm or abort
+	 * token.
 	 */
 	if (IsSpecInsert(change->action))
 		toptxn->txn_flags |= RBTXN_HAS_PARTIAL_CHANGE;
 	else if (rbtxn_has_partial_change(toptxn) &&
-			 IsSpecConfirm(change->action))
+			 IsSpecConfirmOrAbort(change->action))
 		toptxn->txn_flags &= ~RBTXN_HAS_PARTIAL_CHANGE;
 
 	/*
@@ -790,7 +801,8 @@ ReorderBufferQueueChange(ReorderBuffer *rb, TransactionId xid, XLogRecPtr lsn,
 	txn->nentries_mem++;
 
 	/* update memory accounting information */
-	ReorderBufferChangeMemoryUpdate(rb, change, true);
+	ReorderBufferChangeMemoryUpdate(rb, change, true,
+									ReorderBufferChangeSize(change));
 
 	/* process partial change */
 	ReorderBufferProcessPartialChange(rb, txn, change, toast_insert);
@@ -1543,7 +1555,7 @@ ReorderBufferCleanupTXN(ReorderBuffer *rb, ReorderBufferTXN *txn)
  * streaming or decoding them at PREPARE. Keep the remaining info -
  * transactions, tuplecids, invalidations and snapshots.
  *
- * We additionaly remove tuplecids after decoding the transaction at prepare
+ * We additionally remove tuplecids after decoding the transaction at prepare
  * time as we only need to perform invalidation at rollback or commit prepared.
  *
  * 'txn_prepared' indicates that we have decoded the transaction at prepare
@@ -1864,7 +1876,7 @@ ReorderBufferStreamCommit(ReorderBuffer *rb, ReorderBufferTXN *txn)
  * xid 502 which is not visible to our snapshot.  And when we will try to
  * decode with that catalog tuple, it can lead to a wrong result or a crash.
  * So, it is necessary to detect concurrent aborts to allow streaming of
- * in-progress transactions or decoding of prepared  transactions.
+ * in-progress transactions or decoding of prepared transactions.
  *
  * For detecting the concurrent abort we set CheckXidAlive to the current
  * (sub)transaction's xid for which this change belongs to.  And, during
@@ -2325,8 +2337,7 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 				case REORDER_BUFFER_CHANGE_INVALIDATION:
 					/* Execute the invalidation messages locally */
-					ReorderBufferExecuteInvalidations(
-													  change->data.inval.ninvalidations,
+					ReorderBufferExecuteInvalidations(change->data.inval.ninvalidations,
 													  change->data.inval.invalidations);
 					break;
 
@@ -2574,7 +2585,7 @@ ReorderBufferReplay(ReorderBufferTXN *txn,
 
 	txn->final_lsn = commit_lsn;
 	txn->end_lsn = end_lsn;
-	txn->commit_time = commit_time;
+	txn->xact_time.commit_time = commit_time;
 	txn->origin_id = origin_id;
 	txn->origin_lsn = origin_lsn;
 
@@ -2665,7 +2676,7 @@ ReorderBufferRememberPrepareInfo(ReorderBuffer *rb, TransactionId xid,
 	 */
 	txn->final_lsn = prepare_lsn;
 	txn->end_lsn = end_lsn;
-	txn->commit_time = prepare_time;
+	txn->xact_time.prepare_time = prepare_time;
 	txn->origin_id = origin_id;
 	txn->origin_lsn = origin_lsn;
 
@@ -2712,7 +2723,7 @@ ReorderBufferPrepare(ReorderBuffer *rb, TransactionId xid,
 	Assert(txn->final_lsn != InvalidXLogRecPtr);
 
 	ReorderBufferReplay(txn, rb, xid, txn->final_lsn, txn->end_lsn,
-						txn->commit_time, txn->origin_id, txn->origin_lsn);
+						txn->xact_time.prepare_time, txn->origin_id, txn->origin_lsn);
 
 	/*
 	 * We send the prepare for the concurrently aborted xacts so that later
@@ -2732,7 +2743,7 @@ ReorderBufferPrepare(ReorderBuffer *rb, TransactionId xid,
 void
 ReorderBufferFinishPrepared(ReorderBuffer *rb, TransactionId xid,
 							XLogRecPtr commit_lsn, XLogRecPtr end_lsn,
-							XLogRecPtr initial_consistent_point,
+							XLogRecPtr two_phase_at,
 							TimestampTz commit_time, RepOriginId origin_id,
 							XLogRecPtr origin_lsn, char *gid, bool is_commit)
 {
@@ -2751,19 +2762,20 @@ ReorderBufferFinishPrepared(ReorderBuffer *rb, TransactionId xid,
 	 * be later used for rollback.
 	 */
 	prepare_end_lsn = txn->end_lsn;
-	prepare_time = txn->commit_time;
+	prepare_time = txn->xact_time.prepare_time;
 
 	/* add the gid in the txn */
 	txn->gid = pstrdup(gid);
 
 	/*
 	 * It is possible that this transaction is not decoded at prepare time
-	 * either because by that time we didn't have a consistent snapshot or it
-	 * was decoded earlier but we have restarted. We only need to send the
-	 * prepare if it was not decoded earlier. We don't need to decode the xact
-	 * for aborts if it is not done already.
+	 * either because by that time we didn't have a consistent snapshot, or
+	 * two_phase was not enabled, or it was decoded earlier but we have
+	 * restarted. We only need to send the prepare if it was not decoded
+	 * earlier. We don't need to decode the xact for aborts if it is not done
+	 * already.
 	 */
-	if ((txn->final_lsn < initial_consistent_point) && is_commit)
+	if ((txn->final_lsn < two_phase_at) && is_commit)
 	{
 		txn->txn_flags |= RBTXN_PREPARE;
 
@@ -2781,12 +2793,12 @@ ReorderBufferFinishPrepared(ReorderBuffer *rb, TransactionId xid,
 		 * prepared after the restart.
 		 */
 		ReorderBufferReplay(txn, rb, xid, txn->final_lsn, txn->end_lsn,
-							txn->commit_time, txn->origin_id, txn->origin_lsn);
+							txn->xact_time.prepare_time, txn->origin_id, txn->origin_lsn);
 	}
 
 	txn->final_lsn = commit_lsn;
 	txn->end_lsn = end_lsn;
-	txn->commit_time = commit_time;
+	txn->xact_time.commit_time = commit_time;
 	txn->origin_id = origin_id;
 	txn->origin_lsn = origin_lsn;
 
@@ -3097,9 +3109,8 @@ ReorderBufferAddNewCommandId(ReorderBuffer *rb, TransactionId xid,
 static void
 ReorderBufferChangeMemoryUpdate(ReorderBuffer *rb,
 								ReorderBufferChange *change,
-								bool addition)
+								bool addition, Size sz)
 {
-	Size		sz;
 	ReorderBufferTXN *txn;
 	ReorderBufferTXN *toptxn;
 
@@ -3123,8 +3134,6 @@ ReorderBufferChangeMemoryUpdate(ReorderBuffer *rb,
 		toptxn = txn->toptxn;
 	else
 		toptxn = txn;
-
-	sz = ReorderBufferChangeSize(change);
 
 	if (addition)
 	{
@@ -4356,7 +4365,8 @@ ReorderBufferRestoreChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
 	 * update the accounting too (subtracting the size from the counters). And
 	 * we don't want to underflow there.
 	 */
-	ReorderBufferChangeMemoryUpdate(rb, change, true);
+	ReorderBufferChangeMemoryUpdate(rb, change, true,
+									ReorderBufferChangeSize(change));
 }
 
 /*
@@ -4602,17 +4612,23 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 	TupleDesc	toast_desc;
 	MemoryContext oldcontext;
 	ReorderBufferTupleBuf *newtup;
+	Size		old_size;
 
 	/* no toast tuples changed */
 	if (txn->toast_hash == NULL)
 		return;
 
 	/*
-	 * We're going to modify the size of the change, so to make sure the
-	 * accounting is correct we'll make it look like we're removing the change
-	 * now (with the old size), and then re-add it at the end.
+	 * We're going to modify the size of the change. So, to make sure the
+	 * accounting is correct we record the current change size and then after
+	 * re-computing the change we'll subtract the recorded size and then
+	 * re-add the new change size at the end. We don't immediately subtract
+	 * the old size because if there is any error before we add the new size,
+	 * we will release the changes and that will update the accounting info
+	 * (subtracting the size from the counters). And we don't want to
+	 * underflow there.
 	 */
-	ReorderBufferChangeMemoryUpdate(rb, change, false);
+	old_size = ReorderBufferChangeSize(change);
 
 	oldcontext = MemoryContextSwitchTo(rb->context);
 
@@ -4623,8 +4639,8 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 	toast_rel = RelationIdGetRelation(relation->rd_rel->reltoastrelid);
 	if (!RelationIsValid(toast_rel))
-		elog(ERROR, "could not open relation with OID %u",
-			 relation->rd_rel->reltoastrelid);
+		elog(ERROR, "could not open toast relation with OID %u (base relation \"%s\")",
+			 relation->rd_rel->reltoastrelid, RelationGetRelationName(relation));
 
 	toast_desc = RelationGetDescr(toast_rel);
 
@@ -4763,8 +4779,11 @@ ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 	MemoryContextSwitchTo(oldcontext);
 
+	/* subtract the old change size */
+	ReorderBufferChangeMemoryUpdate(rb, change, false, old_size);
 	/* now add the change back, with the correct size */
-	ReorderBufferChangeMemoryUpdate(rb, change, true);
+	ReorderBufferChangeMemoryUpdate(rb, change, true,
+									ReorderBufferChangeSize(change));
 }
 
 /*

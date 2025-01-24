@@ -59,11 +59,11 @@ typedef struct AgStat_GraphMeta
 	PgStat_Counter edges_deleted;
 } AgStat_GraphMeta;
 
-DECLARE_UNIQUE_INDEX_PKEY(ag_graphmeta_full_index, 7056, on ag_graphmeta using btree(graph oid_ops, edge int2_ops, start int2_ops, end int2_ops));
 #define GraphMetaFullIndexId 7056
-DECLARE_INDEX(ag_graphmeta_start_index, 7057, on ag_graphmeta using btree(graph oid_ops, start int2_ops));
+DECLARE_UNIQUE_INDEX_PKEY(ag_graphmeta_full_index, 7056, GraphMetaFullIndexId, on ag_graphmeta using btree(graph oid_ops, edge int2_ops, start int2_ops, end int2_ops));
 #define GraphMetaStartIndexId 7057
-DECLARE_INDEX(ag_graphmeta_end_index, 7058, on ag_graphmeta using btree(graph oid_ops, end int2_ops));
+DECLARE_INDEX(ag_graphmeta_start_index, 7057, GraphMetaStartIndexId, on ag_graphmeta using btree(graph oid_ops, start int2_ops));
 #define GraphMetaEndIndexId 7058
+DECLARE_INDEX(ag_graphmeta_end_index, 7058, GraphMetaEndIndexId, on ag_graphmeta using btree(graph oid_ops, end int2_ops));
 
 #endif							/* AG_GRAPHMETA_H */

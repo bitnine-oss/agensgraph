@@ -3,7 +3,7 @@
  * rewriteHandler.c
  *		Primary module of query rewriter.
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -535,6 +535,9 @@ rewriteRuleAction(Query *parsetree,
 		 *
 		 * This could possibly be fixed by using some sort of internally
 		 * generated ID, instead of names, to link CTE RTEs to their CTEs.
+		 * However, decompiling the results would be quite confusing; note the
+		 * merge of hasRecursive flags below, which could change the apparent
+		 * semantics of such redundantly-named CTEs.
 		 */
 		foreach(lc, parsetree->cteList)
 		{
@@ -556,6 +559,26 @@ rewriteRuleAction(Query *parsetree,
 		/* OK, it's safe to combine the CTE lists */
 		sub_action->cteList = list_concat(sub_action->cteList,
 										  copyObject(parsetree->cteList));
+		/* ... and don't forget about the associated flags */
+		sub_action->hasRecursive |= parsetree->hasRecursive;
+		sub_action->hasModifyingCTE |= parsetree->hasModifyingCTE;
+
+		/*
+		 * If rule_action is different from sub_action (i.e., the rule action
+		 * is an INSERT...SELECT), then we might have just added some
+		 * data-modifying CTEs that are not at the top query level.  This is
+		 * disallowed by the parser and we mustn't generate such trees here
+		 * either, so throw an error.
+		 *
+		 * Conceivably such cases could be supported by attaching the original
+		 * query's CTEs to rule_action not sub_action.  But to do that, we'd
+		 * have to increment ctelevelsup in RTEs and SubLinks copied from the
+		 * original query.  For now, it doesn't seem worth the trouble.
+		 */
+		if (sub_action->hasModifyingCTE && rule_action != sub_action)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("INSERT...SELECT rule actions are not supported for queries having data-modifying statements in WITH")));
 	}
 
 	/*
@@ -1618,6 +1641,10 @@ matchLocks(CmdType event,
 	int			i;
 
 	if (rulelocks == NULL)
+		return NIL;
+
+	/* No rule support for MERGE */
+	if (parsetree->commandType == CMD_MERGE)
 		return NIL;
 
 	if (parsetree->commandType != CMD_SELECT)
@@ -3219,18 +3246,24 @@ rewriteTargetView(Query *parsetree, Relation view)
 				   0);
 
 	/*
-	 * Mark the new target RTE for the permissions checks that we want to
-	 * enforce against the view owner, as distinct from the query caller.  At
-	 * the relation level, require the same INSERT/UPDATE/DELETE permissions
-	 * that the query caller needs against the view.  We drop the ACL_SELECT
-	 * bit that is presumably in new_rte->requiredPerms initially.
+	 * If the view has "security_invoker" set, mark the new target RTE for the
+	 * permissions checks that we want to enforce against the query caller.
+	 * Otherwise we want to enforce them against the view owner.
+	 *
+	 * At the relation level, require the same INSERT/UPDATE/DELETE
+	 * permissions that the query caller needs against the view.  We drop the
+	 * ACL_SELECT bit that is presumably in new_rte->requiredPerms initially.
 	 *
 	 * Note: the original view RTE remains in the query's rangetable list.
 	 * Although it will be unused in the query plan, we need it there so that
 	 * the executor still performs appropriate permissions checks for the
 	 * query caller's use of the view.
 	 */
-	new_rte->checkAsUser = view->rd_rel->relowner;
+	if (RelationHasSecurityInvoker(view))
+		new_rte->checkAsUser = InvalidOid;
+	else
+		new_rte->checkAsUser = view->rd_rel->relowner;
+
 	new_rte->requiredPerms = view_rte->requiredPerms;
 
 	/*
@@ -3585,15 +3618,29 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 
 		/*
 		 * Currently we can only handle unconditional, single-statement DO
-		 * INSTEAD rules correctly; we have to get exactly one Query out of
-		 * the rewrite operation to stuff back into the CTE node.
+		 * INSTEAD rules correctly; we have to get exactly one non-utility
+		 * Query out of the rewrite operation to stuff back into the CTE node.
 		 */
 		if (list_length(newstuff) == 1)
 		{
-			/* Push the single Query back into the CTE node */
+			/* Must check it's not a utility command */
 			ctequery = linitial_node(Query, newstuff);
+			if (!(ctequery->commandType == CMD_SELECT ||
+				  ctequery->commandType == CMD_UPDATE ||
+				  ctequery->commandType == CMD_INSERT ||
+				  ctequery->commandType == CMD_DELETE))
+			{
+				/*
+				 * Currently it could only be NOTIFY; this error message will
+				 * need work if we ever allow other utility commands in rules.
+				 */
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("DO INSTEAD NOTIFY rules are not supported for data-modifying statements in WITH")));
+			}
 			/* WITH queries should never be canSetTag */
 			Assert(!ctequery->canSetTag);
+			/* Push the single Query back into the CTE node */
 			cte->ctequery = (Node *) ctequery;
 		}
 		else if (newstuff == NIL)
@@ -3628,8 +3675,8 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 	}
 
 	/*
-	 * If the statement is an insert, update, or delete, adjust its targetlist
-	 * as needed, and then fire INSERT/UPDATE/DELETE rules on it.
+	 * If the statement is an insert, update, delete, or merge, adjust its
+	 * targetlist as needed, and then fire INSERT/UPDATE/DELETE rules on it.
 	 *
 	 * SELECT rules are handled later when we have all the queries that should
 	 * get executed.  Also, utilities aren't rewritten at all (do we still
@@ -3727,6 +3774,7 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 		}
 		else if (event == CMD_UPDATE)
 		{
+			Assert(parsetree->override == OVERRIDING_NOT_SET);
 			parsetree->targetList =
 				rewriteTargetListIU(parsetree->targetList,
 									parsetree->commandType,
@@ -3736,6 +3784,38 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 
 			/* Also populate extraUpdatedCols (for generated columns) */
 			fill_extraUpdatedCols(rt_entry, rt_entry_relation);
+		}
+		else if (event == CMD_MERGE)
+		{
+			Assert(parsetree->override == OVERRIDING_NOT_SET);
+
+			/*
+			 * Rewrite each action targetlist separately
+			 */
+			foreach(lc1, parsetree->mergeActionList)
+			{
+				MergeAction *action = (MergeAction *) lfirst(lc1);
+
+				switch (action->commandType)
+				{
+					case CMD_NOTHING:
+					case CMD_DELETE:	/* Nothing to do here */
+						break;
+					case CMD_UPDATE:
+					case CMD_INSERT:
+						/* XXX is it possible to have a VALUES clause? */
+						action->targetList =
+							rewriteTargetListIU(action->targetList,
+												action->commandType,
+												action->override,
+												rt_entry_relation,
+												NULL, 0, NULL);
+						break;
+					default:
+						elog(ERROR, "unrecognized commandType: %d", action->commandType);
+						break;
+				}
+			}
 		}
 		else if (event == CMD_DELETE)
 		{

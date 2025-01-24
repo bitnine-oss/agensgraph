@@ -6,7 +6,7 @@
  * The type cache exists to speed lookup of certain information about data
  * types that is not directly available from a type's pg_type row.
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/typcache.h
@@ -102,7 +102,7 @@ typedef struct TypeCacheEntry
 	FmgrInfo	rng_subdiff_finfo;	/* difference function, if any */
 
 	/*
-	 * Fields computed when TYPCACHE_MULTIRANGE_INFO is required.
+	 * Fields computed when TYPECACHE_MULTIRANGE_INFO is required.
 	 */
 	struct TypeCacheEntry *rngtype; /* multirange's range underlying type */
 

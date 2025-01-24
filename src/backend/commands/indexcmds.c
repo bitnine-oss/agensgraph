@@ -3,7 +3,7 @@
  * indexcmds.c
  *	  POSTGRES define and remove index code.
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -82,7 +82,10 @@ static void ComputeIndexAttrs(IndexInfo *indexInfo,
 							  Oid relId,
 							  const char *accessMethodName, Oid accessMethodId,
 							  bool amcanorder,
-							  bool isconstraint);
+							  bool isconstraint,
+							  Oid ddl_userid,
+							  int ddl_sec_context,
+							  int *ddl_save_nestlevel);
 static char *ChooseIndexName(const char *tabname, Oid namespaceId,
 							 List *colnames, List *exclusionOpNames,
 							 bool primary, bool isconstraint);
@@ -133,7 +136,7 @@ typedef struct ReindexErrorInfo
  *		prospective index definition, such that the existing index storage
  *		could become the storage of the new index, avoiding a rebuild.
  *
- * 'heapRelation': the relation the index would apply to.
+ * 'oldId': the OID of the existing index
  * 'accessMethodName': name of the AM to use.
  * 'attributeList': a list of IndexElem specifying columns and expressions
  *		to index on.
@@ -224,13 +227,12 @@ CheckIndexCompatible(Oid oldId,
 	 * Compute the operator classes, collations, and exclusion operators for
 	 * the new index, so we can test whether it's compatible with the existing
 	 * one.  Note that ComputeIndexAttrs might fail here, but that's OK:
-	 * DefineIndex would have called this function with the same arguments
-	 * later on, and it would have failed then anyway.  Our attributeList
-	 * contains only key attributes, thus we're filling ii_NumIndexAttrs and
+	 * DefineIndex would have failed later.  Our attributeList contains only
+	 * key attributes, thus we're filling ii_NumIndexAttrs and
 	 * ii_NumIndexKeyAttrs with same value.
 	 */
 	indexInfo = makeIndexInfo(numberOfAttributes, numberOfAttributes,
-							  accessMethodId, NIL, NIL, false, false, false);
+							  accessMethodId, NIL, NIL, false, false, false, false);
 	typeObjectId = (Oid *) palloc(numberOfAttributes * sizeof(Oid));
 	collationObjectId = (Oid *) palloc(numberOfAttributes * sizeof(Oid));
 	classObjectId = (Oid *) palloc(numberOfAttributes * sizeof(Oid));
@@ -240,7 +242,7 @@ CheckIndexCompatible(Oid oldId,
 					  coloptions, attributeList,
 					  exclusionOpNames, relationId,
 					  accessMethodName, accessMethodId,
-					  amcanorder, isconstraint);
+					  amcanorder, isconstraint, InvalidOid, 0, NULL);
 
 
 	/* Get the soon-obsolete pg_index tuple. */
@@ -486,6 +488,19 @@ WaitForOlderSnapshots(TransactionId limitXmin, bool progress)
  * DefineIndex
  *		Creates a new index.
  *
+ * This function manages the current userid according to the needs of pg_dump.
+ * Recreating old-database catalog entries in new-database is fine, regardless
+ * of which users would have permission to recreate those entries now.  That's
+ * just preservation of state.  Running opaque expressions, like calling a
+ * function named in a catalog entry or evaluating a pg_node_tree in a catalog
+ * entry, as anyone other than the object owner, is not fine.  To adhere to
+ * those principles and to remain fail-safe, use the table owner userid for
+ * most ACL checks.  Use the original userid for ACL checks reached without
+ * traversing opaque expressions.  (pg_dump can predict such ACL checks from
+ * catalogs.)  Overall, this is a mess.  Future DDL development should
+ * consider offering one DDL command for catalog setup and a separate DDL
+ * command for steps that run opaque expressions.
+ *
  * 'relationId': the OID of the heap relation on which the index is to be
  *		created
  * 'stmt': IndexStmt describing the properties of the new index.
@@ -551,8 +566,12 @@ DefineIndex(Oid relationId,
 	LOCKTAG		heaplocktag;
 	LOCKMODE	lockmode;
 	Snapshot	snapshot;
-	int			save_nestlevel = -1;
+	Oid			root_save_userid;
+	int			root_save_sec_context;
+	int			root_save_nestlevel;
 	int			i;
+
+	root_save_nestlevel = NewGUCNestLevel();
 
 	/*
 	 * Some callers need us to run with an empty default_tablespace; this is a
@@ -560,12 +579,9 @@ DefineIndex(Oid relationId,
 	 * recreating indexes after table-rewriting ALTER TABLE.
 	 */
 	if (stmt->reset_default_tblspc)
-	{
-		save_nestlevel = NewGUCNestLevel();
 		(void) set_config_option("default_tablespace", "",
 								 PGC_USERSET, PGC_S_SESSION,
 								 GUC_ACTION_SAVE, true, 0, false);
-	}
 
 	/*
 	 * Force non-concurrent build on temporary relations, even if CONCURRENTLY
@@ -644,6 +660,15 @@ DefineIndex(Oid relationId,
 	lockmode = concurrent ? ShareUpdateExclusiveLock : ShareLock;
 	rel = table_open(relationId, lockmode);
 
+	/*
+	 * Switch to the table owner's userid, so that any index functions are run
+	 * as that user.  Also lock down security-restricted operations.  We
+	 * already arranged to make GUC variable changes local to this command.
+	 */
+	GetUserIdAndSecContext(&root_save_userid, &root_save_sec_context);
+	SetUserIdAndSecContext(rel->rd_rel->relowner,
+						   root_save_sec_context | SECURITY_RESTRICTED_OPERATION);
+
 	namespaceId = RelationGetNamespace(rel);
 
 	/* Ensure that it makes sense to index this kind of relation */
@@ -654,22 +679,12 @@ DefineIndex(Oid relationId,
 		case RELKIND_PARTITIONED_TABLE:
 			/* OK */
 			break;
-		case RELKIND_FOREIGN_TABLE:
-
-			/*
-			 * Custom error message for FOREIGN TABLE since the term is close
-			 * to a regular table and can confuse the user.
-			 */
-			ereport(ERROR,
-					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-					 errmsg("cannot create index on foreign table \"%s\"",
-							RelationGetRelationName(rel))));
-			break;
 		default:
 			ereport(ERROR,
 					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-					 errmsg("\"%s\" is not a table or materialized view",
-							RelationGetRelationName(rel))));
+					 errmsg("cannot create index on relation \"%s\"",
+							RelationGetRelationName(rel)),
+					 errdetail_relkind_not_supported(rel->rd_rel->relkind)));
 			break;
 	}
 
@@ -729,7 +744,7 @@ DefineIndex(Oid relationId,
 	{
 		AclResult	aclresult;
 
-		aclresult = pg_namespace_aclcheck(namespaceId, GetUserId(),
+		aclresult = pg_namespace_aclcheck(namespaceId, root_save_userid,
 										  ACL_CREATE);
 		if (aclresult != ACLCHECK_OK)
 			aclcheck_error(aclresult, OBJECT_SCHEMA,
@@ -761,7 +776,7 @@ DefineIndex(Oid relationId,
 	{
 		AclResult	aclresult;
 
-		aclresult = pg_tablespace_aclcheck(tablespaceId, GetUserId(),
+		aclresult = pg_tablespace_aclcheck(tablespaceId, root_save_userid,
 										   ACL_CREATE);
 		if (aclresult != ACLCHECK_OK)
 			aclcheck_error(aclresult, OBJECT_TABLESPACE,
@@ -881,6 +896,7 @@ DefineIndex(Oid relationId,
 							  NIL,	/* expressions, NIL for now */
 							  make_ands_implicit((Expr *) stmt->whereClause),
 							  stmt->unique,
+							  stmt->nulls_not_distinct,
 							  !concurrent,
 							  concurrent);
 
@@ -893,7 +909,8 @@ DefineIndex(Oid relationId,
 					  coloptions, allIndexParams,
 					  stmt->excludeOpNames, relationId,
 					  accessMethodName, accessMethodId,
-					  amcanorder, stmt->isconstraint);
+					  amcanorder, stmt->isconstraint, root_save_userid,
+					  root_save_sec_context, &root_save_nestlevel);
 
 	/*
 	 * Extra checks when creating a PRIMARY KEY index.
@@ -1151,15 +1168,17 @@ DefineIndex(Oid relationId,
 
 	ObjectAddressSet(address, RelationRelationId, indexRelationId);
 
-	/*
-	 * Revert to original default_tablespace.  Must do this before any return
-	 * from this function, but after index_create, so this is a good time.
-	 */
-	if (save_nestlevel >= 0)
-		AtEOXact_GUC(true, save_nestlevel);
-
 	if (!OidIsValid(indexRelationId))
 	{
+		/*
+		 * Roll back any GUC changes executed by index functions.  Also revert
+		 * to original default_tablespace if we changed it above.
+		 */
+		AtEOXact_GUC(false, root_save_nestlevel);
+
+		/* Restore userid and security context */
+		SetUserIdAndSecContext(root_save_userid, root_save_sec_context);
+
 		table_close(rel, NoLock);
 
 		/* If this is the top-level index, we're done */
@@ -1168,6 +1187,14 @@ DefineIndex(Oid relationId,
 
 		return address;
 	}
+
+	/*
+	 * Roll back any GUC changes executed by index functions, and keep
+	 * subsequent changes local to this command.  This is essential if some
+	 * index function changed a behavior-affecting GUC, e.g. search_path.
+	 */
+	AtEOXact_GUC(false, root_save_nestlevel);
+	root_save_nestlevel = NewGUCNestLevel();
 
 	/* Add any requested comment */
 	if (stmt->idxcomment != NULL)
@@ -1215,12 +1242,21 @@ DefineIndex(Oid relationId,
 			{
 				Oid			childRelid = part_oids[i];
 				Relation	childrel;
+				Oid			child_save_userid;
+				int			child_save_sec_context;
+				int			child_save_nestlevel;
 				List	   *childidxs;
 				ListCell   *cell;
 				AttrMap    *attmap;
 				bool		found = false;
 
 				childrel = table_open(childRelid, lockmode);
+
+				GetUserIdAndSecContext(&child_save_userid,
+									   &child_save_sec_context);
+				SetUserIdAndSecContext(childrel->rd_rel->relowner,
+									   child_save_sec_context | SECURITY_RESTRICTED_OPERATION);
+				child_save_nestlevel = NewGUCNestLevel();
 
 				/*
 				 * Don't try to create indexes on foreign tables, though. Skip
@@ -1237,6 +1273,9 @@ DefineIndex(Oid relationId,
 								 errdetail("Table \"%s\" contains partitions that are foreign tables.",
 										   RelationGetRelationName(rel))));
 
+					AtEOXact_GUC(false, child_save_nestlevel);
+					SetUserIdAndSecContext(child_save_userid,
+										   child_save_sec_context);
 					table_close(childrel, lockmode);
 					continue;
 				}
@@ -1308,6 +1347,9 @@ DefineIndex(Oid relationId,
 				}
 
 				list_free(childidxs);
+				AtEOXact_GUC(false, child_save_nestlevel);
+				SetUserIdAndSecContext(child_save_userid,
+									   child_save_sec_context);
 				table_close(childrel, NoLock);
 
 				/*
@@ -1364,12 +1406,21 @@ DefineIndex(Oid relationId,
 					if (found_whole_row)
 						elog(ERROR, "cannot convert whole-row table reference");
 
+					/*
+					 * Recurse as the starting user ID.  Callee will use that
+					 * for permission checks, then switch again.
+					 */
+					Assert(GetUserId() == child_save_userid);
+					SetUserIdAndSecContext(root_save_userid,
+										   root_save_sec_context);
 					DefineIndex(childRelid, childStmt,
 								InvalidOid, /* no predefined OID */
 								indexRelationId,	/* this is our child */
 								createdConstraintId,
 								is_alter_table, check_rights, check_not_in_use,
 								skip_build, quiet);
+					SetUserIdAndSecContext(child_save_userid,
+										   child_save_sec_context);
 				}
 
 				pgstat_progress_update_param(PROGRESS_CREATEIDX_PARTITIONS_DONE,
@@ -1406,11 +1457,16 @@ DefineIndex(Oid relationId,
 		 * Indexes on partitioned tables are not themselves built, so we're
 		 * done here.
 		 */
+		AtEOXact_GUC(false, root_save_nestlevel);
+		SetUserIdAndSecContext(root_save_userid, root_save_sec_context);
 		table_close(rel, NoLock);
 		if (!OidIsValid(parentIndexId))
 			pgstat_progress_end_command();
 		return address;
 	}
+
+	AtEOXact_GUC(false, root_save_nestlevel);
+	SetUserIdAndSecContext(root_save_userid, root_save_sec_context);
 
 	if (!concurrent)
 	{
@@ -1691,6 +1747,10 @@ CheckPredicate(Expr *predicate)
  * Compute per-index-column information, including indexed column numbers
  * or index expressions, opclasses and their options. Note, all output vectors
  * should be allocated for all columns, including "including" ones.
+ *
+ * If the caller switched to the table owner, ddl_userid is the role for ACL
+ * checks reached without traversing opaque expressions.  Otherwise, it's
+ * InvalidOid, and other ddl_* arguments are undefined.
  */
 static void
 ComputeIndexAttrs(IndexInfo *indexInfo,
@@ -1704,12 +1764,17 @@ ComputeIndexAttrs(IndexInfo *indexInfo,
 				  const char *accessMethodName,
 				  Oid accessMethodId,
 				  bool amcanorder,
-				  bool isconstraint)
+				  bool isconstraint,
+				  Oid ddl_userid,
+				  int ddl_sec_context,
+				  int *ddl_save_nestlevel)
 {
 	ListCell   *nextExclOp;
 	ListCell   *lc;
 	int			attn;
 	int			nkeycols = indexInfo->ii_NumIndexKeyAttrs;
+	Oid			save_userid;
+	int			save_sec_context;
 
 	/* Allocate space for exclusion operator info, if needed */
 	if (exclusionOpNames)
@@ -1722,6 +1787,9 @@ ComputeIndexAttrs(IndexInfo *indexInfo,
 	}
 	else
 		nextExclOp = NULL;
+
+	if (OidIsValid(ddl_userid))
+		GetUserIdAndSecContext(&save_userid, &save_sec_context);
 
 	/*
 	 * process attributeList
@@ -1853,10 +1921,24 @@ ComputeIndexAttrs(IndexInfo *indexInfo,
 		}
 
 		/*
-		 * Apply collation override if any
+		 * Apply collation override if any.  Use of ddl_userid is necessary
+		 * due to ACL checks therein, and it's safe because collations don't
+		 * contain opaque expressions (or non-opaque expressions).
 		 */
 		if (attribute->collation)
+		{
+			if (OidIsValid(ddl_userid))
+			{
+				AtEOXact_GUC(false, *ddl_save_nestlevel);
+				SetUserIdAndSecContext(ddl_userid, ddl_sec_context);
+			}
 			attcollation = get_collation_oid(attribute->collation, false);
+			if (OidIsValid(ddl_userid))
+			{
+				SetUserIdAndSecContext(save_userid, save_sec_context);
+				*ddl_save_nestlevel = NewGUCNestLevel();
+			}
+		}
 
 		/*
 		 * Check we have a collation iff it's a collatable type.  The only
@@ -1884,12 +1966,25 @@ ComputeIndexAttrs(IndexInfo *indexInfo,
 		collationOidP[attn] = attcollation;
 
 		/*
-		 * Identify the opclass to use.
+		 * Identify the opclass to use.  Use of ddl_userid is necessary due to
+		 * ACL checks therein.  This is safe despite opclasses containing
+		 * opaque expressions (specifically, functions), because only
+		 * superusers can define opclasses.
 		 */
+		if (OidIsValid(ddl_userid))
+		{
+			AtEOXact_GUC(false, *ddl_save_nestlevel);
+			SetUserIdAndSecContext(ddl_userid, ddl_sec_context);
+		}
 		classOidP[attn] = ResolveOpClass(attribute->opclass,
 										 atttype,
 										 accessMethodName,
 										 accessMethodId);
+		if (OidIsValid(ddl_userid))
+		{
+			SetUserIdAndSecContext(save_userid, save_sec_context);
+			*ddl_save_nestlevel = NewGUCNestLevel();
+		}
 
 		/*
 		 * Identify the exclusion operator, if any.
@@ -1903,9 +1998,23 @@ ComputeIndexAttrs(IndexInfo *indexInfo,
 
 			/*
 			 * Find the operator --- it must accept the column datatype
-			 * without runtime coercion (but binary compatibility is OK)
+			 * without runtime coercion (but binary compatibility is OK).
+			 * Operators contain opaque expressions (specifically, functions).
+			 * compatible_oper_opid() boils down to oper() and
+			 * IsBinaryCoercible().  PostgreSQL would have security problems
+			 * elsewhere if oper() started calling opaque expressions.
 			 */
+			if (OidIsValid(ddl_userid))
+			{
+				AtEOXact_GUC(false, *ddl_save_nestlevel);
+				SetUserIdAndSecContext(ddl_userid, ddl_sec_context);
+			}
 			opid = compatible_oper_opid(opname, atttype, atttype, false);
+			if (OidIsValid(ddl_userid))
+			{
+				SetUserIdAndSecContext(save_userid, save_sec_context);
+				*ddl_save_nestlevel = NewGUCNestLevel();
+			}
 
 			/*
 			 * Only allow commutative operators to be used in exclusion
@@ -2233,7 +2342,7 @@ makeObjectName(const char *name1, const char *name2, const char *label)
 	Assert(availchars > 0);		/* else caller chose a bad label */
 
 	/*
-	 * If we must truncate,  preferentially truncate the longer name. This
+	 * If we must truncate, preferentially truncate the longer name. This
 	 * logic could be expressed without a loop, but it's simple and obvious as
 	 * a loop.
 	 */
@@ -3000,8 +3109,7 @@ reindex_error_callback(void *arg)
 {
 	ReindexErrorInfo *errinfo = (ReindexErrorInfo *) arg;
 
-	Assert(errinfo->relkind == RELKIND_PARTITIONED_INDEX ||
-		   errinfo->relkind == RELKIND_PARTITIONED_TABLE);
+	Assert(RELKIND_HAS_PARTITIONS(errinfo->relkind));
 
 	if (errinfo->relkind == RELKIND_PARTITIONED_TABLE)
 		errcontext("while reindexing partitioned table \"%s.%s\"",
@@ -3030,8 +3138,7 @@ ReindexPartitions(Oid relid, ReindexParams *params, bool isTopLevel)
 	ErrorContextCallback errcallback;
 	ReindexErrorInfo errinfo;
 
-	Assert(relkind == RELKIND_PARTITIONED_INDEX ||
-		   relkind == RELKIND_PARTITIONED_TABLE);
+	Assert(RELKIND_HAS_PARTITIONS(relkind));
 
 	/*
 	 * Check if this runs in a transaction block, with an error callback to
@@ -3164,8 +3271,7 @@ ReindexMultipleInternal(List *relids, ReindexParams *params)
 		 * Partitioned tables and indexes can never be processed directly, and
 		 * a list of their leaves should be built first.
 		 */
-		Assert(relkind != RELKIND_PARTITIONED_INDEX &&
-			   relkind != RELKIND_PARTITIONED_TABLE);
+		Assert(!RELKIND_HAS_PARTITIONS(relkind));
 
 		if ((params->options & REINDEXOPT_CONCURRENTLY) != 0 &&
 			relpersistence != RELPERSISTENCE_TEMP)
@@ -3572,6 +3678,9 @@ ReindexRelationConcurrently(Oid relationOid, ReindexParams *params)
 		Oid			newIndexId;
 		Relation	indexRel;
 		Relation	heapRel;
+		Oid			save_userid;
+		int			save_sec_context;
+		int			save_nestlevel;
 		Relation	newIndexRel;
 		LockRelId  *lockrelid;
 		Oid			tablespaceid;
@@ -3579,6 +3688,16 @@ ReindexRelationConcurrently(Oid relationOid, ReindexParams *params)
 		indexRel = index_open(idx->indexId, ShareUpdateExclusiveLock);
 		heapRel = table_open(indexRel->rd_index->indrelid,
 							 ShareUpdateExclusiveLock);
+
+		/*
+		 * Switch to the table owner's userid, so that any index functions are
+		 * run as that user.  Also lock down security-restricted operations
+		 * and arrange to make GUC variable changes local to this command.
+		 */
+		GetUserIdAndSecContext(&save_userid, &save_sec_context);
+		SetUserIdAndSecContext(heapRel->rd_rel->relowner,
+							   save_sec_context | SECURITY_RESTRICTED_OPERATION);
+		save_nestlevel = NewGUCNestLevel();
 
 		/* determine safety of this index for set_indexsafe_procflags */
 		idx->safe = (indexRel->rd_indexprs == NIL &&
@@ -3655,6 +3774,13 @@ ReindexRelationConcurrently(Oid relationOid, ReindexParams *params)
 
 		index_close(indexRel, NoLock);
 		index_close(newIndexRel, NoLock);
+
+		/* Roll back any GUC changes executed by index functions */
+		AtEOXact_GUC(false, save_nestlevel);
+
+		/* Restore userid and security context */
+		SetUserIdAndSecContext(save_userid, save_sec_context);
+
 		table_close(heapRel, NoLock);
 	}
 

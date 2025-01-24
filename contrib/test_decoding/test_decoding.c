@@ -3,7 +3,7 @@
  * test_decoding.c
  *		  example logical decoding output plugin
  *
- * Copyright (c) 2012-2021, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2022, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/test_decoding/test_decoding.c
@@ -299,6 +299,10 @@ pg_decode_begin_txn(LogicalDecodingContext *ctx, ReorderBufferTXN *txn)
 	txndata->xact_wrote_changes = false;
 	txn->output_plugin_private = txndata;
 
+	/*
+	 * If asked to skip empty transactions, we'll emit BEGIN at the point
+	 * where the first operation is received for this transaction.
+	 */
 	if (data->skip_empty_xacts)
 		return;
 
@@ -339,7 +343,7 @@ pg_decode_commit_txn(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 
 	if (data->include_timestamp)
 		appendStringInfo(ctx->out, " (at %s)",
-						 timestamptz_to_str(txn->commit_time));
+						 timestamptz_to_str(txn->xact_time.commit_time));
 
 	OutputPluginWrite(ctx, true);
 }
@@ -355,6 +359,10 @@ pg_decode_begin_prepare_txn(LogicalDecodingContext *ctx, ReorderBufferTXN *txn)
 	txndata->xact_wrote_changes = false;
 	txn->output_plugin_private = txndata;
 
+	/*
+	 * If asked to skip empty transactions, we'll emit BEGIN at the point
+	 * where the first operation is received for this transaction.
+	 */
 	if (data->skip_empty_xacts)
 		return;
 
@@ -369,6 +377,10 @@ pg_decode_prepare_txn(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 	TestDecodingData *data = ctx->output_plugin_private;
 	TestDecodingTxnData *txndata = txn->output_plugin_private;
 
+	/*
+	 * If asked to skip empty transactions, we'll emit PREPARE at the point
+	 * where the first operation is received for this transaction.
+	 */
 	if (data->skip_empty_xacts && !txndata->xact_wrote_changes)
 		return;
 
@@ -382,7 +394,7 @@ pg_decode_prepare_txn(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 
 	if (data->include_timestamp)
 		appendStringInfo(ctx->out, " (at %s)",
-						 timestamptz_to_str(txn->commit_time));
+						 timestamptz_to_str(txn->xact_time.prepare_time));
 
 	OutputPluginWrite(ctx, true);
 }
@@ -404,7 +416,7 @@ pg_decode_commit_prepared_txn(LogicalDecodingContext *ctx, ReorderBufferTXN *txn
 
 	if (data->include_timestamp)
 		appendStringInfo(ctx->out, " (at %s)",
-						 timestamptz_to_str(txn->commit_time));
+						 timestamptz_to_str(txn->xact_time.commit_time));
 
 	OutputPluginWrite(ctx, true);
 }
@@ -428,7 +440,7 @@ pg_decode_rollback_prepared_txn(LogicalDecodingContext *ctx,
 
 	if (data->include_timestamp)
 		appendStringInfo(ctx->out, " (at %s)",
-						 timestamptz_to_str(txn->commit_time));
+						 timestamptz_to_str(txn->xact_time.commit_time));
 
 	OutputPluginWrite(ctx, true);
 }
@@ -853,7 +865,7 @@ pg_decode_stream_prepare(LogicalDecodingContext *ctx,
 
 	if (data->include_timestamp)
 		appendStringInfo(ctx->out, " (at %s)",
-						 timestamptz_to_str(txn->commit_time));
+						 timestamptz_to_str(txn->xact_time.prepare_time));
 
 	OutputPluginWrite(ctx, true);
 }
@@ -882,7 +894,7 @@ pg_decode_stream_commit(LogicalDecodingContext *ctx,
 
 	if (data->include_timestamp)
 		appendStringInfo(ctx->out, " (at %s)",
-						 timestamptz_to_str(txn->commit_time));
+						 timestamptz_to_str(txn->xact_time.commit_time));
 
 	OutputPluginWrite(ctx, true);
 }
