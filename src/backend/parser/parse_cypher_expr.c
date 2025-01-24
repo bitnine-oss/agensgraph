@@ -142,7 +142,7 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 		case T_ParamRef:
 			return transformParamRef(pstate, (ParamRef *) expr);
 		case T_A_Const:
-				return (Node *) make_const(pstate, (A_Const *) expr);
+			return (Node *) make_const(pstate, (A_Const *) expr);
 		case T_TypeCast:
 			return transformTypeCast(pstate, (TypeCast *) expr);
 		case T_CypherMapExpr:
@@ -718,7 +718,8 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 	list = transformCypherExprRecurse(pstate, (Node *) clc->list);
 	type = exprType(list);
 
-	switch (type) {
+	switch (type)
+	{
 		case JSONBOID:
 		case VERTEXARRAYOID:
 		case EDGEARRAYOID:

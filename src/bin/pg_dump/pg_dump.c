@@ -6252,8 +6252,8 @@ getTables(Archive *fout, int *numTables)
 		appendPQExpBufferStr(query,
 							 "c.relrowsecurity, c.relforcerowsecurity, "
 							 "ag_label.labkind as labkind, "	/* is vlabel or elabel? */
-						  	 "ag_label.oid as laboid, "
-						  	 "ag_label.labid as labid, ");
+							 "ag_label.oid as laboid, "
+							 "ag_label.labid as labid, ");
 	else
 		appendPQExpBufferStr(query,
 							 "false AS relrowsecurity, "
@@ -18268,8 +18268,8 @@ dumpGraph(Archive *fout, const NamespaceInfo *graphinfo)
 		if (dopt->binary_upgrade)
 		{
 			appendPQExpBuffer(q,
-							"SELECT pg_catalog.binary_upgrade_set_next_ag_graph_oid('%u'::pg_catalog.oid);\n",
-							graphinfo->ag_graphoid);
+							  "SELECT pg_catalog.binary_upgrade_set_next_ag_graph_oid('%u'::pg_catalog.oid);\n",
+							  graphinfo->ag_graphoid);
 		}
 		appendPQExpBuffer(q, "CREATE GRAPH ONLY %s;\n", qnspname);
 	}
@@ -18299,6 +18299,7 @@ dumpGraph(Archive *fout, const NamespaceInfo *graphinfo)
 	if (graphinfo->dobj.dump & DUMP_COMPONENT_COMMENT)
 	{
 		const char *initdb_comment = NULL;
+
 		if (!graphinfo->create && strcmp(qnspname, "public") == 0)
 			initdb_comment = "standard public schema";
 		dumpCommentExtended(fout, "SCHEMA", qnspname,

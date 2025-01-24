@@ -1924,8 +1924,8 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList,
 		int			resno;
 
 		/*
-		 * If `varname` is NULL, this target has to be ignored when
-		 * `RETURN *`.
+		 * If `varname` is NULL, this target has to be ignored when `RETURN
+		 * *`.
 		 */
 		resjunk = (varname == NULL);
 		resno = (resjunk ? InvalidAttrNumber : pstate->p_next_resno++);

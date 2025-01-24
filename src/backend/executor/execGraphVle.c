@@ -77,7 +77,7 @@ ExecInitGraphVLE(GraphVLE *vleplan, EState *estate, int eflags)
 	ResultRelInfo *target_rel_infos;
 	ListCell   *list_cell;
 	A_Indices  *vle_var_len;
-	A_Const	   *lidx;
+	A_Const    *lidx;
 
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
@@ -98,7 +98,8 @@ ExecInitGraphVLE(GraphVLE *vleplan, EState *estate, int eflags)
 	vle_state->minimum_output_depth = intVal(&lidx->val);
 	if (vle_var_len->uidx != NULL)
 	{
-		A_Const	   *uidx = (A_Const *) vle_var_len->uidx;
+		A_Const    *uidx = (A_Const *) vle_var_len->uidx;
+
 		vle_state->maximum_output_depth = intVal(&uidx->val);
 	}
 	else
