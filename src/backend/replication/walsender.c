@@ -57,6 +57,7 @@
 #include "access/xlogreader.h"
 #include "access/xlogrecovery.h"
 #include "access/xlogutils.h"
+#include "backup/basebackup.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_type.h"
 #include "commands/dbcommands.h"
@@ -68,7 +69,6 @@
 #include "nodes/replnodes.h"
 #include "pgstat.h"
 #include "postmaster/interrupt.h"
-#include "replication/basebackup.h"
 #include "replication/decode.h"
 #include "replication/logical.h"
 #include "replication/slot.h"
@@ -518,9 +518,8 @@ ReadReplicationSlot(ReadReplicationSlotCmd *cmd)
 		if (OidIsValid(slot_contents.data.database))
 			ereport(ERROR,
 					errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					errmsg("cannot use \"%s\" with logical replication slot \"%s\"",
-						   "READ_REPLICATION_SLOT",
-						   NameStr(slot_contents.data.name)));
+					errmsg("cannot use %s with a logical replication slot",
+						   "READ_REPLICATION_SLOT"));
 
 		/* slot type */
 		values[i] = CStringGetTextDatum("physical");

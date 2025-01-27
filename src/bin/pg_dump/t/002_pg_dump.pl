@@ -1593,6 +1593,15 @@ my %tests = (
 		like      => { %full_runs, section_pre_data => 1, },
 	},
 
+	'CREATE COLLATION icu_collation' => {
+		create_order => 76,
+		create_sql   => "CREATE COLLATION icu_collation (PROVIDER = icu, LOCALE = 'C');",
+		regexp =>
+		  qr/CREATE COLLATION public.icu_collation \(provider = icu, locale = 'C'(, version = '[^']*')?\);/m,
+		icu => 1,
+		like      => { %full_runs, section_pre_data => 1, },
+	},
+
 	'CREATE CAST FOR timestamptz' => {
 		create_order => 51,
 		create_sql =>
@@ -2513,25 +2522,38 @@ my %tests = (
 		unlike => { exclude_dump_test_schema => 1, },
 	  },
 
-	'ALTER PUBLICATION pub3 ADD ALL TABLES IN SCHEMA dump_test' => {
+	'ALTER PUBLICATION pub3 ADD TABLES IN SCHEMA dump_test' => {
 		create_order => 51,
 		create_sql =>
-		  'ALTER PUBLICATION pub3 ADD ALL TABLES IN SCHEMA dump_test;',
+		  'ALTER PUBLICATION pub3 ADD TABLES IN SCHEMA dump_test;',
 		regexp => qr/^
-			\QALTER PUBLICATION pub3 ADD ALL TABLES IN SCHEMA dump_test;\E
+			\QALTER PUBLICATION pub3 ADD TABLES IN SCHEMA dump_test;\E
 			/xm,
 		like => { %full_runs, section_post_data => 1, },
 		unlike => { exclude_dump_test_schema => 1, },
 	},
 
-	'ALTER PUBLICATION pub3 ADD ALL TABLES IN SCHEMA public' => {
+	'ALTER PUBLICATION pub3 ADD TABLES IN SCHEMA public' => {
 		create_order => 52,
-		create_sql =>
-		  'ALTER PUBLICATION pub3 ADD ALL TABLES IN SCHEMA public;',
-		regexp => qr/^
-			\QALTER PUBLICATION pub3 ADD ALL TABLES IN SCHEMA public;\E
+		create_sql   => 'ALTER PUBLICATION pub3 ADD TABLES IN SCHEMA public;',
+		regexp       => qr/^
+			\QALTER PUBLICATION pub3 ADD TABLES IN SCHEMA public;\E
 			/xm,
 		like => { %full_runs, section_post_data => 1, },
+	},
+
+	'ALTER PUBLICATION pub3 ADD TABLE test_table' => {
+		create_order => 51,
+		create_sql =>
+		  'ALTER PUBLICATION pub3 ADD TABLE dump_test.test_table;',
+		regexp => qr/^
+			\QALTER PUBLICATION pub3 ADD TABLE ONLY dump_test.test_table;\E
+			/xm,
+		like   => { %full_runs, section_post_data => 1, },
+		unlike => {
+			exclude_dump_test_schema => 1,
+			exclude_test_table       => 1,
+		},
 	},
 
 	'ALTER PUBLICATION pub4 ADD TABLE test_table WHERE (col1 > 0);' => {
@@ -3868,9 +3890,13 @@ if ($collation_check_stderr !~ /ERROR: /)
 	$collation_support = 1;
 }
 
-# Determine whether build supports LZ4 and gzip.
+my $supports_icu  = ($ENV{with_icu} eq 'yes');
 my $supports_lz4  = check_pg_config("#define USE_LZ4 1");
 my $supports_gzip = check_pg_config("#define HAVE_LIBZ 1");
+
+# ICU doesn't work with some encodings
+my $encoding = $node->safe_psql('postgres', 'show server_encoding');
+$supports_icu = 0 if $encoding eq 'SQL_ASCII';
 
 # Create additional databases for mutations of schema public
 $node->psql('postgres', 'create database regress_pg_dump_test;');
@@ -3909,11 +3935,22 @@ foreach my $test (
 		$test_db = $tests{$test}->{database};
 	}
 
+	if (defined($tests{$test}->{icu}))
+	{
+		$tests{$test}->{collation} = 1;
+	}
+
 	if ($tests{$test}->{create_sql})
 	{
 
 		# Skip any collation-related commands if there is no collation support
 		if (!$collation_support && defined($tests{$test}->{collation}))
+		{
+			next;
+		}
+
+		# Skip any icu-related collation commands if build was without icu
+		if (!$supports_icu && defined($tests{$test}->{icu}))
 		{
 			next;
 		}
@@ -4115,6 +4152,12 @@ foreach my $run (sort keys %pgdump_runs)
 
 		# Skip any collation-related commands if there is no collation support
 		if (!$collation_support && defined($tests{$test}->{collation}))
+		{
+			next;
+		}
+
+		# Skip any icu-related collation commands if build was without icu
+		if (!$supports_icu && defined($tests{$test}->{icu}))
 		{
 			next;
 		}

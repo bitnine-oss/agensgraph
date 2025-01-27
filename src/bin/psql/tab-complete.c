@@ -1669,7 +1669,7 @@ psql_completion(const char *text, int start, int end)
 		"COMMENT", "COMMIT", "COPY", "CREATE", "DEALLOCATE", "DECLARE",
 		"DELETE FROM", "DISCARD", "DO", "DROP", "END", "EXECUTE", "EXPLAIN",
 		"FETCH", "GRANT", "IMPORT FOREIGN SCHEMA", "INSERT INTO", "LISTEN", "LOAD", "LOCK",
-		"MERGE", "MOVE", "NOTIFY", "PREPARE",
+		"MERGE INTO", "MOVE", "NOTIFY", "PREPARE",
 		"REASSIGN", "REFRESH MATERIALIZED VIEW", "REINDEX", "RELEASE",
 		"RESET", "REVOKE", "ROLLBACK",
 		"SAVEPOINT", "SECURITY LABEL", "SELECT", "SET", "SHOW", "START",
@@ -1820,7 +1820,7 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("ADD", "DROP", "OWNER TO", "RENAME TO", "SET");
 	/* ALTER PUBLICATION <name> ADD */
 	else if (Matches("ALTER", "PUBLICATION", MatchAny, "ADD"))
-		COMPLETE_WITH("ALL TABLES IN SCHEMA", "TABLE");
+		COMPLETE_WITH("TABLES IN SCHEMA", "TABLE");
 	else if (Matches("ALTER", "PUBLICATION", MatchAny, "ADD|SET", "TABLE") ||
 			 (HeadMatches("ALTER", "PUBLICATION", MatchAny, "ADD|SET", "TABLE") &&
 			  ends_with(prev_wd, ',')))
@@ -1844,11 +1844,11 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH(",");
 	/* ALTER PUBLICATION <name> DROP */
 	else if (Matches("ALTER", "PUBLICATION", MatchAny, "DROP"))
-		COMPLETE_WITH("ALL TABLES IN SCHEMA", "TABLE");
+		COMPLETE_WITH("TABLES IN SCHEMA", "TABLE");
 	/* ALTER PUBLICATION <name> SET */
 	else if (Matches("ALTER", "PUBLICATION", MatchAny, "SET"))
-		COMPLETE_WITH("(", "ALL TABLES IN SCHEMA", "TABLE");
-	else if (Matches("ALTER", "PUBLICATION", MatchAny, "ADD|DROP|SET", "ALL", "TABLES", "IN", "SCHEMA"))
+		COMPLETE_WITH("(", "TABLES IN SCHEMA", "TABLE");
+	else if (Matches("ALTER", "PUBLICATION", MatchAny, "ADD|DROP|SET", "TABLES", "IN", "SCHEMA"))
 		COMPLETE_WITH_QUERY_PLUS(Query_for_list_of_schemas
 								 " AND nspname NOT LIKE E'pg\\\\_%%'",
 								 "CURRENT_SCHEMA");
@@ -1873,7 +1873,7 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("(", "PUBLICATION");
 	/* ALTER SUBSCRIPTION <name> SET ( */
 	else if (HeadMatches("ALTER", "SUBSCRIPTION", MatchAny) && TailMatches("SET", "("))
-		COMPLETE_WITH("binary", "slot_name", "streaming", "synchronous_commit", "disable_on_error");
+		COMPLETE_WITH("binary", "disable_on_error", "slot_name", "streaming", "synchronous_commit");
 	/* ALTER SUBSCRIPTION <name> SKIP ( */
 	else if (HeadMatches("ALTER", "SUBSCRIPTION", MatchAny) && TailMatches("SKIP", "("))
 		COMPLETE_WITH("lsn");
@@ -1927,7 +1927,7 @@ psql_completion(const char *text, int start, int end)
 
 	/* ALTER EXTENSION <name> */
 	else if (Matches("ALTER", "EXTENSION", MatchAny))
-		COMPLETE_WITH("ADD", "DROP", "UPDATE TO", "SET SCHEMA");
+		COMPLETE_WITH("ADD", "DROP", "UPDATE", "SET SCHEMA");
 
 	/* ALTER EXTENSION <name> UPDATE */
 	else if (Matches("ALTER", "EXTENSION", MatchAny, "UPDATE"))
@@ -2975,13 +2975,15 @@ psql_completion(const char *text, int start, int end)
 
 /* CREATE PUBLICATION */
 	else if (Matches("CREATE", "PUBLICATION", MatchAny))
-		COMPLETE_WITH("FOR TABLE", "FOR ALL TABLES", "FOR ALL TABLES IN SCHEMA", "WITH (");
+		COMPLETE_WITH("FOR TABLE", "FOR ALL TABLES", "FOR TABLES IN SCHEMA", "WITH (");
 	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR"))
-		COMPLETE_WITH("TABLE", "ALL TABLES", "ALL TABLES IN SCHEMA");
+		COMPLETE_WITH("TABLE", "ALL TABLES", "TABLES IN SCHEMA");
 	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "ALL"))
-		COMPLETE_WITH("TABLES", "TABLES IN SCHEMA");
+		COMPLETE_WITH("TABLES");
 	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "ALL", "TABLES"))
-		COMPLETE_WITH("IN SCHEMA", "WITH (");
+		COMPLETE_WITH("WITH (");
+	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "TABLES"))
+		COMPLETE_WITH("IN SCHEMA");
 	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "TABLE", MatchAny) && !ends_with(prev_wd, ','))
 		COMPLETE_WITH("WHERE (", "WITH (");
 	/* Complete "CREATE PUBLICATION <name> FOR TABLE" with "<table>, ..." */
@@ -3000,14 +3002,13 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH(" WITH (");
 
 	/*
-	 * Complete "CREATE PUBLICATION <name> FOR ALL TABLES IN SCHEMA <schema>,
-	 * ..."
+	 * Complete "CREATE PUBLICATION <name> FOR TABLES IN SCHEMA <schema>, ..."
 	 */
-	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "ALL", "TABLES", "IN", "SCHEMA"))
+	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "TABLES", "IN", "SCHEMA"))
 		COMPLETE_WITH_QUERY_PLUS(Query_for_list_of_schemas
 								 " AND nspname NOT LIKE E'pg\\\\_%%'",
 								 "CURRENT_SCHEMA");
-	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "ALL", "TABLES", "IN", "SCHEMA", MatchAny) && (!ends_with(prev_wd, ',')))
+	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "TABLES", "IN", "SCHEMA", MatchAny) && (!ends_with(prev_wd, ',')))
 		COMPLETE_WITH("WITH (");
 	/* Complete "CREATE PUBLICATION <name> [...] WITH" */
 	else if (HeadMatches("CREATE", "PUBLICATION") && TailMatches("WITH", "("))
@@ -3152,8 +3153,8 @@ psql_completion(const char *text, int start, int end)
 	/* Complete "CREATE SUBSCRIPTION <name> ...  WITH ( <opt>" */
 	else if (HeadMatches("CREATE", "SUBSCRIPTION") && TailMatches("WITH", "("))
 		COMPLETE_WITH("binary", "connect", "copy_data", "create_slot",
-					  "enabled", "slot_name", "streaming",
-					  "synchronous_commit", "two_phase", "disable_on_error");
+					  "disable_on_error", "enabled", "slot_name", "streaming",
+					  "synchronous_commit", "two_phase");
 
 /* CREATE TRIGGER --- is allowed inside CREATE SCHEMA, so use TailMatches */
 
@@ -3626,7 +3627,7 @@ psql_completion(const char *text, int start, int end)
  */
 	else if (Matches("EXPLAIN"))
 		COMPLETE_WITH("SELECT", "INSERT INTO", "DELETE FROM", "UPDATE", "DECLARE",
-					  "MERGE", "EXECUTE", "ANALYZE", "VERBOSE");
+					  "MERGE INTO", "EXECUTE", "ANALYZE", "VERBOSE");
 	else if (HeadMatches("EXPLAIN", "(*") &&
 			 !HeadMatches("EXPLAIN", "(*)"))
 	{
@@ -3645,12 +3646,12 @@ psql_completion(const char *text, int start, int end)
 	}
 	else if (Matches("EXPLAIN", "ANALYZE"))
 		COMPLETE_WITH("SELECT", "INSERT INTO", "DELETE FROM", "UPDATE", "DECLARE",
-					  "MERGE", "EXECUTE", "VERBOSE");
+					  "MERGE INTO", "EXECUTE", "VERBOSE");
 	else if (Matches("EXPLAIN", "(*)") ||
 			 Matches("EXPLAIN", "VERBOSE") ||
 			 Matches("EXPLAIN", "ANALYZE", "VERBOSE"))
 		COMPLETE_WITH("SELECT", "INSERT INTO", "DELETE FROM", "UPDATE", "DECLARE",
-					  "MERGE", "EXECUTE");
+					  "MERGE INTO", "EXECUTE");
 
 /* FETCH && MOVE */
 
@@ -4050,57 +4051,89 @@ psql_completion(const char *text, int start, int end)
 	else if (HeadMatches("LOCK") && TailMatches("IN", "SHARE"))
 		COMPLETE_WITH("MODE", "ROW EXCLUSIVE MODE",
 					  "UPDATE EXCLUSIVE MODE");
+
+	/* Complete LOCK [TABLE] [ONLY] <table> [IN lockmode MODE] with "NOWAIT" */
+	else if (HeadMatches("LOCK") && TailMatches("MODE"))
+		COMPLETE_WITH("NOWAIT");
+
 /* MERGE --- can be inside EXPLAIN */
 	else if (TailMatches("MERGE"))
 		COMPLETE_WITH("INTO");
 	else if (TailMatches("MERGE", "INTO"))
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_mergetargets);
+
+	/* Complete MERGE INTO <table> [[AS] <alias>] with USING */
 	else if (TailMatches("MERGE", "INTO", MatchAny))
 		COMPLETE_WITH("USING", "AS");
-	else if (TailMatches("MERGE", "INTO", MatchAny, "USING"))
-		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables);
-	/* with [AS] alias */
-	else if (TailMatches("MERGE", "INTO", MatchAny, "AS", MatchAny))
+	else if (TailMatches("MERGE", "INTO", MatchAny, "AS", MatchAny) ||
+			 TailMatches("MERGE", "INTO", MatchAny, MatchAnyExcept("USING|AS")))
 		COMPLETE_WITH("USING");
-	else if (TailMatches("MERGE", "INTO", MatchAny, MatchAny))
-		COMPLETE_WITH("USING");
-	else if (TailMatches("MERGE", "INTO", MatchAny, "AS", MatchAny, "USING"))
-		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables);
-	else if (TailMatches("MERGE", "INTO", MatchAny, MatchAny, "USING"))
-		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables);
-	/* ON */
-	else if (TailMatches("MERGE", "INTO", MatchAny, "USING", MatchAny))
+
+	/*
+	 * Complete MERGE INTO ... USING with a list of relations supporting
+	 * SELECT
+	 */
+	else if (TailMatches("MERGE", "INTO", MatchAny, "USING") ||
+			 TailMatches("MERGE", "INTO", MatchAny, "AS", MatchAny, "USING") ||
+			 TailMatches("MERGE", "INTO", MatchAny, MatchAny, "USING"))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_selectables);
+
+	/*
+	 * Complete MERGE INTO <table> [[AS] <alias>] USING <relations> [[AS]
+	 * alias] with ON
+	 */
+	else if (TailMatches("MERGE", "INTO", MatchAny, "USING", MatchAny) ||
+			 TailMatches("MERGE", "INTO", MatchAny, "AS", MatchAny, "USING", MatchAny) ||
+			 TailMatches("MERGE", "INTO", MatchAny, MatchAny, "USING", MatchAny))
+		COMPLETE_WITH("AS", "ON");
+	else if (TailMatches("MERGE", "INTO", MatchAny, "USING", MatchAny, "AS", MatchAny) ||
+			 TailMatches("MERGE", "INTO", MatchAny, "AS", MatchAny, "USING", MatchAny, "AS", MatchAny) ||
+			 TailMatches("MERGE", "INTO", MatchAny, MatchAny, "USING", MatchAny, "AS", MatchAny) ||
+			 TailMatches("MERGE", "INTO", MatchAny, "USING", MatchAny, MatchAnyExcept("ON|AS")) ||
+			 TailMatches("MERGE", "INTO", MatchAny, "AS", MatchAny, "USING", MatchAny, MatchAnyExcept("ON|AS")) ||
+			 TailMatches("MERGE", "INTO", MatchAny, MatchAny, "USING", MatchAny, MatchAnyExcept("ON|AS")))
 		COMPLETE_WITH("ON");
-	else if (TailMatches("INTO", MatchAny, "AS", MatchAny, "USING", MatchAny, "AS", MatchAny))
-		COMPLETE_WITH("ON");
-	else if (TailMatches("INTO", MatchAny, MatchAny, "USING", MatchAny, MatchAny))
-		COMPLETE_WITH("ON");
-	/* ON condition */
+
+	/* Complete MERGE INTO ... ON with target table attributes */
 	else if (TailMatches("INTO", MatchAny, "USING", MatchAny, "ON"))
 		COMPLETE_WITH_ATTR(prev4_wd);
 	else if (TailMatches("INTO", MatchAny, "AS", MatchAny, "USING", MatchAny, "AS", MatchAny, "ON"))
 		COMPLETE_WITH_ATTR(prev8_wd);
 	else if (TailMatches("INTO", MatchAny, MatchAny, "USING", MatchAny, MatchAny, "ON"))
 		COMPLETE_WITH_ATTR(prev6_wd);
-	/* WHEN [NOT] MATCHED */
-	else if (TailMatches("USING", MatchAny, "ON", MatchAny))
+
+	/*
+	 * Complete ... USING <relation> [[AS] alias] ON join condition
+	 * (consisting of one or three words typically used) with WHEN [NOT]
+	 * MATCHED
+	 */
+	else if (TailMatches("USING", MatchAny, "ON", MatchAny) ||
+			 TailMatches("USING", MatchAny, "AS", MatchAny, "ON", MatchAny) ||
+			 TailMatches("USING", MatchAny, MatchAny, "ON", MatchAny) ||
+			 TailMatches("USING", MatchAny, "ON", MatchAny, MatchAnyExcept("WHEN"), MatchAnyExcept("WHEN")) ||
+			 TailMatches("USING", MatchAny, "AS", MatchAny, "ON", MatchAny, MatchAnyExcept("WHEN"), MatchAnyExcept("WHEN")) ||
+			 TailMatches("USING", MatchAny, MatchAny, "ON", MatchAny, MatchAnyExcept("WHEN"), MatchAnyExcept("WHEN")))
 		COMPLETE_WITH("WHEN MATCHED", "WHEN NOT MATCHED");
-	else if (TailMatches("USING", MatchAny, "AS", MatchAny, "ON", MatchAny))
-		COMPLETE_WITH("WHEN MATCHED", "WHEN NOT MATCHED");
-	else if (TailMatches("USING", MatchAny, MatchAny, "ON", MatchAny))
-		COMPLETE_WITH("WHEN MATCHED", "WHEN NOT MATCHED");
-	else if (TailMatches("WHEN", "MATCHED"))
+	else if (TailMatches("USING", MatchAny, "ON", MatchAny, "WHEN") ||
+			 TailMatches("USING", MatchAny, "AS", MatchAny, "ON", MatchAny, "WHEN") ||
+			 TailMatches("USING", MatchAny, MatchAny, "ON", MatchAny, "WHEN") ||
+			 TailMatches("USING", MatchAny, "ON", MatchAny, MatchAny, MatchAny, "WHEN") ||
+			 TailMatches("USING", MatchAny, "AS", MatchAny, "ON", MatchAny, MatchAny, MatchAny, "WHEN") ||
+			 TailMatches("USING", MatchAny, MatchAny, "ON", MatchAny, MatchAny, MatchAny, "WHEN"))
+		COMPLETE_WITH("MATCHED", "NOT MATCHED");
+
+	/* Complete ... WHEN [NOT] MATCHED with THEN/AND */
+	else if (TailMatches("WHEN", "MATCHED") ||
+			 TailMatches("WHEN", "NOT", "MATCHED"))
 		COMPLETE_WITH("THEN", "AND");
-	else if (TailMatches("WHEN", "NOT", "MATCHED"))
-		COMPLETE_WITH("THEN", "AND");
+
+	/* Complete ... WHEN MATCHED THEN with UPDATE SET/DELETE/DO NOTHING */
 	else if (TailMatches("WHEN", "MATCHED", "THEN"))
-		COMPLETE_WITH("UPDATE", "DELETE");
+		COMPLETE_WITH("UPDATE SET", "DELETE", "DO NOTHING");
+
+	/* Complete ... WHEN NOT MATCHED THEN with INSERT/DO NOTHING */
 	else if (TailMatches("WHEN", "NOT", "MATCHED", "THEN"))
 		COMPLETE_WITH("INSERT", "DO NOTHING");
-
-	/* Complete LOCK [TABLE] [ONLY] <table> [IN lockmode MODE] with "NOWAIT" */
-	else if (HeadMatches("LOCK") && TailMatches("MODE"))
-		COMPLETE_WITH("NOWAIT");
 
 /* NOTIFY --- can be inside EXPLAIN, RULE, etc */
 	else if (TailMatches("NOTIFY"))
@@ -5159,6 +5192,10 @@ _complete_from_query(const char *simple_query,
 
 		/* Clean up */
 		termPQExpBuffer(&query_buffer);
+		if (schemaname)
+			free(schemaname);
+		if (objectname)
+			free(objectname);
 		free(e_object_like);
 		if (e_schemaname)
 			free(e_schemaname);

@@ -363,7 +363,7 @@ extern DecodedXLogRecord *XLogNextRecord(XLogReaderState *state,
 										 char **errormsg);
 
 /* Release the previously returned record, if necessary. */
-extern void XLogReleasePreviousRecord(XLogReaderState *state);
+extern XLogRecPtr XLogReleasePreviousRecord(XLogReaderState *state);
 
 /* Try to read ahead, if there is data and space. */
 extern DecodedXLogRecord *XLogReadAhead(XLogReaderState *state,
@@ -372,6 +372,9 @@ extern DecodedXLogRecord *XLogReadAhead(XLogReaderState *state,
 /* Validate a page */
 extern bool XLogReaderValidatePageHeader(XLogReaderState *state,
 										 XLogRecPtr recptr, char *phdr);
+
+/* Forget error produced by XLogReaderValidatePageHeader(). */
+extern void XLogReaderResetError(XLogReaderState *state);
 
 /*
  * Error information from WALRead that both backend and frontend caller can

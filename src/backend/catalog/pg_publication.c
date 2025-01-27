@@ -513,13 +513,13 @@ publication_translate_columns(Relation targetrel, List *columns,
 		if (!AttrNumberIsForUserDefinedAttr(attnum))
 			ereport(ERROR,
 					errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-					errmsg("cannot reference system column \"%s\" in publication column list",
+					errmsg("cannot use system column \"%s\" in publication column list",
 						   colname));
 
 		if (TupleDescAttr(tupdesc, attnum - 1)->attgenerated)
 			ereport(ERROR,
 					errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-					errmsg("cannot reference generated column \"%s\" in publication column list",
+					errmsg("cannot use generated column \"%s\" in publication column list",
 						   colname));
 
 		if (bms_is_member(attnum, set))
@@ -837,7 +837,7 @@ GetAllTablesPublicationRelations(bool pubviaroot)
 /*
  * Gets the list of schema oids for a publication.
  *
- * This should only be used FOR ALL TABLES IN SCHEMA publications.
+ * This should only be used FOR TABLES IN SCHEMA publications.
  */
 List *
 GetPublicationSchemas(Oid pubid)
@@ -957,7 +957,7 @@ GetSchemaPublicationRelations(Oid schemaid, PublicationPartOpt pub_partopt)
 }
 
 /*
- * Gets the list of all relations published by FOR ALL TABLES IN SCHEMA
+ * Gets the list of all relations published by FOR TABLES IN SCHEMA
  * publication.
  */
 List *
@@ -1162,6 +1162,7 @@ pg_get_publication_tables(PG_FUNCTION_ARGS)
 		HeapTuple	pubtuple = NULL;
 		HeapTuple	rettuple;
 		Oid			relid = list_nth_oid(tables, funcctx->call_cntr);
+		Oid			schemaid = get_rel_namespace(relid);
 		Datum		values[NUM_PUBLICATION_TABLES_ELEM];
 		bool		nulls[NUM_PUBLICATION_TABLES_ELEM];
 
@@ -1175,9 +1176,17 @@ pg_get_publication_tables(PG_FUNCTION_ARGS)
 
 		values[0] = ObjectIdGetDatum(relid);
 
-		pubtuple = SearchSysCacheCopy2(PUBLICATIONRELMAP,
-									   ObjectIdGetDatum(relid),
-									   ObjectIdGetDatum(publication->oid));
+		/*
+		 * We don't consider row filters or column lists for FOR ALL TABLES or
+		 * FOR TABLES IN SCHEMA publications.
+		 */
+		if (!publication->alltables &&
+			!SearchSysCacheExists2(PUBLICATIONNAMESPACEMAP,
+								   ObjectIdGetDatum(schemaid),
+								   ObjectIdGetDatum(publication->oid)))
+			pubtuple = SearchSysCacheCopy2(PUBLICATIONRELMAP,
+										   ObjectIdGetDatum(relid),
+										   ObjectIdGetDatum(publication->oid));
 
 		if (HeapTupleIsValid(pubtuple))
 		{

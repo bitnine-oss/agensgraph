@@ -3148,42 +3148,71 @@ dumpDatabase(Archive *fout)
 
 	/*
 	 * pg_largeobject comes from the old system intact, so set its
-	 * relfrozenxids and relminmxids.
+	 * relfrozenxids, relminmxids and relfilenode.
 	 */
 	if (dopt->binary_upgrade)
 	{
 		PGresult   *lo_res;
 		PQExpBuffer loFrozenQry = createPQExpBuffer();
 		PQExpBuffer loOutQry = createPQExpBuffer();
-		int			i_relfrozenxid,
-					i_relminmxid;
+		PQExpBuffer loHorizonQry = createPQExpBuffer();
+		int			ii_relfrozenxid,
+					ii_relfilenode,
+					ii_oid,
+					ii_relminmxid;
 
 		/*
 		 * pg_largeobject
 		 */
 		if (fout->remoteVersion >= 90300)
-			appendPQExpBuffer(loFrozenQry, "SELECT relfrozenxid, relminmxid\n"
+			appendPQExpBuffer(loFrozenQry, "SELECT relfrozenxid, relminmxid, relfilenode, oid\n"
 							  "FROM pg_catalog.pg_class\n"
-							  "WHERE oid = %u;\n",
-							  LargeObjectRelationId);
+							  "WHERE oid IN (%u, %u);\n",
+							  LargeObjectRelationId, LargeObjectLOidPNIndexId);
 		else
-			appendPQExpBuffer(loFrozenQry, "SELECT relfrozenxid, 0 AS relminmxid\n"
+			appendPQExpBuffer(loFrozenQry, "SELECT relfrozenxid, 0 AS relminmxid, relfilenode, oid\n"
 							  "FROM pg_catalog.pg_class\n"
+							  "WHERE oid IN (%u, %u);\n",
+							  LargeObjectRelationId, LargeObjectLOidPNIndexId);
+
+		lo_res = ExecuteSqlQuery(fout, loFrozenQry->data, PGRES_TUPLES_OK);
+
+		ii_relfrozenxid = PQfnumber(lo_res, "relfrozenxid");
+		ii_relminmxid = PQfnumber(lo_res, "relminmxid");
+		ii_relfilenode = PQfnumber(lo_res, "relfilenode");
+		ii_oid = PQfnumber(lo_res, "oid");
+
+		appendPQExpBufferStr(loHorizonQry, "\n-- For binary upgrade, set pg_largeobject relfrozenxid and relminmxid\n");
+		appendPQExpBufferStr(loOutQry, "\n-- For binary upgrade, preserve pg_largeobject and index relfilenodes\n");
+		for (int i = 0; i < PQntuples(lo_res); ++i)
+		{
+			Oid		oid;
+			Oid		relfilenode;
+
+			appendPQExpBuffer(loHorizonQry, "UPDATE pg_catalog.pg_class\n"
+							  "SET relfrozenxid = '%u', relminmxid = '%u'\n"
 							  "WHERE oid = %u;\n",
-							  LargeObjectRelationId);
+							  atooid(PQgetvalue(lo_res, i, ii_relfrozenxid)),
+							  atooid(PQgetvalue(lo_res, i, ii_relminmxid)),
+							  atooid(PQgetvalue(lo_res, i, ii_oid)));
 
-		lo_res = ExecuteSqlQueryForSingleRow(fout, loFrozenQry->data);
+			oid = atooid(PQgetvalue(lo_res, i, ii_oid));
+			relfilenode = atooid(PQgetvalue(lo_res, i, ii_relfilenode));
 
-		i_relfrozenxid = PQfnumber(lo_res, "relfrozenxid");
-		i_relminmxid = PQfnumber(lo_res, "relminmxid");
+			if (oid == LargeObjectRelationId)
+				appendPQExpBuffer(loOutQry,
+								  "SELECT pg_catalog.binary_upgrade_set_next_heap_relfilenode('%u'::pg_catalog.oid);\n",
+								  relfilenode);
+			else if (oid == LargeObjectLOidPNIndexId)
+				appendPQExpBuffer(loOutQry,
+								  "SELECT pg_catalog.binary_upgrade_set_next_index_relfilenode('%u'::pg_catalog.oid);\n",
+								  relfilenode);
+		}
 
-		appendPQExpBufferStr(loOutQry, "\n-- For binary upgrade, set pg_largeobject relfrozenxid and relminmxid\n");
-		appendPQExpBuffer(loOutQry, "UPDATE pg_catalog.pg_class\n"
-						  "SET relfrozenxid = '%u', relminmxid = '%u'\n"
-						  "WHERE oid = %u;\n",
-						  atooid(PQgetvalue(lo_res, 0, i_relfrozenxid)),
-						  atooid(PQgetvalue(lo_res, 0, i_relminmxid)),
-						  LargeObjectRelationId);
+		appendPQExpBufferStr(loOutQry,
+							 "TRUNCATE pg_catalog.pg_largeobject;\n");
+		appendPQExpBufferStr(loOutQry, loHorizonQry->data);
+
 		ArchiveEntry(fout, nilCatalogId, createDumpId(),
 					 ARCHIVE_OPTS(.tag = "pg_largeobject",
 								  .description = "pg_largeobject",
@@ -3193,6 +3222,7 @@ dumpDatabase(Archive *fout)
 		PQclear(lo_res);
 
 		destroyPQExpBuffer(loFrozenQry);
+		destroyPQExpBuffer(loHorizonQry);
 		destroyPQExpBuffer(loOutQry);
 	}
 
@@ -4302,7 +4332,7 @@ dumpPublicationNamespace(Archive *fout, const PublicationSchemaInfo *pubsinfo)
 	query = createPQExpBuffer();
 
 	appendPQExpBuffer(query, "ALTER PUBLICATION %s ", fmtId(pubinfo->dobj.name));
-	appendPQExpBuffer(query, "ADD ALL TABLES IN SCHEMA %s;\n", fmtId(schemainfo->dobj.name));
+	appendPQExpBuffer(query, "ADD TABLES IN SCHEMA %s;\n", fmtId(schemainfo->dobj.name));
 
 	/*
 	 * There is no point in creating drop query as the drop is done by schema
@@ -7120,21 +7150,21 @@ getConstraints(Archive *fout, TableInfo tblinfo[], int numTables)
 	appendPQExpBufferChar(tbloids, '{');
 	for (int i = 0; i < numTables; i++)
 	{
-		TableInfo  *tbinfo = &tblinfo[i];
+		TableInfo  *tinfo = &tblinfo[i];
 
 		/*
 		 * For partitioned tables, foreign keys have no triggers so they must
 		 * be included anyway in case some foreign keys are defined.
 		 */
-		if ((!tbinfo->hastriggers &&
-			 tbinfo->relkind != RELKIND_PARTITIONED_TABLE) ||
-			!(tbinfo->dobj.dump & DUMP_COMPONENT_DEFINITION))
+		if ((!tinfo->hastriggers &&
+			 tinfo->relkind != RELKIND_PARTITIONED_TABLE) ||
+			!(tinfo->dobj.dump & DUMP_COMPONENT_DEFINITION))
 			continue;
 
 		/* OK, we need info for this table */
 		if (tbloids->len > 1)	/* do we have more than the '{'? */
 			appendPQExpBufferChar(tbloids, ',');
-		appendPQExpBuffer(tbloids, "%u", tbinfo->dobj.catId.oid);
+		appendPQExpBuffer(tbloids, "%u", tinfo->dobj.catId.oid);
 	}
 	appendPQExpBufferChar(tbloids, '}');
 
@@ -13131,9 +13161,11 @@ dumpCollation(Archive *fout, const CollInfo *collinfo)
 	int			i_collisdeterministic;
 	int			i_collcollate;
 	int			i_collctype;
+	int			i_colliculocale;
 	const char *collprovider;
 	const char *collcollate;
 	const char *collctype;
+	const char *colliculocale;
 
 	/* Do nothing in data-only dump */
 	if (dopt->dataOnly)
@@ -13164,6 +13196,13 @@ dumpCollation(Archive *fout, const CollInfo *collinfo)
 		appendPQExpBufferStr(query,
 							 "true AS collisdeterministic, ");
 
+	if (fout->remoteVersion >= 150000)
+		appendPQExpBufferStr(query,
+							 "colliculocale, ");
+	else
+		appendPQExpBufferStr(query,
+							 "NULL AS colliculocale, ");
+
 	appendPQExpBuffer(query,
 					  "collcollate, "
 					  "collctype "
@@ -13177,10 +13216,24 @@ dumpCollation(Archive *fout, const CollInfo *collinfo)
 	i_collisdeterministic = PQfnumber(res, "collisdeterministic");
 	i_collcollate = PQfnumber(res, "collcollate");
 	i_collctype = PQfnumber(res, "collctype");
+	i_colliculocale = PQfnumber(res, "colliculocale");
 
 	collprovider = PQgetvalue(res, 0, i_collprovider);
-	collcollate = PQgetvalue(res, 0, i_collcollate);
-	collctype = PQgetvalue(res, 0, i_collctype);
+
+	if (!PQgetisnull(res, 0, i_collcollate))
+		collcollate = PQgetvalue(res, 0, i_collcollate);
+	else
+		collcollate = NULL;
+
+	if (!PQgetisnull(res, 0, i_collctype))
+		collctype = PQgetvalue(res, 0, i_collctype);
+	else
+		collctype = NULL;
+
+	if (!PQgetisnull(res, 0, i_colliculocale))
+		colliculocale = PQgetvalue(res, 0, i_colliculocale);
+	else
+		colliculocale = NULL;
 
 	appendPQExpBuffer(delq, "DROP COLLATION %s;\n",
 					  fmtQualifiedDumpable(collinfo));
@@ -13203,17 +13256,28 @@ dumpCollation(Archive *fout, const CollInfo *collinfo)
 	if (strcmp(PQgetvalue(res, 0, i_collisdeterministic), "f") == 0)
 		appendPQExpBufferStr(q, ", deterministic = false");
 
-	if (strcmp(collcollate, collctype) == 0)
+	if (colliculocale != NULL)
 	{
 		appendPQExpBufferStr(q, ", locale = ");
-		appendStringLiteralAH(q, collcollate, fout);
+		appendStringLiteralAH(q, colliculocale, fout);
 	}
 	else
 	{
-		appendPQExpBufferStr(q, ", lc_collate = ");
-		appendStringLiteralAH(q, collcollate, fout);
-		appendPQExpBufferStr(q, ", lc_ctype = ");
-		appendStringLiteralAH(q, collctype, fout);
+		Assert(collcollate != NULL);
+		Assert(collctype != NULL);
+
+		if (strcmp(collcollate, collctype) == 0)
+		{
+			appendPQExpBufferStr(q, ", locale = ");
+			appendStringLiteralAH(q, collcollate, fout);
+		}
+		else
+		{
+			appendPQExpBufferStr(q, ", lc_collate = ");
+			appendStringLiteralAH(q, collcollate, fout);
+			appendPQExpBufferStr(q, ", lc_ctype = ");
+			appendStringLiteralAH(q, collctype, fout);
+		}
 	}
 
 	/*
@@ -16879,7 +16943,7 @@ dumpSequence(Archive *fout, const TableInfo *tbinfo)
 	 */
 	if (OidIsValid(tbinfo->owning_tab) && !tbinfo->is_identity_sequence)
 	{
-		TableInfo  *owning_tab = findTableByOid(tbinfo->owning_tab);
+		owning_tab = findTableByOid(tbinfo->owning_tab);
 
 		if (owning_tab == NULL)
 			pg_fatal("failed sanity check, parent table with OID %u of sequence with OID %u not found",

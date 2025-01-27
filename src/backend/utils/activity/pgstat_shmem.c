@@ -579,6 +579,22 @@ pgstat_lock_entry(PgStat_EntryRef *entry_ref, bool nowait)
 	return true;
 }
 
+/*
+ * Separate from pgstat_lock_entry() as most callers will need to lock
+ * exclusively.
+ */
+bool
+pgstat_lock_entry_shared(PgStat_EntryRef *entry_ref, bool nowait)
+{
+	LWLock	   *lock = &entry_ref->shared_stats->lock;
+
+	if (nowait)
+		return LWLockConditionalAcquire(lock, LW_SHARED);
+
+	LWLockAcquire(lock, LW_SHARED);
+	return true;
+}
+
 void
 pgstat_unlock_entry(PgStat_EntryRef *entry_ref)
 {
@@ -976,12 +992,12 @@ pgstat_setup_memcxt(void)
 {
 	if (unlikely(!pgStatSharedRefContext))
 		pgStatSharedRefContext =
-			AllocSetContextCreate(CacheMemoryContext,
+			AllocSetContextCreate(TopMemoryContext,
 								  "PgStat Shared Ref",
 								  ALLOCSET_SMALL_SIZES);
 	if (unlikely(!pgStatEntryRefHashContext))
 		pgStatEntryRefHashContext =
-			AllocSetContextCreate(CacheMemoryContext,
+			AllocSetContextCreate(TopMemoryContext,
 								  "PgStat Shared Ref Hash",
 								  ALLOCSET_SMALL_SIZES);
 }

@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ecpg (PostgreSQL 15)\n"
 "Report-Msgid-Bugs-To: pgsql-bugs@lists.postgresql.org\n"
-"POT-Creation-Date: 2022-05-11 14:16+0900\n"
+"POT-Creation-Date: 2022-08-09 12:00+0900\n"
 "PO-Revision-Date: 2022-05-11 14:50+0900\n"
 "Last-Translator: Kyotaro Horiguchi <horikyota.ntt@gmail.com>\n"
 "Language-Team: jpug-doc <jpug-doc@ml.postgresql.jp>\n"
@@ -88,8 +88,8 @@ msgid ""
 "  -c             automatically generate C code from embedded SQL code;\n"
 "                 this affects EXEC SQL TYPE\n"
 msgstr ""
-"  -c             埋め込まれたSQLコードを元にC言語コードを自動的に生成します\n"
-"                 これはEXEC SQL TYPEに影響を与えます\n"
+"  -c             埋め込まれたSQLコードを元にC言語コードを自動的に生成\n"
+"                 これはEXEC SQL TYPEに影響を与える\n"
 
 #: ecpg.c:44
 #, c-format
@@ -98,39 +98,39 @@ msgid ""
 "                 \"INFORMIX\", \"INFORMIX_SE\", \"ORACLE\"\n"
 msgstr ""
 "  -C MODE        互換モードを設定; MODEは\"INFORMIX\"、 \"INFORMIX_SE\"、\n"
-"                 \"ORACLE\"のいずれかです\n"
+"                 \"ORACLE\"のいずれか\n"
 
 #: ecpg.c:47
 #, c-format
 msgid "  -d             generate parser debug output\n"
-msgstr "  -d             パーサのデバッグ出力を有効にします\n"
+msgstr "  -d             パーサのデバッグ出力を有効にする\n"
 
 #: ecpg.c:49
 #, c-format
 msgid "  -D SYMBOL      define SYMBOL\n"
-msgstr "  -D SYMBOL      シンボル SYMBOL を定義します\n"
+msgstr "  -D SYMBOL      シンボル SYMBOL を定義する\n"
 
 #: ecpg.c:50
 #, c-format
 msgid "  -h             parse a header file, this option includes option \"-c\"\n"
 msgstr ""
-"  -h             ヘッダファイルをパースします。このオプションには\"-c\"オプション\n"
-"              が含まれます\n"
+"  -h             ヘッダファイルをパースする。このオプションには\"-c\"オプション\n"
+"                 が含まれる\n"
 
 #: ecpg.c:51
 #, c-format
 msgid "  -i             parse system include files as well\n"
-msgstr "  -i             システムインクルードファイルもパースします\n"
+msgstr "  -i             システムインクルードファイルもパースする\n"
 
 #: ecpg.c:52
 #, c-format
 msgid "  -I DIRECTORY   search DIRECTORY for include files\n"
-msgstr "  -I DIRECTORY   DIRECTORYからインクルードファイルを検索します\n"
+msgstr "  -I DIRECTORY   DIRECTORYからインクルードファイルを検索する\n"
 
 #: ecpg.c:53
 #, c-format
 msgid "  -o OUTFILE     write result to OUTFILE\n"
-msgstr "  -o OUTFILE     結果をOUTFILEに出力します\n"
+msgstr "  -o OUTFILE     結果をOUTFILEに出力する\n"
 
 #: ecpg.c:54
 #, c-format
@@ -138,28 +138,28 @@ msgid ""
 "  -r OPTION      specify run-time behavior; OPTION can be:\n"
 "                 \"no_indicator\", \"prepare\", \"questionmarks\"\n"
 msgstr ""
-"  -r OPTION      実行時の動作を指定します。オプションは次のいずれかです\n"
+"  -r OPTION      実行時の動作を指定する。オプションは次のいずれか\n"
 "                 \"no_indicator\"、\"prepare\"、\"questionmarks\"\n"
 
 #: ecpg.c:56
 #, c-format
 msgid "  --regression   run in regression testing mode\n"
-msgstr "  --regression   リグレッション試験モードで実行します\n"
+msgstr "  --regression   リグレッション試験モードで実行\n"
 
 #: ecpg.c:57
 #, c-format
 msgid "  -t             turn on autocommit of transactions\n"
-msgstr "  -t             トランザクションの自動コミットを有効にします\n"
+msgstr "  -t             トランザクションの自動コミットを有効にする\n"
 
 #: ecpg.c:58
 #, c-format
 msgid "  -V, --version  output version information, then exit\n"
-msgstr "  -V, --version  バージョン情報を出力して、終了します\n"
+msgstr "  -V, --version  バージョン情報を出力して終了\n"
 
 #: ecpg.c:59
 #, c-format
 msgid "  -?, --help     show this help, then exit\n"
-msgstr "  -?, --help     このヘルプを表示して、終了します\n"
+msgstr "  -?, --help     このヘルプを表示して終了\n"
 
 #: ecpg.c:60
 #, c-format
@@ -390,12 +390,12 @@ msgstr "型定義では初期化子は許されません"
 msgid "type name \"string\" is reserved in Informix mode"
 msgstr "型名\"string\"はInformixモードですでに予約されています"
 
-#: preproc.y:552 preproc.y:19317
+#: preproc.y:552 preproc.y:19354
 #, c-format
 msgid "type \"%s\" is already defined"
 msgstr "\"%s\"型はすでに定義されています"
 
-#: preproc.y:577 preproc.y:19952 preproc.y:20277 variable.c:621
+#: preproc.y:577 preproc.y:19989 preproc.y:20314 variable.c:621
 #, c-format
 msgid "multidimensional arrays for simple data types are not supported"
 msgstr "単純なデータ型の多次元配列はサポートされていません"
@@ -445,7 +445,7 @@ msgstr "WHENEVER文ではATオプションは許されません"
 #: preproc.y:7687 preproc.y:9288 preproc.y:9293 preproc.y:12272
 #, c-format
 msgid "unsupported feature will be passed to server"
-msgstr "非サポートの機能がサーバに渡されます"
+msgstr "非サポートの機能がサーバーに渡されます"
 
 #: preproc.y:2890
 #, c-format
@@ -475,7 +475,7 @@ msgstr "カーソル\"%s\"はすでに定義されています"
 #: preproc.y:10818
 #, c-format
 msgid "no longer supported LIMIT #,# syntax passed to server"
-msgstr "サーバに渡されるLIMIT #,#構文はもはやサポートされていません"
+msgstr "サーバーに渡されるLIMIT #,#構文はもはやサポートされていません"
 
 #: preproc.y:11151 preproc.y:11158
 #, c-format
@@ -552,33 +552,33 @@ msgstr "数値データ型または10進数データ型のみが精度/位取り
 msgid "interval specification not allowed here"
 msgstr "時間間隔の指定はここでは許されません"
 
-#: preproc.y:19292 preproc.y:19344
+#: preproc.y:19329 preproc.y:19381
 #, c-format
 msgid "too many levels in nested structure/union definition"
 msgstr "構造体/ユニオンの定義の入れ子レベルが深すぎます"
 
-#: preproc.y:19467
+#: preproc.y:19504
 #, c-format
 msgid "pointers to varchar are not implemented"
 msgstr "varcharを指し示すポインタは実装されていません"
 
-#: preproc.y:19918
+#: preproc.y:19955
 #, c-format
 msgid "initializer not allowed in EXEC SQL VAR command"
 msgstr "EXEC SQL VARコマンドでは初期化子は許されません"
 
-#: preproc.y:20235
+#: preproc.y:20272
 #, c-format
 msgid "arrays of indicators are not allowed on input"
 msgstr "指示子配列は入力として許されません"
 
-#: preproc.y:20422
+#: preproc.y:20459
 #, c-format
 msgid "operator not allowed in variable definition"
 msgstr "変数定義では演算子は許されません"
 
 #. translator: %s is typically the translation of "syntax error"
-#: preproc.y:20463
+#: preproc.y:20500
 #, c-format
 msgid "%s at or near \"%s\""
 msgstr "\"%2$s\"またはその近辺で%1$s"

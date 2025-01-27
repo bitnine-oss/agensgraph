@@ -4,6 +4,9 @@ PostgreSQL documentation
 -->
 
 <refentry id="sql-merge">
+ <indexterm zone="sql-merge">
+  <primary>MERGE</primary>
+ </indexterm>
 
  <refmeta>
   <refentrytitle>MERGE</refentrytitle>
@@ -262,10 +265,6 @@ DELETE
       Each column not present in the explicit or implicit column list will be
       filled with a default value, either its declared default value
       or null if there is none.
-     </para>
-     <para>
-      If the expression for any column is not of the correct data type,
-      automatic type conversion will be attempted.
      </para>
      <para>
       If <replaceable class="parameter">target_table_name</replaceable>
@@ -555,18 +554,18 @@ MERGE <replaceable class="parameter">total_count</replaceable>
   <title>Examples</title>
 
   <para>
-   Perform maintenance on <literal>CustomerAccounts</literal> based
-   upon new <literal>Transactions</literal>.
+   Perform maintenance on <literal>customer_accounts</literal> based
+   upon new <literal>recent_transactions</literal>.
 
 <programlisting>
-MERGE INTO CustomerAccount CA
-USING RecentTransactions T
-ON T.CustomerId = CA.CustomerId
+MERGE INTO customer_account ca
+USING recent_transactions t
+ON t.customer_id = ca.customer_id
 WHEN MATCHED THEN
-  UPDATE SET Balance = Balance + TransactionValue
+  UPDATE SET balance = balance + transaction_value
 WHEN NOT MATCHED THEN
-  INSERT (CustomerId, Balance)
-  VALUES (T.CustomerId, T.TransactionValue);
+  INSERT (customer_id, balance)
+  VALUES (t.customer_id, t.transaction_value);
 </programlisting>
   </para>
 
@@ -576,14 +575,14 @@ WHEN NOT MATCHED THEN
    during execution.
 
 <programlisting>
-MERGE INTO CustomerAccount CA
-USING (Select CustomerId, TransactionValue From RecentTransactions) AS T
-ON CA.CustomerId = T.CustomerId
-WHEN NOT MATCHED THEN
-  INSERT (CustomerId, Balance)
-  VALUES (T.CustomerId, T.TransactionValue)
+MERGE INTO customer_account ca
+USING (SELECT customer_id, transaction_value FROM recent_transactions) AS t
+ON t.customer_id = ca.customer_id
 WHEN MATCHED THEN
-  UPDATE SET Balance = Balance + TransactionValue;
+  UPDATE SET balance = balance + transaction_value
+WHEN NOT MATCHED THEN
+  INSERT (customer_id, balance)
+  VALUES (t.customer_id, t.transaction_value);
 </programlisting>
   </para>
 

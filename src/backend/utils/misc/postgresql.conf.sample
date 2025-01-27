@@ -148,7 +148,7 @@
 					#   windows
 					# (change requires restart)
 #eager_mem = 4MB			# min 1MB
-#dynamic_shared_memory_type = posix	# the default is the first option
+#dynamic_shared_memory_type = posix	# the default is usually the first option
 					# supported by the operating system:
 					#   posix
 					#   sysv
@@ -390,7 +390,6 @@
 #enable_seqscan = on
 #enable_sort = on
 #enable_tidscan = on
-#enable_group_by_reordering = on
 #enable_eager = off
 
 # - Planner Cost Constants -

@@ -28,6 +28,7 @@
 #endif
 
 #include "access/xlog_internal.h"
+#include "backup/basebackup.h"
 #include "bbstreamer.h"
 #include "common/compression.h"
 #include "common/file_perm.h"
@@ -37,7 +38,6 @@
 #include "fe_utils/recovery_gen.h"
 #include "getopt_long.h"
 #include "receivelog.h"
-#include "replication/basebackup.h"
 #include "streamutil.h"
 
 #define ERRCODE_DATA_CORRUPTED	"XX001"
@@ -694,16 +694,8 @@ StartLogStreamer(char *startpos, uint32 timeline, char *sysidentifier,
 	bgchild = fork();
 	if (bgchild == 0)
 	{
-		int			ret;
-
 		/* in child process */
-		ret = LogStreamerMain(param);
-
-		/* temp debugging aid to analyze 019_replslot_limit failures */
-		if (verbose)
-			pg_log_info("log streamer with pid %d exiting", getpid());
-
-		exit(ret);
+		exit(LogStreamerMain(param));
 	}
 	else if (bgchild < 0)
 		pg_fatal("could not create background process: %m");
@@ -1127,8 +1119,9 @@ CreateBackupStreamer(char *archive_name, char *spclocation,
 	 */
 	if (inject_manifest && is_compressed_tar)
 	{
-		pg_log_error("cannot inject manifest into a compressed tarfile");
-		pg_log_info("use client-side compression, send the output to a directory rather than standard output, or use --no-manifest");
+		pg_log_error("cannot inject manifest into a compressed tar file");
+		pg_log_error_hint("Use client-side compression, send the output to a directory rather than standard output, or use %s.",
+						  "--no-manifest");
 		exit(1);
 	}
 
@@ -1143,7 +1136,7 @@ CreateBackupStreamer(char *archive_name, char *spclocation,
 	/* At present, we only know how to parse tar archives. */
 	if (must_parse_archive && !is_tar && !is_compressed_tar)
 	{
-		pg_log_error("unable to parse archive: %s", archive_name);
+		pg_log_error("cannot parse archive \"%s\"", archive_name);
 		pg_log_error_detail("Only tar archives can be parsed.");
 		if (format == 'p')
 			pg_log_error_detail("Plain format requires pg_basebackup to parse the archive.");
@@ -1361,7 +1354,7 @@ ReceiveArchiveStreamChunk(size_t r, char *copybuf, void *callback_data)
 				/* Sanity check. */
 				if (state->manifest_buffer != NULL ||
 					state->manifest_file !=NULL)
-					pg_fatal("archives should precede manifest");
+					pg_fatal("archives must precede manifest");
 
 				/* Parse the rest of the CopyData message. */
 				archive_name = GetCopyDataString(r, copybuf, &cursor);
@@ -1807,7 +1800,7 @@ BaseBackup(char *compression_algorithm, char *compression_detail,
 		 * Error message already written in CheckServerVersionForStreaming(),
 		 * but add a hint about using -X none.
 		 */
-		pg_log_info("HINT: use -X none or -X fetch to disable log streaming");
+		pg_log_error_hint("Use -X none or -X fetch to disable log streaming.");
 		exit(1);
 	}
 
@@ -1919,7 +1912,7 @@ BaseBackup(char *compression_algorithm, char *compression_detail,
 
 	if (showprogress && !verbose)
 	{
-		fprintf(stderr, "waiting for checkpoint");
+		fprintf(stderr, _("waiting for checkpoint"));
 		if (isatty(fileno(stderr)))
 			fprintf(stderr, "\r");
 		else
@@ -2028,9 +2021,7 @@ BaseBackup(char *compression_algorithm, char *compression_detail,
 		if (client_compress->algorithm == PG_COMPRESSION_GZIP)
 		{
 			wal_compress_algorithm = PG_COMPRESSION_GZIP;
-			wal_compress_level =
-				(client_compress->options & PG_COMPRESSION_OPTION_LEVEL)
-				!= 0 ? client_compress->level : 0;
+			wal_compress_level = client_compress->level;
 		}
 		else
 		{
@@ -2039,7 +2030,8 @@ BaseBackup(char *compression_algorithm, char *compression_detail,
 		}
 
 		StartLogStreamer(xlogstart, starttli, sysidentifier,
-						 wal_compress_algorithm, wal_compress_level);
+						 wal_compress_algorithm,
+						 wal_compress_level);
 	}
 
 	if (serverMajor >= 1500)
@@ -2562,7 +2554,7 @@ main(int argc, char **argv)
 		char	   *error_detail;
 
 		if (!parse_compress_algorithm(compression_algorithm, &alg))
-			pg_fatal("unrecognized compression algorithm \"%s\"",
+			pg_fatal("unrecognized compression algorithm: \"%s\"",
 					 compression_algorithm);
 
 		parse_compress_specification(alg, compression_detail, &client_compress);

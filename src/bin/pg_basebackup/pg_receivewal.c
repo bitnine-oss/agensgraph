@@ -511,10 +511,8 @@ FindStreamingStart(uint32 *tli)
 				continue;
 			}
 #else
-			pg_log_error("could not check file \"%s\"",
-						 dirent->d_name);
-			pg_log_error_detail("This build does not support compression with %s.",
-								"LZ4");
+			pg_log_error("cannot check file \"%s\": compression with %s not supported by this build",
+						 dirent->d_name, "LZ4");
 			exit(1);
 #endif
 		}
@@ -867,7 +865,7 @@ main(int argc, char **argv)
 	 */
 	if (!parse_compress_algorithm(compression_algorithm_str,
 								  &compression_algorithm))
-		pg_fatal("unrecognized compression algorithm \"%s\"",
+		pg_fatal("unrecognized compression algorithm: \"%s\"",
 				 compression_algorithm_str);
 
 	parse_compress_specification(compression_algorithm, compression_detail,
@@ -877,38 +875,11 @@ main(int argc, char **argv)
 		pg_fatal("invalid compression specification: %s",
 				 error_detail);
 
-	/* Extract the compression level, if found in the specification */
-	if ((compression_spec.options & PG_COMPRESSION_OPTION_LEVEL) != 0)
-		compresslevel = compression_spec.level;
+	/* Extract the compression level */
+	compresslevel = compression_spec.level;
 
-	switch (compression_algorithm)
-	{
-		case PG_COMPRESSION_NONE:
-			/* nothing to do */
-			break;
-		case PG_COMPRESSION_GZIP:
-#ifdef HAVE_LIBZ
-			if ((compression_spec.options & PG_COMPRESSION_OPTION_LEVEL) == 0)
-			{
-				pg_log_info("no value specified for --compress, switching to default");
-				compresslevel = Z_DEFAULT_COMPRESSION;
-			}
-#else
-			pg_fatal("this build does not support compression with %s",
-					 "gzip");
-#endif
-			break;
-		case PG_COMPRESSION_LZ4:
-#ifndef USE_LZ4
-			pg_fatal("this build does not support compression with %s",
-					 "LZ4");
-#endif
-			break;
-		case PG_COMPRESSION_ZSTD:
-			pg_fatal("compression with %s is not yet supported", "ZSTD");
-			break;
-	}
-
+	if (compression_algorithm == PG_COMPRESSION_ZSTD)
+		pg_fatal("compression with %s is not yet supported", "ZSTD");
 
 	/*
 	 * Check existence of destination folder.

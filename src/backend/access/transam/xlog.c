@@ -63,6 +63,7 @@
 #include "access/xlogreader.h"
 #include "access/xlogrecovery.h"
 #include "access/xlogutils.h"
+#include "backup/basebackup.h"
 #include "catalog/catversion.h"
 #include "catalog/pg_control.h"
 #include "catalog/pg_database.h"
@@ -77,7 +78,6 @@
 #include "postmaster/bgwriter.h"
 #include "postmaster/startup.h"
 #include "postmaster/walwriter.h"
-#include "replication/basebackup.h"
 #include "replication/logical.h"
 #include "replication/origin.h"
 #include "replication/slot.h"
@@ -1778,7 +1778,7 @@ AdvanceXLInsertBuffer(XLogRecPtr upto, TimeLineID tli, bool opportunistic)
 	XLogRecPtr	NewPageEndPtr = InvalidXLogRecPtr;
 	XLogRecPtr	NewPageBeginPtr;
 	XLogPageHeader NewPage;
-	int			npages = 0;
+	int			npages pg_attribute_unused() = 0;
 
 	LWLockAcquire(WALBufMappingLock, LW_EXCLUSIVE);
 
@@ -5313,6 +5313,12 @@ StartupXLOG(void)
 	missingContrecPtr = endOfRecoveryInfo->missingContrecPtr;
 
 	/*
+	 * Reset ps status display, so as no information related to recovery
+	 * shows up.
+	 */
+	set_ps_display("");
+
+	/*
 	 * When recovering from a backup (we are in recovery, and archive recovery
 	 * was requested), complain if we did not roll forward far enough to reach
 	 * the point where the database is consistent.  For regular online
@@ -5444,6 +5450,14 @@ StartupXLOG(void)
 	 */
 	if (!XLogRecPtrIsInvalid(missingContrecPtr))
 	{
+		/*
+		 * We should only have a missingContrecPtr if we're not switching to
+		 * a new timeline. When a timeline switch occurs, WAL is copied from
+		 * the old timeline to the new only up to the end of the last complete
+		 * record, so there can't be an incomplete WAL record that we need to
+		 * disregard.
+		 */
+		Assert(newTLI == endOfRecoveryInfo->lastRecTLI);
 		Assert(!XLogRecPtrIsInvalid(abortedRecPtr));
 		EndOfLog = missingContrecPtr;
 	}
@@ -8294,13 +8308,8 @@ do_pg_backup_start(const char *backupidstr, bool fast, TimeLineID *starttli_p,
 			 * we sometimes use allow_in_place_tablespaces to create
 			 * directories directly under pg_tblspc, which would fail below.
 			 */
-#ifdef WIN32
-			if (!pgwin32_is_junction(fullpath))
-				continue;
-#else
 			if (get_dirent_type(fullpath, de, false, ERROR) != PGFILETYPE_LNK)
 				continue;
-#endif
 
 #if defined(HAVE_READLINK) || defined(WIN32)
 			rllen = readlink(fullpath, linkpath, sizeof(linkpath));
@@ -8783,6 +8792,8 @@ do_pg_abort_backup(int code, Datum arg)
 	{
 		XLogCtl->Insert.forcePageWrites = false;
 	}
+
+	sessionBackupState = SESSION_BACKUP_NONE;
 	WALInsertLockRelease();
 
 	if (emit_warning)

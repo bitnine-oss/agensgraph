@@ -52,10 +52,10 @@ task:
 
   compute_engine_instance:
     image_project: $IMAGE_PROJECT
-    image: family/pg-ci-freebsd-13-0
+    image: family/pg-ci-freebsd-13
     platform: freebsd
     cpu: $CPUS
-    memory: 2G
+    memory: 4G
     disk: 50
 
   sysinfo_script: |
@@ -166,7 +166,7 @@ task:
     image: family/pg-ci-bullseye
     platform: linux
     cpu: $CPUS
-    memory: 2G
+    memory: 4G
 
   ccache_cache:
     folder: ${CCACHE_DIR}
@@ -226,7 +226,10 @@ task:
   env:
     CPUS: 12 # always get that much for cirrusci macOS instances
     BUILD_JOBS: $CPUS
-    TEST_JOBS: $CPUS # already fast enough to not be worth tuning
+    # Test performance regresses noticably when using all cores. 8 seems to
+    # work OK. See
+    # https://postgr.es/m/20220927040208.l3shfcidovpzqxfh%40awork3.anarazel.de
+    TEST_JOBS: 8
 
     CIRRUS_WORKING_DIR: ${HOME}/pgsql/
     CCACHE_DIR: ${HOME}/ccache
@@ -385,6 +388,15 @@ task:
     # permissions b) need to wait for startup to have finished, and we don't
     # currently have a tool for that...
     CIRRUS_ESCAPING_PROCESSES: 1
+
+    # Cirrus defaults to SetErrorMode(SEM_NOGPFAULTERRORBOX | ...). That
+    # prevents crash reporting from working unless binaries do SetErrorMode()
+    # themselves. Furthermore, it appears that either python or, more likely,
+    # the C runtime has a bug where SEM_NOGPFAULTERRORBOX can very
+    # occasionally *trigger* a crash on process exit - which is hard to debug,
+    # given that it explicitly prevents crash dumps from working...
+    # 0x8001 is SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX
+    CIRRUS_WINDOWS_ERROR_MODE: 0x8001
 
   only_if: $CIRRUS_CHANGE_MESSAGE !=~ '.*\nci-os-only:.*' || $CIRRUS_CHANGE_MESSAGE =~ '.*\nci-os-only:[^\n]*windows.*'
 

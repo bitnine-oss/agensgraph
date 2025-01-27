@@ -681,18 +681,7 @@ get_eclass_for_sort_expr(PlannerInfo *root,
 
 			if (opcintype == cur_em->em_datatype &&
 				equal(expr, cur_em->em_expr))
-			{
-				/*
-				 * Match!
-				 *
-				 * Copy the sortref if it wasn't set yet. That may happen if
-				 * the ec was constructed from WHERE clause, i.e. it doesn't
-				 * have a target reference at all.
-				 */
-				if (cur_ec->ec_sortref == 0 && sortref > 0)
-					cur_ec->ec_sortref = sortref;
-				return cur_ec;
-			}
+				return cur_ec;	/* Match! */
 		}
 	}
 
@@ -986,7 +975,7 @@ relation_can_be_sorted_early(PlannerInfo *root, RelOptInfo *rel,
 		 * one are effectively checking properties of targetexpr, so there's
 		 * no point in asking whether some other EC member would be better.)
 		 */
-		if (IS_SRF_CALL((Node *) em->em_expr))
+		if (expression_returns_set((Node *) em->em_expr))
 			continue;
 
 		/*
@@ -1014,7 +1003,7 @@ relation_can_be_sorted_early(PlannerInfo *root, RelOptInfo *rel,
 	 * member in this case; since SRFs can't appear in WHERE, they cannot
 	 * belong to multi-member ECs.)
 	 */
-	if (IS_SRF_CALL((Node *) em->em_expr))
+	if (expression_returns_set((Node *) em->em_expr))
 		return false;
 
 	return true;

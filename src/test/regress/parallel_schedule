@@ -111,7 +111,7 @@ test: select_views portals_p2 foreign_key cluster dependency guc bitmapops combo
 # ----------
 # Another group of parallel tests (JSON related)
 # ----------
-test: json jsonb json_encoding jsonpath jsonpath_encoding jsonb_jsonpath sqljson json_sqljson jsonb_sqljson
+test: json jsonb json_encoding jsonpath jsonpath_encoding jsonb_jsonpath
 
 # ----------
 # Another group of parallel tests
@@ -135,9 +135,6 @@ test: event_trigger oidjoins
 
 # this test also uses event triggers, so likewise run it by itself
 test: fast_default
-
-# run stats by itself because its delay may be insufficient under heavy load
-test: stats
 
 # run cypher dml test
 test: cypher_dml cypher_dml2 cypher_shortestpath cypher_eager graphid

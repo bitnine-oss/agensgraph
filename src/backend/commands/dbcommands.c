@@ -30,6 +30,7 @@
 #include "access/tableam.h"
 #include "access/xact.h"
 #include "access/xloginsert.h"
+#include "access/xlogrecovery.h"
 #include "access/xlogutils.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -47,6 +48,7 @@
 #include "commands/defrem.h"
 #include "commands/seclabel.h"
 #include "commands/tablespace.h"
+#include "common/file_perm.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "pgstat.h"
@@ -135,6 +137,7 @@ static void CreateDirAndVersionFile(char *dbpath, Oid dbid, Oid tsid,
 									bool isRedo);
 static void CreateDatabaseUsingFileCopy(Oid src_dboid, Oid dboid, Oid src_tsid,
 										Oid dst_tsid);
+static void recovery_create_dbdir(char *path, bool only_tblspc);
 
 /*
  * Create a new database using the WAL_LOG strategy.
@@ -254,8 +257,8 @@ ScanSourceDatabasePgClass(Oid tbid, Oid dbid, char *srcpath)
 	Page		page;
 	List	   *rnodelist = NIL;
 	LockRelId	relid;
-	Relation	rel;
 	Snapshot	snapshot;
+	SMgrRelation	smgr;
 	BufferAccessStrategy bstrategy;
 
 	/* Get pg_class relfilenode. */
@@ -272,16 +275,9 @@ ScanSourceDatabasePgClass(Oid tbid, Oid dbid, char *srcpath)
 	rnode.dbNode = dbid;
 	rnode.relNode = relfilenode;
 
-	/*
-	 * We can't use a real relcache entry for a relation in some other
-	 * database, but since we're only going to access the fields related to
-	 * physical storage, a fake one is good enough. If we didn't do this and
-	 * used the smgr layer directly, we would have to worry about
-	 * invalidations.
-	 */
-	rel = CreateFakeRelcacheEntry(rnode);
-	nblocks = smgrnblocks(RelationGetSmgr(rel), MAIN_FORKNUM);
-	FreeFakeRelcacheEntry(rel);
+	smgr = smgropen(rnode, InvalidBackendId);
+	nblocks = smgrnblocks(smgr, MAIN_FORKNUM);
+	smgrclose(smgr);
 
 	/* Use a buffer access strategy since this is a bulk read operation. */
 	bstrategy = GetAccessStrategy(BAS_BULKREAD);
@@ -943,15 +939,6 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 					 errmsg("unrecognized locale provider: %s",
 							locproviderstr)));
 	}
-	if (diculocale && dblocprovider != COLLPROVIDER_ICU)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				 errmsg("ICU locale cannot be specified unless locale provider is ICU")));
-	if (dblocprovider == COLLPROVIDER_ICU && !dbiculocale)
-	{
-		if (dlocale && dlocale->arg)
-			dbiculocale = defGetString(dlocale);
-	}
 	if (distemplate && distemplate->arg)
 		dbistemplate = defGetBoolean(distemplate);
 	if (dallowconnections && dallowconnections->arg)
@@ -1036,7 +1023,7 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("invalid create database strategy %s", strategy),
+					 errmsg("invalid create database strategy \"%s\"", strategy),
 					 errhint("Valid strategies are \"wal_log\", and \"file_copy\".")));
 	}
 
@@ -1047,10 +1034,10 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 		dbcollate = src_collate;
 	if (dbctype == NULL)
 		dbctype = src_ctype;
-	if (dbiculocale == NULL)
-		dbiculocale = src_iculocale;
 	if (dblocprovider == '\0')
 		dblocprovider = src_locprovider;
+	if (dbiculocale == NULL && dblocprovider == COLLPROVIDER_ICU)
+		dbiculocale = src_iculocale;
 
 	/* Some encodings are client only */
 	if (!PG_VALID_BE_ENCODING(encoding))
@@ -1074,6 +1061,12 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 
 	if (dblocprovider == COLLPROVIDER_ICU)
 	{
+		if (!(is_encoding_supported_by_icu(encoding)))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("encoding \"%s\" is not supported with ICU provider",
+							pg_encoding_to_char(encoding))));
+
 		/*
 		 * This would happen if template0 uses the libc provider but the new
 		 * database uses icu.
@@ -1082,10 +1075,16 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("ICU locale must be specified")));
-	}
 
-	if (dblocprovider == COLLPROVIDER_ICU)
 		check_icu_locale(dbiculocale);
+	}
+	else
+	{
+		if (dbiculocale)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+					 errmsg("ICU locale cannot be specified unless locale provider is ICU")));
+	}
 
 	/*
 	 * Check that the new encoding and locale settings match the source
@@ -3041,6 +3040,45 @@ get_database_name(Oid dbid)
 }
 
 /*
+ * recovery_create_dbdir()
+ *
+ * During recovery, there's a case where we validly need to recover a missing
+ * tablespace directory so that recovery can continue.  This happens when
+ * recovery wants to create a database but the holding tablespace has been
+ * removed before the server stopped.  Since we expect that the directory will
+ * be gone before reaching recovery consistency, and we have no knowledge about
+ * the tablespace other than its OID here, we create a real directory under
+ * pg_tblspc here instead of restoring the symlink.
+ *
+ * If only_tblspc is true, then the requested directory must be in pg_tblspc/
+ */
+static void
+recovery_create_dbdir(char *path, bool only_tblspc)
+{
+	struct stat st;
+
+	Assert(RecoveryInProgress());
+
+	if (stat(path, &st) == 0)
+		return;
+
+	if (only_tblspc && strstr(path, "pg_tblspc/") == NULL)
+		elog(PANIC, "requested to created invalid directory: %s", path);
+
+	if (reachedConsistency && !allow_in_place_tablespaces)
+		ereport(PANIC,
+				errmsg("missing directory \"%s\"", path));
+
+	elog(reachedConsistency ? WARNING : DEBUG1,
+		 "creating missing directory: %s", path);
+
+	if (pg_mkdir_p(path, pg_dir_create_mode) != 0)
+		ereport(PANIC,
+				errmsg("could not create missing directory \"%s\": %m", path));
+}
+
+
+/*
  * DATABASE resource manager's routines
  */
 void
@@ -3057,6 +3095,7 @@ dbase_redo(XLogReaderState *record)
 		(xl_dbase_create_file_copy_rec *) XLogRecGetData(record);
 		char	   *src_path;
 		char	   *dst_path;
+		char	   *parent_path;
 		struct stat st;
 
 		src_path = GetDatabasePath(xlrec->src_db_id, xlrec->src_tablespace_id);
@@ -3075,6 +3114,34 @@ dbase_redo(XLogReaderState *record)
 						(errmsg("some useless files may be left behind in old database directory \"%s\"",
 								dst_path)));
 		}
+
+		/*
+		 * If the parent of the target path doesn't exist, create it now. This
+		 * enables us to create the target underneath later.  Note that if
+		 * the database dir is not in a tablespace, the parent will always
+		 * exist, so this never runs in that case.
+		 */
+		parent_path = pstrdup(dst_path);
+		get_parent_directory(parent_path);
+		if (stat(parent_path, &st) < 0)
+		{
+			if (errno != ENOENT)
+				ereport(FATAL,
+						errmsg("could not stat directory \"%s\": %m",
+							   dst_path));
+
+			recovery_create_dbdir(parent_path, true);
+		}
+		pfree(parent_path);
+
+		/*
+		 * There's a case where the copy source directory is missing for the
+		 * same reason above.  Create the emtpy source directory so that
+		 * copydir below doesn't fail.  The directory will be dropped soon by
+		 * recovery.
+		 */
+		if (stat(src_path, &st) < 0 && errno == ENOENT)
+			recovery_create_dbdir(src_path, false);
 
 		/*
 		 * Force dirty buffers out to disk, to ensure source database is
@@ -3100,8 +3167,14 @@ dbase_redo(XLogReaderState *record)
 		xl_dbase_create_wal_log_rec *xlrec =
 		(xl_dbase_create_wal_log_rec *) XLogRecGetData(record);
 		char	   *dbpath;
+		char	   *parent_path;
 
 		dbpath = GetDatabasePath(xlrec->db_id, xlrec->tablespace_id);
+
+		/* create the parent directory if needed and valid */
+		parent_path = pstrdup(dbpath);
+		get_parent_directory(parent_path);
+		recovery_create_dbdir(parent_path, true);
 
 		/* Create the database directory with the version file. */
 		CreateDirAndVersionFile(dbpath, xlrec->db_id, xlrec->tablespace_id,

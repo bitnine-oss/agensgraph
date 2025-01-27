@@ -1289,6 +1289,13 @@ exec_simple_query(const char *query_string)
 		else
 		{
 			/*
+			 * We had better not see XACT_FLAGS_NEEDIMMEDIATECOMMIT set if
+			 * we're not calling finish_xact_command().  (The implicit
+			 * transaction block should have prevented it from getting set.)
+			 */
+			Assert(!(MyXactFlags & XACT_FLAGS_NEEDIMMEDIATECOMMIT));
+
+			/*
 			 * We need a CommandCounterIncrement after every query, except
 			 * those that start or end a transaction block.
 			 */
@@ -2103,32 +2110,16 @@ exec_execute_message(const char *portal_name, long max_rows)
 
 	/*
 	 * We must copy the sourceText and prepStmtName into MessageContext in
-	 * case the portal is destroyed during finish_xact_command. Can avoid the
-	 * copy if it's not an xact command, though.
+	 * case the portal is destroyed during finish_xact_command.  We do not
+	 * make a copy of the portalParams though, preferring to just not print
+	 * them in that case.
 	 */
-	if (is_xact_command)
-	{
-		sourceText = pstrdup(portal->sourceText);
-		if (portal->prepStmtName)
-			prepStmtName = pstrdup(portal->prepStmtName);
-		else
-			prepStmtName = "<unnamed>";
-
-		/*
-		 * An xact command shouldn't have any parameters, which is a good
-		 * thing because they wouldn't be around after finish_xact_command.
-		 */
-		portalParams = NULL;
-	}
+	sourceText = pstrdup(portal->sourceText);
+	if (portal->prepStmtName)
+		prepStmtName = pstrdup(portal->prepStmtName);
 	else
-	{
-		sourceText = portal->sourceText;
-		if (portal->prepStmtName)
-			prepStmtName = portal->prepStmtName;
-		else
-			prepStmtName = "<unnamed>";
-		portalParams = portal->portalParams;
-	}
+		prepStmtName = "<unnamed>";
+	portalParams = portal->portalParams;
 
 	/*
 	 * Report query to various monitoring facilities.
@@ -2227,13 +2218,24 @@ exec_execute_message(const char *portal_name, long max_rows)
 
 	if (completed)
 	{
-		if (is_xact_command)
+		if (is_xact_command || (MyXactFlags & XACT_FLAGS_NEEDIMMEDIATECOMMIT))
 		{
 			/*
 			 * If this was a transaction control statement, commit it.  We
 			 * will start a new xact command for the next command (if any).
+			 * Likewise if the statement required immediate commit.  Without
+			 * this provision, we wouldn't force commit until Sync is
+			 * received, which creates a hazard if the client tries to
+			 * pipeline immediate-commit statements.
 			 */
 			finish_xact_command();
+
+			/*
+			 * These commands typically don't have any parameters, and even if
+			 * one did we couldn't print them now because the storage went
+			 * away during finish_xact_command.  So pretend there were none.
+			 */
+			portalParams = NULL;
 		}
 		else
 		{
@@ -3375,10 +3377,13 @@ ProcessInterrupts(void)
 			IdleSessionTimeoutPending = false;
 	}
 
-	if (IdleStatsUpdateTimeoutPending)
+	/*
+	 * If there are pending stats updates and we currently are truly idle
+	 * (matching the conditions in PostgresMain(), report stats now.
+	 */
+	if (IdleStatsUpdateTimeoutPending &&
+		DoingCommandRead && !IsTransactionOrTransactionBlock())
 	{
-		/* timer should have been disarmed */
-		Assert(!IsTransactionBlock());
 		IdleStatsUpdateTimeoutPending = false;
 		pgstat_report_stat(true);
 	}
@@ -4010,8 +4015,31 @@ PostgresSingleUserMain(int argc, char *argv[],
 	/* read control file (error checking and contains config ) */
 	LocalProcessControlFile(false);
 
+	/*
+	 * process any libraries that should be preloaded at postmaster start
+	 */
+	process_shared_preload_libraries();
+
 	/* Initialize MaxBackends */
 	InitializeMaxBackends();
+
+	/*
+	 * Give preloaded libraries a chance to request additional shared memory.
+	 */
+	process_shmem_requests();
+
+	/*
+	 * Now that loadable modules have had their chance to request additional
+	 * shared memory, determine the value of any runtime-computed GUCs that
+	 * depend on the amount of shared memory required.
+	 */
+	InitializeShmemGUCs();
+
+	/*
+	 * Now that modules have been loaded, we can process any custom resource
+	 * managers specified in the wal_consistency_checking GUC.
+	 */
+	InitializeWalConsistencyChecking();
 
 	CreateSharedMemoryAndSemaphores();
 
@@ -4055,7 +4083,6 @@ PostgresMain(const char *dbname, const char *username)
 	volatile bool send_ready_for_query = true;
 	bool		idle_in_transaction_timeout_enabled = false;
 	bool		idle_session_timeout_enabled = false;
-	bool		idle_stats_update_timeout_enabled = false;
 
 	AssertArg(dbname != NULL);
 	AssertArg(username != NULL);
@@ -4131,7 +4158,11 @@ PostgresMain(const char *dbname, const char *username)
 	 * it inside InitPostgres() instead.  In particular, anything that
 	 * involves database access should be there, not here.
 	 */
-	InitPostgres(dbname, InvalidOid, username, InvalidOid, NULL, false);
+	InitPostgres(dbname, InvalidOid,	/* database to connect to */
+				 username, InvalidOid,	/* role to connect as */
+				 !am_walsender, /* honor session_preload_libraries? */
+				 false,			/* don't ignore datallowconn */
+				 NULL);			/* no out_dbname */
 
 	/*
 	 * If the PostmasterContext is still around, recycle the space; we don't
@@ -4166,12 +4197,6 @@ PostgresMain(const char *dbname, const char *username)
 	/* Perform initialization specific to a WAL sender process. */
 	if (am_walsender)
 		InitWalSender();
-
-	/*
-	 * process any libraries that should be preloaded at backend start (this
-	 * likewise can't be done until GUC settings are complete)
-	 */
-	process_session_preload_libraries();
 
 	/*
 	 * Send this backend's cancellation info to the frontend.
@@ -4432,13 +4457,31 @@ PostgresMain(const char *dbname, const char *username)
 				if (notifyInterruptPending)
 					ProcessNotifyInterrupt(false);
 
-				/* Start the idle-stats-update timer */
+				/*
+				 * Check if we need to report stats. If pgstat_report_stat()
+				 * decides it's too soon to flush out pending stats / lock
+				 * contention prevented reporting, it'll tell us when we
+				 * should try to report stats again (so that stats updates
+				 * aren't unduly delayed if the connection goes idle for a
+				 * long time). We only enable the timeout if we don't already
+				 * have a timeout in progress, because we don't disable the
+				 * timeout below. enable_timeout_after() needs to determine
+				 * the current timestamp, which can have a negative
+				 * performance impact. That's OK because pgstat_report_stat()
+				 * won't have us wake up sooner than a prior call.
+				 */
 				stats_timeout = pgstat_report_stat(false);
 				if (stats_timeout > 0)
 				{
-					idle_stats_update_timeout_enabled = true;
-					enable_timeout_after(IDLE_STATS_UPDATE_TIMEOUT,
-										 stats_timeout);
+					if (!get_timeout_active(IDLE_STATS_UPDATE_TIMEOUT))
+						enable_timeout_after(IDLE_STATS_UPDATE_TIMEOUT,
+											 stats_timeout);
+				}
+				else
+				{
+					/* all stats flushed, no need for the timeout */
+					if (get_timeout_active(IDLE_STATS_UPDATE_TIMEOUT))
+						disable_timeout(IDLE_STATS_UPDATE_TIMEOUT, false);
 				}
 
 				set_ps_display("idle");
@@ -4474,10 +4517,9 @@ PostgresMain(const char *dbname, const char *username)
 		firstchar = ReadCommand(&input_message);
 
 		/*
-		 * (4) turn off the idle-in-transaction, idle-session and
-		 * idle-stats-update timeouts if active.  We do this before step (5)
-		 * so that any last-moment timeout is certain to be detected in step
-		 * (5).
+		 * (4) turn off the idle-in-transaction and idle-session timeouts if
+		 * active.  We do this before step (5) so that any last-moment timeout
+		 * is certain to be detected in step (5).
 		 *
 		 * At most one of these timeouts will be active, so there's no need to
 		 * worry about combining the timeout.c calls into one.
@@ -4491,11 +4533,6 @@ PostgresMain(const char *dbname, const char *username)
 		{
 			disable_timeout(IDLE_SESSION_TIMEOUT, false);
 			idle_session_timeout_enabled = false;
-		}
-		if (idle_stats_update_timeout_enabled)
-		{
-			disable_timeout(IDLE_STATS_UPDATE_TIMEOUT, false);
-			idle_stats_update_timeout_enabled = false;
 		}
 
 		/*

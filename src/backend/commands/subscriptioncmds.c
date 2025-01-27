@@ -406,7 +406,7 @@ get_publications_str(List *publications, StringInfo dest, bool quote_literal)
 }
 
 /*
- * Check the specified publication(s) is(are) present in the publisher.
+ * Check that the specified publications are present on the publisher.
  */
 static void
 check_publications(WalReceiverConn *wrconn, List *publications)
@@ -430,10 +430,8 @@ check_publications(WalReceiverConn *wrconn, List *publications)
 
 	if (res->status != WALRCV_OK_TUPLES)
 		ereport(ERROR,
-				errmsg_plural("could not receive publication from the publisher: %s",
-							  "could not receive list of publications from the publisher: %s",
-							  list_length(publications),
-							  res->err));
+				errmsg("could not receive list of publications from the publisher: %s",
+					   res->err));
 
 	publicationsCopy = list_copy(publications);
 
@@ -464,8 +462,8 @@ check_publications(WalReceiverConn *wrconn, List *publications)
 		get_publications_str(publicationsCopy, pubnames, false);
 		ereport(WARNING,
 				errcode(ERRCODE_UNDEFINED_OBJECT),
-				errmsg_plural("publication %s does not exist in the publisher",
-							  "publications %s do not exist in the publisher",
+				errmsg_plural("publication %s does not exist on the publisher",
+							  "publications %s do not exist on the publisher",
 							  list_length(publicationsCopy),
 							  pubnames->data));
 	}
@@ -1579,15 +1577,9 @@ DropSubscription(DropSubscriptionStmt *stmt, bool isTopLevel)
 
 	/*
 	 * Tell the cumulative stats system that the subscription is getting
-	 * dropped. We can safely report dropping the subscription statistics here
-	 * if the subscription is associated with a replication slot since we
-	 * cannot run DROP SUBSCRIPTION inside a transaction block.  Subscription
-	 * statistics will be removed later by (auto)vacuum either if it's not
-	 * associated with a replication slot or if the message for dropping the
-	 * subscription gets lost.
+	 * dropped.
 	 */
-	if (slotname)
-		pgstat_drop_subscription(subid);
+	pgstat_drop_subscription(subid);
 
 	table_close(rel, NoLock);
 }
