@@ -41,6 +41,7 @@
 #include "executor/nodeWindowAgg.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
+#include "optimizer/clauses.h"
 #include "optimizer/optimizer.h"
 #include "parser/parse_agg.h"
 #include "parser/parse_coerce.h"
@@ -2305,7 +2306,27 @@ ExecWindowAgg(PlanState *pstate)
 						continue;
 					}
 					else
+					{
 						winstate->status = WINDOWAGG_PASSTHROUGH;
+
+						/*
+						 * If we're not the top-window, we'd better NULLify
+						 * the aggregate results.  In pass-through mode we no
+						 * longer update these and this avoids the old stale
+						 * results lingering.  Some of these might be byref
+						 * types so we can't have them pointing to free'd
+						 * memory.  The planner insisted that quals used in
+						 * the runcondition are strict, so the top-level
+						 * WindowAgg will filter these NULLs out in the filter
+						 * clause.
+						 */
+						numfuncs = winstate->numfuncs;
+						for (i = 0; i < numfuncs; i++)
+						{
+							econtext->ecxt_aggvalues[i] = (Datum) 0;
+							econtext->ecxt_aggnulls[i] = true;
+						}
+					}
 				}
 				else
 				{
@@ -2788,16 +2809,24 @@ initialize_peragg(WindowAggState *winstate, WindowFunc *wfunc,
 	 * aggregate's arguments (and FILTER clause if any) contain any calls to
 	 * volatile functions.  Otherwise, the difference between restarting and
 	 * not restarting the aggregation would be user-visible.
+	 *
+	 * We also don't risk using moving aggregates when there are subplans in
+	 * the arguments or FILTER clause.  This is partly because
+	 * contain_volatile_functions() doesn't look inside subplans; but there
+	 * are other reasons why a subplan's output might be volatile.  For
+	 * example, syncscan mode can render the results nonrepeatable.
 	 */
 	if (!OidIsValid(aggform->aggminvtransfn))
 		use_ma_code = false;	/* sine qua non */
 	else if (aggform->aggmfinalmodify == AGGMODIFY_READ_ONLY &&
-			 aggform->aggfinalmodify != AGGMODIFY_READ_ONLY)
+		aggform->aggfinalmodify != AGGMODIFY_READ_ONLY)
 		use_ma_code = true;		/* decision forced by safety */
 	else if (winstate->frameOptions & FRAMEOPTION_START_UNBOUNDED_PRECEDING)
 		use_ma_code = false;	/* non-moving frame head */
 	else if (contain_volatile_functions((Node *) wfunc))
 		use_ma_code = false;	/* avoid possible behavioral change */
+	else if (contain_subplans((Node *) wfunc))
+		use_ma_code = false;	/* subplans might contain volatile functions */
 	else
 		use_ma_code = true;		/* yes, let's use it */
 	if (use_ma_code)

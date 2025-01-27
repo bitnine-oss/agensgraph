@@ -270,11 +270,11 @@ struct PlannerInfo
 
 	/*
 	 * all_result_relids is empty for SELECT, otherwise it contains at least
-	 * parse->resultRelation.  For UPDATE/DELETE across an inheritance or
-	 * partitioning tree, the result rel's child relids are added.  When using
-	 * multi-level partitioning, intermediate partitioned rels are included.
-	 * leaf_result_relids is similar except that only actual result tables,
-	 * not partitioned tables, are included in it.
+	 * parse->resultRelation.  For UPDATE/DELETE/MERGE across an inheritance
+	 * or partitioning tree, the result rel's child relids are added.  When
+	 * using multi-level partitioning, intermediate partitioned rels are
+	 * included. leaf_result_relids is similar except that only actual result
+	 * tables, not partitioned tables, are included in it.
 	 */
 	Relids		all_result_relids;	/* set of all result relids */
 	Relids		leaf_result_relids; /* set of all leaf relids */
@@ -1405,15 +1405,18 @@ typedef struct ForeignPath
 } ForeignPath;
 
 /*
- * CustomPath represents a table scan done by some out-of-core extension.
+ * CustomPath represents a table scan or a table join done by some out-of-core
+ * extension.
  *
  * We provide a set of hooks here - which the provider must take care to set
  * up correctly - to allow extensions to supply their own methods of scanning
- * a relation.  For example, a provider might provide GPU acceleration, a
- * cache-based scan, or some other kind of logic we haven't dreamed up yet.
+ * a relation or joing relations.  For example, a provider might provide GPU
+ * acceleration, a cache-based scan, or some other kind of logic we haven't
+ * dreamed up yet.
  *
- * CustomPaths can be injected into the planning process for a relation by
- * set_rel_pathlist_hook functions.
+ * CustomPaths can be injected into the planning process for a base or join
+ * relation by set_rel_pathlist_hook or set_join_pathlist_hook functions,
+ * respectively.
  *
  * Core code must avoid assuming that the CustomPath is only as large as
  * the structure declared here; providers are allowed to make it the first
@@ -1515,8 +1518,8 @@ typedef struct MemoizePath
 {
 	Path		path;
 	Path	   *subpath;		/* outerpath to cache tuples from */
-	List	   *hash_operators; /* hash operators for each key */
-	List	   *param_exprs;	/* cache keys */
+	List	   *hash_operators; /* OIDs of hash equality ops for cache keys */
+	List	   *param_exprs;	/* expressions that are cache keys */
 	bool		singlerow;		/* true if the cache entry is to be marked as
 								 * complete after caching the first record. */
 	bool		binary_mode;	/* true when cache key should be compared bit
@@ -2418,10 +2421,10 @@ typedef struct AppendRelInfo
 } AppendRelInfo;
 
 /*
- * Information about a row-identity "resjunk" column in UPDATE/DELETE.
+ * Information about a row-identity "resjunk" column in UPDATE/DELETE/MERGE.
  *
- * In partitioned UPDATE/DELETE it's important for child partitions to share
- * row-identity columns whenever possible, so as not to chew up too many
+ * In partitioned UPDATE/DELETE/MERGE it's important for child partitions to
+ * share row-identity columns whenever possible, so as not to chew up too many
  * targetlist columns.  We use these structs to track which identity columns
  * have been requested.  In the finished plan, each of these will give rise
  * to one resjunk entry in the targetlist of the ModifyTable's subplan node.

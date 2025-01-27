@@ -414,6 +414,9 @@ select jsonb_path_query('"2017-03-10 12:34:56+3:10"', '$.datetime().type()');
 select jsonb_path_query('"2017-03-10 12:34:56+3:10"', '$.datetime()');
 select jsonb_path_query('"2017-03-10T12:34:56+3:10"', '$.datetime()');
 select jsonb_path_query('"2017-03-10t12:34:56+3:10"', '$.datetime()');
+select jsonb_path_query('"2017-03-10 12:34:56.789+3:10"', '$.datetime()');
+select jsonb_path_query('"2017-03-10T12:34:56.789+3:10"', '$.datetime()');
+select jsonb_path_query('"2017-03-10t12:34:56.789+3:10"', '$.datetime()');
 select jsonb_path_query('"12:34:56"', '$.datetime().type()');
 select jsonb_path_query('"12:34:56"', '$.datetime()');
 select jsonb_path_query('"12:34:56+3"', '$.datetime().type()');
@@ -532,6 +535,8 @@ set time zone default;
 
 SELECT jsonb_path_query('[{"a": 1}, {"a": 2}]', '$[*]');
 SELECT jsonb_path_query('[{"a": 1}, {"a": 2}]', '$[*] ? (@.a > 10)');
+SELECT jsonb_path_query('[{"a": 1}]', '$undefined_var');
+SELECT jsonb_path_query('[{"a": 1}]', 'false');
 
 SELECT jsonb_path_query_array('[{"a": 1}, {"a": 2}, {}]', 'strict $[*].a');
 SELECT jsonb_path_query_array('[{"a": 1}, {"a": 2}]', '$[*].a');
@@ -547,12 +552,16 @@ SELECT jsonb_path_query_first('[{"a": 1}, {"a": 2}]', '$[*].a ? (@ == 1)');
 SELECT jsonb_path_query_first('[{"a": 1}, {"a": 2}]', '$[*].a ? (@ > 10)');
 SELECT jsonb_path_query_first('[{"a": 1}, {"a": 2}, {"a": 3}, {"a": 5}]', '$[*].a ? (@ > $min && @ < $max)', vars => '{"min": 1, "max": 4}');
 SELECT jsonb_path_query_first('[{"a": 1}, {"a": 2}, {"a": 3}, {"a": 5}]', '$[*].a ? (@ > $min && @ < $max)', vars => '{"min": 3, "max": 4}');
+SELECT jsonb_path_query_first('[{"a": 1}]', '$undefined_var');
+SELECT jsonb_path_query_first('[{"a": 1}]', 'false');
 
 SELECT jsonb '[{"a": 1}, {"a": 2}]' @? '$[*].a ? (@ > 1)';
 SELECT jsonb '[{"a": 1}, {"a": 2}]' @? '$[*] ? (@.a > 2)';
 SELECT jsonb_path_exists('[{"a": 1}, {"a": 2}]', '$[*].a ? (@ > 1)');
 SELECT jsonb_path_exists('[{"a": 1}, {"a": 2}, {"a": 3}, {"a": 5}]', '$[*] ? (@.a > $min && @.a < $max)', vars => '{"min": 1, "max": 4}');
 SELECT jsonb_path_exists('[{"a": 1}, {"a": 2}, {"a": 3}, {"a": 5}]', '$[*] ? (@.a > $min && @.a < $max)', vars => '{"min": 3, "max": 4}');
+SELECT jsonb_path_exists('[{"a": 1}]', '$undefined_var');
+SELECT jsonb_path_exists('[{"a": 1}]', 'false');
 
 SELECT jsonb_path_match('true', '$', silent => false);
 SELECT jsonb_path_match('false', '$', silent => false);
@@ -569,6 +578,8 @@ SELECT jsonb_path_match('[true, true]', '$[*]', silent => false);
 SELECT jsonb '[{"a": 1}, {"a": 2}]' @@ '$[*].a > 1';
 SELECT jsonb '[{"a": 1}, {"a": 2}]' @@ '$[*].a > 2';
 SELECT jsonb_path_match('[{"a": 1}, {"a": 2}]', '$[*].a > 1');
+SELECT jsonb_path_match('[{"a": 1}]', '$undefined_var');
+SELECT jsonb_path_match('[{"a": 1}]', 'false');
 
 -- test string comparison (Unicode codepoint collation)
 WITH str(j, num) AS

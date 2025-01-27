@@ -54,6 +54,7 @@
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
 #include "catalog/storage.h"
+#include "catalog/storage_xlog.h"
 #include "commands/event_trigger.h"
 #include "commands/progress.h"
 #include "commands/tablecmds.h"
@@ -3036,6 +3037,7 @@ index_build(Relation heapRelation,
 		!smgrexists(RelationGetSmgr(indexRelation), INIT_FORKNUM))
 	{
 		smgrcreate(RelationGetSmgr(indexRelation), INIT_FORKNUM, false);
+		log_smgrcreate(&indexRelation->rd_node, INIT_FORKNUM);
 		indexRelation->rd_indam->ambuildempty(indexRelation);
 	}
 
@@ -3486,9 +3488,8 @@ index_set_state_flags(Oid indexId, IndexStateFlagsAction action)
 			 * CONCURRENTLY that failed partway through.)
 			 *
 			 * Note: the CLUSTER logic assumes that indisclustered cannot be
-			 * set on any invalid index, so clear that flag too.  Similarly,
-			 * ALTER TABLE assumes that indisreplident cannot be set for
-			 * invalid indexes.
+			 * set on any invalid index, so clear that flag too.  For
+			 * cleanliness, also clear indisreplident.
 			 */
 			indexForm->indisvalid = false;
 			indexForm->indisclustered = false;

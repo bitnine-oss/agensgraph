@@ -6561,6 +6561,7 @@ find_composite_type_dependencies(Oid typeOid, Relation origRelation,
 	{
 		Form_pg_depend pg_depend = (Form_pg_depend) GETSTRUCT(depTup);
 		Relation	rel;
+		TupleDesc	tupleDesc;
 		Form_pg_attribute att;
 
 		/* Check for directly dependent types */
@@ -6577,18 +6578,57 @@ find_composite_type_dependencies(Oid typeOid, Relation origRelation,
 			continue;
 		}
 
-		/* Else, ignore dependees that aren't user columns of relations */
-		/* (we assume system columns are never of interesting types) */
-		if (pg_depend->classid != RelationRelationId ||
-			pg_depend->objsubid <= 0)
+		/* Else, ignore dependees that aren't relations */
+		if (pg_depend->classid != RelationRelationId)
 			continue;
 
 		rel = relation_open(pg_depend->objid, AccessShareLock);
-		att = TupleDescAttr(rel->rd_att, pg_depend->objsubid - 1);
+		tupleDesc = RelationGetDescr(rel);
 
-		if (rel->rd_rel->relkind == RELKIND_RELATION ||
-			rel->rd_rel->relkind == RELKIND_MATVIEW ||
-			rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+		/*
+		 * If objsubid identifies a specific column, refer to that in error
+		 * messages.  Otherwise, search to see if there's a user column of the
+		 * type.  (We assume system columns are never of interesting types.)
+		 * The search is needed because an index containing an expression
+		 * column of the target type will just be recorded as a whole-relation
+		 * dependency.  If we do not find a column of the type, the dependency
+		 * must indicate that the type is transiently referenced in an index
+		 * expression but not stored on disk, which we assume is OK, just as
+		 * we do for references in views.  (It could also be that the target
+		 * type is embedded in some container type that is stored in an index
+		 * column, but the previous recursion should catch such cases.)
+		 */
+		if (pg_depend->objsubid > 0 && pg_depend->objsubid <= tupleDesc->natts)
+			att = TupleDescAttr(tupleDesc, pg_depend->objsubid - 1);
+		else
+		{
+			att = NULL;
+			for (int attno = 1; attno <= tupleDesc->natts; attno++)
+			{
+				att = TupleDescAttr(tupleDesc, attno - 1);
+				if (att->atttypid == typeOid && !att->attisdropped)
+					break;
+				att = NULL;
+			}
+			if (att == NULL)
+			{
+				/* No such column, so assume OK */
+				relation_close(rel, AccessShareLock);
+				continue;
+			}
+		}
+
+		/*
+		 * We definitely should reject if the relation has storage.  If it's
+		 * partitioned, then perhaps we don't have to reject: if there are
+		 * partitions then we'll fail when we find one, else there is no
+		 * stored data to worry about.  However, it's possible that the type
+		 * change would affect conclusions about whether the type is sortable
+		 * or hashable and thus (if it's a partitioning column) break the
+		 * partitioning rule.  For now, reject for partitioned rels too.
+		 */
+		if (RELKIND_HAS_STORAGE(rel->rd_rel->relkind) ||
+			RELKIND_HAS_PARTITIONS(rel->rd_rel->relkind))
 		{
 			if (origTypeName)
 				ereport(ERROR,
@@ -9554,7 +9594,7 @@ ATAddForeignKeyConstraint(List **wqueue, AlteredTableInfo *tab, Relation rel,
 }
 
 /*
- * validateFkActionSetColumns
+ * validateFkOnDeleteSetColumns
  *		Verifies that columns used in ON DELETE SET NULL/DEFAULT (...)
  *		column lists are valid.
  */
@@ -9609,10 +9649,10 @@ validateFkOnDeleteSetColumns(int numfks, const int16 *fkattnums,
  * numfks is the number of columns in the foreign key
  * pkattnum is the attnum array of referenced attributes.
  * fkattnum is the attnum array of referencing attributes.
- * numfkdelsetcols is the number of columns in the ON DELETE SET NULL/DELETE
+ * numfkdelsetcols is the number of columns in the ON DELETE SET NULL/DEFAULT
  *      (...) clause
  * fkdelsetcols is the attnum array of the columns in the ON DELETE SET
- *      NULL/DELETE clause
+ *      NULL/DEFAULT clause
  * pf/pp/ffeqoperators are OID array of operators between columns.
  * old_check_ok signals that this constraint replaces an existing one that
  * was already validated (thus this one doesn't need validation).
@@ -9828,10 +9868,10 @@ addFkRecurseReferenced(List **wqueue, Constraint *fkconstraint, Relation rel,
  * pkattnum is the attnum array of referenced attributes.
  * fkattnum is the attnum array of referencing attributes.
  * pf/pp/ffeqoperators are OID array of operators between columns.
- * numfkdelsetcols is the number of columns in the ON DELETE SET NULL/DELETE
+ * numfkdelsetcols is the number of columns in the ON DELETE SET NULL/DEFAULT
  *      (...) clause
  * fkdelsetcols is the attnum array of the columns in the ON DELETE SET
- *      NULL/DELETE clause
+ *      NULL/DEFAULT clause
  * old_check_ok signals that this constraint replaces an existing one that
  *		was already validated (thus this one doesn't need validation).
  * lockmode is the lockmode to acquire on partitions when recursing.
@@ -10212,14 +10252,22 @@ CloneFkReferenced(Relation parentRel, Relation partitionRel)
 			mapped_confkey[i] = attmap->attnums[confkey[i] - 1];
 
 		fkconstraint = makeNode(Constraint);
-		/* for now this is all we need */
+		fkconstraint->contype = CONSTRAINT_FOREIGN;
 		fkconstraint->conname = NameStr(constrForm->conname);
-		fkconstraint->fk_upd_action = constrForm->confupdtype;
-		fkconstraint->fk_del_action = constrForm->confdeltype;
 		fkconstraint->deferrable = constrForm->condeferrable;
 		fkconstraint->initdeferred = constrForm->condeferred;
-		fkconstraint->initially_valid = true;
+		fkconstraint->location = -1;
+		fkconstraint->pktable = NULL;
+		/* ->fk_attrs determined below */
+		fkconstraint->pk_attrs = NIL;
 		fkconstraint->fk_matchtype = constrForm->confmatchtype;
+		fkconstraint->fk_upd_action = constrForm->confupdtype;
+		fkconstraint->fk_del_action = constrForm->confdeltype;
+		fkconstraint->fk_del_set_cols = NIL;
+		fkconstraint->old_conpfeqop = NIL;
+		fkconstraint->old_pktable_oid = InvalidOid;
+		fkconstraint->skip_validation = false;
+		fkconstraint->initially_valid = true;
 
 		/* set up colnames that are used to generate the constraint name */
 		for (int i = 0; i < numfks; i++)
@@ -10437,11 +10485,22 @@ CloneFkReferencing(List **wqueue, Relation parentRel, Relation partRel)
 
 		/* No dice.  Set up to create our own constraint */
 		fkconstraint = makeNode(Constraint);
-		fkconstraint->fk_upd_action = constrForm->confupdtype;
-		fkconstraint->fk_del_action = constrForm->confdeltype;
+		fkconstraint->contype = CONSTRAINT_FOREIGN;
+		/* ->conname determined below */
 		fkconstraint->deferrable = constrForm->condeferrable;
 		fkconstraint->initdeferred = constrForm->condeferred;
+		fkconstraint->location = -1;
+		fkconstraint->pktable = NULL;
+		/* ->fk_attrs determined below */
+		fkconstraint->pk_attrs = NIL;
 		fkconstraint->fk_matchtype = constrForm->confmatchtype;
+		fkconstraint->fk_upd_action = constrForm->confupdtype;
+		fkconstraint->fk_del_action = constrForm->confdeltype;
+		fkconstraint->fk_del_set_cols = NIL;
+		fkconstraint->old_conpfeqop = NIL;
+		fkconstraint->old_pktable_oid = InvalidOid;
+		fkconstraint->skip_validation = false;
+		fkconstraint->initially_valid = true;
 		for (int i = 0; i < numfks; i++)
 		{
 			Form_pg_attribute att;
@@ -11287,6 +11346,11 @@ ATExecValidateConstraint(List **wqueue, Relation rel, char *constrName,
  * transformColumnNameList - transform list of column names
  *
  * Lookup each name and return its attnum and, optionally, type OID
+ *
+ * Note: the name of this function suggests that it's general-purpose,
+ * but actually it's only used to look up names appearing in foreign-key
+ * clauses.  The error messages would need work to use it in other cases,
+ * and perhaps the validity checks as well.
  */
 static int
 transformColumnNameList(Oid relId, List *colList,
@@ -11300,6 +11364,7 @@ transformColumnNameList(Oid relId, List *colList,
 	{
 		char	   *attname = strVal(lfirst(l));
 		HeapTuple	atttuple;
+		Form_pg_attribute attform;
 
 		atttuple = SearchSysCacheAttName(relId, attname);
 		if (!HeapTupleIsValid(atttuple))
@@ -11307,14 +11372,19 @@ transformColumnNameList(Oid relId, List *colList,
 					(errcode(ERRCODE_UNDEFINED_COLUMN),
 					 errmsg("column \"%s\" referenced in foreign key constraint does not exist",
 							attname)));
+		attform = (Form_pg_attribute) GETSTRUCT(atttuple);
+		if (attform->attnum < 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("system columns cannot be used in foreign keys")));
 		if (attnum >= INDEX_MAX_KEYS)
 			ereport(ERROR,
 					(errcode(ERRCODE_TOO_MANY_COLUMNS),
 					 errmsg("cannot have more than %d keys in a foreign key",
 							INDEX_MAX_KEYS)));
-		attnums[attnum] = ((Form_pg_attribute) GETSTRUCT(atttuple))->attnum;
+		attnums[attnum] = attform->attnum;
 		if (atttypids != NULL)
-			atttypids[attnum] = ((Form_pg_attribute) GETSTRUCT(atttuple))->atttypid;
+			atttypids[attnum] = attform->atttypid;
 		ReleaseSysCache(atttuple);
 		attnum++;
 	}
@@ -14837,8 +14907,9 @@ ATExecEnableDisableTrigger(Relation rel, const char *trigname,
 						   char fires_when, bool skip_system, bool recurse,
 						   LOCKMODE lockmode)
 {
-	EnableDisableTriggerNew(rel, trigname, fires_when, skip_system, recurse,
-							lockmode);
+	EnableDisableTriggerNew2(rel, trigname, InvalidOid,
+							 fires_when, skip_system, recurse,
+							 lockmode);
 }
 
 /*
@@ -15947,7 +16018,10 @@ ATExecDropOf(Relation rel, LOCKMODE lockmode)
  * relation_mark_replica_identity: Update a table's replica identity
  *
  * Iff ri_type = REPLICA_IDENTITY_INDEX, indexOid must be the Oid of a suitable
- * index. Otherwise, it should be InvalidOid.
+ * index. Otherwise, it must be InvalidOid.
+ *
+ * Caller had better hold an exclusive lock on the relation, as the results
+ * of running two of these concurrently wouldn't be pretty.
  */
 static void
 relation_mark_replica_identity(Relation rel, char ri_type, Oid indexOid,
@@ -15959,7 +16033,6 @@ relation_mark_replica_identity(Relation rel, char ri_type, Oid indexOid,
 	HeapTuple	pg_index_tuple;
 	Form_pg_class pg_class_form;
 	Form_pg_index pg_index_form;
-
 	ListCell   *index;
 
 	/*
@@ -15981,29 +16054,7 @@ relation_mark_replica_identity(Relation rel, char ri_type, Oid indexOid,
 	heap_freetuple(pg_class_tuple);
 
 	/*
-	 * Check whether the correct index is marked indisreplident; if so, we're
-	 * done.
-	 */
-	if (OidIsValid(indexOid))
-	{
-		Assert(ri_type == REPLICA_IDENTITY_INDEX);
-
-		pg_index_tuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(indexOid));
-		if (!HeapTupleIsValid(pg_index_tuple))
-			elog(ERROR, "cache lookup failed for index %u", indexOid);
-		pg_index_form = (Form_pg_index) GETSTRUCT(pg_index_tuple);
-
-		if (pg_index_form->indisreplident)
-		{
-			ReleaseSysCache(pg_index_tuple);
-			return;
-		}
-		ReleaseSysCache(pg_index_tuple);
-	}
-
-	/*
-	 * Clear the indisreplident flag from any index that had it previously,
-	 * and set it for any index that should have it now.
+	 * Update the per-index indisreplident flags correctly.
 	 */
 	pg_index = table_open(IndexRelationId, RowExclusiveLock);
 	foreach(index, RelationGetIndexList(rel))
@@ -16017,19 +16068,23 @@ relation_mark_replica_identity(Relation rel, char ri_type, Oid indexOid,
 			elog(ERROR, "cache lookup failed for index %u", thisIndexOid);
 		pg_index_form = (Form_pg_index) GETSTRUCT(pg_index_tuple);
 
-		/*
-		 * Unset the bit if set.  We know it's wrong because we checked this
-		 * earlier.
-		 */
-		if (pg_index_form->indisreplident)
+		if (thisIndexOid == indexOid)
 		{
-			dirty = true;
-			pg_index_form->indisreplident = false;
+			/* Set the bit if not already set. */
+			if (!pg_index_form->indisreplident)
+			{
+				dirty = true;
+				pg_index_form->indisreplident = true;
+			}
 		}
-		else if (thisIndexOid == indexOid)
+		else
 		{
-			dirty = true;
-			pg_index_form->indisreplident = true;
+			/* Unset the bit if set. */
+			if (pg_index_form->indisreplident)
+			{
+				dirty = true;
+				pg_index_form->indisreplident = false;
+			}
 		}
 
 		if (dirty)
@@ -16041,7 +16096,9 @@ relation_mark_replica_identity(Relation rel, char ri_type, Oid indexOid,
 			/*
 			 * Invalidate the relcache for the table, so that after we commit
 			 * all sessions will refresh the table's replica identity index
-			 * before attempting any UPDATE or DELETE on the table.
+			 * before attempting any UPDATE or DELETE on the table.  (If we
+			 * changed the table's pg_class row above, then a relcache inval
+			 * is already queued due to that; but we might not have.)
 			 */
 			CacheInvalidateRelcache(rel);
 		}
@@ -16125,12 +16182,6 @@ ATExecReplicaIdentity(Relation rel, ReplicaIdentityStmt *stmt, LOCKMODE lockmode
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot use partial index \"%s\" as replica identity",
-						RelationGetRelationName(indexRel))));
-	/* And neither are invalid indexes. */
-	if (!indexRel->rd_index->indisvalid)
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("cannot use invalid index \"%s\" as replica identity",
 						RelationGetRelationName(indexRel))));
 
 	/* Check index for nullable columns. */
@@ -18177,8 +18228,8 @@ AttachPartitionEnsureIndexes(Relation rel, Relation attachrel)
 
 		/*
 		 * Scan the list of existing indexes in the partition-to-be, and mark
-		 * the first matching, unattached one we find, if any, as partition of
-		 * the parent index.  If we find one, we're done.
+		 * the first matching, valid, unattached one we find, if any, as
+		 * partition of the parent index.  If we find one, we're done.
 		 */
 		for (i = 0; i < list_length(attachRelIdxs); i++)
 		{
@@ -18187,6 +18238,10 @@ AttachPartitionEnsureIndexes(Relation rel, Relation attachrel)
 
 			/* does this index have a parent?  if so, can't use it */
 			if (attachrelIdxRels[i]->rd_rel->relispartition)
+				continue;
+
+			/* If this index is invalid, can't use it */
+			if (!attachrelIdxRels[i]->rd_index->indisvalid)
 				continue;
 
 			if (CompareIndexInfo(attachInfos[i], info,
@@ -18665,11 +18720,22 @@ DetachPartitionFinalize(Relation rel, Relation partRel, bool concurrent,
 		 * still do), but now we need separate ones of our own.
 		 */
 		fkconstraint = makeNode(Constraint);
+		fkconstraint->contype = CONSTRAINT_FOREIGN;
 		fkconstraint->conname = pstrdup(NameStr(conform->conname));
-		fkconstraint->fk_upd_action = conform->confupdtype;
-		fkconstraint->fk_del_action = conform->confdeltype;
 		fkconstraint->deferrable = conform->condeferrable;
 		fkconstraint->initdeferred = conform->condeferred;
+		fkconstraint->location = -1;
+		fkconstraint->pktable = NULL;
+		fkconstraint->fk_attrs = NIL;
+		fkconstraint->pk_attrs = NIL;
+		fkconstraint->fk_matchtype = conform->confmatchtype;
+		fkconstraint->fk_upd_action = conform->confupdtype;
+		fkconstraint->fk_del_action = conform->confdeltype;
+		fkconstraint->fk_del_set_cols = NIL;
+		fkconstraint->old_conpfeqop = NIL;
+		fkconstraint->old_pktable_oid = InvalidOid;
+		fkconstraint->skip_validation = false;
+		fkconstraint->initially_valid = true;
 
 		createForeignKeyActionTriggers(partRel, conform->confrelid,
 									   fkconstraint, fk->conoid,
@@ -19232,17 +19298,24 @@ validatePartitionedIndex(Relation partedIdx, Relation partedTbl)
 	if (tuples == RelationGetPartitionDesc(partedTbl, true)->nparts)
 	{
 		Relation	idxRel;
-		HeapTuple	newtup;
+		HeapTuple	indTup;
+		Form_pg_index indexForm;
 
 		idxRel = table_open(IndexRelationId, RowExclusiveLock);
+		indTup = SearchSysCacheCopy1(INDEXRELID,
+									 ObjectIdGetDatum(RelationGetRelid(partedIdx)));
+		if (!HeapTupleIsValid(indTup))
+			elog(ERROR, "cache lookup failed for index %u",
+				 RelationGetRelid(partedIdx));
+		indexForm = (Form_pg_index) GETSTRUCT(indTup);
 
-		newtup = heap_copytuple(partedIdx->rd_indextuple);
-		((Form_pg_index) GETSTRUCT(newtup))->indisvalid = true;
+		indexForm->indisvalid = true;
 		updated = true;
 
-		CatalogTupleUpdate(idxRel, &partedIdx->rd_indextuple->t_self, newtup);
+		CatalogTupleUpdate(idxRel, &indTup->t_self, indTup);
 
 		table_close(idxRel, RowExclusiveLock);
+		heap_freetuple(indTup);
 	}
 
 	/*

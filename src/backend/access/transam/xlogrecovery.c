@@ -383,6 +383,7 @@ static bool recoveryStopAfter;
 /* prototypes for local functions */
 static void ApplyWalRecord(XLogReaderState *xlogreader, XLogRecord *record, TimeLineID *replayTLI);
 
+static void EnableStandbyMode(void);
 static void readRecoverySignalFile(void);
 static void validateRecoveryParameters(void);
 static bool read_backup_label(XLogRecPtr *checkPointLoc,
@@ -465,6 +466,24 @@ XLogRecoveryShmemInit(void)
 	SpinLockInit(&XLogRecoveryCtl->info_lck);
 	InitSharedLatch(&XLogRecoveryCtl->recoveryWakeupLatch);
 	ConditionVariableInit(&XLogRecoveryCtl->recoveryNotPausedCV);
+}
+
+/*
+ * A thin wrapper to enable StandbyMode and do other preparatory work as
+ * needed.
+ */
+static void
+EnableStandbyMode(void)
+{
+	StandbyMode = true;
+
+	/*
+	 * To avoid server log bloat, we don't report recovery progress in a
+	 * standby as it will always be in recovery unless promoted. We disable
+	 * startup progress timeout in standby mode to avoid calling
+	 * startup_progress_timeout_handler() unnecessarily.
+	 */
+	disable_startup_progress_timeout();
 }
 
 /*
@@ -600,7 +619,7 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 		 */
 		InArchiveRecovery = true;
 		if (StandbyModeRequested)
-			StandbyMode = true;
+			EnableStandbyMode();
 
 		/*
 		 * When a backup_label file is present, we want to roll forward from
@@ -737,7 +756,7 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 		{
 			InArchiveRecovery = true;
 			if (StandbyModeRequested)
-				StandbyMode = true;
+				EnableStandbyMode();
 		}
 
 		/* Get the last valid checkpoint record. */
@@ -2544,8 +2563,13 @@ recoveryStopsBefore(XLogReaderState *record)
 		stopsHere = (recordXid == recoveryTargetXid);
 	}
 
-	if (recoveryTarget == RECOVERY_TARGET_TIME &&
-		getRecordTimestamp(record, &recordXtime))
+	/*
+	 * Note: we must fetch recordXtime regardless of recoveryTarget setting.
+	 * We don't expect getRecordTimestamp ever to fail, since we already know
+	 * this is a commit or abort record; but test its result anyway.
+	 */
+	if (getRecordTimestamp(record, &recordXtime) &&
+		recoveryTarget == RECOVERY_TARGET_TIME)
 	{
 		/*
 		 * There can be many transactions that share the same commit time, so
@@ -2597,7 +2621,7 @@ recoveryStopsAfter(XLogReaderState *record)
 	uint8		info;
 	uint8		xact_info;
 	uint8		rmid;
-	TimestampTz recordXtime;
+	TimestampTz recordXtime = 0;
 
 	/*
 	 * Ignore recovery target settings when not in archive recovery (meaning
@@ -3110,7 +3134,7 @@ ReadRecord(XLogPrefetcher *xlogprefetcher, int emode,
 						(errmsg_internal("reached end of WAL in pg_wal, entering archive recovery")));
 				InArchiveRecovery = true;
 				if (StandbyModeRequested)
-					StandbyMode = true;
+					EnableStandbyMode();
 
 				SwitchIntoArchiveRecovery(xlogreader->EndRecPtr, replayTLI);
 				minRecoveryPoint = xlogreader->EndRecPtr;
@@ -3565,6 +3589,9 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 						elog(LOG, "waiting for WAL to become available at %X/%X",
 							 LSN_FORMAT_ARGS(RecPtr));
 
+						/* Do background tasks that might benefit us later. */
+						KnownAssignedTransactionIdsIdleMaintenance();
+
 						(void) WaitLatch(&XLogRecoveryCtl->recoveryWakeupLatch,
 										 WL_LATCH_SET | WL_TIMEOUT |
 										 WL_EXIT_ON_PM_DEATH,
@@ -3830,6 +3857,9 @@ WaitForWALToBecomeAvailable(XLogRecPtr RecPtr, bool randAccess,
 						WalRcvForceReply();
 						streaming_reply_sent = true;
 					}
+
+					/* Do any background tasks that might benefit us later. */
+					KnownAssignedTransactionIdsIdleMaintenance();
 
 					/* Update pg_stat_recovery_prefetch before sleeping. */
 					XLogPrefetcherComputeStats(xlogprefetcher);

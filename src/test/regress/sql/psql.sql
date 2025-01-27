@@ -119,6 +119,14 @@ SELECT 1 AS x, 'Hello', 2 AS y, true AS "dirty\name"
 -- all on one line
 SELECT 3 AS x, 'Hello', 4 AS y, true AS "dirty\name" \gdesc \g
 
+-- test for server bug #17983 with empty statement in aborted transaction
+set search_path = default;
+begin;
+bogus;
+;
+\gdesc
+rollback;
+
 -- \gexec
 
 create temporary table gexec_test(a int, b text, c date, d float);
@@ -1257,8 +1265,16 @@ reset work_mem;
 \df has_database_privilege oid text
 \df has_database_privilege oid text -
 \dfa bit* small*
+\df *._pg_expandarray
 \do - pg_catalog.int4
 \do && anyarray *
+
+-- check \sf
+\sf information_schema._pg_expandarray
+\sf+ information_schema._pg_expandarray
+\sf+ interval_pl_time
+\sf ts_debug(text)
+\sf+ ts_debug(text)
 
 -- AUTOCOMMIT
 

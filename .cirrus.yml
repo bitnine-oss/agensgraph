@@ -11,7 +11,7 @@ env:
   CONTAINER_REPO: us-docker.pkg.dev/${GCP_PROJECT}/ci
 
   # The lower depth accelerates git clone. Use a bit of depth so that
-  # concurrent tasks and retrying older jobs has a chance of working.
+  # concurrent tasks and retrying older jobs have a chance of working.
   CIRRUS_CLONE_DEPTH: 500
   # Useful to be able to analyse what in a script takes long
   CIRRUS_LOG_TIMESTAMP: true
@@ -66,7 +66,7 @@ task:
 
   ccache_cache:
     folder: $CCACHE_DIR
-  # Workaround around performance issues due to 32KB block size
+  # Work around performance issues due to 32KB block size
   repartition_script: src/tools/ci/gcp_freebsd_repartition.sh
   create_user_script: |
     pw useradd postgres
@@ -221,10 +221,10 @@ task:
 
 
 task:
-  name: macOS - Monterey
+  name: macOS - Ventura
 
   env:
-    CPUS: 12 # always get that much for cirrusci macOS instances
+    CPUS: 4 # always get that much for cirrusci macOS instances
     BUILD_JOBS: $CPUS
     # Test performance regresses noticably when using all cores. 8 seems to
     # work OK. See
@@ -238,8 +238,8 @@ task:
 
   only_if: $CIRRUS_CHANGE_MESSAGE !=~ '.*\nci-os-only:.*' || $CIRRUS_CHANGE_MESSAGE =~ '.*\nci-os-only:[^\n]*(macos|darwin|osx).*'
 
-  osx_instance:
-    image: monterey-base
+  macos_instance:
+    image: ghcr.io/cirruslabs/macos-ventura-base:latest
 
   sysinfo_script: |
     id
@@ -284,7 +284,7 @@ task:
   ccache_cache:
     folder: $CCACHE_DIR
   configure_script: |
-    brewpath="/usr/local"
+    brewpath="/opt/homebrew"
     INCLUDES="${brewpath}/include:${INCLUDES}"
     LIBS="${brewpath}/lib:${LIBS}"
 
@@ -400,8 +400,10 @@ task:
 
   only_if: $CIRRUS_CHANGE_MESSAGE !=~ '.*\nci-os-only:.*' || $CIRRUS_CHANGE_MESSAGE =~ '.*\nci-os-only:[^\n]*windows.*'
 
-  windows_container:
-    image: $CONTAINER_REPO/windows_ci_vs_2019:latest
+  compute_engine_instance:
+    image_project: $IMAGE_PROJECT
+    image: family/pg-ci-windows-ci-vs-2019
+    platform: windows
     cpu: $CPUS
     memory: 4G
 

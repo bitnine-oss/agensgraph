@@ -340,11 +340,13 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 	 * functions are present in the query tree.
 	 *
 	 * (Note that we do allow CREATE TABLE AS, SELECT INTO, and CREATE
-	 * MATERIALIZED VIEW to use parallel plans, but as of now, only the leader
-	 * backend writes into a completely new table.  In the future, we can
-	 * extend it to allow workers to write into the table.  However, to allow
-	 * parallel updates and deletes, we have to solve other problems,
-	 * especially around combo CIDs.)
+	 * MATERIALIZED VIEW to use parallel plans, but this is safe only because
+	 * the command is writing into a completely new table which workers won't
+	 * be able to see.  If the workers could see the table, the fact that
+	 * group locking would cause them to ignore the leader's heavyweight
+	 * GIN page locks would make this unsafe.  We'll have to fix that somehow
+	 * if we want to allow parallel inserts in general; updates and deletes
+	 * have additional problems especially around combo CIDs.)
 	 *
 	 * For now, we don't try to use parallel mode if we're running inside a
 	 * parallel worker.  We might eventually be able to relax this
@@ -446,12 +448,10 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 		Gather	   *gather = makeNode(Gather);
 
 		/*
-		 * If there are any initPlans attached to the formerly-top plan node,
-		 * move them up to the Gather node; same as we do for Material node in
-		 * materialize_finished_plan.
+		 * Top plan must not have any initPlans, else it shouldn't have been
+		 * marked parallel-safe.
 		 */
-		gather->plan.initPlan = top_plan->initPlan;
-		top_plan->initPlan = NIL;
+		Assert(top_plan->initPlan == NIL);
 
 		gather->plan.targetlist = top_plan->targetlist;
 		gather->plan.qual = NIL;
@@ -844,6 +844,9 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 												EXPRKIND_LIMIT);
 		wc->endOffset = preprocess_expression(root, wc->endOffset,
 											  EXPRKIND_LIMIT);
+		wc->runCondition = (List *) preprocess_expression(root,
+														  (Node *) wc->runCondition,
+														  EXPRKIND_TARGET);
 	}
 
 	parse->limitOffset = preprocess_expression(root, parse->limitOffset,
@@ -1925,7 +1928,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction)
 
 			if (bms_membership(root->all_result_relids) == BMS_MULTIPLE)
 			{
-				/* Inherited UPDATE/DELETE */
+				/* Inherited UPDATE/DELETE/MERGE */
 				RelOptInfo *top_result_rel = find_base_rel(root,
 														   parse->resultRelation);
 				int			resultRelation = -1;
@@ -2052,7 +2055,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction)
 			}
 			else
 			{
-				/* Single-relation INSERT/UPDATE/DELETE. */
+				/* Single-relation INSERT/UPDATE/DELETE/MERGE. */
 				resultRelations = list_make1_int(parse->resultRelation);
 				if (parse->commandType == CMD_UPDATE)
 					updateColnosLists = list_make1(root->update_colnos);

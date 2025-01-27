@@ -220,7 +220,7 @@ extern LogicalRepRelId logicalrep_read_update(StringInfo in,
 											  LogicalRepTupleData *newtup);
 extern void logicalrep_write_delete(StringInfo out, TransactionId xid,
 									Relation rel, TupleTableSlot *oldtuple,
-									bool binary);
+									bool binary, Bitmapset *columns);
 extern LogicalRepRelId logicalrep_read_delete(StringInfo in,
 											  LogicalRepTupleData *oldtup);
 extern void logicalrep_write_truncate(StringInfo out, TransactionId xid,
@@ -249,6 +249,6 @@ extern void logicalrep_write_stream_abort(StringInfo out, TransactionId xid,
 										  TransactionId subxid);
 extern void logicalrep_read_stream_abort(StringInfo in, TransactionId *xid,
 										 TransactionId *subxid);
-extern char *logicalrep_message_type(LogicalRepMsgType action);
+extern const char *logicalrep_message_type(LogicalRepMsgType action);
 
 #endif							/* LOGICAL_PROTO_H */

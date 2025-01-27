@@ -1598,6 +1598,10 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
        <para>
         <literal>round(42.4382, 2)</literal>
         <returnvalue>42.44</returnvalue>
+       </para>
+       <para>
+        <literal>round(1234.56, -1)</literal>
+        <returnvalue>1230</returnvalue>
        </para></entry>
       </row>
 
@@ -9797,11 +9801,11 @@ SELECT timestamp with time zone '2005-04-02 12:00:00-07' + interval '24 hours';
 <screen>
 SELECT EXTRACT(EPOCH FROM timestamptz '2013-07-01 12:00:00') -
        EXTRACT(EPOCH FROM timestamptz '2013-03-01 12:00:00');
-<lineannotation>Result: </lineannotation><computeroutput>10537200</computeroutput>
+<lineannotation>Result: </lineannotation><computeroutput>10537200.000000</computeroutput>
 SELECT (EXTRACT(EPOCH FROM timestamptz '2013-07-01 12:00:00') -
         EXTRACT(EPOCH FROM timestamptz '2013-03-01 12:00:00'))
         / 60 / 60 / 24;
-<lineannotation>Result: </lineannotation><computeroutput>121.958333333333</computeroutput>
+<lineannotation>Result: </lineannotation><computeroutput>121.9583333333333333</computeroutput>
 SELECT timestamptz '2013-07-01 12:00:00' - timestamptz '2013-03-01 12:00:00';
 <lineannotation>Result: </lineannotation><computeroutput>121 days 23:00:00</computeroutput>
 SELECT age(timestamptz '2013-07-01 12:00:00', timestamptz '2013-03-01 12:00:00');
@@ -9947,13 +9951,13 @@ SELECT EXTRACT(DOY FROM TIMESTAMP '2001-02-16 20:38:40');
 
 <screen>
 SELECT EXTRACT(EPOCH FROM TIMESTAMP WITH TIME ZONE '2001-02-16 20:38:40.12-08');
-<lineannotation>Result: </lineannotation><computeroutput>982384720.12</computeroutput>
+<lineannotation>Result: </lineannotation><computeroutput>982384720.120000</computeroutput>
 
 SELECT EXTRACT(EPOCH FROM TIMESTAMP '2001-02-16 20:38:40.12');
-<lineannotation>Result: </lineannotation><computeroutput>982355920.12</computeroutput>
+<lineannotation>Result: </lineannotation><computeroutput>982355920.120000</computeroutput>
 
 SELECT EXTRACT(EPOCH FROM INTERVAL '5 days 3 hours');
-<lineannotation>Result: </lineannotation><computeroutput>442800</computeroutput>
+<lineannotation>Result: </lineannotation><computeroutput>442800.000000</computeroutput>
 </screen>
 
        <para>
@@ -10100,7 +10104,7 @@ SELECT EXTRACT(MILLENNIUM FROM TIMESTAMP '2001-02-16 20:38:40');
 
 <screen>
 SELECT EXTRACT(MILLISECONDS FROM TIME '17:12:28.5');
-<lineannotation>Result: </lineannotation><computeroutput>28500</computeroutput>
+<lineannotation>Result: </lineannotation><computeroutput>28500.000</computeroutput>
 </screen>
       </listitem>
      </varlistentry>
@@ -10164,10 +10168,10 @@ SELECT EXTRACT(QUARTER FROM TIMESTAMP '2001-02-16 20:38:40');
 
 <screen>
 SELECT EXTRACT(SECOND FROM TIMESTAMP '2001-02-16 20:38:40');
-<lineannotation>Result: </lineannotation><computeroutput>40</computeroutput>
+<lineannotation>Result: </lineannotation><computeroutput>40.000000</computeroutput>
 
 SELECT EXTRACT(SECOND FROM TIME '17:12:28.5');
-<lineannotation>Result: </lineannotation><computeroutput>28.5</computeroutput>
+<lineannotation>Result: </lineannotation><computeroutput>28.500000</computeroutput>
 </screen>
       </listitem>
      </varlistentry>
@@ -15149,6 +15153,12 @@ table2-mapping
    <type>jsonb</type>, though not for <type>json</type>.  The comparison
    operators follow the ordering rules for B-tree operations outlined in
    <xref linkend="json-indexing"/>.
+   See also <xref linkend="functions-aggregate"/> for the aggregate
+   function <function>json_agg</function> which aggregates record
+   values as JSON, the aggregate function
+   <function>json_object_agg</function> which aggregates pairs of values
+   into a JSON object, and their <type>jsonb</type> equivalents,
+   <function>jsonb_agg</function> and <function>jsonb_object_agg</function>.
   </para>
 
   <table id="functions-json-op-table">
@@ -16604,15 +16614,6 @@ table2-mapping
      </tbody>
     </tgroup>
    </table>
-
-  <para>
-    See also <xref linkend="functions-aggregate"/> for the aggregate
-    function <function>json_agg</function> which aggregates record
-    values as JSON, the aggregate function
-    <function>json_object_agg</function> which aggregates pairs of values
-    into a JSON object, and their <type>jsonb</type> equivalents,
-    <function>jsonb_agg</function> and <function>jsonb_object_agg</function>.
-  </para>
  </sect2>
 
  <sect2 id="functions-sqljson-path">
@@ -21599,7 +21600,7 @@ WHERE EXISTS (SELECT 1 FROM tab2 WHERE col2 = tab1.col2);
 
   <para>
    The right-hand side is a parenthesized list
-   of scalar expressions.  The result is <quote>true</quote> if the left-hand expression's
+   of expressions.  The result is <quote>true</quote> if the left-hand expression's
    result is equal to any of the right-hand expressions.  This is a shorthand
    notation for
 
@@ -21630,7 +21631,7 @@ OR
 
   <para>
    The right-hand side is a parenthesized list
-   of scalar expressions.  The result is <quote>true</quote> if the left-hand expression's
+   of expressions.  The result is <quote>true</quote> if the left-hand expression's
    result is unequal to all of the right-hand expressions.  This is a shorthand
    notation for
 
@@ -21741,25 +21742,23 @@ AND
   <para>
    Each side is a row constructor,
    as described in <xref linkend="sql-syntax-row-constructors"/>.
-   The two row values must have the same number of fields.
-   Each side is evaluated and they are compared row-wise.  Row constructor
-   comparisons are allowed when the <replaceable>operator</replaceable> is
+   The two row constructors must have the same number of fields.
+   The given <replaceable>operator</replaceable> is applied to each pair
+   of corresponding fields.  (Since the fields could be of different
+   types, this means that a different specific operator could be selected
+   for each pair.)
+   All the selected operators must be members of some B-tree operator
+   class, or be the negator of an <literal>=</literal> member of a B-tree
+   operator class, meaning that row constructor comparison is only
+   possible when the <replaceable>operator</replaceable> is
    <literal>=</literal>,
    <literal>&lt;&gt;</literal>,
    <literal>&lt;</literal>,
    <literal>&lt;=</literal>,
-   <literal>&gt;</literal> or
-   <literal>&gt;=</literal>.
-   Every row element must be of a type which has a default B-tree operator
-   class or the attempted comparison may generate an error.
+   <literal>&gt;</literal>, or
+   <literal>&gt;=</literal>,
+   or has semantics similar to one of these.
   </para>
-
-  <note>
-   <para>
-    Errors related to the number or types of elements might not occur if
-    the comparison is resolved using earlier columns.
-   </para>
-  </note>
 
   <para>
    The <literal>=</literal> and <literal>&lt;&gt;</literal> cases work slightly differently
@@ -23918,28 +23917,8 @@ SELECT currval(pg_get_serial_sequence('sometable', 'id'));
         Returns an array of the flags associated with the given GUC, or
         <literal>NULL</literal> if it does not exist. The result is
         an empty array if the GUC exists but there are no flags to show.
-        Only the most useful flags are exposed, as of the following:
-        <simplelist>
-         <member>
-          <literal>EXPLAIN</literal>: parameters included in
-          <command>EXPLAIN (SETTINGS)</command> commands.
-         </member>
-         <member>
-          <literal>NO_SHOW_ALL</literal>: parameters excluded from
-          <command>SHOW ALL</command> commands.
-         </member>
-         <member>
-          <literal>NO_RESET_ALL</literal>: parameters excluded from
-          <command>RESET ALL</command> commands.
-         </member>
-         <member>
-          <literal>NOT_IN_SAMPLE</literal>: parameters not included in
-          <filename>postgresql.conf</filename> by default.
-         </member>
-         <member>
-          <literal>RUNTIME_COMPUTED</literal>: runtime-computed parameters.
-         </member>
-        </simplelist>
+        Only the most useful flags listed in
+        <xref linkend="functions-pg-settings-flags"/> are exposed.
        </para></entry>
       </row>
 
@@ -24341,6 +24320,46 @@ SELECT collation for ('foo' COLLATE "de_DE");
       <entry><literal>can_include</literal></entry>
       <entry>Does the access method support the <literal>INCLUDE</literal>
         clause of <literal>CREATE INDEX</literal>?
+      </entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
+
+  <table id="functions-pg-settings-flags">
+   <title>GUC Flags</title>
+   <tgroup cols="2">
+    <thead>
+     <row><entry>Flag</entry><entry>Description</entry></row>
+    </thead>
+    <tbody>
+     <row>
+      <entry><literal>EXPLAIN</literal></entry>
+      <entry>Parameters with this flag are included in
+       <command>EXPLAIN (SETTINGS)</command> commands.
+      </entry>
+     </row>
+     <row>
+      <entry><literal>NO_SHOW_ALL</literal></entry>
+      <entry>Parameters with this flag are excluded from
+       <command>SHOW ALL</command> commands.
+      </entry>
+     </row>
+     <row>
+      <entry><literal>NO_RESET_ALL</literal></entry>
+      <entry>Parameters with this flag are excluded from
+       <command>RESET ALL</command> commands.
+      </entry>
+     </row>
+     <row>
+      <entry><literal>NOT_IN_SAMPLE</literal></entry>
+      <entry>Parameters with this flag are not included in
+       <filename>postgresql.conf</filename> by default.
+      </entry>
+     </row>
+     <row>
+      <entry><literal>RUNTIME_COMPUTED</literal></entry>
+      <entry>Parameters with this flag are runtime-computed ones.
       </entry>
      </row>
     </tbody>
@@ -26880,7 +26899,7 @@ postgres=# SELECT * FROM pg_walfile_name_offset((pg_backup_stop()).lsn);
        </para>
        <para>
         Converts a size in bytes into a more easily human-readable format with
-        size units (bytes, kB, MB, GB or TB as appropriate).  Note that the
+        size units (bytes, kB, MB, GB, TB, or PB as appropriate).  Note that the
         units are powers of 2 rather than powers of 10, so 1kB is 1024 bytes,
         1MB is 1024<superscript>2</superscript> = 1048576 bytes, and so on.
        </para></entry>

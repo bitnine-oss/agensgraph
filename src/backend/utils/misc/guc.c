@@ -3973,7 +3973,7 @@ static struct config_real ConfigureNamesReal[] =
 		},
 		&CheckPointCompletionTarget,
 		0.9, 0.0, 1.0,
-		NULL, NULL, NULL
+		NULL, assign_checkpoint_completion_target, NULL
 	},
 
 	{
@@ -5035,7 +5035,7 @@ static struct config_enum ConfigureNamesEnum[] =
 		},
 		&pgstat_fetch_consistency,
 		PGSTAT_FETCH_CONSISTENCY_CACHE, stats_fetch_consistency,
-		NULL, NULL, NULL
+		NULL, assign_stats_fetch_consistency, NULL
 	},
 
 	{
@@ -9810,6 +9810,7 @@ MarkGUCPrefixReserved(const char *className)
 			num_guc_variables--;
 			memmove(&guc_variables[i], &guc_variables[i + 1],
 					(num_guc_variables - i) * sizeof(struct config_generic *));
+			i--;
 		}
 	}
 
@@ -10563,7 +10564,7 @@ show_all_file_settings(PG_FUNCTION_ARGS)
 	conf = ProcessConfigFileInternal(PGC_SIGHUP, false, DEBUG3);
 
 	/* Build a tuplestore to return our results in */
-	SetSingleFuncCall(fcinfo, 0);
+	InitMaterializedSRF(fcinfo, 0);
 
 	/* Process the results and create a tuplestore */
 	for (seqno = 1; conf != NULL; conf = conf->next, seqno++)

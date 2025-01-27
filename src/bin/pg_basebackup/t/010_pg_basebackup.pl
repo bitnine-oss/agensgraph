@@ -304,17 +304,23 @@ $node->command_fails(
 	[ @pg_basebackup_defs, '-D', "$tempdir/backup_foo", '-Fp', "-Tfoo" ],
 	'-T with invalid format fails');
 
-# Tar format doesn't support filenames longer than 100 bytes.
 my $superlongname = "superlongname_" . ("x" x 100);
-my $superlongpath = "$pgdata/$superlongname";
+# Tar format doesn't support filenames longer than 100 bytes.
+SKIP:
+{
+	my $superlongpath = "$pgdata/$superlongname";
 
-open my $file, '>', "$superlongpath"
-  or die "unable to create file $superlongpath";
-close $file;
-$node->command_fails(
-	[ @pg_basebackup_defs, '-D', "$tempdir/tarbackup_l1", '-Ft' ],
-	'pg_basebackup tar with long name fails');
-unlink "$pgdata/$superlongname";
+	skip "File path too long", 1
+	  if $windows_os && length($superlongpath) > 255;
+
+	open my $file, '>', "$superlongpath"
+	  or die "unable to create file $superlongpath";
+	close $file;
+	$node->command_fails(
+		[ @pg_basebackup_defs, '-D', "$tempdir/tarbackup_l1", '-Ft' ],
+		'pg_basebackup tar with long name fails');
+	unlink "$superlongpath";
+}
 
 # The following tests are for symlinks.
 
@@ -327,19 +333,24 @@ umask(0027);
 # Enable group permissions on PGDATA
 chmod_recursive("$pgdata", 0750, 0640);
 
-rename("$pgdata/pg_replslot", "$tempdir/pg_replslot")
+# Create a temporary directory in the system location.
+my $sys_tempdir = PostgreSQL::Test::Utils::tempdir_short;
+
+# On Windows use the short location to avoid path length issues.
+# Elsewhere use $tempdir to avoid file system boundary issues with moving.
+my $tmploc = $windows_os ? $sys_tempdir : $tempdir;
+
+rename("$pgdata/pg_replslot", "$tmploc/pg_replslot")
   or BAIL_OUT "could not move $pgdata/pg_replslot";
-dir_symlink("$tempdir/pg_replslot", "$pgdata/pg_replslot")
+dir_symlink("$tmploc/pg_replslot", "$pgdata/pg_replslot")
   or BAIL_OUT "could not symlink to $pgdata/pg_replslot";
 
 $node->start;
 
 # Test backup of a tablespace using tar format.
-# Create a temporary directory in the system location and symlink it
-# to our physical temp location.  That way we can use shorter names
-# for the tablespace directories, which hopefully won't run afoul of
-# the 99 character length limit.
-my $sys_tempdir      = PostgreSQL::Test::Utils::tempdir_short;
+# Symlink the system located tempdir to our physical temp location.
+# That way we can use shorter names for the tablespace directories,
+# which hopefully won't run afoul of the 99 character length limit.
 my $real_sys_tempdir = "$sys_tempdir/tempdir";
 dir_symlink "$tempdir", $real_sys_tempdir;
 

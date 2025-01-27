@@ -3405,12 +3405,13 @@ check_index_predicates(PlannerInfo *root, RelOptInfo *rel)
 	 * Normally we remove quals that are implied by a partial index's
 	 * predicate from indrestrictinfo, indicating that they need not be
 	 * checked explicitly by an indexscan plan using this index.  However, if
-	 * the rel is a target relation of UPDATE/DELETE/SELECT FOR UPDATE, we
-	 * cannot remove such quals from the plan, because they need to be in the
-	 * plan so that they will be properly rechecked by EvalPlanQual testing.
-	 * Some day we might want to remove such quals from the main plan anyway
-	 * and pass them through to EvalPlanQual via a side channel; but for now,
-	 * we just don't remove implied quals at all for target relations.
+	 * the rel is a target relation of UPDATE/DELETE/MERGE/SELECT FOR UPDATE,
+	 * we cannot remove such quals from the plan, because they need to be in
+	 * the plan so that they will be properly rechecked by EvalPlanQual
+	 * testing.  Some day we might want to remove such quals from the main
+	 * plan anyway and pass them through to EvalPlanQual via a side channel;
+	 * but for now, we just don't remove implied quals at all for target
+	 * relations.
 	 */
 	is_target_rel = (bms_is_member(rel->relid, root->all_result_relids) ||
 					 get_plan_rowmark(root->rowMarks, rel->relid) != NULL);
@@ -3583,10 +3584,13 @@ relation_has_unique_index_for(PlannerInfo *root, RelOptInfo *rel,
 
 		/*
 		 * If the index is not unique, or not immediately enforced, or if it's
-		 * a partial index that doesn't match the query, it's useless here.
+		 * a partial index, it's useless here.  We're unable to make use of
+		 * predOK partial unique indexes due to the fact that
+		 * check_index_predicates() also makes use of join predicates to
+		 * determine if the partial index is usable. Here we need proofs that
+		 * hold true before any joins are evaluated.
 		 */
-		if (!ind->unique || !ind->immediate ||
-			(ind->indpred != NIL && !ind->predOK))
+		if (!ind->unique || !ind->immediate || ind->indpred != NIL)
 			continue;
 
 		/*

@@ -5544,7 +5544,11 @@ StartupXLOG(void)
 	TrimCLOG();
 	TrimMultiXact();
 
-	/* Reload shared-memory state for prepared transactions */
+	/*
+	 * Reload shared-memory state for prepared transactions.  This needs to
+	 * happen before renaming the last partial segment of the old timeline as
+	 * it may be possible that we have to recovery some transactions from it.
+	 */
 	RecoverPreparedTransactions();
 
 	/* Shut down xlogreader */
@@ -7298,7 +7302,7 @@ KeepLogSeg(XLogRecPtr recptr, XLogSegNo *logSegNo)
 	 * max_slot_wal_keep_size.
 	 */
 	keep = XLogGetReplicationSlotMinimumLSN();
-	if (keep != InvalidXLogRecPtr)
+	if (keep != InvalidXLogRecPtr && keep < recptr)
 	{
 		XLByteToSeg(keep, segno, wal_segment_size);
 

@@ -418,6 +418,10 @@ CheckMyDatabase(const char *name, bool am_superuser, bool override_allow_connect
 						   " which is not recognized by setlocale().", ctype),
 				 errhint("Recreate the database with another locale or install the missing locale.")));
 
+	if (strcmp(ctype, "C") == 0 ||
+		strcmp(ctype, "POSIX") == 0)
+		database_ctype_is_c = true;
+
 	if (dbform->datlocprovider == COLLPROVIDER_ICU)
 	{
 		datum = SysCacheGetAttr(DATABASEOID, tup, Anum_pg_database_daticulocale, &isnull);
@@ -1038,6 +1042,7 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	if (!bootstrap)
 	{
 		HeapTuple	tuple;
+		Form_pg_database datform;
 
 		tuple = GetDatabaseTuple(dbname);
 		if (!HeapTupleIsValid(tuple) ||
@@ -1047,6 +1052,15 @@ InitPostgres(const char *in_dbname, Oid dboid,
 					(errcode(ERRCODE_UNDEFINED_DATABASE),
 					 errmsg("database \"%s\" does not exist", dbname),
 					 errdetail("It seems to have just been dropped or renamed.")));
+
+		datform = (Form_pg_database) GETSTRUCT(tuple);
+		if (database_is_invalid_form(datform))
+		{
+			ereport(FATAL,
+					errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					errmsg("cannot connect to invalid database \"%s\"", dbname),
+					errhint("Use DROP DATABASE to drop invalid databases."));
+		}
 	}
 
 	/*

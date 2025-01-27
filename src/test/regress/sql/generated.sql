@@ -81,6 +81,21 @@ SELECT * FROM gtest1 ORDER BY a;
 DELETE FROM gtest1 WHERE b = 2;
 SELECT * FROM gtest1 ORDER BY a;
 
+-- test MERGE
+CREATE TABLE gtestm (
+  id int PRIMARY KEY,
+  f1 int,
+  f2 int,
+  f3 int GENERATED ALWAYS AS (f1 * 2) STORED,
+  f4 int GENERATED ALWAYS AS (f2 * 2) STORED
+);
+INSERT INTO gtestm VALUES (1, 5, 100);
+MERGE INTO gtestm t USING (VALUES (1, 10), (2, 20)) v(id, f1) ON t.id = v.id
+  WHEN MATCHED THEN UPDATE SET f1 = v.f1
+  WHEN NOT MATCHED THEN INSERT VALUES (v.id, v.f1, 200);
+SELECT * FROM gtestm ORDER BY id;
+DROP TABLE gtestm;
+
 -- views
 CREATE VIEW gtest1v AS SELECT * FROM gtest1;
 SELECT * FROM gtest1v;
@@ -148,6 +163,15 @@ DROP TABLE gtesty;
 CREATE TABLE gtesty (x int, b int DEFAULT 55);
 CREATE TABLE gtest1_2 () INHERITS (gtest0, gtesty);  -- error
 DROP TABLE gtesty;
+
+-- test correct handling of GENERATED column that's only in child
+CREATE TABLE gtestp (f1 int);
+CREATE TABLE gtestc (f2 int GENERATED ALWAYS AS (f1+1) STORED) INHERITS(gtestp);
+INSERT INTO gtestc values(42);
+TABLE gtestc;
+UPDATE gtestp SET f1 = f1 * 10;
+TABLE gtestc;
+DROP TABLE gtestp CASCADE;
 
 -- test stored update
 CREATE TABLE gtest3 (a int, b int GENERATED ALWAYS AS (a * 3) STORED);
@@ -366,9 +390,13 @@ DROP TABLE gtest_parent;
 -- partitioned table
 CREATE TABLE gtest_parent (f1 date NOT NULL, f2 bigint, f3 bigint GENERATED ALWAYS AS (f2 * 2) STORED) PARTITION BY RANGE (f1);
 CREATE TABLE gtest_child PARTITION OF gtest_parent FOR VALUES FROM ('2016-07-01') TO ('2016-08-01');
+CREATE TABLE gtest_child3 PARTITION OF gtest_parent FOR VALUES FROM ('2016-09-01') TO ('2016-10-01');
 INSERT INTO gtest_parent (f1, f2) VALUES ('2016-07-15', 1);
 SELECT * FROM gtest_parent;
 SELECT * FROM gtest_child;
+UPDATE gtest_parent SET f1 = f1 + 60, f2 = f2 + 1;
+SELECT * FROM gtest_parent;
+SELECT * FROM gtest_child3;
 DROP TABLE gtest_parent;
 
 -- generated columns in partition key (not allowed)

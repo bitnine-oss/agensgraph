@@ -1398,7 +1398,7 @@ apply_spooled_messages(TransactionId xid, XLogRecPtr lsn)
 	nchanges = 0;
 	while (true)
 	{
-		int			nbytes;
+		size_t		nbytes;
 		int			len;
 
 		CHECK_FOR_INTERRUPTS();
@@ -1414,8 +1414,8 @@ apply_spooled_messages(TransactionId xid, XLogRecPtr lsn)
 		if (nbytes != sizeof(len))
 			ereport(ERROR,
 					(errcode_for_file_access(),
-					 errmsg("could not read from streaming transaction's changes file \"%s\": %m",
-							path)));
+					 errmsg("could not read from streaming transaction's changes file \"%s\": read only %zu of %zu bytes",
+							path, nbytes, sizeof(len))));
 
 		if (len <= 0)
 			elog(ERROR, "incorrect length %d in streaming transaction's changes file \"%s\"",
@@ -1425,11 +1425,12 @@ apply_spooled_messages(TransactionId xid, XLogRecPtr lsn)
 		buffer = repalloc(buffer, len);
 
 		/* and finally read the data into the buffer */
-		if (BufFileRead(fd, buffer, len) != len)
+		nbytes = BufFileRead(fd, buffer, len);
+		if (nbytes != len)
 			ereport(ERROR,
 					(errcode_for_file_access(),
-					 errmsg("could not read from streaming transaction's changes file \"%s\": %m",
-							path)));
+					 errmsg("could not read from streaming transaction's changes file \"%s\": read only %zu of %zu bytes",
+							path, nbytes, (size_t) len)));
 
 		/* copy the buffer to the stringinfo and call apply_dispatch */
 		resetStringInfo(&s2);
@@ -1851,9 +1852,6 @@ apply_handle_update(StringInfo s)
 		}
 	}
 
-	/* Also populate extraUpdatedCols, in case we have generated columns */
-	fill_extraUpdatedCols(target_rte, rel->localrel);
-
 	/* Build the search tuple. */
 	oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 	slot_store_data(remoteslot, rel,
@@ -2152,6 +2150,15 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 	partrel = partrelinfo->ri_RelationDesc;
 
 	/*
+	 * Check for supported relkind.  We need this since partitions might be of
+	 * unsupported relkinds; and the set of partitions can change, so checking
+	 * at CREATE/ALTER SUBSCRIPTION would be insufficient.
+	 */
+	CheckSubscriptionRelkind(partrel->rd_rel->relkind,
+							 get_namespace_name(RelationGetNamespace(partrel)),
+							 RelationGetRelationName(partrel));
+
+	/*
 	 * To perform any of the operations below, the tuple must match the
 	 * partition's rowtype. Convert if needed or just copy, using a dedicated
 	 * slot to store the tuple in any case.
@@ -2204,6 +2211,7 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 			{
 				TupleTableSlot *localslot;
 				ResultRelInfo *partrelinfo_new;
+				Relation	partrel_new;
 				bool		found;
 
 				/* Get the matching local tuple from the partition. */
@@ -2289,7 +2297,6 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 						slot_getallattrs(remoteslot);
 					}
 
-
 					/* Find the new partition. */
 					oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 					partrelinfo_new = ExecFindPartition(mtstate, relinfo,
@@ -2297,6 +2304,12 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 														estate);
 					MemoryContextSwitchTo(oldctx);
 					Assert(partrelinfo_new != partrelinfo);
+					partrel_new = partrelinfo_new->ri_RelationDesc;
+
+					/* Check that new partition also has supported relkind. */
+					CheckSubscriptionRelkind(partrel_new->rd_rel->relkind,
+											 get_namespace_name(RelationGetNamespace(partrel_new)),
+											 RelationGetRelationName(partrel_new));
 
 					/* DELETE old tuple found in the old partition. */
 					apply_handle_delete_internal(edata, partrelinfo,
@@ -2309,10 +2322,9 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 					 * partition rowtype.
 					 */
 					oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-					partrel = partrelinfo_new->ri_RelationDesc;
 					remoteslot_part = partrelinfo_new->ri_PartitionTupleSlot;
 					if (remoteslot_part == NULL)
-						remoteslot_part = table_slot_create(partrel,
+						remoteslot_part = table_slot_create(partrel_new,
 															&estate->es_tupleTable);
 					map = partrelinfo_new->ri_RootToPartitionMap;
 					if (map != NULL)
@@ -2567,7 +2579,7 @@ apply_dispatch(StringInfo s)
 		default:
 			ereport(ERROR,
 					(errcode(ERRCODE_PROTOCOL_VIOLATION),
-					 errmsg("invalid logical replication message type \"%c\"", action)));
+					 errmsg("invalid logical replication message type \"??? (%d)\"", action)));
 	}
 
 	/* Reset the current command */
@@ -3181,6 +3193,7 @@ static void
 subxact_info_read(Oid subid, TransactionId xid)
 {
 	char		path[MAXPGPATH];
+	size_t		nread;
 	Size		len;
 	BufFile    *fd;
 	MemoryContext oldctx;
@@ -3200,13 +3213,12 @@ subxact_info_read(Oid subid, TransactionId xid)
 		return;
 
 	/* read number of subxact items */
-	if (BufFileRead(fd, &subxact_data.nsubxacts,
-					sizeof(subxact_data.nsubxacts)) !=
-		sizeof(subxact_data.nsubxacts))
+	nread = BufFileRead(fd, &subxact_data.nsubxacts, sizeof(subxact_data.nsubxacts));
+	if (nread != sizeof(subxact_data.nsubxacts))
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not read from streaming transaction's subxact file \"%s\": %m",
-						path)));
+				 errmsg("could not read from streaming transaction's subxact file \"%s\": read only %zu of %zu bytes",
+						path, nread, sizeof(subxact_data.nsubxacts))));
 
 	len = sizeof(SubXactInfo) * subxact_data.nsubxacts;
 
@@ -3224,11 +3236,15 @@ subxact_info_read(Oid subid, TransactionId xid)
 								   sizeof(SubXactInfo));
 	MemoryContextSwitchTo(oldctx);
 
-	if ((len > 0) && ((BufFileRead(fd, subxact_data.subxacts, len)) != len))
+	if (len > 0)
+	{
+		nread = BufFileRead(fd, subxact_data.subxacts, len);
+		if (nread != len)
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not read from streaming transaction's subxact file \"%s\": %m",
-						path)));
+				 errmsg("could not read from streaming transaction's subxact file \"%s\": read only %zu of %zu bytes",
+						path, nread, len)));
+	}
 
 	BufFileClose(fd);
 }

@@ -416,6 +416,8 @@ static void get_update_query_targetlist_def(Query *query, List *targetList,
 											RangeTblEntry *rte);
 static void get_delete_query_def(Query *query, deparse_context *context,
 								 bool colNamesVisible);
+static void get_merge_query_def(Query *query, deparse_context *context,
+								bool colNamesVisible);
 static void get_utility_query_def(Query *query, deparse_context *context);
 static void get_basic_select_query(Query *query, deparse_context *context,
 								   TupleDesc resultDesc, bool colNamesVisible);
@@ -480,6 +482,8 @@ static void get_from_clause(Query *query, const char *prefix,
 							deparse_context *context);
 static void get_from_clause_item(Node *jtnode, Query *query,
 								 deparse_context *context);
+static void get_rte_alias(RangeTblEntry *rte, int varno, bool use_as,
+						  deparse_context *context);
 static void get_column_alias_list(deparse_columns *colinfo,
 								  deparse_context *context);
 static void get_from_clause_coldeflist(RangeTblFunction *rtfunc,
@@ -1215,6 +1219,22 @@ pg_get_indexdef_columns(Oid indexrelid, bool pretty)
 
 	return pg_get_indexdef_worker(indexrelid, 0, NULL,
 								  true, true,
+								  false, false,
+								  prettyFlags, false);
+}
+
+/* Internal version, extensible with flags to control its behavior */
+char *
+pg_get_indexdef_columns_extended(Oid indexrelid, bits16 flags)
+{
+	bool		pretty = ((flags & RULE_INDEXDEF_PRETTY) != 0);
+	bool		keys_only = ((flags & RULE_INDEXDEF_KEYS_ONLY) != 0);
+	int			prettyFlags;
+
+	prettyFlags = GET_PRETTY_FLAGS(pretty);
+
+	return pg_get_indexdef_worker(indexrelid, 0, NULL,
+								  true, keys_only,
 								  false, false,
 								  prettyFlags, false);
 }
@@ -2895,8 +2915,8 @@ pg_get_serial_sequence(PG_FUNCTION_ARGS)
  *
  * Note: if you change the output format of this function, be careful not
  * to break psql's rules (in \ef and \sf) for identifying the start of the
- * function body.  To wit: the function body starts on a line that begins
- * with "AS ", and no preceding line will look like that.
+ * function body.  To wit: the function body starts on a line that begins with
+ * "AS ", "BEGIN ", or "RETURN ", and no preceding line will look like that.
  */
 Datum
 pg_get_functiondef(PG_FUNCTION_ARGS)
@@ -5512,6 +5532,10 @@ get_query_def(Query *query, StringInfo buf, List *parentnamespace,
 			get_delete_query_def(query, &context, colNamesVisible);
 			break;
 
+		case CMD_MERGE:
+			get_merge_query_def(query, &context, colNamesVisible);
+			break;
+
 		case CMD_NOTHING:
 			appendStringInfoString(buf, "NOTHING");
 			break;
@@ -6684,12 +6708,14 @@ get_insert_query_def(Query *query, deparse_context *context,
 		context->indentLevel += PRETTYINDENT_STD;
 		appendStringInfoChar(buf, ' ');
 	}
-	appendStringInfo(buf, "INSERT INTO %s ",
+	appendStringInfo(buf, "INSERT INTO %s",
 					 generate_relation_name(rte->relid, NIL));
-	/* INSERT requires AS keyword for target alias */
-	if (rte->alias != NULL)
-		appendStringInfo(buf, "AS %s ",
-						 quote_identifier(rte->alias->aliasname));
+
+	/* Print the relation alias, if needed; INSERT requires explicit AS */
+	get_rte_alias(rte, query->resultRelation, true, context);
+
+	/* always want a space here */
+	appendStringInfoChar(buf, ' ');
 
 	/*
 	 * Add the insert-column-names list.  Any indirection decoration needed on
@@ -6871,9 +6897,10 @@ get_update_query_def(Query *query, deparse_context *context,
 	appendStringInfo(buf, "UPDATE %s%s",
 					 only_marker(rte),
 					 generate_relation_name(rte->relid, NIL));
-	if (rte->alias != NULL)
-		appendStringInfo(buf, " %s",
-						 quote_identifier(rte->alias->aliasname));
+
+	/* Print the relation alias, if needed */
+	get_rte_alias(rte, query->resultRelation, false, context);
+
 	appendStringInfoString(buf, " SET ");
 
 	/* Deparse targetlist */
@@ -7079,9 +7106,9 @@ get_delete_query_def(Query *query, deparse_context *context,
 	appendStringInfo(buf, "DELETE FROM %s%s",
 					 only_marker(rte),
 					 generate_relation_name(rte->relid, NIL));
-	if (rte->alias != NULL)
-		appendStringInfo(buf, " %s",
-						 quote_identifier(rte->alias->aliasname));
+
+	/* Print the relation alias, if needed */
+	get_rte_alias(rte, query->resultRelation, false, context);
 
 	/* Add the USING clause if given */
 	get_from_clause(query, " USING ", context);
@@ -7101,6 +7128,128 @@ get_delete_query_def(Query *query, deparse_context *context,
 							 -PRETTYINDENT_STD, PRETTYINDENT_STD, 1);
 		get_target_list(query->returningList, context, NULL, colNamesVisible);
 	}
+}
+
+
+/* ----------
+ * get_merge_query_def				- Parse back a MERGE parsetree
+ * ----------
+ */
+static void
+get_merge_query_def(Query *query, deparse_context *context,
+					bool colNamesVisible)
+{
+	StringInfo	buf = context->buf;
+	RangeTblEntry *rte;
+	ListCell   *lc;
+
+	/* Insert the WITH clause if given */
+	get_with_clause(query, context);
+
+	/*
+	 * Start the query with MERGE INTO relname
+	 */
+	rte = rt_fetch(query->resultRelation, query->rtable);
+	Assert(rte->rtekind == RTE_RELATION);
+	if (PRETTY_INDENT(context))
+	{
+		appendStringInfoChar(buf, ' ');
+		context->indentLevel += PRETTYINDENT_STD;
+	}
+	appendStringInfo(buf, "MERGE INTO %s%s",
+					 only_marker(rte),
+					 generate_relation_name(rte->relid, NIL));
+
+	/* Print the relation alias, if needed */
+	get_rte_alias(rte, query->resultRelation, false, context);
+
+	/* Print the source relation and join clause */
+	get_from_clause(query, " USING ", context);
+	appendContextKeyword(context, " ON ",
+						 -PRETTYINDENT_STD, PRETTYINDENT_STD, 2);
+	get_rule_expr(query->jointree->quals, context, false);
+
+	/* Print each merge action */
+	foreach(lc, query->mergeActionList)
+	{
+		MergeAction *action = lfirst_node(MergeAction, lc);
+
+		appendContextKeyword(context, " WHEN ",
+							 -PRETTYINDENT_STD, PRETTYINDENT_STD, 2);
+		appendStringInfo(buf, "%sMATCHED", action->matched ? "" : "NOT ");
+
+		if (action->qual)
+		{
+			appendContextKeyword(context, " AND ",
+								 -PRETTYINDENT_STD, PRETTYINDENT_STD, 3);
+			get_rule_expr(action->qual, context, false);
+		}
+		appendContextKeyword(context, " THEN ",
+							 -PRETTYINDENT_STD, PRETTYINDENT_STD, 3);
+
+		if (action->commandType == CMD_INSERT)
+		{
+			/* This generally matches get_insert_query_def() */
+			List	   *strippedexprs = NIL;
+			const char *sep = "";
+			ListCell   *lc2;
+
+			appendStringInfoString(buf, "INSERT");
+
+			if (action->targetList)
+				appendStringInfoString(buf, " (");
+			foreach(lc2, action->targetList)
+			{
+				TargetEntry *tle = (TargetEntry *) lfirst(lc2);
+
+				Assert(!tle->resjunk);
+
+				appendStringInfoString(buf, sep);
+				sep = ", ";
+
+				appendStringInfoString(buf,
+									   quote_identifier(get_attname(rte->relid,
+																	tle->resno,
+																	false)));
+				strippedexprs = lappend(strippedexprs,
+										processIndirection((Node *) tle->expr,
+														   context));
+			}
+			if (action->targetList)
+				appendStringInfoChar(buf, ')');
+
+			if (action->override)
+			{
+				if (action->override == OVERRIDING_SYSTEM_VALUE)
+					appendStringInfoString(buf, " OVERRIDING SYSTEM VALUE");
+				else if (action->override == OVERRIDING_USER_VALUE)
+					appendStringInfoString(buf, " OVERRIDING USER VALUE");
+			}
+
+			if (strippedexprs)
+			{
+				appendContextKeyword(context, " VALUES (",
+									 -PRETTYINDENT_STD, PRETTYINDENT_STD, 4);
+				get_rule_list_toplevel(strippedexprs, context, false);
+				appendStringInfoChar(buf, ')');
+			}
+			else
+				appendStringInfoString(buf, " DEFAULT VALUES");
+		}
+		else if (action->commandType == CMD_UPDATE)
+		{
+			appendStringInfoString(buf, "UPDATE SET ");
+			get_update_query_targetlist_def(query, action->targetList,
+											context, rte);
+		}
+		else if (action->commandType == CMD_DELETE)
+			appendStringInfoString(buf, "DELETE");
+		else if (action->commandType == CMD_NOTHING)
+			appendStringInfoString(buf, "DO NOTHING");
+	}
+
+	/* No RETURNING support in MERGE yet */
+	Assert(query->returningList == NIL);
 }
 
 
@@ -7531,7 +7680,8 @@ get_name_for_var_field(Var *var, int fieldno,
 
 	/*
 	 * If it's a RowExpr that was expanded from a whole-row Var, use the
-	 * column names attached to it.
+	 * column names attached to it.  (We could let get_expr_result_tupdesc()
+	 * handle this, but it's much cheaper to just pull out the name we need.)
 	 */
 	if (IsA(var, RowExpr))
 	{
@@ -8315,11 +8465,12 @@ isSimpleNode(Node *node, Node *parentNode, int prettyFlags)
 			{
 				case T_FuncExpr:
 					{
-						/* special handling for casts */
+						/* special handling for casts and COERCE_SQL_SYNTAX */
 						CoercionForm type = ((FuncExpr *) parentNode)->funcformat;
 
 						if (type == COERCE_EXPLICIT_CAST ||
-							type == COERCE_IMPLICIT_CAST)
+							type == COERCE_IMPLICIT_CAST ||
+							type == COERCE_SQL_SYNTAX)
 							return false;
 						return true;	/* own parentheses */
 					}
@@ -8367,11 +8518,12 @@ isSimpleNode(Node *node, Node *parentNode, int prettyFlags)
 					return false;
 				case T_FuncExpr:
 					{
-						/* special handling for casts */
+						/* special handling for casts and COERCE_SQL_SYNTAX */
 						CoercionForm type = ((FuncExpr *) parentNode)->funcformat;
 
 						if (type == COERCE_EXPLICIT_CAST ||
-							type == COERCE_IMPLICIT_CAST)
+							type == COERCE_IMPLICIT_CAST ||
+							type == COERCE_SQL_SYNTAX)
 							return false;
 						return true;	/* own parentheses */
 					}
@@ -10410,9 +10562,11 @@ get_func_sql_syntax(FuncExpr *expr, deparse_context *context)
 		case F_TIMEZONE_TEXT_TIMETZ:
 			/* AT TIME ZONE ... note reversed argument order */
 			appendStringInfoChar(buf, '(');
-			get_rule_expr((Node *) lsecond(expr->args), context, false);
+			get_rule_expr_paren((Node *) lsecond(expr->args), context, false,
+								(Node *) expr);
 			appendStringInfoString(buf, " AT TIME ZONE ");
-			get_rule_expr((Node *) linitial(expr->args), context, false);
+			get_rule_expr_paren((Node *) linitial(expr->args), context, false,
+								(Node *) expr);
 			appendStringInfoChar(buf, ')');
 			return true;
 
@@ -10464,9 +10618,10 @@ get_func_sql_syntax(FuncExpr *expr, deparse_context *context)
 
 		case F_IS_NORMALIZED:
 			/* IS xxx NORMALIZED */
-			appendStringInfoString(buf, "((");
-			get_rule_expr((Node *) linitial(expr->args), context, false);
-			appendStringInfoString(buf, ") IS");
+			appendStringInfoString(buf, "(");
+			get_rule_expr_paren((Node *) linitial(expr->args), context, false,
+								(Node *) expr);
+			appendStringInfoString(buf, " IS");
 			if (list_length(expr->args) == 2)
 			{
 				Const	   *con = (Const *) lsecond(expr->args);
@@ -10486,11 +10641,6 @@ get_func_sql_syntax(FuncExpr *expr, deparse_context *context)
 			get_rule_expr((Node *) linitial(expr->args), context, false);
 			appendStringInfoChar(buf, ')');
 			return true;
-
-			/*
-			 * XXX EXTRACT, a/k/a date_part(), is intentionally not covered
-			 * yet.  Add it after we change the return type to numeric.
-			 */
 
 		case F_NORMALIZE:
 			/* NORMALIZE() */
@@ -11332,10 +11482,8 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 	{
 		int			varno = ((RangeTblRef *) jtnode)->rtindex;
 		RangeTblEntry *rte = rt_fetch(varno, query->rtable);
-		char	   *refname = get_rtable_name(varno, context);
 		deparse_columns *colinfo = deparse_columns_fetch(varno, dpns);
 		RangeTblFunction *rtfunc1 = NULL;
-		bool		printalias;
 
 		if (rte->lateral)
 			appendStringInfoString(buf, "LATERAL ");
@@ -11472,55 +11620,7 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 		}
 
 		/* Print the relation alias, if needed */
-		printalias = false;
-		if (rte->alias != NULL)
-		{
-			/* Always print alias if user provided one */
-			printalias = true;
-		}
-		else if (colinfo->printaliases)
-		{
-			/* Always print alias if we need to print column aliases */
-			printalias = true;
-		}
-		else if (rte->rtekind == RTE_RELATION)
-		{
-			/*
-			 * No need to print alias if it's same as relation name (this
-			 * would normally be the case, but not if set_rtable_names had to
-			 * resolve a conflict).
-			 */
-			if (strcmp(refname, get_relation_name(rte->relid)) != 0)
-				printalias = true;
-		}
-		else if (rte->rtekind == RTE_FUNCTION)
-		{
-			/*
-			 * For a function RTE, always print alias.  This covers possible
-			 * renaming of the function and/or instability of the
-			 * FigureColname rules for things that aren't simple functions.
-			 * Note we'd need to force it anyway for the columndef list case.
-			 */
-			printalias = true;
-		}
-		else if (rte->rtekind == RTE_SUBQUERY ||
-				 rte->rtekind == RTE_VALUES)
-		{
-			/* Alias is syntactically required for SUBQUERY and VALUES */
-			printalias = true;
-		}
-		else if (rte->rtekind == RTE_CTE)
-		{
-			/*
-			 * No need to print alias if it's same as CTE name (this would
-			 * normally be the case, but not if set_rtable_names had to
-			 * resolve a conflict).
-			 */
-			if (strcmp(refname, rte->ctename) != 0)
-				printalias = true;
-		}
-		if (printalias)
-			appendStringInfo(buf, " %s", quote_identifier(refname));
+		get_rte_alias(rte, varno, false, context);
 
 		/* Print the column definitions or aliases, if needed */
 		if (rtfunc1 && rtfunc1->funccolnames != NIL)
@@ -11668,6 +11768,73 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 	else
 		elog(ERROR, "unrecognized node type: %d",
 			 (int) nodeTag(jtnode));
+}
+
+/*
+ * get_rte_alias - print the relation's alias, if needed
+ *
+ * If printed, the alias is preceded by a space, or by " AS " if use_as is true.
+ */
+static void
+get_rte_alias(RangeTblEntry *rte, int varno, bool use_as,
+			  deparse_context *context)
+{
+	deparse_namespace *dpns = (deparse_namespace *) linitial(context->namespaces);
+	char	   *refname = get_rtable_name(varno, context);
+	deparse_columns *colinfo = deparse_columns_fetch(varno, dpns);
+	bool		printalias = false;
+
+	if (rte->alias != NULL)
+	{
+		/* Always print alias if user provided one */
+		printalias = true;
+	}
+	else if (colinfo->printaliases)
+	{
+		/* Always print alias if we need to print column aliases */
+		printalias = true;
+	}
+	else if (rte->rtekind == RTE_RELATION)
+	{
+		/*
+		 * No need to print alias if it's same as relation name (this would
+		 * normally be the case, but not if set_rtable_names had to resolve a
+		 * conflict).
+		 */
+		if (strcmp(refname, get_relation_name(rte->relid)) != 0)
+			printalias = true;
+	}
+	else if (rte->rtekind == RTE_FUNCTION)
+	{
+		/*
+		 * For a function RTE, always print alias.  This covers possible
+		 * renaming of the function and/or instability of the FigureColname
+		 * rules for things that aren't simple functions.  Note we'd need to
+		 * force it anyway for the columndef list case.
+		 */
+		printalias = true;
+	}
+	else if (rte->rtekind == RTE_SUBQUERY ||
+			 rte->rtekind == RTE_VALUES)
+	{
+		/* Alias is syntactically required for SUBQUERY and VALUES */
+		printalias = true;
+	}
+	else if (rte->rtekind == RTE_CTE)
+	{
+		/*
+		 * No need to print alias if it's same as CTE name (this would
+		 * normally be the case, but not if set_rtable_names had to resolve a
+		 * conflict).
+		 */
+		if (strcmp(refname, rte->ctename) != 0)
+			printalias = true;
+	}
+
+	if (printalias)
+		appendStringInfo(context->buf, "%s%s",
+						 use_as ? " AS " : " ",
+						 quote_identifier(refname));
 }
 
 /*
@@ -11844,7 +12011,7 @@ get_opclass_name(Oid opclass, Oid actual_datatype,
 
 /*
  * generate_opclass_name
- *		Compute the name to display for a opclass specified by OID
+ *		Compute the name to display for an opclass specified by OID
  *
  * The result includes all necessary quoting and schema-prefixing.
  */

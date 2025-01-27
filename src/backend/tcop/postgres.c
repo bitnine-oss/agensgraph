@@ -2246,6 +2246,12 @@ exec_execute_message(const char *portal_name, long max_rows)
 			CommandCounterIncrement();
 
 			/*
+			 * Set XACT_FLAGS_PIPELINING whenever we complete an Execute
+			 * message without immediately committing the transaction.
+			 */
+			MyXactFlags |= XACT_FLAGS_PIPELINING;
+
+			/*
 			 * Disable statement timeout whenever we complete an Execute
 			 * message.  The next protocol message will start a fresh timeout.
 			 */
@@ -2260,6 +2266,12 @@ exec_execute_message(const char *portal_name, long max_rows)
 		/* Portal run not complete, so send PortalSuspended */
 		if (whereToSendOutput == DestRemote)
 			pq_putemptymessage('s');
+
+		/*
+		 * Set XACT_FLAGS_PIPELINING whenever we suspend an Execute message,
+		 * too.
+		 */
+		MyXactFlags |= XACT_FLAGS_PIPELINING;
 	}
 
 	/*
@@ -4077,12 +4089,12 @@ PostgresSingleUserMain(int argc, char *argv[],
 void
 PostgresMain(const char *dbname, const char *username)
 {
-	int			firstchar;
-	StringInfoData input_message;
 	sigjmp_buf	local_sigjmp_buf;
+
+	/* these must be volatile to ensure state is preserved across longjmp: */
 	volatile bool send_ready_for_query = true;
-	bool		idle_in_transaction_timeout_enabled = false;
-	bool		idle_session_timeout_enabled = false;
+	volatile bool idle_in_transaction_timeout_enabled = false;
+	volatile bool idle_session_timeout_enabled = false;
 
 	AssertArg(dbname != NULL);
 	AssertArg(username != NULL);
@@ -4288,8 +4300,10 @@ PostgresMain(const char *dbname, const char *username)
 		 * query cancels from being misreported as timeouts in case we're
 		 * forgetting a timeout cancel.
 		 */
-		disable_all_timeouts(false);
-		QueryCancelPending = false; /* second to avoid race condition */
+		disable_all_timeouts(false);	/* do first to avoid race condition */
+		QueryCancelPending = false;
+		idle_in_transaction_timeout_enabled = false;
+		idle_session_timeout_enabled = false;
 
 		/* Not reading from the client anymore. */
 		DoingCommandRead = false;
@@ -4378,6 +4392,9 @@ PostgresMain(const char *dbname, const char *username)
 
 	for (;;)
 	{
+		int			firstchar;
+		StringInfoData input_message;
+
 		/*
 		 * At top of loop, reset extended-query-message flag, so that any
 		 * errors encountered in "idle" state don't provoke skip.

@@ -1085,6 +1085,8 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 {
 	Node	   *parsetree = pstmt->utilityStmt;
 	uint64		saved_queryId = pstmt->queryId;
+	int			saved_stmt_location = pstmt->stmt_location;
+	int			saved_stmt_len = pstmt->stmt_len;
 
 	/*
 	 * Force utility statements to get queryId zero.  We do this even in cases
@@ -1150,6 +1152,16 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 		}
 		PG_END_TRY();
 
+		/*
+		 * CAUTION: do not access the *pstmt data structure again below here.
+		 * If it was a ROLLBACK or similar, that data structure may have been
+		 * freed.  We must copy everything we still need into local variables,
+		 * which we did above.
+		 *
+		 * For the same reason, we can't risk restoring pstmt->queryId to its
+		 * former value, which'd otherwise be a good idea.
+		 */
+
 		INSTR_TIME_SET_CURRENT(duration);
 		INSTR_TIME_SUBTRACT(duration, start);
 
@@ -1174,8 +1186,8 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 
 		pgss_store(queryString,
 				   saved_queryId,
-				   pstmt->stmt_location,
-				   pstmt->stmt_len,
+				   saved_stmt_location,
+				   saved_stmt_len,
 				   PGSS_EXEC,
 				   INSTR_TIME_GET_MILLISEC(duration),
 				   rows,
@@ -1245,7 +1257,7 @@ pgss_store(const char *query, uint64 queryId,
 
 	/* Set up key for hashtable search */
 
-	/* memset() is required when pgssHashKey is without padding only */
+	/* clear padding */
 	memset(&key, 0, sizeof(pgssHashKey));
 
 	key.userid = GetUserId();
@@ -1555,7 +1567,7 @@ pg_stat_statements_internal(FunctionCallInfo fcinfo,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("pg_stat_statements must be loaded via shared_preload_libraries")));
 
-	SetSingleFuncCall(fcinfo, 0);
+	InitMaterializedSRF(fcinfo, 0);
 
 	/*
 	 * Check we have the expected number of output arguments.  Aside from
@@ -2540,16 +2552,16 @@ entry_reset(Oid userid, Oid dbid, uint64 queryid)
 		key.dbid = dbid;
 		key.queryid = queryid;
 
-		/* Remove the key if it exists, starting with the top-level entry  */
+		/*
+		 * Remove the key if it exists, starting with the non-top-level entry.
+		 */
 		key.toplevel = false;
 		entry = (pgssEntry *) hash_search(pgss_hash, &key, HASH_REMOVE, NULL);
 		if (entry)				/* found */
 			num_remove++;
 
-		/* Also remove entries for top level statements */
+		/* Also remove the top-level entry if it exists. */
 		key.toplevel = true;
-
-		/* Remove the key if exists */
 		entry = (pgssEntry *) hash_search(pgss_hash, &key, HASH_REMOVE, NULL);
 		if (entry)				/* found */
 			num_remove++;

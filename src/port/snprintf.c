@@ -110,6 +110,16 @@
 #undef	printf
 
 /*
+ * We use the platform's native snprintf() for some machine-dependent cases.
+ * While that's required by C99, Microsoft Visual Studio lacks it before
+ * VS2015.  Fortunately, we don't really need the length check in practice,
+ * so just fall back to native sprintf() on that platform.
+ */
+#if defined(_MSC_VER) && _MSC_VER < 1900	/* pre-VS2015 */
+#define snprintf(str,size,...) sprintf(str,__VA_ARGS__)
+#endif
+
+/*
  * Info about where the formatted output is going.
  *
  * dopr and subroutines will not write at/past bufend, but snprintf
@@ -1002,8 +1012,8 @@ fmtptr(const void *value, PrintfTarget *target)
 	int			vallen;
 	char		convert[64];
 
-	/* we rely on regular C library's sprintf to do the basic conversion */
-	vallen = sprintf(convert, "%p", value);
+	/* we rely on regular C library's snprintf to do the basic conversion */
+	vallen = snprintf(convert, sizeof(convert), "%p", value);
 	if (vallen < 0)
 		target->failed = true;
 	else
@@ -1153,11 +1163,11 @@ fmtfloat(double value, char type, int forcesign, int leftjust,
 	int			padlen;			/* amount to pad with spaces */
 
 	/*
-	 * We rely on the regular C library's sprintf to do the basic conversion,
+	 * We rely on the regular C library's snprintf to do the basic conversion,
 	 * then handle padding considerations here.
 	 *
 	 * The dynamic range of "double" is about 1E+-308 for IEEE math, and not
-	 * too wildly more than that with other hardware.  In "f" format, sprintf
+	 * too wildly more than that with other hardware.  In "f" format, snprintf
 	 * could therefore generate at most 308 characters to the left of the
 	 * decimal point; while we need to allow the precision to get as high as
 	 * 308+17 to ensure that we don't truncate significant digits from very
@@ -1209,14 +1219,14 @@ fmtfloat(double value, char type, int forcesign, int leftjust,
 			fmt[2] = '*';
 			fmt[3] = type;
 			fmt[4] = '\0';
-			vallen = sprintf(convert, fmt, prec, value);
+			vallen = snprintf(convert, sizeof(convert), fmt, prec, value);
 		}
 		else
 		{
 			fmt[0] = '%';
 			fmt[1] = type;
 			fmt[2] = '\0';
-			vallen = sprintf(convert, fmt, value);
+			vallen = snprintf(convert, sizeof(convert), fmt, value);
 		}
 		if (vallen < 0)
 			goto fail;
@@ -1345,7 +1355,7 @@ pg_strfromd(char *str, size_t count, int precision, double value)
 			fmt[2] = '*';
 			fmt[3] = 'g';
 			fmt[4] = '\0';
-			vallen = sprintf(convert, fmt, precision, value);
+			vallen = snprintf(convert, sizeof(convert), fmt, precision, value);
 			if (vallen < 0)
 			{
 				target.failed = true;

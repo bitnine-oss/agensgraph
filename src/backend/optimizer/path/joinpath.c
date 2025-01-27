@@ -24,6 +24,7 @@
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
 #include "optimizer/planmain.h"
+#include "optimizer/restrictinfo.h"
 #include "utils/typcache.h"
 
 /* Hook for plugins to get control in add_paths_to_joinrel() */
@@ -138,6 +139,7 @@ add_paths_to_joinrel(PlannerInfo *root,
 {
 	JoinPathExtraData extra;
 	bool		mergejoin_allowed = true;
+	bool		consider_join_pushdown = false;
 	ListCell   *lc;
 	Relids		joinrelids;
 
@@ -327,12 +329,24 @@ add_paths_to_joinrel(PlannerInfo *root,
 							 jointype, &extra);
 
 	/*
+	 * createplan.c does not currently support handling of pseudoconstant
+	 * clauses assigned to joins pushed down by extensions; check if the
+	 * restrictlist has such clauses, and if so, disallow pushing down joins.
+	 */
+	if ((joinrel->fdwroutine &&
+		 joinrel->fdwroutine->GetForeignJoinPaths) ||
+		set_join_pathlist_hook)
+		consider_join_pushdown = !has_pseudoconstant_clauses(root,
+															 restrictlist);
+
+	/*
 	 * 5. If inner and outer relations are foreign tables (or joins) belonging
 	 * to the same server and assigned to the same user to check access
 	 * permissions as, give the FDW a chance to push down joins.
 	 */
 	if (joinrel->fdwroutine &&
-		joinrel->fdwroutine->GetForeignJoinPaths)
+		joinrel->fdwroutine->GetForeignJoinPaths &&
+		consider_join_pushdown)
 		joinrel->fdwroutine->GetForeignJoinPaths(root, joinrel,
 												 outerrel, innerrel,
 												 jointype, &extra);
@@ -340,7 +354,8 @@ add_paths_to_joinrel(PlannerInfo *root,
 	/*
 	 * 6. Finally, give extensions a chance to manipulate the path list.
 	 */
-	if (set_join_pathlist_hook)
+	if (set_join_pathlist_hook &&
+		consider_join_pushdown)
 		set_join_pathlist_hook(root, joinrel, outerrel, innerrel,
 							   jointype, &extra);
 }
@@ -594,6 +609,7 @@ get_memoize_path(PlannerInfo *root, RelOptInfo *innerrel,
 				 Path *outer_path, JoinType jointype,
 				 JoinPathExtraData *extra)
 {
+	RelOptInfo *top_outerrel;
 	List	   *param_exprs;
 	List	   *hash_operators;
 	ListCell   *lc;
@@ -683,10 +699,38 @@ get_memoize_path(PlannerInfo *root, RelOptInfo *innerrel,
 			return NULL;
 	}
 
+	/*
+	 * Also check the parameterized path restrictinfos for volatile functions.
+	 * Indexed functions must be immutable so shouldn't have any volatile
+	 * functions, however, with a lateral join the inner scan may not be an
+	 * index scan.
+	 */
+	if (inner_path->param_info != NULL)
+	{
+		foreach(lc, inner_path->param_info->ppi_clauses)
+		{
+			RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
+
+			if (contain_volatile_functions((Node *) rinfo))
+				return NULL;
+		}
+	}
+
+	/*
+	 * When considering a partitionwise join, we have clauses that reference
+	 * the outerrel's top parent not outerrel itself.
+	 */
+	if (outerrel->reloptkind == RELOPT_OTHER_MEMBER_REL)
+		top_outerrel = find_base_rel(root, bms_singleton_member(outerrel->top_parent_relids));
+	else if (outerrel->reloptkind == RELOPT_OTHER_JOINREL)
+		top_outerrel = find_join_rel(root, outerrel->top_parent_relids);
+	else
+		top_outerrel = outerrel;
+
 	/* Check if we have hash ops for each parameter to the path */
 	if (paraminfo_get_equal_hashops(root,
 									inner_path->param_info,
-									outerrel,
+									top_outerrel,
 									innerrel,
 									&param_exprs,
 									&hash_operators,

@@ -332,26 +332,40 @@ GetWALRecordsInfo(FunctionCallInfo fcinfo, XLogRecPtr start_lsn,
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 	Datum		values[PG_GET_WAL_RECORDS_INFO_COLS];
 	bool		nulls[PG_GET_WAL_RECORDS_INFO_COLS];
+	MemoryContext old_cxt;
+	MemoryContext tmp_cxt;
 
-	SetSingleFuncCall(fcinfo, 0);
+	InitMaterializedSRF(fcinfo, 0);
 
 	xlogreader = InitXLogReaderState(start_lsn);
 
 	MemSet(values, 0, sizeof(values));
 	MemSet(nulls, 0, sizeof(nulls));
 
+	tmp_cxt = AllocSetContextCreate(CurrentMemoryContext,
+									"GetWALRecordsInfo temporary cxt",
+									ALLOCSET_DEFAULT_SIZES);
+
 	while (ReadNextXLogRecord(xlogreader) &&
 		   xlogreader->EndRecPtr <= end_lsn)
 	{
+		/* Use the tmp context so we can clean up after each tuple is done */
+		old_cxt = MemoryContextSwitchTo(tmp_cxt);
+
 		GetWALRecordInfo(xlogreader, values, nulls,
 						 PG_GET_WAL_RECORDS_INFO_COLS);
 
 		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc,
 							 values, nulls);
 
+		/* clean up and switch back */
+		MemoryContextSwitchTo(old_cxt);
+		MemoryContextReset(tmp_cxt);
+
 		CHECK_FOR_INTERRUPTS();
 	}
 
+	MemoryContextDelete(tmp_cxt);
 	pfree(xlogreader->private_data);
 	XLogReaderFree(xlogreader);
 
@@ -554,7 +568,7 @@ GetWalStats(FunctionCallInfo fcinfo, XLogRecPtr start_lsn,
 	Datum		values[PG_GET_WAL_STATS_COLS];
 	bool		nulls[PG_GET_WAL_STATS_COLS];
 
-	SetSingleFuncCall(fcinfo, 0);
+	InitMaterializedSRF(fcinfo, 0);
 
 	xlogreader = InitXLogReaderState(start_lsn);
 

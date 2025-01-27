@@ -27,6 +27,7 @@
 
 #include "catalog/pg_type.h"
 #include "funcapi.h"
+#include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
@@ -316,6 +317,9 @@ static Node *
 pull_up_sublinks_jointree_recurse(PlannerInfo *root, Node *jtnode,
 								  Relids *relids)
 {
+	/* Since this function recurses, it could be driven to stack overflow. */
+	check_stack_depth();
+
 	if (jtnode == NULL)
 	{
 		*relids = NULL;
@@ -817,6 +821,11 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 						   JoinExpr *lowest_nulling_outer_join,
 						   AppendRelInfo *containing_appendrel)
 {
+	/* Since this function recurses, it could be driven to stack overflow. */
+	check_stack_depth();
+	/* Also, since it's a bit expensive, let's check for query cancel. */
+	CHECK_FOR_INTERRUPTS();
+
 	Assert(jtnode != NULL);
 	if (IsA(jtnode, RangeTblRef))
 	{
@@ -1984,6 +1993,9 @@ is_simple_union_all(Query *subquery)
 static bool
 is_simple_union_all_recurse(Node *setOp, Query *setOpQuery, List *colTypes)
 {
+	/* Since this function recurses, it could be driven to stack overflow. */
+	check_stack_depth();
+
 	if (IsA(setOp, RangeTblRef))
 	{
 		RangeTblRef *rtr = (RangeTblRef *) setOp;
@@ -2167,6 +2179,15 @@ perform_pullup_replace_vars(PlannerInfo *root,
 		pullup_replace_vars((Node *) parse->targetList, rvcontext);
 	parse->returningList = (List *)
 		pullup_replace_vars((Node *) parse->returningList, rvcontext);
+
+	foreach(lc, parse->windowClause)
+	{
+		WindowClause *wc = lfirst_node(WindowClause, lc);
+
+		if (wc->runCondition != NIL)
+			wc->runCondition = (List *)
+				pullup_replace_vars((Node *) wc->runCondition, rvcontext);
+	}
 	if (parse->onConflict)
 	{
 		parse->onConflict->onConflictSet = (List *)
@@ -3320,16 +3341,6 @@ remove_useless_results_recurse(PlannerInfo *root, Node *jtnode)
 					jtnode = j->larg;
 				}
 				break;
-			case JOIN_RIGHT:
-				/* Mirror-image of the JOIN_LEFT case */
-				if ((varno = get_result_relid(root, j->larg)) != 0 &&
-					(j->quals == NULL ||
-					 !find_dependent_phvs(root, varno)))
-				{
-					remove_result_refs(root, varno, j->rarg);
-					jtnode = j->rarg;
-				}
-				break;
 			case JOIN_SEMI:
 
 				/*
@@ -3338,14 +3349,17 @@ remove_useless_results_recurse(PlannerInfo *root, Node *jtnode)
 				 * LHS, since we should either return the LHS row or not.  For
 				 * simplicity we inject the filter qual into a new FromExpr.
 				 *
-				 * Unlike the LEFT/RIGHT cases, we just Assert that there are
-				 * no PHVs that need to be evaluated at the semijoin's RHS,
-				 * since the rest of the query couldn't reference any outputs
-				 * of the semijoin's RHS.
+				 * There is a fine point about PHVs that are supposed to be
+				 * evaluated at the RHS.  Such PHVs could only appear in the
+				 * semijoin's qual, since the rest of the query cannot
+				 * reference any outputs of the semijoin's RHS.  Therefore,
+				 * they can't actually go to null before being examined, and
+				 * it'd be OK to just remove the PHV wrapping.  We don't have
+				 * infrastructure for that, but remove_result_refs() will
+				 * relabel them as to be evaluated at the LHS, which is fine.
 				 */
 				if ((varno = get_result_relid(root, j->rarg)) != 0)
 				{
-					Assert(!find_dependent_phvs(root, varno));
 					remove_result_refs(root, varno, j->larg);
 					if (j->quals)
 						jtnode = (Node *)
@@ -3361,6 +3375,7 @@ remove_useless_results_recurse(PlannerInfo *root, Node *jtnode)
 				/* We have no special smarts for these cases */
 				break;
 			default:
+				/* Note: JOIN_RIGHT should be gone at this point */
 				elog(ERROR, "unrecognized join type: %d",
 					 (int) j->jointype);
 				break;

@@ -1113,6 +1113,16 @@ select * from
            select a as b) as t3
 where b;
 
+-- Test PHV in a semijoin qual, which confused useless-RTE removal (bug #17700)
+explain (verbose, costs off)
+with ctetable as not materialized ( select 1 as f1 )
+select * from ctetable c1
+where f1 in ( select c3.f1 from ctetable c2 full join ctetable c3 on true );
+
+with ctetable as not materialized ( select 1 as f1 )
+select * from ctetable c1
+where f1 in ( select c3.f1 from ctetable c2 full join ctetable c3 on true );
+
 --
 -- test inlining of immutable functions
 --
@@ -2252,6 +2262,15 @@ inner join j2 on j1.id1 = j2.id1 where j1.id2 = 1;
 explain (verbose, costs off)
 select * from j1
 left join j2 on j1.id1 = j2.id1 where j1.id2 = 1;
+
+create unique index j1_id2_idx on j1(id2) where id2 is not null;
+
+-- ensure we don't use a partial unique index as unique proofs
+explain (verbose, costs off)
+select * from j1
+inner join j2 on j1.id2 = j2.id2;
+
+drop index j1_id2_idx;
 
 -- validate logic in merge joins which skips mark and restore.
 -- it should only do this if all quals which were used to detect the unique

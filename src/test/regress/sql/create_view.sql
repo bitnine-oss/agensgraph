@@ -703,6 +703,7 @@ select pg_get_viewdef('tt20v', true);
 
 create view tt201v as
 select
+  ('2022-12-01'::date + '1 day'::interval) at time zone 'UTC' as atz,
   extract(day from now()) as extr,
   (now(), '1 day'::interval) overlaps
     (current_timestamp(2), '1 day'::interval) as o,
@@ -779,6 +780,29 @@ select x + y + z as c1,
        (x,y) <= ANY (values(1,2),(3,4)) as c11
 from (values(1,2,3)) v(x,y,z);
 select pg_get_viewdef('tt26v', true);
+
+
+-- Test that changing the relkind of a relcache entry doesn't cause
+-- trouble. Prior instances of where it did:
+-- CALDaNm2yXz+zOtv7y5zBd5WKT8O0Ld3YxikuU3dcyCvxF7gypA@mail.gmail.com
+-- CALDaNm3oZA-8Wbps2Jd1g5_Gjrr-x3YWrJPek-mF5Asrrvz2Dg@mail.gmail.com
+CREATE TABLE tt26(c int);
+
+BEGIN;
+CREATE TABLE tt27(c int);
+SAVEPOINT q;
+CREATE RULE "_RETURN" AS ON SELECT TO tt27 DO INSTEAD SELECT * FROM tt26;
+SELECT * FROM tt27;
+ROLLBACK TO q;
+CREATE RULE "_RETURN" AS ON SELECT TO tt27 DO INSTEAD SELECT * FROM tt26;
+ROLLBACK;
+
+BEGIN;
+CREATE TABLE tt28(c int);
+CREATE RULE "_RETURN" AS ON SELECT TO tt28 DO INSTEAD SELECT * FROM tt26;
+CREATE RULE "_RETURN" AS ON SELECT TO tt28 DO INSTEAD SELECT * FROM tt26;
+ROLLBACK;
+
 
 -- clean up all the random objects we made above
 DROP SCHEMA temp_view_test CASCADE;

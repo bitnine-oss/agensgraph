@@ -659,7 +659,7 @@ USING source AS s
 ON t.tid = s.sid
 WHEN MATCHED THEN /* Terminal WHEN clause for MATCHED */
 	DELETE
-WHEN MATCHED AND s.delta > 0 THEN
+WHEN MATCHED THEN
 	UPDATE SET balance = t.balance - s.delta;
 ERROR:  unreachable WHEN clause specified after unconditional WHEN clause
 ROLLBACK;
@@ -843,22 +843,6 @@ SELECT * FROM wq_target;
    1 |     499
 (1 row)
 
--- test preventing WHEN conditions from writing to the database
-create or replace function merge_when_and_write() returns boolean
-language plpgsql as
-$$
-BEGIN
-	INSERT INTO target VALUES (100, 100);
-	RETURN TRUE;
-END;
-$$;
-BEGIN;
-MERGE INTO wq_target t
-USING wq_source s ON t.tid = s.sid
-WHEN MATCHED AND (merge_when_and_write()) THEN
-	UPDATE SET balance = t.balance + s.balance;
-ROLLBACK;
-drop function merge_when_and_write();
 DROP TABLE wq_target, wq_source;
 -- test triggers
 create or replace function merge_trigfunc () returns trigger
@@ -958,12 +942,25 @@ SELECT * FROM target full outer join source on (sid = tid);
 
 create trigger merge_skip BEFORE INSERT OR UPDATE or DELETE
   ON target FOR EACH ROW EXECUTE FUNCTION skip_merge_op();
+DO $$
+DECLARE
+  result integer;
+BEGIN
 MERGE INTO target t
 USING source AS s
 ON t.tid = s.sid
 WHEN MATCHED AND s.sid = 3 THEN UPDATE SET balance = t.balance + s.delta
 WHEN MATCHED THEN DELETE
 WHEN NOT MATCHED THEN INSERT VALUES (sid, delta);
+IF FOUND THEN
+  RAISE NOTICE 'Found';
+ELSE
+  RAISE NOTICE 'Not found';
+END IF;
+GET DIAGNOSTICS result := ROW_COUNT;
+RAISE NOTICE 'ROW_COUNT = %', result;
+END;
+$$;
 NOTICE:  BEFORE INSERT STATEMENT trigger
 NOTICE:  BEFORE UPDATE STATEMENT trigger
 NOTICE:  BEFORE DELETE STATEMENT trigger
@@ -973,6 +970,8 @@ NOTICE:  BEFORE INSERT ROW trigger row: (4,40)
 NOTICE:  AFTER DELETE STATEMENT trigger
 NOTICE:  AFTER UPDATE STATEMENT trigger
 NOTICE:  AFTER INSERT STATEMENT trigger
+NOTICE:  Not found
+NOTICE:  ROW_COUNT = 0
 SELECT * FROM target FULL OUTER JOIN source ON (sid = tid);
  tid | balance | sid | delta 
 -----+---------+-----+-------
@@ -1598,6 +1597,10 @@ SELECT * FROM pa_target ORDER BY tid;
 ROLLBACK;
 -- try updating the partition key column
 BEGIN;
+CREATE FUNCTION merge_func() RETURNS integer LANGUAGE plpgsql AS $$
+DECLARE
+  result integer;
+BEGIN
 MERGE INTO pa_target t
   USING pa_source s
   ON t.tid = s.sid
@@ -1605,6 +1608,18 @@ MERGE INTO pa_target t
     UPDATE SET tid = tid + 1, balance = balance + delta, val = val || ' updated by merge'
   WHEN NOT MATCHED THEN
     INSERT VALUES (sid, delta, 'inserted by merge');
+IF FOUND THEN
+  GET DIAGNOSTICS result := ROW_COUNT;
+END IF;
+RETURN result;
+END;
+$$;
+SELECT merge_func();
+ merge_func 
+------------
+         14
+(1 row)
+
 SELECT * FROM pa_target ORDER BY tid;
  tid | balance |           val            
 -----+---------+--------------------------
@@ -1737,6 +1752,18 @@ SELECT * FROM pa_target ORDER BY tid;
 (14 rows)
 
 ROLLBACK;
+-- test RLS enforcement
+BEGIN;
+ALTER TABLE pa_target ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pa_target FORCE ROW LEVEL SECURITY;
+CREATE POLICY pa_target_pol ON pa_target USING (tid != 0);
+MERGE INTO pa_target t
+  USING pa_source s
+  ON t.tid = s.sid AND t.tid IN (1,2,3,4)
+  WHEN MATCHED THEN
+    UPDATE SET tid = tid - 1;
+ERROR:  new row violates row-level security policy for table "pa_target"
+ROLLBACK;
 DROP TABLE pa_source;
 DROP TABLE pa_target CASCADE;
 -- Sub-partitioning
@@ -1787,6 +1814,63 @@ SELECT * FROM pa_target ORDER BY tid;
 (9 rows)
 
 ROLLBACK;
+DROP TABLE pa_source;
+DROP TABLE pa_target CASCADE;
+-- Partitioned table with primary key
+CREATE TABLE pa_target (tid integer PRIMARY KEY) PARTITION BY LIST (tid);
+CREATE TABLE pa_targetp PARTITION OF pa_target DEFAULT;
+CREATE TABLE pa_source (sid integer);
+INSERT INTO pa_source VALUES (1), (2);
+EXPLAIN (VERBOSE, COSTS OFF)
+MERGE INTO pa_target t USING pa_source s ON t.tid = s.sid
+  WHEN NOT MATCHED THEN INSERT VALUES (s.sid);
+                              QUERY PLAN                               
+-----------------------------------------------------------------------
+ Merge on public.pa_target t
+   Merge on public.pa_targetp t_1
+   ->  Nested Loop Left Join
+         Output: s.sid, t_1.tableoid, t_1.ctid
+         ->  Seq Scan on public.pa_source s
+               Output: s.sid
+         ->  Index Scan using pa_targetp_pkey on public.pa_targetp t_1
+               Output: t_1.tid, t_1.tableoid, t_1.ctid
+               Index Cond: (t_1.tid = s.sid)
+(9 rows)
+
+MERGE INTO pa_target t USING pa_source s ON t.tid = s.sid
+  WHEN NOT MATCHED THEN INSERT VALUES (s.sid);
+TABLE pa_target;
+ tid 
+-----
+   1
+   2
+(2 rows)
+
+-- Partition-less partitioned table
+-- (the bug we are checking for appeared only if table had partitions before)
+DROP TABLE pa_targetp;
+EXPLAIN (VERBOSE, COSTS OFF)
+MERGE INTO pa_target t USING pa_source s ON t.tid = s.sid
+  WHEN NOT MATCHED THEN INSERT VALUES (s.sid);
+                 QUERY PLAN                 
+--------------------------------------------
+ Merge on public.pa_target t
+   ->  Hash Left Join
+         Output: s.sid, t.ctid
+         Hash Cond: (s.sid = t.tid)
+         ->  Seq Scan on public.pa_source s
+               Output: s.sid
+         ->  Hash
+               Output: t.tid, t.ctid
+               ->  Result
+                     Output: t.tid, t.ctid
+                     One-Time Filter: false
+(11 rows)
+
+MERGE INTO pa_target t USING pa_source s ON t.tid = s.sid
+  WHEN NOT MATCHED THEN INSERT VALUES (s.sid);
+ERROR:  no partition of relation "pa_target" found for row
+DETAIL:  Partition key of the failing row contains (tid) = (1).
 DROP TABLE pa_source;
 DROP TABLE pa_target CASCADE;
 -- some complex joins on the source side
@@ -1842,6 +1926,27 @@ SELECT * FROM cj_target;
    1 |     110 | initial source2 200
    2 |     320 | initial source2 300
 (4 rows)
+
+-- try it with an outer join and PlaceHolderVar
+MERGE INTO cj_target t
+USING (SELECT *, 'join input'::text AS phv FROM cj_source1) fj
+	FULL JOIN cj_source2 fj2 ON fj.scat = fj2.sid2 * 10
+ON t.tid = fj.scat
+WHEN NOT MATCHED THEN
+	INSERT (tid, balance, val) VALUES (fj.scat, fj.delta, fj.phv);
+SELECT * FROM cj_target;
+ tid | balance |               val                
+-----+---------+----------------------------------
+   3 |     400 | initial source2 updated by merge
+   1 |     220 | initial source2 200
+   1 |     110 | initial source2 200
+   2 |     320 | initial source2 300
+  10 |     100 | join input
+  10 |     400 | join input
+  20 |     200 | join input
+  20 |     300 | join input
+     |         | 
+(9 rows)
 
 ALTER TABLE cj_source1 RENAME COLUMN sid1 TO sid;
 ALTER TABLE cj_source2 RENAME COLUMN sid2 TO sid;
@@ -1902,6 +2007,7 @@ CREATE TABLE measurement_y2007m01 (
 ) WITH (autovacuum_enabled=off);
 ALTER TABLE measurement_y2007m01 DROP COLUMN filler;
 ALTER TABLE measurement_y2007m01 INHERIT measurement;
+INSERT INTO measurement VALUES (0, '2005-07-21', 5, 15);
 CREATE OR REPLACE FUNCTION measurement_insert_trigger()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -1933,15 +2039,17 @@ INSERT INTO measurement VALUES (1, '2007-01-17', 10, 10);
 SELECT tableoid::regclass, * FROM measurement ORDER BY city_id, logdate;
        tableoid       | city_id |  logdate   | peaktemp | unitsales 
 ----------------------+---------+------------+----------+-----------
+ measurement          |       0 | 07-21-2005 |        5 |        15
  measurement_y2006m02 |       1 | 02-10-2006 |       35 |        10
  measurement_y2006m02 |       1 | 02-16-2006 |       45 |        20
  measurement_y2006m03 |       1 | 03-17-2006 |       25 |        10
  measurement_y2006m03 |       1 | 03-27-2006 |       15 |        40
  measurement_y2007m01 |       1 | 01-15-2007 |       10 |        10
  measurement_y2007m01 |       1 | 01-17-2007 |       10 |        10
-(6 rows)
+(7 rows)
 
 CREATE TABLE new_measurement (LIKE measurement) WITH (autovacuum_enabled=off);
+INSERT INTO new_measurement VALUES (0, '2005-07-21', 25, 20);
 INSERT INTO new_measurement VALUES (1, '2006-03-01', 20, 10);
 INSERT INTO new_measurement VALUES (1, '2006-02-16', 50, 10);
 INSERT INTO new_measurement VALUES (2, '2006-02-10', 20, 20);
@@ -1949,6 +2057,37 @@ INSERT INTO new_measurement VALUES (1, '2006-03-27', NULL, NULL);
 INSERT INTO new_measurement VALUES (1, '2007-01-17', NULL, NULL);
 INSERT INTO new_measurement VALUES (1, '2007-01-15', 5, NULL);
 INSERT INTO new_measurement VALUES (1, '2007-01-16', 10, 10);
+BEGIN;
+MERGE INTO ONLY measurement m
+ USING new_measurement nm ON
+      (m.city_id = nm.city_id and m.logdate=nm.logdate)
+WHEN MATCHED AND nm.peaktemp IS NULL THEN DELETE
+WHEN MATCHED THEN UPDATE
+     SET peaktemp = greatest(m.peaktemp, nm.peaktemp),
+        unitsales = m.unitsales + coalesce(nm.unitsales, 0)
+WHEN NOT MATCHED THEN INSERT
+     (city_id, logdate, peaktemp, unitsales)
+   VALUES (city_id, logdate, peaktemp, unitsales);
+SELECT tableoid::regclass, * FROM measurement ORDER BY city_id, logdate, peaktemp;
+       tableoid       | city_id |  logdate   | peaktemp | unitsales 
+----------------------+---------+------------+----------+-----------
+ measurement          |       0 | 07-21-2005 |       25 |        35
+ measurement_y2006m02 |       1 | 02-10-2006 |       35 |        10
+ measurement_y2006m02 |       1 | 02-16-2006 |       45 |        20
+ measurement_y2006m02 |       1 | 02-16-2006 |       50 |        10
+ measurement_y2006m03 |       1 | 03-01-2006 |       20 |        10
+ measurement_y2006m03 |       1 | 03-17-2006 |       25 |        10
+ measurement_y2006m03 |       1 | 03-27-2006 |       15 |        40
+ measurement_y2006m03 |       1 | 03-27-2006 |          |          
+ measurement_y2007m01 |       1 | 01-15-2007 |        5 |          
+ measurement_y2007m01 |       1 | 01-15-2007 |       10 |        10
+ measurement_y2007m01 |       1 | 01-16-2007 |       10 |        10
+ measurement_y2007m01 |       1 | 01-17-2007 |       10 |        10
+ measurement_y2007m01 |       1 | 01-17-2007 |          |          
+ measurement_y2006m02 |       2 | 02-10-2006 |       20 |        20
+(14 rows)
+
+ROLLBACK;
 MERGE into measurement m
  USING new_measurement nm ON
       (m.city_id = nm.city_id and m.logdate=nm.logdate)
@@ -1962,6 +2101,7 @@ WHEN NOT MATCHED THEN INSERT
 SELECT tableoid::regclass, * FROM measurement ORDER BY city_id, logdate;
        tableoid       | city_id |  logdate   | peaktemp | unitsales 
 ----------------------+---------+------------+----------+-----------
+ measurement          |       0 | 07-21-2005 |       25 |        35
  measurement_y2006m02 |       1 | 02-10-2006 |       35 |        10
  measurement_y2006m02 |       1 | 02-16-2006 |       50 |        30
  measurement_y2006m03 |       1 | 03-01-2006 |       20 |        10
@@ -1969,7 +2109,36 @@ SELECT tableoid::regclass, * FROM measurement ORDER BY city_id, logdate;
  measurement_y2007m01 |       1 | 01-15-2007 |       10 |        10
  measurement_y2007m01 |       1 | 01-16-2007 |       10 |        10
  measurement_y2006m02 |       2 | 02-10-2006 |       20 |        20
+(8 rows)
+
+BEGIN;
+MERGE INTO new_measurement nm
+ USING ONLY measurement m ON
+      (nm.city_id = m.city_id and nm.logdate=m.logdate)
+WHEN MATCHED THEN DELETE;
+SELECT * FROM new_measurement ORDER BY city_id, logdate;
+ city_id |  logdate   | peaktemp | unitsales 
+---------+------------+----------+-----------
+       1 | 02-16-2006 |       50 |        10
+       1 | 03-01-2006 |       20 |        10
+       1 | 03-27-2006 |          |          
+       1 | 01-15-2007 |        5 |          
+       1 | 01-16-2007 |       10 |        10
+       1 | 01-17-2007 |          |          
+       2 | 02-10-2006 |       20 |        20
 (7 rows)
+
+ROLLBACK;
+MERGE INTO new_measurement nm
+ USING measurement m ON
+      (nm.city_id = m.city_id and nm.logdate=m.logdate)
+WHEN MATCHED THEN DELETE;
+SELECT * FROM new_measurement ORDER BY city_id, logdate;
+ city_id |  logdate   | peaktemp | unitsales 
+---------+------------+----------+-----------
+       1 | 03-27-2006 |          |          
+       1 | 01-17-2007 |          |          
+(2 rows)
 
 DROP TABLE measurement, new_measurement CASCADE;
 NOTICE:  drop cascades to 3 other objects

@@ -393,6 +393,7 @@ pgoutput_startup(LogicalDecodingContext *ctx, OutputPluginOptions *opt,
 				 bool is_init)
 {
 	PGOutputData *data = palloc0(sizeof(PGOutputData));
+	static bool publication_callback_registered = false;
 
 	/* Create our memory context for private allocations. */
 	data->context = AllocSetContextCreate(ctx->context,
@@ -481,9 +482,18 @@ pgoutput_startup(LogicalDecodingContext *ctx, OutputPluginOptions *opt,
 		/* Init publication state. */
 		data->publications = NIL;
 		publications_valid = false;
-		CacheRegisterSyscacheCallback(PUBLICATIONOID,
-									  publication_invalidation_cb,
-									  (Datum) 0);
+
+		/*
+		 * Register callback for pg_publication if we didn't already do that
+		 * during some previous call in this process.
+		 */
+		if (!publication_callback_registered)
+		{
+			CacheRegisterSyscacheCallback(PUBLICATIONOID,
+										  publication_invalidation_cb,
+										  (Datum) 0);
+			publication_callback_registered = true;
+		}
 
 		/* Initialize relation schema cache. */
 		init_rel_sync_cache(CacheMemoryContext);
@@ -1513,7 +1523,8 @@ pgoutput_change(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 					break;
 				case REORDER_BUFFER_CHANGE_DELETE:
 					logicalrep_write_delete(ctx->out, xid, targetrel,
-											old_slot, data->binary);
+											old_slot, data->binary,
+											relentry->columns);
 					break;
 				default:
 					Assert(false);
@@ -1559,7 +1570,8 @@ pgoutput_change(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 
 				OutputPluginPrepareWrite(ctx, true);
 				logicalrep_write_delete(ctx->out, xid, targetrel,
-										old_slot, data->binary);
+										old_slot, data->binary,
+										relentry->columns);
 				OutputPluginWrite(ctx, true);
 			}
 			else
@@ -1707,7 +1719,7 @@ pgoutput_origin_filter(LogicalDecodingContext *ctx,
  * Shutdown the output plugin.
  *
  * Note, we don't need to clean the data->context and data->cachectx as
- * they are child context of the ctx->context so it will be cleaned up by
+ * they are child contexts of the ctx->context so they will be cleaned up by
  * logical decoding machinery.
  */
 static void
@@ -1889,7 +1901,9 @@ static void
 init_rel_sync_cache(MemoryContext cachectx)
 {
 	HASHCTL		ctl;
+	static bool relation_callbacks_registered = false;
 
+	/* Nothing to do if hash table already exists */
 	if (RelationSyncCache != NULL)
 		return;
 
@@ -1904,6 +1918,10 @@ init_rel_sync_cache(MemoryContext cachectx)
 
 	Assert(RelationSyncCache != NULL);
 
+	/* No more to do if we already registered callbacks */
+	if (relation_callbacks_registered)
+		return;
+
 	CacheRegisterRelcacheCallback(rel_sync_cache_relation_cb, (Datum) 0);
 	CacheRegisterSyscacheCallback(PUBLICATIONRELMAP,
 								  rel_sync_cache_publication_cb,
@@ -1911,6 +1929,8 @@ init_rel_sync_cache(MemoryContext cachectx)
 	CacheRegisterSyscacheCallback(PUBLICATIONNAMESPACEMAP,
 								  rel_sync_cache_publication_cb,
 								  (Datum) 0);
+
+	relation_callbacks_registered = true;
 }
 
 /*

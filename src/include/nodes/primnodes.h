@@ -158,8 +158,8 @@ typedef struct Expr
  * is abused to signify references to columns of a custom scan tuple type.)
  *
  * ROWID_VAR is used in the planner to identify nonce variables that carry
- * row identity information during UPDATE/DELETE.  This value should never
- * be seen outside the planner.
+ * row identity information during UPDATE/DELETE/MERGE.  This value should
+ * never be seen outside the planner.
  *
  * In the parser, varnosyn and varattnosyn are either identical to
  * varno/varattno, or they specify the column's position in an aliased JOIN
@@ -731,9 +731,9 @@ typedef struct SubLink
  * The values are assigned to the global PARAM_EXEC params indexed by parParam
  * (the parParam and args lists must have the same ordering).  setParam is a
  * list of the PARAM_EXEC params that are computed by the sub-select, if it
- * is an initplan; they are listed in order by sub-select output column
- * position.  (parParam and setParam are integer Lists, not Bitmapsets,
- * because their ordering is significant.)
+ * is an initplan or MULTIEXPR plan; they are listed in order by sub-select
+ * output column position.  (parParam and setParam are integer Lists, not
+ * Bitmapsets, because their ordering is significant.)
  *
  * Also, the planner computes startup and per-call costs for use of the
  * SubPlan.  Note that these include the cost of the subquery proper,
@@ -766,8 +766,8 @@ typedef struct SubPlan
 	/* Note: parallel_safe does not consider contents of testexpr or args */
 	/* Information for passing params into and out of the subselect: */
 	/* setParam and parParam are lists of integers (param IDs) */
-	List	   *setParam;		/* initplan subqueries have to set these
-								 * Params for parent plan */
+	List	   *setParam;		/* initplan and MULTIEXPR subqueries have to
+								 * set these Params for parent plan */
 	List	   *parParam;		/* indices of input Params from parent plan */
 	List	   *args;			/* exprs to pass as parParam values */
 	/* Estimated execution costs: */
