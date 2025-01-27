@@ -721,8 +721,8 @@ typedef struct EState
  * ExecRowMark -
  *	   runtime representation of FOR [KEY] UPDATE/SHARE clauses
  *
- * When doing UPDATE, DELETE, or SELECT FOR [KEY] UPDATE/SHARE, we will have an
- * ExecRowMark for each non-target relation in the query (except inheritance
+ * When doing UPDATE/DELETE/MERGE/SELECT FOR [KEY] UPDATE/SHARE, we will have
+ * an ExecRowMark for each non-target relation in the query (except inheritance
  * parent RTEs, which can be ignored at runtime).  Virtual relations such as
  * subqueries-in-FROM will have an ExecRowMark with relation == NULL.  See
  * PlanRowMark for details about most of the fields.  In addition to fields
@@ -1607,6 +1607,8 @@ typedef struct IndexScanState
  *		TableSlot		   slot for holding tuples fetched from the table
  *		VMBuffer		   buffer in use for visibility map testing, if any
  *		PscanLen		   size of parallel index-only scan descriptor
+ *		NameCStringAttNums attnums of name typed columns to pad to NAMEDATALEN
+ *		NameCStringCount   number of elements in the NameCStringAttNums array
  * ----------------
  */
 typedef struct IndexOnlyScanState
@@ -1626,6 +1628,8 @@ typedef struct IndexOnlyScanState
 	TupleTableSlot *ioss_TableSlot;
 	Buffer		ioss_VMBuffer;
 	Size		ioss_PscanLen;
+	AttrNumber *ioss_NameCStringAttNums;
+	int			ioss_NameCStringCount;
 } IndexOnlyScanState;
 
 /* ----------------

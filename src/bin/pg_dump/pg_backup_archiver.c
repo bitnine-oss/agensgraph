@@ -1224,10 +1224,13 @@ PrintTOCSummary(Archive *AHX)
 	curSection = SECTION_PRE_DATA;
 	for (te = AH->toc->next; te != AH->toc; te = te->next)
 	{
+		/* This bit must match ProcessArchiveRestoreOptions' marking logic */
 		if (te->section != SECTION_NONE)
 			curSection = te->section;
+		te->reqs = _tocEntryRequired(te, curSection, AH);
+		/* Now, should we print it? */
 		if (ropt->verbose ||
-			(_tocEntryRequired(te, curSection, AH) & (REQ_SCHEMA | REQ_DATA)) != 0)
+			(te->reqs & (REQ_SCHEMA | REQ_DATA)) != 0)
 		{
 			char	   *sanitized_name;
 			char	   *sanitized_schema;
@@ -2918,7 +2921,10 @@ _tocEntryRequired(TocEntry *te, teSection curSection, ArchiveHandle *AH)
 			 * TOC entry types only if their parent object is being restored.
 			 * Without selectivity options, we let through everything in the
 			 * archive.  Note there may be such entries with no parent, eg
-			 * non-default ACLs for built-in objects.
+			 * non-default ACLs for built-in objects.  Also, we make
+			 * per-column ACLs additionally depend on the table's ACL if any
+			 * to ensure correct restore order, so those dependencies should
+			 * be ignored in this check.
 			 *
 			 * This code depends on the parent having been marked already,
 			 * which should be the case; if it isn't, perhaps due to
@@ -2929,8 +2935,23 @@ _tocEntryRequired(TocEntry *te, teSection curSection, ArchiveHandle *AH)
 			 * But it's hard to tell which of their dependencies is the one to
 			 * consult.
 			 */
-			if (te->nDeps != 1 ||
-				TocIDRequired(AH, te->dependencies[0]) == 0)
+			bool		dumpthis = false;
+
+			for (int i = 0; i < te->nDeps; i++)
+			{
+				TocEntry   *pte = getTocEntryByDumpId(AH, te->dependencies[i]);
+
+				if (!pte)
+					continue;	/* probably shouldn't happen */
+				if (strcmp(pte->desc, "ACL") == 0)
+					continue;	/* ignore dependency on another ACL */
+				if (pte->reqs == 0)
+					continue;	/* this object isn't marked, so ignore it */
+				/* Found a parent to be dumped, so we want to dump this too */
+				dumpthis = true;
+				break;
+			}
+			if (!dumpthis)
 				return 0;
 		}
 	}

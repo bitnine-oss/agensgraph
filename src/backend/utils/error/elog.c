@@ -755,6 +755,10 @@ errcode_for_file_access(void)
 			edata->sqlerrcode = ERRCODE_DISK_FULL;
 			break;
 
+		case ENOMEM:			/* Out of memory */
+			edata->sqlerrcode = ERRCODE_OUT_OF_MEMORY;
+			break;
+
 		case ENFILE:			/* File table overflow */
 		case EMFILE:			/* Too many open files */
 			edata->sqlerrcode = ERRCODE_INSUFFICIENT_RESOURCES;
@@ -1569,7 +1573,21 @@ CopyErrorData(void)
 	newedata = (ErrorData *) palloc(sizeof(ErrorData));
 	memcpy(newedata, edata, sizeof(ErrorData));
 
-	/* Make copies of separately-allocated fields */
+	/*
+	 * Make copies of separately-allocated strings.  Note that we copy even
+	 * theoretically-constant strings such as filename.  This is because those
+	 * could point into JIT-created code segments that might get unloaded at
+	 * transaction cleanup.  In some cases we need the copied ErrorData to
+	 * survive transaction boundaries, so we'd better copy those strings too.
+	 */
+	if (newedata->filename)
+		newedata->filename = pstrdup(newedata->filename);
+	if (newedata->funcname)
+		newedata->funcname = pstrdup(newedata->funcname);
+	if (newedata->domain)
+		newedata->domain = pstrdup(newedata->domain);
+	if (newedata->context_domain)
+		newedata->context_domain = pstrdup(newedata->context_domain);
 	if (newedata->message)
 		newedata->message = pstrdup(newedata->message);
 	if (newedata->detail)
@@ -1582,6 +1600,8 @@ CopyErrorData(void)
 		newedata->context = pstrdup(newedata->context);
 	if (newedata->backtrace)
 		newedata->backtrace = pstrdup(newedata->backtrace);
+	if (newedata->message_id)
+		newedata->message_id = pstrdup(newedata->message_id);
 	if (newedata->schema_name)
 		newedata->schema_name = pstrdup(newedata->schema_name);
 	if (newedata->table_name)
@@ -3401,6 +3421,34 @@ write_stderr(const char *fmt,...)
 	}
 #endif
 	va_end(ap);
+}
+
+
+/*
+ * Write a message to STDERR using only async-signal-safe functions.  This can
+ * be used to safely emit a message from a signal handler.
+ *
+ * TODO: It is likely possible to safely do a limited amount of string
+ * interpolation (e.g., %s and %d), but that is not presently supported.
+ */
+void
+write_stderr_signal_safe(const char *str)
+{
+	int			nwritten = 0;
+	int			ntotal = strlen(str);
+
+	while (nwritten < ntotal)
+	{
+		int			rc;
+
+		rc = write(STDERR_FILENO, str + nwritten, ntotal - nwritten);
+
+		/* Just give up on error.  There isn't much else we can do. */
+		if (rc == -1)
+			return;
+
+		nwritten += rc;
+	}
 }
 
 

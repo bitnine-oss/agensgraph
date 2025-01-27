@@ -388,6 +388,7 @@ static CoercionPathType findFkeyCast(Oid targetTypeId, Oid sourceTypeId,
 static void validateForeignKeyConstraint(char *conname,
 										 Relation rel, Relation pkrel,
 										 Oid pkindOid, Oid constraintOid);
+static void CheckAlterTableIsSafe(Relation rel);
 static void ATController(AlterTableStmt *parsetree,
 						 Relation rel, List *cmds, bool recurse, LOCKMODE lockmode,
 						 AlterTableUtilityContext *context);
@@ -787,10 +788,6 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 	}
 	else if (stmt->partbound)
 	{
-		/*
-		 * For partitions, when no other tablespace is specified, we default
-		 * the tablespace to the parent partitioned table's.
-		 */
 		Assert(list_length(inheritOids) == 1);
 		tablespaceId = get_rel_tablespace(linitial_oid(inheritOids));
 	}
@@ -3304,8 +3301,15 @@ findAttrByName(const char *attributeName, List *schema)
  * SetRelationHasSubclass
  *		Set the value of the relation's relhassubclass field in pg_class.
  *
- * NOTE: caller must be holding an appropriate lock on the relation.
- * ShareUpdateExclusiveLock is sufficient.
+ * It's always safe to set this field to true, because all SQL commands are
+ * ready to see true and then find no children.  On the other hand, commands
+ * generally assume zero children if this is false.
+ *
+ * Caller must hold any self-exclusive lock until end of transaction.  If the
+ * new value is false, caller must have acquired that lock before reading the
+ * evidence that justified the false value.  That way, it properly waits if
+ * another backend is simultaneously concluding no need to change the tuple
+ * (new and old values are true).
  *
  * NOTE: an important side-effect of this operation is that an SI invalidation
  * message is sent out to all backends --- including me --- causing plans
@@ -3319,6 +3323,11 @@ SetRelationHasSubclass(Oid relationId, bool relhassubclass)
 	Relation	relationRelation;
 	HeapTuple	tuple;
 	Form_pg_class classtuple;
+
+	Assert(CheckRelationOidLockedByMe(relationId,
+									  ShareUpdateExclusiveLock, false) ||
+		   CheckRelationOidLockedByMe(relationId,
+									  ShareRowExclusiveLock, true));
 
 	/*
 	 * Fetch a modifiable copy of the tuple, modify it, update pg_class.
@@ -4092,6 +4101,37 @@ CheckTableNotInUse(Relation rel, const char *stmt)
 }
 
 /*
+ * CheckAlterTableIsSafe
+ *		Verify that it's safe to allow ALTER TABLE on this relation.
+ *
+ * This consists of CheckTableNotInUse() plus a check that the relation
+ * isn't another session's temp table.  We must split out the temp-table
+ * check because there are callers of CheckTableNotInUse() that don't want
+ * that, notably DROP TABLE.  (We must allow DROP or we couldn't clean out
+ * an orphaned temp schema.)  Compare truncate_check_activity().
+ */
+static void
+CheckAlterTableIsSafe(Relation rel)
+{
+	/*
+	 * Don't allow ALTER on temp tables of other backends.  Their local buffer
+	 * manager is not going to cope if we need to change the table's contents.
+	 * Even if we don't, there may be optimizations that assume temp tables
+	 * aren't subject to such interference.
+	 */
+	if (RELATION_IS_OTHER_TEMP(rel))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot alter temporary tables of other sessions")));
+
+	/*
+	 * Also check for active uses of the relation in the current transaction,
+	 * including open scans and pending AFTER trigger events.
+	 */
+	CheckTableNotInUse(rel, "ALTER TABLE");
+}
+
+/*
  * AlterTableLookupRelation
  *		Look up, and lock, the OID for the relation named by an alter table
  *		statement.
@@ -4165,7 +4205,7 @@ AlterTable(AlterTableStmt *stmt, LOCKMODE lockmode,
 	/* Caller is required to provide an adequate lock. */
 	rel = relation_open(context->relid, NoLock);
 
-	CheckTableNotInUse(rel, "ALTER TABLE");
+	CheckAlterTableIsSafe(rel);
 
 	ATController(stmt, rel, stmt->cmds, stmt->relation->inh, lockmode, context);
 }
@@ -5568,7 +5608,9 @@ ATRewriteTables(AlterTableStmt *parsetree, List **wqueue, LOCKMODE lockmode,
 
 			/*
 			 * Don't allow rewrite on temp tables of other backends ... their
-			 * local buffer manager is not going to cope.
+			 * local buffer manager is not going to cope.  (This is redundant
+			 * with the check in CheckAlterTableIsSafe, but for safety we'll
+			 * check here too.)
 			 */
 			if (RELATION_IS_OTHER_TEMP(OldHeap))
 				ereport(ERROR,
@@ -6438,7 +6480,7 @@ ATSimpleRecursion(List **wqueue, Relation rel,
 				continue;
 			/* find_all_inheritors already got lock */
 			childrel = relation_open(childrelid, NoLock);
-			CheckTableNotInUse(childrel, "ALTER TABLE");
+			CheckAlterTableIsSafe(childrel);
 			ATPrepCmd(wqueue, childrel, cmd, false, true, lockmode, context);
 			relation_close(childrel, NoLock);
 		}
@@ -6447,7 +6489,7 @@ ATSimpleRecursion(List **wqueue, Relation rel,
 
 /*
  * Obtain list of partitions of the given table, locking them all at the given
- * lockmode and ensuring that they all pass CheckTableNotInUse.
+ * lockmode and ensuring that they all pass CheckAlterTableIsSafe.
  *
  * This function is a no-op if the given relation is not a partitioned table;
  * in particular, nothing is done if it's a legacy inheritance parent.
@@ -6468,7 +6510,7 @@ ATCheckPartitionsNotInUse(Relation rel, LOCKMODE lockmode)
 
 			/* find_all_inheritors already got lock */
 			childrel = table_open(lfirst_oid(cell), NoLock);
-			CheckTableNotInUse(childrel, "ALTER TABLE");
+			CheckAlterTableIsSafe(childrel);
 			table_close(childrel, NoLock);
 		}
 		list_free(inh);
@@ -6501,7 +6543,7 @@ ATTypedTableRecursion(List **wqueue, Relation rel, AlterTableCmd *cmd,
 		Relation	childrel;
 
 		childrel = relation_open(childrelid, lockmode);
-		CheckTableNotInUse(childrel, "ALTER TABLE");
+		CheckAlterTableIsSafe(childrel);
 		ATPrepCmd(wqueue, childrel, cmd, true, true, lockmode, context);
 		relation_close(childrel, NoLock);
 	}
@@ -6831,6 +6873,9 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 	TupleDesc	tupdesc;
 	FormData_pg_attribute *aattr[] = {&attribute};
 
+	/* since this function recurses, it could be driven to stack overflow */
+	check_stack_depth();
+
 	/* At top level, permission check was done in ATPrepCmd, else do it */
 	if (recursing)
 		ATSimplePermissions((*cmd)->subtype, rel, ATT_TABLE | ATT_FOREIGN_TABLE);
@@ -6891,6 +6936,10 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 							colDef->colname, RelationGetRelationName(rel))));
 
 			table_close(attrdesc, RowExclusiveLock);
+
+			/* Make the child column change visible */
+			CommandCounterIncrement();
+
 			return InvalidObjectAddress;
 		}
 	}
@@ -7195,7 +7244,7 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 
 		/* find_inheritance_children already got lock */
 		childrel = table_open(childrelid, NoLock);
-		CheckTableNotInUse(childrel, "ALTER TABLE");
+		CheckAlterTableIsSafe(childrel);
 
 		/* Find or create work queue entry for this table */
 		childtab = ATGetQueueEntry(wqueue, childrel);
@@ -8559,6 +8608,10 @@ ATExecDropColumn(List **wqueue, Relation rel, const char *colName,
 
 	/* Initialize addrs on the first invocation */
 	Assert(!recursing || addrs != NULL);
+
+	/* since this function recurses, it could be driven to stack overflow */
+	check_stack_depth();
+
 	if (!recursing)
 		addrs = new_object_addresses();
 
@@ -8651,7 +8704,7 @@ ATExecDropColumn(List **wqueue, Relation rel, const char *colName,
 
 			/* find_inheritance_children already got lock */
 			childrel = table_open(childrelid, NoLock);
-			CheckTableNotInUse(childrel, "ALTER TABLE");
+			CheckAlterTableIsSafe(childrel);
 
 			tuple = SearchSysCacheCopyAttName(childrelid, colName);
 			if (!HeapTupleIsValid(tuple))	/* shouldn't happen */
@@ -9133,7 +9186,7 @@ ATAddCheckConstraint(List **wqueue, AlteredTableInfo *tab, Relation rel,
 
 		/* find_inheritance_children already got lock */
 		childrel = table_open(childrelid, NoLock);
-		CheckTableNotInUse(childrel, "ALTER TABLE");
+		CheckAlterTableIsSafe(childrel);
 
 		/* Find or create work queue entry for this table */
 		childtab = ATGetQueueEntry(wqueue, childrel);
@@ -9971,7 +10024,7 @@ addFkRecurseReferencing(List **wqueue, Constraint *fkconstraint, Relation rel,
 						referenced;
 			ListCell   *cell;
 
-			CheckTableNotInUse(partition, "ALTER TABLE");
+			CheckAlterTableIsSafe(partition);
 
 			attmap = build_attrmap_by_name(RelationGetDescr(partition),
 										   RelationGetDescr(rel));
@@ -11021,6 +11074,9 @@ ATExecAlterConstrRecurse(Constraint *cmdcon, Relation conrel, Relation tgrel,
 	Oid			refrelid;
 	bool		changed = false;
 
+	/* since this function recurses, it could be driven to stack overflow */
+	check_stack_depth();
+
 	currcon = (Form_pg_constraint) GETSTRUCT(contuple);
 	conoid = currcon->oid;
 	refrelid = currcon->confrelid;
@@ -11496,15 +11552,19 @@ transformFkeyGetPrimaryKey(Relation pkrel, Oid *indexOid,
 /*
  * transformFkeyCheckAttrs -
  *
- *	Make sure that the attributes of a referenced table belong to a unique
- *	(or primary key) constraint.  Return the OID of the index supporting
- *	the constraint, as well as the opclasses associated with the index
- *	columns.
+ *	Validate that the 'attnums' columns in the 'pkrel' relation are valid to
+ *	reference as part of a foreign key constraint.
+ *
+ *	Returns the OID of the unique index supporting the constraint and
+ *	populates the caller-provided 'opclasses' array with the opclasses
+ *	associated with the index columns.
+ *
+ *	Raises an ERROR on validation failure.
  */
 static Oid
 transformFkeyCheckAttrs(Relation pkrel,
 						int numattrs, int16 *attnums,
-						Oid *opclasses) /* output parameter */
+						Oid *opclasses)
 {
 	Oid			indexoid = InvalidOid;
 	bool		found = false;
@@ -12033,6 +12093,9 @@ ATExecDropConstraint(Relation rel, const char *constrName,
 	bool		is_no_inherit_constraint = false;
 	char		contype;
 
+	/* since this function recurses, it could be driven to stack overflow */
+	check_stack_depth();
+
 	/* At top level, permission check was done in ATPrepCmd, else do it */
 	if (recursing)
 		ATSimplePermissions(AT_DropConstraint, rel, ATT_TABLE | ATT_FOREIGN_TABLE);
@@ -12088,7 +12151,7 @@ ATExecDropConstraint(Relation rel, const char *constrName,
 
 			/* Must match lock taken by RemoveTriggerById: */
 			frel = table_open(con->confrelid, AccessExclusiveLock);
-			CheckTableNotInUse(frel, "ALTER TABLE");
+			CheckAlterTableIsSafe(frel);
 			table_close(frel, NoLock);
 		}
 
@@ -12166,7 +12229,7 @@ ATExecDropConstraint(Relation rel, const char *constrName,
 
 		/* find_inheritance_children already got lock */
 		childrel = table_open(childrelid, NoLock);
-		CheckTableNotInUse(childrel, "ALTER TABLE");
+		CheckAlterTableIsSafe(childrel);
 
 		ScanKeyInit(&skey[0],
 					Anum_pg_constraint_conrelid,
@@ -12469,7 +12532,7 @@ ATPrepAlterColumnType(List **wqueue,
 
 			/* find_all_inheritors already got lock */
 			childrel = relation_open(childrelid, NoLock);
-			CheckTableNotInUse(childrel, "ALTER TABLE");
+			CheckAlterTableIsSafe(childrel);
 
 			/*
 			 * Verify that the child doesn't have any inherited definitions of
@@ -12773,8 +12836,29 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 				RememberConstraintForRebuilding(foundObject.objectId, tab);
 				break;
 
+			case OCLASS_PROC:
+
+				/*
+				 * A new-style SQL function can depend on a column, if that
+				 * column is referenced in the parsed function body.  Ideally
+				 * we'd automatically update the function by deparsing and
+				 * reparsing it, but that's risky and might well fail anyhow.
+				 * FIXME someday.
+				 */
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("cannot alter type of a column used by a function or procedure"),
+						 errdetail("%s depends on column \"%s\"",
+								   getObjectDescription(&foundObject, false),
+								   colName)));
+				break;
+
 			case OCLASS_REWRITE:
-				/* XXX someday see if we can cope with revising views */
+
+				/*
+				 * View/rule bodies have pretty much the same issues as
+				 * function bodies.  FIXME someday.
+				 */
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						 errmsg("cannot alter type of a column used by a view or rule"),
@@ -12790,9 +12874,9 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 				 * specified as an update target, or because the column is
 				 * used in the trigger's WHEN condition.  The first case would
 				 * not require any extra work, but the second case would
-				 * require updating the WHEN expression, which will take a
-				 * significant amount of new code.  Since we can't easily tell
-				 * which case applies, we punt for both.  FIXME someday.
+				 * require updating the WHEN expression, which has the same
+				 * issues as above.  Since we can't easily tell which case
+				 * applies, we punt for both.  FIXME someday.
 				 */
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -12864,7 +12948,20 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 				RememberStatisticsForRebuilding(foundObject.objectId, tab);
 				break;
 
-			case OCLASS_PROC:
+			case OCLASS_PUBLICATION_REL:
+
+				/*
+				 * Column reference in a PUBLICATION ... FOR TABLE ... WHERE
+				 * clause.  Same issues as above.  FIXME someday.
+				 */
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("cannot alter type of a column used by a publication WHERE clause"),
+						 errdetail("%s depends on column \"%s\"",
+								   getObjectDescription(&foundObject, false),
+								   colName)));
+				break;
+
 			case OCLASS_TYPE:
 			case OCLASS_CAST:
 			case OCLASS_COLLATION:
@@ -12894,7 +12991,6 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 			case OCLASS_PARAMETER_ACL:
 			case OCLASS_PUBLICATION:
 			case OCLASS_PUBLICATION_NAMESPACE:
-			case OCLASS_PUBLICATION_REL:
 			case OCLASS_SUBSCRIPTION:
 			case OCLASS_TRANSFORM:
 			case OCLASS_GRAPH:
@@ -16650,16 +16746,11 @@ AlterTableNamespaceInternal(Relation rel, Oid oldNspOid, Oid nspOid,
 								   nspOid, false, false, objsMoved);
 
 	/* Fix other dependent stuff */
-	if (rel->rd_rel->relkind == RELKIND_RELATION ||
-		rel->rd_rel->relkind == RELKIND_MATVIEW ||
-		rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
-	{
-		AlterIndexNamespaces(classRel, rel, oldNspOid, nspOid, objsMoved);
-		AlterSeqNamespaces(classRel, rel, oldNspOid, nspOid,
-						   objsMoved, AccessExclusiveLock);
-		AlterConstraintNamespaces(RelationGetRelid(rel), oldNspOid, nspOid,
-								  false, objsMoved);
-	}
+	AlterIndexNamespaces(classRel, rel, oldNspOid, nspOid, objsMoved);
+	AlterSeqNamespaces(classRel, rel, oldNspOid, nspOid,
+					   objsMoved, AccessExclusiveLock);
+	AlterConstraintNamespaces(RelationGetRelid(rel), oldNspOid, nspOid,
+							  false, objsMoved);
 
 	table_close(classRel, RowExclusiveLock);
 }
@@ -16995,11 +17086,19 @@ PreCommit_on_commit_actions(void)
 		}
 
 		/*
+		 * Object deletion might involve toast table access (to clean up
+		 * toasted catalog entries), so ensure we have a valid snapshot.
+		 */
+		PushActiveSnapshot(GetTransactionSnapshot());
+
+		/*
 		 * Since this is an automatic drop, rather than one directly initiated
 		 * by the user, we pass the PERFORM_DELETION_INTERNAL flag.
 		 */
 		performMultipleDeletions(targetObjects, DROP_CASCADE,
 								 PERFORM_DELETION_INTERNAL | PERFORM_DELETION_QUIETLY);
+
+		PopActiveSnapshot();
 
 #ifdef USE_ASSERT_CHECKING
 
@@ -17493,30 +17592,6 @@ ComputePartitionAttrs(ParseState *pstate, Relation rel, List *partParams, AttrNu
 				*partexprs = lappend(*partexprs, expr);
 
 				/*
-				 * Try to simplify the expression before checking for
-				 * mutability.  The main practical value of doing it in this
-				 * order is that an inline-able SQL-language function will be
-				 * accepted if its expansion is immutable, whether or not the
-				 * function itself is marked immutable.
-				 *
-				 * Note that expression_planner does not change the passed in
-				 * expression destructively and we have already saved the
-				 * expression to be stored into the catalog above.
-				 */
-				expr = (Node *) expression_planner((Expr *) expr);
-
-				/*
-				 * Partition expression cannot contain mutable functions,
-				 * because a given row must always map to the same partition
-				 * as long as there is no change in the partition boundary
-				 * structure.
-				 */
-				if (contain_mutable_functions(expr))
-					ereport(ERROR,
-							(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-							 errmsg("functions in partition key expression must be marked IMMUTABLE")));
-
-				/*
 				 * transformPartitionSpec() should have already rejected
 				 * subqueries, aggregates, window functions, and SRFs, based
 				 * on the EXPR_KIND_ for partition expressions.
@@ -17556,6 +17631,32 @@ ComputePartitionAttrs(ParseState *pstate, Relation rel, List *partParams, AttrNu
 										   get_attname(RelationGetRelid(rel), attno, false)),
 								 parser_errposition(pstate, pelem->location)));
 				}
+
+				/*
+				 * Preprocess the expression before checking for mutability.
+				 * This is essential for the reasons described in
+				 * contain_mutable_functions_after_planning.  However, we call
+				 * expression_planner for ourselves rather than using that
+				 * function, because if constant-folding reduces the
+				 * expression to a constant, we'd like to know that so we can
+				 * complain below.
+				 *
+				 * Like contain_mutable_functions_after_planning, assume that
+				 * expression_planner won't scribble on its input, so this
+				 * won't affect the partexprs entry we saved above.
+				 */
+				expr = (Node *) expression_planner((Expr *) expr);
+
+				/*
+				 * Partition expressions cannot contain mutable functions,
+				 * because a given row must always map to the same partition
+				 * as long as there is no change in the partition boundary
+				 * structure.
+				 */
+				if (contain_mutable_functions(expr))
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+							 errmsg("functions in partition key expression must be marked IMMUTABLE")));
 
 				/*
 				 * While it is not exactly *wrong* for a partition expression
@@ -18775,22 +18876,31 @@ DetachPartitionFinalize(Relation rel, Relation partRel, bool concurrent,
 	foreach(cell, indexes)
 	{
 		Oid			idxid = lfirst_oid(cell);
+		Oid			parentidx;
 		Relation	idx;
 		Oid			constrOid;
+		Oid			parentConstrOid;
 
 		if (!has_superclass(idxid))
 			continue;
 
-		Assert((IndexGetRelation(get_partition_parent(idxid, false), false) ==
-				RelationGetRelid(rel)));
+		parentidx = get_partition_parent(idxid, false);
+		Assert((IndexGetRelation(parentidx, false) == RelationGetRelid(rel)));
 
 		idx = index_open(idxid, AccessExclusiveLock);
 		IndexSetParentIndex(idx, InvalidOid);
 
-		/* If there's a constraint associated with the index, detach it too */
+		/*
+		 * If there's a constraint associated with the index, detach it too.
+		 * Careful: it is possible for a constraint index in a partition to be
+		 * the child of a non-constraint index, so verify whether the parent
+		 * index does actually have a constraint.
+		 */
 		constrOid = get_relation_idx_constraint_oid(RelationGetRelid(partRel),
 													idxid);
-		if (OidIsValid(constrOid))
+		parentConstrOid = get_relation_idx_constraint_oid(RelationGetRelid(rel),
+														  parentidx);
+		if (OidIsValid(parentConstrOid) && OidIsValid(constrOid))
 			ConstraintSetParentConstraint(constrOid, InvalidOid, InvalidOid);
 
 		index_close(idx, NoLock);

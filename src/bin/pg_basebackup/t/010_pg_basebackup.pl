@@ -3,6 +3,7 @@
 
 use strict;
 use warnings;
+use Config;
 use File::Basename qw(basename dirname);
 use File::Path qw(rmtree);
 use PostgreSQL::Test::Cluster;
@@ -173,6 +174,16 @@ foreach my $filename (
 	close $file;
 }
 
+# Test that macOS system files are skipped. Only test on non-macOS systems
+# however since creating incorrect .DS_Store files on a macOS system may have
+# unintended side effects.
+if ($Config{osname} ne 'darwin')
+{
+	open my $file, '>>', "$pgdata/.DS_Store";
+	print $file "DONOTCOPY";
+	close $file;
+}
+
 # Connect to a database to create global/pg_internal.init.  If this is removed
 # the test to ensure global/pg_internal.init is not copied will return a false
 # positive.
@@ -240,6 +251,12 @@ foreach my $filename (
 	global/pg_internal.init global/pg_internal.init.123))
 {
 	ok(!-f "$tempdir/backup/$filename", "$filename not copied");
+}
+
+# We only test .DS_Store files being skipped on non-macOS systems
+if ($Config{osname} ne 'darwin')
+{
+	ok(!-f "$tempdir/backup/.DS_Store", ".DS_Store not copied");
 }
 
 # Unlogged relation forks other than init should not be copied
@@ -336,13 +353,13 @@ chmod_recursive("$pgdata", 0750, 0640);
 # Create a temporary directory in the system location.
 my $sys_tempdir = PostgreSQL::Test::Utils::tempdir_short;
 
-# On Windows use the short location to avoid path length issues.
-# Elsewhere use $tempdir to avoid file system boundary issues with moving.
-my $tmploc = $windows_os ? $sys_tempdir : $tempdir;
-
-rename("$pgdata/pg_replslot", "$tmploc/pg_replslot")
-  or BAIL_OUT "could not move $pgdata/pg_replslot";
-dir_symlink("$tmploc/pg_replslot", "$pgdata/pg_replslot")
+# pg_replslot should be empty. We remove it and recreate it in $sys_tempdir
+# before symlinking, in order to avoid possibly trying to move things across
+# drives.
+rmdir("$pgdata/pg_replslot")
+  or BAIL_OUT "could not remove $pgdata/pg_replslot";
+mkdir("$sys_tempdir/pg_replslot"); # if this fails the symlink will fail
+dir_symlink("$sys_tempdir/pg_replslot", "$pgdata/pg_replslot")
   or BAIL_OUT "could not symlink to $pgdata/pg_replslot";
 
 $node->start;
@@ -472,7 +489,7 @@ SKIP:
 SKIP:
 {
 	skip "unix-style permissions not supported on Windows", 1
-	  if ($windows_os);
+	  if ($windows_os || $Config::Config{osname} eq 'cygwin');
 
 	ok(check_mode_recursive("$tempdir/backup1", 0750, 0640),
 		"check backup dir permissions");

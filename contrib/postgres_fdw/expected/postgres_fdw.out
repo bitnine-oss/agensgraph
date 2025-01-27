@@ -637,6 +637,17 @@ EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft_empty ORDER BY c1;
    Remote SQL: SELECT c1, c2 FROM public.loct_empty ORDER BY c1 ASC NULLS LAST
 (3 rows)
 
+-- test restriction on non-system foreign tables.
+SET restrict_nonsystem_relation_kind TO 'foreign-table';
+SELECT * from ft1 where c1 < 1; -- ERROR
+ERROR:  access to non-system foreign table is restricted
+INSERT INTO ft1 (c1) VALUES (1); -- ERROR
+ERROR:  access to non-system foreign table is restricted
+DELETE FROM ft1 WHERE c1 = 1; -- ERROR
+ERROR:  access to non-system foreign table is restricted
+TRUNCATE ft1; -- ERROR
+ERROR:  access to non-system foreign table is restricted
+RESET restrict_nonsystem_relation_kind;
 -- ===================================================================
 -- WHERE with remotely-executable conditions
 -- ===================================================================
@@ -744,10 +755,10 @@ EXPLAIN (VERBOSE, COSTS OFF)
          Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" WHERE (($1::integer = "C 1"))
 (8 rows)
 
-SELECT * FROM ft2 a, ft2 b WHERE a.c1 = 47 AND b.c1 = a.c2;
- c1 | c2 |  c3   |              c4              |            c5            | c6 |     c7     | c8  | c1 | c2 |  c3   |              c4              |            c5            | c6 |     c7     | c8  
-----+----+-------+------------------------------+--------------------------+----+------------+-----+----+----+-------+------------------------------+--------------------------+----+------------+-----
- 47 |  7 | 00047 | Tue Feb 17 00:00:00 1970 PST | Tue Feb 17 00:00:00 1970 | 7  | 7          | foo |  7 |  7 | 00007 | Thu Jan 08 00:00:00 1970 PST | Thu Jan 08 00:00:00 1970 | 7  | 7          | foo
+SELECT * FROM "S 1"."T 1" a, ft2 b WHERE a."C 1" = 47 AND b.c1 = a.c2;
+ C 1 | c2 |  c3   |              c4              |            c5            | c6 |     c7     | c8  | c1 | c2 |  c3   |              c4              |            c5            | c6 |     c7     | c8  
+-----+----+-------+------------------------------+--------------------------+----+------------+-----+----+----+-------+------------------------------+--------------------------+----+------------+-----
+  47 |  7 | 00047 | Tue Feb 17 00:00:00 1970 PST | Tue Feb 17 00:00:00 1970 | 7  | 7          | foo |  7 |  7 | 00007 | Thu Jan 08 00:00:00 1970 PST | Thu Jan 08 00:00:00 1970 | 7  | 7          | foo
 (1 row)
 
 -- check both safe and unsafe join conditions
@@ -892,32 +903,6 @@ SELECT * FROM ft2 WHERE c1 = ANY (ARRAY(SELECT c1 FROM ft1 WHERE c1 < 5));
   3 |  3 | 00003 | Sun Jan 04 00:00:00 1970 PST | Sun Jan 04 00:00:00 1970 | 3  | 3          | foo
   4 |  4 | 00004 | Mon Jan 05 00:00:00 1970 PST | Mon Jan 05 00:00:00 1970 | 4  | 4          | foo
 (4 rows)
-
--- we should not push order by clause with volatile expressions or unsafe
--- collations
-EXPLAIN (VERBOSE, COSTS OFF)
-	SELECT * FROM ft2 ORDER BY ft2.c1, random();
-                                  QUERY PLAN                                   
--------------------------------------------------------------------------------
- Sort
-   Output: c1, c2, c3, c4, c5, c6, c7, c8, (random())
-   Sort Key: ft2.c1, (random())
-   ->  Foreign Scan on public.ft2
-         Output: c1, c2, c3, c4, c5, c6, c7, c8, random()
-         Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1"
-(6 rows)
-
-EXPLAIN (VERBOSE, COSTS OFF)
-	SELECT * FROM ft2 ORDER BY ft2.c1, ft2.c3 collate "C";
-                                  QUERY PLAN                                   
--------------------------------------------------------------------------------
- Sort
-   Output: c1, c2, c3, c4, c5, c6, c7, c8, ((c3)::text)
-   Sort Key: ft2.c1, ft2.c3 COLLATE "C"
-   ->  Foreign Scan on public.ft2
-         Output: c1, c2, c3, c4, c5, c6, c7, c8, c3
-         Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1"
-(6 rows)
 
 -- user-defined operator/function
 CREATE FUNCTION postgres_fdw_abs(int) RETURNS int AS $$
@@ -1073,6 +1058,27 @@ SELECT * FROM ft1 t1 WHERE t1.c1 === t1.c2 order by t1.c2 limit 1;
   1 |  1 | 00001 | Fri Jan 02 00:00:00 1970 PST | Fri Jan 02 00:00:00 1970 | 1  | 1          | foo
 (1 row)
 
+-- Ensure we don't ship FETCH FIRST .. WITH TIES
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT t1.c2 FROM ft1 t1 WHERE t1.c1 > 960 ORDER BY t1.c2 FETCH FIRST 2 ROWS WITH TIES;
+                                           QUERY PLAN                                            
+-------------------------------------------------------------------------------------------------
+ Limit
+   Output: c2
+   ->  Foreign Scan on public.ft1 t1
+         Output: c2
+         Remote SQL: SELECT c2 FROM "S 1"."T 1" WHERE (("C 1" > 960)) ORDER BY c2 ASC NULLS LAST
+(5 rows)
+
+SELECT t1.c2 FROM ft1 t1 WHERE t1.c1 > 960 ORDER BY t1.c2 FETCH FIRST 2 ROWS WITH TIES;
+ c2 
+----
+  0
+  0
+  0
+  0
+(4 rows)
+
 -- Test CASE pushdown
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT c1,c2,c3 FROM ft2 WHERE CASE WHEN c1 > 990 THEN c1 END < 1000 ORDER BY c1;
@@ -1182,6 +1188,73 @@ WHERE c1 = 642 AND length(to_tsvector('custom_search'::regconfig, c3)) > 0;
 -----+-------------
  642 | '00642':1
 (1 row)
+
+-- ===================================================================
+-- ORDER BY queries
+-- ===================================================================
+-- we should not push order by clause with volatile expressions or unsafe
+-- collations
+EXPLAIN (VERBOSE, COSTS OFF)
+	SELECT * FROM ft2 ORDER BY ft2.c1, random();
+                                  QUERY PLAN                                   
+-------------------------------------------------------------------------------
+ Sort
+   Output: c1, c2, c3, c4, c5, c6, c7, c8, (random())
+   Sort Key: ft2.c1, (random())
+   ->  Foreign Scan on public.ft2
+         Output: c1, c2, c3, c4, c5, c6, c7, c8, random()
+         Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1"
+(6 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+	SELECT * FROM ft2 ORDER BY ft2.c1, ft2.c3 collate "C";
+                                  QUERY PLAN                                   
+-------------------------------------------------------------------------------
+ Sort
+   Output: c1, c2, c3, c4, c5, c6, c7, c8, ((c3)::text)
+   Sort Key: ft2.c1, ft2.c3 COLLATE "C"
+   ->  Foreign Scan on public.ft2
+         Output: c1, c2, c3, c4, c5, c6, c7, c8, c3
+         Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1"
+(6 rows)
+
+-- Ensure we don't push ORDER BY expressions which are Consts at the UNION
+-- child level to the foreign server.
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM (
+    SELECT 1 AS type,c1 FROM ft1
+    UNION ALL
+    SELECT 2 AS type,c1 FROM ft2
+) a ORDER BY type,c1;
+                                   QUERY PLAN                                    
+---------------------------------------------------------------------------------
+ Merge Append
+   Sort Key: (1), ft1.c1
+   ->  Foreign Scan on public.ft1
+         Output: 1, ft1.c1
+         Remote SQL: SELECT "C 1" FROM "S 1"."T 1" ORDER BY "C 1" ASC NULLS LAST
+   ->  Foreign Scan on public.ft2
+         Output: 2, ft2.c1
+         Remote SQL: SELECT "C 1" FROM "S 1"."T 1" ORDER BY "C 1" ASC NULLS LAST
+(8 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM (
+    SELECT 1 AS type,c1 FROM ft1
+    UNION ALL
+    SELECT 2 AS type,c1 FROM ft2
+) a ORDER BY type;
+                    QUERY PLAN                     
+---------------------------------------------------
+ Merge Append
+   Sort Key: (1)
+   ->  Foreign Scan on public.ft1
+         Output: 1, ft1.c1
+         Remote SQL: SELECT "C 1" FROM "S 1"."T 1"
+   ->  Foreign Scan on public.ft2
+         Output: 2, ft2.c1
+         Remote SQL: SELECT "C 1" FROM "S 1"."T 1"
+(8 rows)
 
 -- ===================================================================
 -- JOIN queries
@@ -6448,6 +6521,51 @@ SELECT * FROM ft1 ORDER BY c6 ASC NULLS FIRST, c1 OFFSET 15 LIMIT 10;
    40 |  42 | 00040_trig_update | Tue Feb 10 00:00:00 1970 PST | Tue Feb 10 00:00:00 1970 | 0    | 0          | foo
 (10 rows)
 
+-- Test ReScan code path that recreates the cursor even when no parameters
+-- change (bug #17889)
+CREATE TABLE loct1 (c1 int);
+CREATE TABLE loct2 (c1 int, c2 text);
+INSERT INTO loct1 VALUES (1001);
+INSERT INTO loct1 VALUES (1002);
+INSERT INTO loct2 SELECT id, to_char(id, 'FM0000') FROM generate_series(1, 1000) id;
+INSERT INTO loct2 VALUES (1001, 'foo');
+INSERT INTO loct2 VALUES (1002, 'bar');
+CREATE FOREIGN TABLE remt2 (c1 int, c2 text) SERVER loopback OPTIONS (table_name 'loct2');
+ANALYZE loct1;
+ANALYZE remt2;
+SET enable_mergejoin TO false;
+SET enable_hashjoin TO false;
+SET enable_material TO false;
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE remt2 SET c2 = remt2.c2 || remt2.c2 FROM loct1 WHERE loct1.c1 = remt2.c1 RETURNING remt2.*;
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Update on public.remt2
+   Output: remt2.c1, remt2.c2
+   Remote SQL: UPDATE public.loct2 SET c2 = $2 WHERE ctid = $1 RETURNING c1, c2
+   ->  Nested Loop
+         Output: (remt2.c2 || remt2.c2), remt2.ctid, remt2.*, loct1.ctid
+         Join Filter: (remt2.c1 = loct1.c1)
+         ->  Seq Scan on public.loct1
+               Output: loct1.ctid, loct1.c1
+         ->  Foreign Scan on public.remt2
+               Output: remt2.c2, remt2.ctid, remt2.*, remt2.c1
+               Remote SQL: SELECT c1, c2, ctid FROM public.loct2 FOR UPDATE
+(11 rows)
+
+UPDATE remt2 SET c2 = remt2.c2 || remt2.c2 FROM loct1 WHERE loct1.c1 = remt2.c1 RETURNING remt2.*;
+  c1  |   c2   
+------+--------
+ 1001 | foofoo
+ 1002 | barbar
+(2 rows)
+
+RESET enable_mergejoin;
+RESET enable_hashjoin;
+RESET enable_material;
+DROP FOREIGN TABLE remt2;
+DROP TABLE loct1;
+DROP TABLE loct2;
 -- ===================================================================
 -- test check constraints
 -- ===================================================================
@@ -10576,6 +10694,13 @@ SELECT * FROM result_tbl ORDER BY a;
 (2 rows)
 
 DELETE FROM result_tbl;
+-- Test error handling, if accessing one of the foreign partitions errors out
+CREATE FOREIGN TABLE async_p_broken PARTITION OF async_pt FOR VALUES FROM (10000) TO (10001)
+  SERVER loopback OPTIONS (table_name 'non_existent_table');
+SELECT * FROM async_pt;
+ERROR:  relation "public.non_existent_table" does not exist
+CONTEXT:  remote SQL command: SELECT a, b, c FROM public.non_existent_table
+DROP FOREIGN TABLE async_p_broken;
 -- Check case where multiple partitions use the same connection
 CREATE TABLE base_tbl3 (a int, b int, c text);
 CREATE FOREIGN TABLE async_p3 PARTITION OF async_pt FOR VALUES FROM (3000) TO (4000)

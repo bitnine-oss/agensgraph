@@ -238,7 +238,7 @@ if (defined($ENV{oldinstall}))
 
 	my $dump_data = slurp_file($dump1_file);
 
-	my $newregresssrc = "$srcdir/src/test/regress";
+	my $newregresssrc = dirname($ENV{REGRESS_SHLIB});
 	foreach (@libpaths)
 	{
 		my $libpath = $_;
@@ -336,7 +336,7 @@ command_ok(
 	],
 	'run of pg_upgrade --check for new instance');
 ok(!-d $newnode->data_dir . "/pg_upgrade_output.d",
-	"pg_upgrade_output.d/ not removed after pg_upgrade --check success");
+	"pg_upgrade_output.d/ removed after pg_upgrade --check success");
 
 # Actual run, pg_upgrade_output.d is removed at the end.
 command_ok(
@@ -381,15 +381,9 @@ push(@dump_command, '--extra-float-digits', '0')
   if ($oldnode->pg_version < 12);
 $newnode->command_ok(\@dump_command, 'dump after running pg_upgrade');
 
-# No need to apply filters on the dumps if working on the same version
-# for the old and new nodes.
-my $dump1_filtered = $dump1_file;
-my $dump2_filtered = $dump2_file;
-if ($oldnode->pg_version != $newnode->pg_version)
-{
-	$dump1_filtered = filter_dump(1, $oldnode->pg_version, $dump1_file);
-	$dump2_filtered = filter_dump(0, $oldnode->pg_version, $dump2_file);
-}
+# Filter the contents of the dumps.
+my $dump1_filtered = filter_dump(1, $oldnode->pg_version, $dump1_file);
+my $dump2_filtered = filter_dump(0, $oldnode->pg_version, $dump2_file);
 
 $newnode->command_ok(
     [

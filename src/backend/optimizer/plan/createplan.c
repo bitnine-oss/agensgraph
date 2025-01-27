@@ -40,6 +40,7 @@
 #include "parser/parse_clause.h"
 #include "parser/parsetree.h"
 #include "partitioning/partprune.h"
+#include "tcop/tcopprot.h"
 #include "utils/lsyscache.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
@@ -7420,7 +7421,19 @@ make_modifytable(PlannerInfo *root, Plan *subplan,
 			Assert(rte->rtekind == RTE_RELATION);
 			Assert(operation != CMD_MERGE);
 			if (rte->relkind == RELKIND_FOREIGN_TABLE)
+			{
+				/* Check if the access to foreign tables is restricted */
+				if (unlikely((restrict_nonsystem_relation_kind & RESTRICT_RELKIND_FOREIGN_TABLE) != 0))
+				{
+					/* there must not be built-in foreign tables */
+					Assert(rte->relid >= FirstNormalObjectId);
+					ereport(ERROR,
+							(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+							 errmsg("access to non-system foreign table is restricted")));
+				}
+
 				fdwroutine = GetFdwRoutineByRelId(rte->relid);
+			}
 			else
 				fdwroutine = NULL;
 		}

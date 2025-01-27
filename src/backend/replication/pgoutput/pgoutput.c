@@ -1095,8 +1095,8 @@ init_tuple_slot(PGOutputData *data, Relation relation,
 	 * Create tuple table slots. Create a copy of the TupleDesc as it needs to
 	 * live as long as the cache remains.
 	 */
-	oldtupdesc = CreateTupleDescCopy(RelationGetDescr(relation));
-	newtupdesc = CreateTupleDescCopy(RelationGetDescr(relation));
+	oldtupdesc = CreateTupleDescCopyConstr(RelationGetDescr(relation));
+	newtupdesc = CreateTupleDescCopyConstr(RelationGetDescr(relation));
 
 	entry->old_slot = MakeSingleTupleTableSlot(oldtupdesc, &TTSOpsHeapTuple);
 	entry->new_slot = MakeSingleTupleTableSlot(newtupdesc, &TTSOpsHeapTuple);
@@ -1585,6 +1585,16 @@ pgoutput_change(LogicalDecodingContext *ctx, ReorderBufferTXN *txn,
 	{
 		RelationClose(ancestor);
 		ancestor = NULL;
+	}
+
+	/* Drop the new slots that were used to store the converted tuples. */
+	if (relentry->attrmap)
+	{
+		if (old_slot)
+			ExecDropSingleTupleTableSlot(old_slot);
+
+		if (new_slot)
+			ExecDropSingleTupleTableSlot(new_slot);
 	}
 
 	/* Cleanup */

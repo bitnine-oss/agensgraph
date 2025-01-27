@@ -3034,6 +3034,7 @@ CommitTransactionCommand(void)
 	TransactionState s = CurrentTransactionState;
 	SavedTransactionCharacteristics savetc;
 
+	/* Must save in case we need to restore below */
 	SaveTransactionCharacteristics(&savetc);
 
 	switch (s->blockState)
@@ -5276,6 +5277,7 @@ PushTransaction(void)
 	s->blockState = TBLOCK_SUBBEGIN;
 	GetUserIdAndSecContext(&s->prevUser, &s->prevSecContext);
 	s->prevXactReadOnly = XactReadOnly;
+	s->startedInRecovery = p->startedInRecovery;
 	s->parallelModeLevel = 0;
 	s->topXidLogged = false;
 

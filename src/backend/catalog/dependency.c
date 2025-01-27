@@ -79,6 +79,7 @@
 #include "commands/trigger.h"
 #include "commands/typecmds.h"
 #include "funcapi.h"
+#include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteRemove.h"
@@ -521,6 +522,12 @@ findDependentObjects(const ObjectAddress *object,
 	 */
 	if (stack_address_present_add_flags(object, objflags, stack))
 		return;
+
+	/*
+	 * since this function recurses, it could be driven to stack overflow,
+	 * because of the deep dependency tree, not only due to dependency loops.
+	 */
+	check_stack_depth();
 
 	/*
 	 * It's also possible that the target object has already been completely
@@ -1373,7 +1380,9 @@ deleteOneObject(const ObjectAddress *object, Relation *depRel, int flags)
 	/*
 	 * Delete any comments, security labels, or initial privileges associated
 	 * with this object.  (This is a convenient place to do these things,
-	 * rather than having every object type know to do it.)
+	 * rather than having every object type know to do it.)  As above, all
+	 * these functions must remove records for sub-objects too if the subid is
+	 * zero.
 	 */
 	DeleteComments(object->objectId, object->classId, object->objectSubId);
 	DeleteSecurityLabel(object);
@@ -2392,7 +2401,11 @@ process_function_rte_ref(RangeTblEntry *rte, AttrNumber attnum,
 		{
 			TupleDesc	tupdesc;
 
-			tupdesc = get_expr_result_tupdesc(rtfunc->funcexpr, true);
+			/* If it has a coldeflist, it certainly returns RECORD */
+			if (rtfunc->funccolnames != NIL)
+				tupdesc = NULL; /* no need to work hard */
+			else
+				tupdesc = get_expr_result_tupdesc(rtfunc->funcexpr, true);
 			if (tupdesc && tupdesc->tdtypeid != RECORDOID)
 			{
 				/*
@@ -2994,6 +3007,7 @@ DeleteInitPrivs(const ObjectAddress *object)
 {
 	Relation	relation;
 	ScanKeyData key[3];
+	int			nkeys;
 	SysScanDesc scan;
 	HeapTuple	oldtuple;
 
@@ -3007,13 +3021,19 @@ DeleteInitPrivs(const ObjectAddress *object)
 				Anum_pg_init_privs_classoid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(object->classId));
-	ScanKeyInit(&key[2],
-				Anum_pg_init_privs_objsubid,
-				BTEqualStrategyNumber, F_INT4EQ,
-				Int32GetDatum(object->objectSubId));
+	if (object->objectSubId != 0)
+	{
+		ScanKeyInit(&key[2],
+					Anum_pg_init_privs_objsubid,
+					BTEqualStrategyNumber, F_INT4EQ,
+					Int32GetDatum(object->objectSubId));
+		nkeys = 3;
+	}
+	else
+		nkeys = 2;
 
 	scan = systable_beginscan(relation, InitPrivsObjIndexId, true,
-							  NULL, 3, key);
+							  NULL, nkeys, key);
 
 	while (HeapTupleIsValid(oldtuple = systable_getnext(scan)))
 		CatalogTupleDelete(relation, &oldtuple->t_self);

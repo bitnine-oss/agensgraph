@@ -373,6 +373,12 @@ CREATE TABLE people (
       generated columns in <literal>BEFORE</literal> triggers.
      </para>
     </listitem>
+    <listitem>
+     <para>
+      Generated columns are skipped for logical replication and cannot be
+      specified in a <command>CREATE PUBLICATION</command> column list.
+     </para>
+    </listitem>
    </itemizedlist>
   </para>
  </sect1>
@@ -1154,16 +1160,16 @@ CREATE TABLE posts (
 
    <para>
     A foreign key must reference columns that either are a primary key or
-    form a unique constraint.  This means that the referenced columns always
-    have an index (the one underlying the primary key or unique constraint);
-    so checks on whether a referencing row has a match will be efficient.
-    Since a <command>DELETE</command> of a row from the referenced table
-    or an <command>UPDATE</command> of a referenced column will require
-    a scan of the referencing table for rows matching the old value, it
-    is often a good idea to index the referencing columns too.  Because this
-    is not always needed, and there are many choices available on how
-    to index, declaration of a foreign key constraint does not
-    automatically create an index on the referencing columns.
+    form a unique constraint, or are columns from a non-partial unique index.
+    This means that the referenced columns always have an index to allow
+    efficient lookups on whether a referencing row has a match.  Since a
+    <command>DELETE</command> of a row from the referenced table or an
+    <command>UPDATE</command> of a referenced column will require a scan of
+    the referencing table for rows matching the old value, it is often a good
+    idea to index the referencing columns too.  Because this is not always
+    needed, and there are many choices available on how to index, the
+    declaration of a foreign key constraint does not automatically create an
+    index on the referencing columns.
    </para>
 
    <para>
@@ -2253,9 +2259,16 @@ REVOKE ALL ON accounts FROM PUBLIC;
     <primary><type>aclitem</type></primary>
    </indexterm>
    The privileges that have been granted for a particular object are
-   displayed as a list of <type>aclitem</type> entries, where each
-   <type>aclitem</type> describes the permissions of one grantee that
-   have been granted by a particular grantor.  For example,
+   displayed as a list of <type>aclitem</type> entries, each having the
+   format:
+<synopsis>
+<replaceable>grantee</replaceable><literal>=</literal><replaceable>privilege-abbreviation</replaceable><optional><literal>*</literal></optional>...<literal>/</literal><replaceable>grantor</replaceable>
+</synopsis>
+   Each <type>aclitem</type> lists all the permissions of one grantee that
+   have been granted by a particular grantor.  Specific privileges are
+   represented by one-letter abbreviations from
+   <xref linkend="privilege-abbrevs-table"/>, with <literal>*</literal>
+   appended if the privilege was granted with grant option.  For example,
    <literal>calvin=r*w/hobbes</literal> specifies that the role
    <literal>calvin</literal> has the privilege
    <literal>SELECT</literal> (<literal>r</literal>) with grant option
@@ -4150,7 +4163,7 @@ ALTER TABLE measurement ATTACH PARTITION measurement_y2008m02
 <programlisting>
 CREATE INDEX measurement_usls_idx ON ONLY measurement (unitsales);
 
-CREATE INDEX measurement_usls_200602_idx
+CREATE INDEX CONCURRENTLY measurement_usls_200602_idx
     ON measurement_y2006m02 (unitsales);
 ALTER INDEX measurement_usls_idx
     ATTACH PARTITION measurement_usls_200602_idx;
@@ -4267,7 +4280,9 @@ ALTER INDEX measurement_city_id_logdate_key
         Using <literal>ONLY</literal> to add or drop a constraint on only
         the partitioned table is supported as long as there are no
         partitions.  Once partitions exist, using <literal>ONLY</literal>
-        will result in an error.  Instead, constraints on the partitions
+        will result in an error for any constraints other than
+        <literal>UNIQUE</literal> and <literal>PRIMARY KEY</literal>.
+        Instead, constraints on the partitions
         themselves can be added and (if they are not present in the parent
         table) dropped.
        </para>

@@ -637,7 +637,11 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 
 		visibilitymap_count(onerel, &relallvisible, NULL);
 
-		/* Update pg_class for table relation */
+		/*
+		 * Update pg_class for table relation.  CCI first, in case acquirefunc
+		 * updated pg_class.
+		 */
+		CommandCounterIncrement();
 		vac_update_relstats(onerel,
 							relpages,
 							totalrows,
@@ -672,6 +676,7 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 		 * Partitioned tables don't have storage, so we don't set any fields
 		 * in their pg_class entries except for reltuples and relhasindex.
 		 */
+		CommandCounterIncrement();
 		vac_update_relstats(onerel, -1, totalrows,
 							0, hasindex, InvalidTransactionId,
 							InvalidMultiXactId,
@@ -1534,8 +1539,25 @@ acquire_inherited_sample_rows(Relation onerel, int elevel,
 		AcquireSampleRowsFunc acquirefunc = acquirefuncs[i];
 		double		childblocks = relblocks[i];
 
-		pgstat_progress_update_param(PROGRESS_ANALYZE_CURRENT_CHILD_TABLE_RELID,
-									 RelationGetRelid(childrel));
+		/*
+		 * Report progress.  The sampling function will normally report blocks
+		 * done/total, but we need to reset them to 0 here, so that they don't
+		 * show an old value until that.
+		 */
+		{
+			const int	progress_index[] = {
+				PROGRESS_ANALYZE_CURRENT_CHILD_TABLE_RELID,
+				PROGRESS_ANALYZE_BLOCKS_DONE,
+				PROGRESS_ANALYZE_BLOCKS_TOTAL
+			};
+			const int64 progress_vals[] = {
+				RelationGetRelid(childrel),
+				0,
+				0,
+			};
+
+			pgstat_progress_update_multi_param(3, progress_index, progress_vals);
+		}
 
 		if (childblocks > 0)
 		{

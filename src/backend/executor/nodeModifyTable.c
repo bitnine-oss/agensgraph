@@ -24,6 +24,14 @@
  *		values plus row-locating info for UPDATE and MERGE cases, or just the
  *		row-locating info for DELETE cases.
  *
+ *		The relation to modify can be an ordinary table, a view having an
+ *		INSTEAD OF trigger, or a foreign table.  Earlier processing already
+ *		pointed ModifyTable to the underlying relations of any automatically
+ *		updatable view not using an INSTEAD OF trigger, so code here can
+ *		assume it won't have one as a modification target.  This node does
+ *		process ri_WithCheckOptions, which may have expressions from those
+ *		automatically updatable views.
+ *
  *		MERGE runs a join between the source relation and the target
  *		table; if any WHEN NOT MATCHED clauses are present, then the
  *		join is an outer join.  In this case, any unmatched tuples will
@@ -1380,18 +1388,18 @@ ExecDeleteEpilogue(ModifyTableContext *context, ResultRelInfo *resultRelInfo,
  *		DELETE is like UPDATE, except that we delete the tuple and no
  *		index modifications are needed.
  *
- *		When deleting from a table, tupleid identifies the tuple to
- *		delete and oldtuple is NULL.  When deleting from a view,
- *		oldtuple is passed to the INSTEAD OF triggers and identifies
- *		what to delete, and tupleid is invalid.  When deleting from a
- *		foreign table, tupleid is invalid; the FDW has to figure out
- *		which row to delete using data from the planSlot.  oldtuple is
- *		passed to foreign table triggers; it is NULL when the foreign
- *		table has no relevant triggers.  We use tupleDeleted to indicate
- *		whether the tuple is actually deleted, callers can use it to
- *		decide whether to continue the operation.  When this DELETE is a
- *		part of an UPDATE of partition-key, then the slot returned by
- *		EvalPlanQual() is passed back using output parameter epqreturnslot.
+ *		When deleting from a table, tupleid identifies the tuple to delete and
+ *		oldtuple is NULL.  When deleting through a view INSTEAD OF trigger,
+ *		oldtuple is passed to the triggers and identifies what to delete, and
+ *		tupleid is invalid.  When deleting from a foreign table, tupleid is
+ *		invalid; the FDW has to figure out which row to delete using data from
+ *		the planSlot.  oldtuple is passed to foreign table triggers; it is
+ *		NULL when the foreign table has no relevant triggers.  We use
+ *		tupleDeleted to indicate whether the tuple is actually deleted,
+ *		callers can use it to decide whether to continue the operation.  When
+ *		this DELETE is a part of an UPDATE of partition-key, then the slot
+ *		returned by EvalPlanQual() is passed back using output parameter
+ *		epqreturnslot.
  *
  *		Returns RETURNING result if any, otherwise NULL.
  * ----------------------------------------------------------------
@@ -1404,6 +1412,7 @@ ExecDelete(ModifyTableContext *context,
 		   bool processReturning,
 		   bool changingPart,
 		   bool canSetTag,
+		   TM_Result *tmresult,
 		   bool *tupleDeleted,
 		   TupleTableSlot **epqreturnslot)
 {
@@ -1420,7 +1429,7 @@ ExecDelete(ModifyTableContext *context,
 	 * done if it says we are.
 	 */
 	if (!ExecDeletePrologue(context, resultRelInfo, tupleid, oldtuple,
-							epqreturnslot, NULL))
+							epqreturnslot, tmresult))
 		return NULL;
 
 	/* INSTEAD OF ROW DELETE Triggers */
@@ -1474,6 +1483,9 @@ ExecDelete(ModifyTableContext *context,
 		 */
 ldelete:;
 		result = ExecDeleteAct(context, resultRelInfo, tupleid, changingPart);
+
+		if (tmresult)
+			*tmresult = result;
 
 		switch (result)
 		{
@@ -1713,6 +1725,7 @@ ExecCrossPartitionUpdate(ModifyTableContext *context,
 						 TupleTableSlot *slot,
 						 bool canSetTag,
 						 UpdateContext *updateCxt,
+						 TM_Result *tmresult,
 						 TupleTableSlot **retry_slot,
 						 TupleTableSlot **inserted_tuple,
 						 ResultRelInfo **insert_destrel)
@@ -1776,7 +1789,7 @@ ExecCrossPartitionUpdate(ModifyTableContext *context,
 			   false,			/* processReturning */
 			   true,			/* changingPart */
 			   false,			/* canSetTag */
-			   &tuple_deleted, &epqslot);
+			   tmresult, &tuple_deleted, &epqslot);
 
 	/*
 	 * For some reason if DELETE didn't happen (e.g. trigger prevented it, or
@@ -1808,7 +1821,7 @@ ExecCrossPartitionUpdate(ModifyTableContext *context,
 		 * action entirely).
 		 */
 		if (context->relaction != NULL)
-			return false;
+			return *tmresult == TM_Ok;
 		else if (TupIsNull(epqslot))
 			return true;
 		else
@@ -2013,6 +2026,7 @@ lreplace:
 		if (ExecCrossPartitionUpdate(context, resultRelInfo,
 									 tupleid, oldtuple, slot,
 									 canSetTag, updateCxt,
+									 &result,
 									 &retry_slot,
 									 &inserted_tuple,
 									 &insert_destrel))
@@ -2052,7 +2066,7 @@ lreplace:
 		 * here; instead let it handle that on its own rules.
 		 */
 		if (context->relaction != NULL)
-			return TM_Updated;
+			return result;
 
 		/*
 		 * ExecCrossPartitionUpdate installed an updated version of the new
@@ -2219,21 +2233,22 @@ ExecCrossPartitionUpdateForeignKey(ModifyTableContext *context,
  *		is, we don't want to get stuck in an infinite loop
  *		which corrupts your database..
  *
- *		When updating a table, tupleid identifies the tuple to
- *		update and oldtuple is NULL.  When updating a view, oldtuple
- *		is passed to the INSTEAD OF triggers and identifies what to
- *		update, and tupleid is invalid.  When updating a foreign table,
- *		tupleid is invalid; the FDW has to figure out which row to
- *		update using data from the planSlot.  oldtuple is passed to
- *		foreign table triggers; it is NULL when the foreign table has
- *		no relevant triggers.
+ *		When updating a table, tupleid identifies the tuple to update and
+ *		oldtuple is NULL.  When updating through a view INSTEAD OF trigger,
+ *		oldtuple is passed to the triggers and identifies what to update, and
+ *		tupleid is invalid.  When updating a foreign table, tupleid is
+ *		invalid; the FDW has to figure out which row to update using data from
+ *		the planSlot.  oldtuple is passed to foreign table triggers; it is
+ *		NULL when the foreign table has no relevant triggers.
  *
  *		slot contains the new tuple value to be stored.
  *		planSlot is the output of the ModifyTable's subplan; we use it
  *		to access values from other input tables (for RETURNING),
  *		row-ID junk columns, etc.
  *
- *		Returns RETURNING result if any, otherwise NULL.
+ *		Returns RETURNING result if any, otherwise NULL.  On exit, if tupleid
+ *		had identified the tuple to update, it will identify the tuple
+ *		actually updated after EvalPlanQual.
  * ----------------------------------------------------------------
  */
 static TupleTableSlot *
@@ -2879,7 +2894,21 @@ lmerge_matched:;
 					break;		/* concurrent update/delete */
 				}
 				result = ExecUpdateAct(context, resultRelInfo, tupleid, NULL,
-									   newslot, false, &updateCxt);
+									   newslot, canSetTag, &updateCxt);
+
+				/*
+				 * As in ExecUpdate(), if ExecUpdateAct() reports that a
+				 * cross-partition update was done, then there's nothing else
+				 * for us to do --- the UPDATE has been turned into a DELETE
+				 * and an INSERT, and we must not perform any of the usual
+				 * post-update tasks.
+				 */
+				if (updateCxt.crossPartUpdate)
+				{
+					mtstate->mt_merge_updated += 1;
+					return true;
+				}
+
 				if (result == TM_Ok && updateCxt.updated)
 				{
 					ExecUpdateEpilogue(context, &updateCxt, resultRelInfo,
@@ -2927,8 +2956,29 @@ lmerge_matched:;
 			case TM_SelfModified:
 
 				/*
-				 * The SQL standard disallows this for MERGE.
+				 * The target tuple was already updated or deleted by the
+				 * current command, or by a later command in the current
+				 * transaction.  The former case is explicitly disallowed by
+				 * the SQL standard for MERGE, which insists that the MERGE
+				 * join condition should not join a target row to more than
+				 * one source row.
+				 *
+				 * The latter case arises if the tuple is modified by a
+				 * command in a BEFORE trigger, or perhaps by a command in a
+				 * volatile function used in the query.  In such situations we
+				 * should not ignore the MERGE action, but it is equally
+				 * unsafe to proceed.  We don't want to discard the original
+				 * MERGE action while keeping the triggered actions based on
+				 * it; and it would be no better to allow the original MERGE
+				 * action while discarding the updates that it triggered.  So
+				 * throwing an error is the only safe course.
 				 */
+				if (context->tmfd.cmax != estate->es_output_cid)
+					ereport(ERROR,
+							(errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
+							 errmsg("tuple to be updated or deleted was already modified by an operation triggered by the current command"),
+							 errhint("Consider using an AFTER trigger instead of a BEFORE trigger to propagate changes to other rows.")));
+
 				if (TransactionIdIsCurrentTransactionId(context->tmfd.xmax))
 					ereport(ERROR,
 							(errcode(ERRCODE_CARDINALITY_VIOLATION),
@@ -2936,6 +2986,7 @@ lmerge_matched:;
 							 errmsg("%s command cannot affect row a second time",
 									"MERGE"),
 							 errhint("Ensure that not more than one source row matches any one target row.")));
+
 				/* This shouldn't happen */
 				elog(ERROR, "attempted to update or delete invisible tuple");
 				break;
@@ -3044,19 +3095,27 @@ lmerge_matched:;
 							/*
 							 * This can be reached when following an update
 							 * chain from a tuple updated by another session,
-							 * reaching a tuple that was already updated in
-							 * this transaction. If previously modified by
-							 * this command, ignore the redundant update,
-							 * otherwise error out.
-							 *
-							 * See also response to TM_SelfModified in
-							 * ExecUpdate().
+							 * reaching a tuple that was already updated or
+							 * deleted by the current command, or by a later
+							 * command in the current transaction. As above,
+							 * this should always be treated as an error.
 							 */
 							if (context->tmfd.cmax != estate->es_output_cid)
 								ereport(ERROR,
 										(errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
 										 errmsg("tuple to be updated or deleted was already modified by an operation triggered by the current command"),
 										 errhint("Consider using an AFTER trigger instead of a BEFORE trigger to propagate changes to other rows.")));
+
+							if (TransactionIdIsCurrentTransactionId(context->tmfd.xmax))
+								ereport(ERROR,
+										(errcode(ERRCODE_CARDINALITY_VIOLATION),
+								/* translator: %s is a SQL command name */
+										 errmsg("%s command cannot affect row a second time",
+												"MERGE"),
+										 errhint("Ensure that not more than one source row matches any one target row.")));
+
+							/* This shouldn't happen */
+							elog(ERROR, "attempted to update or delete invisible tuple");
 							return false;
 
 						default:
@@ -3731,8 +3790,8 @@ ExecModifyTable(PlanState *pstate)
 			 * know enough here to set t_tableOid.  Quite separately from
 			 * this, the FDW may fetch its own junk attrs to identify the row.
 			 *
-			 * Other relevant relkinds, currently limited to views, always
-			 * have a wholerow attribute.
+			 * Other relevant relkinds, currently limited to views having
+			 * INSTEAD OF triggers, always have a wholerow attribute.
 			 */
 			else if (AttributeNumberIsValid(resultRelInfo->ri_RowIdAttNo))
 			{
@@ -3808,7 +3867,7 @@ ExecModifyTable(PlanState *pstate)
 
 			case CMD_DELETE:
 				slot = ExecDelete(&context, resultRelInfo, tupleid, oldtuple,
-								  true, false, node->canSetTag, NULL, NULL);
+								  true, false, node->canSetTag, NULL, NULL, NULL);
 				break;
 
 			case CMD_MERGE:
@@ -3947,10 +4006,10 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	 *   must be converted, and
 	 * - the root partitioned table used for tuple routing.
 	 *
-	 * If it's a partitioned table, the root partition doesn't appear
-	 * elsewhere in the plan and its RT index is given explicitly in
-	 * node->rootRelation.  Otherwise (i.e. table inheritance) the target
-	 * relation is the first relation in the node->resultRelations list.
+	 * If it's a partitioned or inherited table, the root partition or
+	 * appendrel RTE doesn't appear elsewhere in the plan and its RT index is
+	 * given explicitly in node->rootRelation.  Otherwise, the target relation
+	 * is the sole relation in the node->resultRelations list.
 	 *----------
 	 */
 	if (node->rootRelation > 0)
@@ -3961,6 +4020,7 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	}
 	else
 	{
+		Assert(list_length(node->resultRelations) == 1);
 		mtstate->rootResultRelInfo = mtstate->resultRelInfo;
 		ExecInitResultRelation(estate, mtstate->resultRelInfo,
 							   linitial_int(node->resultRelations));
@@ -4277,9 +4337,9 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 
 	/*
 	 * If we have any secondary relations in an UPDATE or DELETE, they need to
-	 * be treated like non-locked relations in SELECT FOR UPDATE, ie, the
-	 * EvalPlanQual mechanism needs to be told about them.  Locate the
-	 * relevant ExecRowMarks.
+	 * be treated like non-locked relations in SELECT FOR UPDATE, i.e., the
+	 * EvalPlanQual mechanism needs to be told about them.  This also goes for
+	 * the source relations in a MERGE.  Locate the relevant ExecRowMarks.
 	 */
 	arowmarks = NIL;
 	foreach(l, node->rowMarks)

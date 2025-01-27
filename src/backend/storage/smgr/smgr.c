@@ -292,6 +292,7 @@ smgrrelease(SMgrRelation reln)
 		smgrsw[reln->smgr_which].smgr_close(reln, forknum);
 		reln->smgr_cached_nblocks[forknum] = InvalidBlockNumber;
 	}
+	reln->smgr_targblock = InvalidBlockNumber;
 }
 
 /*
@@ -603,8 +604,9 @@ BlockNumber
 smgrnblocks_cached(SMgrRelation reln, ForkNumber forknum)
 {
 	/*
-	 * For now, we only use cached values in recovery due to lack of a shared
-	 * invalidation mechanism for changes in file size.
+	 * For now, this function uses cached values only in recovery due to lack
+	 * of a shared invalidation mechanism for changes in file size.  Code
+	 * elsewhere reads smgr_cached_nblocks and copes with stale data.
 	 */
 	if (InRecovery && reln->smgr_cached_nblocks[forknum] != InvalidBlockNumber)
 		return reln->smgr_cached_nblocks[forknum];

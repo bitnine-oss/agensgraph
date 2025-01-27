@@ -1099,7 +1099,7 @@ ProcArrayApplyRecoveryInfo(RunningTransactions running)
 		 * If the snapshot isn't overflowed or if its empty we can reset our
 		 * pending state and use this snapshot instead.
 		 */
-		if (!running->subxid_overflow || running->xcnt == 0)
+		if (running->subxid_status != SUBXIDS_MISSING || running->xcnt == 0)
 		{
 			/*
 			 * If we have already collected known assigned xids, we need to
@@ -1251,7 +1251,7 @@ ProcArrayApplyRecoveryInfo(RunningTransactions running)
 	 * missing, so conservatively assume the last one is latestObservedXid.
 	 * ----------
 	 */
-	if (running->subxid_overflow)
+	if (running->subxid_status == SUBXIDS_MISSING)
 	{
 		standbyState = STANDBY_SNAPSHOT_PENDING;
 
@@ -1263,6 +1263,18 @@ ProcArrayApplyRecoveryInfo(RunningTransactions running)
 		standbyState = STANDBY_SNAPSHOT_READY;
 
 		standbySnapshotPendingXmin = InvalidTransactionId;
+
+		/*
+		 * If the 'xids' array didn't include all subtransactions, we have to
+		 * mark any snapshots taken as overflowed.
+		 */
+		if (running->subxid_status == SUBXIDS_IN_SUBTRANS)
+			procArray->lastOverflowedXid = latestObservedXid;
+		else
+		{
+			Assert(running->subxid_status == SUBXIDS_IN_ARRAY);
+			procArray->lastOverflowedXid = InvalidTransactionId;
+		}
 	}
 
 	/*
@@ -2176,7 +2188,7 @@ GetSnapshotDataReuse(Snapshot snapshot)
 	 * GetSnapshotData() cannot change while ProcArrayLock is held. Snapshot
 	 * contents only depend on transactions with xids and xactCompletionCount
 	 * is incremented whenever a transaction with an xid finishes (while
-	 * holding ProcArrayLock) exclusively). Thus the xactCompletionCount check
+	 * holding ProcArrayLock exclusively). Thus the xactCompletionCount check
 	 * ensures we would detect if the snapshot would have changed.
 	 *
 	 * As the snapshot contents are the same as it was before, it is safe to
@@ -2220,8 +2232,7 @@ GetSnapshotDataReuse(Snapshot snapshot)
  * but since PGPROC has only a limited cache area for subxact XIDs, full
  * information may not be available.  If we find any overflowed subxid arrays,
  * we have to mark the snapshot's subxid data as overflowed, and extra work
- * *may* need to be done to determine what's running (see XidInMVCCSnapshot()
- * in heapam_visibility.c).
+ * *may* need to be done to determine what's running (see XidInMVCCSnapshot()).
  *
  * We also update the following backend-global variables:
  *		TransactionXmin: the oldest xmin of any snapshot in use in the
@@ -2898,7 +2909,7 @@ GetRunningTransactionData(void)
 
 	CurrentRunningXacts->xcnt = count - subcount;
 	CurrentRunningXacts->subxcnt = subcount;
-	CurrentRunningXacts->subxid_overflow = suboverflowed;
+	CurrentRunningXacts->subxid_status = suboverflowed ? SUBXIDS_IN_SUBTRANS : SUBXIDS_IN_ARRAY;
 	CurrentRunningXacts->nextXid = XidFromFullTransactionId(ShmemVariableCache->nextXid);
 	CurrentRunningXacts->oldestRunningXid = oldestRunningXid;
 	CurrentRunningXacts->latestCompletedXid = latestCompletedXid;
@@ -3809,8 +3820,8 @@ CountOtherDBBackends(Oid databaseId, int *nbackends, int *nprepared)
  * The current backend is always ignored; it is caller's responsibility to
  * check whether the current backend uses the given DB, if it's important.
  *
- * It doesn't allow to terminate the connections even if there is a one
- * backend with the prepared transaction in the target database.
+ * If the target database has a prepared transaction or permissions checks
+ * fail for a connection, this fails without terminating anything.
  */
 void
 TerminateOtherDBBackends(Oid databaseId)
@@ -3855,14 +3866,19 @@ TerminateOtherDBBackends(Oid databaseId)
 		ListCell   *lc;
 
 		/*
-		 * Check whether we have the necessary rights to terminate other
-		 * sessions.  We don't terminate any session until we ensure that we
-		 * have rights on all the sessions to be terminated.  These checks are
-		 * the same as we do in pg_terminate_backend.
+		 * Permissions checks relax the pg_terminate_backend checks in two
+		 * ways, both by omitting the !OidIsValid(proc->roleId) check:
 		 *
-		 * In this case we don't raise some warnings - like "PID %d is not a
-		 * PostgreSQL server process", because for us already finished session
-		 * is not a problem.
+		 * - Accept terminating autovacuum workers, since DROP DATABASE
+		 * without FORCE terminates them.
+		 *
+		 * - Accept terminating bgworkers.  For bgworker authors, it's
+		 * convenient to be able to recommend FORCE if a worker is blocking
+		 * DROP DATABASE unexpectedly.
+		 *
+		 * Unlike pg_terminate_backend, we don't raise some warnings - like
+		 * "PID %d is not a PostgreSQL server process", because for us already
+		 * finished session is not a problem.
 		 */
 		foreach(lc, pids)
 		{
@@ -3871,13 +3887,11 @@ TerminateOtherDBBackends(Oid databaseId)
 
 			if (proc != NULL)
 			{
-				/* Only allow superusers to signal superuser-owned backends. */
 				if (superuser_arg(proc->roleId) && !superuser())
 					ereport(ERROR,
 							(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 							 errmsg("must be a superuser to terminate superuser process")));
 
-				/* Users can signal backends they have role membership in. */
 				if (!has_privs_of_role(GetUserId(), proc->roleId) &&
 					!has_privs_of_role(GetUserId(), ROLE_PG_SIGNAL_BACKEND))
 					ereport(ERROR,
