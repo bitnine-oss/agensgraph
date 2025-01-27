@@ -27,6 +27,7 @@
 #include "catalog/index.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_am.h"
+#include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_opclass.h"
@@ -353,10 +354,12 @@ static bool
 CompareOpclassOptions(Datum *opts1, Datum *opts2, int natts)
 {
 	int			i;
+	FmgrInfo	fm;
 
 	if (!opts1 && !opts2)
 		return true;
 
+	fmgr_info(F_ARRAY_EQ, &fm);
 	for (i = 0; i < natts; i++)
 	{
 		Datum		opt1 = opts1 ? opts1[i] : (Datum) 0;
@@ -372,8 +375,12 @@ CompareOpclassOptions(Datum *opts1, Datum *opts2, int natts)
 		else if (opt2 == (Datum) 0)
 			return false;
 
-		/* Compare non-NULL text[] datums. */
-		if (!DatumGetBool(DirectFunctionCall2(array_eq, opt1, opt2)))
+		/*
+		 * Compare non-NULL text[] datums.  Use C collation to enforce binary
+		 * equivalence of texts, because we don't know anything about the
+		 * semantics of opclass options.
+		 */
+		if (!DatumGetBool(FunctionCall2Coll(&fm, C_COLLATION_OID, opt1, opt2)))
 			return false;
 	}
 
@@ -3704,8 +3711,8 @@ ReindexRelationConcurrently(Oid relationOid, ReindexParams *params)
 		save_nestlevel = NewGUCNestLevel();
 
 		/* determine safety of this index for set_indexsafe_procflags */
-		idx->safe = (indexRel->rd_indexprs == NIL &&
-					 indexRel->rd_indpred == NIL);
+		idx->safe = (RelationGetIndexExpressions(indexRel) == NIL &&
+					 RelationGetIndexPredicate(indexRel) == NIL);
 		idx->tableId = RelationGetRelid(heapRel);
 		idx->amId = indexRel->rd_rel->relam;
 
@@ -4323,14 +4330,17 @@ update_relispartition(Oid relationId, bool newval)
 {
 	HeapTuple	tup;
 	Relation	classRel;
+	ItemPointerData otid;
 
 	classRel = table_open(RelationRelationId, RowExclusiveLock);
-	tup = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relationId));
+	tup = SearchSysCacheLockedCopy1(RELOID, ObjectIdGetDatum(relationId));
 	if (!HeapTupleIsValid(tup))
 		elog(ERROR, "cache lookup failed for relation %u", relationId);
+	otid = tup->t_self;
 	Assert(((Form_pg_class) GETSTRUCT(tup))->relispartition != newval);
 	((Form_pg_class) GETSTRUCT(tup))->relispartition = newval;
-	CatalogTupleUpdate(classRel, &tup->t_self, tup);
+	CatalogTupleUpdate(classRel, &otid, tup);
+	UnlockTuple(classRel, &otid, InplaceUpdateTupleLock);
 	heap_freetuple(tup);
 	table_close(classRel, RowExclusiveLock);
 }

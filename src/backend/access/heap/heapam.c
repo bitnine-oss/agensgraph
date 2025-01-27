@@ -52,6 +52,8 @@
 #include "access/xloginsert.h"
 #include "access/xlogutils.h"
 #include "catalog/catalog.h"
+#include "catalog/pg_database.h"
+#include "catalog/pg_database_d.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "port/atomics.h"
@@ -78,6 +80,12 @@ static XLogRecPtr log_heap_update(Relation reln, Buffer oldbuf,
 								  Buffer newbuf, HeapTuple oldtup,
 								  HeapTuple newtup, HeapTuple old_key_tuple,
 								  bool all_visible_cleared, bool new_all_visible_cleared);
+#ifdef USE_ASSERT_CHECKING
+static void check_lock_if_inplace_updateable_rel(Relation relation,
+												 ItemPointer otid,
+												 HeapTuple newtup);
+static void check_inplace_rel_lock(HeapTuple oldtup);
+#endif
 static Bitmapset *HeapDetermineColumnsInfo(Relation relation,
 										   Bitmapset *interesting_cols,
 										   Bitmapset *external_cols,
@@ -118,6 +126,8 @@ static HeapTuple ExtractReplicaIdentity(Relation rel, HeapTuple tup, bool key_re
  * update them).  This table (and the macros below) helps us determine the
  * heavyweight lock mode and MultiXactStatus values to use for any particular
  * tuple lock strength.
+ *
+ * These interact with InplaceUpdateTupleLock, an alias for ExclusiveLock.
  *
  * Don't look at lockstatus/updstatus directly!  Use get_mxact_status_for_lock
  * instead.
@@ -3187,6 +3197,10 @@ heap_update(Relation relation, ItemPointer otid, HeapTuple newtup,
 				(errcode(ERRCODE_INVALID_TRANSACTION_STATE),
 				 errmsg("cannot update tuples during a parallel operation")));
 
+#ifdef USE_ASSERT_CHECKING
+	check_lock_if_inplace_updateable_rel(relation, otid, newtup);
+#endif
+
 	/*
 	 * Fetch the list of attributes to be checked for various operations.
 	 *
@@ -4013,6 +4027,128 @@ l2:
 
 	return TM_Ok;
 }
+
+#ifdef USE_ASSERT_CHECKING
+/*
+ * Confirm adequate lock held during heap_update(), per rules from
+ * README.tuplock section "Locking to write inplace-updated tables".
+ */
+static void
+check_lock_if_inplace_updateable_rel(Relation relation,
+									 ItemPointer otid,
+									 HeapTuple newtup)
+{
+	/* LOCKTAG_TUPLE acceptable for any catalog */
+	switch (RelationGetRelid(relation))
+	{
+		case RelationRelationId:
+		case DatabaseRelationId:
+			{
+				LOCKTAG		tuptag;
+
+				SET_LOCKTAG_TUPLE(tuptag,
+								  relation->rd_lockInfo.lockRelId.dbId,
+								  relation->rd_lockInfo.lockRelId.relId,
+								  ItemPointerGetBlockNumber(otid),
+								  ItemPointerGetOffsetNumber(otid));
+				if (LockHeldByMe(&tuptag, InplaceUpdateTupleLock))
+					return;
+			}
+			break;
+		default:
+			Assert(!IsInplaceUpdateRelation(relation));
+			return;
+	}
+
+	switch (RelationGetRelid(relation))
+	{
+		case RelationRelationId:
+			{
+				/* LOCKTAG_TUPLE or LOCKTAG_RELATION ok */
+				Form_pg_class classForm = (Form_pg_class) GETSTRUCT(newtup);
+				Oid			relid = classForm->oid;
+				Oid			dbid;
+				LOCKTAG		tag;
+
+				if (IsSharedRelation(relid))
+					dbid = InvalidOid;
+				else
+					dbid = MyDatabaseId;
+
+				if (classForm->relkind == RELKIND_INDEX)
+				{
+					Relation	irel = index_open(relid, AccessShareLock);
+
+					SET_LOCKTAG_RELATION(tag, dbid, irel->rd_index->indrelid);
+					index_close(irel, AccessShareLock);
+				}
+				else
+					SET_LOCKTAG_RELATION(tag, dbid, relid);
+
+				if (!LockHeldByMe(&tag, ShareUpdateExclusiveLock) &&
+					!LockOrStrongerHeldByMe(&tag, ShareRowExclusiveLock))
+					elog(WARNING,
+						 "missing lock for relation \"%s\" (OID %u, relkind %c) @ TID (%u,%u)",
+						 NameStr(classForm->relname),
+						 relid,
+						 classForm->relkind,
+						 ItemPointerGetBlockNumber(otid),
+						 ItemPointerGetOffsetNumber(otid));
+			}
+			break;
+		case DatabaseRelationId:
+			{
+				/* LOCKTAG_TUPLE required */
+				Form_pg_database dbForm = (Form_pg_database) GETSTRUCT(newtup);
+
+				elog(WARNING,
+					 "missing lock on database \"%s\" (OID %u) @ TID (%u,%u)",
+					 NameStr(dbForm->datname),
+					 dbForm->oid,
+					 ItemPointerGetBlockNumber(otid),
+					 ItemPointerGetOffsetNumber(otid));
+			}
+			break;
+	}
+}
+
+/*
+ * Confirm adequate relation lock held, per rules from README.tuplock section
+ * "Locking to write inplace-updated tables".
+ */
+static void
+check_inplace_rel_lock(HeapTuple oldtup)
+{
+	Form_pg_class classForm = (Form_pg_class) GETSTRUCT(oldtup);
+	Oid			relid = classForm->oid;
+	Oid			dbid;
+	LOCKTAG		tag;
+
+	if (IsSharedRelation(relid))
+		dbid = InvalidOid;
+	else
+		dbid = MyDatabaseId;
+
+	if (classForm->relkind == RELKIND_INDEX)
+	{
+		Relation	irel = index_open(relid, AccessShareLock);
+
+		SET_LOCKTAG_RELATION(tag, dbid, irel->rd_index->indrelid);
+		index_close(irel, AccessShareLock);
+	}
+	else
+		SET_LOCKTAG_RELATION(tag, dbid, relid);
+
+	if (!LockOrStrongerHeldByMe(&tag, ShareUpdateExclusiveLock))
+		elog(WARNING,
+			 "missing lock for relation \"%s\" (OID %u, relkind %c) @ TID (%u,%u)",
+			 NameStr(classForm->relname),
+			 relid,
+			 classForm->relkind,
+			 ItemPointerGetBlockNumber(&oldtup->t_self),
+			 ItemPointerGetOffsetNumber(&oldtup->t_self));
+}
+#endif
 
 /*
  * Check if the specified attribute's values are the same.  Subroutine for
@@ -5991,23 +6127,260 @@ heap_abort_speculative(Relation relation, ItemPointer tid)
 }
 
 /*
- * heap_inplace_update - update a tuple "in place" (ie, overwrite it)
+ * heap_inplace_lock - protect inplace update from concurrent heap_update()
  *
- * Overwriting violates both MVCC and transactional safety, so the uses
- * of this function in Postgres are extremely limited.  Nonetheless we
- * find some places to use it.
+ * Evaluate whether the tuple's state is compatible with a no-key update.
+ * Current transaction rowmarks are fine, as is KEY SHARE from any
+ * transaction.  If compatible, return true with the buffer exclusive-locked,
+ * and the caller must release that by calling
+ * heap_inplace_update_and_unlock(), calling heap_inplace_unlock(), or raising
+ * an error.  Otherwise, call release_callback(arg), wait for blocking
+ * transactions to end, and return false.
  *
- * The tuple cannot change size, and therefore it's reasonable to assume
- * that its null bitmap (if any) doesn't change either.  So we just
- * overwrite the data portion of the tuple without touching the null
- * bitmap or any of the header fields.
+ * Since this is intended for system catalogs and SERIALIZABLE doesn't cover
+ * DDL, this doesn't guarantee any particular predicate locking.
  *
- * tuple is an in-memory tuple structure containing the data to be written
- * over the target tuple.  Also, tuple->t_self identifies the target tuple.
+ * One could modify this to return true for tuples with delete in progress,
+ * All inplace updaters take a lock that conflicts with DROP.  If explicit
+ * "DELETE FROM pg_class" is in progress, we'll wait for it like we would an
+ * update.
  *
- * Note that the tuple updated here had better not come directly from the
- * syscache if the relation has a toast relation as this tuple could
- * include toast values that have been expanded, causing a failure here.
+ * Readers of inplace-updated fields expect changes to those fields are
+ * durable.  For example, vac_truncate_clog() reads datfrozenxid from
+ * pg_database tuples via catalog snapshots.  A future snapshot must not
+ * return a lower datfrozenxid for the same database OID (lower in the
+ * FullTransactionIdPrecedes() sense).  We achieve that since no update of a
+ * tuple can start while we hold a lock on its buffer.  In cases like
+ * BEGIN;GRANT;CREATE INDEX;COMMIT we're inplace-updating a tuple visible only
+ * to this transaction.  ROLLBACK then is one case where it's okay to lose
+ * inplace updates.  (Restoring relhasindex=false on ROLLBACK is fine, since
+ * any concurrent CREATE INDEX would have blocked, then inplace-updated the
+ * committed tuple.)
+ *
+ * In principle, we could avoid waiting by overwriting every tuple in the
+ * updated tuple chain.  Reader expectations permit updating a tuple only if
+ * it's aborted, is the tail of the chain, or we already updated the tuple
+ * referenced in its t_ctid.  Hence, we would need to overwrite the tuples in
+ * order from tail to head.  That would imply either (a) mutating all tuples
+ * in one critical section or (b) accepting a chance of partial completion.
+ * Partial completion of a relfrozenxid update would have the weird
+ * consequence that the table's next VACUUM could see the table's relfrozenxid
+ * move forward between vacuum_get_cutoffs() and finishing.
+ */
+bool
+heap_inplace_lock(Relation relation,
+				  HeapTuple oldtup_ptr, Buffer buffer,
+				  void (*release_callback) (void *), void *arg)
+{
+	HeapTupleData oldtup = *oldtup_ptr; /* minimize diff vs. heap_update() */
+	TM_Result	result;
+	bool		ret;
+
+#ifdef USE_ASSERT_CHECKING
+	if (RelationGetRelid(relation) == RelationRelationId)
+		check_inplace_rel_lock(oldtup_ptr);
+#endif
+
+	Assert(BufferIsValid(buffer));
+
+	LockTuple(relation, &oldtup.t_self, InplaceUpdateTupleLock);
+	LockBuffer(buffer, BUFFER_LOCK_EXCLUSIVE);
+
+	/*----------
+	 * Interpret HeapTupleSatisfiesUpdate() like heap_update() does, except:
+	 *
+	 * - wait unconditionally
+	 * - already locked tuple above, since inplace needs that unconditionally
+	 * - don't recheck header after wait: simpler to defer to next iteration
+	 * - don't try to continue even if the updater aborts: likewise
+	 * - no crosscheck
+	 */
+	result = HeapTupleSatisfiesUpdate(&oldtup, GetCurrentCommandId(false),
+									  buffer);
+
+	if (result == TM_Invisible)
+	{
+		/* no known way this can happen */
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg_internal("attempted to overwrite invisible tuple")));
+	}
+	else if (result == TM_SelfModified)
+	{
+		/*
+		 * CREATE INDEX might reach this if an expression is silly enough to
+		 * call e.g. SELECT ... FROM pg_class FOR SHARE.  C code of other SQL
+		 * statements might get here after a heap_update() of the same row, in
+		 * the absence of an intervening CommandCounterIncrement().
+		 */
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("tuple to be updated was already modified by an operation triggered by the current command")));
+	}
+	else if (result == TM_BeingModified)
+	{
+		TransactionId xwait;
+		uint16		infomask;
+
+		xwait = HeapTupleHeaderGetRawXmax(oldtup.t_data);
+		infomask = oldtup.t_data->t_infomask;
+
+		if (infomask & HEAP_XMAX_IS_MULTI)
+		{
+			LockTupleMode lockmode = LockTupleNoKeyExclusive;
+			MultiXactStatus mxact_status = MultiXactStatusNoKeyUpdate;
+			int			remain;
+
+			if (DoesMultiXactIdConflict((MultiXactId) xwait, infomask,
+										lockmode, NULL))
+			{
+				LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
+				release_callback(arg);
+				ret = false;
+				MultiXactIdWait((MultiXactId) xwait, mxact_status, infomask,
+								relation, &oldtup.t_self, XLTW_Update,
+								&remain);
+			}
+			else
+				ret = true;
+		}
+		else if (TransactionIdIsCurrentTransactionId(xwait))
+			ret = true;
+		else if (HEAP_XMAX_IS_KEYSHR_LOCKED(infomask))
+			ret = true;
+		else
+		{
+			LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
+			release_callback(arg);
+			ret = false;
+			XactLockTableWait(xwait, relation, &oldtup.t_self,
+							  XLTW_Update);
+		}
+	}
+	else
+	{
+		ret = (result == TM_Ok);
+		if (!ret)
+		{
+			LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
+			release_callback(arg);
+		}
+	}
+
+	/*
+	 * GetCatalogSnapshot() relies on invalidation messages to know when to
+	 * take a new snapshot.  COMMIT of xwait is responsible for sending the
+	 * invalidation.  We're not acquiring heavyweight locks sufficient to
+	 * block if not yet sent, so we must take a new snapshot to ensure a later
+	 * attempt has a fair chance.  While we don't need this if xwait aborted,
+	 * don't bother optimizing that.
+	 */
+	if (!ret)
+	{
+		UnlockTuple(relation, &oldtup.t_self, InplaceUpdateTupleLock);
+		InvalidateCatalogSnapshot();
+	}
+	return ret;
+}
+
+/*
+ * heap_inplace_update_and_unlock - core of systable_inplace_update_finish
+ *
+ * The tuple cannot change size, and therefore its header fields and null
+ * bitmap (if any) don't change either.
+ *
+ * Since we hold LOCKTAG_TUPLE, no updater has a local copy of this tuple.
+ */
+void
+heap_inplace_update_and_unlock(Relation relation,
+							   HeapTuple oldtup, HeapTuple tuple,
+							   Buffer buffer)
+{
+	HeapTupleHeader htup = oldtup->t_data;
+	uint32		oldlen;
+	uint32		newlen;
+
+	Assert(ItemPointerEquals(&oldtup->t_self, &tuple->t_self));
+	oldlen = oldtup->t_len - htup->t_hoff;
+	newlen = tuple->t_len - tuple->t_data->t_hoff;
+	if (oldlen != newlen || htup->t_hoff != tuple->t_data->t_hoff)
+		elog(ERROR, "wrong tuple length");
+
+	/* NO EREPORT(ERROR) from here till changes are logged */
+	START_CRIT_SECTION();
+
+	memcpy((char *) htup + htup->t_hoff,
+		   (char *) tuple->t_data + tuple->t_data->t_hoff,
+		   newlen);
+
+	/*----------
+	 * XXX A crash here can allow datfrozenxid() to get ahead of relfrozenxid:
+	 *
+	 * ["D" is a VACUUM (ONLY_DATABASE_STATS)]
+	 * ["R" is a VACUUM tbl]
+	 * D: vac_update_datfrozenid() -> systable_beginscan(pg_class)
+	 * D: systable_getnext() returns pg_class tuple of tbl
+	 * R: memcpy() into pg_class tuple of tbl
+	 * D: raise pg_database.datfrozenxid, XLogInsert(), finish
+	 * [crash]
+	 * [recovery restores datfrozenxid w/o relfrozenxid]
+	 */
+
+	MarkBufferDirty(buffer);
+
+	/* XLOG stuff */
+	if (RelationNeedsWAL(relation))
+	{
+		xl_heap_inplace xlrec;
+		XLogRecPtr	recptr;
+
+		xlrec.offnum = ItemPointerGetOffsetNumber(&tuple->t_self);
+
+		XLogBeginInsert();
+		XLogRegisterData((char *) &xlrec, SizeOfHeapInplace);
+
+		XLogRegisterBuffer(0, buffer, REGBUF_STANDARD);
+		XLogRegisterBufData(0, (char *) htup + htup->t_hoff, newlen);
+
+		/* inplace updates aren't decoded atm, don't log the origin */
+
+		recptr = XLogInsert(RM_HEAP_ID, XLOG_HEAP_INPLACE);
+
+		PageSetLSN(BufferGetPage(buffer), recptr);
+	}
+
+	END_CRIT_SECTION();
+
+	heap_inplace_unlock(relation, oldtup, buffer);
+
+	/*
+	 * Send out shared cache inval if necessary.  Note that because we only
+	 * pass the new version of the tuple, this mustn't be used for any
+	 * operations that could change catcache lookup keys.  But we aren't
+	 * bothering with index updates either, so that's true a fortiori.
+	 *
+	 * XXX ROLLBACK discards the invalidation.  See test inplace-inval.spec.
+	 */
+	if (!IsBootstrapProcessingMode())
+		CacheInvalidateHeapTuple(relation, tuple, NULL);
+}
+
+/*
+ * heap_inplace_unlock - reverse of heap_inplace_lock
+ */
+void
+heap_inplace_unlock(Relation relation,
+					HeapTuple oldtup, Buffer buffer)
+{
+	LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
+	UnlockTuple(relation, &oldtup->t_self, InplaceUpdateTupleLock);
+}
+
+/*
+ * heap_inplace_update - deprecated
+ *
+ * This exists only to keep modules working in back branches.  Affected
+ * modules should migrate to systable_inplace_update_begin().
  */
 void
 heap_inplace_update(Relation relation, HeapTuple tuple)

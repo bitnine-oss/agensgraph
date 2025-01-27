@@ -3075,6 +3075,7 @@ _locale_t
 _resultmap
 _stringlist
 acquireLocksOnSubLinks_context
+addFkConstraintSides
 adjust_appendrel_attrs_context
 aff_regex_struct
 allocfunc
@@ -3253,6 +3254,7 @@ fill_string_relopt
 finalize_primnode_context
 find_dependent_phvs_context
 find_expr_references_context
+fireRIRonSubLink_context
 fix_join_expr_context
 fix_scan_expr_context
 fix_upper_expr_context
@@ -3366,6 +3368,8 @@ json_manifest_perwalrange_callback
 json_ofield_action
 json_scalar_action
 json_struct_action
+keepwal_entry
+keepwal_hash
 keyEntryData
 key_t
 lclContext

@@ -335,13 +335,13 @@ _SPI_rollback(bool chain)
 	MemoryContext oldcontext = CurrentMemoryContext;
 	SavedTransactionCharacteristics savetc;
 
-	/* see under SPI_commit() */
+	/* see comments in _SPI_commit() */
 	if (_SPI_current->atomic)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TRANSACTION_TERMINATION),
 				 errmsg("invalid transaction termination")));
 
-	/* see under SPI_commit() */
+	/* see comments in _SPI_commit() */
 	if (IsSubTransaction())
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TRANSACTION_TERMINATION),
@@ -583,8 +583,11 @@ SPI_inside_nonatomic_context(void)
 {
 	if (_SPI_current == NULL)
 		return false;			/* not in any SPI context at all */
+	/* these tests must match _SPI_commit's opinion of what's atomic: */
 	if (_SPI_current->atomic)
 		return false;			/* it's atomic (ie function not procedure) */
+	if (IsSubTransaction())
+		return false;			/* if within subtransaction, it's atomic */
 	return true;
 }
 
@@ -2045,6 +2048,8 @@ SPI_result_code_string(int code)
  * SPI_plan_get_plan_sources --- get a SPI plan's underlying list of
  * CachedPlanSources.
  *
+ * CAUTION: there is no check on whether the CachedPlanSources are up-to-date.
+ *
  * This is exported so that PL/pgSQL can use it (this beats letting PL/pgSQL
  * look directly into the SPIPlan for itself).  It's not documented in
  * spi.sgml because we'd just as soon not have too many places using this.
@@ -2410,9 +2415,12 @@ _SPI_execute_plan(SPIPlanPtr plan, const SPIExecuteOptions *options,
 
 	/*
 	 * We allow nonatomic behavior only if options->allow_nonatomic is set
-	 * *and* the SPI_OPT_NONATOMIC flag was given when connecting.
+	 * *and* the SPI_OPT_NONATOMIC flag was given when connecting and we are
+	 * not inside a subtransaction.  The latter two tests match whether
+	 * _SPI_commit() would allow a commit; see there for more commentary.
 	 */
-	allow_nonatomic = options->allow_nonatomic && !_SPI_current->atomic;
+	allow_nonatomic = options->allow_nonatomic &&
+		!_SPI_current->atomic && !IsSubTransaction();
 
 	/*
 	 * Setup error traceback support for ereport()
