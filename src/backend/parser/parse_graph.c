@@ -146,6 +146,8 @@ static NodeInfo *findNodeInfo(ParseState *pstate, char *varname);
 static List *makeComponents(List *pattern);
 static bool isPathConnectedTo(CypherPath *path, List *component);
 static bool arePathsConnected(CypherPath *path1, CypherPath *path2);
+static void createNonExistentLabels(ParseState *pstate, List *pattern);
+
 /* MATCH - transform */
 static Node *transformComponents(ParseState *pstate, List *components,
 								 List **targetList);
@@ -967,6 +969,12 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	qry->commandType = CMD_GRAPHWRITE;
 	qry->graph.writeOp = GWROP_MERGE;
 	qry->graph.last = (pstate->parentParseState == NULL);
+
+	/*
+	 * If there are any new labels involved in MERGE pattern,
+	 * create them before transforming MATCH for MERGE.
+	 */
+	createNonExistentLabels(pstate, detail->pattern);
 
 	nsitem = transformClauseBy(pstate, (Node *) clause, transformMergeMatch);
 	Assert(nsitem->p_rte->rtekind == RTE_SUBQUERY);
@@ -4706,18 +4714,6 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 	{
 		labname = AG_VERTEX;
 	}
-	else
-	{
-		int			labloc = getCypherNameLoc(cnode->label);
-
-		if (strcmp(labname, AG_VERTEX) == 0)
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-							errmsg("specifying default label is not allowed"),
-							parser_errposition(pstate, labloc)));
-
-		createVertexLabelIfNotExist(pstate, labname, labloc);
-	}
 
 	relation = openTargetLabel(pstate, labname);
 
@@ -4755,9 +4751,7 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 				  List *resultList)
 {
 	char	   *varname;
-	Node	   *type;
-	char	   *typname;
-	Relation 	relation;
+	Relation	relation;
 	Node	   *edge;
 	Oid			relid = InvalidOid;
 	TargetEntry	*te;
@@ -4781,17 +4775,6 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
 						errmsg("duplicate variable \"%s\"", varname),
 						parser_errposition(pstate, getCypherNameLoc(crel->variable))));
-
-	type = linitial(crel->types);
-	typname = getCypherName(type);
-
-	if (strcmp(typname, AG_EDGE) == 0)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-						errmsg("cannot create edge on default label"),
-						parser_errposition(pstate, getCypherNameLoc(type))));
-
-	createEdgeLabelIfNotExist(pstate, typname, getCypherNameLoc(type));
 
 	relation = openTargetLabel(pstate, getCypherName(linitial(crel->types)));
 
@@ -6367,4 +6350,56 @@ IsNullAConst(Node *arg)
 			return true;
 	}
 	return false;
+}
+
+/*
+ * Helper function used in transformCypherMergeClause to
+ * create non existent labels.
+ */
+static void
+createNonExistentLabels(ParseState *pstate, List *pattern)
+{
+	CypherPath *path;
+	ListCell   *le;
+
+	path = linitial(pattern);
+	foreach(le, path->chain)
+	{
+		Node	   *elem = lfirst(le);
+
+		if (IsA(elem, CypherNode))
+		{
+			CypherNode *cnode = (CypherNode *) elem;
+			char 	   *labname = getCypherName(cnode->label);
+			int 		labloc = getCypherNameLoc(cnode->label);
+			
+			if (labname == NULL)
+				continue;
+
+			if (strcmp(labname, AG_VERTEX) == 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						errmsg("specifying default label is not allowed"),
+						parser_errposition(pstate, labloc)));
+
+			createVertexLabelIfNotExist(pstate, labname, labloc);
+		}
+		else
+		{
+			CypherRel  *crel = (CypherRel *) elem;
+			Node 	   *type = crel->types ? linitial(crel->types) : NULL;
+			char 	   *typname = getCypherName(type);
+
+			if (typname == NULL)
+				continue;
+
+			if (strcmp(typname, AG_EDGE) == 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						errmsg("cannot create edge on default label"),
+						parser_errposition(pstate, getCypherNameLoc(type))));
+
+			createEdgeLabelIfNotExist(pstate, typname, getCypherNameLoc(type));
+		}
+	}
 }

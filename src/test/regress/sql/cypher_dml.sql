@@ -1097,6 +1097,13 @@ MERGE ()-[:e1 =10]->();
 MERGE (:ag_vertex);
 MERGE ()-[:ag_edge]->();
 
+-- ag-322: Auto create non-existent labels
+MERGE (a:v3);
+MERGE (a:v4) MERGE (b:v5) MERGE (a)-[:e3]->(b);
+MATCH (a) RETURN a;
+
+MERGE p=(a:v4)-[:e4]->(b:v5) RETURN p;
+
 DROP GRAPH gm CASCADE;
 
 --
