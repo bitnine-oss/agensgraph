@@ -2711,8 +2711,27 @@ MERGE ()-[:ag_edge]->();
 ERROR:  cannot create edge on default label
 LINE 1: MERGE ()-[:ag_edge]->();
                    ^
+-- ag-322: Auto create non-existent labels
+MERGE (a:v3);
+MERGE (a:v4) MERGE (b:v5) MERGE (a)-[:e3]->(b);
+MATCH (a) RETURN a;
+     a      
+------------
+ v1[3.12]{}
+ v2[4.10]{}
+ v3[9.1]{}
+ v5[11.1]{}
+ v4[12.1]{}
+(5 rows)
+
+MERGE p=(a:v4)-[:e4]->(b:v5) RETURN p;
+                       p                       
+-----------------------------------------------
+ [v4[12.2]{},e4[13.1][12.2,11.2]{},v5[11.2]{}]
+(1 row)
+
 DROP GRAPH gm CASCADE;
-NOTICE:  drop cascades to 9 other objects
+NOTICE:  drop cascades to 14 other objects
 DETAIL:  drop cascades to sequence gm.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -2722,6 +2741,11 @@ drop cascades to elabel e1
 drop cascades to vlabel person
 drop cascades to vlabel city
 drop cascades to elabel hometown
+drop cascades to vlabel v3
+drop cascades to elabel e3
+drop cascades to vlabel v5
+drop cascades to vlabel v4
+drop cascades to elabel e4
 --
 -- null properties
 --
