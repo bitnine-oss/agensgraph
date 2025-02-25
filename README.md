@@ -1,5 +1,22 @@
 # AgensGraph: Powerful Multi-Model Graph Database
 ![Build Status](https://github.com/bitnine-oss/agensgraph/actions/workflows/regression.yml/badge.svg)
+&nbsp;
+<a href="https://github.com/bitnine-oss/agensgraph/releases">
+<img src="https://img.shields.io/badge/Release-v2.14.1-FFA500?labelColor=gray&style=flat&link=https://github.com/bitnine-oss/agensgraph/releases"/>
+</a>
+&nbsp;
+<a href="https://github.com/bitnine-oss/agensgraph/issues">
+  <img src="https://img.shields.io/github/issues/bitnine-oss/agensgraph"/>
+</a>
+&nbsp;
+<a href="https://github.com/bitnine-oss/agensgraph/network/members">
+ <img src="https://img.shields.io/github/forks/bitnine-oss/agensgraph"/>
+</a>
+&nbsp;
+<a href="https://github.com/bitnine-oss/agensgraph/stargazers">
+ <img src="https://img.shields.io/github/stars/bitnine-oss/agensgraph"/>
+</a>
+<br>
 
 AgensGraph is a cutting-edge multi-model graph database designed for modern complex data environments. By supporting both relational and graph data models simultaneously, AgensGraph allows developers to seamlessly integrate legacy relational data with the flexible graph data model within a single database. AgensGraph is built on the robust PostgreSQL RDBMS, providing a highly reliable, fully-featured platform ready for enterprise use.
 
