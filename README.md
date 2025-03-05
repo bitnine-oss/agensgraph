@@ -102,7 +102,7 @@ AgensGraph supports various drivers for seamless connection and interaction with
 ## Documentation
 Comprehensive documentation is available to help you get started with AgensGraph and make the most of its features.
 - **Quick Start Guide**: Learn how to quickly set up and start using AgensGraph.
-  - [Quick Start Guide](http://bitnine.net/documentations/quick-guide-1-3.html)
+  - [Quick Start Guide](https://www.skaiworldwide.com/_next/static/pdf/agensgraph%20manual%20pdf_quick%20guide_(EN).pdf)
 
 ## AgensGraphViewer
 AgensGraphViewer is a web-based user interface that provides visualization of graph data stored in an AgensGraph database. It allows users to easily interact with and visualize their graph data, making it easier to understand and analyze complex relationships within the database.
@@ -110,7 +110,7 @@ AgensGraphViewer is a web-based user interface that provides visualization of gr
 - **Graph Visualization**: Provides interactive visualization tools for graph data.
 - **User-Friendly**: Intuitive interface designed for ease of use.
 - **Real-Time Interaction**: Allows for real-time data updates and interaction with graph data.
-<img src="https://bitnine.net/documentations/images/g_result_1.png" alt="AgensGraphViewer Screenshot" width="400" />
+<img src="https://github.com/bitnine-oss/agensgraph/blob/v2.14/images/g_result_1.png" alt="AgensGraphViewer Screenshot" width="400" />
 
 For more information and to get started with AgensGraphViewer, visit the [AgensGraphViewer GitHub repository](https://github.com/bitnine-oss/AgensGraphViewer).
 
