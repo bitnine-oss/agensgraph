@@ -778,6 +778,14 @@ pgstat_clear_snapshot(void)
 		pgStatLocal.snapshot.context = NULL;
 	}
 
+	if (agStatContext)
+	{
+		MemoryContextDelete(agStatContext);
+
+		/* Reset variables */
+		agStatContext = NULL;
+	}
+
 	/*
 	 * Historically the backend_status.c facilities lived in this file, and
 	 * were reset with the same function. For now keep it that way, and
