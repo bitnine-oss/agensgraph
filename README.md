@@ -2,7 +2,7 @@
 ![Build Status](https://github.com/skaiworldwide-oss/agensgraph/actions/workflows/regression.yml/badge.svg)
 &nbsp;
 <a href="https://github.com/skaiworldwide-oss/agensgraph/releases">
-<img src="https://img.shields.io/badge/Release-v2.14.1-FFA500?labelColor=gray&style=flat&link=https://github.com/skaiworldwide-oss/agensgraph/releases"/>
+<img src="https://img.shields.io/badge/Release-v2.15.0-FFA500?labelColor=gray&style=flat&link=https://github.com/skaiworldwide-oss/agensgraph/releases"/>
 </a>
 &nbsp;
 <a href="https://github.com/skaiworldwide-oss/agensgraph/issues">
@@ -89,6 +89,37 @@ Follow these steps to build AgensGraph from the source code:
     ```sh
     echo "export AGDATA=/path/to/agensgraph/data" >> ~/.bashrc
     ```
+## Quick Start with Docker
+
+1. **Pull the AgensGraph Docker image**
+
+    ```bash
+    docker pull skaiworldwide/agensgraph
+    ```
+    **Note**: By default, this pulls the `latest` tag
+
+2. **Create and run the AgensGraph container**
+
+    ```
+    docker run \
+        --name agensgraph \
+        -p 5455:5432 \
+        -e POSTGRES_USER=postgres \
+        -e POSTGRES_PASSWORD=agens \
+        -e POSTGRES_DB=agens \
+        -d \
+        skaiworldwide/agensgraph
+    ```
+
+3. **Connect to AgensGraph client**
+    ```
+    docker exec -it agensgraph agens -d agens -U postgres
+    ```
+
+**More Information**
+
+See more information on the [Docker Hub](https://hub.docker.com/r/skaiworldwide/agensgraph) page.
+
 ## AgensGraph Drivers
 AgensGraph supports various drivers for seamless connection and interaction with the database. Below are the supported drivers:
 | Driver      | Description                                                                                       |
