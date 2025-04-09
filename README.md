@@ -135,15 +135,15 @@ Comprehensive documentation is available to help you get started with AgensGraph
 - **Quick Start Guide**: Learn how to quickly set up and start using AgensGraph.
   - [Quick Start Guide](https://www.skaiworldwide.com/_next/static/pdf/agensgraph%20manual%20pdf_quick%20guide_(EN).pdf)
 
-## AgensGraphViewer
-AgensGraphViewer is a web-based user interface that provides visualization of graph data stored in an AgensGraph database. It allows users to easily interact with and visualize their graph data, making it easier to understand and analyze complex relationships within the database.
+## AGViewer
+AGViewer is a web-based user interface that provides visualization of graph data stored in an AgensGraph database. It allows users to easily interact with and visualize their graph data, making it easier to understand and analyze complex relationships within the database.
 - **Web-Based Interface**: Accessible through any web browser.
 - **Graph Visualization**: Provides interactive visualization tools for graph data.
 - **User-Friendly**: Intuitive interface designed for ease of use.
 - **Real-Time Interaction**: Allows for real-time data updates and interaction with graph data.
-<img src="https://github.com/skaiworldwide-oss/agensgraph/blob/v2.15/images/g_result_1.png" alt="AgensGraphViewer Screenshot" width="400" />
+<img src="https://github.com/skaiworldwide-oss/agensgraph/blob/v2.15/images/g_result_1.png" alt="AGViewer Screenshot" width="400" />
 
-For more information and to get started with AgensGraphViewer, visit the [AgensGraphViewer GitHub repository](https://github.com/skaiworldwide-oss/AgensGraphViewer).
+For more information and to get started with AGViewer, visit the [AGViewer GitHub repository](https://github.com/skaiworldwide-oss/AGViewer).
 
 ## License
 - [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0)
