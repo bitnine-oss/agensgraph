@@ -145,6 +145,9 @@ test: cypher_dml cypher_dml2 cypher_shortestpath cypher_eager graphid
 # run cypher expr test
 test: cypher_expr
 
+# run cypher priviledge test
+test: cypher_privileges
+
 # run graphmeta
 test: graphmeta
 
