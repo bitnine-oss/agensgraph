@@ -4051,6 +4051,29 @@ WITH graph as (MATCH (n) SET n.vertex = true RETURN n) SELECT * FROM graph;
  ag_vertex[1.33]{"vertex": true}
 (2 rows)
 
+--
+-- Github issue #635
+--
+SET graph_path = agens;
+MATCH (n) WITH n, 'n' as name RETURN name;
+ name 
+------
+ "n"
+ "n"
+(2 rows)
+
+CREATE (n1 {name: 'test'}) WITH NULL AS a0 RETURN a0;
+ a0 
+----
+ 
+(1 row)
+
+MATCH (n1) WITH n1, 'test' as name WHERE n1.name = name RETURN n1;
+               n1                
+---------------------------------
+ ag_vertex[1.34]{"name": "test"}
+(1 row)
+
 -- cleanup
 DROP GRAPH srf CASCADE;
 NOTICE:  drop cascades to 5 other objects

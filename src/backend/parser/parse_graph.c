@@ -25,6 +25,7 @@
 #include "parser/analyze.h"
 #include "parser/parse_agg.h"
 #include "parser/parse_clause.h"
+#include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
 #include "parser/parse_cypher_expr.h"
 #include "parser/parse_cypher_utils.h"
@@ -546,12 +547,18 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		foreach(lt, qry->targetList)
 		{
 			TargetEntry *te = lfirst(lt);
+			Node		*expr = (Node *) te->expr;
 
-			if (IsA(te->expr, Var) && exprType((Node *) te->expr) == VERTEXOID)
+			if (IsA(expr, Const) && exprType(expr) == UNKNOWNOID)
+				expr = coerce_type(pstate, expr, UNKNOWNOID, TEXTOID, -1,
+								   COERCION_IMPLICIT, COERCE_IMPLICIT_CAST,
+								   exprLocation(expr));
+
+			else if (IsA(expr, Var) && exprType(expr) == VERTEXOID)
 				continue;
 
-			te->expr = (Expr *) resolve_future_vertex(pstate,
-													  (Node *) te->expr, 0);
+			expr = resolve_future_vertex(pstate, expr, 0);
+			te->expr = (Expr *) expr;
 		}
 
 		flags = FVR_DONT_RESOLVE;

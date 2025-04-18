@@ -1561,6 +1561,14 @@ WITH graph as (MATCH (n) RETURN n) SELECT * FROM graph;
 WITH graph as (LOAD FROM history AS n RETURN n) SELECT * FROM graph;
 WITH graph as (MATCH (n) SET n.vertex = true RETURN n) SELECT * FROM graph;
 
+--
+-- Github issue #635
+--
+SET graph_path = agens;
+MATCH (n) WITH n, 'n' as name RETURN name;
+CREATE (n1 {name: 'test'}) WITH NULL AS a0 RETURN a0;
+MATCH (n1) WITH n1, 'test' as name WHERE n1.name = name RETURN n1;
+
 -- cleanup
 
 DROP GRAPH srf CASCADE;
