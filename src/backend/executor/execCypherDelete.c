@@ -21,6 +21,8 @@
 #include "utils/acl.h"
 #include "utils/arrayaccess.h"
 #include "access/xact.h"
+#include "catalog/ag_graph_fn.h"
+#include "catalog/namespace.h"
 #include "commands/trigger.h"
 #include "utils/fmgroids.h"
 
