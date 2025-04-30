@@ -60,7 +60,7 @@ match (n1:v1 {'property':'4'} ), (n2:v1 {'property':'d'}) create (n1)-[n3:e1 {pr
 SET SESSION AUTHORIZATION readonly_user;
 
 MATCH (n{'property':'1'}) WHERE NOT EXISTS ((n)-[*1]-()) return n;
-MATCH (n{'property':'1'}) WHERE NOT EXISTS ((n)-[*1]-()) delete n; -- #624 issue
+MATCH (n{'property':'1'}) WHERE EXISTS ((n)-[*1]-()) delete n; -- #624 issue
 MATCH (n{'property':'1'}) WHERE NOT EXISTS ((n)-[*1]-()) return n;
 
 -- clear all

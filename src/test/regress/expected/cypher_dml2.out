@@ -492,6 +492,49 @@ EXPLAIN VERBOSE MATCH p=(a)-[]-(a) RETURN *;
                      Filter: (ag_edge_3."end" = ag_edge_3.start)
 (20 rows)
 
+-- #609, column does not exists
+EXPLAIN MATCH (a),(a)-[*1..1]->(b) RETURN count(a);
+                                     QUERY PLAN                                      
+-------------------------------------------------------------------------------------
+ Aggregate  (cost=101.16..101.17 rows=1 width=32)
+   ->  Hash Join  (cost=37.00..98.16 rows=1200 width=46)
+         Hash Cond: ("<0000000017>"."end" = b.id)
+         ->  Nested Loop  (cost=0.00..58.00 rows=1200 width=54)
+               ->  Seq Scan on ag_vertex a  (cost=0.00..22.00 rows=1200 width=46)
+               ->  Subquery Scan on "<0000000017>"  (cost=0.00..0.02 rows=1 width=8)
+                     ->  Graph VLE [1..1]  (cost=0.00..0.01 rows=1 width=0)
+                           ->  Result  (cost=0.00..0.01 rows=1 width=80)
+         ->  Hash  (cost=22.00..22.00 rows=1200 width=8)
+               ->  Seq Scan on ag_vertex b  (cost=0.00..22.00 rows=1200 width=8)
+(10 rows)
+
+MATCH (a),(a)-[*1..1]->(b) RETURN count(a);
+ count 
+-------
+ 4
+(1 row)
+
+EXPLAIN MATCH (a)-[*1..1]->(b) RETURN count(a);
+                                     QUERY PLAN                                      
+-------------------------------------------------------------------------------------
+ Aggregate  (cost=101.16..101.17 rows=1 width=32)
+   ->  Hash Join  (cost=37.00..98.16 rows=1200 width=46)
+         Hash Cond: ("<0000000019>"."end" = b.id)
+         ->  Nested Loop  (cost=0.00..58.00 rows=1200 width=54)
+               ->  Seq Scan on ag_vertex a  (cost=0.00..22.00 rows=1200 width=46)
+               ->  Subquery Scan on "<0000000019>"  (cost=0.00..0.02 rows=1 width=8)
+                     ->  Graph VLE [1..1]  (cost=0.00..0.01 rows=1 width=0)
+                           ->  Result  (cost=0.00..0.01 rows=1 width=80)
+         ->  Hash  (cost=22.00..22.00 rows=1200 width=8)
+               ->  Seq Scan on ag_vertex b  (cost=0.00..22.00 rows=1200 width=8)
+(10 rows)
+
+MATCH (a)-[*1..1]->(b) RETURN count(a);
+ count 
+-------
+ 4
+(1 row)
+
 DROP GRAPH cypher_dml2 CASCADE;
 NOTICE:  drop cascades to 4 other objects
 DETAIL:  drop cascades to sequence cypher_dml2.ag_label_seq
