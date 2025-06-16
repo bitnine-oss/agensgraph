@@ -13,6 +13,8 @@
 #include "access/htup_details.h"
 #include "access/xact.h"
 #include "catalog/ag_graph_fn.h"
+#include "catalog/namespace.h"
+#include "catalog/pg_namespace.h"
 #include "catalog/pg_type.h"
 #include "executor/executor.h"
 #include "executor/nodeModifyGraph.h"
@@ -20,6 +22,7 @@
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_relation.h"
 #include "pgstat.h"
+#include "utils/acl.h"
 #include "utils/arrayaccess.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
@@ -49,6 +52,9 @@ static void reflectModifiedProp(ModifyGraphState *mgstate);
 static bool isEdgeArrayOfPath(List *exprs, char *variable);
 
 static void openResultRelInfosIndices(ModifyGraphState *mgstate);
+
+/* ACL*/
+static void checkModifyGraphACL(ModifyGraphState *mgstate);
 
 ModifyGraphState *
 ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
@@ -326,6 +332,8 @@ ExecModifyGraph(PlanState *pstate)
 						mgstate->modify_cid + MODIFY_CID_LOWER_BOUND;
 					break;
 			}
+
+			checkModifyGraphACL(mgstate);
 
 			slot = ExecProcNode(mgstate->subplan);
 
@@ -862,4 +870,35 @@ openResultRelInfosIndices(ModifyGraphState *mgstate)
 		ExecOpenIndices(resultRelInfo, false);
 		resultRelInfo++;
 	}
+}
+
+static void
+checkModifyGraphACL(ModifyGraphState *mgstate)
+{
+	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
+	AclResult	aclresult;
+	AclMode 	mode;
+
+	switch (plan->operation)
+	{
+		case GWROP_CREATE:
+		case GWROP_MERGE:
+			mode = ACL_INSERT;
+			break;
+		case GWROP_DELETE:
+			mode = ACL_DELETE;
+			break;
+		case GWROP_SET:
+			mode = ACL_UPDATE;
+			break;
+		default:
+			elog(ERROR, "unknown graph operation");
+	}
+
+	aclresult = object_aclcheck(NamespaceRelationId,
+								get_namespace_oid(graph_path, true),
+								GetUserId(), mode);
+
+	if (aclresult != ACLCHECK_OK)
+		aclcheck_error(aclresult, OBJECT_SCHEMA, graph_path);
 }

@@ -19,11 +19,8 @@
 #include "utils/lsyscache.h"
 #include "access/heapam.h"
 #include "pgstat.h"
-#include "utils/acl.h"
 #include "utils/arrayaccess.h"
 #include "access/xact.h"
-#include "catalog/ag_graph_fn.h"
-#include "catalog/namespace.h"
 #include "commands/trigger.h"
 #include "utils/fmgroids.h"
 
@@ -62,8 +59,6 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		Datum		elem;
 		bool		isNull;
 		AttrNumber	attno = findAttrInSlotByName(slot, gde->variable);
-		AclResult	aclresult;
-		char	   *graphpath_name;
 
 		type = exprType((Node *) gde->elem);
 		if (!(type == VERTEXOID || type == EDGEOID ||
@@ -78,13 +73,6 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		{
 			continue;
 		}
-
-		graphpath_name = get_graphid_graphname(get_graph_path_oid());
-
-		aclresult = object_aclcheck(NamespaceRelationId, get_namespace_oid(graphpath_name, true),
-									GetUserId(), ACL_DELETE);
-		if (aclresult != ACLCHECK_OK)
-			aclcheck_error(aclresult, OBJECT_SCHEMA, graphpath_name);
 
 		/*
 		 * NOTE: After all the graph elements to be removed are collected,
