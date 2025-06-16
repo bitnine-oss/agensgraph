@@ -1063,6 +1063,17 @@ _outDijkstra(StringInfo str, const Dijkstra *node)
 }
 
 static void
+_outGraphVLE(StringInfo str, const GraphVLE *node)
+{
+	WRITE_NODE_TYPE("GRAPHVLE");
+
+	_outPlanInfo(str, (const Plan *) node);
+
+	WRITE_NODE_FIELD(subplan);
+	WRITE_NODE_FIELD(vle_rel);
+}
+
+static void
 _outNestLoopParam(StringInfo str, const NestLoopParam *node)
 {
 	WRITE_NODE_TYPE("NESTLOOPPARAM");
@@ -4703,6 +4714,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_Dijkstra:
 				_outDijkstra(str, obj);
+				break;
+			case T_GraphVLE:
+				_outGraphVLE(str, obj);
 				break;
 			case T_NestLoopParam:
 				_outNestLoopParam(str, obj);
