@@ -289,7 +289,7 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	LockTupleMode lockmode;
 	TM_Result	result;
 	TM_FailureData tmfd;
-	bool		update_indexes;
+	TU_UpdateIndexes update_indexes;
 	Datum		gid;
 	Oid			relid;
 	ItemPointer ctid;
@@ -362,8 +362,8 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	if (resultRelInfo->ri_TrigDesc &&
 		resultRelInfo->ri_TrigDesc->trig_update_before_row)
 	{
-		if (!ExecBRUpdateTriggers(estate, epqstate, resultRelInfo,
-								  ctid, NULL, elemTupleSlot, &tmfd))
+		if (!ExecBRUpdateTriggers(estate, epqstate, resultRelInfo, ctid,
+								  NULL, elemTupleSlot, &result, &tmfd))
 			return (Datum) 0;
 	}
 
@@ -487,7 +487,8 @@ lreplace:
 											   true,
 											   false,
 											   NULL,
-											   NIL);
+											   NIL,
+											   false);
 
 	graphWriteStats.updateProperty++;
 
@@ -532,7 +533,7 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	LockTupleMode lockmode;
 	TM_Result	result;
 	TM_FailureData tmfd;
-	bool		update_indexes;
+	TU_UpdateIndexes update_indexes;
 	List	   *recheckIndexes = NIL;
 
 	relid = get_labid_relid(mgstate->graphid,
@@ -573,8 +574,8 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	if (resultRelInfo->ri_TrigDesc &&
 		resultRelInfo->ri_TrigDesc->trig_update_before_row)
 	{
-		if (!ExecBRUpdateTriggers(estate, epqstate, resultRelInfo,
-								  ctid, NULL, elemTupleSlot, &tmfd))
+		if (!ExecBRUpdateTriggers(estate, epqstate, resultRelInfo, ctid,
+								  NULL, elemTupleSlot, &result, &tmfd))
 		{
 			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
 			return NULL;
@@ -623,7 +624,8 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 											   true,
 											   false,
 											   NULL,
-											   NIL);
+											   NIL,
+											   false);
 
 	graphWriteStats.updateProperty++;
 

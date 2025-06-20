@@ -3,7 +3,7 @@
  * json.c
  *		JSON data type support.
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -13,7 +13,6 @@
  */
 #include "postgres.h"
 
-#include "access/hash.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "common/hashfn.h"
@@ -30,6 +29,28 @@
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
 
+typedef enum					/* type categories for datum_to_json */
+{
+	JSONTYPE_NULL,				/* null, so we didn't bother to identify */
+	JSONTYPE_BOOL,				/* boolean (built-in types only) */
+	JSONTYPE_NUMERIC,			/* numeric (ditto) */
+	JSONTYPE_DATE,				/* we use special formatting for datetimes */
+	JSONTYPE_TIMESTAMP,
+	JSONTYPE_TIMESTAMPTZ,
+	JSONTYPE_JSON,				/* JSON itself (and JSONB) */
+	JSONTYPE_ARRAY,				/* array */
+	JSONTYPE_COMPOSITE,			/* composite */
+	JSONTYPE_CAST,				/* something with an explicit cast to JSON */
+	JSONTYPE_OTHER				/* all else */
+} JsonTypeCategory;
+
+
+/*
+ * Support for fast key uniqueness checking.
+ *
+ * We maintain a hash table of used keys in JSON objects for fast detection
+ * of duplicates.
+ */
 /* Common context for key uniqueness check */
 typedef struct HTAB *JsonUniqueCheckState;	/* hash table for key names */
 
@@ -41,22 +62,14 @@ typedef struct JsonUniqueHashEntry
 	int			object_id;
 } JsonUniqueHashEntry;
 
-/* Context for key uniqueness check in builder functions */
-typedef struct JsonUniqueBuilderState
-{
-	JsonUniqueCheckState check; /* unique check */
-	StringInfoData skipped_keys;	/* skipped keys with NULL values */
-	MemoryContext mcxt;			/* context for saving skipped keys */
-} JsonUniqueBuilderState;
-
-/* Element of object stack for key uniqueness check during json parsing */
+/* Stack element for key uniqueness check during JSON parsing */
 typedef struct JsonUniqueStackEntry
 {
 	struct JsonUniqueStackEntry *parent;
 	int			object_id;
 } JsonUniqueStackEntry;
 
-/* State for key uniqueness check during json parsing */
+/* Context struct for key uniqueness check during JSON parsing */
 typedef struct JsonUniqueParsingState
 {
 	JsonLexContext *lex;
@@ -66,6 +79,16 @@ typedef struct JsonUniqueParsingState
 	bool		unique;
 } JsonUniqueParsingState;
 
+/* Context struct for key uniqueness check during JSON building */
+typedef struct JsonUniqueBuilderState
+{
+	JsonUniqueCheckState check; /* unique check */
+	StringInfoData skipped_keys;	/* skipped keys with NULL values */
+	MemoryContext mcxt;			/* context for saving skipped keys */
+} JsonUniqueBuilderState;
+
+
+/* State struct for JSON aggregation */
 typedef struct JsonAggState
 {
 	StringInfo	str;
@@ -84,6 +107,9 @@ static void array_dim_to_json(StringInfo result, int dim, int ndims, int *dims,
 							  bool use_line_feeds);
 static void array_to_json_internal(Datum array, StringInfo result,
 								   bool use_line_feeds);
+static void json_categorize_type(Oid typoid,
+								 JsonTypeCategory *tcategory,
+								 Oid *outfuncoid);
 static void datum_to_json(Datum val, bool is_null, StringInfo result,
 						  JsonTypeCategory tcategory, Oid outfuncoid,
 						  bool key_scalar);
@@ -103,9 +129,10 @@ json_in(PG_FUNCTION_ARGS)
 
 	/* validate it */
 	lex = makeJsonLexContext(result, false);
-	pg_parse_json_or_ereport(lex, &nullSemAction);
+	if (!pg_parse_json_or_errsave(lex, &nullSemAction, fcinfo->context))
+		PG_RETURN_NULL();
 
-	/* Internal representation is the same as text, for now */
+	/* Internal representation is the same as text */
 	PG_RETURN_TEXT_P(result);
 }
 
@@ -162,7 +189,7 @@ json_recv(PG_FUNCTION_ARGS)
  * output function OID.  If the returned category is JSONTYPE_CAST, we
  * return the OID of the type->JSON cast function instead.
  */
-void
+static void
 json_categorize_type(Oid typoid,
 					 JsonTypeCategory *tcategory,
 					 Oid *outfuncoid)
@@ -744,16 +771,13 @@ row_to_json_pretty(PG_FUNCTION_ARGS)
 	PG_RETURN_TEXT_P(cstring_to_text_with_len(result->data, result->len));
 }
 
-Datum
-to_json_worker(Datum val, JsonTypeCategory tcategory, Oid outfuncoid)
-{
-	StringInfo	result = makeStringInfo();
-
-	datum_to_json(val, false, result, tcategory, outfuncoid, false);
-
-	return PointerGetDatum(cstring_to_text_with_len(result->data, result->len));
-}
-
+/*
+ * Is the given type immutable when coming out of a JSON context?
+ *
+ * At present, datetimes are all considered mutable, because they
+ * depend on timezone.  XXX we should also drill down into objects
+ * and arrays, but do not.
+ */
 bool
 to_json_is_immutable(Oid typoid)
 {
@@ -766,6 +790,7 @@ to_json_is_immutable(Oid typoid)
 	{
 		case JSONTYPE_BOOL:
 		case JSONTYPE_JSON:
+		case JSONTYPE_NULL:
 			return true;
 
 		case JSONTYPE_DATE:
@@ -781,9 +806,11 @@ to_json_is_immutable(Oid typoid)
 
 		case JSONTYPE_NUMERIC:
 		case JSONTYPE_CAST:
-		default:
+		case JSONTYPE_OTHER:
 			return func_volatile(outfuncoid) == PROVOLATILE_IMMUTABLE;
 	}
+
+	return false;				/* not reached */
 }
 
 /*
@@ -794,6 +821,7 @@ to_json(PG_FUNCTION_ARGS)
 {
 	Datum		val = PG_GETARG_DATUM(0);
 	Oid			val_type = get_fn_expr_argtype(fcinfo->flinfo, 0);
+	StringInfo	result;
 	JsonTypeCategory tcategory;
 	Oid			outfuncoid;
 
@@ -805,7 +833,11 @@ to_json(PG_FUNCTION_ARGS)
 	json_categorize_type(val_type,
 						 &tcategory, &outfuncoid);
 
-	PG_RETURN_DATUM(to_json_worker(val, tcategory, outfuncoid));
+	result = makeStringInfo();
+
+	datum_to_json(val, false, result, tcategory, outfuncoid, false);
+
+	PG_RETURN_TEXT_P(cstring_to_text_with_len(result->data, result->len));
 }
 
 /*
@@ -960,7 +992,12 @@ json_unique_hash_match(const void *key1, const void *key2, Size keysize)
 	return strncmp(entry1->key, entry2->key, entry1->key_len);
 }
 
-/* Functions implementing object key uniqueness check */
+/*
+ * Uniqueness detection support.
+ *
+ * In order to detect uniqueness during building or parsing of a JSON
+ * object, we maintain a hash table of key names already seen.
+ */
 static void
 json_unique_check_init(JsonUniqueCheckState *cxt)
 {
@@ -979,6 +1016,14 @@ json_unique_check_init(JsonUniqueCheckState *cxt)
 					   HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION | HASH_COMPARE);
 }
 
+static void
+json_unique_builder_init(JsonUniqueBuilderState *cxt)
+{
+	json_unique_check_init(&cxt->check);
+	cxt->mcxt = CurrentMemoryContext;
+	cxt->skipped_keys.data = NULL;
+}
+
 static bool
 json_unique_check_key(JsonUniqueCheckState *cxt, const char *key, int object_id)
 {
@@ -994,17 +1039,13 @@ json_unique_check_key(JsonUniqueCheckState *cxt, const char *key, int object_id)
 	return !found;
 }
 
-static void
-json_unique_builder_init(JsonUniqueBuilderState *cxt)
-{
-	json_unique_check_init(&cxt->check);
-	cxt->mcxt = CurrentMemoryContext;
-	cxt->skipped_keys.data = NULL;
-}
-
-/* On-demand initialization of skipped_keys StringInfo structure */
+/*
+ * On-demand initialization of a throwaway StringInfo.  This is used to
+ * read a key name that we don't need to store in the output object, for
+ * duplicate key detection when the value is NULL.
+ */
 static StringInfo
-json_unique_builder_get_skipped_keys(JsonUniqueBuilderState *cxt)
+json_unique_builder_get_throwawaybuf(JsonUniqueBuilderState *cxt)
 {
 	StringInfo	out = &cxt->skipped_keys;
 
@@ -1015,6 +1056,9 @@ json_unique_builder_get_skipped_keys(JsonUniqueBuilderState *cxt)
 		initStringInfo(out);
 		MemoryContextSwitchTo(oldcxt);
 	}
+	else
+		/* Just reset the string to empty */
+		out->len = 0;
 
 	return out;
 }
@@ -1049,8 +1093,8 @@ json_object_agg_transfn_worker(FunctionCallInfo fcinfo,
 		/*
 		 * Make the StringInfo in a context where it will persist for the
 		 * duration of the aggregate call. Switching context is only needed
-		 * for this initial step, as the StringInfo routines make sure they
-		 * use the right context to enlarge the object if necessary.
+		 * for this initial step, as the StringInfo and dynahash routines make
+		 * sure they use the right context to enlarge the object if necessary.
 		 */
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 		state = (JsonAggState *) palloc(sizeof(JsonAggState));
@@ -1098,27 +1142,31 @@ json_object_agg_transfn_worker(FunctionCallInfo fcinfo,
 
 	if (PG_ARGISNULL(1))
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("field name must not be null")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("null value not allowed for object key")));
 
 	/* Skip null values if absent_on_null */
 	skip = absent_on_null && PG_ARGISNULL(2);
 
 	if (skip)
 	{
-		/* If key uniqueness check is needed we must save skipped keys */
+		/*
+		 * We got a NULL value and we're not storing those; if we're not
+		 * testing key uniqueness, we're done.  If we are, use the throwaway
+		 * buffer to store the key name so that we can check it.
+		 */
 		if (!unique_keys)
 			PG_RETURN_POINTER(state);
 
-		out = json_unique_builder_get_skipped_keys(&state->unique_check);
+		out = json_unique_builder_get_throwawaybuf(&state->unique_check);
 	}
 	else
 	{
 		out = state->str;
 
 		/*
-		 * Append comma delimiter only if we have already outputted some
-		 * fields after the initial string "{ ".
+		 * Append comma delimiter only if we have already output some fields
+		 * after the initial string "{ ".
 		 */
 		if (out->len > 2)
 			appendStringInfoString(out, ", ");
@@ -1137,8 +1185,8 @@ json_object_agg_transfn_worker(FunctionCallInfo fcinfo,
 
 		if (!json_unique_check_key(&state->unique_check.check, key, 0))
 			ereport(ERROR,
-					(errcode(ERRCODE_DUPLICATE_JSON_OBJECT_KEY_VALUE),
-					 errmsg("duplicate JSON key %s", key)));
+					errcode(ERRCODE_DUPLICATE_JSON_OBJECT_KEY_VALUE),
+					errmsg("duplicate JSON key %s", key));
 
 		if (skip)
 			PG_RETURN_POINTER(state);
@@ -1273,7 +1321,7 @@ json_build_object_worker(int nargs, Datum *args, bool *nulls, Oid *types,
 			if (!unique_keys)
 				continue;
 
-			out = json_unique_builder_get_skipped_keys(&unique_check);
+			out = json_unique_builder_get_throwawaybuf(&unique_check);
 		}
 		else
 		{
@@ -1285,11 +1333,10 @@ json_build_object_worker(int nargs, Datum *args, bool *nulls, Oid *types,
 		/* process key */
 		if (nulls[i])
 			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("argument %d cannot be null", i + 1),
-					 errhint("Object keys should be text.")));
+					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					 errmsg("null value not allowed for object key")));
 
-		/* save key offset before key appending */
+		/* save key offset before appending it */
 		key_offset = out->len;
 
 		add_json(args[i], false, out, types[i], true);
@@ -1301,8 +1348,8 @@ json_build_object_worker(int nargs, Datum *args, bool *nulls, Oid *types,
 
 			if (!json_unique_check_key(&unique_check.check, key, 0))
 				ereport(ERROR,
-						(errcode(ERRCODE_DUPLICATE_JSON_OBJECT_KEY_VALUE),
-						 errmsg("duplicate JSON key %s", key)));
+						errcode(ERRCODE_DUPLICATE_JSON_OBJECT_KEY_VALUE),
+						errmsg("duplicate JSON key %s", key));
 
 			if (skip)
 				continue;
@@ -1450,9 +1497,7 @@ json_object(PG_FUNCTION_ARGS)
 					 errmsg("wrong number of array subscripts")));
 	}
 
-	deconstruct_array(in_array,
-					  TEXTOID, -1, false, TYPALIGN_INT,
-					  &in_datums, &in_nulls, &in_count);
+	deconstruct_array_builtin(in_array, TEXTOID, &in_datums, &in_nulls, &in_count);
 
 	count = in_count / 2;
 
@@ -1526,13 +1571,8 @@ json_object_two_arg(PG_FUNCTION_ARGS)
 	if (nkdims == 0)
 		PG_RETURN_DATUM(CStringGetTextDatum("{}"));
 
-	deconstruct_array(key_array,
-					  TEXTOID, -1, false, TYPALIGN_INT,
-					  &key_datums, &key_nulls, &key_count);
-
-	deconstruct_array(val_array,
-					  TEXTOID, -1, false, TYPALIGN_INT,
-					  &val_datums, &val_nulls, &val_count);
+	deconstruct_array_builtin(key_array, TEXTOID, &key_datums, &key_nulls, &key_count);
+	deconstruct_array_builtin(val_array, TEXTOID, &val_datums, &val_nulls, &val_count);
 
 	if (key_count != val_count)
 		ereport(ERROR,
@@ -1626,48 +1666,51 @@ escape_json(StringInfo buf, const char *str)
 }
 
 /* Semantic actions for key uniqueness check */
-static void
+static JsonParseErrorType
 json_unique_object_start(void *_state)
 {
 	JsonUniqueParsingState *state = _state;
 	JsonUniqueStackEntry *entry;
 
 	if (!state->unique)
-		return;
+		return JSON_SUCCESS;
 
 	/* push object entry to stack */
 	entry = palloc(sizeof(*entry));
 	entry->object_id = state->id_counter++;
 	entry->parent = state->stack;
 	state->stack = entry;
+
+	return JSON_SUCCESS;
 }
 
-static void
+static JsonParseErrorType
 json_unique_object_end(void *_state)
 {
 	JsonUniqueParsingState *state = _state;
 	JsonUniqueStackEntry *entry;
 
 	if (!state->unique)
-		return;
+		return JSON_SUCCESS;
 
 	entry = state->stack;
 	state->stack = entry->parent;	/* pop object from stack */
 	pfree(entry);
+	return JSON_SUCCESS;
 }
 
-static void
+static JsonParseErrorType
 json_unique_object_field_start(void *_state, char *field, bool isnull)
 {
 	JsonUniqueParsingState *state = _state;
 	JsonUniqueStackEntry *entry;
 
 	if (!state->unique)
-		return;
+		return JSON_SUCCESS;
 
 	/* find key collision in the current object */
 	if (json_unique_check_key(&state->check, field, state->stack->object_id))
-		return;
+		return JSON_SUCCESS;
 
 	state->unique = false;
 
@@ -1677,6 +1720,7 @@ json_unique_object_field_start(void *_state, char *field, bool isnull)
 		state->stack = entry->parent;
 		pfree(entry);
 	}
+	return JSON_SUCCESS;
 }
 
 /* Validate JSON text and additionally check key uniqueness */
@@ -1707,7 +1751,7 @@ json_validate(text *json, bool check_unique_keys, bool throw_error)
 	if (result != JSON_SUCCESS)
 	{
 		if (throw_error)
-			json_ereport_error(result, lex);
+			json_errsave_error(result, lex, NULL);
 
 		return false;			/* invalid json */
 	}
@@ -1741,11 +1785,16 @@ Datum
 json_typeof(PG_FUNCTION_ARGS)
 {
 	text	   *json = PG_GETARG_TEXT_PP(0);
+	JsonLexContext *lex = makeJsonLexContext(json, false);
 	char	   *type;
 	JsonTokenType tok;
+	JsonParseErrorType result;
 
 	/* Lex exactly one token from the input and check its type. */
-	tok = json_get_first_token(json, true);
+	result = json_lex(lex);
+	if (result != JSON_SUCCESS)
+		json_errsave_error(result, lex, NULL);
+	tok = lex->token_type;
 
 	switch (tok)
 	{

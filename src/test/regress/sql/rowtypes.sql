@@ -31,6 +31,13 @@ select '[]'::fullname;          -- bad
 select ' (Joe,Blow)  '::fullname;  -- ok, extra whitespace
 select '(Joe,Blow) /'::fullname;  -- bad
 
+-- test non-error-throwing API
+SELECT pg_input_is_valid('(1,2)', 'complex');
+SELECT pg_input_is_valid('(1,2', 'complex');
+SELECT pg_input_is_valid('(1,zed)', 'complex');
+SELECT * FROM pg_input_error_info('(1,zed)', 'complex');
+SELECT * FROM pg_input_error_info('(1,1e400)', 'complex');
+
 create temp table quadtable(f1 int, q quad);
 
 insert into quadtable values (1, ((3.3,4.4),(5.5,6.6)));
@@ -77,6 +84,11 @@ create temp table pp (f1 text);
 insert into pp values (repeat('abcdefghijkl', 100000));
 
 insert into people select ('Jim', f1, null)::fullname, current_date from pp;
+
+select (fn).first, substr((fn).last, 1, 20), length((fn).last) from people;
+
+-- try an update on a toasted composite value, too
+update people set fn.first = 'Jack';
 
 select (fn).first, substr((fn).last, 1, 20), length((fn).last) from people;
 

@@ -10,6 +10,7 @@
 #ifndef GRAPHNODES_H
 #define GRAPHNODES_H
 
+#include "nodes/nodes.h"
 #include "nodes/execnodes.h"
 
 typedef struct GraphPath
@@ -21,6 +22,8 @@ typedef struct GraphPath
 
 typedef struct GraphVertex
 {
+	pg_node_attr(custom_read_write, custom_copy_equal)
+
 	NodeTag		type;
 	AttrNumber	resno;
 	bool		create;			/* whether this vertex will be created or not */
@@ -35,6 +38,8 @@ typedef struct GraphVertex
 
 typedef struct GraphEdge
 {
+	pg_node_attr(custom_read_write, custom_copy_equal)
+
 	NodeTag		type;
 	uint32		direction;		/* bitmask of directions (see above) */
 	AttrNumber	resno;
@@ -52,6 +57,8 @@ typedef enum GSPKind
 
 typedef struct GraphSetProp
 {
+	pg_node_attr(custom_read_write, custom_copy_equal)
+
 	NodeTag		type;
 	GSPKind		kind;
 	char	   *variable;
@@ -63,6 +70,8 @@ typedef struct GraphSetProp
 
 typedef struct GraphDelElem
 {
+	pg_node_attr(custom_read_write, custom_copy_equal)
+
 	NodeTag		type;
 	char	   *variable;
 	Node	   *elem;

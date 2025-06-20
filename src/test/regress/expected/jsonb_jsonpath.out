@@ -1920,6 +1920,21 @@ select jsonb_path_query('"2017-03-10T12:34:56+3:10"', '$.datetime()');
 select jsonb_path_query('"2017-03-10t12:34:56+3:10"', '$.datetime()');
 ERROR:  datetime format is not recognized: "2017-03-10t12:34:56+3:10"
 HINT:  Use a datetime template argument to specify the input data format.
+select jsonb_path_query('"2017-03-10 12:34:56.789+3:10"', '$.datetime()');
+        jsonb_path_query         
+---------------------------------
+ "2017-03-10T12:34:56.789+03:10"
+(1 row)
+
+select jsonb_path_query('"2017-03-10T12:34:56.789+3:10"', '$.datetime()');
+        jsonb_path_query         
+---------------------------------
+ "2017-03-10T12:34:56.789+03:10"
+(1 row)
+
+select jsonb_path_query('"2017-03-10t12:34:56.789+3:10"', '$.datetime()');
+ERROR:  datetime format is not recognized: "2017-03-10t12:34:56.789+3:10"
+HINT:  Use a datetime template argument to specify the input data format.
 select jsonb_path_query('"12:34:56"', '$.datetime().type()');
      jsonb_path_query     
 --------------------------
@@ -2212,6 +2227,14 @@ SELECT jsonb_path_query('[{"a": 1}, {"a": 2}]', '$[*] ? (@.a > 10)');
 ------------------
 (0 rows)
 
+SELECT jsonb_path_query('[{"a": 1}]', '$undefined_var');
+ERROR:  could not find jsonpath variable "undefined_var"
+SELECT jsonb_path_query('[{"a": 1}]', 'false');
+ jsonb_path_query 
+------------------
+ false
+(1 row)
+
 SELECT jsonb_path_query_array('[{"a": 1}, {"a": 2}, {}]', 'strict $[*].a');
 ERROR:  JSON object does not contain key "a"
 SELECT jsonb_path_query_array('[{"a": 1}, {"a": 2}]', '$[*].a');
@@ -2282,6 +2305,14 @@ SELECT jsonb_path_query_first('[{"a": 1}, {"a": 2}, {"a": 3}, {"a": 5}]', '$[*].
  
 (1 row)
 
+SELECT jsonb_path_query_first('[{"a": 1}]', '$undefined_var');
+ERROR:  could not find jsonpath variable "undefined_var"
+SELECT jsonb_path_query_first('[{"a": 1}]', 'false');
+ jsonb_path_query_first 
+------------------------
+ false
+(1 row)
+
 SELECT jsonb '[{"a": 1}, {"a": 2}]' @? '$[*].a ? (@ > 1)';
  ?column? 
 ----------
@@ -2310,6 +2341,14 @@ SELECT jsonb_path_exists('[{"a": 1}, {"a": 2}, {"a": 3}, {"a": 5}]', '$[*] ? (@.
  jsonb_path_exists 
 -------------------
  f
+(1 row)
+
+SELECT jsonb_path_exists('[{"a": 1}]', '$undefined_var');
+ERROR:  could not find jsonpath variable "undefined_var"
+SELECT jsonb_path_exists('[{"a": 1}]', 'false');
+ jsonb_path_exists 
+-------------------
+ t
 (1 row)
 
 SELECT jsonb_path_match('true', '$', silent => false);
@@ -2372,6 +2411,14 @@ SELECT jsonb_path_match('[{"a": 1}, {"a": 2}]', '$[*].a > 1');
  jsonb_path_match 
 ------------------
  t
+(1 row)
+
+SELECT jsonb_path_match('[{"a": 1}]', '$undefined_var');
+ERROR:  could not find jsonpath variable "undefined_var"
+SELECT jsonb_path_match('[{"a": 1}]', 'false');
+ jsonb_path_match 
+------------------
+ f
 (1 row)
 
 -- test string comparison (Unicode codepoint collation)

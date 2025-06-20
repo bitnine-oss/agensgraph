@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 # Test logical replication with partitioned tables
 use strict;
@@ -153,12 +153,8 @@ ALTER TABLE ONLY tab1_2 ENABLE REPLICA TRIGGER sub2_tab1_2_log_op_trigger;
 });
 
 # Wait for initial sync of all subscriptions
-my $synced_query =
-  "SELECT count(1) = 0 FROM pg_subscription_rel WHERE srsubstate NOT IN ('r', 's');";
-$node_subscriber1->poll_query_until('postgres', $synced_query)
-  or die "Timed out while waiting for subscriber to synchronize data";
-$node_subscriber2->poll_query_until('postgres', $synced_query)
-  or die "Timed out while waiting for subscriber to synchronize data";
+$node_subscriber1->wait_for_subscription_sync;
+$node_subscriber2->wait_for_subscription_sync;
 
 # Tests for replication using leaf partition identity and schema
 
@@ -413,10 +409,10 @@ $node_publisher->safe_psql('postgres',
 $node_publisher->safe_psql('postgres',
 	"CREATE TABLE tab4 (a int PRIMARY KEY) PARTITION BY LIST (a)");
 $node_publisher->safe_psql('postgres',
-	"CREATE TABLE tab4_1 PARTITION OF tab4 FOR VALUES IN (0, 1) PARTITION BY LIST (a)"
+	"CREATE TABLE tab4_1 PARTITION OF tab4 FOR VALUES IN (-1, 0, 1) PARTITION BY LIST (a)"
 );
 $node_publisher->safe_psql('postgres',
-	"CREATE TABLE tab4_1_1 PARTITION OF tab4_1 FOR VALUES IN (0, 1)");
+	"CREATE TABLE tab4_1_1 PARTITION OF tab4_1 FOR VALUES IN (-1, 0, 1)");
 
 $node_publisher->safe_psql('postgres',
 	"ALTER PUBLICATION pub_all SET (publish_via_partition_root = true)");
@@ -428,13 +424,13 @@ $node_publisher->safe_psql('postgres',
 	"CREATE PUBLICATION pub_viaroot FOR TABLE tab2, tab2_1, tab3_1 WITH (publish_via_partition_root = true)"
 );
 
-# for tab4, we publish changes through the "middle" partitioned table
 $node_publisher->safe_psql('postgres',
 	"CREATE PUBLICATION pub_lower_level FOR TABLE tab4_1 WITH (publish_via_partition_root = true)"
 );
 
 # prepare data for the initial sync
 $node_publisher->safe_psql('postgres', "INSERT INTO tab2 VALUES (1)");
+$node_publisher->safe_psql('postgres', "INSERT INTO tab4 VALUES (-1)");
 
 # subscriber 1
 $node_subscriber1->safe_psql('postgres', "DROP SUBSCRIPTION sub1");
@@ -483,21 +479,26 @@ $node_subscriber2->safe_psql('postgres',
 	"CREATE TABLE tab4 (a int PRIMARY KEY)");
 $node_subscriber2->safe_psql('postgres',
 	"CREATE TABLE tab4_1 (a int PRIMARY KEY)");
-# Publication that sub2 points to now publishes via root, so must update
-# subscription target relations. We set the list of publications so that
-# the FOR ALL TABLES publication is second (the list order matters).
+# Since we specified publish_via_partition_root in pub_all and
+# pub_lower_level, all partition tables use their root tables' identity and
+# schema. We set the list of publications so that the FOR ALL TABLES
+# publication is second (the list order matters).
 $node_subscriber2->safe_psql('postgres',
 	"ALTER SUBSCRIPTION sub2 SET PUBLICATION pub_lower_level, pub_all");
 
 # Wait for initial sync of all subscriptions
-$node_subscriber1->poll_query_until('postgres', $synced_query)
-  or die "Timed out while waiting for subscriber to synchronize data";
-$node_subscriber2->poll_query_until('postgres', $synced_query)
-  or die "Timed out while waiting for subscriber to synchronize data";
+$node_subscriber1->wait_for_subscription_sync;
+$node_subscriber2->wait_for_subscription_sync;
 
 # check that data is synced correctly
 $result = $node_subscriber1->safe_psql('postgres', "SELECT c, a FROM tab2");
 is($result, qq(sub1_tab2|1), 'initial data synced for pub_viaroot');
+$result =
+  $node_subscriber2->safe_psql('postgres', "SELECT a FROM tab4 ORDER BY 1");
+is($result, qq(-1), 'initial data synced for pub_lower_level and pub_all');
+$result =
+  $node_subscriber2->safe_psql('postgres', "SELECT a FROM tab4_1 ORDER BY 1");
+is($result, qq(), 'initial data synced for pub_lower_level and pub_all');
 
 # insert
 $node_publisher->safe_psql('postgres', "INSERT INTO tab1 VALUES (1), (0)");
@@ -554,7 +555,8 @@ sub2_tab3|5), 'inserts into tab3 replicated');
 # maps to the tab4 relation on subscriber.
 $result =
   $node_subscriber2->safe_psql('postgres', "SELECT a FROM tab4 ORDER BY 1");
-is($result, qq(0), 'inserts into tab4 replicated');
+is( $result, qq(-1
+0), 'inserts into tab4 replicated');
 
 $result =
   $node_subscriber2->safe_psql('postgres', "SELECT a FROM tab4_1 ORDER BY 1");
@@ -562,14 +564,13 @@ is($result, qq(), 'inserts into tab4_1 replicated');
 
 
 # now switch the order of publications in the list, try again, the result
-# should be the same (no dependence on order of pulications)
+# should be the same (no dependence on order of publications)
 $node_subscriber2->safe_psql('postgres',
 	"ALTER SUBSCRIPTION sub2 SET PUBLICATION pub_all, pub_lower_level");
 
 # make sure the subscription on the second subscriber is synced, before
 # continuing
-$node_subscriber2->poll_query_until('postgres', $synced_query)
-  or die "Timed out while waiting for subscriber to synchronize data";
+$node_subscriber2->wait_for_subscription_sync;
 
 # Insert a change into the leaf partition, should be replicated through
 # the partition root (thanks to the FOR ALL TABLES partition).
@@ -581,7 +582,8 @@ $node_publisher->wait_for_catchup('sub2');
 # maps to the tab4 relation on subscriber.
 $result =
   $node_subscriber2->safe_psql('postgres', "SELECT a FROM tab4 ORDER BY 1");
-is( $result, qq(0
+is( $result, qq(-1
+0
 1), 'inserts into tab4 replicated');
 
 $result =
@@ -824,8 +826,7 @@ $node_subscriber2->safe_psql(
 $node_subscriber2->safe_psql('postgres',
 	"ALTER SUBSCRIPTION sub2 REFRESH PUBLICATION");
 
-$node_subscriber2->poll_query_until('postgres', $synced_query)
-  or die "Timed out while waiting for subscriber to synchronize data";
+$node_subscriber2->wait_for_subscription_sync;
 
 # Make partition map cache
 $node_publisher->safe_psql('postgres', "INSERT INTO tab5 VALUES (1, 1)");

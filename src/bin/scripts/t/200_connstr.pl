@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 use strict;
 use warnings;
@@ -12,7 +12,7 @@ use Test::More;
 
 # We're going to use byte sequences that aren't valid UTF-8 strings.  Use
 # LATIN1, which accepts any byte and has a conversion from each byte to UTF-8.
-$ENV{LC_ALL}           = 'C';
+$ENV{LC_ALL} = 'C';
 $ENV{PGCLIENTENCODING} = 'LATIN1';
 
 # Create database names covering the range of LATIN1 characters and

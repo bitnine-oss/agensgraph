@@ -1,6 +1,6 @@
 # -*-perl-*- hey - emacs - this is a perl file
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 # src/tools/msvc/vcregress.pl
 
@@ -25,7 +25,7 @@ my $startdir = getcwd();
 
 chdir "../../.." if (-d "../../../src/tools/msvc");
 
-my $topdir         = getcwd();
+my $topdir = getcwd();
 my $tmp_installdir = "$topdir/tmp_install";
 
 do './src/tools/msvc/config_default.pl';
@@ -64,16 +64,16 @@ else
 # use a capital C here because config.pl has $config
 my $Config = -e "release/postgres/postgres.exe" ? "Release" : "Debug";
 
-copy("$Config/refint/refint.dll",                 "src/test/regress");
-copy("$Config/autoinc/autoinc.dll",               "src/test/regress");
-copy("$Config/regress/regress.dll",               "src/test/regress");
+copy("$Config/refint/refint.dll", "src/test/regress");
+copy("$Config/autoinc/autoinc.dll", "src/test/regress");
+copy("$Config/regress/regress.dll", "src/test/regress");
 copy("$Config/dummy_seclabel/dummy_seclabel.dll", "src/test/regress");
 
 # Configuration settings used by TAP tests
-$ENV{with_ssl}    = $config->{openssl} ? 'openssl' : 'no';
-$ENV{with_ldap}   = $config->{ldap}    ? 'yes'     : 'no';
-$ENV{with_icu}    = $config->{icu}     ? 'yes'     : 'no';
-$ENV{with_gssapi} = $config->{gss}     ? 'yes'     : 'no';
+$ENV{with_ssl} = $config->{openssl} ? 'openssl' : 'no';
+$ENV{with_ldap} = $config->{ldap} ? 'yes' : 'no';
+$ENV{with_icu} = $config->{icu} ? 'yes' : 'no';
+$ENV{with_gssapi} = $config->{gss} ? 'yes' : 'no';
 $ENV{with_krb_srvnam} = $config->{krb_srvnam} || 'postgres';
 $ENV{with_readline} = 'no';
 
@@ -99,17 +99,17 @@ $temp_config = "--temp-config=\"$ENV{TEMP_CONFIG}\""
 chdir "src/test/regress";
 
 my %command = (
-	CHECK          => \&check,
-	PLCHECK        => \&plcheck,
-	INSTALLCHECK   => \&installcheck,
-	ECPGCHECK      => \&ecpgcheck,
-	CONTRIBCHECK   => \&contribcheck,
-	MODULESCHECK   => \&modulescheck,
+	CHECK => \&check,
+	PLCHECK => \&plcheck,
+	INSTALLCHECK => \&installcheck,
+	ECPGCHECK => \&ecpgcheck,
+	CONTRIBCHECK => \&contribcheck,
+	MODULESCHECK => \&modulescheck,
 	ISOLATIONCHECK => \&isolationcheck,
-	BINCHECK       => \&bincheck,
-	RECOVERYCHECK  => \&recoverycheck,
-	UPGRADECHECK   => \&upgradecheck,     # no-op
-	TAPTEST        => \&taptest,);
+	BINCHECK => \&bincheck,
+	RECOVERYCHECK => \&recoverycheck,
+	UPGRADECHECK => \&upgradecheck,    # no-op
+	TAPTEST => \&taptest,);
 
 my $proc = $command{$what};
 
@@ -124,7 +124,7 @@ exit 0;
 # Helper function for set_command_env, to set one environment command.
 sub set_single_env
 {
-	my $envname    = shift;
+	my $envname = shift;
 	my $envdefault = shift;
 
 	# If a command is defined by the environment, just use it.
@@ -145,8 +145,9 @@ sub set_single_env
 sub set_command_env
 {
 	set_single_env('GZIP_PROGRAM', 'gzip');
-	set_single_env('LZ4',          'lz4');
-	set_single_env('ZSTD',         'zstd');
+	set_single_env('LZ4', 'lz4');
+	set_single_env('OPENSSL', 'openssl');
+	set_single_env('ZSTD', 'zstd');
 }
 
 sub installcheck_internal
@@ -155,17 +156,15 @@ sub installcheck_internal
 	# for backwards compatibility, "serial" runs the tests in
 	# parallel_schedule one by one.
 	my $maxconn = $maxconn;
-	$maxconn  = "--max-connections=1" if $schedule eq 'serial';
-	$schedule = 'parallel'            if $schedule eq 'serial';
+	$maxconn = "--max-connections=1" if $schedule eq 'serial';
+	$schedule = 'parallel' if $schedule eq 'serial';
 
 	my @args = (
 		"../../../$Config/pg_regress/pg_regress",
 		"--dlpath=.",
 		"--bindir=../../../$Config/psql",
 		"--schedule=${schedule}_schedule",
-		"--max-concurrent-tests=20",
-		"--encoding=SQL_ASCII",
-		"--no-locale");
+		"--max-concurrent-tests=20");
 	push(@args, $maxconn) if $maxconn;
 	push(@args, @EXTRA_REGRESS_OPTS);
 	system(@args);
@@ -184,11 +183,12 @@ sub installcheck
 sub check
 {
 	my $schedule = shift || 'parallel';
+	my $encoding = $ENV{ENCODING} || "SQL_ASCII";
 	# for backwards compatibility, "serial" runs the tests in
 	# parallel_schedule one by one.
 	my $maxconn = $maxconn;
-	$maxconn  = "--max-connections=1" if $schedule eq 'serial';
-	$schedule = 'parallel'            if $schedule eq 'serial';
+	$maxconn = "--max-connections=1" if $schedule eq 'serial';
+	$schedule = 'parallel' if $schedule eq 'serial';
 
 	InstallTemp();
 	chdir "${topdir}/src/test/regress";
@@ -198,10 +198,10 @@ sub check
 		"--bindir=",
 		"--schedule=${schedule}_schedule",
 		"--max-concurrent-tests=20",
-		"--encoding=SQL_ASCII",
+		"--encoding=${encoding}",
 		"--no-locale",
 		"--temp-instance=./tmp_check");
-	push(@args, $maxconn)     if $maxconn;
+	push(@args, $maxconn) if $maxconn;
 	push(@args, $temp_config) if $temp_config;
 	system(@args);
 	my $status = $? >> 8;
@@ -219,7 +219,7 @@ sub ecpgcheck
 	InstallTemp();
 	chdir "$topdir/src/interfaces/ecpg/test";
 	my $schedule = "ecpg";
-	my @args     = (
+	my @args = (
 		"../../../../$Config/pg_regress_ecpg/pg_regress_ecpg",
 		"--bindir=",
 		"--dbname=ecpg1_regression,ecpg2_regression",
@@ -287,11 +287,13 @@ sub tap_check
 
 	# adjust the environment for just this test
 	local %ENV = %ENV;
-	$ENV{PERL5LIB}      = "$topdir/src/test/perl;$ENV{PERL5LIB}";
-	$ENV{PG_REGRESS}    = "$topdir/$Config/pg_regress/pg_regress";
+	$ENV{PERL5LIB} = "$topdir/src/test/perl;$ENV{PERL5LIB}";
+	$ENV{PG_REGRESS} = "$topdir/$Config/pg_regress/pg_regress";
 	$ENV{REGRESS_SHLIB} = "$topdir/src/test/regress/regress.dll";
 
-	$ENV{TESTDIR} = "$dir";
+	$ENV{TESTDATADIR} = "$dir/tmp_check";
+	$ENV{TESTLOGDIR} = "$dir/tmp_check/log";
+
 	my $module = basename $dir;
 	# add the module build dir as the second element in the PATH
 	$ENV{PATH} =~ s!;!;$topdir/$Config/$module;!;
@@ -465,11 +467,11 @@ sub contribcheck
 	foreach my $module (glob("*"))
 	{
 		# these configuration-based exclusions must match Install.pm
-		next if ($module eq "uuid-ossp"  && !defined($config->{uuid}));
-		next if ($module eq "sslinfo"    && !defined($config->{openssl}));
-		next if ($module eq "pgcrypto"   && !defined($config->{openssl}));
-		next if ($module eq "xml2"       && !defined($config->{xml}));
-		next if ($module =~ /_plperl$/   && !defined($config->{perl}));
+		next if ($module eq "uuid-ossp" && !defined($config->{uuid}));
+		next if ($module eq "sslinfo" && !defined($config->{openssl}));
+		next if ($module eq "pgcrypto" && !defined($config->{openssl}));
+		next if ($module eq "xml2" && !defined($config->{xml}));
+		next if ($module =~ /_plperl$/ && !defined($config->{perl}));
 		next if ($module =~ /_plpython$/ && !defined($config->{python}));
 		next if ($module eq "sepgsql");
 
@@ -499,7 +501,7 @@ sub recoverycheck
 {
 	InstallTemp();
 
-	my $dir    = "$topdir/src/test/recovery";
+	my $dir = "$topdir/src/test/recovery";
 	my $status = tap_check($dir);
 	exit $status if $status;
 	return;
@@ -606,7 +608,7 @@ sub fetchTests
 
 			my $pgptests =
 			  $config->{zlib}
-			  ? GetTests("ZLIB_TST",     $m)
+			  ? GetTests("ZLIB_TST", $m)
 			  : GetTests("ZLIB_OFF_TST", $m);
 			$t =~ s/\$\(CF_PGP_TESTS\)/$pgptests/;
 		}
@@ -618,7 +620,7 @@ sub fetchTests
 sub GetTests
 {
 	my $testname = shift;
-	my $m        = shift;
+	my $m = shift;
 	if ($m =~ /^$testname\s*=\s*(.*)$/gm)
 	{
 		return $1;

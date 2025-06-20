@@ -3,7 +3,7 @@
 # pg_aggregate.dat
 #    Initial contents of the pg_aggregate system catalog.
 #
-# Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/include/catalog/pg_aggregate.dat
@@ -543,20 +543,29 @@
 
 # array
 { aggfnoid => 'array_agg(anynonarray)', aggtransfn => 'array_agg_transfn',
-  aggfinalfn => 'array_agg_finalfn', aggfinalextra => 't',
+  aggfinalfn => 'array_agg_finalfn', aggcombinefn => 'array_agg_combine',
+  aggserialfn => 'array_agg_serialize',
+  aggdeserialfn => 'array_agg_deserialize', aggfinalextra => 't',
   aggtranstype => 'internal' },
 { aggfnoid => 'array_agg(anyarray)', aggtransfn => 'array_agg_array_transfn',
-  aggfinalfn => 'array_agg_array_finalfn', aggfinalextra => 't',
+  aggfinalfn => 'array_agg_array_finalfn',
+  aggcombinefn => 'array_agg_array_combine',
+  aggserialfn => 'array_agg_array_serialize',
+  aggdeserialfn => 'array_agg_array_deserialize', aggfinalextra => 't',
   aggtranstype => 'internal' },
 
 # text
 { aggfnoid => 'string_agg(text,text)', aggtransfn => 'string_agg_transfn',
-  aggfinalfn => 'string_agg_finalfn', aggtranstype => 'internal' },
+  aggfinalfn => 'string_agg_finalfn', aggcombinefn => 'string_agg_combine',
+  aggserialfn => 'string_agg_serialize',
+  aggdeserialfn => 'string_agg_deserialize', aggtranstype => 'internal' },
 
 # bytea
 { aggfnoid => 'string_agg(bytea,bytea)',
   aggtransfn => 'bytea_string_agg_transfn',
-  aggfinalfn => 'bytea_string_agg_finalfn', aggtranstype => 'internal' },
+  aggfinalfn => 'bytea_string_agg_finalfn',
+  aggcombinefn => 'string_agg_combine', aggserialfn => 'string_agg_serialize',
+  aggdeserialfn => 'string_agg_deserialize', aggtranstype => 'internal' },
 
 # range
 { aggfnoid => 'range_intersect_agg(anyrange)',
@@ -654,5 +663,9 @@
   aggtransfn => 'ordered_set_transition_multi',
   aggfinalfn => 'dense_rank_final', aggfinalextra => 't', aggfinalmodify => 'w',
   aggmfinalmodify => 'w', aggtranstype => 'internal' },
+
+# any_value
+{ aggfnoid => 'any_value(anyelement)', aggtransfn => 'any_value_transfn',
+  aggcombinefn => 'any_value_transfn', aggtranstype => 'anyelement' },
 
 ]

@@ -1,7 +1,7 @@
 /*
  *	pg_upgrade.h
  *
- *	Copyright (c) 2010-2022, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2023, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/pg_upgrade.h
  */
 
@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 
+#include "common/relpath.h"
 #include "libpq-fe.h"
 
 /* For now, pg_upgrade does not use common/logging.c; use our own pg_fatal */
@@ -135,7 +136,7 @@ typedef struct
 	char	   *nspname;		/* namespace name */
 	char	   *relname;		/* relation name */
 	Oid			reloid;			/* relation OID */
-	Oid			relfilenode;	/* relation file node */
+	RelFileNumber relfilenumber;	/* relation file number */
 	Oid			indtable;		/* if index, OID of its table, else 0 */
 	Oid			toastheap;		/* if toast table, OID of base table, else 0 */
 	char	   *tablespace;		/* tablespace path; "" for cluster default */
@@ -159,7 +160,7 @@ typedef struct
 	const char *old_tablespace_suffix;
 	const char *new_tablespace_suffix;
 	Oid			db_oid;
-	Oid			relfilenode;
+	RelFileNumber relfilenumber;
 	/* the rest are used only for logging and error reporting */
 	char	   *nspname;		/* namespaces */
 	char	   *relname;
@@ -174,13 +175,20 @@ typedef struct
 	char	   *db_name;		/* database name */
 	char		db_tablespace[MAXPGPATH];	/* database default tablespace
 											 * path */
+	RelInfoArr	rel_arr;		/* array of all user relinfos */
+} DbInfo;
+
+/*
+ * Locale information about a database.
+ */
+typedef struct
+{
 	char	   *db_collate;
 	char	   *db_ctype;
 	char		db_collprovider;
 	char	   *db_iculocale;
 	int			db_encoding;
-	RelInfoArr	rel_arr;		/* array of all user relinfos */
-} DbInfo;
+} DbLocaleInfo;
 
 typedef struct
 {
@@ -216,7 +224,7 @@ typedef struct
 	uint32		large_object;
 	bool		date_is_int;
 	bool		float8_pass_by_value;
-	bool		data_checksum_version;
+	uint32		data_checksum_version;
 } ControlData;
 
 /*
@@ -235,14 +243,12 @@ typedef enum
 typedef enum
 {
 	PG_VERBOSE,
-	PG_STATUS,
+	PG_STATUS,					/* these messages do not get a newline added */
+	PG_REPORT_NONL,				/* these too */
 	PG_REPORT,
 	PG_WARNING,
 	PG_FATAL
 } eLogType;
-
-
-typedef long pgpid_t;
 
 
 /*
@@ -253,6 +259,7 @@ typedef long pgpid_t;
 typedef struct
 {
 	ControlData controldata;	/* pg_control information */
+	DbLocaleInfo *template0;	/* template0 locale info */
 	DbInfoArr	dbarr;			/* dbinfos array */
 	char	   *pgdata;			/* pathname for cluster's $PGDATA directory */
 	char	   *pgconfig;		/* pathname for cluster's config file
@@ -360,7 +367,7 @@ void		generate_old_dump(void);
 
 #define EXEC_PSQL_ARGS "--echo-queries --set ON_ERROR_STOP=on --no-psqlrc --dbname=template1"
 
-bool		exec_prog(const char *log_file, const char *opt_log_file,
+bool		exec_prog(const char *log_filename, const char *opt_log_file,
 					  bool report_error, bool exit_on_error, const char *fmt,...) pg_attribute_printf(5, 6);
 void		verify_directories(void);
 bool		pid_lock_file_exists(const char *datadir);
@@ -400,7 +407,7 @@ void		parseCommandLine(int argc, char *argv[]);
 void		adjust_data_dir(ClusterInfo *cluster);
 void		get_sock_dir(ClusterInfo *cluster, bool live_check);
 
-/* relfilenode.c */
+/* relfilenumber.c */
 
 void		transfer_all_new_tablespaces(DbInfoArr *old_db_arr,
 										 DbInfoArr *new_db_arr, char *old_pgdata, char *new_pgdata);

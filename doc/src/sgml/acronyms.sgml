@@ -299,9 +299,7 @@
     <term><acronym>HOT</acronym></term>
     <listitem>
      <para>
-      <ulink
-      url="https://git.postgresql.org/gitweb/?p=postgresql.git;a=blob;f=src/backend/access/heap/README.HOT;hb=HEAD">Heap-Only
-      Tuples</ulink>
+      <link linkend="storage-hot">Heap-Only Tuples</link>
      </para>
     </listitem>
    </varlistentry>
@@ -404,8 +402,27 @@
     <term><acronym>LSN</acronym></term>
     <listitem>
      <para>
-      Log Sequence Number, see <link linkend="datatype-pg-lsn"><type>pg_lsn</type></link>
-      and <link linkend="wal-internals">WAL Internals</link>.
+      <glossterm linkend="glossary-log-sequence-number">Log Sequence Number</glossterm>
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><acronym>MCF</acronym></term>
+    <listitem>
+     <para>
+      Most Common Frequency, that is the frequency associated with some
+      Most Common Value
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><acronym>MCV</acronym></term>
+    <listitem>
+     <para>
+      Most Common Value, one of the values appearing most often within a
+      particular table column
      </para>
     </listitem>
    </varlistentry>

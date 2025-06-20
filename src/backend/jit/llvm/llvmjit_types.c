@@ -16,7 +16,7 @@
  * bitcode.
  *
  *
- * Copyright (c) 2016-2022, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2023, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/jit/llvm/llvmjit_types.c
@@ -102,7 +102,9 @@ FunctionReturningBool(void)
 void	   *referenced_functions[] =
 {
 	ExecAggInitGroup,
-	ExecAggTransReparent,
+	ExecAggCopyTransValue,
+	ExecEvalPreOrderedDistinctSingle,
+	ExecEvalPreOrderedDistinctMulti,
 	ExecEvalAggOrderedTransDatum,
 	ExecEvalAggOrderedTransTuple,
 	ExecEvalArrayCoerce,
@@ -143,7 +145,6 @@ void	   *referenced_functions[] =
 	ExecEvalXmlExpr,
 	ExecEvalJsonConstructor,
 	ExecEvalJsonIsPredicate,
-	ExecEvalJson,
 	MakeExpandedObjectReadOnlyInternal,
 	slot_getmissingattrs,
 	slot_getsomeattrs_int,

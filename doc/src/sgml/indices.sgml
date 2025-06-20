@@ -103,7 +103,9 @@ CREATE INDEX test1_id_index ON test1 (id);
 
   <para>
    After an index is created, the system has to keep it synchronized with the
-   table.  This adds overhead to data manipulation operations.
+   table.  This adds overhead to data manipulation operations.  Indexes can
+   also prevent the creation of <link linkend="storage-hot">heap-only
+   tuples</link>.
    Therefore indexes that are seldom or never used in queries
    should be removed.
   </para>
@@ -115,7 +117,8 @@ CREATE INDEX test1_id_index ON test1 (id);
 
   <para>
    <productname>PostgreSQL</productname> provides several index types:
-   B-tree, Hash, GiST, SP-GiST, GIN and BRIN.
+   B-tree, Hash, GiST, SP-GiST, GIN, BRIN, and the extension <link
+   linkend="bloom">bloom</link>.
    Each index type uses a different
    algorithm that is best suited to different types of queries.
    By default, the <link linkend="sql-createindex"><command>CREATE
@@ -661,16 +664,18 @@ CREATE INDEX test3_desc_index ON test3 (id DESC NULLS LAST);
    Indexes can also be used to enforce uniqueness of a column's value,
    or the uniqueness of the combined values of more than one column.
 <synopsis>
-CREATE UNIQUE INDEX <replaceable>name</replaceable> ON <replaceable>table</replaceable> (<replaceable>column</replaceable> <optional>, ...</optional>);
+CREATE UNIQUE INDEX <replaceable>name</replaceable> ON <replaceable>table</replaceable> (<replaceable>column</replaceable> <optional>, ...</optional>) <optional> NULLS <optional> NOT </optional> DISTINCT </optional>;
 </synopsis>
    Currently, only B-tree indexes can be declared unique.
   </para>
 
   <para>
    When an index is declared unique, multiple table rows with equal
-   indexed values are not allowed.  Null values are not considered
-   equal.  A multicolumn unique index will only reject cases where all
-   indexed columns are equal in multiple rows.
+   indexed values are not allowed.  By default, null values in a unique column
+   are not considered equal, allowing multiple nulls in the column.  The
+   <literal>NULLS NOT DISTINCT</literal> option modifies this and causes the
+   index to treat nulls as equal.  A multicolumn unique index will only reject
+   cases where all indexed columns are equal in multiple rows.
   </para>
 
   <para>
@@ -749,7 +754,7 @@ CREATE INDEX people_names ON people ((first_name || ' ' || last_name));
   <para>
    Index expressions are relatively expensive to maintain, because the
    derived expression(s) must be computed for each row insertion
-   and non-HOT update.  However, the index expressions are
+   and <link linkend="storage-hot">non-HOT update.</link>  However, the index expressions are
    <emphasis>not</emphasis> recomputed during an indexed search, since they are
    already stored in the index.  In both examples above, the system
    sees the query as just <literal>WHERE indexedcolumn = 'constant'</literal>

@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 # Testing of commit timestamps preservation across restarts
 use strict;
@@ -25,12 +25,12 @@ like(
 
 ($ret, $stdout, $stderr) =
   $node_primary->psql('postgres', qq[SELECT pg_xact_commit_timestamp('1');]);
-is($ret,    0,  'getting ts of BootstrapTransactionId succeeds');
+is($ret, 0, 'getting ts of BootstrapTransactionId succeeds');
 is($stdout, '', 'timestamp of BootstrapTransactionId is null');
 
 ($ret, $stdout, $stderr) =
   $node_primary->psql('postgres', qq[SELECT pg_xact_commit_timestamp('2');]);
-is($ret,    0,  'getting ts of FrozenTransactionId succeeds');
+is($ret, 0, 'getting ts of FrozenTransactionId succeeds');
 is($stdout, '', 'timestamp of FrozenTransactionId is null');
 
 # Since FirstNormalTransactionId will've occurred during initdb, long before we

@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 # Test for replication slot limit
 # Ensure that max_slot_wal_keep_size limits the number of WAL files to
@@ -9,8 +9,6 @@ use warnings;
 
 use PostgreSQL::Test::Utils;
 use PostgreSQL::Test::Cluster;
-
-use File::Path qw(rmtree);
 use Test::More;
 use Time::HiRes qw(usleep);
 
@@ -163,8 +161,7 @@ $node_primary->wait_for_catchup($node_standby);
 
 $node_standby->stop;
 
-ok( !find_in_log(
-		$node_standby,
+ok( !$node_standby->log_contains(
 		"requested WAL segment [0-9A-F]+ has already been removed"),
 	'check that required WAL segments are still available');
 
@@ -184,12 +181,10 @@ $node_primary->safe_psql('postgres',
 	'ALTER SYSTEM RESET max_wal_size; SELECT pg_reload_conf()');
 $node_primary->safe_psql('postgres', "CHECKPOINT;");
 my $invalidated = 0;
-for (my $i = 0; $i < 10000; $i++)
+for (my $i = 0; $i < 10 * $PostgreSQL::Test::Utils::timeout_default; $i++)
 {
-	if (find_in_log(
-			$node_primary,
-			"invalidating slot \"rep1\" because its restart_lsn [0-9A-F/]+ exceeds max_slot_wal_keep_size",
-			$logstart))
+	if ($node_primary->log_contains(
+			'invalidating obsolete replication slot "rep1"', $logstart))
 	{
 		$invalidated = 1;
 		last;
@@ -208,9 +203,9 @@ is($result, "rep1|f|t|lost|",
 
 # Wait until current checkpoint ends
 my $checkpoint_ended = 0;
-for (my $i = 0; $i < 10000; $i++)
+for (my $i = 0; $i < 10 * $PostgreSQL::Test::Utils::timeout_default; $i++)
 {
-	if (find_in_log($node_primary, "checkpoint complete: ", $logstart))
+	if ($node_primary->log_contains("checkpoint complete: ", $logstart))
 	{
 		$checkpoint_ended = 1;
 		last;
@@ -238,10 +233,9 @@ $logstart = get_log_size($node_standby);
 $node_standby->start;
 
 my $failed = 0;
-for (my $i = 0; $i < 10000; $i++)
+for (my $i = 0; $i < 10 * $PostgreSQL::Test::Utils::timeout_default; $i++)
 {
-	if (find_in_log(
-			$node_standby,
+	if ($node_standby->log_contains(
 			"requested WAL segment [0-9A-F]+ has already been removed",
 			$logstart))
 	{
@@ -316,16 +310,13 @@ $node_primary3->append_conf(
 	max_wal_size = 2MB
 	log_checkpoints = yes
 	max_slot_wal_keep_size = 1MB
-
-	# temp debugging aid to analyze 019_replslot_limit failures
-	log_min_messages=debug3
 	));
 $node_primary3->start;
 $node_primary3->safe_psql('postgres',
 	"SELECT pg_create_physical_replication_slot('rep3')");
 # Take backup
 $backup_name = 'my_backup';
-$node_primary3->backup($backup_name, backup_options => ['--verbose']);
+$node_primary3->backup($backup_name);
 # Create standby
 my $node_standby3 = PostgreSQL::Test::Cluster->new('standby_3');
 $node_standby3->init_from_backup($node_primary3, $backup_name,
@@ -336,11 +327,9 @@ $node_primary3->wait_for_catchup($node_standby3);
 
 my $senderpid;
 
-# We've seen occasional cases where multiple walsender pids are active. It
-# could be that we're just observing process shutdown being slow. To collect
-# more information, retry a couple times, print a bit of debugging information
-# each iteration. Don't fail the test if retries find just one pid, the
-# buildfarm failures are too noisy.
+# We've seen occasional cases where multiple walsender pids are still active
+# at this point, apparently just due to process shutdown being slow. To avoid
+# spurious failures, retry a couple times.
 my $i = 0;
 while (1)
 {
@@ -361,8 +350,7 @@ while (1)
 		stderr => \$stderr);
 	diag $stdout, $stderr;
 
-	# unlikely that the problem would resolve after 15s, so give up at point
-	if ($i++ == 150)
+	if ($i++ == 10 * $PostgreSQL::Test::Utils::timeout_default)
 	{
 		# An immediate shutdown may hide evidence of a locking bug. If
 		# retrying didn't resolve the issue, shut down in fast mode.
@@ -386,19 +374,20 @@ $logstart = get_log_size($node_primary3);
 kill 'STOP', $senderpid, $receiverpid;
 advance_wal($node_primary3, 2);
 
+my $msg_logged = 0;
 my $max_attempts = $PostgreSQL::Test::Utils::timeout_default;
 while ($max_attempts-- >= 0)
 {
-	if (find_in_log(
-			$node_primary3,
+	if ($node_primary3->log_contains(
 			"terminating process $senderpid to release replication slot \"rep3\"",
 			$logstart))
 	{
-		ok(1, "walsender termination logged");
+		$msg_logged = 1;
 		last;
 	}
 	sleep 1;
 }
+ok($msg_logged, "walsender termination logged");
 
 # Now let the walsender continue; slot should be killed now.
 # (Must not let walreceiver run yet; otherwise the standby could start another
@@ -409,18 +398,19 @@ $node_primary3->poll_query_until('postgres',
 	"lost")
   or die "timed out waiting for slot to be lost";
 
+$msg_logged = 0;
 $max_attempts = $PostgreSQL::Test::Utils::timeout_default;
 while ($max_attempts-- >= 0)
 {
-	if (find_in_log(
-			$node_primary3,
-			'invalidating slot "rep3" because its restart_lsn', $logstart))
+	if ($node_primary3->log_contains(
+			'invalidating obsolete replication slot "rep3"', $logstart))
 	{
-		ok(1, "slot invalidation logged");
+		$msg_logged = 1;
 		last;
 	}
 	sleep 1;
 }
+ok($msg_logged, "slot invalidation logged");
 
 # Now let the walreceiver continue, so that the node can be stopped cleanly
 kill 'CONT', $receiverpid;
@@ -434,7 +424,7 @@ sub advance_wal
 {
 	my ($node, $n) = @_;
 
-	# Advance by $n segments (= (16 * $n) MB) on primary
+	# Advance by $n segments (= (wal_segment_size * $n) bytes) on primary.
 	for (my $i = 0; $i < $n; $i++)
 	{
 		$node->safe_psql('postgres',
@@ -449,20 +439,6 @@ sub get_log_size
 	my ($node) = @_;
 
 	return (stat $node->logfile)[7];
-}
-
-# find $pat in logfile of $node after $off-th byte
-sub find_in_log
-{
-	my ($node, $pat, $off) = @_;
-
-	$off = 0 unless defined $off;
-	my $log = PostgreSQL::Test::Utils::slurp_file($node->logfile);
-	return 0 if (length($log) <= $off);
-
-	$log = substr($log, $off);
-
-	return $log =~ m/$pat/;
 }
 
 done_testing();

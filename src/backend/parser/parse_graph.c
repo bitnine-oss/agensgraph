@@ -378,6 +378,7 @@ static bool IsNullAConst(Node *arg);
 static List *repairTargetListCollations(List *targetList);
 static Node *resolveVarOrExpr(ParseState *pstate, Node *node,
 							  char *colname, bool node_is_nsitem);
+static void markRelsAsNulledBy(ParseState *pstate, Node *n, int jindex);
 
 Query *
 transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
@@ -463,7 +464,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	{
 		Node	   *where = detail->where;
 
-		AssertArg(detail->kind == CP_WITH);
+		Assert(detail->kind == CP_WITH);
 
 		detail->where = NULL;
 		nsitem = transformClause(pstate, (Node *) clause);
@@ -582,6 +583,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
 	qry->hasAggs = pstate->p_hasAggs;
+	qry->rteperminfos = pstate->p_rteperminfos;
 	if (qry->hasAggs)
 		parseCheckAggregates(pstate, qry);
 
@@ -797,9 +799,8 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
-
+	qry->rteperminfos = pstate->p_rteperminfos;
 	qry->hasSubLinks = pstate->p_hasSubLinks;
-
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 
 	assign_query_collations(pstate, qry);
@@ -813,7 +814,9 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 	CypherCreateClause *detail;
 	CypherPath *cpath;
 	Query	   *qry;
+	
 
+	
 	detail = (CypherCreateClause *) clause->detail;
 	cpath = llast(detail->pattern);
 
@@ -836,8 +839,8 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_GRAPHWRITE;
-	qry->graph.writeOp = GWROP_CREATE;
-	qry->graph.last = (pstate->parentParseState == NULL);
+	qry->g_writeOp = GWROP_CREATE;
+	qry->g_last = (pstate->parentParseState == NULL);
 
 	if (clause->prev != NULL)
 	{
@@ -847,10 +850,10 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 	}
 
-	qry->graph.pattern = transformCreatePattern(pstate, cpath,
-												&qry->targetList);
+	qry->g_pattern = transformCreatePattern(pstate, cpath,
+											&qry->targetList);
 	addRangeTableLabels(pstate, pstate->p_target_labels, qry);
-	qry->graph.nr_modify = pstate->p_nr_modify_clause++;
+	qry->g_nr_modify = pstate->p_nr_modify_clause++;
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
@@ -859,7 +862,7 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, pstate->p_resolved_qual);
-
+	qry->rteperminfos = pstate->p_rteperminfos;
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
 	pstate->p_hasGraphwriteClause = true;
@@ -881,7 +884,7 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	Query	   *qry;
 
 	/* DELETE cannot be the first clause */
-	AssertArg(clause->prev != NULL);
+	Assert(clause->prev != NULL);
 
 	/* Merge same mode of DELETE clauses for reducing delete join */
 	while (cypherClauseTag(clause->prev) == T_CypherDeleteClause)
@@ -897,18 +900,18 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_GRAPHWRITE;
-	qry->graph.writeOp = GWROP_DELETE;
-	qry->graph.last = (pstate->parentParseState == NULL);
-	qry->graph.detach = detail->detach;
+	qry->g_writeOp = GWROP_DELETE;
+	qry->g_last = (pstate->parentParseState == NULL);
+	qry->g_detach = detail->detach;
 
 	nsitem = transformClauseBy(pstate, (Node *) clause, transformDeleteJoin);
 
 	qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
-	qry->graph.exprs = extractVerticesExpr(pstate, detail->exprs,
-										   EXPR_KIND_OTHER);
-	qry->graph.nr_modify = pstate->p_nr_modify_clause++;
+	qry->g_exprs = extractVerticesExpr(pstate, detail->exprs,
+									   EXPR_KIND_OTHER);
+	qry->g_nr_modify = pstate->p_nr_modify_clause++;
 
-	foreach(le, qry->graph.exprs)
+	foreach(le, qry->g_exprs)
 	{
 		GraphDelElem *gde = lfirst(le);
 
@@ -922,7 +925,6 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
-
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
 	pstate->p_hasGraphwriteClause = true;
@@ -933,6 +935,7 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	assign_query_eager(qry);
 
 	addRangeTableAllModifiedLabels(pstate, qry, NIL);
+	qry->rteperminfos = pstate->p_rteperminfos;
 
 	return qry;
 }
@@ -946,13 +949,13 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 	ListCell   *le;
 
 	/* SET/REMOVE cannot be the first clause */
-	AssertArg(clause->prev != NULL);
+	Assert(clause->prev != NULL);
 	Assert(detail->kind == CSET_NORMAL);
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_GRAPHWRITE;
-	qry->graph.writeOp = GWROP_SET;
-	qry->graph.last = (pstate->parentParseState == NULL);
+	qry->g_writeOp = GWROP_SET;
+	qry->g_last = (pstate->parentParseState == NULL);
 
 	while (cypherClauseTag(clause->prev) == T_CypherSetClause)
 	{
@@ -975,9 +978,9 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 
 	qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 
-	qry->graph.sets = transformSetPropList(pstate, detail->is_remove,
+	qry->g_sets = transformSetPropList(pstate, detail->is_remove,
 										   detail->kind, detail->items);
-	foreach(le, qry->graph.sets)
+	foreach(le, qry->g_sets)
 	{
 		GraphSetProp *gsp = lfirst(le);
 
@@ -985,7 +988,7 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 		gsp->expr = resolve_future_vertex(pstate, gsp->expr, 0);
 	}
 
-	qry->graph.nr_modify = pstate->p_nr_modify_clause++;
+	qry->g_nr_modify = pstate->p_nr_modify_clause++;
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
@@ -993,16 +996,15 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, pstate->p_resolved_qual);
-
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
 	pstate->p_hasGraphwriteClause = true;
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
-
-	substitute_set_props_as_targetentry(pstate, qry, qry->graph.sets);
+	
+	substitute_set_props_as_targetentry(pstate, qry, qry->g_sets);
 
 	assign_query_collations(pstate, qry);
-	foreach(le, qry->graph.sets)
+	foreach(le, qry->g_sets)
 	{
 		GraphSetProp *gsp = lfirst(le);
 
@@ -1012,6 +1014,7 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 	assign_query_eager(qry);
 
 	addRangeTableAllModifiedLabels(pstate, qry, NIL);
+	qry->rteperminfos = pstate->p_rteperminfos;
 
 	return qry;
 }
@@ -1031,8 +1034,8 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_GRAPHWRITE;
-	qry->graph.writeOp = GWROP_MERGE;
-	qry->graph.last = (pstate->parentParseState == NULL);
+	qry->g_writeOp = GWROP_MERGE;
+	qry->g_last = (pstate->parentParseState == NULL);
 
 	nsitem = transformClauseBy(pstate, (Node *) clause, transformMergeMatch);
 	Assert(nsitem->p_rte->rtekind == RTE_SUBQUERY);
@@ -1044,11 +1047,11 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	 * previous clause is the first RTE of MERGE MATCH.
 	 */
 	prev_rte = rt_fetch(1, nsitem->p_rte->subquery->rtable);
-	qry->graph.pattern = transformMergeCreate(pstate, detail->pattern,
-											  prev_rte, qry->targetList);
+	qry->g_pattern = transformMergeCreate(pstate, detail->pattern,
+										  prev_rte, qry->targetList);
 
-	qry->graph.sets = transformMergeOnSet(pstate, detail->sets);
-	qry->graph.nr_modify = pstate->p_nr_modify_clause++;
+	qry->g_sets = transformMergeOnSet(pstate, detail->sets);
+	qry->g_nr_modify = pstate->p_nr_modify_clause++;
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
@@ -1057,7 +1060,6 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, pstate->p_resolved_qual);
-
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
 	pstate->p_hasGraphwriteClause = true;
@@ -1068,6 +1070,7 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	assign_query_eager(qry);
 
 	addRangeTableAllModifiedLabels(pstate, qry, pstate->p_target_labels);
+	qry->rteperminfos = pstate->p_rteperminfos;
 
 	return qry;
 }
@@ -1104,7 +1107,7 @@ transformCypherLoadClause(ParseState *pstate, CypherClause *clause)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
-
+	qry->rteperminfos = pstate->p_rteperminfos;
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 
 	assign_query_collations(pstate, qry);
@@ -1205,7 +1208,7 @@ transformCypherUnwindClause(ParseState *pstate, CypherClause *clause)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
-
+	qry->rteperminfos = pstate->p_rteperminfos;
 	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
 
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
@@ -2219,12 +2222,12 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 	{
 		bool		resjunk;
 		int			resno;
-		TargetEntry *te;
+		TargetEntry *_te;
 
 		resjunk = (varname == NULL);
 		resno = (resjunk ? InvalidAttrNumber : pstate->p_next_resno++);
 
-		te = makeTargetEntry((Expr *) makeEdgeExpr(pstate, crel, nsitem,
+		_te = makeTargetEntry((Expr *) makeEdgeExpr(pstate, crel, nsitem,
 												   varloc),
 							 (AttrNumber) resno,
 							 alias->aliasname,
@@ -2235,15 +2238,15 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 			ElemQualOnly *eqo;
 
 			eqo = palloc(sizeof(*eqo));
-			eqo->te = te;
+			eqo->te = _te;
 			eqo->prop_map = crel->prop_map;
 
 			*eqoList = lappend(*eqoList, eqo);
 		}
 		else
 		{
-			addElemQual(pstate, te->resno, crel->prop_map);
-			*targetList = lappend(*targetList, te);
+			addElemQual(pstate, _te->resno, crel->prop_map);
+			*targetList = lappend(*targetList, _te);
 		}
 	}
 
@@ -2258,7 +2261,7 @@ addEdgeUnion(ParseState *pstate, char *edge_label, bool only, int location,
 	Node	   *u;
 	Query	   *qry;
 
-	AssertArg(alias != NULL);
+	Assert(alias != NULL);
 
 	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
 	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
@@ -2371,7 +2374,7 @@ setInitialVidForVLE(ParseState *pstate, CypherRel *crel, Node *vertex,
 				TargetEntry *te = (TargetEntry *) prev_edge;
 				Node		*vid;
 
-				AssertArg(IsA(prev_edge, TargetEntry));
+				Assert(IsA(prev_edge, TargetEntry));
 
 				cref = makeNode(ColumnRef);
 				cref->fields = list_make1(makeString(te->resname));
@@ -2409,7 +2412,7 @@ setInitialVidForVLE(ParseState *pstate, CypherRel *crel, Node *vertex,
 		TargetEntry *te = (TargetEntry *) vertex;
 		Node	   *vid;
 
-		AssertArg(IsA(vertex, TargetEntry));
+		Assert(IsA(vertex, TargetEntry));
 
 		/* vertex or future vertex */
 
@@ -2461,7 +2464,7 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList,
 
 	if (out)
 	{
-		TargetEntry *te;
+		TargetEntry *_te;
 		Node	   *var;
 		bool		resjunk;
 		int			resno;
@@ -2474,17 +2477,17 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList,
 		else
 			var = (Node *) makeNullConst(EDGEARRAYOID, -1, InvalidOid);
 
-		te = makeTargetEntry((Expr *) var,
+		_te = makeTargetEntry((Expr *) var,
 							 (AttrNumber) resno,
 							 alias->aliasname,
 							 resjunk);
 
-		*targetList = lappend(*targetList, te);
+		*targetList = lappend(*targetList, _te);
 	}
 
 	if (pathout)
 	{
-		TargetEntry *te;
+		TargetEntry *_te;
 		Node	   *var;
 
 		if (pstate->p_valid_labels)
@@ -2492,12 +2495,12 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList,
 		else
 			var = (Node *) makeNullConst(VERTEXARRAYOID, -1, InvalidOid);
 
-		te = makeTargetEntry((Expr *) var,
+		_te = makeTargetEntry((Expr *) var,
 							 InvalidAttrNumber,
 							 genUniqueName(),
 							 true);
 
-		*targetList = lappend(*targetList, te);
+		*targetList = lappend(*targetList, _te);
 	}
 
 	*is_nsitem = true;
@@ -2953,7 +2956,8 @@ transformVLEtoNSItem(ParseState *pstate, CypherRel *crel, SelectStmt *vle, Alias
 		crel->prop_map = transformCypherExpr(pstate,
 											 crel->prop_map,
 											 EXPR_KIND_WHERE);
-	qry->graph.vle_rel = (Node *) crel;
+	
+	qry->g_vle_rel = (Node *) crel;
 
 	pstate->p_lateral_active = false;
 	pstate->p_expr_kind = EXPR_KIND_NONE;
@@ -3103,7 +3107,7 @@ isFutureVertexExpr(Node *vertex)
 	TargetEntry *te;
 	RowExpr    *row;
 
-	AssertArg(vertex != NULL);
+	Assert(vertex != NULL);
 
 	if (!IsA(vertex, TargetEntry))
 		return false;
@@ -3286,7 +3290,7 @@ adjustElemQuals(List *elem_quals, ParseNamespaceItem *nsitem)
 {
 	ListCell   *le;
 
-	AssertArg(nsitem->p_rte->rtekind == RTE_SUBQUERY);
+	Assert(nsitem->p_rte->rtekind == RTE_SUBQUERY);
 
 	foreach(le, elem_quals)
 	{
@@ -3650,7 +3654,7 @@ adjustFutureVertices(List *future_vertices, ParseNamespaceItem *nsitem)
 {
 	ListCell   *le;
 
-	AssertArg(nsitem->p_rte->rtekind == RTE_SUBQUERY);
+	Assert(nsitem->p_rte->rtekind == RTE_SUBQUERY);
 
 	foreach(le, future_vertices)
 	{
@@ -3860,7 +3864,7 @@ resolveFutureVertex(ParseState *pstate, FutureVertex *fv, bool ignore_nullable)
 	Node	   *id;
 	Node	   *qual;
 
-	AssertArg(fv->expr == NULL);
+	Assert(fv->expr == NULL);
 
 	fv_nsitem = GetNSItemByRangeTablePosn(pstate, fv->varno, 0);
 	Assert(fv_nsitem->p_rte->rtekind == RTE_SUBQUERY);
@@ -4795,7 +4799,7 @@ transformMergeCreate(ParseState *pstate, List *pattern, RangeTblEntry *prevrte,
 	List	   *gchain = NIL;
 	GraphPath  *gpath;
 
-	AssertArg(prevrte != NULL && prevrte->rtekind == RTE_SUBQUERY);
+	Assert(prevrte != NULL && prevrte->rtekind == RTE_SUBQUERY);
 
 	/*
 	 * Copy the target list of the RTE of the previous clause to check
@@ -5055,7 +5059,7 @@ transformDeleteJoin(ParseState *pstate, Node *parseTree)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, pstate->p_resolved_qual);
-
+	qry->rteperminfos = pstate->p_rteperminfos;
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
 	assign_query_collations(pstate, qry);
@@ -5071,6 +5075,7 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 	ParseNamespaceItem *nsitem;
 	Query	   *qry;
 	List	   *edges = NIL;
+	
 
 	nsitem = transformClause(pstate, clause->prev);
 
@@ -5087,7 +5092,7 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 		qry->rtable = pstate->p_rtable;
 		qry->jointree = makeFromExpr(pstate->p_joinlist,
 									 pstate->p_resolved_qual);
-
+		qry->rteperminfos = pstate->p_rteperminfos;
 		qry->hasSubLinks = pstate->p_hasSubLinks;
 
 		assign_query_collations(pstate, qry);
@@ -5095,17 +5100,19 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 		return qry;
 	}
 
+	
+
 	qry = makeNode(Query);
 	qry->commandType = CMD_GRAPHWRITE;
-	qry->graph.writeOp = GWROP_DELETE;
-	qry->graph.last = false;
-	qry->graph.detach = false;
-	qry->graph.eager = true;
+	qry->g_writeOp = GWROP_DELETE;
+	qry->g_last = false;
+	qry->g_detach = false;
+	qry->g_eager = true;
 
 	qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 
-	qry->graph.exprs = edges;
-	qry->graph.nr_modify = pstate->p_nr_modify_clause++;
+	qry->g_exprs = edges;
+	qry->g_nr_modify = pstate->p_nr_modify_clause++;
 
 	markTargetListOrigins(pstate, qry->targetList);
 
@@ -5115,14 +5122,15 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, pstate->p_resolved_qual);
-
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+	
 
 	assign_query_collations(pstate, qry);
 
 	addRangeTableAllModifiedLabels(pstate, qry, NIL);
+	qry->rteperminfos = pstate->p_rteperminfos;
 
 	return qry;
 }
@@ -5292,7 +5300,7 @@ makeSelectEdgesVertices(Node *vertices, CypherDeleteClause *delete,
 	RangeFunction *unnest;
 	SelectStmt *sel;
 
-	AssertArg(vertices != NULL);
+	Assert(vertices != NULL);
 
 	nulledge = makeNode(TypeCast);
 	nulledge->arg = (Node *) makeNullAConst();
@@ -5474,9 +5482,9 @@ addRangeTableAllModifiedLabels(ParseState *pstate, Query *qry, List *targets)
 	ListCell   *lc;
 
 	/* DELETE */
-	if (qry->graph.exprs != NIL)
+	if (qry->g_exprs != NIL)
 	{
-		foreach(lc, qry->graph.exprs)
+		foreach(lc, qry->g_exprs)
 		{
 			GraphDelElem *gde = lfirst(lc);
 
@@ -5486,9 +5494,9 @@ addRangeTableAllModifiedLabels(ParseState *pstate, Query *qry, List *targets)
 	}
 
 	/* SET and MERGE ON SET */
-	if (qry->graph.sets != NIL)
+	if (qry->g_sets != NIL)
 	{
-		foreach(lc, qry->graph.sets)
+		foreach(lc, qry->g_sets)
 		{
 			GraphSetProp *gsp = lfirst(lc);
 
@@ -5533,7 +5541,7 @@ addRangeTableLabels(ParseState *pstate, List *targets, Query *qry)
 		table_close(relation, NoLock);
 		resultRelations = lappend_int(resultRelations, nsitem->p_rtindex);
 	}
-	qry->graph.resultRelations = resultRelations;
+	qry->g_resultRelations = resultRelations;
 }
 
 static Oid
@@ -5572,8 +5580,8 @@ find_target_label_walker(Node *node, find_target_label_context *ctx)
 		 * NOTE: This is related to how `ModifyGraph` does SET, and
 		 * `FVR_PRESERVE_VAR_REF` flag. We need to fix this.
 		 */
-		if ((qry->graph.writeOp == GWROP_SET ||
-			 qry->graph.writeOp == GWROP_DELETE) &&
+		if ((qry->g_writeOp == GWROP_SET ||
+			 qry->g_writeOp == GWROP_DELETE) &&
 			ctx->sublevels_up == 0 && !ctx->in_preserved)
 		{
 			te = get_tle_by_resno(qry->targetList, var->varattno);
@@ -5639,20 +5647,20 @@ find_target_label_walker(Node *node, find_target_label_context *ctx)
 
 	/*
 	 * For a CREATE clause, `transformCypherCreateClause()` does not create
-	 * RTE's for target labels. So, look through `qry->graph.pattern` to get
+	 * RTE's for target labels. So, look through `qry->g_pattern` to get
 	 * the relid of the target label.
 	 *
 	 * This code assumes that `RowExpr` appears only as root of the expression
 	 * in `TargetEntry` when `wrietOp` is `GWROP_CREATE`. This assumption is
 	 * OK because users cannot make `RowExpr` in Cypher.
 	 */
-	if (IsA(node, RowExpr) && qry->graph.writeOp == GWROP_CREATE)
+	if (IsA(node, RowExpr) && qry->g_writeOp == GWROP_CREATE)
 	{
 		GraphPath  *gpath;
 		ListCell   *le;
 
-		Assert(list_length(qry->graph.pattern) == 1);
-		gpath = linitial(qry->graph.pattern);
+		Assert(list_length(qry->g_pattern) == 1);
+		gpath = linitial(qry->g_pattern);
 
 		foreach(le, gpath->chain)
 		{
@@ -5851,24 +5859,24 @@ assign_query_eager_walker(Node *node, Query *nxtQry)
 	{
 		Query	   *qry = (Query *) node;
 
-		if (qry->graph.eager == true)
+		if (qry->g_eager == true)
 			return true;
 
 		if (qry->commandType == CMD_GRAPHWRITE)
 		{
 			/* Clauses whose CID is incremented should be run as eager. */
-			if (qry->graph.sets != NIL ||
-				qry->graph.exprs != NIL ||
-				qry->graph.writeOp == GWROP_MERGE)
-				qry->graph.eager = true;
-			else if (nxtQry->graph.writeOp == GWROP_MERGE &&
-					 (qry->graph.writeOp == GWROP_CREATE ||
-					  qry->graph.writeOp == GWROP_MERGE))
-				qry->graph.eager = true;
+			if (qry->g_sets != NIL ||
+				qry->g_exprs != NIL ||
+				qry->g_writeOp == GWROP_MERGE)
+				qry->g_eager = true;
+			else if (nxtQry->g_writeOp == GWROP_MERGE &&
+					 (qry->g_writeOp == GWROP_CREATE ||
+					  qry->g_writeOp == GWROP_MERGE))
+				qry->g_eager = true;
 			else
-				qry->graph.eager = false;
+				qry->g_eager = false;
 
-			if (qry->graph.eager == true &&
+			if (qry->g_eager == true &&
 				enable_eager == false)
 				elog(ERROR, "eagerness plan is not allowed.");
 			return true;
@@ -5891,12 +5899,12 @@ assign_query_eager(Query *query)
 							  (void *) query,
 							  QTW_IGNORE_CTE_SUBQUERIES);
 
-	if (!query->graph.last &&
-		(query->graph.sets != NIL ||
-		 query->graph.exprs != NIL))
-		query->graph.eager = true;
+	if (!query->g_last &&
+		(query->g_sets != NIL ||
+		 query->g_exprs != NIL))
+		query->g_eager = true;
 
-	if (query->graph.eager == true &&
+	if (query->g_eager == true &&
 		enable_eager == false)
 		elog(ERROR, "eagerness plan is not allowed.");
 }
@@ -5941,7 +5949,7 @@ transformClauseImpl(ParseState *pstate, Node *clause,
 	List	   *future_vertices;
 	ParseNamespaceItem *nsitem;
 
-	AssertArg(IsA(clause, CypherClause));
+	Assert(IsA(clause, CypherClause));
 
 	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
 	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
@@ -6036,6 +6044,13 @@ incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
 	j->quals = qual;
 	j->alias = alias;
 
+    /*
+     * Since this is left join, we need to mark j->rarg as it may potentially
+     * emit NULL. The jindex argument holds rtindex of the join's RTE, which is
+     * created right after j->arg's RTE in this case.
+     */
+    markRelsAsNulledBy(pstate, j->rarg, r_nsitem->p_rtindex + 1);
+
 	makeJoinResCols(pstate, l_nsitem, r_nsitem, &l_colnos, &r_colnos, &res_colnames,
 					&res_colvars);
 	res_nscolumns = (ParseNamespaceColumn *) palloc0((list_length(l_colnos) +
@@ -6111,8 +6126,17 @@ makeJoinResCols(ParseState *pstate, ParseNamespaceItem *l_rte,
 
 		if (var == NULL)
 		{
+            Var *v;
+
+            /*
+             * Each join (left) RTE's Var, that references a column of the
+             * right RTE, needs to be marked 'nullable'.
+             */
+            v = lfirst(r_lvar);
+            markNullableIfNeeded(pstate, v);
+
 			colnames = lappend(colnames, lfirst(r_lname));
-			colvars = lappend(colvars, lfirst(r_lvar));
+        	colvars = lappend(colvars, v);
 		}
 		else
 		{
@@ -6165,7 +6189,7 @@ makeTargetListFromNSItem(ParseState *pstate, ParseNamespaceItem *nsitem)
 	ListCell   *ln;
 	ListCell   *lt;
 
-	AssertArg(nsitem->p_rte->rtekind == RTE_SUBQUERY);
+	Assert(nsitem->p_rte->rtekind == RTE_SUBQUERY);
 
 	varattno = 1;
 	ln = list_head(nsitem->p_rte->eref->colnames);
@@ -6211,7 +6235,7 @@ makeTargetListFromJoin(ParseState *pstate, ParseNamespaceItem *nsitem)
 	ListCell   *ln;
 	RangeTblEntry *rte = nsitem->p_rte;
 
-	AssertArg(rte->rtekind == RTE_JOIN);
+	Assert(rte->rtekind == RTE_JOIN);
 
 	forboth(lt, rte->joinaliasvars, ln, rte->eref->colnames)
 	{
@@ -6279,8 +6303,8 @@ makePathVertexExpr(ParseState *pstate, Node *obj, bool is_nsitem)
 	{
 		TargetEntry *te = (TargetEntry *) obj;
 
-		AssertArg(IsA(obj, TargetEntry));
-		AssertArg(exprType((Node *) te->expr) == VERTEXOID);
+		Assert(IsA(obj, TargetEntry));
+		Assert(exprType((Node *) te->expr) == VERTEXOID);
 
 		return (Node *) te->expr;
 	}
@@ -6297,8 +6321,8 @@ makePathEdgeExpr(ParseState *pstate, CypherRel *crel, Node *obj, bool is_nsitem)
 	{
 		TargetEntry *te = (TargetEntry *) obj;
 
-		AssertArg(IsA(obj, TargetEntry));
-		AssertArg(exprType((Node *) te->expr) == EDGEOID);
+		Assert(IsA(obj, TargetEntry));
+		Assert(exprType((Node *) te->expr) == EDGEOID);
 
 		return (Node *) te->expr;
 	}
@@ -6385,7 +6409,7 @@ makeNullAConst(void)
 static bool
 IsNullAConst(Node *arg)
 {
-	AssertArg(arg != NULL);
+	Assert(arg != NULL);
 
 	if (IsA(arg, A_Const))
 	{
@@ -6416,8 +6440,49 @@ static Node *resolveVarOrExpr(ParseState *pstate, Node *node,
 	{
 		TargetEntry *te = (TargetEntry *) node;
 
-		AssertArg(IsA(node, TargetEntry));
+		Assert(IsA(node, TargetEntry));
 
 		return getExprField(te->expr, colname);
 	}
+}
+
+/*
+ * markRelsAsNulledBy -
+ *	  Mark the given jointree node and its children as nulled by join jindex
+ */
+static void
+markRelsAsNulledBy(ParseState *pstate, Node *n, int jindex)
+{
+	int			varno;
+	ListCell   *lc;
+
+	/* Note: we can't see FromExpr here */
+	if (IsA(n, RangeTblRef))
+	{
+		varno = ((RangeTblRef *) n)->rtindex;
+	}
+	else if (IsA(n, JoinExpr))
+	{
+		JoinExpr   *j = (JoinExpr *) n;
+
+		/* recurse to children */
+		markRelsAsNulledBy(pstate, j->larg, jindex);
+		markRelsAsNulledBy(pstate, j->rarg, jindex);
+		varno = j->rtindex;
+	}
+	else
+	{
+		elog(ERROR, "unrecognized node type: %d", (int) nodeTag(n));
+		varno = 0;				/* keep compiler quiet */
+	}
+
+	/*
+	 * Now add jindex to the p_nullingrels set for relation varno.  Since we
+	 * maintain the p_nullingrels list lazily, we might need to extend it to
+	 * make the varno'th entry exist.
+	 */
+	while (list_length(pstate->p_nullingrels) < varno)
+		pstate->p_nullingrels = lappend(pstate->p_nullingrels, NULL);
+	lc = list_nth_cell(pstate->p_nullingrels, varno - 1);
+	lfirst(lc) = bms_add_member((Bitmapset *) lfirst(lc), jindex);
 }

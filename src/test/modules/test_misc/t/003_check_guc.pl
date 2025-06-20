@@ -13,7 +13,7 @@ $node->start;
 
 # Grab the names of all the parameters that can be listed in the
 # configuration sample file.  config_file is an exception, it is not
-# in postgresql.conf.sample but is part of the lists from guc.c.
+# in postgresql.conf.sample but is part of the lists from guc_tables.c.
 my $all_params = $node->safe_psql(
 	'postgres',
 	"SELECT name
@@ -33,10 +33,9 @@ my $not_in_sample = $node->safe_psql(
      ORDER BY 1");
 my @not_in_sample_array = split("\n", lc($not_in_sample));
 
-# TAP tests are executed in the directory of the test, in the source tree,
-# even for VPATH builds, so rely on that to find postgresql.conf.sample.
-my $rootdir     = "../../../..";
-my $sample_file = "$rootdir/src/backend/utils/misc/postgresql.conf.sample";
+# use the sample file from the temp install
+my $share_dir = $node->config_data('--sharedir');
+my $sample_file = "$share_dir/postgresql.conf.sample";
 
 # List of all the GUCs found in the sample file.
 my @gucs_in_file;
@@ -74,8 +73,8 @@ close $contents;
 # Cross-check that all the GUCs found in the sample file match the ones
 # fetched above.  This maps the arrays to a hash, making the creation of
 # each exclude and intersection list easier.
-my %gucs_in_file_hash  = map { $_ => 1 } @gucs_in_file;
-my %all_params_hash    = map { $_ => 1 } @all_params_array;
+my %gucs_in_file_hash = map { $_ => 1 } @gucs_in_file;
+my %all_params_hash = map { $_ => 1 } @all_params_array;
 my %not_in_sample_hash = map { $_ => 1 } @not_in_sample_array;
 
 my @missing_from_file = grep(!$gucs_in_file_hash{$_}, @all_params_array);
@@ -83,7 +82,7 @@ is(scalar(@missing_from_file),
 	0, "no parameters missing from postgresql.conf.sample");
 
 my @missing_from_list = grep(!$all_params_hash{$_}, @gucs_in_file);
-is(scalar(@missing_from_list), 0, "no parameters missing from guc.c");
+is(scalar(@missing_from_list), 0, "no parameters missing from guc_tables.c");
 
 my @sample_intersect = grep($not_in_sample_hash{$_}, @gucs_in_file);
 is(scalar(@sample_intersect),
@@ -92,12 +91,14 @@ is(scalar(@sample_intersect),
 # These would log some information only on errors.
 foreach my $param (@missing_from_file)
 {
-	print("found GUC $param in guc.c, missing from postgresql.conf.sample\n");
+	print(
+		"found GUC $param in guc_tables.c, missing from postgresql.conf.sample\n"
+	);
 }
 foreach my $param (@missing_from_list)
 {
 	print(
-		"found GUC $param in postgresql.conf.sample, with incorrect info in guc.c\n"
+		"found GUC $param in postgresql.conf.sample, with incorrect info in guc_tables.c\n"
 	);
 }
 foreach my $param (@sample_intersect)

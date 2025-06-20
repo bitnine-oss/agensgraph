@@ -1,4 +1,4 @@
-# Copyright (c) 2022, PostgreSQL Global Development Group
+# Copyright (c) 2022-2023, PostgreSQL Global Development Group
 
 # Test recovering to a point-in-time using WAL archive, such that the
 # target point is physically in a WAL segment with a higher TLI than
@@ -64,7 +64,7 @@ INSERT INTO foo VALUES(2);
 my $node_standby = PostgreSQL::Test::Cluster->new('standby');
 $node_standby->init_from_backup(
 	$node_primary, $backup_name,
-	standby       => 1,
+	standby => 1,
 	has_streaming => 1,
 	has_archiving => 1,
 	has_restoring => 0);
@@ -118,7 +118,7 @@ $node_standby->stop;
 my $node_pitr = PostgreSQL::Test::Cluster->new('node_pitr');
 $node_pitr->init_from_backup(
 	$node_primary, $backup_name,
-	standby       => 0,
+	standby => 0,
 	has_restoring => 1);
 $node_pitr->append_conf(
 	'postgresql.conf', qq{
@@ -140,6 +140,13 @@ is($result, qq{1}, "check table contents after point-in-time recovery");
 # back to this timeline.
 $node_pitr->safe_psql('postgres', "INSERT INTO foo VALUES(3);");
 
+# Wait for the archiver to be running.  The startup process might have yet to
+# exit, in which case the postmaster has not started the archiver.  If we
+# stop() without an archiver, the archive will be incomplete.
+$node_pitr->poll_query_until('postgres',
+	"SELECT true FROM pg_stat_activity WHERE backend_type = 'archiver';")
+  or die "Timed out while waiting for archiver to start";
+
 # Stop the node.  This archives the last segment.
 $node_pitr->stop();
 
@@ -149,7 +156,7 @@ $node_pitr->stop();
 my $node_pitr2 = PostgreSQL::Test::Cluster->new('node_pitr2');
 $node_pitr2->init_from_backup(
 	$node_primary, $backup_name,
-	standby       => 0,
+	standby => 0,
 	has_restoring => 1);
 $node_pitr2->append_conf(
 	'postgresql.conf', qq{

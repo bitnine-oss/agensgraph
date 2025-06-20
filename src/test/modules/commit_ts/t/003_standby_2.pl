@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 # Test primary/standby scenario where the track_commit_timestamp GUC is
 # repeatedly toggled on and off.
@@ -11,7 +11,7 @@ use Test::More;
 use PostgreSQL::Test::Cluster;
 
 my $bkplabel = 'backup';
-my $primary  = PostgreSQL::Test::Cluster->new('primary');
+my $primary = PostgreSQL::Test::Cluster->new('primary');
 $primary->init(allows_streaming => 1);
 $primary->append_conf(
 	'postgresql.conf', qq{

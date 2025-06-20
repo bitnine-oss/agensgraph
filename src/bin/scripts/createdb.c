@@ -2,7 +2,7 @@
  *
  * createdb
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/scripts/createdb.c
@@ -41,6 +41,7 @@ main(int argc, char *argv[])
 		{"maintenance-db", required_argument, NULL, 3},
 		{"locale-provider", required_argument, NULL, 4},
 		{"icu-locale", required_argument, NULL, 5},
+		{"icu-rules", required_argument, NULL, 6},
 		{NULL, 0, NULL, 0}
 	};
 
@@ -67,6 +68,7 @@ main(int argc, char *argv[])
 	char	   *locale = NULL;
 	char	   *locale_provider = NULL;
 	char	   *icu_locale = NULL;
+	char	   *icu_rules = NULL;
 
 	PQExpBufferData sql;
 
@@ -79,15 +81,36 @@ main(int argc, char *argv[])
 
 	handle_help_version_opts(argc, argv, "createdb", help);
 
-	while ((c = getopt_long(argc, argv, "h:p:U:wWeO:D:T:E:l:S:", long_options, &optindex)) != -1)
+	while ((c = getopt_long(argc, argv, "D:eE:h:l:O:p:S:T:U:wW", long_options, &optindex)) != -1)
 	{
 		switch (c)
 		{
+			case 'D':
+				tablespace = pg_strdup(optarg);
+				break;
+			case 'e':
+				echo = true;
+				break;
+			case 'E':
+				encoding = pg_strdup(optarg);
+				break;
 			case 'h':
 				host = pg_strdup(optarg);
 				break;
+			case 'l':
+				locale = pg_strdup(optarg);
+				break;
+			case 'O':
+				owner = pg_strdup(optarg);
+				break;
 			case 'p':
 				port = pg_strdup(optarg);
+				break;
+			case 'S':
+				strategy = pg_strdup(optarg);
+				break;
+			case 'T':
+				template = pg_strdup(optarg);
 				break;
 			case 'U':
 				username = pg_strdup(optarg);
@@ -98,32 +121,11 @@ main(int argc, char *argv[])
 			case 'W':
 				prompt_password = TRI_YES;
 				break;
-			case 'e':
-				echo = true;
-				break;
-			case 'O':
-				owner = pg_strdup(optarg);
-				break;
-			case 'D':
-				tablespace = pg_strdup(optarg);
-				break;
-			case 'T':
-				template = pg_strdup(optarg);
-				break;
-			case 'E':
-				encoding = pg_strdup(optarg);
-				break;
-			case 'S':
-				strategy = pg_strdup(optarg);
-				break;
 			case 1:
 				lc_collate = pg_strdup(optarg);
 				break;
 			case 2:
 				lc_ctype = pg_strdup(optarg);
-				break;
-			case 'l':
-				locale = pg_strdup(optarg);
 				break;
 			case 3:
 				maintenance_db = pg_strdup(optarg);
@@ -133,6 +135,9 @@ main(int argc, char *argv[])
 				break;
 			case 5:
 				icu_locale = pg_strdup(optarg);
+				break;
+			case 6:
+				icu_rules = pg_strdup(optarg);
 				break;
 			default:
 				/* getopt_long already emitted a complaint */
@@ -157,16 +162,6 @@ main(int argc, char *argv[])
 						 argv[optind + 2]);
 			pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 			exit(1);
-	}
-
-	if (locale)
-	{
-		if (lc_ctype)
-			pg_fatal("only one of --locale and --lc-ctype can be specified");
-		if (lc_collate)
-			pg_fatal("only one of --locale and --lc-collate can be specified");
-		lc_ctype = locale;
-		lc_collate = locale;
 	}
 
 	if (encoding)
@@ -216,6 +211,11 @@ main(int argc, char *argv[])
 		appendPQExpBuffer(&sql, " STRATEGY %s", fmtId(strategy));
 	if (template)
 		appendPQExpBuffer(&sql, " TEMPLATE %s", fmtId(template));
+	if (locale)
+	{
+		appendPQExpBufferStr(&sql, " LOCALE ");
+		appendStringLiteralConn(&sql, locale, conn);
+	}
 	if (lc_collate)
 	{
 		appendPQExpBufferStr(&sql, " LC_COLLATE ");
@@ -232,6 +232,11 @@ main(int argc, char *argv[])
 	{
 		appendPQExpBufferStr(&sql, " ICU_LOCALE ");
 		appendStringLiteralConn(&sql, icu_locale, conn);
+	}
+	if (icu_rules)
+	{
+		appendPQExpBufferStr(&sql, " ICU_RULES ");
+		appendStringLiteralConn(&sql, icu_rules, conn);
 	}
 
 	appendPQExpBufferChar(&sql, ';');
@@ -290,6 +295,7 @@ help(const char *progname)
 	printf(_("      --lc-collate=LOCALE      LC_COLLATE setting for the database\n"));
 	printf(_("      --lc-ctype=LOCALE        LC_CTYPE setting for the database\n"));
 	printf(_("      --icu-locale=LOCALE      ICU locale setting for the database\n"));
+	printf(_("      --icu-rules=RULES        ICU rules setting for the database\n"));
 	printf(_("      --locale-provider={libc|icu}\n"
 			 "                               locale provider for the database's default collation\n"));
 	printf(_("  -O, --owner=OWNER            database user to own the new database\n"));

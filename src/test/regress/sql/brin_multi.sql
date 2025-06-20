@@ -30,7 +30,7 @@ INSERT INTO brintest_multi SELECT
 	(four + 1.0)/(hundred+1),
 	odd::float8 / (tenthous + 1),
 	format('%s:00:%s:00:%s:00', to_hex(odd), to_hex(even), to_hex(hundred))::macaddr,
-	substr(md5(unique1::text), 1, 16)::macaddr8,
+	substr(fipshash(unique1::text), 1, 16)::macaddr8,
 	inet '10.2.3.4/24' + tenthous,
 	cidr '10.2.3/24' + tenthous,
 	date '1995-08-15' + tenthous,
@@ -183,7 +183,7 @@ INSERT INTO brinopers_multi VALUES
 	('macaddr8col', 'macaddr8',
 	 '{>, >=, =, <=, <}',
 	 '{b1:d1:0e:7b:af:a4:42:12, d9:35:91:bd:f7:86:0e:1e, 72:8f:20:6c:2a:01:bf:57, 23:e8:46:63:86:07:ad:cb, 13:16:8e:6a:2e:6c:84:b4}',
-	 '{33, 15, 1, 13, 6}'),
+	 '{31, 17, 1, 11, 4}'),
 	('inetcol', 'inet',
 	 '{=, <, <=, >, >=}',
 	 '{10.2.14.231/24, 255.255.255.255, 255.255.255.255, 0.0.0.0, 0.0.0.0}',
@@ -334,7 +334,7 @@ INSERT INTO brintest_multi SELECT
 	(four + 1.0)/(hundred+1),
 	odd::float8 / (tenthous + 1),
 	format('%s:00:%s:00:%s:00', to_hex(odd), to_hex(even), to_hex(hundred))::macaddr,
-	substr(md5(unique1::text), 1, 16)::macaddr8,
+	substr(fipshash(unique1::text), 1, 16)::macaddr8,
 	inet '10.2.3.4' + tenthous,
 	cidr '10.2.3/24' + tenthous,
 	date '1995-08-15' + tenthous,
@@ -356,6 +356,13 @@ insert into public.brintest_multi (float4col) values (real 'nan');
 insert into public.brintest_multi (float8col) values (real 'nan');
 
 UPDATE brintest_multi SET int8col = int8col * int4col;
+
+-- Test handling of inet netmasks with inet_minmax_multi_ops
+CREATE TABLE brin_test_inet (a inet);
+CREATE INDEX ON brin_test_inet USING brin (a inet_minmax_multi_ops);
+INSERT INTO brin_test_inet VALUES ('127.0.0.1/0');
+INSERT INTO brin_test_inet VALUES ('0.0.0.0/12');
+DROP TABLE brin_test_inet;
 
 -- Tests for brin_summarize_new_values
 SELECT brin_summarize_new_values('brintest_multi'); -- error, not an index

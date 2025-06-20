@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 #
-# Copyright (c) 2007-2022, PostgreSQL Global Development Group
+# Copyright (c) 2007-2023, PostgreSQL Global Development Group
 #
 # src/backend/utils/mb/Unicode/UCS_to_GB18030.pl
 #
@@ -33,17 +33,17 @@ while (<$in>)
 	next if (!m/<a u="([0-9A-F]+)" b="([0-9A-F ]+)"/);
 	my ($u, $c) = ($1, $2);
 	$c =~ s/ //g;
-	my $ucs  = hex($u);
+	my $ucs = hex($u);
 	my $code = hex($c);
 	if ($code >= 0x80 && $ucs >= 0x0080)
 	{
 		push @mapping,
 		  {
-			ucs       => $ucs,
-			code      => $code,
+			ucs => $ucs,
+			code => $code,
 			direction => BOTH,
-			f         => $in_file,
-			l         => $.
+			f => $in_file,
+			l => $.
 		  };
 	}
 }

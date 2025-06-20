@@ -166,6 +166,7 @@ SELECT tableoid::regclass, b FROM agg_csv;
 INSERT INTO agg_csv VALUES(1,2.0);
 UPDATE agg_csv SET a = 1;
 DELETE FROM agg_csv WHERE a = 100;
+TRUNCATE agg_csv;
 -- but this should be allowed
 SELECT * FROM agg_csv FOR UPDATE;
 
@@ -231,6 +232,17 @@ CREATE FOREIGN TABLE gft1 (a int, b text, c text GENERATED ALWAYS AS ('foo') STO
 OPTIONS (format 'csv', filename :'filename', delimiter ',');
 SELECT a, c FROM gft1;
 DROP FOREIGN TABLE gft1;
+
+-- copy default tests
+\set filename :abs_srcdir '/data/copy_default.csv'
+CREATE FOREIGN TABLE copy_default (
+	id integer,
+	text_value text not null default 'test',
+	ts_value timestamp without time zone not null default '2022-07-05'
+) SERVER file_server
+OPTIONS (format 'csv', filename :'filename', default '\D');
+SELECT id, text_value, ts_value FROM copy_default;
+DROP FOREIGN TABLE copy_default;
 
 -- privilege tests
 SET ROLE regress_file_fdw_superuser;

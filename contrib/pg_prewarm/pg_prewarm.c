@@ -3,7 +3,7 @@
  * pg_prewarm.c
  *		  prewarming utilities
  *
- * Copyright (c) 2010-2022, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2023, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/pg_prewarm/pg_prewarm.c
@@ -36,7 +36,7 @@ typedef enum
 	PREWARM_BUFFER
 } PrewarmType;
 
-static PGAlignedBlock blockbuffer;
+static PGIOAlignedBlock blockbuffer;
 
 /*
  * pg_prewarm(regclass, mode text, fork text,

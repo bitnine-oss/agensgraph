@@ -2,7 +2,7 @@
 #
 # win32tzlist.pl -- compare Windows timezone information
 #
-# Copyright (c) 2008-2022, PostgreSQL Global Development Group
+# Copyright (c) 2008-2023, PostgreSQL Global Development Group
 #
 # src/tools/win32tzlist.pl
 #################################################################
@@ -48,8 +48,8 @@ foreach my $keyname (@subkeys)
 	  unless ($vals{Std} && $vals{Dlt} && $vals{Display});
 	push @system_zones,
 	  {
-		'std'     => $vals{Std}->[2],
-		'dlt'     => $vals{Dlt}->[2],
+		'std' => $vals{Std}->[2],
+		'dlt' => $vals{Dlt}->[2],
 		'display' => clean_displayname($vals{Display}->[2]),
 	  };
 }
@@ -80,9 +80,9 @@ while ($pgtz =~
 	push @file_zones,
 	  {
 		'display' => clean_displayname($1),
-		'std'     => $2,
-		'dlt'     => $3,
-		'match'   => $4,
+		'std' => $2,
+		'dlt' => $3,
+		'match' => $4,
 	  };
 }
 

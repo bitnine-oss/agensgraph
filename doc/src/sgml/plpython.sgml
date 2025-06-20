@@ -153,7 +153,7 @@ $$ LANGUAGE plpython3u;
    below.
   </para>
 
-  <sect2>
+  <sect2 id="plpython-data-type-mapping">
    <title>Data Type Mapping</title>
    <para>
     When a PL/Python function is called, its arguments are converted from
@@ -269,7 +269,7 @@ $$ LANGUAGE plpython3u;
    </para>
   </sect2>
 
-  <sect2>
+  <sect2 id="plpython-data-null">
    <title>Null, None</title>
   <para>
    If an SQL null value<indexterm><primary>null value</primary><secondary
@@ -369,7 +369,7 @@ SELECT return_str_arr();
   </para>
   </sect2>
 
-  <sect2>
+  <sect2 id="plpython-data-composite-types">
    <title>Composite Types</title>
   <para>
    Composite-type arguments are passed to the function as Python mappings. The
@@ -516,7 +516,7 @@ CALL python_triple(5, 10);
    </para>
   </sect2>
 
-  <sect2>
+  <sect2 id="plpython-data-set-returning-funcs">
    <title>Set-Returning Functions</title>
   <para>
    A <application>PL/Python</application> function can also return sets of
@@ -779,7 +779,7 @@ $$ LANGUAGE plpython3u;
    <literal>plpy.<replaceable>foo</replaceable></literal>.
   </para>
 
-  <sect2>
+  <sect2 id="plpython-database-access-funcs">
     <title>Database Access Functions</title>
 
   <para>
@@ -789,12 +789,21 @@ $$ LANGUAGE plpython3u;
 
   <variablelist>
    <varlistentry>
-    <term><literal>plpy.<function>execute</function>(<replaceable>query</replaceable> [, <replaceable>max-rows</replaceable>])</literal></term>
+    <term><literal>plpy.<function>execute</function>(<replaceable>query</replaceable> [, <replaceable>limit</replaceable>])</literal></term>
     <listitem>
      <para>
       Calling <function>plpy.execute</function> with a query string and an
       optional row limit argument causes that query to be run and the result to
       be returned in a result object.
+     </para>
+
+     <para>
+      If <replaceable>limit</replaceable> is specified and is greater than
+      zero, then <function>plpy.execute</function> retrieves at
+      most <replaceable>limit</replaceable> rows, much as if the query
+      included a <literal>LIMIT</literal>
+      clause.  Omitting <replaceable>limit</replaceable> or specifying it as
+      zero results in no row limit.
      </para>
 
      <para>
@@ -887,7 +896,7 @@ foo = rv[i]["my_column"]
 
    <varlistentry>
     <term><literal>plpy.<function>prepare</function>(<replaceable>query</replaceable> [, <replaceable>argtypes</replaceable>])</literal></term>
-    <term><literal>plpy.<function>execute</function>(<replaceable>plan</replaceable> [, <replaceable>arguments</replaceable> [, <replaceable>max-rows</replaceable>]])</literal></term>
+    <term><literal>plpy.<function>execute</function>(<replaceable>plan</replaceable> [, <replaceable>arguments</replaceable> [, <replaceable>limit</replaceable>]])</literal></term>
     <listitem>
      <para>
       <indexterm><primary>preparing a query</primary><secondary>in PL/Python</secondary></indexterm>
@@ -1115,7 +1124,7 @@ $$ LANGUAGE plpython3u;
    the form of explicit subtransactions.
   </para>
 
-  <sect2>
+  <sect2 id="plpython-subtransaction-context-managers">
    <title>Subtransaction Context Managers</title>
 
    <para>

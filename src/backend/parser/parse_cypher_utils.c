@@ -253,6 +253,9 @@ make_var(ParseState *pstate, ParseNamespaceItem *nsitem, AttrNumber attnum,
 						 sublevels_up);
 	}
 	result->location = location;
+
+	markNullableIfNeeded(pstate, result);
+
 	return result;
 }
 
@@ -436,8 +439,8 @@ getSysColumnVar(ParseState *pstate, ParseNamespaceItem *nsitem,
 {
 	Var		   *var;
 
-	AssertArg(attnum <= SelfItemPointerAttributeNumber &&
-			  attnum >= FirstLowInvalidHeapAttributeNumber);
+	Assert(attnum <= SelfItemPointerAttributeNumber &&
+		   attnum >= FirstLowInvalidHeapAttributeNumber);
 
 	var = make_var(pstate, nsitem, attnum, -1);
 

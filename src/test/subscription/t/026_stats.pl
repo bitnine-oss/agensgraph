@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 # Tests for subscription stats.
 use strict;
@@ -43,7 +43,7 @@ sub create_sub_pub_w_errors
 	]);
 
 	# Set up publication.
-	my $pub_name          = $table_name . '_pub';
+	my $pub_name = $table_name . '_pub';
 	my $publisher_connstr = $node_publisher->connstr . qq( dbname=$db);
 
 	$node_publisher->safe_psql($db,

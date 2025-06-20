@@ -1,7 +1,7 @@
 <!-- doc/src/sgml/ltree.sgml -->
 
 <sect1 id="ltree" xreflabel="ltree">
- <title>ltree</title>
+ <title>ltree &mdash; hierarchical tree-like data type</title>
 
  <indexterm zone="ltree">
   <primary>ltree</primary>
@@ -19,14 +19,15 @@
   on the current database.
  </para>
 
- <sect2>
+ <sect2 id="ltree-definitions">
   <title>Definitions</title>
 
   <para>
-   A <firstterm>label</firstterm> is a sequence of alphanumeric characters
-   and underscores (for example, in C locale the characters
-   <literal>A-Za-z0-9_</literal> are allowed).
-   Labels must be less than 256 characters long.
+   A <firstterm>label</firstterm> is a sequence of alphanumeric characters,
+   underscores, and hyphens. Valid alphanumeric character ranges are
+   dependent on the database locale. For example, in C locale, the characters
+   <literal>A-Za-z0-9_-</literal> are allowed.
+   Labels must be no more than 1000 characters long.
   </para>
 
   <para>
@@ -187,7 +188,7 @@ Europe &amp; Russia*@ &amp; !Transportation
   </para>
  </sect2>
 
- <sect2>
+ <sect2 id="ltree-ops-funcs">
   <title>Operators and Functions</title>
 
   <para>
@@ -607,7 +608,7 @@ Europe &amp; Russia*@ &amp; !Transportation
   </table>
  </sect2>
 
- <sect2>
+ <sect2 id="ltree-indexes">
   <title>Indexes</title>
   <para>
    <filename>ltree</filename> supports several types of indexes that can speed
@@ -636,7 +637,8 @@ Europe &amp; Russia*@ &amp; !Transportation
      path labels as a bitmap signature.  Its optional integer parameter
      <literal>siglen</literal> determines the
      signature length in bytes.  The default signature length is 8 bytes.
-     Valid values of signature length are between 1 and 2024 bytes.  Longer
+     The length must be a positive multiple of <type>int</type> alignment
+     (4 bytes on most machines)) up to 2024.  Longer
      signatures lead to a more precise search (scanning a smaller fraction of the index and
      fewer heap pages), at the cost of a larger index.
     </para>
@@ -685,7 +687,7 @@ CREATE INDEX path_gist_idx ON test USING GIST (array_path gist__ltree_ops(siglen
   </itemizedlist>
  </sect2>
 
- <sect2>
+ <sect2 id="ltree-example">
   <title>Example</title>
 
   <para>
@@ -822,7 +824,7 @@ ltreetest=&gt; SELECT ins_label(path,2,'Space') FROM test WHERE path &lt;@ 'Top.
   </para>
  </sect2>
 
- <sect2>
+ <sect2 id="ltree-transforms">
   <title>Transforms</title>
 
   <para>
@@ -842,7 +844,7 @@ ltreetest=&gt; SELECT ins_label(path,2,'Space') FROM test WHERE path &lt;@ 'Top.
   </caution>
  </sect2>
 
- <sect2>
+ <sect2 id="ltree-authors">
   <title>Authors</title>
 
   <para>

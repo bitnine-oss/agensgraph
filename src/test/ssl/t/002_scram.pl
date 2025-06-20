@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 # Test SCRAM authentication and TLS channel binding types
 
@@ -19,6 +19,11 @@ use SSL::Server;
 if ($ENV{with_ssl} ne 'openssl')
 {
 	plan skip_all => 'OpenSSL not supported by this build';
+}
+elsif ($ENV{PG_TEST_EXTRA} !~ /\bssl\b/)
+{
+	plan skip_all =>
+	  'Potentially unsafe test SSL not enabled in PG_TEST_EXTRA';
 }
 
 my $ssl_server = SSL::Server->new();
@@ -42,6 +47,10 @@ my $SERVERHOSTCIDR = '127.0.0.1/32';
 # Determine whether build supports tls-server-end-point.
 my $supports_tls_server_end_point =
   check_pg_config("#define HAVE_X509_GET_SIGNATURE_NID 1");
+# Determine whether build supports detection of hash algorithms for
+# RSA-PSS certificates.
+my $supports_rsapss_certs =
+  check_pg_config("#define HAVE_X509_GET_SIGNATURE_INFO 1");
 
 # Allocation of base connection string shared among multiple tests.
 my $common_connstr;
@@ -62,7 +71,7 @@ $node->start;
 $ssl_server->configure_test_server_for_ssl(
 	$node, $SERVERHOSTADDR, $SERVERHOSTCIDR,
 	"scram-sha-256",
-	'password'     => "pass",
+	'password' => "pass",
 	'password_enc' => "scram-sha-256");
 switch_server_cert($node, certfile => 'server-cn-only');
 $ENV{PGPASSWORD} = "pass";
@@ -109,7 +118,7 @@ $node->connect_fails(
 # because channel binding is not performed.  Note that ssl/client.key may
 # be used in a different test, so the name of this temporary client key
 # is chosen here to be unique.
-my $cert_tempdir   = PostgreSQL::Test::Utils::tempdir();
+my $cert_tempdir = PostgreSQL::Test::Utils::tempdir();
 my $client_tmp_key = "$cert_tempdir/client_scram.key";
 copy("ssl/client.key", "$cert_tempdir/client_scram.key")
   or die
@@ -132,4 +141,45 @@ $node->connect_ok(
 		qr/connection authenticated: identity="ssltestuser" method=scram-sha-256/
 	]);
 
+# channel_binding should continue to work independently of require_auth.
+$node->connect_ok(
+	"$common_connstr user=ssltestuser channel_binding=disable require_auth=scram-sha-256",
+	"SCRAM with SSL, channel_binding=disable, and require_auth=scram-sha-256"
+);
+$node->connect_fails(
+	"$common_connstr user=md5testuser require_auth=md5 channel_binding=require",
+	"channel_binding can fail even when require_auth succeeds",
+	expected_stderr =>
+	  qr/channel binding required but not supported by server's authentication request/
+);
+if ($supports_tls_server_end_point)
+{
+	$node->connect_ok(
+		"$common_connstr user=ssltestuser channel_binding=require require_auth=scram-sha-256",
+		"SCRAM with SSL, channel_binding=require, and require_auth=scram-sha-256"
+	);
+}
+else
+{
+	$node->connect_fails(
+		"$common_connstr user=ssltestuser channel_binding=require require_auth=scram-sha-256",
+		"SCRAM with SSL, channel_binding=require, and require_auth=scram-sha-256",
+		expected_stderr =>
+		  qr/channel binding is required, but server did not offer an authentication method that supports channel binding/
+	);
+}
+
+# Now test with a server certificate that uses the RSA-PSS algorithm.
+# This checks that the certificate can be loaded and that channel binding
+# works. (see bug #17760)
+if ($supports_rsapss_certs)
+{
+	switch_server_cert($node, certfile => 'server-rsapss');
+	$node->connect_ok(
+		"$common_connstr user=ssltestuser channel_binding=require",
+		"SCRAM with SSL and channel_binding=require, server certificate uses 'rsassaPss'",
+		log_like => [
+			qr/connection authenticated: identity="ssltestuser" method=scram-sha-256/
+		]);
+}
 done_testing();

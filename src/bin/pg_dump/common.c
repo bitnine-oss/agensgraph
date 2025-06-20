@@ -4,7 +4,7 @@
  *	Catalog routines used by pg_dump; long ago these were shared
  *	by another dump tool, but not anymore.
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -79,12 +79,10 @@ typedef struct _catalogIdMapEntry
 
 static catalogid_hash *catalogIdHash = NULL;
 
-static void flagInhTables(Archive *fout, TableInfo *tbinfo, int numTables,
+static void flagInhTables(Archive *fout, TableInfo *tblinfo, int numTables,
 						  InhInfo *inhinfo, int numInherits);
 static void flagInhIndexes(Archive *fout, TableInfo *tblinfo, int numTables);
 static void flagInhAttrs(DumpOptions *dopt, TableInfo *tblinfo, int numTables);
-static void findParentsByOid(TableInfo *self,
-							 InhInfo *inhinfo, int numInherits);
 static int	strInArray(const char *pattern, char **arr, int arr_size);
 static IndxInfo *findIndexByOid(Oid oid);
 
@@ -230,6 +228,9 @@ getSchemaData(Archive *fout, int *numTablesPtr)
 	pg_log_info("flagging inherited columns in subtables");
 	flagInhAttrs(fout->dopt, tblinfo, numTables);
 
+	pg_log_info("reading partitioning data");
+	getPartitioningInfo(fout);
+
 	pg_log_info("reading indexes");
 	getIndexes(fout, tblinfo, numTables);
 
@@ -285,46 +286,70 @@ static void
 flagInhTables(Archive *fout, TableInfo *tblinfo, int numTables,
 			  InhInfo *inhinfo, int numInherits)
 {
-	DumpOptions *dopt = fout->dopt;
+	TableInfo  *child = NULL;
+	TableInfo  *parent = NULL;
 	int			i,
 				j;
 
+	/*
+	 * Set up links from child tables to their parents.
+	 *
+	 * We used to attempt to skip this work for tables that are not to be
+	 * dumped; but the optimizable cases are rare in practice, and setting up
+	 * these links in bulk is cheaper than the old way.  (Note in particular
+	 * that it's very rare for a child to have more than one parent.)
+	 */
+	for (i = 0; i < numInherits; i++)
+	{
+		/*
+		 * Skip a hashtable lookup if it's same table as last time.  This is
+		 * unlikely for the child, but less so for the parent.  (Maybe we
+		 * should ask the backend for a sorted array to make it more likely?
+		 * Not clear the sorting effort would be repaid, though.)
+		 */
+		if (child == NULL ||
+			child->dobj.catId.oid != inhinfo[i].inhrelid)
+		{
+			child = findTableByOid(inhinfo[i].inhrelid);
+
+			/*
+			 * If we find no TableInfo, assume the pg_inherits entry is for a
+			 * partitioned index, which we don't need to track.
+			 */
+			if (child == NULL)
+				continue;
+		}
+		if (parent == NULL ||
+			parent->dobj.catId.oid != inhinfo[i].inhparent)
+		{
+			parent = findTableByOid(inhinfo[i].inhparent);
+			if (parent == NULL)
+				pg_fatal("failed sanity check, parent OID %u of table \"%s\" (OID %u) not found",
+						 inhinfo[i].inhparent,
+						 child->dobj.name,
+						 child->dobj.catId.oid);
+		}
+		/* Add this parent to the child's list of parents. */
+		if (child->numParents > 0)
+			child->parents = pg_realloc_array(child->parents,
+											  TableInfo *,
+											  child->numParents + 1);
+		else
+			child->parents = pg_malloc_array(TableInfo *, 1);
+		child->parents[child->numParents++] = parent;
+	}
+
+	/*
+	 * Now consider all child tables and mark parents interesting as needed.
+	 */
 	for (i = 0; i < numTables; i++)
 	{
-		bool		find_parents = true;
-		bool		mark_parents = true;
-
-		/* Some kinds never have parents */
-		if (tblinfo[i].relkind == RELKIND_SEQUENCE ||
-			tblinfo[i].relkind == RELKIND_VIEW ||
-			tblinfo[i].relkind == RELKIND_MATVIEW)
-			continue;
-
-		/*
-		 * Normally, we don't bother computing anything for non-target tables,
-		 * but if load-via-partition-root is specified, we gather information
-		 * on every partition in the system so that getRootTableInfo can trace
-		 * from any given to leaf partition all the way up to the root.  (We
-		 * don't need to mark them as interesting for getTableAttrs, though.)
-		 */
-		if (!tblinfo[i].dobj.dump)
-		{
-			mark_parents = false;
-
-			if (!dopt->load_via_partition_root ||
-				!tblinfo[i].ispartition)
-				find_parents = false;
-		}
-
-		/* If needed, find all the immediate parent tables. */
-		if (find_parents)
-			findParentsByOid(&tblinfo[i], inhinfo, numInherits);
-
 		/*
 		 * If needed, mark the parents as interesting for getTableAttrs and
-		 * getIndexes.
+		 * getIndexes.  We only need this for direct parents of dumpable
+		 * tables.
 		 */
-		if (mark_parents)
+		if (tblinfo[i].dobj.dump)
 		{
 			int			numParents = tblinfo[i].numParents;
 			TableInfo **parents = tblinfo[i].parents;
@@ -334,7 +359,8 @@ flagInhTables(Archive *fout, TableInfo *tblinfo, int numTables,
 		}
 
 		/* Create TableAttachInfo object if needed */
-		if (tblinfo[i].dobj.dump && tblinfo[i].ispartition)
+		if ((tblinfo[i].dobj.dump & DUMP_COMPONENT_DEFINITION) &&
+			tblinfo[i].ispartition)
 		{
 			TableAttachInfo *attachinfo;
 
@@ -400,7 +426,7 @@ flagInhIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 			if (parentidx == NULL)
 				continue;
 
-			attachinfo = (IndexAttachInfo *) pg_malloc(sizeof(IndexAttachInfo));
+			attachinfo = pg_malloc_object(IndexAttachInfo);
 
 			attachinfo->dobj.objType = DO_INDEX_ATTACH;
 			attachinfo->dobj.catId.tableoid = 0;
@@ -452,14 +478,15 @@ flagInhIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
  *   that we'll correctly emit the necessary DEFAULT NULL clause; otherwise
  *   the backend will apply an inherited default to the column.
  *
- * - Detect child columns that have a generation expression when their parents
- *   also have one.  Generation expressions are always inherited, so there is
- *   no need to set them again in child tables, and there is no syntax for it
- *   either.  Exceptions: If it's a partition or we are in binary upgrade
- *   mode, we dump them because in those cases inherited tables are recreated
- *   standalone first and then reattached to the parent.  (See also the logic
- *   in dumpTableSchema().)  In that situation, the generation expressions
- *   must match the parent, enforced by ALTER TABLE.
+ * - Detect child columns that have a generation expression and all their
+ *   parents also have the same generation expression, and if so suppress the
+ *   child's expression.  The child will inherit the generation expression
+ *   automatically, so there's no need to dump it.  This improves the dump's
+ *   compatibility with pre-v16 servers, which didn't allow the child's
+ *   expression to be given explicitly.  Exceptions: If it's a partition or
+ *   we are in binary upgrade mode, we dump such expressions anyway because
+ *   in those cases inherited tables are recreated standalone first and then
+ *   reattached to the parent.  (See also the logic in dumpTableSchema().)
  *
  * modifies tblinfo
  */
@@ -470,6 +497,13 @@ flagInhAttrs(DumpOptions *dopt, TableInfo *tblinfo, int numTables)
 				j,
 				k;
 
+	/*
+	 * We scan the tables in OID order, since that's how tblinfo[] is sorted.
+	 * Hence we will typically visit parents before their children --- but
+	 * that is *not* guaranteed.  Thus this loop must be careful that it does
+	 * not alter table properties in a way that could change decisions made at
+	 * child tables during other iterations.
+	 */
 	for (i = 0; i < numTables; i++)
 	{
 		TableInfo  *tbinfo = &(tblinfo[i]);
@@ -497,7 +531,8 @@ flagInhAttrs(DumpOptions *dopt, TableInfo *tblinfo, int numTables)
 		{
 			bool		foundNotNull;	/* Attr was NOT NULL in a parent */
 			bool		foundDefault;	/* Found a default in a parent */
-			bool		foundGenerated; /* Found a generated in a parent */
+			bool		foundSameGenerated; /* Found matching GENERATED */
+			bool		foundDiffGenerated; /* Found non-matching GENERATED */
 
 			/* no point in examining dropped columns */
 			if (tbinfo->attisdropped[j])
@@ -505,7 +540,8 @@ flagInhAttrs(DumpOptions *dopt, TableInfo *tblinfo, int numTables)
 
 			foundNotNull = false;
 			foundDefault = false;
-			foundGenerated = false;
+			foundSameGenerated = false;
+			foundDiffGenerated = false;
 			for (k = 0; k < numParents; k++)
 			{
 				TableInfo  *parent = parents[k];
@@ -516,21 +552,42 @@ flagInhAttrs(DumpOptions *dopt, TableInfo *tblinfo, int numTables)
 										parent->numatts);
 				if (inhAttrInd >= 0)
 				{
+					AttrDefInfo *parentDef = parent->attrdefs[inhAttrInd];
+
 					foundNotNull |= parent->notnull[inhAttrInd];
-					foundDefault |= (parent->attrdefs[inhAttrInd] != NULL && !parent->attgenerated[inhAttrInd]);
-					foundGenerated |= parent->attgenerated[inhAttrInd];
+					foundDefault |= (parentDef != NULL &&
+									 strcmp(parentDef->adef_expr, "NULL") != 0 &&
+									 !parent->attgenerated[inhAttrInd]);
+					if (parent->attgenerated[inhAttrInd])
+					{
+						/* these pointer nullness checks are just paranoia */
+						if (parentDef != NULL &&
+							tbinfo->attrdefs[j] != NULL &&
+							strcmp(parentDef->adef_expr,
+								   tbinfo->attrdefs[j]->adef_expr) == 0)
+							foundSameGenerated = true;
+						else
+							foundDiffGenerated = true;
+					}
 				}
 			}
 
 			/* Remember if we found inherited NOT NULL */
 			tbinfo->inhNotNull[j] = foundNotNull;
 
-			/* Manufacture a DEFAULT NULL clause if necessary */
+			/*
+			 * Manufacture a DEFAULT NULL clause if necessary.  This breaks
+			 * the advice given above to avoid changing state that might get
+			 * inspected in other loop iterations.  We prevent trouble by
+			 * having the foundDefault test above check whether adef_expr is
+			 * "NULL", so that it will reach the same conclusion before or
+			 * after this is done.
+			 */
 			if (foundDefault && tbinfo->attrdefs[j] == NULL)
 			{
 				AttrDefInfo *attrDef;
 
-				attrDef = (AttrDefInfo *) pg_malloc(sizeof(AttrDefInfo));
+				attrDef = pg_malloc_object(AttrDefInfo);
 				attrDef->dobj.objType = DO_ATTRDEF;
 				attrDef->dobj.catId.tableoid = 0;
 				attrDef->dobj.catId.oid = 0;
@@ -561,9 +618,10 @@ flagInhAttrs(DumpOptions *dopt, TableInfo *tblinfo, int numTables)
 				tbinfo->attrdefs[j] = attrDef;
 			}
 
-			/* Remove generation expression from child */
-			if (foundGenerated && !tbinfo->ispartition && !dopt->binary_upgrade)
-				tbinfo->attrdefs[j] = NULL;
+			/* No need to dump generation expression if it's inheritable */
+			if (foundSameGenerated && !foundDiffGenerated &&
+				!tbinfo->ispartition && !dopt->binary_upgrade)
+				tbinfo->attrdefs[j]->dobj.dump = DUMP_COMPONENT_NONE;
 		}
 	}
 }
@@ -600,14 +658,12 @@ AssignDumpId(DumpableObject *dobj)
 		if (allocedDumpIds <= 0)
 		{
 			newAlloc = 256;
-			dumpIdMap = (DumpableObject **)
-				pg_malloc(newAlloc * sizeof(DumpableObject *));
+			dumpIdMap = pg_malloc_array(DumpableObject *, newAlloc);
 		}
 		else
 		{
 			newAlloc = allocedDumpIds * 2;
-			dumpIdMap = (DumpableObject **)
-				pg_realloc(dumpIdMap, newAlloc * sizeof(DumpableObject *));
+			dumpIdMap = pg_realloc_array(dumpIdMap, DumpableObject *, newAlloc);
 		}
 		memset(dumpIdMap + allocedDumpIds, 0,
 			   (newAlloc - allocedDumpIds) * sizeof(DumpableObject *));
@@ -700,8 +756,7 @@ getDumpableObjects(DumpableObject ***objs, int *numObjs)
 	int			i,
 				j;
 
-	*objs = (DumpableObject **)
-		pg_malloc(allocedDumpIds * sizeof(DumpableObject *));
+	*objs = pg_malloc_array(DumpableObject *, allocedDumpIds);
 	j = 0;
 	for (i = 1; i < allocedDumpIds; i++)
 	{
@@ -724,15 +779,13 @@ addObjectDependency(DumpableObject *dobj, DumpId refId)
 		if (dobj->allocDeps <= 0)
 		{
 			dobj->allocDeps = 16;
-			dobj->dependencies = (DumpId *)
-				pg_malloc(dobj->allocDeps * sizeof(DumpId));
+			dobj->dependencies = pg_malloc_array(DumpId, dobj->allocDeps);
 		}
 		else
 		{
 			dobj->allocDeps *= 2;
-			dobj->dependencies = (DumpId *)
-				pg_realloc(dobj->dependencies,
-						   dobj->allocDeps * sizeof(DumpId));
+			dobj->dependencies = pg_realloc_array(dobj->dependencies,
+												  DumpId, dobj->allocDeps);
 		}
 	}
 	dobj->dependencies[dobj->nDeps++] = refId;
@@ -965,53 +1018,6 @@ findOwningExtension(CatalogId catalogId)
 	return entry->ext;
 }
 
-
-/*
- * findParentsByOid
- *	  find a table's parents in tblinfo[]
- */
-static void
-findParentsByOid(TableInfo *self,
-				 InhInfo *inhinfo, int numInherits)
-{
-	Oid			oid = self->dobj.catId.oid;
-	int			i,
-				j;
-	int			numParents;
-
-	numParents = 0;
-	for (i = 0; i < numInherits; i++)
-	{
-		if (inhinfo[i].inhrelid == oid)
-			numParents++;
-	}
-
-	self->numParents = numParents;
-
-	if (numParents > 0)
-	{
-		self->parents = (TableInfo **)
-			pg_malloc(sizeof(TableInfo *) * numParents);
-		j = 0;
-		for (i = 0; i < numInherits; i++)
-		{
-			if (inhinfo[i].inhrelid == oid)
-			{
-				TableInfo  *parent;
-
-				parent = findTableByOid(inhinfo[i].inhparent);
-				if (parent == NULL)
-					pg_fatal("failed sanity check, parent OID %u of table \"%s\" (OID %u) not found",
-							 inhinfo[i].inhparent,
-							 self->dobj.name,
-							 oid);
-				self->parents[j++] = parent;
-			}
-		}
-	}
-	else
-		self->parents = NULL;
-}
 
 /*
  * parseOidArray

@@ -4,7 +4,7 @@
  *	  creator functions for various nodes. The functions here are for the
  *	  most frequently created nodes.
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -81,11 +81,13 @@ makeVar(int varno,
 	var->varlevelsup = varlevelsup;
 
 	/*
-	 * Only a few callers need to make Var nodes with varnosyn/varattnosyn
-	 * different from varno/varattno.  We don't provide separate arguments for
-	 * them, but just initialize them to the given varno/varattno.  This
-	 * reduces code clutter and chance of error for most callers.
+	 * Only a few callers need to make Var nodes with non-null varnullingrels,
+	 * or with varnosyn/varattnosyn different from varno/varattno.  We don't
+	 * provide separate arguments for them, but just initialize them to NULL
+	 * and the given varno/varattno.  This reduces code clutter and chance of
+	 * error for most callers.
 	 */
+	var->varnullingrels = NULL;
 	var->varnosyn = (Index) varno;
 	var->varattnosyn = varattno;
 
@@ -742,7 +744,8 @@ make_ands_implicit(Expr *clause)
  */
 IndexInfo *
 makeIndexInfo(int numattrs, int numkeyattrs, Oid amoid, List *expressions,
-			  List *predicates, bool unique, bool nulls_not_distinct, bool isready, bool concurrent)
+			  List *predicates, bool unique, bool nulls_not_distinct,
+			  bool isready, bool concurrent, bool summarizing)
 {
 	IndexInfo  *n = makeNode(IndexInfo);
 
@@ -756,6 +759,10 @@ makeIndexInfo(int numattrs, int numkeyattrs, Oid amoid, List *expressions,
 	n->ii_CheckedUnchanged = false;
 	n->ii_IndexUnchanged = false;
 	n->ii_Concurrent = concurrent;
+	n->ii_Summarizing = summarizing;
+
+	/* summarizing indexes cannot contain non-key attributes */
+	Assert(!summarizing || (numkeyattrs == numattrs));
 
 	/* expressions */
 	n->ii_Expressions = expressions;
@@ -853,40 +860,6 @@ makeJsonValueExpr(Expr *expr, JsonFormat *format)
 }
 
 /*
- * makeJsonBehavior -
- *	  creates a JsonBehavior node
- */
-JsonBehavior *
-makeJsonBehavior(JsonBehaviorType type, Node *default_expr)
-{
-	JsonBehavior *behavior = makeNode(JsonBehavior);
-
-	behavior->btype = type;
-	behavior->default_expr = default_expr;
-
-	return behavior;
-}
-
-/*
- * makeJsonTableJoinedPlan -
- *	   creates a joined JsonTablePlan node
- */
-Node *
-makeJsonTableJoinedPlan(JsonTablePlanJoinType type, Node *plan1, Node *plan2,
-						int location)
-{
-	JsonTablePlan *n = makeNode(JsonTablePlan);
-
-	n->plan_type = JSTP_JOINED;
-	n->join_type = type;
-	n->plan1 = castNode(JsonTablePlan, plan1);
-	n->plan2 = castNode(JsonTablePlan, plan2);
-	n->location = location;
-
-	return (Node *) n;
-}
-
-/*
  * makeJsonEncoding -
  *	  converts JSON encoding name to enum JsonEncoding
  */
@@ -901,8 +874,8 @@ makeJsonEncoding(char *name)
 		return JS_ENC_UTF32;
 
 	ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("unrecognized JSON encoding: %s", name)));
+			errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			errmsg("unrecognized JSON encoding: %s", name));
 
 	return JS_ENC_DEFAULT;
 }

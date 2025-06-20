@@ -21,7 +21,7 @@
 #include "catalog/pg_namespace.h"
 #include "commands/schemacmds.h"
 #include "utils/builtins.h"
-#include "utils/guc.h"
+#include "utils/guc_hooks.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
@@ -110,7 +110,7 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString,
 	ObjectAddress graphobj;
 	ObjectAddress schemaobj;
 
-	AssertArg(graphName != NULL);
+	Assert(graphName != NULL);
 
 	if (OidIsValid(get_graphname_oid(graphName)))
 	{

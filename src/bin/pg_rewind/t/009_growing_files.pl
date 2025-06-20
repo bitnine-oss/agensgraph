@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 use strict;
 use warnings;
@@ -51,7 +51,7 @@ append_to_file "$standby_pgdata/tst_both_dir/file1", 'a';
 # copy operation and the result will be an error.
 my $ret = run_log(
 	[
-		'pg_rewind',       '--debug',
+		'pg_rewind', '--debug',
 		'--source-pgdata', $standby_pgdata,
 		'--target-pgdata', $primary_pgdata,
 		'--no-sync',

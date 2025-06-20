@@ -23,7 +23,6 @@
 #include "commands/trigger.h"
 #include "executor/spi.h"
 #include "funcapi.h"
-#include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "parser/parse_type.h"
@@ -47,7 +46,6 @@
 /* string literal macros defining chunks of perl code */
 #include "perlchunks.h"
 #include "plperl.h"
-#include "plperl_helpers.h"
 /* defines PLPERL_SET_OPMASK */
 #include "plperl_opmask.h"
 
@@ -245,7 +243,6 @@ static plperl_call_data *current_call_data = NULL;
 /**********************************************************************
  * Forward declarations
  **********************************************************************/
-void		_PG_init(void);
 
 static PerlInterpreter *plperl_init_interp(void);
 static void plperl_destroy_interp(PerlInterpreter **);
@@ -275,9 +272,9 @@ static Datum plperl_sv_to_datum(SV *sv, Oid typid, int32 typmod,
 								bool *isnull);
 static void _sv_to_datum_finfo(Oid typid, FmgrInfo *finfo, Oid *typioparam);
 static Datum plperl_array_to_datum(SV *src, Oid typid, int32 typmod);
-static void array_to_datum_internal(AV *av, ArrayBuildState *astate,
+static void array_to_datum_internal(AV *av, ArrayBuildState **astatep,
 									int *ndims, int *dims, int cur_depth,
-									Oid arraytypid, Oid elemtypid, int32 typmod,
+									Oid elemtypid, int32 typmod,
 									FmgrInfo *finfo, Oid typioparam);
 static Datum plperl_hash_to_datum(SV *src, TupleDesc td);
 
@@ -1163,11 +1160,16 @@ get_perl_array_ref(SV *sv)
 
 /*
  * helper function for plperl_array_to_datum, recurses for multi-D arrays
+ *
+ * The ArrayBuildState is created only when we first find a scalar element;
+ * if we didn't do it like that, we'd need some other convention for knowing
+ * whether we'd already found any scalars (and thus the number of dimensions
+ * is frozen).
  */
 static void
-array_to_datum_internal(AV *av, ArrayBuildState *astate,
+array_to_datum_internal(AV *av, ArrayBuildState **astatep,
 						int *ndims, int *dims, int cur_depth,
-						Oid arraytypid, Oid elemtypid, int32 typmod,
+						Oid elemtypid, int32 typmod,
 						FmgrInfo *finfo, Oid typioparam)
 {
 	dTHX;
@@ -1187,28 +1189,34 @@ array_to_datum_internal(AV *av, ArrayBuildState *astate,
 		{
 			AV		   *nav = (AV *) SvRV(sav);
 
-			/* dimensionality checks */
-			if (cur_depth + 1 > MAXDIM)
-				ereport(ERROR,
-						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-						 errmsg("number of array dimensions (%d) exceeds the maximum allowed (%d)",
-								cur_depth + 1, MAXDIM)));
-
 			/* set size when at first element in this level, else compare */
 			if (i == 0 && *ndims == cur_depth)
 			{
+				/* array after some scalars at same level? */
+				if (*astatep != NULL)
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+							 errmsg("multidimensional arrays must have array expressions with matching dimensions")));
+				/* too many dimensions? */
+				if (cur_depth + 1 > MAXDIM)
+					ereport(ERROR,
+							(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+							 errmsg("number of array dimensions (%d) exceeds the maximum allowed (%d)",
+									cur_depth + 1, MAXDIM)));
+				/* OK, add a dimension */
 				dims[*ndims] = av_len(nav) + 1;
 				(*ndims)++;
 			}
-			else if (av_len(nav) + 1 != dims[cur_depth])
+			else if (cur_depth >= *ndims ||
+					 av_len(nav) + 1 != dims[cur_depth])
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 						 errmsg("multidimensional arrays must have array expressions with matching dimensions")));
 
 			/* recurse to fetch elements of this sub-array */
-			array_to_datum_internal(nav, astate,
+			array_to_datum_internal(nav, astatep,
 									ndims, dims, cur_depth + 1,
-									arraytypid, elemtypid, typmod,
+									elemtypid, typmod,
 									finfo, typioparam);
 		}
 		else
@@ -1230,7 +1238,13 @@ array_to_datum_internal(AV *av, ArrayBuildState *astate,
 									 typioparam,
 									 &isnull);
 
-			(void) accumArrayResult(astate, dat, isnull,
+			/* Create ArrayBuildState if we didn't already */
+			if (*astatep == NULL)
+				*astatep = initArrayResult(elemtypid,
+										   CurrentMemoryContext, true);
+
+			/* ... and save the element value in it */
+			(void) accumArrayResult(*astatep, dat, isnull,
 									elemtypid, CurrentMemoryContext);
 		}
 	}
@@ -1243,7 +1257,8 @@ static Datum
 plperl_array_to_datum(SV *src, Oid typid, int32 typmod)
 {
 	dTHX;
-	ArrayBuildState *astate;
+	AV		   *nav = (AV *) SvRV(src);
+	ArrayBuildState *astate = NULL;
 	Oid			elemtypid;
 	FmgrInfo	finfo;
 	Oid			typioparam;
@@ -1259,21 +1274,19 @@ plperl_array_to_datum(SV *src, Oid typid, int32 typmod)
 				 errmsg("cannot convert Perl array to non-array type %s",
 						format_type_be(typid))));
 
-	astate = initArrayResult(elemtypid, CurrentMemoryContext, true);
-
 	_sv_to_datum_finfo(elemtypid, &finfo, &typioparam);
 
 	memset(dims, 0, sizeof(dims));
-	dims[0] = av_len((AV *) SvRV(src)) + 1;
+	dims[0] = av_len(nav) + 1;
 
-	array_to_datum_internal((AV *) SvRV(src), astate,
+	array_to_datum_internal(nav, &astate,
 							&ndims, dims, 1,
-							typid, elemtypid, typmod,
+							elemtypid, typmod,
 							&finfo, typioparam);
 
 	/* ensure we get zero-D array for no inputs, as per PG convention */
-	if (dims[0] <= 0)
-		ndims = 0;
+	if (astate == NULL)
+		return PointerGetDatum(construct_empty_array(elemtypid));
 
 	for (i = 0; i < ndims; i++)
 		lbs[i] = 1;
@@ -1851,7 +1864,7 @@ plperl_call_handler(PG_FUNCTION_ARGS)
 	{
 		current_call_data = &this_call_data;
 		if (CALLED_AS_TRIGGER(fcinfo))
-			retval = PointerGetDatum(plperl_trigger_handler(fcinfo));
+			retval = plperl_trigger_handler(fcinfo);
 		else if (CALLED_AS_EVENT_TRIGGER(fcinfo))
 		{
 			plperl_event_trigger_handler(fcinfo);
@@ -2112,7 +2125,7 @@ plperl_create_sub(plperl_proc_desc *prodesc, const char *s, Oid fn_oid)
 	/*
 	 * G_KEEPERR seems to be needed here, else we don't recognize compile
 	 * errors properly.  Perhaps it's because there's another level of eval
-	 * inside mksafefunc?
+	 * inside mkfunc?
 	 */
 	count = call_pv("PostgreSQL::InServer::mkfunc",
 					G_SCALAR | G_EVAL | G_KEEPERR);
@@ -2918,10 +2931,8 @@ compile_plperl_function(Oid fn_oid, bool is_trigger, bool is_event_trigger)
 		 * we do not use a named subroutine so that we can call directly
 		 * through the reference.
 		 ************************************************************/
-		prosrcdatum = SysCacheGetAttr(PROCOID, procTup,
-									  Anum_pg_proc_prosrc, &isnull);
-		if (isnull)
-			elog(ERROR, "null prosrc");
+		prosrcdatum = SysCacheGetAttrNotNull(PROCOID, procTup,
+											 Anum_pg_proc_prosrc);
 		proc_source = TextDatumGetCString(prosrcdatum);
 
 		/************************************************************
@@ -3616,7 +3627,7 @@ plperl_spi_prepare(char *query, int argc, SV **argv)
 			char	   *typstr;
 
 			typstr = sv2cstr(argv[i]);
-			parseTypeString(typstr, &typId, &typmod, false);
+			(void) parseTypeString(typstr, &typId, &typmod, NULL);
 			pfree(typstr);
 
 			getTypeInputInfo(typId, &typInput, &typIOParam);

@@ -12,9 +12,9 @@
  * Otherwise, a compression specification is a comma-separated list of items,
  * each having the form keyword or keyword=value.
  *
- * Currently, the only supported keywords are "level" and "workers".
+ * Currently, the supported keywords are "level", "long", and "workers".
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/common/compression.c
@@ -27,9 +27,18 @@
 #include "postgres_fe.h"
 #endif
 
+#ifdef USE_ZSTD
+#include <zstd.h>
+#endif
+#ifdef HAVE_LIBZ
+#include <zlib.h>
+#endif
+
 #include "common/compression.h"
 
 static int	expect_integer_value(char *keyword, char *value,
+								 pg_compress_specification *result);
+static bool expect_boolean_value(char *keyword, char *value,
 								 pg_compress_specification *result);
 
 /*
@@ -88,6 +97,9 @@ get_compress_algorithm_name(pg_compress_algorithm algorithm)
  * Note, however, even if there's no parse error, the string might not make
  * sense: e.g. for gzip, level=12 is not sensible, but it does parse OK.
  *
+ * The compression level is assigned by default if not directly specified
+ * by the specification.
+ *
  * Use validate_compress_specification() to find out whether a compression
  * specification is semantically sensible.
  */
@@ -101,8 +113,45 @@ parse_compress_specification(pg_compress_algorithm algorithm, char *specificatio
 	/* Initial setup of result object. */
 	result->algorithm = algorithm;
 	result->options = 0;
-	result->level = -1;
 	result->parse_error = NULL;
+
+	/*
+	 * Assign a default level depending on the compression method.  This may
+	 * be enforced later.
+	 */
+	switch (result->algorithm)
+	{
+		case PG_COMPRESSION_NONE:
+			result->level = 0;
+			break;
+		case PG_COMPRESSION_LZ4:
+#ifdef USE_LZ4
+			result->level = 0;	/* fast compression mode */
+#else
+			result->parse_error =
+				psprintf(_("this build does not support compression with %s"),
+						 "LZ4");
+#endif
+			break;
+		case PG_COMPRESSION_ZSTD:
+#ifdef USE_ZSTD
+			result->level = ZSTD_CLEVEL_DEFAULT;
+#else
+			result->parse_error =
+				psprintf(_("this build does not support compression with %s"),
+						 "ZSTD");
+#endif
+			break;
+		case PG_COMPRESSION_GZIP:
+#ifdef HAVE_LIBZ
+			result->level = Z_DEFAULT_COMPRESSION;
+#else
+			result->parse_error =
+				psprintf(_("this build does not support compression with %s"),
+						 "gzip");
+#endif
+			break;
+	}
 
 	/* If there is no specification, we're done already. */
 	if (specification == NULL)
@@ -113,7 +162,6 @@ parse_compress_specification(pg_compress_algorithm algorithm, char *specificatio
 	if (specification != bare_level_endp && *bare_level_endp == '\0')
 	{
 		result->level = bare_level;
-		result->options |= PG_COMPRESSION_OPTION_LEVEL;
 		return;
 	}
 
@@ -175,16 +223,25 @@ parse_compress_specification(pg_compress_algorithm algorithm, char *specificatio
 		if (strcmp(keyword, "level") == 0)
 		{
 			result->level = expect_integer_value(keyword, value, result);
-			result->options |= PG_COMPRESSION_OPTION_LEVEL;
+
+			/*
+			 * No need to set a flag in "options", there is a default level
+			 * set at least thanks to the logic above.
+			 */
 		}
 		else if (strcmp(keyword, "workers") == 0)
 		{
 			result->workers = expect_integer_value(keyword, value, result);
 			result->options |= PG_COMPRESSION_OPTION_WORKERS;
 		}
+		else if (strcmp(keyword, "long") == 0)
+		{
+			result->long_distance = expect_boolean_value(keyword, value, result);
+			result->options |= PG_COMPRESSION_OPTION_LONG_DISTANCE;
+		}
 		else
 			result->parse_error =
-				psprintf(_("unknown compression option \"%s\""), keyword);
+				psprintf(_("unrecognized compression option: \"%s\""), keyword);
 
 		/* Release memory, just to be tidy. */
 		pfree(keyword);
@@ -240,6 +297,43 @@ expect_integer_value(char *keyword, char *value, pg_compress_specification *resu
 }
 
 /*
+ * Parse 'value' as a boolean and return the result.
+ *
+ * If parsing fails, set result->parse_error to an appropriate message
+ * and return -1.  The caller must check result->parse_error to determine if
+ * the call was successful.
+ *
+ * Valid values are: yes, no, on, off, 1, 0.
+ *
+ * Inspired by ParseVariableBool().
+ */
+static bool
+expect_boolean_value(char *keyword, char *value, pg_compress_specification *result)
+{
+	if (value == NULL)
+		return true;
+
+	if (pg_strcasecmp(value, "yes") == 0)
+		return true;
+	if (pg_strcasecmp(value, "on") == 0)
+		return true;
+	if (pg_strcasecmp(value, "1") == 0)
+		return true;
+
+	if (pg_strcasecmp(value, "no") == 0)
+		return false;
+	if (pg_strcasecmp(value, "off") == 0)
+		return false;
+	if (pg_strcasecmp(value, "0") == 0)
+		return false;
+
+	result->parse_error =
+		psprintf(_("value for compression option \"%s\" must be a Boolean value"),
+				 keyword);
+	return false;
+}
+
+/*
  * Returns NULL if the compression specification string was syntactically
  * valid and semantically sensible.  Otherwise, returns an error message.
  *
@@ -249,35 +343,49 @@ expect_integer_value(char *keyword, char *value, pg_compress_specification *resu
 char *
 validate_compress_specification(pg_compress_specification *spec)
 {
+	int			min_level = 1;
+	int			max_level = 1;
+	int			default_level = 0;
+
 	/* If it didn't even parse OK, it's definitely no good. */
 	if (spec->parse_error != NULL)
 		return spec->parse_error;
 
 	/*
-	 * If a compression level was specified, check that the algorithm expects
-	 * a compression level and that the level is within the legal range for
-	 * the algorithm.
+	 * Check that the algorithm expects a compression level and it is within
+	 * the legal range for the algorithm.
 	 */
-	if ((spec->options & PG_COMPRESSION_OPTION_LEVEL) != 0)
+	switch (spec->algorithm)
 	{
-		int			min_level = 1;
-		int			max_level;
-
-		if (spec->algorithm == PG_COMPRESSION_GZIP)
+		case PG_COMPRESSION_GZIP:
 			max_level = 9;
-		else if (spec->algorithm == PG_COMPRESSION_LZ4)
+#ifdef HAVE_LIBZ
+			default_level = Z_DEFAULT_COMPRESSION;
+#endif
+			break;
+		case PG_COMPRESSION_LZ4:
 			max_level = 12;
-		else if (spec->algorithm == PG_COMPRESSION_ZSTD)
-			max_level = 22;
-		else
-			return psprintf(_("compression algorithm \"%s\" does not accept a compression level"),
-							get_compress_algorithm_name(spec->algorithm));
-
-		if (spec->level < min_level || spec->level > max_level)
-			return psprintf(_("compression algorithm \"%s\" expects a compression level between %d and %d"),
-							get_compress_algorithm_name(spec->algorithm),
-							min_level, max_level);
+			default_level = 0;	/* fast mode */
+			break;
+		case PG_COMPRESSION_ZSTD:
+#ifdef USE_ZSTD
+			max_level = ZSTD_maxCLevel();
+			min_level = ZSTD_minCLevel();
+			default_level = ZSTD_CLEVEL_DEFAULT;
+#endif
+			break;
+		case PG_COMPRESSION_NONE:
+			if (spec->level != 0)
+				return psprintf(_("compression algorithm \"%s\" does not accept a compression level"),
+								get_compress_algorithm_name(spec->algorithm));
+			break;
 	}
+
+	if ((spec->level < min_level || spec->level > max_level) &&
+		spec->level != default_level)
+		return psprintf(_("compression algorithm \"%s\" expects a compression level between %d and %d (default at %d)"),
+						get_compress_algorithm_name(spec->algorithm),
+						min_level, max_level, default_level);
 
 	/*
 	 * Of the compression algorithms that we currently support, only zstd
@@ -290,5 +398,79 @@ validate_compress_specification(pg_compress_specification *spec)
 						get_compress_algorithm_name(spec->algorithm));
 	}
 
+	/*
+	 * Of the compression algorithms that we currently support, only zstd
+	 * supports long-distance mode.
+	 */
+	if ((spec->options & PG_COMPRESSION_OPTION_LONG_DISTANCE) != 0 &&
+		(spec->algorithm != PG_COMPRESSION_ZSTD))
+	{
+		return psprintf(_("compression algorithm \"%s\" does not support long-distance mode"),
+						get_compress_algorithm_name(spec->algorithm));
+	}
+
 	return NULL;
 }
+
+#ifdef FRONTEND
+
+/*
+ * Basic parsing of a value specified through a command-line option, commonly
+ * -Z/--compress.
+ *
+ * The parsing consists of a METHOD:DETAIL string fed later to
+ * parse_compress_specification().  This only extracts METHOD and DETAIL.
+ * If only an integer is found, the method is implied by the value specified.
+ */
+void
+parse_compress_options(const char *option, char **algorithm, char **detail)
+{
+	char	   *sep;
+	char	   *endp;
+	long		result;
+
+	/*
+	 * Check whether the compression specification consists of a bare integer.
+	 *
+	 * For backward-compatibility, assume "none" if the integer found is zero
+	 * and "gzip" otherwise.
+	 */
+	result = strtol(option, &endp, 10);
+	if (*endp == '\0')
+	{
+		if (result == 0)
+		{
+			*algorithm = pstrdup("none");
+			*detail = NULL;
+		}
+		else
+		{
+			*algorithm = pstrdup("gzip");
+			*detail = pstrdup(option);
+		}
+		return;
+	}
+
+	/*
+	 * Check whether there is a compression detail following the algorithm
+	 * name.
+	 */
+	sep = strchr(option, ':');
+	if (sep == NULL)
+	{
+		*algorithm = pstrdup(option);
+		*detail = NULL;
+	}
+	else
+	{
+		char	   *alg;
+
+		alg = palloc((sep - option) + 1);
+		memcpy(alg, option, sep - option);
+		alg[sep - option] = '\0';
+
+		*algorithm = alg;
+		*detail = pstrdup(sep + 1);
+	}
+}
+#endif							/* FRONTEND */

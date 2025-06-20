@@ -5,7 +5,7 @@
  *	  commands.  At one time acted as an interface between the Lisp and C
  *	  systems.
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -223,10 +223,8 @@ ClassifyUtilityCommandAsReadOnly(Node *parsetree)
 			/* AgensGraph DDLs */
 		case T_CreateGraphStmt:
 		case T_CreateLabelStmt:
-		case T_AlterLabelStmt:
 		case T_CreateConstraintStmt:
 		case T_DropConstraintStmt:
-		case T_CreatePropertyIndexStmt:
 		case T_DisableIndexStmt:
 			{
 				/* DDL is not read-only, and neither is TRUNCATE. */
@@ -777,7 +775,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 
 		case T_GrantRoleStmt:
 			/* no event triggers for global objects */
-			GrantRole((GrantRoleStmt *) parsetree);
+			GrantRole(pstate, (GrantRoleStmt *) parsetree);
 			break;
 
 		case T_CreatedbStmt:
@@ -957,10 +955,13 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 			break;
 
 		case T_CheckPointStmt:
-			if (!has_privs_of_role(GetUserId(), ROLE_PG_CHECKPOINTER))
+			if (!has_privs_of_role(GetUserId(), ROLE_PG_CHECKPOINT))
 				ereport(ERROR,
 						(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-						 errmsg("must be superuser or have privileges of pg_checkpointer to do CHECKPOINT")));
+						 errmsg("permission denied to execute %s command",
+								"CHECKPOINT"),
+						 errdetail("Only roles with privileges of the \"%s\" role may execute this command.",
+								   "pg_checkpoint")));
 
 			RequestCheckpoint(CHECKPOINT_IMMEDIATE | CHECKPOINT_WAIT |
 							  (RecoveryInProgress() ? 0 : CHECKPOINT_FORCE));
@@ -1292,7 +1293,6 @@ ProcessUtilitySlow(ParseState *pstate,
 				}
 				break;
 
-			case T_AlterLabelStmt:
 			case T_AlterTableStmt:
 				{
 					AlterTableStmt *atstmt = (AlterTableStmt *) parsetree;
@@ -1318,11 +1318,12 @@ ProcessUtilitySlow(ParseState *pstate,
 						}
 					}
 
-					if (nodeTag(parsetree) == T_AlterLabelStmt)
+					if (atstmt->objtype == OBJECT_VLABEL ||
+						atstmt->objtype == OBJECT_ELABEL)
 					{
-						atstmt = transformAlterLabelStmt(
-														 (AlterLabelStmt *) atstmt);
+						atstmt = transformAlterLabelStmt(atstmt);
 						if (atstmt == NULL)
+							/* transformAlterLabelStmt already issued a notice */
 							break;
 					}
 
@@ -1490,11 +1491,27 @@ ProcessUtilitySlow(ParseState *pstate,
 					IndexStmt  *stmt = (IndexStmt *) parsetree;
 					Oid			relid;
 					LOCKMODE	lockmode;
+					int			nparts = -1;
 					bool		is_alter_table;
 
 					if (stmt->concurrent)
 						PreventInTransactionBlock(isTopLevel,
+												  stmt->is_property_index ? 
+												  "CREATE PROPERTY INDEX CONCURRENTLY" :
 												  "CREATE INDEX CONCURRENTLY");
+					/* Agensgraph */
+					if (stmt->is_property_index)
+					{
+						/* Implicitly fill the schemaname using graph_path */
+						if (stmt->relation->schemaname == NULL)
+							stmt->relation->schemaname = get_graph_path(true);
+
+						if (!RangeVarIsLabel(stmt->relation))
+						{
+							elog(ERROR, "label \"%s\" does not exist",
+								stmt->relation->relname);
+						}
+					}
 
 					/*
 					 * Look up the relation OID just once, right here at the
@@ -1520,7 +1537,9 @@ ProcessUtilitySlow(ParseState *pstate,
 					 *
 					 * We also take the opportunity to verify that all
 					 * partitions are something we can put an index on, to
-					 * avoid building some indexes only to fail later.
+					 * avoid building some indexes only to fail later.  While
+					 * at it, also count the partitions, so that DefineIndex
+					 * needn't do a duplicative find_all_inheritors search.
 					 */
 					if (stmt->relation->inh &&
 						get_rel_relkind(relid) == RELKIND_PARTITIONED_TABLE)
@@ -1531,7 +1550,8 @@ ProcessUtilitySlow(ParseState *pstate,
 						inheritors = find_all_inheritors(relid, lockmode, NULL);
 						foreach(lc, inheritors)
 						{
-							char		relkind = get_rel_relkind(lfirst_oid(lc));
+							Oid			partrelid = lfirst_oid(lc);
+							char		relkind = get_rel_relkind(partrelid);
 
 							if (relkind != RELKIND_RELATION &&
 								relkind != RELKIND_MATVIEW &&
@@ -1549,6 +1569,8 @@ ProcessUtilitySlow(ParseState *pstate,
 										 errdetail("Table \"%s\" contains partitions that are foreign tables.",
 												   stmt->relation->relname)));
 						}
+						/* count direct and indirect children, but not rel */
+						nparts = list_length(inheritors) - 1;
 						list_free(inheritors);
 					}
 
@@ -1564,7 +1586,11 @@ ProcessUtilitySlow(ParseState *pstate,
 					is_alter_table = stmt->transformed;
 
 					/* Run parse analysis ... */
-					stmt = transformIndexStmt(relid, stmt, queryString);
+					if (stmt->is_property_index)
+						stmt = transformCreatePropertyIndexStmt(relid, stmt,
+																queryString);
+					else
+						stmt = transformIndexStmt(relid, stmt, queryString);
 
 					/* ... and do it */
 					EventTriggerAlterTableStart(parsetree);
@@ -1574,6 +1600,7 @@ ProcessUtilitySlow(ParseState *pstate,
 									InvalidOid, /* no predefined OID */
 									InvalidOid, /* no parent index */
 									InvalidOid, /* no parent constraint */
+									nparts, /* # of partitions, or -1 */
 									is_alter_table,
 									true,	/* check_rights */
 									true,	/* check_not_in_use */
@@ -1707,16 +1734,16 @@ ProcessUtilitySlow(ParseState *pstate,
 				 * command itself is queued, which is enough.
 				 */
 				EventTriggerInhibitCommandCollection();
-				PG_TRY();
+				PG_TRY(2);
 				{
 					address = ExecRefreshMatView((RefreshMatViewStmt *) parsetree,
 												 queryString, params, qc);
 				}
-				PG_FINALLY();
+				PG_FINALLY(2);
 				{
 					EventTriggerUndoInhibitCommandCollection();
 				}
-				PG_END_TRY();
+				PG_END_TRY(2);
 				break;
 
 			case T_CreateTrigStmt:
@@ -1887,76 +1914,6 @@ ProcessUtilitySlow(ParseState *pstate,
 									  queryString, pstmt->stmt_location,
 									  pstmt->stmt_len, params);
 				commandCollected = true;
-				break;
-
-				/* see above case T_IndexStmt */
-			case T_CreatePropertyIndexStmt:
-				{
-					CreatePropertyIndexStmt *stmt;
-					IndexStmt  *idxstmt;
-					Oid			relid;
-					LOCKMODE	lockmode;
-
-					stmt = (CreatePropertyIndexStmt *) parsetree;
-					if (stmt->concurrent)
-						PreventInTransactionBlock(isTopLevel,
-												  "CREATE PROPERTY INDEX CONCURRENTLY");
-
-					/* Parser prevent to input graph name for label. */
-					Assert(stmt->relation->schemaname == NULL);
-					stmt->relation->schemaname = get_graph_path(true);
-
-					if (!RangeVarIsLabel(stmt->relation))
-					{
-						elog(ERROR, "label \"%s\" does not exist",
-							 stmt->relation->relname);
-					}
-
-					/*
-					 * Look up the relation OID just once, right here at the
-					 * beginning, so that we don't end up repeating the name
-					 * lookup later and latching onto a different relation
-					 * partway through.  To avoid lock upgrade hazards, it's
-					 * important that we take the strongest lock that will
-					 * eventually be needed here, so the lockmode calculation
-					 * needs to match what DefineIndex() does.
-					 */
-					lockmode = stmt->concurrent ? ShareUpdateExclusiveLock
-						: ShareLock;
-					relid =
-						RangeVarGetRelidExtended(stmt->relation, lockmode,
-												 0,
-												 RangeVarCallbackOwnsRelation,
-												 NULL);
-
-					/* Run parse analysis ... */
-					idxstmt = transformCreatePropertyIndexStmt(relid, stmt,
-															   queryString);
-
-					/* ... and do it */
-					EventTriggerAlterTableStart(parsetree);
-					address =
-						DefineIndex(relid,	/* OID of heap relation */
-									idxstmt,
-									InvalidOid, /* no predefined OID */
-									InvalidOid, /* no parent index */
-									InvalidOid, /* no parent constraint */
-									false,	/* is_alter_table */
-									true,	/* check_rights */
-									true,	/* check_not_in_use */
-									false,	/* skip_build */
-									false); /* quiet */
-
-					/*
-					 * Add the CREATE INDEX node itself to stash right away;
-					 * if there were any commands stashed in the ALTER TABLE
-					 * code, we need them to appear after this one.
-					 */
-					EventTriggerCollectSimpleCommand(address, secondaryObject,
-													 parsetree);
-					commandCollected = true;
-					EventTriggerAlterTableEnd();
-				}
 				break;
 
 			case T_CreatePublicationStmt:
@@ -2668,27 +2625,6 @@ CreateCommandTag(Node *parsetree)
 			tag = CMDTAG_DROP_CONSTRAINT;
 			break;
 
-		case T_AlterLabelStmt:
-			{
-				switch (((AlterLabelStmt *) parsetree)->objtype)
-				{
-					case OBJECT_VLABEL:
-						tag = CMDTAG_ALTER_VLABEL;
-						break;
-					case OBJECT_ELABEL:
-						tag = CMDTAG_ALTER_ELABEL;
-						break;
-					default:
-						tag = CMDTAG_UNKNOWN;
-						break;
-				}
-			}
-			break;
-
-		case T_CreatePropertyIndexStmt:
-			tag = CMDTAG_CREATE_PROPERTY_INDEX;
-			break;
-
 		case T_CreateTableSpaceStmt:
 			tag = CMDTAG_CREATE_TABLESPACE;
 			break;
@@ -3025,7 +2961,9 @@ CreateCommandTag(Node *parsetree)
 			break;
 
 		case T_IndexStmt:
-			tag = CMDTAG_CREATE_INDEX;
+			tag = ((IndexStmt *) parsetree)->is_property_index ?
+				  CMDTAG_CREATE_PROPERTY_INDEX :
+				  CMDTAG_CREATE_INDEX;
 			break;
 
 		case T_RuleStmt:
@@ -3531,10 +3469,8 @@ GetCommandLogLevel(Node *parsetree)
 			break;
 
 		case T_CreateLabelStmt:
-		case T_AlterLabelStmt:
 		case T_CreateConstraintStmt:
 		case T_DropConstraintStmt:
-		case T_CreatePropertyIndexStmt:
 			lev = LOGSTMT_DDL;
 			break;
 

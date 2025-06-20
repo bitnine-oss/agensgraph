@@ -3,7 +3,7 @@
  * lsyscache.h
  *	  Convenience routines for common queries in the system catalog cache.
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/lsyscache.h
@@ -198,6 +198,10 @@ extern Oid	get_index_column_opclass(Oid index_oid, int attno);
 extern bool get_index_isreplident(Oid index_oid);
 extern bool get_index_isvalid(Oid index_oid);
 extern bool get_index_isclustered(Oid index_oid);
+extern Oid	get_publication_oid(const char *pubname, bool missing_ok);
+extern char *get_publication_name(Oid pubid, bool missing_ok);
+extern Oid	get_subscription_oid(const char *subname, bool missing_ok);
+extern char *get_subscription_name(Oid subid, bool missing_ok);
 
 extern char *get_graphid_graphname(Oid graphid);
 extern Oid	get_graphname_oid(const char *graphname);

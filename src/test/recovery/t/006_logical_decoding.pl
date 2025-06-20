@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 # Testing of logical decoding using SQL interface and/or pg_recvlogical
 #
@@ -45,7 +45,7 @@ ok( $stderr =~
 	replication => 'database');
 like(
 	$stderr,
-	qr/cannot use "READ_REPLICATION_SLOT" with logical replication slot "test_slot"/,
+	qr/cannot use READ_REPLICATION_SLOT with a logical replication slot/,
 	'READ_REPLICATION_SLOT not supported for logical slots');
 
 # Check case of walsender not using a database connection.  Logical
@@ -109,7 +109,7 @@ $node_primary->safe_psql('postgres',
 my $stdout_recv = $node_primary->pg_recvlogical_upto(
 	'postgres', 'test_slot', $endpos,
 	$PostgreSQL::Test::Utils::timeout_default,
-	'include-xids'     => '0',
+	'include-xids' => '0',
 	'skip-empty-xacts' => '1');
 chomp($stdout_recv);
 is($stdout_recv, $expected,
@@ -122,7 +122,7 @@ $node_primary->poll_query_until('postgres',
 $stdout_recv = $node_primary->pg_recvlogical_upto(
 	'postgres', 'test_slot', $endpos,
 	$PostgreSQL::Test::Utils::timeout_default,
-	'include-xids'     => '0',
+	'include-xids' => '0',
 	'skip-empty-xacts' => '1');
 chomp($stdout_recv);
 is($stdout_recv, '', 'pg_recvlogical acknowledged changes');

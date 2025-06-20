@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 use strict;
 use warnings;
@@ -43,7 +43,7 @@ SKIP:
 	# Get the PID
 	$stdout = '';
 	$stderr = '';
-	$stdin  = "\\! echo \$PPID >$tempdir/psql.pid\n";
+	$stdin = "\\! echo \$PPID >$tempdir/psql.pid\n";
 	pump $h while length $stdin;
 	my $count;
 	my $psql_pid;

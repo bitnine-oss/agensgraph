@@ -1,6 +1,6 @@
 # -*-perl-*- hey - emacs - this is a perl file
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 # src/tools/msvc/pgbison.pl
 
@@ -13,10 +13,10 @@ use File::Basename;
 
 do './src/tools/msvc/buildenv.pl' if -e 'src/tools/msvc/buildenv.pl';
 
-my ($bisonver) = `bison -V`;    # grab first line
+my ($bisonver) = `bison -V`;                 # grab first line
 $bisonver = (split(/\s+/, $bisonver))[3];    # grab version number
 
-unless ($bisonver eq '1.875' || $bisonver ge '2.2')
+unless ($bisonver ge '2.3')
 {
 	print "WARNING! Bison install not found, or unsupported Bison version.\n";
 	print "echo Attempting to build without.\n";

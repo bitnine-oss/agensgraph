@@ -33,9 +33,13 @@ VACUUM [ FULL ] [ FREEZE ] [ VERBOSE ] [ ANALYZE ] [ <replaceable class="paramet
     DISABLE_PAGE_SKIPPING [ <replaceable class="parameter">boolean</replaceable> ]
     SKIP_LOCKED [ <replaceable class="parameter">boolean</replaceable> ]
     INDEX_CLEANUP { AUTO | ON | OFF }
+    PROCESS_MAIN [ <replaceable class="parameter">boolean</replaceable> ]
     PROCESS_TOAST [ <replaceable class="parameter">boolean</replaceable> ]
     TRUNCATE [ <replaceable class="parameter">boolean</replaceable> ]
     PARALLEL <replaceable class="parameter">integer</replaceable>
+    SKIP_DATABASE_STATS [ <replaceable class="parameter">boolean</replaceable> ]
+    ONLY_DATABASE_STATS [ <replaceable class="parameter">boolean</replaceable> ]
+    BUFFER_USAGE_LIMIT [ <replaceable class="parameter">size</replaceable> ]
 
 <phrase>and <replaceable class="parameter">table_and_columns</replaceable> is:</phrase>
 
@@ -237,6 +241,18 @@ VACUUM [ FULL ] [ FREEZE ] [ VERBOSE ] [ ANALYZE ] [ <replaceable class="paramet
    </varlistentry>
 
    <varlistentry>
+    <term><literal>PROCESS_MAIN</literal></term>
+    <listitem>
+     <para>
+      Specifies that <command>VACUUM</command> should attempt to process the
+      main relation. This is usually the desired behavior and is the default.
+      Setting this option to false may be useful when it is only necessary to
+      vacuum a relation's corresponding <literal>TOAST</literal> table.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
     <term><literal>PROCESS_TOAST</literal></term>
     <listitem>
      <para>
@@ -296,6 +312,65 @@ VACUUM [ FULL ] [ FREEZE ] [ VERBOSE ] [ ANALYZE ] [ <replaceable class="paramet
    </varlistentry>
 
    <varlistentry>
+    <term><literal>SKIP_DATABASE_STATS</literal></term>
+    <listitem>
+     <para>
+      Specifies that <command>VACUUM</command> should skip updating the
+      database-wide statistics about oldest unfrozen XIDs.  Normally
+      <command>VACUUM</command> will update these statistics once at the
+      end of the command.  However, this can take awhile in a database
+      with a very large number of tables, and it will accomplish nothing
+      unless the table that had contained the oldest unfrozen XID was
+      among those vacuumed.  Moreover, if multiple <command>VACUUM</command>
+      commands are issued in parallel, only one of them can update the
+      database-wide statistics at a time.  Therefore, if an application
+      intends to issue a series of many <command>VACUUM</command>
+      commands, it can be helpful to set this option in all but the last
+      such command; or set it in all the commands and separately
+      issue <literal>VACUUM (ONLY_DATABASE_STATS)</literal> afterwards.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>ONLY_DATABASE_STATS</literal></term>
+    <listitem>
+     <para>
+      Specifies that <command>VACUUM</command> should do nothing except
+      update the database-wide statistics about oldest unfrozen XIDs.
+      When this option is specified,
+      the <replaceable class="parameter">table_and_columns</replaceable>
+      list must be empty, and no other option may be enabled
+      except <literal>VERBOSE</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>BUFFER_USAGE_LIMIT</literal></term>
+    <listitem>
+     <para>
+      Specifies the
+      <glossterm linkend="glossary-buffer-access-strategy">Buffer Access Strategy</glossterm>
+      ring buffer size for <command>VACUUM</command>.  This size is used to
+      calculate the number of shared buffers which will be reused as part of
+      this strategy.  <literal>0</literal> disables use of a
+      <literal>Buffer Access Strategy</literal>.  If <option>ANALYZE</option>
+      is also specified, the <option>BUFFER_USAGE_LIMIT</option> value is used
+      for both the vacuum and analyze stages.  This option can't be used with
+      the <option>FULL</option> option except if <option>ANALYZE</option> is
+      also specified.  When this option is not specified,
+      <command>VACUUM</command> uses the value from
+      <xref linkend="guc-vacuum-buffer-usage-limit"/>.  Higher settings can
+      allow <command>VACUUM</command> to run more quickly, but having too
+      large a setting may cause too many other useful pages to be evicted from
+      shared buffers.  The minimum value is <literal>128 kB</literal> and the
+      maximum value is <literal>16 GB</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
     <term><replaceable class="parameter">boolean</replaceable></term>
     <listitem>
      <para>
@@ -314,6 +389,19 @@ VACUUM [ FULL ] [ FREEZE ] [ VERBOSE ] [ ANALYZE ] [ <replaceable class="paramet
     <listitem>
      <para>
       Specifies a non-negative integer value passed to the selected option.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">size</replaceable></term>
+    <listitem>
+     <para>
+      Specifies an amount of memory in kilobytes.  Sizes may also be specified
+      as a string containing the numerical size followed by any one of the
+      following memory units: <literal>kB</literal> (kilobytes),
+      <literal>MB</literal> (megabytes), <literal>GB</literal> (gigabytes), or
+      <literal>TB</literal> (terabytes).
      </para>
     </listitem>
    </varlistentry>
@@ -356,11 +444,9 @@ VACUUM [ FULL ] [ FREEZE ] [ VERBOSE ] [ ANALYZE ] [ <replaceable class="paramet
   <title>Notes</title>
 
    <para>
-    To vacuum a table, one must ordinarily be the table's owner or a
-    superuser.  However, database owners are allowed to
+    To vacuum a table, one must ordinarily have the <literal>MAINTAIN</literal>
+    privilege on the table.  However, database owners are allowed to
     vacuum all tables in their databases, except shared catalogs.
-    (The restriction for shared catalogs means that a true database-wide
-    <command>VACUUM</command> can only be performed by a superuser.)
     <command>VACUUM</command> will skip over any tables that the calling user
     does not have permission to vacuum.
    </para>

@@ -19,7 +19,7 @@ OBJS = \
 	option.o \
 	parallel.o \
 	pg_upgrade.o \
-	relfilenode.o \
+	relfilenumber.o \
 	server.o \
 	tablespace.o \
 	util.o \
@@ -50,6 +50,8 @@ clean distclean maintainer-clean:
 	rm -f pg_upgrade$(X) $(OBJS)
 	rm -rf delete_old_cluster.sh log/ tmp_check/ \
 	       reindex_hash.sql
+
+export with_icu
 
 check:
 	$(prove_check)

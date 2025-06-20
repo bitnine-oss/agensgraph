@@ -3,7 +3,7 @@
  *
  *	main source file
  *
- *	Copyright (c) 2010-2022, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2023, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/pg_upgrade.c
  */
 
@@ -51,6 +51,7 @@
 #include "fe_utils/string_utils.h"
 #include "pg_upgrade.h"
 
+static void set_locale_and_encoding(void);
 static void prepare_new_cluster(void);
 static void prepare_new_globals(void);
 static void create_new_objects(void);
@@ -81,6 +82,10 @@ main(int argc, char **argv)
 	char	   *deletion_script_file_name = NULL;
 	bool		live_check = false;
 
+	/*
+	 * pg_upgrade doesn't currently use common/logging.c, but initialize it
+	 * anyway because we might call common code that does.
+	 */
 	pg_logging_init(argv[0]);
 	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pg_upgrade"));
 
@@ -99,7 +104,7 @@ main(int argc, char **argv)
 	 * output directories with correct permissions.
 	 */
 	if (!GetDataDirectoryCreatePerm(new_cluster.pgdata))
-		pg_fatal("could not read permissions of directory \"%s\": %s\n",
+		pg_fatal("could not read permissions of directory \"%s\": %s",
 				 new_cluster.pgdata, strerror(errno));
 
 	umask(pg_mode_mask);
@@ -133,7 +138,9 @@ main(int argc, char **argv)
 	pg_log(PG_REPORT,
 		   "\n"
 		   "Performing Upgrade\n"
-		   "------------------\n");
+		   "------------------");
+
+	set_locale_and_encoding();
 
 	prepare_new_cluster();
 
@@ -197,7 +204,7 @@ main(int argc, char **argv)
 	pg_log(PG_REPORT,
 		   "\n"
 		   "Upgrade Complete\n"
-		   "----------------\n");
+		   "----------------");
 
 	output_completion_banner(deletion_script_file_name);
 
@@ -228,7 +235,7 @@ make_outputdirs(char *pgdata)
 	log_opts.rootdir = (char *) pg_malloc0(MAXPGPATH);
 	len = snprintf(log_opts.rootdir, MAXPGPATH, "%s/%s", pgdata, BASE_OUTPUTDIR);
 	if (len >= MAXPGPATH)
-		pg_fatal("directory path for new cluster is too long\n");
+		pg_fatal("directory path for new cluster is too long");
 
 	/* BASE_OUTPUTDIR/$timestamp/ */
 	gettimeofday(&time, NULL);
@@ -241,42 +248,42 @@ make_outputdirs(char *pgdata)
 	len = snprintf(log_opts.basedir, MAXPGPATH, "%s/%s", log_opts.rootdir,
 				   timebuf);
 	if (len >= MAXPGPATH)
-		pg_fatal("directory path for new cluster is too long\n");
+		pg_fatal("directory path for new cluster is too long");
 
 	/* BASE_OUTPUTDIR/$timestamp/dump/ */
 	log_opts.dumpdir = (char *) pg_malloc0(MAXPGPATH);
 	len = snprintf(log_opts.dumpdir, MAXPGPATH, "%s/%s/%s", log_opts.rootdir,
 				   timebuf, DUMP_OUTPUTDIR);
 	if (len >= MAXPGPATH)
-		pg_fatal("directory path for new cluster is too long\n");
+		pg_fatal("directory path for new cluster is too long");
 
 	/* BASE_OUTPUTDIR/$timestamp/log/ */
 	log_opts.logdir = (char *) pg_malloc0(MAXPGPATH);
 	len = snprintf(log_opts.logdir, MAXPGPATH, "%s/%s/%s", log_opts.rootdir,
 				   timebuf, LOG_OUTPUTDIR);
 	if (len >= MAXPGPATH)
-		pg_fatal("directory path for new cluster is too long\n");
+		pg_fatal("directory path for new cluster is too long");
 
 	/*
 	 * Ignore the error case where the root path exists, as it is kept the
 	 * same across runs.
 	 */
 	if (mkdir(log_opts.rootdir, pg_dir_create_mode) < 0 && errno != EEXIST)
-		pg_fatal("could not create directory \"%s\": %m\n", log_opts.rootdir);
+		pg_fatal("could not create directory \"%s\": %m", log_opts.rootdir);
 	if (mkdir(log_opts.basedir, pg_dir_create_mode) < 0)
-		pg_fatal("could not create directory \"%s\": %m\n", log_opts.basedir);
+		pg_fatal("could not create directory \"%s\": %m", log_opts.basedir);
 	if (mkdir(log_opts.dumpdir, pg_dir_create_mode) < 0)
-		pg_fatal("could not create directory \"%s\": %m\n", log_opts.dumpdir);
+		pg_fatal("could not create directory \"%s\": %m", log_opts.dumpdir);
 	if (mkdir(log_opts.logdir, pg_dir_create_mode) < 0)
-		pg_fatal("could not create directory \"%s\": %m\n", log_opts.logdir);
+		pg_fatal("could not create directory \"%s\": %m", log_opts.logdir);
 
 	len = snprintf(filename_path, sizeof(filename_path), "%s/%s",
 				   log_opts.logdir, INTERNAL_LOG_FILE);
 	if (len >= sizeof(filename_path))
-		pg_fatal("directory path for new cluster is too long\n");
+		pg_fatal("directory path for new cluster is too long");
 
 	if ((log_opts.internal = fopen_priv(filename_path, "a")) == NULL)
-		pg_fatal("could not open log file \"%s\": %m\n", filename_path);
+		pg_fatal("could not open log file \"%s\": %m", filename_path);
 
 	/* label start of upgrade in logfiles */
 	for (filename = output_files; *filename != NULL; filename++)
@@ -284,9 +291,9 @@ make_outputdirs(char *pgdata)
 		len = snprintf(filename_path, sizeof(filename_path), "%s/%s",
 					   log_opts.logdir, *filename);
 		if (len >= sizeof(filename_path))
-			pg_fatal("directory path for new cluster is too long\n");
+			pg_fatal("directory path for new cluster is too long");
 		if ((fp = fopen_priv(filename_path, "a")) == NULL)
-			pg_fatal("could not write to log file \"%s\": %m\n", filename_path);
+			pg_fatal("could not write to log file \"%s\": %m", filename_path);
 
 		fprintf(fp,
 				"-----------------------------------------------------------------\n"
@@ -317,7 +324,7 @@ setup(char *argv0, bool *live_check)
 		char		exec_path[MAXPGPATH];
 
 		if (find_my_exec(argv0, exec_path) < 0)
-			pg_fatal("%s: could not find own program executable\n", argv0);
+			pg_fatal("%s: could not find own program executable", argv0);
 		/* Trim off program name and keep just path */
 		*last_dir_separator(exec_path) = '\0';
 		canonicalize_path(exec_path);
@@ -344,7 +351,7 @@ setup(char *argv0, bool *live_check)
 		{
 			if (!user_opts.check)
 				pg_fatal("There seems to be a postmaster servicing the old cluster.\n"
-						 "Please shutdown that postmaster and try again.\n");
+						 "Please shutdown that postmaster and try again.");
 			else
 				*live_check = true;
 		}
@@ -357,8 +364,78 @@ setup(char *argv0, bool *live_check)
 			stop_postmaster(false);
 		else
 			pg_fatal("There seems to be a postmaster servicing the new cluster.\n"
-					 "Please shutdown that postmaster and try again.\n");
+					 "Please shutdown that postmaster and try again.");
 	}
+}
+
+
+/*
+ * Copy locale and encoding information into the new cluster's template0.
+ *
+ * We need to copy the encoding, datlocprovider, datcollate, datctype, and
+ * daticulocale. We don't need datcollversion because that's never set for
+ * template0.
+ */
+static void
+set_locale_and_encoding(void)
+{
+	PGconn	   *conn_new_template1;
+	char	   *datcollate_literal;
+	char	   *datctype_literal;
+	char	   *daticulocale_literal = NULL;
+	DbLocaleInfo *locale = old_cluster.template0;
+
+	prep_status("Setting locale and encoding for new cluster");
+
+	/* escape literals with respect to new cluster */
+	conn_new_template1 = connectToServer(&new_cluster, "template1");
+
+	datcollate_literal = PQescapeLiteral(conn_new_template1,
+										 locale->db_collate,
+										 strlen(locale->db_collate));
+	datctype_literal = PQescapeLiteral(conn_new_template1,
+									   locale->db_ctype,
+									   strlen(locale->db_ctype));
+	if (locale->db_iculocale)
+		daticulocale_literal = PQescapeLiteral(conn_new_template1,
+											   locale->db_iculocale,
+											   strlen(locale->db_iculocale));
+	else
+		daticulocale_literal = pg_strdup("NULL");
+
+	/* update template0 in new cluster */
+	if (GET_MAJOR_VERSION(new_cluster.major_version) >= 1500)
+		PQclear(executeQueryOrDie(conn_new_template1,
+								  "UPDATE pg_catalog.pg_database "
+								  "  SET encoding = %d, "
+								  "      datlocprovider = '%c', "
+								  "      datcollate = %s, "
+								  "      datctype = %s, "
+								  "      daticulocale = %s "
+								  "  WHERE datname = 'template0' ",
+								  locale->db_encoding,
+								  locale->db_collprovider,
+								  datcollate_literal,
+								  datctype_literal,
+								  daticulocale_literal));
+	else
+		PQclear(executeQueryOrDie(conn_new_template1,
+								  "UPDATE pg_catalog.pg_database "
+								  "  SET encoding = %d, "
+								  "      datcollate = %s, "
+								  "      datctype = %s "
+								  "  WHERE datname = 'template0' ",
+								  locale->db_encoding,
+								  datcollate_literal,
+								  datctype_literal));
+
+	PQfreemem(datcollate_literal);
+	PQfreemem(datctype_literal);
+	PQfreemem(daticulocale_literal);
+
+	PQfinish(conn_new_template1);
+
+	check_ok();
 }
 
 
@@ -529,7 +606,7 @@ remove_new_subdir(const char *subdir, bool rmtopdir)
 
 	snprintf(new_path, sizeof(new_path), "%s/%s", new_cluster.pgdata, subdir);
 	if (!rmtree(new_path, rmtopdir))
-		pg_fatal("could not delete directory \"%s\"\n", new_path);
+		pg_fatal("could not delete directory \"%s\"", new_path);
 
 	check_ok();
 }

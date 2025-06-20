@@ -1,7 +1,7 @@
 <!-- doc/src/sgml/dblink.sgml -->
 
 <sect1 id="dblink" xreflabel="dblink">
- <title>dblink</title>
+ <title>dblink &mdash; connect to other PostgreSQL databases</title>
 
  <indexterm zone="dblink">
   <primary>dblink</primary>
@@ -117,8 +117,9 @@ dblink_connect(text connname, text connstr) returns text
 
    <para>
     Only superusers may use <function>dblink_connect</function> to create
-    non-password-authenticated connections.  If non-superusers need this
-    capability, use <function>dblink_connect_u</function> instead.
+    non-password-authenticated and non-GSSAPI-authenticated connections.
+    If non-superusers need this capability, use
+    <function>dblink_connect_u</function> instead.
    </para>
 
    <para>

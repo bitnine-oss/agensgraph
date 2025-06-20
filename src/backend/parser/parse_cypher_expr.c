@@ -1929,10 +1929,10 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 			aexprs = NIL;
 			foreach(l, rnonvars)
 			{
-				Node	   *rexpr = (Node *) lfirst(l);
+				Node	   *_rexpr = (Node *) lfirst(l);
 
-				rexpr = coerce_to_common_type(pstate, rexpr, scalar_type, "IN");
-				aexprs = lappend(aexprs, rexpr);
+				_rexpr = coerce_to_common_type(pstate, _rexpr, scalar_type, "IN");
+				aexprs = lappend(aexprs, _rexpr);
 			}
 			newa = makeNode(ArrayExpr);
 			newa->array_typeid = array_type;
@@ -1955,11 +1955,11 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 	 */
 	foreach(l, rexprs)
 	{
-		Node	   *rexpr = (Node *) lfirst(l);
+		Node	   *_rexpr = (Node *) lfirst(l);
 		Node	   *cmp;
 
 		/* Ordinary scalar operator */
-		cmp = (Node *) make_op(pstate, a->name, copyObject(lexpr), rexpr,
+		cmp = (Node *) make_op(pstate, a->name, copyObject(lexpr), _rexpr,
 							   pstate->p_last_srf, a->location);
 
 		cmp = coerce_to_boolean(pstate, cmp, "IN");

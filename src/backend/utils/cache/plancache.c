@@ -44,7 +44,7 @@
  * if the old one gets invalidated.
  *
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -78,9 +78,11 @@
 /*
  * We must skip "overhead" operations that involve database access when the
  * cached plan's subject statement is a transaction control command.
+ * For the convenience of postgres.c, treat empty statements as control
+ * commands too.
  */
 #define IsTransactionStmtPlan(plansource)  \
-	((plansource)->raw_parse_tree && \
+	((plansource)->raw_parse_tree == NULL || \
 	 IsA((plansource)->raw_parse_tree->stmt, TransactionStmt))
 
 /*
@@ -116,7 +118,7 @@ static void PlanCacheObjectCallback(Datum arg, int cacheid, uint32 hashvalue);
 static void PlanCacheSysCallback(Datum arg, int cacheid, uint32 hashvalue);
 
 /* GUC parameter */
-int			plan_cache_mode;
+int			plan_cache_mode = PLAN_CACHE_MODE_AUTO;
 
 /*
  * InitPlanCache: initialize module during InitPostgres.
@@ -1769,7 +1771,8 @@ AcquireExecutorLocks(List *stmt_list, bool acquire)
 		{
 			RangeTblEntry *rte = (RangeTblEntry *) lfirst(lc2);
 
-			if (rte->rtekind != RTE_RELATION)
+			if (!(rte->rtekind == RTE_RELATION ||
+				  (rte->rtekind == RTE_SUBQUERY && OidIsValid(rte->relid))))
 				continue;
 
 			/*
@@ -1845,6 +1848,14 @@ ScanQueryForLocks(Query *parsetree, bool acquire)
 				break;
 
 			case RTE_SUBQUERY:
+				/* If this was a view, must lock/unlock the view */
+				if (OidIsValid(rte->relid))
+				{
+					if (acquire)
+						LockRelationOid(rte->relid, rte->rellockmode);
+					else
+						UnlockRelationOid(rte->relid, rte->rellockmode);
+				}
 				/* Recurse into subquery-in-FROM */
 				ScanQueryForLocks(rte->subquery, acquire);
 				break;

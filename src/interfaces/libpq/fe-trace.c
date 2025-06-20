@@ -3,7 +3,7 @@
  *	fe-trace.c
  *	  functions for libpq protocol tracing
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -74,7 +74,7 @@ PQsetTraceFlags(PGconn *conn, int flags)
 /*
  * Print the current time, with microseconds, into a caller-supplied
  * buffer.
- * Cribbed from setup_formatted_log_time, but much simpler.
+ * Cribbed from get_formatted_log_time, but much simpler.
  */
 static void
 pqTraceFormatTimestamp(char *timestr, size_t ts_len)

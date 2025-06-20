@@ -71,6 +71,7 @@ static void get_cstring_substr(char *c, char *res, int32 start, int32 len);
 static Timestamp dt2local(Timestamp dt, int timezone);
 static Timestamp get_timestamp_for_timezone(text *zone, TimestampTz timestamp);
 static int	float8_cmp(const void *a, const void *b);
+static Jsonb *JsonbMakeEmptyArray(void);
 
 Datum
 jsonb_head(PG_FUNCTION_ARGS)
@@ -1411,7 +1412,7 @@ array_tail(PG_FUNCTION_ARGS)
 							 element_type, CurrentMemoryContext);
 	}
 
-	PG_RETURN_ARRAYTYPE_P(makeArrayResult(astate, CurrentMemoryContext));
+	PG_RETURN_DATUM(makeArrayResult(astate, CurrentMemoryContext));
 }
 
 
@@ -1740,7 +1741,7 @@ range_2_args(PG_FUNCTION_ARGS)
 	else						/* if the progression is negative, step = -1 */
 		step = -1;
 
-	PG_RETURN_POINTER(range(start, end, step));
+	PG_RETURN_DATUM(range(start, end, step));
 }
 
 /* wrapper function which is used to map three integer inputs (start, end, step) with the range function.*/
@@ -1759,8 +1760,7 @@ range_3_args(PG_FUNCTION_ARGS)
 				 errmsg("Step value cannot be 0")));
 	}
 
-	PG_RETURN_POINTER(range(start, end, step));
-
+	PG_RETURN_DATUM(range(start, end, step));
 }
 
 
@@ -2030,7 +2030,7 @@ array_tostringlist(PG_FUNCTION_ARGS)
 
 	}
 
-	PG_RETURN_ARRAYTYPE_P(makeArrayResult(astate, CurrentMemoryContext));
+	PG_RETURN_DATUM(makeArrayResult(astate, CurrentMemoryContext));
 }
 
 
@@ -2157,7 +2157,7 @@ array_reverse(PG_FUNCTION_ARGS)
 							 element_type, CurrentMemoryContext);
 	}
 
-	PG_RETURN_ARRAYTYPE_P(makeArrayResult(astate, CurrentMemoryContext));
+	PG_RETURN_DATUM(makeArrayResult(astate, CurrentMemoryContext));
 
 }
 
@@ -2169,7 +2169,7 @@ array_reverse(PG_FUNCTION_ARGS)
 Datum
 split(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_ARRAYTYPE_P(text_to_array(fcinfo));
+	PG_RETURN_DATUM(text_to_array(fcinfo));
 }
 
 /* Helper function to get local datetime */
@@ -2190,8 +2190,10 @@ get_timestamp_for_timezone(text *zone, TimestampTz timestamp)
 	char		tzname[TZ_STRLEN_MAX + 1];
 	char	   *lowzone;
 	int			type,
-				val;
+				val,
+				dterr;
 	pg_tz	   *tzp;
+	DateTimeErrorExtra extra;
 
 	if (TIMESTAMP_NOT_FINITE(timestamp))
 		PG_RETURN_TIMESTAMP(timestamp);
@@ -2211,7 +2213,9 @@ get_timestamp_for_timezone(text *zone, TimestampTz timestamp)
 										   strlen(tzname),
 										   false);
 
-	type = DecodeTimezoneAbbrev(0, lowzone, &val, &tzp);
+	dterr = DecodeTimezoneAbbrev(0, lowzone, &type, &val, &tzp, &extra);
+	if (dterr)
+		DateTimeParseError(dterr, &extra, NULL, NULL, NULL);
 
 	if (type == 5 || type == 6)
 	{
@@ -2704,7 +2708,7 @@ array_tointegerlist(PG_FUNCTION_ARGS)
 
 	}
 
-	PG_RETURN_ARRAYTYPE_P(makeArrayResult(astate, CurrentMemoryContext));
+	PG_RETURN_DATUM(makeArrayResult(astate, CurrentMemoryContext));
 }
 
 
@@ -2963,14 +2967,14 @@ array_tofloatlist(PG_FUNCTION_ARGS)
 
 	}
 
-	PG_RETURN_ARRAYTYPE_P(makeArrayResult(astate, CurrentMemoryContext));
+	PG_RETURN_DATUM(makeArrayResult(astate, CurrentMemoryContext));
 }
 
 Datum
 e(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_NUMERIC(DirectFunctionCall1(numeric_exp,
-										  NumericGetDatum(int64_to_numeric(1.0))));
+	PG_RETURN_DATUM(DirectFunctionCall1(numeric_exp,
+										NumericGetDatum(int64_to_numeric(1.0))));
 }
 
 static int
@@ -3149,3 +3153,20 @@ collect_finalfn(PG_FUNCTION_ARGS)
 
 	return jsonb_agg_finalfn(fcinfo);
 }
+
+/*
+ * Construct an empty array jsonb.
+ */
+static Jsonb *
+JsonbMakeEmptyArray(void)
+{
+	JsonbValue	jbv;
+
+	jbv.type = jbvArray;
+	jbv.val.array.elems = NULL;
+	jbv.val.array.nElems = 0;
+	jbv.val.array.rawScalar = false;
+
+	return JsonbValueToJsonb(&jbv);
+}
+

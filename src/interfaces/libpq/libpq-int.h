@@ -9,7 +9,7 @@
  *	  more likely to break across PostgreSQL releases than code that uses
  *	  only the official API.
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/interfaces/libpq/libpq-int.h
@@ -23,8 +23,11 @@
 /* We assume libpq-fe.h has already been included. */
 #include "libpq-events.h"
 
+#include <netdb.h>
+#include <sys/socket.h>
 #include <time.h>
-#ifndef WIN32
+/* MinGW has sys/time.h, but MSVC doesn't */
+#ifndef _MSC_VER
 #include <sys/time.h>
 #endif
 
@@ -38,7 +41,6 @@
 #endif
 
 /* include stuff common to fe and be */
-#include "getaddrinfo.h"
 #include "libpq/pqcomm.h"
 /* include stuff found in fe only */
 #include "fe-auth-sasl.h"
@@ -80,6 +82,8 @@ typedef struct
 #define USE_SSL_ENGINE
 #endif
 #endif							/* USE_OPENSSL */
+
+#include "common/pg_prng.h"
 
 /*
  * POSTGRES backend dependent Constants.
@@ -225,7 +229,8 @@ typedef enum
 								 * query */
 	PGASYNC_COPY_IN,			/* Copy In data transfer in progress */
 	PGASYNC_COPY_OUT,			/* Copy Out data transfer in progress */
-	PGASYNC_COPY_BOTH			/* Copy In/Out data transfer in progress */
+	PGASYNC_COPY_BOTH,			/* Copy In/Out data transfer in progress */
+	PGASYNC_PIPELINE_IDLE,		/* "Idle" between commands in pipeline mode */
 } PGAsyncStatusType;
 
 /* Target server type (decoded value of target_session_attrs) */
@@ -239,6 +244,13 @@ typedef enum
 	SERVER_TYPE_PREFER_STANDBY, /* Prefer standby server */
 	SERVER_TYPE_PREFER_STANDBY_PASS2	/* second pass - behaves same as ANY */
 } PGTargetServerType;
+
+/* Target server type (decoded value of load_balance_hosts) */
+typedef enum
+{
+	LOAD_BALANCE_DISABLE = 0,	/* Use the existing host order (default) */
+	LOAD_BALANCE_RANDOM,		/* Randomly shuffle the hosts */
+} PGLoadBalanceType;
 
 /* Boolean value plus a not-known state, for GUCs we might have to fetch */
 typedef enum
@@ -311,7 +323,8 @@ typedef enum
 	PGQUERY_EXTENDED,			/* full Extended protocol (PQexecParams) */
 	PGQUERY_PREPARE,			/* Parse only (PQprepare) */
 	PGQUERY_DESCRIBE,			/* Describe Statement or Portal */
-	PGQUERY_SYNC				/* Sync (at end of a pipeline) */
+	PGQUERY_SYNC,				/* Sync (at end of a pipeline) */
+	PGQUERY_CLOSE
 } PGQueryClass;
 
 /*
@@ -381,6 +394,7 @@ struct pg_conn
 	char	   *sslkey;			/* client key filename */
 	char	   *sslcert;		/* client certificate filename */
 	char	   *sslpassword;	/* client key file password */
+	char	   *sslcertmode;	/* client cert mode (require,allow,disable) */
 	char	   *sslrootcert;	/* root certificate filename */
 	char	   *sslcrl;			/* certificate revocation list filename */
 	char	   *sslcrldir;		/* certificate revocation list directory name */
@@ -390,9 +404,12 @@ struct pg_conn
 	char	   *krbsrvname;		/* Kerberos service name */
 	char	   *gsslib;			/* What GSS library to use ("gssapi" or
 								 * "sspi") */
+	char	   *gssdelegation;	/* Try to delegate GSS credentials? (0 or 1) */
 	char	   *ssl_min_protocol_version;	/* minimum TLS protocol version */
 	char	   *ssl_max_protocol_version;	/* maximum TLS protocol version */
 	char	   *target_session_attrs;	/* desired session properties */
+	char	   *require_auth;	/* name of the expected auth method */
+	char	   *load_balance_hosts; /* load balance over hosts */
 
 	/* Optional file to write trace info to */
 	FILE	   *Pfdebug;
@@ -450,18 +467,30 @@ struct pg_conn
 	int			agversion;		/* server version, e.g. 20101 for 2.1.1 */
 	bool		auth_req_received;	/* true if any type of auth req received */
 	bool		password_needed;	/* true if server demanded a password */
+	bool		gssapi_used;	/* true if authenticated via gssapi */
 	bool		sigpipe_so;		/* have we masked SIGPIPE via SO_NOSIGPIPE? */
 	bool		sigpipe_flag;	/* can we mask SIGPIPE via MSG_NOSIGNAL? */
 	bool		write_failed;	/* have we had a write failure on sock? */
 	char	   *write_err_msg;	/* write error message, or NULL if OOM */
 
+	bool		auth_required;	/* require an authentication challenge from
+								 * the server? */
+	uint32		allowed_auth_methods;	/* bitmask of acceptable AuthRequest
+										 * codes */
+	bool		client_finished_auth;	/* have we finished our half of the
+										 * authentication exchange? */
+
+
 	/* Transient state needed while establishing connection */
 	PGTargetServerType target_server_type;	/* desired session properties */
+	PGLoadBalanceType load_balance_type;	/* desired load balancing
+											 * algorithm */
 	bool		try_next_addr;	/* time to advance to next address/host? */
 	bool		try_next_host;	/* time to advance to next connhost[]? */
-	struct addrinfo *addrlist;	/* list of addresses for current connhost */
-	struct addrinfo *addr_cur;	/* the one currently being tried */
-	int			addrlist_family;	/* needed to know how to free addrlist */
+	int			naddr;			/* number of addresses returned by getaddrinfo */
+	int			whichaddr;		/* the address currently being tried */
+	AddrInfo   *addr;			/* the array of addresses for the currently
+								 * tried host */
 	bool		send_appname;	/* okay to send application_name? */
 
 	/* Miscellaneous stuff */
@@ -475,6 +504,8 @@ struct pg_conn
 	PGVerbosity verbosity;		/* error/notice message verbosity */
 	PGContextVisibility show_context;	/* whether to show CONTEXT field */
 	PGlobjfuncs *lobjfuncs;		/* private state for large-object access fns */
+	pg_prng_state prng_state;	/* prng state for load balancing connections */
+
 
 	/* Buffer for data received from backend and not yet processed */
 	char	   *inBuffer;		/* currently allocated buffer */
@@ -513,9 +544,12 @@ struct pg_conn
 	/* Assorted state for SASL, SSL, GSS, etc */
 	const pg_fe_sasl_mech *sasl;
 	void	   *sasl_state;
+	int			scram_sha_256_iterations;
 
 	/* SSL structures */
 	bool		ssl_in_use;
+	bool		ssl_cert_requested; /* Did the server ask us for a cert? */
+	bool		ssl_cert_sent;	/* Did we send one in reply? */
 
 #ifdef USE_SSL
 	bool		allow_ssl_try;	/* Allowed to try SSL negotiation */
@@ -683,6 +717,7 @@ extern void pqParseInput3(PGconn *conn);
 extern int	pqGetErrorNotice3(PGconn *conn, bool isError);
 extern void pqBuildErrorMessage3(PQExpBuffer msg, const PGresult *res,
 								 PGVerbosity verbosity, PGContextVisibility show_context);
+extern int	pqGetNegotiateProtocolVersion3(PGconn *conn);
 extern int	pqGetCopyData3(PGconn *conn, char **buffer, int async);
 extern int	pqGetline3(PGconn *conn, char *s, int maxlen);
 extern int	pqGetlineAsync3(PGconn *conn, char *buffer, int bufsize);
@@ -803,7 +838,7 @@ extern ssize_t pgtls_write(PGconn *conn, const void *ptr, size_t len);
  * This is not supported with old versions of OpenSSL that don't have
  * the X509_get_signature_nid() function.
  */
-#if defined(USE_OPENSSL) && defined(HAVE_X509_GET_SIGNATURE_NID)
+#if defined(USE_OPENSSL) && (defined(HAVE_X509_GET_SIGNATURE_NID) || defined(HAVE_X509_GET_SIGNATURE_INFO))
 #define HAVE_PGTLS_GET_PEER_CERTIFICATE_HASH
 extern char *pgtls_get_peer_certificate_hash(PGconn *conn, size_t *len);
 #endif
@@ -838,7 +873,7 @@ extern ssize_t pg_GSS_write(PGconn *conn, const void *ptr, size_t len);
 extern ssize_t pg_GSS_read(PGconn *conn, void *ptr, size_t len);
 #endif
 
-/* === in libpq-trace.c === */
+/* === in fe-trace.c === */
 
 extern void pqTraceOutputMessage(PGconn *conn, const char *message,
 								 bool toServer);
@@ -879,6 +914,14 @@ extern char *libpq_ngettext(const char *msgid, const char *msgid_plural, unsigne
 #define libpq_gettext(x) (x)
 #define libpq_ngettext(s, p, n) ((n) == 1 ? (s) : (p))
 #endif
+/*
+ * libpq code should use the above, not _(), since that would use the
+ * surrounding programs's message catalog.
+ */
+#undef _
+
+extern void libpq_append_error(PQExpBuffer errorMessage, const char *fmt,...) pg_attribute_printf(2, 3);
+extern void libpq_append_conn_error(PGconn *conn, const char *fmt,...) pg_attribute_printf(2, 3);
 
 /*
  * These macros are needed to let error-handling code be portable between

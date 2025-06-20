@@ -1,7 +1,9 @@
 <!-- doc/src/sgml/postgres-fdw.sgml -->
 
 <sect1 id="postgres-fdw" xreflabel="postgres_fdw">
- <title>postgres_fdw</title>
+ <title>postgres_fdw &mdash;
+   access data stored in external <productname>PostgreSQL</productname>
+   servers</title>
 
  <indexterm zone="postgres-fdw">
   <primary>postgres_fdw</primary>
@@ -106,10 +108,10 @@
   of columns to the remote table is by name, not position.
  </para>
 
- <sect2>
+ <sect2 id="postgres-fdw-options">
   <title>FDW Options of postgres_fdw</title>
 
-  <sect3>
+  <sect3 id="postgres-fdw-options-connection">
    <title>Connection Options</title>
 
    <para>
@@ -167,9 +169,10 @@
     <literal>sslcert</literal> or <literal>sslkey</literal> settings.
    </para>
    <para>
-    Only superusers may connect to foreign servers without password
-    authentication, so always specify the <literal>password</literal> option
-    for user mappings belonging to non-superusers.
+    Non-superusers may connect to foreign servers using password
+    authentication or with GSSAPI delegated credentials, so specify the
+    <literal>password</literal> option for user mappings belonging to
+    non-superusers where password authentication is required.
    </para>
    <para>
     A superuser may override this check on a per-user-mapping basis by setting
@@ -197,7 +200,7 @@ OPTIONS (ADD password_required 'false');
    </para>
   </sect3>
 
-  <sect3>
+  <sect3 id="postgres-fdw-options-object-name">
    <title>Object Name Options</title>
 
    <para>
@@ -246,7 +249,7 @@ OPTIONS (ADD password_required 'false');
 
   </sect3>
 
-  <sect3>
+  <sect3 id="postgres-fdw-options-cost-estimation">
    <title>Cost Estimation Options</title>
 
    <para>
@@ -326,9 +329,44 @@ OPTIONS (ADD password_required 'false');
     frequently updated, the local statistics will soon be obsolete.
    </para>
 
+   <para>
+    The following option controls how such an <command>ANALYZE</command>
+    operation behaves:
+   </para>
+
+   <variablelist>
+
+    <varlistentry>
+     <term><literal>analyze_sampling</literal> (<type>text</type>)</term>
+     <listitem>
+      <para>
+       This option, which can be specified for a foreign table or a foreign
+       server, determines if <command>ANALYZE</command> on a foreign table
+       samples the data on the remote side, or reads and transfers all data
+       and performs the sampling locally. The supported values
+       are <literal>off</literal>, <literal>random</literal>,
+       <literal>system</literal>, <literal>bernoulli</literal>
+       and <literal>auto</literal>. <literal>off</literal> disables remote
+       sampling, so all data are transferred and sampled locally.
+       <literal>random</literal> performs remote sampling using the
+       <literal>random()</literal> function to choose returned rows,
+       while <literal>system</literal> and <literal>bernoulli</literal> rely
+       on the built-in <literal>TABLESAMPLE</literal> methods of those
+       names. <literal>random</literal> works on all remote server versions,
+       while <literal>TABLESAMPLE</literal> is supported only since 9.5.
+       <literal>auto</literal> (the default) picks the recommended sampling
+       method automatically; currently it means
+       either <literal>bernoulli</literal> or <literal>random</literal>
+       depending on the remote server version.
+      </para>
+     </listitem>
+    </varlistentry>
+
+   </variablelist>
+
   </sect3>
 
-  <sect3>
+  <sect3 id="postgres-fdw-options-remote-execution">
    <title>Remote Execution Options</title>
 
    <para>
@@ -398,6 +436,14 @@ OPTIONS (ADD password_required 'false');
        exceeds the limit, the <literal>batch_size</literal> will be adjusted to
        avoid an error.
       </para>
+
+      <para>
+       This option also applies when copying into foreign tables.  In that case
+       the actual number of rows <filename>postgres_fdw</filename> copies at
+       once is determined in a similar way to the insert case, but it is
+       limited to at most 1000 due to implementation restrictions of the
+       <command>COPY</command> command.
+      </para>
      </listitem>
     </varlistentry>
 
@@ -405,7 +451,7 @@ OPTIONS (ADD password_required 'false');
 
   </sect3>
 
-  <sect3>
+  <sect3 id="postgres-fdw-options-asynchronous-execution">
    <title>Asynchronous Execution Options</title>
 
    <para>
@@ -456,7 +502,7 @@ OPTIONS (ADD password_required 'false');
    </variablelist>
   </sect3>
 
-  <sect3>
+  <sect3 id="postgres-fdw-options-transaction-management">
    <title>Transaction Management Options</title>
 
    <para>
@@ -465,12 +511,13 @@ OPTIONS (ADD password_required 'false');
     corresponding remote transactions, and subtransactions are managed by
     creating corresponding remote subtransactions. When multiple remote
     transactions are involved in the current local transaction, by default
-    <filename>postgres_fdw</filename> commits those remote transactions
-    serially when the local transaction is committed. When multiple remote
-    subtransactions are involved in the current local subtransaction, by
-    default <filename>postgres_fdw</filename> commits those remote
-    subtransactions serially when the local subtransaction is committed.
-    Performance can be improved with the following option:
+    <filename>postgres_fdw</filename> commits or aborts those remote
+    transactions serially when the local transaction is committed or aborted.
+    When multiple remote subtransactions are involved in the current local
+    subtransaction, by default <filename>postgres_fdw</filename> commits or
+    aborts those remote subtransactions serially when the local subtransaction
+    is committed or aborted.
+    Performance can be improved with the following options:
    </para>
 
    <variablelist>
@@ -479,34 +526,48 @@ OPTIONS (ADD password_required 'false');
      <term><literal>parallel_commit</literal> (<type>boolean</type>)</term>
      <listitem>
       <para>
-       This option controls whether <filename>postgres_fdw</filename> commits
-       in parallel remote transactions opened on a foreign server in a local
+       This option controls whether <filename>postgres_fdw</filename> commits,
+       in parallel, remote transactions opened on a foreign server in a local
        transaction when the local transaction is committed. This setting also
        applies to remote and local subtransactions. This option can only be
        specified for foreign servers, not per-table. The default is
        <literal>false</literal>.
       </para>
+     </listitem>
+    </varlistentry>
 
+    <varlistentry>
+     <term><literal>parallel_abort</literal> (<type>boolean</type>)</term>
+     <listitem>
       <para>
-       If multiple foreign servers with this option enabled are involved in a
-       local transaction, multiple remote transactions on those foreign
-       servers are committed in parallel across those foreign servers when
-       the local transaction is committed.
-      </para>
-
-      <para>
-       When this option is enabled, a foreign server with many remote
-       transactions may see a negative performance impact when the local
-       transaction is committed.
+       This option controls whether <filename>postgres_fdw</filename> aborts,
+       in parallel, remote transactions opened on a foreign server in a local
+       transaction when the local transaction is aborted. This setting also
+       applies to remote and local subtransactions. This option can only be
+       specified for foreign servers, not per-table. The default is
+       <literal>false</literal>.
       </para>
      </listitem>
     </varlistentry>
 
    </variablelist>
 
+   <para>
+    If multiple foreign servers with these options enabled are involved in a
+    local transaction, multiple remote transactions on those foreign servers
+    are committed or aborted in parallel across those foreign servers when
+    the local transaction is committed or aborted.
+   </para>
+
+   <para>
+    When these options are enabled, a foreign server with many remote
+    transactions may see a negative performance impact when the local
+    transaction is committed or aborted.
+   </para>
+
   </sect3>
 
-  <sect3>
+  <sect3 id="postgres-fdw-options-updatability">
    <title>Updatability Options</title>
 
    <para>
@@ -543,7 +604,7 @@ OPTIONS (ADD password_required 'false');
    </variablelist>
   </sect3>
 
-  <sect3>
+  <sect3 id="postgres-fdw-options-truncatability">
    <title>Truncatability Options</title>
 
    <para>
@@ -574,7 +635,7 @@ OPTIONS (ADD password_required 'false');
    </variablelist>
   </sect3>
 
-  <sect3>
+  <sect3 id="postgres-fdw-options-importing">
    <title>Importing Options</title>
 
    <para>
@@ -682,7 +743,7 @@ OPTIONS (ADD password_required 'false');
 
   </sect3>
 
-  <sect3>
+  <sect3 id="postgres-fdw-options-connection-management">
     <title>Connection Management Options</title>
 
     <para>
@@ -711,7 +772,7 @@ OPTIONS (ADD password_required 'false');
    </sect3>
  </sect2>
 
-<sect2>
+<sect2 id="postgres-fdw-functions">
   <title>Functions</title>
 
   <variablelist>
@@ -790,7 +851,7 @@ postgres=# SELECT postgres_fdw_disconnect_all();
 
 </sect2>
 
- <sect2>
+ <sect2 id="postgres-fdw-connection-management">
   <title>Connection Management</title>
 
   <para>
@@ -827,7 +888,7 @@ postgres=# SELECT postgres_fdw_disconnect_all();
   </para>
  </sect2>
 
- <sect2>
+ <sect2 id="postgres-fdw-transaction-management">
   <title>Transaction Management</title>
 
   <para>
@@ -862,7 +923,7 @@ postgres=# SELECT postgres_fdw_disconnect_all();
   </para>
  </sect2>
 
- <sect2>
+ <sect2 id="postgres-fdw-remote-query-optimization">
   <title>Remote Query Optimization</title>
 
   <para>
@@ -905,7 +966,7 @@ postgres=# SELECT postgres_fdw_disconnect_all();
   </para>
  </sect2>
 
- <sect2>
+ <sect2 id="postgres-fdw-remote-query-execution-environment">
   <title>Remote Query Execution Environment</title>
 
   <para>
@@ -961,7 +1022,7 @@ postgres=# SELECT postgres_fdw_disconnect_all();
   </para>
  </sect2>
 
- <sect2>
+ <sect2 id="postgres-fdw-cross-version-compatibility">
   <title>Cross-Version Compatibility</title>
 
   <para>
@@ -981,7 +1042,7 @@ postgres=# SELECT postgres_fdw_disconnect_all();
   </para>
  </sect2>
 
- <sect2>
+ <sect2 id="postgres-fdw-configuration-parameters">
   <title>Configuration Parameters</title>
 
   <variablelist>
@@ -1081,7 +1142,7 @@ postgres=# SELECT postgres_fdw_disconnect_all();
   </variablelist>
  </sect2>
 
- <sect2>
+ <sect2 id="postgres-fdw-examples">
   <title>Examples</title>
 
   <para>
@@ -1145,7 +1206,7 @@ CREATE FOREIGN TABLE foreign_table (
   </para>
  </sect2>
 
- <sect2>
+ <sect2 id="postgres-fdw-author">
   <title>Author</title>
   <para>
    Shigeru Hanada <email>shigeru.hanada@gmail.com</email>

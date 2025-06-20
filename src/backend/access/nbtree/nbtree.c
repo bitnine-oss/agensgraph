@@ -8,7 +8,7 @@
  *	  This file contains only the public interface routines.
  *
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -114,6 +114,7 @@ bthandler(PG_FUNCTION_ARGS)
 	amroutine->amcanparallel = true;
 	amroutine->amcaninclude = true;
 	amroutine->amusemaintenanceworkmem = false;
+	amroutine->amsummarizing = false;
 	amroutine->amparallelvacuumoptions =
 		VACUUM_OPTION_PARALLEL_BULKDEL | VACUUM_OPTION_PARALLEL_COND_CLEANUP;
 	amroutine->amkeytype = InvalidOid;
@@ -153,7 +154,7 @@ btbuildempty(Relation index)
 	Page		metapage;
 
 	/* Construct metapage. */
-	metapage = (Page) palloc(BLCKSZ);
+	metapage = (Page) palloc_aligned(BLCKSZ, PG_IO_ALIGN_SIZE, 0);
 	_bt_initmetapage(metapage, P_NONE, 0, _bt_allequalimage(index, false));
 
 	/*
@@ -165,8 +166,8 @@ btbuildempty(Relation index)
 	 */
 	PageSetChecksumInplace(metapage, BTREE_METAPAGE);
 	smgrwrite(RelationGetSmgr(index), INIT_FORKNUM, BTREE_METAPAGE,
-			  (char *) metapage, true);
-	log_newpage(&RelationGetSmgr(index)->smgr_rnode.node, INIT_FORKNUM,
+			  metapage, true);
+	log_newpage(&RelationGetSmgr(index)->smgr_rlocator.locator, INIT_FORKNUM,
 				BTREE_METAPAGE, metapage, true);
 
 	/*
@@ -969,6 +970,9 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	 * write-lock on the left page before it adds a right page, so we must
 	 * already have processed any tuples due to be moved into such a page.
 	 *
+	 * XXX: Now that new pages are locked with RBM_ZERO_AND_LOCK, I don't
+	 * think the use of the extension lock is still required.
+	 *
 	 * We can skip locking for new or temp relations, however, since no one
 	 * else could be accessing them.
 	 */
@@ -1038,6 +1042,7 @@ btvacuumpage(BTVacState *vstate, BlockNumber scanblkno)
 	IndexBulkDeleteCallback callback = vstate->callback;
 	void	   *callback_state = vstate->callback_state;
 	Relation	rel = info->index;
+	Relation	heaprel = info->heaprel;
 	bool		attempt_pagedel;
 	BlockNumber blkno,
 				backtrack_to;
@@ -1088,8 +1093,7 @@ backtrack:
 		 * can't be half-dead because only an interrupted VACUUM process can
 		 * leave pages in that state, so we'd definitely have dealt with it
 		 * back when the page was the scanblkno page (half-dead pages are
-		 * always marked fully deleted by _bt_pagedel()).  This assumes that
-		 * there can be only one vacuum process running at a time.
+		 * always marked fully deleted by _bt_pagedel(), barring corruption).
 		 */
 		if (!opaque || !P_ISLEAF(opaque) || P_ISHALFDEAD(opaque))
 		{
@@ -1123,7 +1127,7 @@ backtrack:
 		}
 	}
 
-	if (!opaque || BTPageIsRecyclable(page))
+	if (!opaque || BTPageIsRecyclable(page, heaprel))
 	{
 		/* Okay to recycle this page (which could be leaf or internal) */
 		RecordFreeIndexPage(rel, blkno);

@@ -10,6 +10,7 @@
 
 #include "postgres.h"
 
+#include "catalog/pg_namespace.h"
 #include "executor/execCypherDelete.h"
 #include "executor/executor.h"
 #include "executor/nodeModifyGraph.h"
@@ -80,7 +81,7 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 
 		graphpath_name = get_graphid_graphname(get_graph_path_oid());
 
-		aclresult = pg_namespace_aclcheck(get_namespace_oid(graphpath_name, true),
+		aclresult = object_aclcheck(NamespaceRelationId, get_namespace_oid(graphpath_name, true),
 										  GetUserId(), ACL_DELETE);
 		if (aclresult != ACLCHECK_OK)
 			aclcheck_error(aclresult, OBJECT_SCHEMA, graphpath_name);
@@ -137,7 +138,7 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 		bool		dodelete;
 
 		dodelete = ExecBRDeleteTriggers(estate, epqstate, resultRelInfo,
-										tupleid, NULL, NULL);
+										tupleid, NULL, NULL, &result, &tmfd);
 		if (!dodelete)
 		{
 			if (required)

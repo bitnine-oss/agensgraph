@@ -360,7 +360,7 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
-
+	qry->rteperminfos = pstate->p_rteperminfos;
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 	qry->hasAggs = pstate->p_hasAggs;
 	if (qry->hasAggs)
@@ -543,7 +543,7 @@ makeShortestPathFrom(ParseState *parentParseState, CypherPath *cpath)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
-
+	qry->rteperminfos = pstate->p_rteperminfos;
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 	qry->hasAggs = pstate->p_hasAggs;
 	if (qry->hasAggs)
@@ -1182,7 +1182,7 @@ makeDijkstraQuery(ParseState *pstate, CypherPath *cpath, bool is_expr)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
-
+	qry->rteperminfos = pstate->p_rteperminfos;
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 	qry->hasAggs = pstate->p_hasAggs;
 	if (qry->hasAggs)
@@ -1345,7 +1345,7 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
-
+	qry->rteperminfos = pstate->p_rteperminfos;
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 	qry->hasAggs = pstate->p_hasAggs;
 	if (qry->hasAggs)

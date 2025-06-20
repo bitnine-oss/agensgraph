@@ -16,7 +16,7 @@
 # To use: run bison with the -v switch, then feed the produced y.output
 # file to this script.
 #
-# Copyright (c) 2011-2022, PostgreSQL Global Development Group
+# Copyright (c) 2011-2023, PostgreSQL Global Development Group
 #
 # src/tools/check_bison_recursion.pl
 #################################################################
@@ -52,16 +52,16 @@ while (<>)
 		{
 
 			# first rule for nonterminal
-			$rule_number     = $1;
+			$rule_number = $1;
 			$cur_nonterminal = $2;
-			$rhs             = $3;
+			$rhs = $3;
 		}
 		elsif (m/^\s*(\d+)\s+\|\s+(.*)$/)
 		{
 
 			# additional rule for nonterminal
 			$rule_number = $1;
-			$rhs         = $2;
+			$rhs = $2;
 		}
 	}
 

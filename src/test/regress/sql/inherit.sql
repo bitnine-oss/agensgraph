@@ -630,6 +630,44 @@ reset enable_indexscan;
 reset enable_bitmapscan;
 
 --
+-- Check handling of MULTIEXPR SubPlans in inherited updates
+--
+create table inhpar(f1 int, f2 name);
+create table inhcld(f2 name, f1 int);
+alter table inhcld inherit inhpar;
+insert into inhpar select x, x::text from generate_series(1,5) x;
+insert into inhcld select x::text, x from generate_series(6,10) x;
+
+explain (verbose, costs off)
+update inhpar i set (f1, f2) = (select i.f1, i.f2 || '-' from int4_tbl limit 1);
+update inhpar i set (f1, f2) = (select i.f1, i.f2 || '-' from int4_tbl limit 1);
+select * from inhpar;
+
+drop table inhpar cascade;
+
+--
+-- And the same for partitioned cases
+--
+create table inhpar(f1 int primary key, f2 name) partition by range (f1);
+create table inhcld1(f2 name, f1 int primary key);
+create table inhcld2(f1 int primary key, f2 name);
+alter table inhpar attach partition inhcld1 for values from (1) to (5);
+alter table inhpar attach partition inhcld2 for values from (5) to (100);
+insert into inhpar select x, x::text from generate_series(1,10) x;
+
+explain (verbose, costs off)
+update inhpar i set (f1, f2) = (select i.f1, i.f2 || '-' from int4_tbl limit 1);
+update inhpar i set (f1, f2) = (select i.f1, i.f2 || '-' from int4_tbl limit 1);
+select * from inhpar;
+
+-- Also check ON CONFLICT
+insert into inhpar as i values (3), (7) on conflict (f1)
+  do update set (f1, f2) = (select i.f1, i.f2 || '+');
+select * from inhpar order by f1;  -- tuple order might be unstable here
+
+drop table inhpar cascade;
+
+--
 -- Check handling of a constant-null CHECK constraint
 --
 create table cnullparent (f1 int);
@@ -882,7 +920,7 @@ alter table permtest_child attach partition permtest_grandchild for values in ('
 alter table permtest_parent attach partition permtest_child for values in (1);
 create index on permtest_parent (left(c, 3));
 insert into permtest_parent
-  select 1, 'a', left(md5(i::text), 5) from generate_series(0, 100) i;
+  select 1, 'a', left(fipshash(i::text), 5) from generate_series(0, 100) i;
 analyze permtest_parent;
 create role regress_no_child_access;
 revoke all on permtest_grandchild from regress_no_child_access;

@@ -6,7 +6,7 @@
  * Joe Conway <mail@joeconway.com>
  *
  * contrib/fuzzystrmatch/fuzzystrmatch.c
- * Copyright (c) 2001-2022, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2023, PostgreSQL Global Development Group
  * ALL RIGHTS RESERVED;
  *
  * metaphone()
@@ -43,6 +43,7 @@
 #include "mb/pg_wchar.h"
 #include "utils/builtins.h"
 #include "utils/varlena.h"
+#include "varatt.h"
 
 PG_MODULE_MAGIC;
 
@@ -724,19 +725,17 @@ _soundex(const char *instr, char *outstr)
 {
 	int			count;
 
-	AssertArg(instr);
-	AssertArg(outstr);
-
-	outstr[SOUNDEX_LEN] = '\0';
+	Assert(instr);
+	Assert(outstr);
 
 	/* Skip leading non-alphabetic characters */
-	while (!isalpha((unsigned char) instr[0]) && instr[0])
+	while (*instr && !isalpha((unsigned char) *instr))
 		++instr;
 
-	/* No string left */
-	if (!instr[0])
+	/* If no string left, return all-zeroes buffer */
+	if (!*instr)
 	{
-		outstr[0] = (char) 0;
+		memset(outstr, '\0', SOUNDEX_LEN + 1);
 		return;
 	}
 
@@ -749,7 +748,7 @@ _soundex(const char *instr, char *outstr)
 		if (isalpha((unsigned char) *instr) &&
 			soundex_code(*instr) != soundex_code(*(instr - 1)))
 		{
-			*outstr = soundex_code(instr[0]);
+			*outstr = soundex_code(*instr);
 			if (*outstr != '0')
 			{
 				++outstr;
@@ -766,6 +765,9 @@ _soundex(const char *instr, char *outstr)
 		++outstr;
 		++count;
 	}
+
+	/* And null-terminate */
+	*outstr = '\0';
 }
 
 PG_FUNCTION_INFO_V1(difference);

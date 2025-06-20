@@ -3,7 +3,7 @@
  * fe-secure-gssapi.c
  *   The front-end (client) encryption support for GSSAPI
  *
- * Portions Copyright (c) 2016-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2016-2023, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *  src/interfaces/libpq/fe-secure-gssapi.c
@@ -135,11 +135,11 @@ pg_GSS_write(PGconn *conn, const void *ptr, size_t len)
 		 */
 		if (PqGSSSendLength)
 		{
-			ssize_t		ret;
+			ssize_t		retval;
 			ssize_t		amount = PqGSSSendLength - PqGSSSendNext;
 
-			ret = pqsecure_raw_write(conn, PqGSSSendBuffer + PqGSSSendNext, amount);
-			if (ret <= 0)
+			retval = pqsecure_raw_write(conn, PqGSSSendBuffer + PqGSSSendNext, amount);
+			if (retval <= 0)
 			{
 				/*
 				 * Report any previously-sent data; if there was none, reflect
@@ -149,16 +149,16 @@ pg_GSS_write(PGconn *conn, const void *ptr, size_t len)
 				 */
 				if (bytes_sent)
 					return bytes_sent;
-				return ret;
+				return retval;
 			}
 
 			/*
 			 * Check if this was a partial write, and if so, move forward that
 			 * far in our buffer and try again.
 			 */
-			if (ret != amount)
+			if (retval != amount)
 			{
-				PqGSSSendNext += ret;
+				PqGSSSendNext += retval;
 				continue;
 			}
 
@@ -205,18 +205,16 @@ pg_GSS_write(PGconn *conn, const void *ptr, size_t len)
 
 		if (conf_state == 0)
 		{
-			appendPQExpBufferStr(&conn->errorMessage,
-								 libpq_gettext("outgoing GSSAPI message would not use confidentiality\n"));
+			libpq_append_conn_error(conn, "outgoing GSSAPI message would not use confidentiality");
 			errno = EIO;		/* for lack of a better idea */
 			goto cleanup;
 		}
 
 		if (output.length > PQ_GSS_SEND_BUFFER_SIZE - sizeof(uint32))
 		{
-			appendPQExpBuffer(&conn->errorMessage,
-							  libpq_gettext("client tried to send oversize GSSAPI packet (%zu > %zu)\n"),
-							  (size_t) output.length,
-							  PQ_GSS_SEND_BUFFER_SIZE - sizeof(uint32));
+			libpq_append_conn_error(conn, "client tried to send oversize GSSAPI packet (%zu > %zu)",
+									(size_t) output.length,
+									PQ_GSS_SEND_BUFFER_SIZE - sizeof(uint32));
 			errno = EIO;		/* for lack of a better idea */
 			goto cleanup;
 		}
@@ -350,10 +348,9 @@ pg_GSS_read(PGconn *conn, void *ptr, size_t len)
 
 		if (input.length > PQ_GSS_RECV_BUFFER_SIZE - sizeof(uint32))
 		{
-			appendPQExpBuffer(&conn->errorMessage,
-							  libpq_gettext("oversize GSSAPI packet sent by the server (%zu > %zu)\n"),
-							  (size_t) input.length,
-							  PQ_GSS_RECV_BUFFER_SIZE - sizeof(uint32));
+			libpq_append_conn_error(conn, "oversize GSSAPI packet sent by the server (%zu > %zu)",
+									(size_t) input.length,
+									PQ_GSS_RECV_BUFFER_SIZE - sizeof(uint32));
 			errno = EIO;		/* for lack of a better idea */
 			return -1;
 		}
@@ -399,8 +396,7 @@ pg_GSS_read(PGconn *conn, void *ptr, size_t len)
 
 		if (conf_state == 0)
 		{
-			appendPQExpBufferStr(&conn->errorMessage,
-								 libpq_gettext("incoming GSSAPI message did not use confidentiality\n"));
+			libpq_append_conn_error(conn, "incoming GSSAPI message did not use confidentiality");
 			ret = -1;
 			errno = EIO;		/* for lack of a better idea */
 			goto cleanup;
@@ -481,7 +477,8 @@ pqsecure_open_gss(PGconn *conn)
 {
 	ssize_t		ret;
 	OM_uint32	major,
-				minor;
+				minor,
+				gss_flags = GSS_REQUIRED_FLAGS;
 	uint32		netlen;
 	PostgresPollingStatusType result;
 	gss_buffer_desc input = GSS_C_EMPTY_BUFFER,
@@ -500,8 +497,7 @@ pqsecure_open_gss(PGconn *conn)
 		PqGSSResultBuffer = malloc(PQ_GSS_RECV_BUFFER_SIZE);
 		if (!PqGSSSendBuffer || !PqGSSRecvBuffer || !PqGSSResultBuffer)
 		{
-			appendPQExpBufferStr(&conn->errorMessage,
-								 libpq_gettext("out of memory\n"));
+			libpq_append_conn_error(conn, "out of memory");
 			return PGRES_POLLING_FAILED;
 		}
 		PqGSSSendLength = PqGSSSendNext = PqGSSSendConsumed = 0;
@@ -578,6 +574,8 @@ pqsecure_open_gss(PGconn *conn)
 
 			PqGSSRecvLength += ret;
 
+			Assert(PqGSSRecvLength < PQ_GSS_RECV_BUFFER_SIZE);
+			PqGSSRecvBuffer[PqGSSRecvLength] = '\0';
 			appendPQExpBuffer(&conn->errorMessage, "%s\n", PqGSSRecvBuffer + 1);
 
 			return PGRES_POLLING_FAILED;
@@ -592,10 +590,9 @@ pqsecure_open_gss(PGconn *conn)
 		input.length = pg_ntoh32(*(uint32 *) PqGSSRecvBuffer);
 		if (input.length > PQ_GSS_RECV_BUFFER_SIZE - sizeof(uint32))
 		{
-			appendPQExpBuffer(&conn->errorMessage,
-							  libpq_gettext("oversize GSSAPI packet sent by the server (%zu > %zu)\n"),
-							  (size_t) input.length,
-							  PQ_GSS_RECV_BUFFER_SIZE - sizeof(uint32));
+			libpq_append_conn_error(conn, "oversize GSSAPI packet sent by the server (%zu > %zu)",
+									(size_t) input.length,
+									PQ_GSS_RECV_BUFFER_SIZE - sizeof(uint32));
 			return PGRES_POLLING_FAILED;
 		}
 
@@ -625,13 +622,30 @@ pqsecure_open_gss(PGconn *conn)
 	if (ret != STATUS_OK)
 		return PGRES_POLLING_FAILED;
 
+	if (conn->gssdelegation && conn->gssdelegation[0] == '1')
+	{
+		/* Acquire credentials if possible */
+		if (conn->gcred == GSS_C_NO_CREDENTIAL)
+			(void) pg_GSS_have_cred_cache(&conn->gcred);
+
+		/*
+		 * We have credentials and gssdelegation is enabled, so request
+		 * credential delegation.  This may or may not actually result in
+		 * credentials being delegated- it depends on if the forwardable flag
+		 * has been set in the credential and if the server is configured to
+		 * accept delegated credentials.
+		 */
+		if (conn->gcred != GSS_C_NO_CREDENTIAL)
+			gss_flags |= GSS_C_DELEG_FLAG;
+	}
+
 	/*
 	 * Call GSS init context, either with an empty input, or with a complete
 	 * packet from the server.
 	 */
 	major = gss_init_sec_context(&minor, conn->gcred, &conn->gctx,
 								 conn->gtarg_nam, GSS_C_NO_OID,
-								 GSS_REQUIRED_FLAGS, 0, 0, &input, NULL,
+								 gss_flags, 0, 0, &input, NULL,
 								 &output, NULL, NULL);
 
 	/* GSS Init Sec Context uses the whole packet, so clear it */
@@ -651,6 +665,7 @@ pqsecure_open_gss(PGconn *conn)
 		 * to do GSS wrapping/unwrapping.
 		 */
 		conn->gssenc = true;
+		conn->gssapi_used = true;
 
 		/* Clean up */
 		gss_release_cred(&minor, &conn->gcred);

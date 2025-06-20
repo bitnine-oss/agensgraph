@@ -55,8 +55,8 @@ label_create_with_catalog(RangeVar *label, Oid relid, char labkind,
 	}
 	else
 	{
-		laboid = GetNewRelFileNode(labtablespace, ag_label_desc,
-								   label->relpersistence);
+		laboid = GetNewRelFileNumber(labtablespace, ag_label_desc,
+									 label->relpersistence);
 	}
 
 	InsertAgLabelTuple(ag_label_desc, laboid, label, relid, labkind,
@@ -107,7 +107,7 @@ InsertAgLabelTuple(Relation ag_label_desc, Oid laboid, RangeVar *label,
 	bool		nulls[Natts_ag_label];
 	HeapTuple	tup;
 
-	AssertArg(labkind == LABEL_KIND_VERTEX || labkind == LABEL_KIND_EDGE);
+	Assert(labkind == LABEL_KIND_VERTEX || labkind == LABEL_KIND_EDGE);
 
 	if (is_fixed_id)
 	{

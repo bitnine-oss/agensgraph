@@ -28,6 +28,7 @@ ANALYZE [ VERBOSE ] [ <replaceable class="parameter">table_and_columns</replacea
 
     VERBOSE [ <replaceable class="parameter">boolean</replaceable> ]
     SKIP_LOCKED [ <replaceable class="parameter">boolean</replaceable> ]
+    BUFFER_USAGE_LIMIT [ <replaceable class="parameter">size</replaceable> ]
 
 <phrase>and <replaceable class="parameter">table_and_columns</replaceable> is:</phrase>
 
@@ -96,6 +97,26 @@ ANALYZE [ VERBOSE ] [ <replaceable class="parameter">table_and_columns</replacea
    </varlistentry>
 
    <varlistentry>
+    <term><literal>BUFFER_USAGE_LIMIT</literal></term>
+    <listitem>
+     <para>
+      Specifies the
+      <glossterm linkend="glossary-buffer-access-strategy">Buffer Access Strategy</glossterm>
+      ring buffer size for <command>ANALYZE</command>.  This size is used to
+      calculate the number of shared buffers which will be reused as part of
+      this strategy.  <literal>0</literal> disables use of a
+      <literal>Buffer Access Strategy</literal>.   When this option is not
+      specified, <command>ANALYZE</command> uses the value from
+      <xref linkend="guc-vacuum-buffer-usage-limit"/>.  Higher settings can
+      allow <command>ANALYZE</command> to run more quickly, but having too
+      large a setting may cause too many other useful pages to be evicted from
+      shared buffers.  The minimum value is <literal>128 kB</literal> and the
+      maximum value is <literal>16 GB</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
     <term><replaceable class="parameter">boolean</replaceable></term>
     <listitem>
      <para>
@@ -105,6 +126,19 @@ ANALYZE [ VERBOSE ] [ <replaceable class="parameter">table_and_columns</replacea
       <literal>OFF</literal>, or <literal>0</literal> to disable it.  The
       <replaceable class="parameter">boolean</replaceable> value can also
       be omitted, in which case <literal>TRUE</literal> is assumed.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">size</replaceable></term>
+    <listitem>
+     <para>
+      Specifies an amount of memory in kilobytes.  Sizes may also be specified
+      as a string containing the numerical size followed by any one of the
+      following memory units: <literal>kB</literal> (kilobytes),
+      <literal>MB</literal> (megabytes), <literal>GB</literal> (gigabytes), or
+      <literal>TB</literal> (terabytes).
      </para>
     </listitem>
    </varlistentry>
@@ -148,11 +182,9 @@ ANALYZE [ VERBOSE ] [ <replaceable class="parameter">table_and_columns</replacea
   <title>Notes</title>
 
   <para>
-   To analyze a table, one must ordinarily be the table's owner or a
-   superuser.  However, database owners are allowed to
+   To analyze a table, one must ordinarily have the <literal>MAINTAIN</literal>
+   privilege on the table.  However, database owners are allowed to
    analyze all tables in their databases, except shared catalogs.
-   (The restriction for shared catalogs means that a true database-wide
-   <command>ANALYZE</command> can only be performed by a superuser.)
    <command>ANALYZE</command> will skip over any tables that the calling user
    does not have permission to analyze.
   </para>
@@ -250,12 +282,13 @@ ANALYZE [ VERBOSE ] [ <replaceable class="parameter">table_and_columns</replacea
   </para>
 
   <para>
-    If the table being analyzed has one or more children,
-    <command>ANALYZE</command> will gather statistics twice: once on the
-    rows of the parent table only, and a second time on the rows of the
-    parent table with all of its children.  This second set of statistics
-    is needed when planning queries that traverse the entire inheritance
-    tree.  The autovacuum daemon, however, will only consider inserts or
+    If the table being analyzed has inheritance children,
+    <command>ANALYZE</command> gathers two sets of statistics: one on the rows
+    of the parent table only, and a second including rows of both the parent
+    table and all of its children.  This second set of statistics is needed when
+    planning queries that process the inheritance tree as a whole.  The child
+    tables themselves are not individually analyzed in this case.
+    The autovacuum daemon, however, will only consider inserts or
     updates on the parent table itself when deciding whether to trigger an
     automatic analyze for that table.  If that table is rarely inserted into
     or updated, the inheritance statistics will not be up to date unless you
@@ -269,15 +302,6 @@ ANALYZE [ VERBOSE ] [ <replaceable class="parameter">table_and_columns</replacea
     once, even with multi-level partitioning.  No statistics are collected for
     only the parent table (without data from its partitions), because with
     partitioning it's guaranteed to be empty.
-  </para>
-
-  <para>
-    By contrast, if the table being analyzed has inheritance children,
-    <command>ANALYZE</command> gathers two sets of statistics: one on the rows
-    of the parent table only, and a second including rows of both the parent
-    table and all of its children.  This second set of statistics is needed when
-    planning queries that process the inheritance tree as a whole.  The child
-    tables themselves are not individually analyzed in this case.
   </para>
 
   <para>

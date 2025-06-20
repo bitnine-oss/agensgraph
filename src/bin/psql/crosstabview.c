@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2022, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2023, PostgreSQL Global Development Group
  *
  * src/bin/psql/crosstabview.c
  */
@@ -532,7 +532,7 @@ avlInsertNode(avl_tree *tree, avl_node **node, pivot_field field)
 	if (current == tree->end)
 	{
 		avl_node   *new_node = (avl_node *)
-		pg_malloc(sizeof(avl_node));
+			pg_malloc(sizeof(avl_node));
 
 		new_node->height = 1;
 		new_node->field = field;

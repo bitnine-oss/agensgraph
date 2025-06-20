@@ -1,4 +1,4 @@
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 use strict;
 use warnings;
@@ -16,13 +16,16 @@ if (!defined $gzip || $gzip eq '')
 	plan skip_all => 'gzip not available';
 }
 
+# to ensure path can be embedded in postgresql.conf
+$gzip =~ s{\\}{/}g if ($PostgreSQL::Test::Utils::windows_os);
+
 my $node = PostgreSQL::Test::Cluster->new('primary');
 
 # Make sure pg_hba.conf is set up to allow connections from backupuser.
 # This is only needed on Windows machines that don't use UNIX sockets.
 $node->init(
 	'allows_streaming' => 1,
-	'auth_extra'       => [ '--create-role', 'backupuser' ]);
+	'auth_extra' => [ '--create-role', 'backupuser' ]);
 
 $node->append_conf('postgresql.conf',
 	"shared_preload_libraries = 'basebackup_to_shell'");
@@ -46,15 +49,15 @@ $node->command_fails_like(
 	qr/shell command for backup is not configured/,
 	'fails if basebackup_to_shell.command is not set');
 
-# Configure basebackup_to_shell.command and reload the configuation file.
-my $backup_path         = PostgreSQL::Test::Utils::tempdir;
+# Configure basebackup_to_shell.command and reload the configuration file.
+my $backup_path = PostgreSQL::Test::Utils::tempdir;
 my $escaped_backup_path = $backup_path;
 $escaped_backup_path =~ s{\\}{\\\\}g
   if ($PostgreSQL::Test::Utils::windows_os);
 my $shell_command =
   $PostgreSQL::Test::Utils::windows_os
-  ? qq{$gzip --fast > "$escaped_backup_path\\\\%f.gz"}
-  : qq{$gzip --fast > "$escaped_backup_path/%f.gz"};
+  ? qq{"$gzip" --fast > "$escaped_backup_path\\\\%f.gz"}
+  : qq{"$gzip" --fast > "$escaped_backup_path/%f.gz"};
 $node->append_conf('postgresql.conf',
 	"basebackup_to_shell.command='$shell_command'");
 $node->reload();
@@ -74,8 +77,8 @@ $node->command_fails_like(
 # Reconfigure to restrict access and require a detail.
 $shell_command =
   $PostgreSQL::Test::Utils::windows_os
-  ? qq{$gzip --fast > "$escaped_backup_path\\\\%d.%f.gz"}
-  : qq{$gzip --fast > "$escaped_backup_path/%d.%f.gz"};
+  ? qq{"$gzip" --fast > "$escaped_backup_path\\\\%d.%f.gz"}
+  : qq{"$gzip" --fast > "$escaped_backup_path/%d.%f.gz"};
 $node->append_conf('postgresql.conf',
 	"basebackup_to_shell.command='$shell_command'");
 $node->append_conf('postgresql.conf',

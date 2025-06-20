@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 # Demonstrate that logical can follow timeline switches.
 #
@@ -28,7 +28,6 @@ use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
 use File::Copy;
-use IPC::Run ();
 use Scalar::Util qw(blessed);
 
 my ($stdout, $stderr, $ret);
@@ -188,8 +187,8 @@ my $endpos = $node_replica->safe_psql('postgres',
 
 $stdout = $node_replica->pg_recvlogical_upto(
 	'postgres', 'before_basebackup',
-	$endpos,    $PostgreSQL::Test::Utils::timeout_default,
-	'include-xids'     => '0',
+	$endpos, $PostgreSQL::Test::Utils::timeout_default,
+	'include-xids' => '0',
 	'skip-empty-xacts' => '1');
 
 # walsender likes to add a newline

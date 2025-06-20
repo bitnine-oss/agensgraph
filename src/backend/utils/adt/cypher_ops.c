@@ -178,7 +178,7 @@ jnumber_op(PGFunction f, Jsonb *l, Jsonb *r)
 	Datum		n;
 	Jsonb	   *op_result = NULL;
 
-	AssertArg(r != NULL);
+	Assert(r != NULL);
 
 	if (!((l == NULL || JB_ROOT_IS_SCALAR(l)) && JB_ROOT_IS_SCALAR(r)))
 		ereport_op(f, l, r);
@@ -279,7 +279,7 @@ ereport_op_str(const char *op, Jsonb *l, Jsonb *r)
 	const char *lstr;
 	const char *rstr;
 
-	AssertArg(r != NULL);
+	Assert(r != NULL);
 
 	if (l == NULL)
 	{

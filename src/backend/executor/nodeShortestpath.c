@@ -455,9 +455,9 @@ ExecShortestpath(PlanState *pstate)
 					 */
 					bool		shouldFree;
 					MemoryContext oldContext;
-					ExprContext *econtext = node->js.ps.ps_ExprContext;
+					ExprContext *_econtext = node->js.ps.ps_ExprContext;
 
-					econtext->ecxt_outertuple = outerTupleSlot;
+					_econtext->ecxt_outertuple = outerTupleSlot;
 					oldContext = MemoryContextSwitchTo(outerTupleSlot->tts_mcxt);
 					outerTuple = ExecFetchSlotMinimalTuple(outerTupleSlot, &shouldFree);
 					MemoryContextSwitchTo(oldContext);

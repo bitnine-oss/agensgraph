@@ -1,10 +1,10 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 package MSBuildProject;
 
 #
-# Package that encapsulates a MSBuild project file (Visual C++ 2013 or greater)
+# Package that encapsulates a MSBuild project file (Visual C++ 2015 or greater)
 #
 # src/tools/msvc/MSBuildProject.pm
 #
@@ -19,11 +19,11 @@ no warnings qw(redefine);    ## no critic
 sub _new
 {
 	my $classname = shift;
-	my $self      = $classname->SUPER::_new(@_);
+	my $self = $classname->SUPER::_new(@_);
 	bless($self, $classname);
 
 	$self->{filenameExtension} = '.vcxproj';
-	$self->{ToolsVersion}      = '4.0';
+	$self->{ToolsVersion} = '4.0';
 
 	return $self;
 }
@@ -51,7 +51,7 @@ EOF
 	{
 		# remove trailing backslash if necessary.
 		$sdkVersion =~ s/\\$//;
-		print $f <<EOF
+		print $f <<EOF;
     <WindowsTargetPlatformVersion>$sdkVersion</WindowsTargetPlatformVersion>
 EOF
 	}
@@ -84,8 +84,8 @@ EOF
 	$self->WriteItemDefinitionGroup(
 		$f, 'Debug',
 		{
-			defs    => "_DEBUG;DEBUG=1",
-			opt     => 'Disabled',
+			defs => "_DEBUG;DEBUG=1",
+			opt => 'Disabled',
 			strpool => 'false',
 			runtime => 'MultiThreadedDebugDLL'
 		});
@@ -93,8 +93,8 @@ EOF
 		$f,
 		'Release',
 		{
-			defs    => "",
-			opt     => 'Full',
+			defs => "",
+			opt => 'Full',
 			strpool => 'true',
 			runtime => 'MultiThreadedDLL'
 		});
@@ -141,14 +141,14 @@ sub WriteFiles
 	print $f <<EOF;
   <ItemGroup>
 EOF
-	my @grammarFiles  = ();
+	my @grammarFiles = ();
 	my @resourceFiles = ();
 	my %uniquefiles;
 	foreach my $fileNameWithPath (sort keys %{ $self->{files} })
 	{
 		confess "Bad format filename '$fileNameWithPath'\n"
 		  unless ($fileNameWithPath =~ m!^(.*)/([^/]+)\.(c|cpp|y|l|rc)$!);
-		my $dir      = $1;
+		my $dir = $1;
 		my $fileName = $2;
 		if ($fileNameWithPath =~ /\.y$/ or $fileNameWithPath =~ /\.l$/)
 		{
@@ -312,6 +312,7 @@ sub WriteItemDefinitionGroup
 
 	my $targetmachine =
 	  $self->{platform} eq 'Win32' ? 'MachineX86' : 'MachineX64';
+	my $arch = $self->{platform} eq 'Win32' ? 'x86' : 'x86_64';
 
 	my $includes = join ';', @{ $self->{includes} }, "";
 
@@ -347,7 +348,6 @@ sub WriteItemDefinitionGroup
       <ProgramDatabaseFile>.\\$cfgname\\$self->{name}\\$self->{name}.pdb</ProgramDatabaseFile>
       <GenerateMapFile>false</GenerateMapFile>
       <MapFileName>.\\$cfgname\\$self->{name}\\$self->{name}.map</MapFileName>
-      <RandomizedBaseAddress>false</RandomizedBaseAddress>
       <!-- Permit links to MinGW-built, 32-bit DLLs (default before VS2012). -->
       <ImageHasSafeExceptionHandlers/>
       <SubSystem>Console</SubSystem>
@@ -381,7 +381,7 @@ EOF
 		print $f <<EOF;
     <PreLinkEvent>
       <Message>Generate DEF file</Message>
-      <Command>perl src\\tools\\msvc\\gendef.pl $cfgname\\$self->{name} $self->{platform}</Command>
+      <Command>perl src\\tools\\msvc\\gendef.pl --arch $arch --deffile $cfgname\\$self->{name}\\$self->{name}.def --tempdir $cfgname\\$self->{name} $cfgname\\$self->{name}</Command>
     </PreLinkEvent>
 EOF
 	}
@@ -405,31 +405,6 @@ EOF
 	return;
 }
 
-package VC2013Project;
-
-#
-# Package that encapsulates a Visual C++ 2013 project file
-#
-
-use strict;
-use warnings;
-use base qw(MSBuildProject);
-
-no warnings qw(redefine);    ## no critic
-
-sub new
-{
-	my $classname = shift;
-	my $self      = $classname->SUPER::_new(@_);
-	bless($self, $classname);
-
-	$self->{vcver}           = '12.00';
-	$self->{PlatformToolset} = 'v120';
-	$self->{ToolsVersion}    = '12.0';
-
-	return $self;
-}
-
 package VC2015Project;
 
 #
@@ -445,12 +420,12 @@ no warnings qw(redefine);    ## no critic
 sub new
 {
 	my $classname = shift;
-	my $self      = $classname->SUPER::_new(@_);
+	my $self = $classname->SUPER::_new(@_);
 	bless($self, $classname);
 
-	$self->{vcver}           = '14.00';
+	$self->{vcver} = '14.00';
 	$self->{PlatformToolset} = 'v140';
-	$self->{ToolsVersion}    = '14.0';
+	$self->{ToolsVersion} = '14.0';
 
 	return $self;
 }
@@ -470,12 +445,12 @@ no warnings qw(redefine);    ## no critic
 sub new
 {
 	my $classname = shift;
-	my $self      = $classname->SUPER::_new(@_);
+	my $self = $classname->SUPER::_new(@_);
 	bless($self, $classname);
 
-	$self->{vcver}           = '15.00';
+	$self->{vcver} = '15.00';
 	$self->{PlatformToolset} = 'v141';
-	$self->{ToolsVersion}    = '15.0';
+	$self->{ToolsVersion} = '15.0';
 
 	return $self;
 }
@@ -495,12 +470,12 @@ no warnings qw(redefine);    ## no critic
 sub new
 {
 	my $classname = shift;
-	my $self      = $classname->SUPER::_new(@_);
+	my $self = $classname->SUPER::_new(@_);
 	bless($self, $classname);
 
-	$self->{vcver}           = '16.00';
+	$self->{vcver} = '16.00';
 	$self->{PlatformToolset} = 'v142';
-	$self->{ToolsVersion}    = '16.0';
+	$self->{ToolsVersion} = '16.0';
 
 	return $self;
 }
@@ -520,12 +495,12 @@ no warnings qw(redefine);    ## no critic
 sub new
 {
 	my $classname = shift;
-	my $self      = $classname->SUPER::_new(@_);
+	my $self = $classname->SUPER::_new(@_);
 	bless($self, $classname);
 
-	$self->{vcver}           = '17.00';
+	$self->{vcver} = '17.00';
 	$self->{PlatformToolset} = 'v143';
-	$self->{ToolsVersion}    = '17.0';
+	$self->{ToolsVersion} = '17.0';
 
 	return $self;
 }

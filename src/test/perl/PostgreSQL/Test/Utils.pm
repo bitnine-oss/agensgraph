@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 =pod
 
@@ -55,6 +55,7 @@ use File::Spec;
 use File::stat qw(stat);
 use File::Temp ();
 use IPC::Run;
+use POSIX qw(locale_h);
 use PostgreSQL::Test::SimpleTee;
 
 # We need a version of Test::More recent enough to support subtests
@@ -65,6 +66,7 @@ our @EXPORT = qw(
   slurp_dir
   slurp_file
   append_to_file
+  string_replace_file
   check_mode_recursive
   chmod_recursive
   check_pg_config
@@ -102,6 +104,7 @@ BEGIN
 	delete $ENV{LANGUAGE};
 	delete $ENV{LC_ALL};
 	$ENV{LC_MESSAGES} = 'C';
+	setlocale(LC_ALL, "");
 
 	# This list should be kept in sync with pg_regress.c.
 	my @envkeys = qw (
@@ -110,6 +113,7 @@ BEGIN
 	  PGCONNECT_TIMEOUT
 	  PGDATA
 	  PGDATABASE
+	  PGGSSDELEGATION
 	  PGGSSENCMODE
 	  PGGSSLIB
 	  PGHOSTADDR
@@ -143,7 +147,7 @@ BEGIN
 	$windows_os = $Config{osname} eq 'MSWin32' || $Config{osname} eq 'msys';
 	# Check if this environment is MSYS2.
 	$is_msys2 =
-	     $windows_os
+		 $windows_os
 	  && -x '/usr/bin/uname'
 	  && `uname -or` =~ /^[2-9].*Msys/;
 
@@ -189,11 +193,11 @@ INIT
 	# test may still fail, but it's more likely to report useful facts.
 	$SIG{PIPE} = 'IGNORE';
 
-	# Determine output directories, and create them.  The base path is the
-	# TESTDIR environment variable, which is normally set by the invoking
-	# Makefile.
-	$tmp_check = $ENV{TESTDIR} ? "$ENV{TESTDIR}/tmp_check" : "tmp_check";
-	$log_path = "$tmp_check/log";
+	# Determine output directories, and create them.  The base paths are the
+	# TESTDATADIR / TESTLOGDIR environment variables, which are normally set
+	# by the invoking Makefile.
+	$tmp_check = $ENV{TESTDATADIR} ? "$ENV{TESTDATADIR}" : "tmp_check";
+	$log_path = $ENV{TESTLOGDIR} ? "$ENV{TESTLOGDIR}" : "log";
 
 	mkdir $tmp_check;
 	mkdir $log_path;
@@ -208,15 +212,15 @@ INIT
 	# Hijack STDOUT and STDERR to the log file
 	open(my $orig_stdout, '>&', \*STDOUT);
 	open(my $orig_stderr, '>&', \*STDERR);
-	open(STDOUT,          '>&', $testlog);
-	open(STDERR,          '>&', $testlog);
+	open(STDOUT, '>&', $testlog);
+	open(STDERR, '>&', $testlog);
 
 	# The test output (ok ...) needs to be printed to the original STDOUT so
 	# that the 'prove' program can parse it, and display it to the user in
 	# real time. But also copy it to the log file, to provide more context
 	# in the log.
 	my $builder = Test::More->builder;
-	my $fh      = $builder->output;
+	my $fh = $builder->output;
 	tie *$fh, "PostgreSQL::Test::SimpleTee", $orig_stdout, $testlog;
 	$fh = $builder->failure_output;
 	tie *$fh, "PostgreSQL::Test::SimpleTee", $orig_stderr, $testlog;
@@ -281,7 +285,7 @@ sub tempdir
 	$prefix = "tmp_test" unless defined $prefix;
 	return File::Temp::tempdir(
 		$prefix . '_XXXX',
-		DIR     => $tmp_check,
+		DIR => $tmp_check,
 		CLEANUP => 1);
 }
 
@@ -318,7 +322,7 @@ https://postgr.es/m/20220116210241.GC756210@rfd.leadboat.com for details.
 sub has_wal_read_bug
 {
 	return
-	     $Config{osname} eq 'linux'
+		 $Config{osname} eq 'linux'
 	  && $Config{archname} =~ /^sparc/
 	  && !run_log([ qw(df -x ext4), $tmp_check ], '>', '/dev/null', '2>&1');
 }
@@ -549,6 +553,32 @@ sub append_to_file
 
 =pod
 
+=item string_replace_file(filename, find, replace)
+
+Find and replace string of a given file.
+
+=cut
+
+sub string_replace_file
+{
+	my ($filename, $find, $replace) = @_;
+	open(my $in, '<', $filename);
+	my $content;
+	while (<$in>)
+	{
+		$_ =~ s/$find/$replace/;
+		$content = $content . $_;
+	}
+	close $in;
+	open(my $out, '>', $filename);
+	print $out $content;
+	close($out);
+
+	return;
+}
+
+=pod
+
 =item check_mode_recursive(dir, expected_dir_mode, expected_file_mode, ignore_list)
 
 Check that all file/dir modes in a directory match the expected values,
@@ -566,7 +596,7 @@ sub check_mode_recursive
 	find(
 		{
 			follow_fast => 1,
-			wanted      => sub {
+			wanted => sub {
 				# Is file in the ignore list?
 				foreach my $ignore ($ignore_list ? @{$ignore_list} : [])
 				{
@@ -582,7 +612,7 @@ sub check_mode_recursive
 				unless (defined($file_stat))
 				{
 					my $is_ENOENT = $!{ENOENT};
-					my $msg       = "unable to stat $File::Find::name: $!";
+					my $msg = "unable to stat $File::Find::name: $!";
 					if ($is_ENOENT)
 					{
 						warn $msg;
@@ -653,7 +683,7 @@ sub chmod_recursive
 	find(
 		{
 			follow_fast => 1,
-			wanted      => sub {
+			wanted => sub {
 				my $file_stat = stat($File::Find::name);
 
 				if (defined($file_stat))
@@ -782,15 +812,11 @@ sub command_exit_is
 	my $h = IPC::Run::start $cmd;
 	$h->finish();
 
-	# On Windows, the exit status of the process is returned directly as the
-	# process's exit code, while on Unix, it's returned in the high bits
-	# of the exit code (see WEXITSTATUS macro in the standard <sys/wait.h>
-	# header file). IPC::Run's result function always returns exit code >> 8,
-	# assuming the Unix convention, which will always return 0 on Windows as
-	# long as the process was not terminated by an exception. To work around
-	# that, use $h->full_results on Windows instead.
+	# Normally, if the child called exit(N), IPC::Run::result() returns N.  On
+	# Windows, with IPC::Run v20220807.0 and earlier, full_results() is the
+	# method that returns N (https://github.com/toddr/IPC-Run/issues/161).
 	my $result =
-	    ($Config{osname} eq "MSWin32")
+	  ($Config{osname} eq "MSWin32" && $IPC::Run::VERSION <= 20220807.0)
 	  ? ($h->full_results)[0]
 	  : $h->result(0);
 	is($result, $expected, $test_name);

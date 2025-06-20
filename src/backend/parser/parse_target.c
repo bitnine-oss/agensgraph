@@ -3,7 +3,7 @@
  * parse_target.c
  *	  handle target lists
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -41,7 +41,6 @@ static Node *transformAssignmentSubscripts(ParseState *pstate,
 										   int32 targetTypMod,
 										   Oid targetCollation,
 										   List *subscripts,
-										   bool isSlice,
 										   List *indirection,
 										   ListCell *next_indirection,
 										   Node *rhs,
@@ -697,7 +696,6 @@ transformAssignmentIndirection(ParseState *pstate,
 {
 	Node	   *result;
 	List	   *subscripts = NIL;
-	bool		isSlice = false;
 	ListCell   *i;
 
 	if (indirection_cell && !basenode)
@@ -727,11 +725,7 @@ transformAssignmentIndirection(ParseState *pstate,
 		Node	   *n = lfirst(i);
 
 		if (IsA(n, A_Indices))
-		{
 			subscripts = lappend(subscripts, n);
-			if (((A_Indices *) n)->is_slice)
-				isSlice = true;
-		}
 		else if (IsA(n, A_Star))
 		{
 			ereport(ERROR,
@@ -763,7 +757,6 @@ transformAssignmentIndirection(ParseState *pstate,
 													 targetTypMod,
 													 targetCollation,
 													 subscripts,
-													 isSlice,
 													 indirection,
 													 i,
 													 rhs,
@@ -853,7 +846,6 @@ transformAssignmentIndirection(ParseState *pstate,
 											 targetTypMod,
 											 targetCollation,
 											 subscripts,
-											 isSlice,
 											 indirection,
 											 NULL,
 											 rhs,
@@ -907,7 +899,6 @@ transformAssignmentSubscripts(ParseState *pstate,
 							  int32 targetTypMod,
 							  Oid targetCollation,
 							  List *subscripts,
-							  bool isSlice,
 							  List *indirection,
 							  ListCell *next_indirection,
 							  Node *rhs,
@@ -1141,7 +1132,7 @@ ExpandColumnRefStar(ParseState *pstate, ColumnRef *cref,
 		 *
 		 * Note: this code is a lot like transformColumnRef; it's tempting to
 		 * call that instead and then replace the resulting whole-row Var with
-		 * a list of Vars.  However, that would leave us with the RTE's
+		 * a list of Vars.  However, that would leave us with the relation's
 		 * selectedCols bitmap showing the whole row as needing select
 		 * permission, as well as the individual columns.  That would be
 		 * incorrect (since columns added later shouldn't need select
@@ -1376,10 +1367,11 @@ ExpandSingleTable(ParseState *pstate, ParseNamespaceItem *nsitem,
 	else
 	{
 		RangeTblEntry *rte = nsitem->p_rte;
+		RTEPermissionInfo *perminfo = nsitem->p_perminfo;
 		List	   *vars;
 		ListCell   *l;
 
-		vars = expandNSItemVars(nsitem, sublevels_up, location, NULL);
+		vars = expandNSItemVars(pstate, nsitem, sublevels_up, location, NULL);
 
 		/*
 		 * Require read access to the table.  This is normally redundant with
@@ -1390,7 +1382,10 @@ ExpandSingleTable(ParseState *pstate, ParseNamespaceItem *nsitem,
 		 * target relation of UPDATE/DELETE, which cannot be under a join.)
 		 */
 		if (rte->rtekind == RTE_RELATION)
-			rte->requiredPerms |= ACL_SELECT;
+		{
+			Assert(perminfo != NULL);
+			perminfo->requiredPerms |= ACL_SELECT;
+		}
 
 		/* Require read access to each column */
 		foreach(l, vars)
@@ -1423,11 +1418,11 @@ ExpandRowReference(ParseState *pstate, Node *expr,
 	/*
 	 * If the rowtype expression is a whole-row Var, we can expand the fields
 	 * as simple Vars.  Note: if the RTE is a relation, this case leaves us
-	 * with the RTE's selectedCols bitmap showing the whole row as needing
-	 * select permission, as well as the individual columns.  However, we can
-	 * only get here for weird notations like (table.*).*, so it's not worth
-	 * trying to clean up --- arguably, the permissions marking is correct
-	 * anyway for such cases.
+	 * with its RTEPermissionInfo's selectedCols bitmap showing the whole row
+	 * as needing select permission, as well as the individual columns.
+	 * However, we can only get here for weird notations like (table.*).*, so
+	 * it's not worth trying to clean up --- arguably, the permissions marking
+	 * is correct anyway for such cases.
 	 */
 	if (IsA(expr, Var) &&
 		((Var *) expr)->varattno == InvalidAttrNumber)
@@ -1594,9 +1589,8 @@ expandRecordVariable(ParseState *pstate, Var *var, int levelsup)
 					 * to.  We have to build an additional level of ParseState
 					 * to keep in step with varlevelsup in the subselect.
 					 */
-					ParseState	mypstate;
+					ParseState	mypstate = {0};
 
-					MemSet(&mypstate, 0, sizeof(mypstate));
 					mypstate.parentParseState = pstate;
 					mypstate.p_rtable = rte->subquery->rtable;
 					/* don't bother filling the rest of the fake pstate */
@@ -1956,48 +1950,26 @@ FigureColnameInternal(Node *node, char **name)
 			}
 			break;
 		case T_XmlSerialize:
+			/* make XMLSERIALIZE act like a regular function */
 			*name = "xmlserialize";
 			return 2;
-		case T_JsonParseExpr:
-			*name = "json";
-			return 2;
-		case T_JsonScalarExpr:
-			*name = "json_scalar";
-			return 2;
-		case T_JsonSerializeExpr:
-			*name = "json_serialize";
-			return 2;
 		case T_JsonObjectConstructor:
+			/* make JSON_OBJECT act like a regular function */
 			*name = "json_object";
 			return 2;
 		case T_JsonArrayConstructor:
 		case T_JsonArrayQueryConstructor:
+			/* make JSON_ARRAY act like a regular function */
 			*name = "json_array";
 			return 2;
 		case T_JsonObjectAgg:
+			/* make JSON_OBJECTAGG act like a regular function */
 			*name = "json_objectagg";
 			return 2;
 		case T_JsonArrayAgg:
+			/* make JSON_ARRAYAGG act like a regular function */
 			*name = "json_arrayagg";
 			return 2;
-		case T_JsonFuncExpr:
-			/* make SQL/JSON functions act like a regular function */
-			switch (((JsonFuncExpr *) node)->op)
-			{
-				case JSON_QUERY_OP:
-					*name = "json_query";
-					return 2;
-				case JSON_VALUE_OP:
-					*name = "json_value";
-					return 2;
-				case JSON_EXISTS_OP:
-					*name = "json_exists";
-					return 2;
-				case JSON_TABLE_OP:
-					*name = "json_table";
-					return 2;
-			}
-			break;
 		default:
 			break;
 	}

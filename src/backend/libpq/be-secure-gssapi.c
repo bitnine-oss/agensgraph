@@ -3,7 +3,7 @@
  * be-secure-gssapi.c
  *  GSSAPI encryption support
  *
- * Portions Copyright (c) 2018-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2018-2023, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *  src/backend/libpq/be-secure-gssapi.c
@@ -497,12 +497,16 @@ secure_open_gssapi(Port *port)
 	bool		complete_next = false;
 	OM_uint32	major,
 				minor;
+	gss_cred_id_t delegated_creds;
 
 	/*
 	 * Allocate subsidiary Port data for GSSAPI operations.
 	 */
 	port->gss = (pg_gssinfo *)
 		MemoryContextAllocZero(TopMemoryContext, sizeof(pg_gssinfo));
+
+	delegated_creds = GSS_C_NO_CREDENTIAL;
+	port->gss->delegated_creds = false;
 
 	/*
 	 * Allocate buffers and initialize state variables.  By malloc'ing the
@@ -522,8 +526,9 @@ secure_open_gssapi(Port *port)
 	PqGSSRecvLength = PqGSSResultLength = PqGSSResultNext = 0;
 
 	/*
-	 * Use the configured keytab, if there is one.  Unfortunately, Heimdal
-	 * doesn't support the cred store extensions, so use the env var.
+	 * Use the configured keytab, if there is one.  As we now require MIT
+	 * Kerberos, we might consider using the credential store extensions in
+	 * the future instead of the environment variable.
 	 */
 	if (pg_krb_server_keyfile != NULL && pg_krb_server_keyfile[0] != '\0')
 	{
@@ -588,7 +593,8 @@ secure_open_gssapi(Port *port)
 									   GSS_C_NO_CREDENTIAL, &input,
 									   GSS_C_NO_CHANNEL_BINDINGS,
 									   &port->gss->name, NULL, &output, NULL,
-									   NULL, NULL);
+									   NULL, pg_gss_accept_delegation ? &delegated_creds : NULL);
+
 		if (GSS_ERROR(major))
 		{
 			pg_GSS_error(_("could not accept GSSAPI security context"),
@@ -603,6 +609,12 @@ secure_open_gssapi(Port *port)
 			 * both with and without a packet to be sent.
 			 */
 			complete_next = true;
+		}
+
+		if (delegated_creds != GSS_C_NO_CREDENTIAL)
+		{
+			pg_store_delegated_credential(delegated_creds);
+			port->gss->delegated_creds = true;
 		}
 
 		/* Done handling the incoming packet, reset our buffer */
@@ -730,4 +742,17 @@ be_gssapi_get_princ(Port *port)
 		return NULL;
 
 	return port->gss->princ;
+}
+
+/*
+ * Return if GSSAPI delegated credentials were included on this
+ * connection.
+ */
+bool
+be_gssapi_get_delegation(Port *port)
+{
+	if (!port || !port->gss)
+		return false;
+
+	return port->gss->delegated_creds;
 }

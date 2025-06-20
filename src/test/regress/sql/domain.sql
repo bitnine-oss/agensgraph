@@ -69,6 +69,25 @@ drop domain domainint4 restrict;
 drop domain domaintext;
 
 
+-- Test non-error-throwing input
+
+create domain positiveint int4 check(value > 0);
+create domain weirdfloat float8 check((1 / value) < 10);
+
+select pg_input_is_valid('1', 'positiveint');
+select pg_input_is_valid('junk', 'positiveint');
+select pg_input_is_valid('-1', 'positiveint');
+select * from pg_input_error_info('junk', 'positiveint');
+select * from pg_input_error_info('-1', 'positiveint');
+select * from pg_input_error_info('junk', 'weirdfloat');
+select * from pg_input_error_info('0.01', 'weirdfloat');
+-- We currently can't trap errors raised in the CHECK expression itself
+select * from pg_input_error_info('0', 'weirdfloat');
+
+drop domain positiveint;
+drop domain weirdfloat;
+
+
 -- Test domains over array types
 
 create domain domainint4arr int4[1];
@@ -287,6 +306,10 @@ update dcomptable set f1[1].cf2 = 5;
 table dcomptable;
 update dcomptable set f1[1].cf1 = -1;  -- fail
 update dcomptable set f1[1].cf1 = 1;
+table dcomptable;
+-- if there's no constraints, a different code path is taken:
+alter domain dcomptype drop constraint dcomptype_check;
+update dcomptable set f1[1].cf1 = -1;  -- now ok
 table dcomptable;
 
 drop table dcomptable;

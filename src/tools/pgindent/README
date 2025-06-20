@@ -10,18 +10,20 @@ http://adpgtech.blogspot.com/2015/05/running-pgindent-on-non-core-code-or.html
 
 PREREQUISITES:
 
-1) Install pg_bsd_indent in your PATH.  Fetch its source code with
-   git clone https://git.postgresql.org/git/pg_bsd_indent.git
-   then follow the directions in README.pg_bsd_indent therein.
+1) Install pg_bsd_indent in your PATH.  Its source code is in the
+   sibling directory src/tools/pg_bsd_indent; see the directions
+   in that directory's README file.
 
-2) Install perltidy.  Please be sure it is version 20170521 (older and newer
+2) Install perltidy.  Please be sure it is version 20230309 (older and newer
    versions make different formatting choices, and we want consistency).
    You can get the correct version from
    https://cpan.metacpan.org/authors/id/S/SH/SHANCOCK/
    To install, follow the usual install process for a Perl module
    ("man perlmodinstall" explains it).  Or, if you have cpan installed,
    this should work:
-   cpan SHANCOCK/Perl-Tidy-20170521.tar.gz
+   cpan SHANCOCK/Perl-Tidy-20230309.tar.gz
+   Or if you have cpanm installed, you can just use:
+   cpanm https://cpan.metacpan.org/authors/id/S/SH/SHANCOCK/Perl-Tidy-20230309.tar.gz
 
 DOING THE INDENT RUN:
 
@@ -36,14 +38,14 @@ DOING THE INDENT RUN:
 
 3) Run pgindent on the C files:
 
-	src/tools/pgindent/pgindent
+	src/tools/pgindent/pgindent .
 
    If any files generate errors, restore their original versions with
    "git checkout", and see below for cleanup ideas.
 
 4) Indent the Perl code using perltidy:
 
-	src/tools/pgindent/pgperltidy
+	src/tools/pgindent/pgperltidy .
 
    If you want to use some perltidy version that's not in your PATH,
    first set the PERLTIDY environment variable to point to it.
@@ -127,8 +129,8 @@ BSD indent
 
 We have standardized on FreeBSD's indent, and renamed it pg_bsd_indent.
 pg_bsd_indent does differ slightly from FreeBSD's version, mostly in
-being more easily portable to non-BSD platforms.  You can obtain it from
-https://git.postgresql.org/git/pg_bsd_indent.git
+being more easily portable to non-BSD platforms.  Find it in the
+sibling directory src/tools/pg_bsd_indent.
 
 GNU indent, version 2.2.6, has several problems, and is not recommended.
 These bugs become pretty major when you are doing >500k lines of code.

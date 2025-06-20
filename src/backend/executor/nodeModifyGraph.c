@@ -87,8 +87,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 		(mgplan->nr_modify * MODIFY_CID_MAX);
 
 	mgstate->subplan = ExecInitNode(mgplan->subplan, estate, eflags);
-	AssertArg(mgplan->operation != GWROP_MERGE ||
-			  IsA(mgstate->subplan, NestLoopState));
+	Assert(mgplan->operation != GWROP_MERGE ||
+		   IsA(mgstate->subplan, NestLoopState));
 
 	mgstate->graphid = get_graph_path_oid();
 	mgstate->pattern = ExecInitGraphPattern(mgplan->pattern, mgstate);
@@ -115,7 +115,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 	/* Initialize for EPQ. */
 	EvalPlanQualInit(&mgstate->mt_epqstate, estate, NULL, NIL,
-					 mgplan->epqParam);
+					 mgplan->epqParam, mgplan->resultRelations);
 	mgstate->mt_arowmarks = (List **) palloc0(sizeof(List *) * 1);
 	EvalPlanQualSetPlan(&mgstate->mt_epqstate, mgplan->subplan,
 						mgstate->mt_arowmarks[0]);
@@ -484,7 +484,7 @@ ExecInitGraphPattern(List *pattern, ModifyGraphState *mgstate)
 	if (plan->operation != GWROP_MERGE)
 		return pattern;
 
-	AssertArg(list_length(pattern) == 1);
+	Assert(list_length(pattern) == 1);
 
 	gpath = linitial(pattern);
 
@@ -695,7 +695,7 @@ reflectModifiedProp(ModifyGraphState *mgstate)
 	while ((entry = hash_seq_search(&seq)) != NULL)
 	{
 		ItemPointer ctid;
-		Datum		gid = PointerGetDatum(entry->key);
+		Datum		gid = PointerGetDatum((void *) entry->key);
 		Oid			type;
 
 		type = get_labid_typeoid(mgstate->graphid,
@@ -816,7 +816,7 @@ setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum)
 	if (slot == NULL)
 		return;
 
-	AssertArg(attnum > 0 && attnum <= slot->tts_tupleDescriptor->natts);
+	Assert(attnum > 0 && attnum <= slot->tts_tupleDescriptor->natts);
 
 	slot->tts_values[attnum - 1] = value;
 	slot->tts_isnull[attnum - 1] = (value == (Datum) 0) ? true : false;

@@ -3,7 +3,7 @@
  *
  * pl_gram.y			- Parser for the PL/pgSQL procedural language
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -39,10 +39,7 @@
 /*
  * Bison doesn't allocate anything that needs to live across parser calls,
  * so we can easily have it use palloc instead of malloc.  This prevents
- * memory leaks if we error out during parsing.  Note this only works with
- * bison >= 2.0.  However, in bison 1.875 the default is to use alloca()
- * if possible, so there's not really much problem anyhow, at least if
- * you're building with gcc.
+ * memory leaks if we error out during parsing.
  */
 #define YYMALLOC palloc
 #define YYFREE   pfree
@@ -325,6 +322,7 @@ static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 %token <keyword>	K_PG_EXCEPTION_CONTEXT
 %token <keyword>	K_PG_EXCEPTION_DETAIL
 %token <keyword>	K_PG_EXCEPTION_HINT
+%token <keyword>	K_PG_ROUTINE_OID
 %token <keyword>	K_PRINT_STRICT_PARAMS
 %token <keyword>	K_PRIOR
 %token <keyword>	K_QUERY
@@ -537,10 +535,6 @@ decl_statement	: decl_varname decl_const decl_datatype decl_collate decl_notnull
 				  decl_cursor_args decl_is_for decl_cursor_query
 					{
 						PLpgSQL_var *new;
-						PLpgSQL_expr *curname_def;
-						char		buf[NAMEDATALEN * 2 + 64];
-						char	   *cp1;
-						char	   *cp2;
 
 						/* pop local namespace for cursor args */
 						plpgsql_ns_pop();
@@ -552,29 +546,6 @@ decl_statement	: decl_varname decl_const decl_datatype decl_collate decl_notnull
 																		  InvalidOid,
 																		  NULL),
 												   true);
-
-						curname_def = palloc0(sizeof(PLpgSQL_expr));
-
-						/* Note: refname has been truncated to NAMEDATALEN */
-						cp1 = new->refname;
-						cp2 = buf;
-						/*
-						 * Don't trust standard_conforming_strings here;
-						 * it might change before we use the string.
-						 */
-						if (strchr(cp1, '\\') != NULL)
-							*cp2++ = ESCAPE_STRING_SYNTAX;
-						*cp2++ = '\'';
-						while (*cp1)
-						{
-							if (SQL_STR_DOUBLE(*cp1, true))
-								*cp2++ = *cp1;
-							*cp2++ = *cp1++;
-						}
-						strcpy(cp2, "'::pg_catalog.refcursor");
-						curname_def->query = pstrdup(buf);
-						curname_def->parseMode = RAW_PARSE_PLPGSQL_EXPR;
-						new->default_val = curname_def;
 
 						new->cursor_explicit_expr = $7;
 						if ($5 == NULL)
@@ -1038,6 +1009,7 @@ stmt_getdiag	: K_GET getdiag_area_opt K_DIAGNOSTICS getdiag_list ';'
 							{
 								/* these fields are disallowed in stacked case */
 								case PLPGSQL_GETDIAG_ROW_COUNT:
+								case PLPGSQL_GETDIAG_ROUTINE_OID:
 									if (new->is_stacked)
 										ereport(ERROR,
 												(errcode(ERRCODE_SYNTAX_ERROR),
@@ -1120,6 +1092,9 @@ getdiag_item :
 						if (tok_is_keyword(tok, &yylval,
 										   K_ROW_COUNT, "row_count"))
 							$$ = PLPGSQL_GETDIAG_ROW_COUNT;
+						else if (tok_is_keyword(tok, &yylval,
+												K_PG_ROUTINE_OID, "pg_routine_oid"))
+							$$ = PLPGSQL_GETDIAG_ROUTINE_OID;
 						else if (tok_is_keyword(tok, &yylval,
 												K_PG_CONTEXT, "pg_context"))
 							$$ = PLPGSQL_GETDIAG_CONTEXT;
@@ -2558,6 +2533,7 @@ unreserved_keyword	:
 				| K_PG_EXCEPTION_CONTEXT
 				| K_PG_EXCEPTION_DETAIL
 				| K_PG_EXCEPTION_HINT
+				| K_PG_ROUTINE_OID
 				| K_PRINT_STRICT_PARAMS
 				| K_PRIOR
 				| K_QUERY
@@ -3728,7 +3704,7 @@ parse_datatype(const char *string, int location)
 	error_context_stack = &syntax_errcontext;
 
 	/* Let the main parser try to parse it under standard SQL rules */
-	typeName = typeStringToTypeName(string);
+	typeName = typeStringToTypeName(string, NULL);
 	typenameTypeIdAndMod(NULL, typeName, &type_id, &typmod);
 
 	/* Restore former ereport callback */

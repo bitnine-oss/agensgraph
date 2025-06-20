@@ -820,7 +820,7 @@ CREATE ()-[:rege4 {id: 10, name: 'agens'}]->();
 ERROR:  new row for relation "rege4" violates check constraint "rege4_name_isnull_constraint"
 CREATE ()-[:rege4 {name: 'graph'}]->();
 DROP CONSTRAINT rege4_name_isnull_constraint ON ag_edge;
-ERROR:  constraint "rege4_name_isnull_constraint" of relation "ag_edge" does not exist
+ERROR:  ALTER base edge label is prohibited
 DROP CONSTRAINT ON rege4;
 ERROR:  syntax error at or near "ON" at character 17
 DROP CONSTRAINT rege4_name_isnull_constraint ON rege4;

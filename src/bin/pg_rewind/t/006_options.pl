@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 #
 # Test checking options of pg_rewind.
@@ -17,7 +17,7 @@ my $primary_pgdata = PostgreSQL::Test::Utils::tempdir;
 my $standby_pgdata = PostgreSQL::Test::Utils::tempdir;
 command_fails(
 	[
-		'pg_rewind',       '--debug',
+		'pg_rewind', '--debug',
 		'--target-pgdata', $primary_pgdata,
 		'--source-pgdata', $standby_pgdata,
 		'extra_arg1'
@@ -27,7 +27,7 @@ command_fails([ 'pg_rewind', '--target-pgdata', $primary_pgdata ],
 	'no source specified');
 command_fails(
 	[
-		'pg_rewind',       '--debug',
+		'pg_rewind', '--debug',
 		'--target-pgdata', $primary_pgdata,
 		'--source-pgdata', $standby_pgdata,
 		'--source-server', 'incorrect_source'
@@ -35,7 +35,7 @@ command_fails(
 	'both remote and local sources specified');
 command_fails(
 	[
-		'pg_rewind',       '--debug',
+		'pg_rewind', '--debug',
 		'--target-pgdata', $primary_pgdata,
 		'--source-pgdata', $standby_pgdata,
 		'--write-recovery-conf'

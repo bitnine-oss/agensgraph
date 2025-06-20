@@ -1,19 +1,24 @@
 #!/usr/bin/perl
 #
 # Generate lwlocknames.h and lwlocknames.c from lwlocknames.txt
-# Copyright (c) 2000-2022, PostgreSQL Global Development Group
+# Copyright (c) 2000-2023, PostgreSQL Global Development Group
 
 use strict;
 use warnings;
+use Getopt::Long;
+
+my $output_path = '.';
 
 my $lastlockidx = -1;
-my $continue    = "\n";
+my $continue = "\n";
+
+GetOptions('outdir:s' => \$output_path);
 
 open my $lwlocknames, '<', $ARGV[0] or die;
 
 # Include PID in suffix in case parallel make runs this multiple times.
-my $htmp = "lwlocknames.h.tmp$$";
-my $ctmp = "lwlocknames.c.tmp$$";
+my $htmp = "$output_path/lwlocknames.h.tmp$$";
+my $ctmp = "$output_path/lwlocknames.c.tmp$$";
 open my $h, '>', $htmp or die "Could not open $htmp: $!";
 open my $c, '>', $ctmp or die "Could not open $ctmp: $!";
 
@@ -42,7 +47,7 @@ while (<$lwlocknames>)
 	$trimmedlockname =~ s/Lock$//;
 	die "lock names must end with 'Lock'" if $trimmedlockname eq $lockname;
 
-	die "lwlocknames.txt not in order"   if $lockidx < $lastlockidx;
+	die "lwlocknames.txt not in order" if $lockidx < $lastlockidx;
 	die "lwlocknames.txt has duplicates" if $lockidx == $lastlockidx;
 
 	while ($lastlockidx < $lockidx - 1)
@@ -53,7 +58,7 @@ while (<$lwlocknames>)
 	}
 	printf $c "%s	\"%s\"", $continue, $trimmedlockname;
 	$lastlockidx = $lockidx;
-	$continue    = ",\n";
+	$continue = ",\n";
 
 	print $h "#define $lockname (&MainLWLockArray[$lockidx].lock)\n";
 }
@@ -65,7 +70,8 @@ printf $h "#define NUM_INDIVIDUAL_LWLOCKS		%s\n", $lastlockidx + 1;
 close $h;
 close $c;
 
-rename($htmp, 'lwlocknames.h') || die "rename: $htmp: $!";
-rename($ctmp, 'lwlocknames.c') || die "rename: $ctmp: $!";
+rename($htmp, "$output_path/lwlocknames.h")
+  || die "rename: $htmp to $output_path/lwlocknames.h: $!";
+rename($ctmp, "$output_path/lwlocknames.c") || die "rename: $ctmp: $!";
 
 close $lwlocknames;

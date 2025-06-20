@@ -3,7 +3,7 @@
 # parser generator for ecpg version 2
 # call with backend parser as stdin
 #
-# Copyright (c) 2007-2022, PostgreSQL Global Development Group
+# Copyright (c) 2007-2023, PostgreSQL Global Development Group
 #
 # Written by Mike Aubury <mike.aubury@aubit.com>
 #            Michael Meskes <meskes@postgresql.org>
@@ -14,22 +14,33 @@
 
 use strict;
 use warnings;
-no warnings 'uninitialized';
+use Getopt::Long;
 
-my $path = shift @ARGV;
-$path = "." unless $path;
+my $srcdir = '.';
+my $outfile = '';
+my $parser = '';
 
-my $copymode              = 0;
-my $brace_indent          = 0;
-my $yaccmode              = 0;
-my $in_rule               = 0;
-my $header_included       = 0;
+GetOptions(
+	'srcdir=s' => \$srcdir,
+	'output=s' => \$outfile,
+	'parser=s' => \$parser,) or die "wrong arguments";
+
+# open parser / output file early, to raise errors early
+open(my $parserfh, '<', $parser) or die "could not open parser file $parser";
+open(my $outfh, '>', $outfile) or die "could not open output file $outfile";
+
+my $copymode = 0;
+my $brace_indent = 0;
+my $yaccmode = 0;
+my $in_rule = 0;
+my $header_included = 0;
 my $feature_not_supported = 0;
-my $tokenmode             = 0;
+my $tokenmode = 0;
 
 my (%buff, $infield, $comment, %tokens, %addons);
 my ($stmt_mode, @fields);
-my ($line,      $non_term_id);
+my $line = '';
+my $non_term_id;
 
 
 # some token have to be replaced by other symbols
@@ -39,67 +50,67 @@ my %replace_token = (
 	'FCONST' => 'ecpg_fconst',
 	'Sconst' => 'ecpg_sconst',
 	'XCONST' => 'ecpg_xconst',
-	'IDENT'  => 'ecpg_ident',
-	'PARAM'  => 'ecpg_param',);
+	'IDENT' => 'ecpg_ident',
+	'PARAM' => 'ecpg_param',);
 
 # or in the block
 my %replace_string = (
-	'NOT_LA'         => 'not',
-	'NULLS_LA'       => 'nulls',
-	'WITH_LA'        => 'with',
-	'WITH_LA_UNIQUE' => 'with',
-	'WITHOUT_LA'     => 'without',
-	'TYPECAST'       => '::',
-	'DOT_DOT'        => '..',
-	'COLON_EQUALS'   => ':=',
+	'FORMAT_LA' => 'format',
+	'NOT_LA' => 'not',
+	'NULLS_LA' => 'nulls',
+	'WITH_LA' => 'with',
+	'WITHOUT_LA' => 'without',
+	'TYPECAST' => '::',
+	'DOT_DOT' => '..',
+	'COLON_EQUALS' => ':=',
 	'EQUALS_GREATER' => '=>',
-	'LESS_EQUALS'    => '<=',
+	'LESS_EQUALS' => '<=',
 	'GREATER_EQUALS' => '>=',
-	'NOT_EQUALS'     => '<>',);
+	'NOT_EQUALS' => '<>',);
 
 # specific replace_types for specific non-terminals - never include the ':'
 # ECPG-only replace_types are defined in ecpg-replace_types
 my %replace_types = (
-	'PrepareStmt'      => '<prep>',
-	'ExecuteStmt'      => '<exec>',
+	'PrepareStmt' => '<prep>',
+	'ExecuteStmt' => '<exec>',
 	'opt_array_bounds' => '<index>',
 
 	# "ignore" means: do not create type and rules for this non-term-id
-	'parse_toplevel'      => 'ignore',
-	'stmtmulti'           => 'ignore',
-	'CreateAsStmt'        => 'ignore',
-	'DeallocateStmt'      => 'ignore',
-	'ColId'               => 'ignore',
-	'type_function_name'  => 'ignore',
-	'ColLabel'            => 'ignore',
-	'Sconst'              => 'ignore',
+	'parse_toplevel' => 'ignore',
+	'stmtmulti' => 'ignore',
+	'CreateAsStmt' => 'ignore',
+	'DeallocateStmt' => 'ignore',
+	'ColId' => 'ignore',
+	'type_function_name' => 'ignore',
+	'ColLabel' => 'ignore',
+	'Sconst' => 'ignore',
 	'opt_distinct_clause' => 'ignore',
-	'PLpgSQL_Expr'        => 'ignore',
-	'PLAssignStmt'        => 'ignore',
-	'plassign_target'     => 'ignore',
-	'plassign_equals'     => 'ignore',);
+	'PLpgSQL_Expr' => 'ignore',
+	'PLAssignStmt' => 'ignore',
+	'plassign_target' => 'ignore',
+	'plassign_equals' => 'ignore',);
 
 # these replace_line commands excise certain keywords from the core keyword
 # lists.  Be sure to account for these in ColLabel and related productions.
 my %replace_line = (
 	'unreserved_keywordCONNECTION' => 'ignore',
-	'unreserved_keywordCURRENT_P'  => 'ignore',
-	'unreserved_keywordDAY_P'      => 'ignore',
-	'unreserved_keywordHOUR_P'     => 'ignore',
-	'unreserved_keywordINPUT_P'    => 'ignore',
-	'unreserved_keywordMINUTE_P'   => 'ignore',
-	'unreserved_keywordMONTH_P'    => 'ignore',
-	'unreserved_keywordSECOND_P'   => 'ignore',
-	'unreserved_keywordYEAR_P'     => 'ignore',
-	'col_name_keywordCHAR_P'       => 'ignore',
-	'col_name_keywordINT_P'        => 'ignore',
-	'col_name_keywordVALUES'       => 'ignore',
-	'reserved_keywordTO'           => 'ignore',
-	'reserved_keywordUNION'        => 'ignore',
+	'unreserved_keywordCURRENT_P' => 'ignore',
+	'unreserved_keywordDAY_P' => 'ignore',
+	'unreserved_keywordHOUR_P' => 'ignore',
+	'unreserved_keywordINPUT_P' => 'ignore',
+	'unreserved_keywordMINUTE_P' => 'ignore',
+	'unreserved_keywordMONTH_P' => 'ignore',
+	'unreserved_keywordSECOND_P' => 'ignore',
+	'unreserved_keywordYEAR_P' => 'ignore',
+	'col_name_keywordCHAR_P' => 'ignore',
+	'col_name_keywordINT_P' => 'ignore',
+	'col_name_keywordVALUES' => 'ignore',
+	'reserved_keywordTO' => 'ignore',
+	'reserved_keywordUNION' => 'ignore',
 
 	# some other production rules have to be ignored or replaced
-	'fetch_argsFORWARDopt_from_incursor_name'      => 'ignore',
-	'fetch_argsBACKWARDopt_from_incursor_name'     => 'ignore',
+	'fetch_argsFORWARDopt_from_incursor_name' => 'ignore',
+	'fetch_argsBACKWARDopt_from_incursor_name' => 'ignore',
 	"opt_array_boundsopt_array_bounds'['Iconst']'" => 'ignore',
 	'VariableShowStmtSHOWvar_name' => 'SHOW var_name ecpg_into',
 	'VariableShowStmtSHOWTIMEZONE' => 'SHOW TIME ZONE ecpg_into',
@@ -128,15 +139,17 @@ dump_buffer('tokens');
 dump_buffer('types');
 dump_buffer('ecpgtype');
 dump_buffer('orig_tokens');
-print '%%',                "\n";
-print 'prog: statements;', "\n";
+print $outfh '%%', "\n";
+print $outfh 'prog: statements;', "\n";
 dump_buffer('rules');
 include_file('trailer', 'ecpg.trailer');
 dump_buffer('trailer');
 
+close($parserfh);
+
 sub main
 {
-  line: while (<>)
+  line: while (<$parserfh>)
 	{
 		if (/ERRCODE_FEATURE_NOT_SUPPORTED/)
 		{
@@ -164,7 +177,7 @@ sub main
 		if (/^%%/)
 		{
 			$tokenmode = 2;
-			$copymode  = 1;
+			$copymode = 1;
 			$yaccmode++;
 			$infield = 0;
 		}
@@ -182,6 +195,16 @@ sub main
 		# Now split the line into individual fields
 		my @arr = split(' ');
 
+		if (!@arr)
+		{
+			# empty line: in tokenmode 1, emit an empty line, else ignore
+			if ($tokenmode == 1)
+			{
+				add_to_buffer('orig_tokens', '');
+			}
+			next line;
+		}
+
 		if ($arr[0] eq '%token' && $tokenmode == 0)
 		{
 			$tokenmode = 1;
@@ -189,14 +212,14 @@ sub main
 		}
 		elsif ($arr[0] eq '%type' && $header_included == 0)
 		{
-			include_file('header',   'ecpg.header');
+			include_file('header', 'ecpg.header');
 			include_file('ecpgtype', 'ecpg.type');
 			$header_included = 1;
 		}
 
 		if ($tokenmode == 1)
 		{
-			my $str   = '';
+			my $str = '';
 			my $prior = '';
 			for my $a (@arr)
 			{
@@ -297,9 +320,9 @@ sub main
 				{
 					$copymode = 1;
 				}
-				@fields  = ();
+				@fields = ();
 				$infield = 0;
-				$line    = '';
+				$line = '';
 				$in_rule = 0;
 				next;
 			}
@@ -328,7 +351,8 @@ sub main
 
 			# Are we looking at a declaration of a non-terminal ?
 			if (($arr[$fieldIndexer] =~ /[A-Za-z0-9]+:/)
-				|| $arr[ $fieldIndexer + 1 ] eq ':')
+				|| (   $fieldIndexer + 1 < scalar(@arr)
+					&& $arr[ $fieldIndexer + 1 ] eq ':'))
 			{
 				$non_term_id = $arr[$fieldIndexer];
 				$non_term_id =~ tr/://d;
@@ -341,7 +365,7 @@ sub main
 				elsif ($replace_types{$non_term_id} eq 'ignore')
 				{
 					$copymode = 0;
-					$line     = '';
+					$line = '';
 					next line;
 				}
 				$line = $line . ' ' . $arr[$fieldIndexer];
@@ -366,7 +390,7 @@ sub main
 					$stmt_mode = 0;
 				}
 				my $tstr =
-				    '%type '
+					'%type '
 				  . $replace_types{$non_term_id} . ' '
 				  . $non_term_id;
 				add_to_buffer('types', $tstr);
@@ -375,8 +399,8 @@ sub main
 				{
 					add_to_buffer('rules', $line);
 				}
-				$line    = '';
-				@fields  = ();
+				$line = '';
+				@fields = ();
 				$infield = 1;
 				die "unterminated rule at grammar line $.\n"
 				  if $in_rule;
@@ -396,11 +420,13 @@ sub main
 			if (   $copymode
 				&& !$prec
 				&& !$comment
+				&& $fieldIndexer < scalar(@arr)
 				&& length($arr[$fieldIndexer])
 				&& $infield)
 			{
 				if ($arr[$fieldIndexer] ne 'Op'
-					&& (   $tokens{ $arr[$fieldIndexer] } > 0
+					&& ((   defined $tokens{ $arr[$fieldIndexer] }
+							&& $tokens{ $arr[$fieldIndexer] } > 0)
 						|| $arr[$fieldIndexer] =~ /'.+'/)
 					|| $stmt_mode == 1)
 				{
@@ -442,7 +468,7 @@ sub main
 sub include_file
 {
 	my ($buffer, $filename) = @_;
-	my $full = "$path/$filename";
+	my $full = "$srcdir/$filename";
 	open(my $fh, '<', $full) or die;
 	while (<$fh>)
 	{
@@ -459,11 +485,12 @@ sub include_addon
 	my $rec = $addons{$block};
 	return 0 unless $rec;
 
-	if ($rec->{type} eq 'rule')
+	my $rectype = (defined $rec->{type}) ? $rec->{type} : '';
+	if ($rectype eq 'rule')
 	{
 		dump_fields($stmt_mode, $fields, ' { ');
 	}
-	elsif ($rec->{type} eq 'addon')
+	elsif ($rectype eq 'addon')
 	{
 		add_to_buffer('rules', ' { ');
 	}
@@ -474,7 +501,7 @@ sub include_addon
 
 	push(@{ $buff{$buffer} }, @{ $rec->{lines} });
 
-	if ($rec->{type} eq 'addon')
+	if ($rectype eq 'addon')
 	{
 		dump_fields($stmt_mode, $fields, '');
 	}
@@ -498,9 +525,9 @@ sub add_to_buffer
 sub dump_buffer
 {
 	my ($buffer) = @_;
-	print '/* ', $buffer, ' */', "\n";
+	print $outfh '/* ', $buffer, ' */', "\n";
 	my $ref = $buff{$buffer};
-	print @$ref;
+	print $outfh @$ref;
 	return;
 }
 
@@ -652,7 +679,7 @@ sub dump_line
 
 sub preload_addons
 {
-	my $filename = $path . "/ecpg.addons";
+	my $filename = $srcdir . "/ecpg.addons";
 	open(my $fh, '<', $filename) or die;
 
 	# there may be multiple lines starting ECPG: and then multiple lines of code.
@@ -672,11 +699,11 @@ sub preload_addons
 				{
 					push(@{ $x->{lines} }, @code);
 				}
-				@code       = ();
+				@code = ();
 				@needsRules = ();
 			}
-			$record          = {};
-			$record->{type}  = $2;
+			$record = {};
+			$record->{type} = $2;
 			$record->{lines} = [];
 			if (exists $addons{$1}) { die "Ga! there are dups!\n"; }
 			$addons{$1} = $record;

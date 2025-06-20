@@ -3,7 +3,7 @@
  * blinsert.c
  *		Bloom index build and insert functions.
  *
- * Copyright (c) 2016-2022, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2023, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/bloom/blinsert.c
@@ -166,7 +166,7 @@ blbuildempty(Relation index)
 	Page		metapage;
 
 	/* Construct metapage. */
-	metapage = (Page) palloc(BLCKSZ);
+	metapage = (Page) palloc_aligned(BLCKSZ, PG_IO_ALIGN_SIZE, 0);
 	BloomFillMetapage(index, metapage);
 
 	/*
@@ -178,8 +178,8 @@ blbuildempty(Relation index)
 	 */
 	PageSetChecksumInplace(metapage, BLOOM_METAPAGE_BLKNO);
 	smgrwrite(RelationGetSmgr(index), INIT_FORKNUM, BLOOM_METAPAGE_BLKNO,
-			  (char *) metapage, true);
-	log_newpage(&(RelationGetSmgr(index))->smgr_rnode.node, INIT_FORKNUM,
+			  metapage, true);
+	log_newpage(&(RelationGetSmgr(index))->smgr_rlocator.locator, INIT_FORKNUM,
 				BLOOM_METAPAGE_BLKNO, metapage, true);
 
 	/*
@@ -232,8 +232,6 @@ blinsert(Relation index, Datum *values, bool *isnull,
 
 	if (metaData->nEnd > metaData->nStart)
 	{
-		Page		page;
-
 		blkno = metaData->notFullPage[metaData->nStart];
 		Assert(blkno != InvalidBlockNumber);
 

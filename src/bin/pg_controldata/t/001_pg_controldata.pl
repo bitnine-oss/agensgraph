@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 use strict;
 use warnings;
@@ -24,7 +24,7 @@ command_like([ 'pg_controldata', $node->data_dir ],
 # check with a corrupted pg_control
 
 my $pg_control = $node->data_dir . '/global/pg_control';
-my $size       = (stat($pg_control))[7];
+my $size = (stat($pg_control))[7];
 
 open my $fh, '>', $pg_control or BAIL_OUT($!);
 binmode $fh;

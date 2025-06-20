@@ -207,7 +207,7 @@ graph_labid(PG_FUNCTION_ARGS)
 	Oid			graphoid;
 	uint16		labid;
 
-	names = stringToQualifiedNameList(labname);
+	names = stringToQualifiedNameList(labname, NULL);
 	rv = makeRangeVarFromNameList(names);
 	graphoid = get_graphname_oid(rv->schemaname);
 	labid = get_labname_labid(rv->relname, graphoid);
@@ -724,7 +724,7 @@ cache_label(FmgrInfo *flinfo, uint16 labid)
 	MemoryContext oldMemoryContext;
 	LabelOutData *my_extra;
 
-	AssertArg(flinfo != NULL);
+	Assert(flinfo != NULL);
 
 	oldMemoryContext = MemoryContextSwitchTo(flinfo->fn_mcxt);
 
@@ -1092,7 +1092,7 @@ cache_labels(FmgrInfo *flinfo, uint16 labid)
 	MemoryContext oldMemoryContext;
 	LabelsOutData *my_extra;
 
-	AssertArg(flinfo != NULL);
+	Assert(flinfo != NULL);
 
 	oldMemoryContext = MemoryContextSwitchTo(flinfo->fn_mcxt);
 

@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 =pod
 
@@ -93,7 +93,7 @@ sub copypath
 sub _copypath_recurse
 {
 	my ($base_src_dir, $base_dest_dir, $curr_path, $filterfn) = @_;
-	my $srcpath  = "$base_src_dir/$curr_path";
+	my $srcpath = "$base_src_dir/$curr_path";
 	my $destpath = "$base_dest_dir/$curr_path";
 
 	# invoke the filter and skip all further operation if it returns false

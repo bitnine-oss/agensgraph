@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 #
 # Tests of pg_shmem.h functions
@@ -147,7 +147,7 @@ log_ipcs();
 my $pre_existing_msg = qr/pre-existing shared memory block/;
 {
 	my $max_attempts = 10 * $PostgreSQL::Test::Utils::timeout_default;
-	my $attempts     = 0;
+	my $attempts = 0;
 	while ($attempts < $max_attempts)
 	{
 		last
@@ -194,7 +194,7 @@ sub poll_start
 	my ($node) = @_;
 
 	my $max_attempts = 10 * $PostgreSQL::Test::Utils::timeout_default;
-	my $attempts     = 0;
+	my $attempts = 0;
 
 	while ($attempts < $max_attempts)
 	{

@@ -201,6 +201,8 @@ next(struct vars *v)
 {
 	chr			c;
 
+next_restart:					/* loop here after eating a comment */
+
 	/* errors yield an infinite sequence of failures */
 	if (ISERR())
 		return 0;				/* the error has set nexttype to EOS */
@@ -493,8 +495,7 @@ next(struct vars *v)
 						if (!ATEOS())
 							v->now++;
 						assert(v->nexttype == v->lasttype);
-						return next(v);
-						break;
+						goto next_restart;
 					case CHR('='):	/* positive lookahead */
 						NOTE(REG_ULOOKAROUND);
 						RETV(LACON, LATYPE_AHEAD_POS);
@@ -612,7 +613,11 @@ lexescape(struct vars *v)
 
 	assert(!ATEOS());
 	c = *v->now++;
-	if (!iscalnum(c))
+
+	/* if it's not alphanumeric ASCII, treat it as a plain character */
+	if (!('a' <= c && c <= 'z') &&
+		!('A' <= c && c <= 'Z') &&
+		!('0' <= c && c <= '9'))
 		RETV(PLAIN, c);
 
 	NOTE(REG_UNONPOSIX);
@@ -754,8 +759,12 @@ lexescape(struct vars *v)
 			RETV(PLAIN, c);
 			break;
 		default:
-			assert(iscalpha(c));
-			FAILW(REG_EESCAPE); /* unknown alphabetic escape */
+
+			/*
+			 * Throw an error for unrecognized ASCII alpha escape sequences,
+			 * which reserves them for future use if needed.
+			 */
+			FAILW(REG_EESCAPE);
 			break;
 	}
 	assert(NOTREACHED);

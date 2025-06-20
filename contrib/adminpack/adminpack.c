@@ -3,7 +3,7 @@
  * adminpack.c
  *
  *
- * Copyright (c) 2002-2022, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2023, PostgreSQL Global Development Group
  *
  * Author: Andreas Pflug <pgadmin@pse-consulting.de>
  *
@@ -97,7 +97,7 @@ convert_and_check_filename(text *arg)
 	else if (!path_is_relative_and_below_cwd(filename))
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("path must be in or below the current directory")));
+				 errmsg("path must be in or below the data directory")));
 
 	return filename;
 }
@@ -553,6 +553,7 @@ pg_logdir_ls_internal(FunctionCallInfo fcinfo)
 		fsec_t		fsec;
 		int			tz = 0;
 		struct pg_tm date;
+		DateTimeErrorExtra extra;
 
 		/*
 		 * Default format: postgresql-YYYY-MM-DD_HHMMSS.log
@@ -571,7 +572,8 @@ pg_logdir_ls_internal(FunctionCallInfo fcinfo)
 		if (ParseDateTime(timestampbuf, lowstr, MAXDATELEN, field, ftype, MAXDATEFIELDS, &nf))
 			continue;
 
-		if (DecodeDateTime(field, ftype, nf, &dtype, &date, &fsec, &tz))
+		if (DecodeDateTime(field, ftype, nf,
+						   &dtype, &date, &fsec, &tz, &extra))
 			continue;
 
 		/* Seems the timestamp is OK; prepare and return tuple */

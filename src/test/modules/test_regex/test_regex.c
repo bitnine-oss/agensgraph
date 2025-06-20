@@ -3,7 +3,7 @@
  * test_regex.c
  *		Test harness for the regular expression package.
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -60,7 +60,7 @@ static void test_re_compile(text *text_re, int cflags, Oid collation,
 static void parse_test_flags(test_re_flags *flags, text *opts);
 static test_regex_ctx *setup_test_matches(text *orig_str,
 										  regex_t *cpattern,
-										  test_re_flags *flags,
+										  test_re_flags *re_flags,
 										  Oid collation,
 										  bool use_subpatterns);
 static ArrayType *build_test_info_result(regex_t *cpattern,
@@ -185,15 +185,6 @@ test_re_compile(text *text_re, int cflags, Oid collation,
 	if (regcomp_result != REG_OKAY)
 	{
 		/* re didn't compile (no need for pg_regfree, if so) */
-
-		/*
-		 * Here and in other places in this file, do CHECK_FOR_INTERRUPTS
-		 * before reporting a regex error.  This is so that if the regex
-		 * library aborts and returns REG_CANCEL, we don't print an error
-		 * message that implies the regex was invalid.
-		 */
-		CHECK_FOR_INTERRUPTS();
-
 		pg_regerror(regcomp_result, result_re, errMsg, sizeof(errMsg));
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_REGULAR_EXPRESSION),
@@ -239,7 +230,6 @@ test_re_execute(regex_t *re, pg_wchar *data, int data_len,
 	if (regexec_result != REG_OKAY && regexec_result != REG_NOMATCH)
 	{
 		/* re failed??? */
-		CHECK_FOR_INTERRUPTS();
 		pg_regerror(regexec_result, re, errMsg, sizeof(errMsg));
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_REGULAR_EXPRESSION),

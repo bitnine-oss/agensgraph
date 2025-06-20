@@ -15,7 +15,7 @@
 									 ((GISTIntArrayOptions *) PG_GET_OPCLASS_OPTIONS())->num_ranges : \
 									 G_INT_NUMRANGES_DEFAULT)
 
-/* gist_int_ops opclass options */
+/* gist__int_ops opclass options */
 typedef struct
 {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
@@ -80,7 +80,7 @@ typedef char *BITVECP;
 #define HASHVAL(val, siglen) (((unsigned int)(val)) % SIGLENBIT(siglen))
 #define HASH(sign, val, siglen) SETBIT((sign), HASHVAL(val, siglen))
 
-/* gist_intbig_ops opclass options */
+/* gist__intbig_ops opclass options */
 typedef struct
 {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
@@ -114,7 +114,7 @@ ArrayType  *new_intArrayType(int num);
 ArrayType  *copy_intArrayType(ArrayType *a);
 ArrayType  *resize_intArrayType(ArrayType *a, int num);
 int			internal_size(int *a, int len);
-ArrayType  *_int_unique(ArrayType *a);
+ArrayType  *_int_unique(ArrayType *r);
 int32		intarray_match_first(ArrayType *a, int32 elem);
 ArrayType  *intarray_add_elem(ArrayType *a, int32 elem);
 ArrayType  *intarray_concat_arrays(ArrayType *a, ArrayType *b);

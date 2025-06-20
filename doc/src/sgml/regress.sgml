@@ -30,9 +30,11 @@
    parallel method starts up multiple server processes to run groups
    of tests in parallel.  Parallel testing adds confidence that
    interprocess communication and locking are working correctly.
+   Some tests may run sequentially even in the <quote>parallel</quote>
+   mode in case this is required by the test.
   </para>
 
-  <sect2>
+  <sect2 id="regress-run-temp-inst">
    <title>Running the Tests Against a Temporary Installation</title>
 
   <para>
@@ -43,12 +45,12 @@ make check
 </screen>
    in the top-level directory.  (Or you can change to
    <filename>src/test/regress</filename> and run the command there.)
+   Tests which are run in parallel are prefixed with <quote>+</quote>, and
+   tests which run sequentially are prefixed with <quote>-</quote>.
    At the end you should see something like:
 <screen>
 <computeroutput>
-=======================
- All 193 tests passed.
-=======================
+# All 213 tests passed.
 </computeroutput>
 </screen>
    or otherwise a note about which tests failed.  See <xref
@@ -93,7 +95,7 @@ make MAX_CONNECTIONS=10 check
    </para>
   </sect2>
 
-  <sect2>
+  <sect2 id="regress-run-existing-inst">
    <title>Running the Tests Against an Existing Installation</title>
 
   <para>
@@ -123,7 +125,7 @@ make installcheck-parallel
   </para>
   </sect2>
 
-  <sect2>
+  <sect2 id="regress-additional">
    <title>Additional Test Suites</title>
 
   <para>
@@ -256,7 +258,7 @@ make check-world -j8 >/dev/null
    <varname>PG_TEST_EXTRA</varname> to a whitespace-separated list, for
    example:
 <programlisting>
-make check-world PG_TEST_EXTRA='kerberos ldap ssl'
+make check-world PG_TEST_EXTRA='kerberos ldap ssl load_balance'
 </programlisting>
    The following values are currently supported:
    <variablelist>
@@ -291,6 +293,17 @@ make check-world PG_TEST_EXTRA='kerberos ldap ssl'
     </varlistentry>
 
     <varlistentry>
+     <term><literal>load_balance</literal></term>
+     <listitem>
+      <para>
+       Runs the test <filename>src/interfaces/libpq/t/004_load_balance_dns.pl</filename>.
+       This requires editing the system <filename>hosts</filename> file and
+       opens TCP/IP listen sockets.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
      <term><literal>wal_consistency_checking</literal></term>
      <listitem>
       <para>
@@ -319,7 +332,7 @@ make check-world PG_TEST_EXTRA='kerberos ldap ssl'
   </para>
   </sect2>
 
-  <sect2>
+  <sect2 id="regress-run-locale">
    <title>Locale and Encoding</title>
 
    <para>
@@ -362,7 +375,7 @@ make check LANG=C ENCODING=EUC_JP
    </para>
   </sect2>
 
-  <sect2>
+  <sect2 id="regress-run-custom-settings">
    <title>Custom Server Settings</title>
 
    <para>
@@ -370,7 +383,7 @@ make check LANG=C ENCODING=EUC_JP
     set in the <varname>PGOPTIONS</varname> environment variable (for settings
     that allow this):
 <screen>
-make check PGOPTIONS="-c force_parallel_mode=regress -c work_mem=50MB"
+make check PGOPTIONS="-c debug_parallel_query=regress -c work_mem=50MB"
 </screen>
     When running against a temporary installation, custom settings can also be
     set by supplying a pre-written <filename>postgresql.conf</filename>:
@@ -388,7 +401,7 @@ make check EXTRA_REGRESS_OPTS="--temp-config=test_postgresql.conf"
    </para>
   </sect2>
 
-  <sect2>
+  <sect2 id="regress-run-extra-tests">
    <title>Extra Tests</title>
 
    <para>
@@ -452,7 +465,7 @@ make check EXTRA_TESTS=numeric_big
     <xref linkend="regress-variant"/> for details.
    </para>
 
-   <sect2>
+   <sect2 id="regress-evaluation-message-differences">
     <title>Error Message Differences</title>
 
     <para>
@@ -467,7 +480,7 @@ make check EXTRA_TESTS=numeric_big
     </para>
    </sect2>
 
-   <sect2>
+   <sect2 id="regress-evaluation-locale-differences">
     <title>Locale Differences</title>
 
     <para>
@@ -514,7 +527,7 @@ make check NO_LOCALE=1
     </para>
    </sect2>
 
-   <sect2>
+   <sect2 id="regress-evaluation-date-time-differences">
     <title>Date and Time Differences</title>
 
     <para>
@@ -528,7 +541,7 @@ make check NO_LOCALE=1
     </para>
    </sect2>
 
-   <sect2>
+   <sect2 id="regress-evaluation-float-differences">
     <title>Floating-Point Differences</title>
 
     <para>
@@ -556,7 +569,7 @@ make check NO_LOCALE=1
     </para>
    </sect2>
 
-   <sect2>
+   <sect2 id="regress-evaluation-ordering-differences">
     <title>Row Ordering Differences</title>
 
     <para>
@@ -592,7 +605,7 @@ exclusion of those that don't.
     </para>
    </sect2>
 
-   <sect2>
+   <sect2 id="regress-evaluation-stack-depth">
     <title>Insufficient Stack Depth</title>
 
     <para>
@@ -614,7 +627,7 @@ exclusion of those that don't.
     </para>
    </sect2>
 
-   <sect2>
+   <sect2 id="regress-evaluation-random-test">
     <title>The <quote>random</quote> Test</title>
 
     <para>
@@ -629,7 +642,7 @@ diff results/random.out expected/random.out
     </para>
    </sect2>
 
-   <sect2>
+   <sect2 id="regress-evaluation-config-params">
     <title>Configuration Parameters</title>
 
     <para>
@@ -689,13 +702,13 @@ testname:output:platformpattern=comparisonfilename
     Therefore, we provide a variant comparison file,
     <filename>float4-misrounded-input.out</filename>, which includes
     the results to be expected on these systems.  To silence the bogus
-    <quote>failure</quote> message on <systemitem>HP-UX 10</systemitem>
+    <quote>failure</quote> message on <systemitem>Cygwin</systemitem>
     platforms, <filename>resultmap</filename> includes:
 <programlisting>
-float4:out:hppa.*-hp-hpux10.*=float4-misrounded-input.out
+float4:out:.*-.*-cygwin.*=float4-misrounded-input.out
 </programlisting>
     which will trigger on any machine where the output of
-    <command>config.guess</command> matches <literal>hppa.*-hp-hpux10.*</literal>.
+    <command>config.guess</command> matches <literal>.*-.*-cygwin.*</literal>.
     Other lines in <filename>resultmap</filename> select the variant comparison
     file for other platforms where it's appropriate.
    </para>
@@ -765,7 +778,9 @@ make check PROVE_TESTS='t/001_test1.pl t/003_test3.pl'
 
    <para>
     The TAP tests require the Perl module <literal>IPC::Run</literal>.
-    This module is available from CPAN or an operating system package.
+    This module is available from
+    <ulink url="https://metacpan.org/dist/IPC-Run">CPAN</ulink>
+    or an operating system package.
     They also require <productname>PostgreSQL</productname> to be
     configured with the option <option>--enable-tap-tests</option>.
    </para>
@@ -789,6 +804,30 @@ make check PROVE_TESTS='t/001_test1.pl t/003_test3.pl'
     meaning that <literal>make installcheck</literal> will produce a mix of
     results from temporary servers and the already-running test server.
    </para>
+
+  <sect2 id="regress-tap-vars">
+   <title>Environment Variables</title>
+
+   <para>
+    Data directories are named according to the test filename, and will be
+    retained if a test fails.  If the environment variable
+    <varname>PG_TEST_NOCLEAN</varname> is set, data directories will be
+    retained regardless of test status.  For example, retaining the data
+    directory regardless of test results when running the
+    <application>pg_dump</application> tests:
+<programlisting>
+PG_TEST_NOCLEAN=1 make -C src/bin/pg_dump check
+</programlisting>
+   </para>
+
+   <para>
+    Many operations in the test suites use a 180-second timeout, which on slow
+    hosts may lead to load-induced timeouts.  Setting the environment variable
+    <varname>PG_TEST_TIMEOUT_DEFAULT</varname> to a higher number will change
+    the default to avoid this.
+   </para>
+  </sect2>
+
   </sect1>
 
   <sect1 id="regress-coverage">
@@ -799,53 +838,77 @@ make check PROVE_TESTS='t/001_test1.pl t/003_test3.pl'
     instrumentation, so that it becomes possible to examine which
     parts of the code are covered by the regression tests or any other
     test suite that is run with the code.  This is currently supported
-    when compiling with GCC, and it requires the <command>gcov</command>
-    and <command>lcov</command> programs.
+    when compiling with GCC, and it requires the <literal>gcov</literal>
+    and <literal>lcov</literal> packages.
    </para>
 
-   <para>
-    A typical workflow looks like this:
+   <sect2 id="regress-coverage-configure">
+    <title>Coverage with Autoconf and Make</title>
+    <para>
+     A typical workflow looks like this:
 <screen>
 ./configure --enable-coverage ... OTHER OPTIONS ...
 make
 make check # or other test suite
 make coverage-html
 </screen>
-    Then point your HTML browser
-    to <filename>coverage/index.html</filename>.
-   </para>
+     Then point your HTML browser
+     to <filename>coverage/index.html</filename>.
+    </para>
 
-   <para>
-    If you don't have <command>lcov</command> or prefer text output over an
-    HTML report, you can run
+    <para>
+     If you don't have <command>lcov</command> or prefer text output over an
+     HTML report, you can run
 <screen>
 make coverage
 </screen>
-    instead of <literal>make coverage-html</literal>, which will
-    produce <filename>.gcov</filename> output files for each source file
-    relevant to the test.  (<literal>make coverage</literal> and <literal>make
-    coverage-html</literal> will overwrite each other's files, so mixing them
-    might be confusing.)
-   </para>
+     instead of <literal>make coverage-html</literal>, which will
+     produce <filename>.gcov</filename> output files for each source file
+     relevant to the test.  (<literal>make coverage</literal> and <literal>make
+     coverage-html</literal> will overwrite each other's files, so mixing them
+     might be confusing.)
+    </para>
 
-   <para>
-    You can run several different tests before making the coverage report;
-    the execution counts will accumulate.  If you want
-    to reset the execution counts between test runs, run:
+    <para>
+     You can run several different tests before making the coverage report;
+     the execution counts will accumulate.  If you want
+     to reset the execution counts between test runs, run:
 <screen>
 make coverage-clean
 </screen>
-   </para>
+    </para>
 
-   <para>
-    You can run the <literal>make coverage-html</literal> or <literal>make
-    coverage</literal> command in a subdirectory if you want a coverage
-    report for only a portion of the code tree.
-   </para>
+    <para>
+     You can run the <literal>make coverage-html</literal> or <literal>make
+     coverage</literal> command in a subdirectory if you want a coverage
+     report for only a portion of the code tree.
+    </para>
 
-   <para>
-    Use <literal>make distclean</literal> to clean up when done.
-   </para>
+    <para>
+     Use <literal>make distclean</literal> to clean up when done.
+    </para>
+   </sect2>
+
+   <sect2 id="regress-coverage-meson">
+    <title>Coverage with Meson</title>
+    <para>
+     A typical workflow looks like this:
+<screen>
+meson setup -Db_coverage=true ... OTHER OPTIONS ... builddir/
+meson compile -C builddir/
+meson test -C builddir/
+cd builddir/
+ninja coverage-html
+</screen>
+     Then point your HTML browser
+     to <filename>./meson-logs/coveragereport/index.html</filename>.
+    </para>
+
+    <para>
+     You can run several different tests before making the coverage report;
+     the execution counts will accumulate.
+    </para>
+   </sect2>
   </sect1>
 
 </chapter>
