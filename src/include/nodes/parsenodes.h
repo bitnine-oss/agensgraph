@@ -120,7 +120,7 @@ typedef uint64 AclMode;			/* a bitmask of privilege bits */
  *	  significant (such as alias names), as is ignored anything that can
  *	  be deduced from child nodes (else we'd just be double-hashing that
  *	  piece of information).
- *	
+ *
  *	  Fields prepended with g_ represent graph fields that are used in planner/
  *	  executor for agensgraph queries.
  */
@@ -268,7 +268,7 @@ typedef struct Query
 	/* DETACH DELETE */
 	bool		g_detach pg_node_attr(query_jumble_ignore);
 	/* Should it work with eager? */
-	bool		g_eager	pg_node_attr(query_jumble_ignore);
+	bool		g_eager pg_node_attr(query_jumble_ignore);
 	/* graph pattern (list of paths) for CREATE */
 	List	   *g_pattern;
 	/* expression list for DELETE */
@@ -3256,7 +3256,7 @@ typedef struct IndexStmt
 	bool		reset_default_tblspc;	/* reset default_tablespace prior to
 										 * executing */
 	/* Agensgraph */
-	bool		is_property_index; /* is it an agensgraph property index? */
+	bool		is_property_index;	/* is it an agensgraph property index? */
 } IndexStmt;
 
 /* ----------------------

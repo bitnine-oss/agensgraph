@@ -557,7 +557,7 @@ does_not_exist_skipping(ObjectType objtype, Node *object)
 		case OBJECT_TABLE:
 		case OBJECT_TABLESPACE:
 		case OBJECT_VIEW:
-		/* Agensgraph */
+			/* Agensgraph */
 		case OBJECT_PROPERTY_INDEX:
 
 			/*

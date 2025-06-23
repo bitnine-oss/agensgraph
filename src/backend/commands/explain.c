@@ -1631,8 +1631,8 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					case JOIN_RIGHT_ANTI:
 						jointype = "Right Anti";
 						break;
-					
-					/* Agensgraph cases below */
+
+						/* Agensgraph cases below */
 					case JOIN_CYPHER_MERGE:
 						jointype = "CypherMerge";
 						break;

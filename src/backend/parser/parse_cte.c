@@ -153,7 +153,7 @@ transformWithClause(ParseState *pstate, WithClause *withClause)
 
 		if (IsA(cte->ctequery, CypherStmt))
 		{
-			pstate->p_hasModifyingCTE = 
+			pstate->p_hasModifyingCTE =
 				cypherHasModifyingClause((CypherStmt *) cte->ctequery);
 		}
 		else if (!IsA(cte->ctequery, SelectStmt))
@@ -1206,10 +1206,11 @@ checkWellFormedSelectStmt(SelectStmt *stmt, CteState *cstate)
 	}
 }
 
-static bool cypherHasModifyingClause(CypherStmt *stmt)
+static bool
+cypherHasModifyingClause(CypherStmt *stmt)
 {
 	CypherClause *clause = (CypherClause *) stmt->last;
-	NodeTag type;
+	NodeTag		type;
 
 	while (clause != NULL)
 	{

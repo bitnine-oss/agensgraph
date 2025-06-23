@@ -156,7 +156,7 @@ ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 			foreach(lc, mgstate->sets)
 			{
 				char	   *attr_name =
-				NameStr(slot->tts_tupleDescriptor->attrs[i].attname);
+					NameStr(slot->tts_tupleDescriptor->attrs[i].attname);
 				GraphSetProp *gsp = lfirst(lc);
 
 				if (strcmp(gsp->variable, attr_name) == 0)

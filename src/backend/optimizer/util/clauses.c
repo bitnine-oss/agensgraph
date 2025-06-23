@@ -3616,7 +3616,7 @@ eval_const_expressions_mutator(Node *node,
 				return (Node *) newcre;
 			}
 
-		/* Agensgraph cases below */
+			/* Agensgraph cases below */
 		case T_CypherTypeCast:
 			{
 				CypherTypeCast *tc = (CypherTypeCast *) node;

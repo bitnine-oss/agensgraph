@@ -4622,7 +4622,7 @@ struct config_string ConfigureNamesString[] =
 		check_io_direct, assign_io_direct, NULL
 	},
 
-	/* Agensgraph String GUCs*/
+	/* Agensgraph String GUCs */
 	{
 		/* Can't be set in postgresql.conf */
 		{"agversion", PGC_INTERNAL, PRESET_OPTIONS,

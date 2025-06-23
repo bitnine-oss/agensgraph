@@ -1496,7 +1496,7 @@ ProcessUtilitySlow(ParseState *pstate,
 
 					if (stmt->concurrent)
 						PreventInTransactionBlock(isTopLevel,
-												  stmt->is_property_index ? 
+												  stmt->is_property_index ?
 												  "CREATE PROPERTY INDEX CONCURRENTLY" :
 												  "CREATE INDEX CONCURRENTLY");
 					/* Agensgraph */
@@ -1509,7 +1509,7 @@ ProcessUtilitySlow(ParseState *pstate,
 						if (!RangeVarIsLabel(stmt->relation))
 						{
 							elog(ERROR, "label \"%s\" does not exist",
-								stmt->relation->relname);
+								 stmt->relation->relname);
 						}
 					}
 
@@ -2962,8 +2962,8 @@ CreateCommandTag(Node *parsetree)
 
 		case T_IndexStmt:
 			tag = ((IndexStmt *) parsetree)->is_property_index ?
-				  CMDTAG_CREATE_PROPERTY_INDEX :
-				  CMDTAG_CREATE_INDEX;
+				CMDTAG_CREATE_PROPERTY_INDEX :
+				CMDTAG_CREATE_INDEX;
 			break;
 
 		case T_RuleStmt:

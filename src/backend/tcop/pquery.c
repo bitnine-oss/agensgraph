@@ -188,10 +188,10 @@ ProcessQuery(PlannedStmt *plan,
 			case CMD_GRAPHWRITE:
 				{
 					uint64		sum = graphWriteStats.insertVertex +
-					graphWriteStats.insertEdge +
-					graphWriteStats.deleteVertex +
-					graphWriteStats.deleteEdge +
-					graphWriteStats.updateProperty;
+						graphWriteStats.insertEdge +
+						graphWriteStats.deleteVertex +
+						graphWriteStats.deleteEdge +
+						graphWriteStats.updateProperty;
 
 					SetQueryCompletion(qc, CMDTAG_UPDATE, sum);
 				}

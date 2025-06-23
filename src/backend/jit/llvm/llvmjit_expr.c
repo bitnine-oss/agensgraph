@@ -2406,7 +2406,7 @@ llvm_compile_expr(ExprState *state)
 				LLVMBuildBr(b, opblocks[opno + 1]);
 				break;
 
-			/* Agensgraph cases below */
+				/* Agensgraph cases below */
 			case EEOP_CYPHERTYPECAST:
 				build_EvalXFunc(b, mod, "ExecEvalCypherTypeCast",
 								v_state, op);

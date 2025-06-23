@@ -269,7 +269,7 @@ exprType(const Node *expr)
 			type = exprType((Node *) ((const PlaceHolderVar *) expr)->phexpr);
 			break;
 
-		/* Agensgraph cases below */
+			/* Agensgraph cases below */
 		case T_CypherTypeCast:
 			type = ((const CypherTypeCast *) expr)->type;
 			break;
@@ -525,7 +525,7 @@ exprTypmod(const Node *expr)
 		case T_PlaceHolderVar:
 			return exprTypmod((Node *) ((const PlaceHolderVar *) expr)->phexpr);
 
-		/* Agengraph cases below */
+			/* Agengraph cases below */
 		case T_CypherTypeCast:
 			return -1;
 		case T_CypherMapExpr:
@@ -1038,7 +1038,7 @@ exprCollation(const Node *expr)
 			coll = exprCollation((Node *) ((const PlaceHolderVar *) expr)->phexpr);
 			break;
 
-		/* Agensgraph cases below */
+			/* Agensgraph cases below */
 		case T_CypherTypeCast:
 			coll = InvalidOid;
 			break;
@@ -1288,7 +1288,7 @@ exprSetCollation(Node *expr, Oid collation)
 			Assert(!OidIsValid(collation)); /* ... so never set a collation */
 			break;
 
-		/* Agensgraph cases below */
+			/* Agensgraph cases below */
 		case T_CypherTypeCast:
 			/* XXX: Don't care for now */
 			break;
@@ -1788,7 +1788,7 @@ exprLocation(const Node *expr)
 			loc = ((const PartitionRangeDatum *) expr)->location;
 			break;
 
-		/* Agensgraph cases below */
+			/* Agensgraph cases below */
 		case T_CypherTypeCast:
 			loc = ((const CypherTypeCast *) expr)->location;
 			break;

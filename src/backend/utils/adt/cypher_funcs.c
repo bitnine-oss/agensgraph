@@ -3169,4 +3169,3 @@ JsonbMakeEmptyArray(void)
 
 	return JsonbValueToJsonb(&jbv);
 }
-

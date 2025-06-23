@@ -24,6 +24,7 @@ struct ExprEvalStep;
 struct SubscriptingRefState;
 struct ScalarArrayOpExprHashTable;
 struct JsonConstructorExprState;
+
 /* Agensgraph */
 struct CypherAccessPathElem;
 struct CypherListCompArrayIterator;

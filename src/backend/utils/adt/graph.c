@@ -1074,6 +1074,7 @@ edge_start_vid(PG_FUNCTION_ARGS)
 	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
 	Graphid		vertex_id = DatumGetGraphid(tuple_getattr(edge,
 														  Anum_ag_edge_start));
+
 	PG_RETURN_GRAPHID(vertex_id);
 }
 
@@ -1083,6 +1084,7 @@ edge_end_vid(PG_FUNCTION_ARGS)
 	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
 	Graphid		vertex_id = DatumGetGraphid(tuple_getattr(edge,
 														  Anum_ag_edge_end));
+
 	PG_RETURN_GRAPHID(vertex_id);
 }
 
@@ -1558,9 +1560,9 @@ gin_compare_partial_graphid(FunctionCallInfo fcinfo)
 Datum
 graph_exists(PG_FUNCTION_ARGS)
 {
-	text	*graphName_text = PG_GETARG_TEXT_PP(0);
-	char	*graphName;
-	Oid		gOID ;
+	text	   *graphName_text = PG_GETARG_TEXT_PP(0);
+	char	   *graphName;
+	Oid			gOID;
 
 	graphName = text_to_cstring(graphName_text);
 	gOID = get_graphname_oid(graphName);

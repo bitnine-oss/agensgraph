@@ -82,7 +82,7 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		graphpath_name = get_graphid_graphname(get_graph_path_oid());
 
 		aclresult = object_aclcheck(NamespaceRelationId, get_namespace_oid(graphpath_name, true),
-										  GetUserId(), ACL_DELETE);
+									GetUserId(), ACL_DELETE);
 		if (aclresult != ACLCHECK_OK)
 			aclcheck_error(aclresult, OBJECT_SCHEMA, graphpath_name);
 
@@ -198,13 +198,13 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 																	 Anum_table_edge_start,
 																	 tupleDesc,
 																	 &isnull)
-			);
+				);
 			Graphid		edge_end_id = DatumGetGraphid(
 													  heap_getattr(tuple,
 																   Anum_table_edge_end,
 																   tupleDesc,
 																   &isnull)
-			);
+				);
 
 			agstat_count_edge_delete(
 									 GraphidGetLabid(graphid),

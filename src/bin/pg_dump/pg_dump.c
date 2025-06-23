@@ -7026,8 +7026,8 @@ getIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
 
 	int			i_ispropidx;
 	char		sql_is_prop_idx[] = "ag_label.oid IS NOT NULL "
-	"AND i.indisexclusion = false "
-	"AND i.indexprs IS NOT NULL";
+		"AND i.indisexclusion = false "
+		"AND i.indexprs IS NOT NULL";
 
 	/*
 	 * We want to perform just one query against pg_index.  However, we

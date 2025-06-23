@@ -153,7 +153,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 		case GWROP_DELETE:
 			{
 				DeleteGraphState *deleteGraphState =
-				palloc(sizeof(DeleteGraphState));
+					palloc(sizeof(DeleteGraphState));
 				List	   *edge_label_oids = get_all_edge_labels_per_graph(
 																			estate->es_snapshot, mgstate->graphid);
 				int			num_edge_labels = list_length(edge_label_oids);
@@ -161,10 +161,10 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 				if (num_edge_labels > 0)
 				{
 					ResultRelInfo *edge_label_resultRelInfos =
-					(ResultRelInfo *) palloc(
-											 num_edge_labels * sizeof(ResultRelInfo));
+						(ResultRelInfo *) palloc(
+												 num_edge_labels * sizeof(ResultRelInfo));
 					ResultRelInfo *resultRelInfoForDel =
-					edge_label_resultRelInfos;
+						edge_label_resultRelInfos;
 					ListCell   *lc;
 
 					foreach(lc, edge_label_oids)

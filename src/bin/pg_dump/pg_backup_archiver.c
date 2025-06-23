@@ -3476,7 +3476,7 @@ _getObjectDescription(PQExpBuffer buf, const TocEntry *te)
 		strcmp(type, "SERVER") == 0 ||
 		strcmp(type, "PUBLICATION") == 0 ||
 		strcmp(type, "SUBSCRIPTION") == 0 ||
-		/* Agensgraph cases */
+	/* Agensgraph cases */
 		strcmp(type, "USER MAPPING") == 0 ||
 		strcmp(type, "GRAPH") == 0)
 	{

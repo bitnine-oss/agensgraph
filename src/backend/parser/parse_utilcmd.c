@@ -5311,8 +5311,8 @@ transformCreatePropertyIndexStmt(Oid relid, IndexStmt *stmt,
 
 		/*
 		 * transformExpr() should have already rejected subqueries,
-		 * aggregates, window functions, and SRFs, based on the EXPR_KIND_
-		 * for an index expression.
+		 * aggregates, window functions, and SRFs, based on the EXPR_KIND_ for
+		 * an index expression.
 		 *
 		 * DefineIndex() will make more checks.
 		 */

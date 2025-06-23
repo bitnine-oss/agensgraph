@@ -66,12 +66,12 @@ bool		enable_eager = true;
 
 typedef struct
 {
-	NodeTag type;
-	char *varname;		/* variable assigned to the entity */
-	char *labname;		/* final label of the entity */
-	bool prop_constr;	/* has property constraints? */
-	bool local;			/* declared in current clause? */
-} EntityInfo;
+	NodeTag		type;
+	char	   *varname;		/* variable assigned to the entity */
+	char	   *labname;		/* final label of the entity */
+	bool		prop_constr;	/* has property constraints? */
+	bool		local;			/* declared in current clause? */
+}			EntityInfo;
 
 typedef struct
 {
@@ -152,13 +152,13 @@ static void appendFindPathsResult(ParseState *pstate, List *fplist,
 								  List **targetList);
 static void collectEntityInfo(ParseState *pstate, List *pattern);
 static void addEntityInfo(ParseState *pstate, Node *entity);
-static EntityInfo *getEntityInfo(ParseState *pstate, char *varname,
-								 NodeTag entity_type, bool local_only);
-static EntityInfo *findEntityInfo(ParseState *pstate, char *varname,
+static EntityInfo * getEntityInfo(ParseState *pstate, char *varname,
 								  NodeTag entity_type, bool local_only);
+static EntityInfo * findEntityInfo(ParseState *pstate, char *varname,
+								   NodeTag entity_type, bool local_only);
 static char *getEntityVarname(Node *entity);
 static char *getEntityLabname(Node *entity);
-static int getEntityVarloc(Node *entity);
+static int	getEntityVarloc(Node *entity);
 static bool hasEntityPropConstr(Node *entity);
 static List *makeComponents(List *pattern);
 static bool isPathConnectedTo(CypherPath *path, List *component);
@@ -172,12 +172,12 @@ static Node *transformMatchNode(ParseState *pstate, CypherNode *cnode,
 								List **targetList, List **eqoList,
 								bool *is_nsitem);
 static Node *transformMatchRel(ParseState *pstate,
-											 CypherRel *crel,
-											 List **targetList, List **eqoList,
-											 bool pathout, bool *is_nsitem);
+							   CypherRel *crel,
+							   List **targetList, List **eqoList,
+							   bool pathout, bool *is_nsitem);
 static Node *transformMatchSR(ParseState *pstate, CypherRel *crel,
-											List **targetList, List **eqoList,
-											bool *is_nsitem);
+							  List **targetList, List **eqoList,
+							  bool *is_nsitem);
 static ParseNamespaceItem *addEdgeUnion(ParseState *pstate, char *edge_label,
 										bool only, int location, Alias *alias);
 static Node *genEdgeUnion(char *edge_label, bool only, int location);
@@ -204,9 +204,9 @@ static void getCypherRelType(CypherRel *crel, char **typname, int *typloc);
 static Node *addQualRelPath(ParseState *pstate, Node *qual,
 							CypherRel *prev_crel, Node *prev_edge,
 							bool prev_edge_is_nsitem,
-			   				CypherRel *crel, Node *edge, bool edge_is_nsitem);
+							CypherRel *crel, Node *edge, bool edge_is_nsitem);
 static Node *addQualNodeIn(ParseState *pstate, Node *qual, Node *vertex,
-			 			   bool vertex_is_nsitem, CypherRel *crel, Node *edge,
+						   bool vertex_is_nsitem, CypherRel *crel, Node *edge,
 						   bool edge_is_nsitem, bool prev);
 static char *getEdgeColname(CypherRel *crel, bool edge_is_nsitem, bool prev);
 static bool isFutureVertexExpr(Node *vertex);
@@ -547,7 +547,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		foreach(lt, qry->targetList)
 		{
 			TargetEntry *te = lfirst(lt);
-			Node		*expr = (Node *) te->expr;
+			Node	   *expr = (Node *) te->expr;
 
 			if (IsA(expr, Const) && exprType(expr) == UNKNOWNOID)
 				expr = coerce_type(pstate, expr, UNKNOWNOID, TEXTOID, -1,
@@ -643,7 +643,8 @@ repairTargetListCollations(List *targetList)
 	return targetList;
 }
 
-static bool validate_pattern_labels(ParseState *pstate, List *pattern)
+static bool
+validate_pattern_labels(ParseState *pstate, List *pattern)
 {
 	ListCell   *lp = NULL;
 
@@ -659,9 +660,9 @@ static bool validate_pattern_labels(ParseState *pstate, List *pattern)
 			if (IsA(elem, CypherNode))
 			{
 				CypherNode *cnode = (CypherNode *) elem;
-				char 	   *labname = getCypherName(cnode->label);
+				char	   *labname = getCypherName(cnode->label);
 				int			labloc = getCypherNameLoc(cnode->label);
-				
+
 				if (labname == NULL)
 					continue;
 
@@ -671,8 +672,8 @@ static bool validate_pattern_labels(ParseState *pstate, List *pattern)
 			else
 			{
 				CypherRel  *crel = (CypherRel *) elem;
-				Node 	   *type = crel->types ? linitial(crel->types) : NULL;
-				char 	   *typname = getCypherName(type);
+				Node	   *type = crel->types ? linitial(crel->types) : NULL;
+				char	   *typname = getCypherName(type);
 				int			typloc = getCypherNameLoc(type);
 
 				if (typname == NULL)
@@ -700,7 +701,7 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 
 	pstate->p_valid_labels = validate_pattern_labels(pstate, detail->pattern);
 
-    if (!pstate->p_valid_labels)
+	if (!pstate->p_valid_labels)
 		detail->where = (Node *) makeBoolAConst(false, -1);
 
 	/*
@@ -814,9 +815,7 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 	CypherCreateClause *detail;
 	CypherPath *cpath;
 	Query	   *qry;
-	
 
-	
 	detail = (CypherCreateClause *) clause->detail;
 	cpath = llast(detail->pattern);
 
@@ -979,7 +978,7 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 	qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 
 	qry->g_sets = transformSetPropList(pstate, detail->is_remove,
-										   detail->kind, detail->items);
+									   detail->kind, detail->items);
 	foreach(le, qry->g_sets)
 	{
 		GraphSetProp *gsp = lfirst(le);
@@ -1000,7 +999,7 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 
 	pstate->p_hasGraphwriteClause = true;
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
-	
+
 	substitute_set_props_as_targetentry(pstate, qry, qry->g_sets);
 
 	assign_query_collations(pstate, qry);
@@ -1443,14 +1442,15 @@ collectEntityInfo(ParseState *pstate, List *pattern)
 
 		foreach(le, p->chain)
 		{
-			Node *node = lfirst(le);
+			Node	   *node = lfirst(le);
 
 			addEntityInfo(pstate, node);
 		}
 	}
 }
 
-static char *getEntityVarname(Node *entity)
+static char *
+getEntityVarname(Node *entity)
 {
 	if (IsA(entity, CypherNode))
 		return getCypherName(((CypherNode *) entity)->variable);
@@ -1460,13 +1460,14 @@ static char *getEntityVarname(Node *entity)
 		elog(ERROR, "unexpected entity type: %d", (int) nodeTag(entity));
 }
 
-static char *getEntityLabname(Node *entity)
+static char *
+getEntityLabname(Node *entity)
 {
 	if (IsA(entity, CypherNode))
 		return getCypherName(((CypherNode *) entity)->label);
 	else if (IsA(entity, CypherRel))
 	{
-		CypherRel *crel = (CypherRel *) entity;
+		CypherRel  *crel = (CypherRel *) entity;
 
 		if (crel->types == NIL)
 			return NULL;
@@ -1477,7 +1478,8 @@ static char *getEntityLabname(Node *entity)
 		elog(ERROR, "unexpected entity type: %d", (int) nodeTag(entity));
 }
 
-static int getEntityVarloc(Node *entity)
+static int
+getEntityVarloc(Node *entity)
 {
 	if (IsA(entity, CypherNode))
 		return getCypherNameLoc(((CypherNode *) entity)->variable);
@@ -1487,7 +1489,8 @@ static int getEntityVarloc(Node *entity)
 		elog(ERROR, "unexpected entity type: %d", (int) nodeTag(entity));
 }
 
-static bool hasEntityPropConstr(Node *entity)
+static bool
+hasEntityPropConstr(Node *entity)
 {
 	if (IsA(entity, CypherNode))
 		return (((CypherNode *) entity)->prop_map != NULL);
@@ -1549,7 +1552,7 @@ static EntityInfo *
 getEntityInfo(ParseState *pstate, char *varname,
 			  NodeTag entity_type, bool local_only)
 {
-	EntityInfo   *ei;
+	EntityInfo *ei;
 
 	if (varname == NULL)
 		return NULL;
@@ -1569,14 +1572,14 @@ findEntityInfo(ParseState *pstate, char *varname, NodeTag entity_type,
 	{
 		foreach(le, pstate->p_entity_info_list)
 		{
-			EntityInfo   *ei = lfirst(le);
+			EntityInfo *ei = lfirst(le);
 
 			if (strcmp(ei->varname, varname) == 0 &&
 				(ei->type == entity_type) &&
 				(ei->local == local_only))
 				return ei;
 		}
-		
+
 		if (local_only)
 			break;
 
@@ -1758,8 +1761,8 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			for (;;)
 			{
 				CypherRel  *crel;
-				Node *edge;
-				bool edge_is_nsitem;
+				Node	   *edge;
+				bool		edge_is_nsitem;
 
 				cnode = lfirst(le);
 
@@ -1828,6 +1831,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				if (crel->varlen == NULL)
 				{
 					Node	   *eid;
+
 					eid = resolveVarOrExpr(pstate, edge, AG_ELEM_LOCAL_ID, edge_is_nsitem);
 					ueids = list_append_unique(ueids, eid);
 				}
@@ -1964,7 +1968,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList,
 			 * from the pattern, it should be an actual vertex or a future
 			 * vertex
 			 */
-			char	  *_labname = getCypherName(cnode->label);
+			char	   *_labname = getCypherName(cnode->label);
 
 			/*
 			 * If the variable is from the previous clause, it should either
@@ -1973,13 +1977,13 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList,
 			 */
 			if (IsA(te->expr, Var) && _labname != NULL)
 			{
-				EntityInfo  *_ei = getEntityInfo(pstate, varname, T_CypherNode, false);	
+				EntityInfo *_ei = getEntityInfo(pstate, varname, T_CypherNode, false);
 
 				if (_ei->labname == NULL || strcmp(_ei->labname, _labname) != 0)
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),
-							errmsg("label on variable from previous clauses is not allowed"),
-							parser_errposition(pstate, getCypherNameLoc(cnode->label))));
+							 errmsg("label on variable from previous clauses is not allowed"),
+							 parser_errposition(pstate, getCypherNameLoc(cnode->label))));
 			}
 			return (Node *) te;
 		}
@@ -2003,11 +2007,11 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList,
 		if (col != NULL)
 		{
 			FutureVertex *fv;
-			EntityInfo	 *_ei = getEntityInfo(pstate, varname, T_CypherNode, false);
-			char		 *_labname = getCypherName(cnode->label);
+			EntityInfo *_ei = getEntityInfo(pstate, varname, T_CypherNode, false);
+			char	   *_labname = getCypherName(cnode->label);
 
 			if ((_labname != NULL && (_ei->labname == NULL || strcmp(_ei->labname, _labname) != 0)) ||
-				 exprType((Node *) col) != VERTEXOID)
+				exprType((Node *) col) != VERTEXOID)
 				ereport(ERROR,
 						(errcode(ERRCODE_DUPLICATE_ALIAS),
 						 errmsg("duplicate variable \"%s\"", varname),
@@ -2137,10 +2141,10 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 		addElemQual(pstate, te->resno, crel->prop_map);
 
 		nsitem = scanNameSpaceForRefname(pstate, varname, varloc);
-		
+
 		if (nsitem == NULL)
 		{
-			char *_typname = getEntityLabname((Node *) crel);
+			char	   *_typname = getEntityLabname((Node *) crel);
 
 			if (IsA(te->expr, Var) && _typname != NULL)
 			{
@@ -2149,8 +2153,8 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 				if (_ei->labname == NULL || strcmp(_ei->labname, _typname) != 0)
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),
-							errmsg("label on variable from previous clauses is not allowed"),
-							parser_errposition(pstate, varloc)));
+							 errmsg("label on variable from previous clauses is not allowed"),
+							 parser_errposition(pstate, varloc)));
 			}
 			return (Node *) te;
 		}
@@ -2174,11 +2178,11 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 		col = (Var *) colNameToVar(pstate, varname, false, varloc);
 		if (col != NULL)
 		{
-			EntityInfo	 *_ei = getEntityInfo(pstate, varname, T_CypherRel, false);
-			char		 *_labname = getEntityLabname((Node *) crel);
+			EntityInfo *_ei = getEntityInfo(pstate, varname, T_CypherRel, false);
+			char	   *_labname = getEntityLabname((Node *) crel);
 
 			if ((_labname != NULL && (_ei->labname == NULL || strcmp(_ei->labname, _labname) != 0)) ||
-				 exprType((Node *) col) != EDGEOID)
+				exprType((Node *) col) != EDGEOID)
 				ereport(ERROR,
 						(errcode(ERRCODE_DUPLICATE_ALIAS),
 						 errmsg("duplicate variable \"%s\"", varname),
@@ -2228,10 +2232,10 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 		resno = (resjunk ? InvalidAttrNumber : pstate->p_next_resno++);
 
 		_te = makeTargetEntry((Expr *) makeEdgeExpr(pstate, crel, nsitem,
-												   varloc),
-							 (AttrNumber) resno,
-							 alias->aliasname,
-							 resjunk);
+													varloc),
+							  (AttrNumber) resno,
+							  alias->aliasname,
+							  resjunk);
 
 		if (resjunk)
 		{
@@ -2353,7 +2357,8 @@ setInitialVidForVLE(ParseState *pstate, CypherRel *crel, Node *vertex,
 		}
 		else
 		{
-			char *colname = getEdgeColname(prev_crel, prev_edge_is_nsitem, true);
+			char	   *colname = getEdgeColname(prev_crel, prev_edge_is_nsitem, true);
+
 			if (prev_edge_is_nsitem)
 			{
 				ParseNamespaceItem *pe = (ParseNamespaceItem *) prev_edge;
@@ -2362,8 +2367,8 @@ setInitialVidForVLE(ParseState *pstate, CypherRel *crel, Node *vertex,
 
 				cref = makeNode(ColumnRef);
 				cref->fields = list_make2(
-										makeString(pe->p_rte->eref->aliasname),
-										makeString(colname));
+										  makeString(pe->p_rte->eref->aliasname),
+										  makeString(colname));
 				cref->location = -1;
 
 				pstate->p_vle_initial_vid = (Node *) cref;
@@ -2372,7 +2377,7 @@ setInitialVidForVLE(ParseState *pstate, CypherRel *crel, Node *vertex,
 			else
 			{
 				TargetEntry *te = (TargetEntry *) prev_edge;
-				Node		*vid;
+				Node	   *vid;
 
 				Assert(IsA(prev_edge, TargetEntry));
 
@@ -2478,9 +2483,9 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList,
 			var = (Node *) makeNullConst(EDGEARRAYOID, -1, InvalidOid);
 
 		_te = makeTargetEntry((Expr *) var,
-							 (AttrNumber) resno,
-							 alias->aliasname,
-							 resjunk);
+							  (AttrNumber) resno,
+							  alias->aliasname,
+							  resjunk);
 
 		*targetList = lappend(*targetList, _te);
 	}
@@ -2496,9 +2501,9 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList,
 			var = (Node *) makeNullConst(VERTEXARRAYOID, -1, InvalidOid);
 
 		_te = makeTargetEntry((Expr *) var,
-							 InvalidAttrNumber,
-							 genUniqueName(),
-							 true);
+							  InvalidAttrNumber,
+							  genUniqueName(),
+							  true);
 
 		*targetList = lappend(*targetList, _te);
 	}
@@ -2577,7 +2582,7 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 												  VLE_COLNAME_VERTICES));
 	vertices = makeResTarget(vertices_col, VLE_COLNAME_VERTICES);
 	tlist = lappend(tlist, vertices);
-	
+
 	left = genVLELeftChild(pstate, crel, out);
 
 	sel = makeNode(SelectStmt);
@@ -2956,7 +2961,7 @@ transformVLEtoNSItem(ParseState *pstate, CypherRel *crel, SelectStmt *vle, Alias
 		crel->prop_map = transformCypherExpr(pstate,
 											 crel->prop_map,
 											 EXPR_KIND_WHERE);
-	
+
 	qry->g_vle_rel = (Node *) crel;
 
 	pstate->p_lateral_active = false;
@@ -5075,7 +5080,6 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 	ParseNamespaceItem *nsitem;
 	Query	   *qry;
 	List	   *edges = NIL;
-	
 
 	nsitem = transformClause(pstate, clause->prev);
 
@@ -5100,8 +5104,6 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 		return qry;
 	}
 
-	
-
 	qry = makeNode(Query);
 	qry->commandType = CMD_GRAPHWRITE;
 	qry->g_writeOp = GWROP_DELETE;
@@ -5125,7 +5127,6 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
-	
 
 	assign_query_collations(pstate, qry);
 
@@ -5647,8 +5648,8 @@ find_target_label_walker(Node *node, find_target_label_context *ctx)
 
 	/*
 	 * For a CREATE clause, `transformCypherCreateClause()` does not create
-	 * RTE's for target labels. So, look through `qry->g_pattern` to get
-	 * the relid of the target label.
+	 * RTE's for target labels. So, look through `qry->g_pattern` to get the
+	 * relid of the target label.
 	 *
 	 * This code assumes that `RowExpr` appears only as root of the expression
 	 * in `TargetEntry` when `wrietOp` is `GWROP_CREATE`. This assumption is
@@ -5928,9 +5929,10 @@ transformClauseBy(ParseState *pstate, Node *clause, TransformMethod transform)
 	return nsitem;
 }
 
-static void mark_nodes_as_nonlocal(List *nis)
+static void
+mark_nodes_as_nonlocal(List *nis)
 {
-	ListCell *lc;
+	ListCell   *lc;
 
 	foreach(lc, nis)
 	{
@@ -6044,12 +6046,12 @@ incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
 	j->quals = qual;
 	j->alias = alias;
 
-    /*
-     * Since this is left join, we need to mark j->rarg as it may potentially
-     * emit NULL. The jindex argument holds rtindex of the join's RTE, which is
-     * created right after j->arg's RTE in this case.
-     */
-    markRelsAsNulledBy(pstate, j->rarg, r_nsitem->p_rtindex + 1);
+	/*
+	 * Since this is left join, we need to mark j->rarg as it may potentially
+	 * emit NULL. The jindex argument holds rtindex of the join's RTE, which
+	 * is created right after j->arg's RTE in this case.
+	 */
+	markRelsAsNulledBy(pstate, j->rarg, r_nsitem->p_rtindex + 1);
 
 	makeJoinResCols(pstate, l_nsitem, r_nsitem, &l_colnos, &r_colnos, &res_colnames,
 					&res_colvars);
@@ -6126,17 +6128,17 @@ makeJoinResCols(ParseState *pstate, ParseNamespaceItem *l_rte,
 
 		if (var == NULL)
 		{
-            Var *v;
+			Var		   *v;
 
-            /*
-             * Each join (left) RTE's Var, that references a column of the
-             * right RTE, needs to be marked 'nullable'.
-             */
-            v = lfirst(r_lvar);
-            markNullableIfNeeded(pstate, v);
+			/*
+			 * Each join (left) RTE's Var, that references a column of the
+			 * right RTE, needs to be marked 'nullable'.
+			 */
+			v = lfirst(r_lvar);
+			markNullableIfNeeded(pstate, v);
 
 			colnames = lappend(colnames, lfirst(r_lname));
-        	colvars = lappend(colvars, v);
+			colvars = lappend(colvars, v);
 		}
 		else
 		{
@@ -6385,13 +6387,13 @@ qualAndExpr(Node *qual, Node *expr)
 static A_Const *
 makeBoolAConst(bool state, int location)
 {
-	A_Const	   *n = makeNode(A_Const);
+	A_Const    *n = makeNode(A_Const);
 
 	n->val.boolval.type = T_Boolean;
 	n->val.boolval.boolval = state;
 	n->location = location;
 
-   return n;
+	return n;
 }
 
 static A_Const *
@@ -6424,8 +6426,9 @@ IsNullAConst(Node *arg)
 /*
  * Retrieve a column variable or expression field from the given node.
  */
-static Node *resolveVarOrExpr(ParseState *pstate, Node *node,
-							  char *colname, bool node_is_nsitem)
+static Node *
+resolveVarOrExpr(ParseState *pstate, Node *node,
+				 char *colname, bool node_is_nsitem)
 {
 	if (node_is_nsitem)
 	{

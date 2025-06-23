@@ -4557,9 +4557,9 @@ ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op)
 	else
 	{
 		/*
-		* get the jsonb value and switch on its type to determine if the cast is
-		* appropriate. Note: We always allow explicit casts.
-		*/
+		 * get the jsonb value and switch on its type to determine if the cast
+		 * is appropriate. Note: We always allow explicit casts.
+		 */
 		jv = getIthJsonbValueFromContainer(&argjb->root, 0);
 		switch (jv->type)
 		{

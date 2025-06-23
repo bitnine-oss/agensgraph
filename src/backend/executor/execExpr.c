@@ -2540,7 +2540,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				break;
 			}
 
-		/* Agensgraph cases below */
+			/* Agensgraph cases below */
 		case T_CypherTypeCast:
 			{
 				CypherTypeCast *tc = (CypherTypeCast *) node;
