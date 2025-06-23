@@ -250,13 +250,11 @@ ERROR:  invalid XML content
 DETAIL:  line 1: xmlParseEntityRef: no name
 <invalidentity>&</invalidentity>
                 ^
-line 1: chunk is not well balanced
 SELECT xmlparse(content '<undefinedentity>&idontexist;</undefinedentity>');
 ERROR:  invalid XML content
 DETAIL:  line 1: Entity 'idontexist' not defined
 <undefinedentity>&idontexist;</undefinedentity>
                              ^
-line 1: chunk is not well balanced
 SELECT xmlparse(content '<invalidns xmlns=''&lt;''/>');
          xmlparse          
 ---------------------------
@@ -275,7 +273,6 @@ DETAIL:  line 1: Entity 'idontexist' not defined
 <twoerrors>&idontexist;</unbalanced>
                        ^
 line 1: Opening and ending tag mismatch: twoerrors line 1 and unbalanced
-line 1: chunk is not well balanced
 SELECT xmlparse(content '<nosuchprefix:tag/>');
       xmlparse       
 ---------------------
@@ -474,8 +471,7 @@ SELECT xmlserialize(DOCUMENT '<foo><bar><val x="y">42</val></bar></foo>' AS text
    <bar>                +
      <val x="y">42</val>+
    </bar>               +
- </foo>                 +
- 
+ </foo>
 (1 row)
 
 SELECT xmlserialize(CONTENT  '<foo><bar><val x="y">42</val></bar></foo>' AS text INDENT);
@@ -535,8 +531,7 @@ SELECT xmlserialize(DOCUMENT '<foo><bar><val x="y">42</val><val x="y">text node<
      <val x="y">42</val>                    +
      <val x="y">text node<val>73</val></val>+
    </bar>                                   +
- </foo>                                     +
- 
+ </foo>
 (1 row)
 
 SELECT xmlserialize(CONTENT  '<foo><bar><val x="y">42</val><val x="y">text node<val>73</val></val></bar></foo>' AS text INDENT);
@@ -590,8 +585,7 @@ SELECT xmlserialize(DOCUMENT '<?xml version="1.0" encoding="UTF-8"?><foo><bar><v
    <bar>                               +
      <val>73</val>                     +
    </bar>                              +
- </foo>                                +
- 
+ </foo>
 (1 row)
 
 SELECT xmlserialize(CONTENT  '<?xml version="1.0" encoding="UTF-8"?><foo><bar><val>73</val></bar></foo>' AS text INDENT);
@@ -609,8 +603,7 @@ SELECT xmlserialize(DOCUMENT '<!DOCTYPE a><a/>' AS text INDENT);
  xmlserialize 
 --------------
  <!DOCTYPE a>+
- <a/>        +
- 
+ <a/>
 (1 row)
 
 SELECT xmlserialize(CONTENT  '<!DOCTYPE a><a/>' AS text INDENT);
@@ -627,8 +620,7 @@ SELECT xmlserialize(DOCUMENT '<foo><bar></bar></foo>' AS text INDENT);
 --------------
  <foo>       +
    <bar/>    +
- </foo>      +
- 
+ </foo>
 (1 row)
 
 SELECT xmlserialize(CONTENT  '<foo><bar></bar></foo>' AS text INDENT);
@@ -650,6 +642,24 @@ SELECT xmlserialize(CONTENT  '<foo><bar><val x="y">42</val></bar></foo>' AS text
  ?column? 
 ----------
  t
+(1 row)
+
+-- indent xml strings containing blank nodes
+SELECT xmlserialize(DOCUMENT '<foo>   <bar></bar>    </foo>' AS text INDENT);
+ xmlserialize 
+--------------
+ <foo>       +
+   <bar/>    +
+ </foo>
+(1 row)
+
+SELECT xmlserialize(CONTENT  'text node<foo>    <bar></bar>   </foo>' AS text INDENT);
+ xmlserialize 
+--------------
+ text node   +
+ <foo>       +
+   <bar/>    +
+ </foo>
 (1 row)
 
 SELECT xml '<foo>bar</foo>' IS DOCUMENT;

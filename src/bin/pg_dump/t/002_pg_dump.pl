@@ -1913,9 +1913,9 @@ my %tests = (
 		    CREATE DATABASE regression_invalid;
 			UPDATE pg_database SET datconnlimit = -2 WHERE datname = 'regression_invalid'),
 		regexp => qr/^CREATE DATABASE regression_invalid/m,
-		not_like => {
-			pg_dumpall_dbprivs => 1,
-		},
+
+		# invalid databases should never be dumped
+		like => {},
 	},
 
 	'CREATE ACCESS METHOD gist2' => {
@@ -3731,14 +3731,15 @@ my %tests = (
 	'CREATE STATISTICS extended_stats_no_options' => {
 		create_order => 97,
 		create_sql => 'CREATE STATISTICS dump_test.test_ext_stats_no_options
-							ON col1, col2 FROM dump_test.test_fifth_table',
+							ON col1, col2 FROM dump_test.test_table',
 		regexp => qr/^
-			\QCREATE STATISTICS dump_test.test_ext_stats_no_options ON col1, col2 FROM dump_test.test_fifth_table;\E
+			\QCREATE STATISTICS dump_test.test_ext_stats_no_options ON col1, col2 FROM dump_test.test_table;\E
 		    /xms,
 		like =>
 		  { %full_runs, %dump_test_schema_runs, section_post_data => 1, },
 		unlike => {
 			exclude_dump_test_schema => 1,
+			exclude_test_table => 1,
 			only_dump_measurement => 1,
 		},
 	},
@@ -4229,11 +4230,13 @@ my %tests = (
 
 	'GRANT SELECT ON TABLE measurement' => {
 		create_order => 91,
-		create_sql => 'GRANT SELECT ON
-						   TABLE dump_test.measurement
-						   TO regress_dump_test_role;',
+		create_sql => 'GRANT SELECT ON TABLE dump_test.measurement
+						   TO regress_dump_test_role;
+					   GRANT SELECT(city_id) ON TABLE dump_test.measurement
+						   TO "regress_quoted  \"" role";',
 		regexp =>
-		  qr/^\QGRANT SELECT ON TABLE dump_test.measurement TO regress_dump_test_role;\E/m,
+		  qr/^\QGRANT SELECT ON TABLE dump_test.measurement TO regress_dump_test_role;\E\n.*
+			 ^\QGRANT SELECT(city_id) ON TABLE dump_test.measurement TO "regress_quoted  \"" role";\E/xms,
 		like => {
 			%full_runs,
 			%dump_test_schema_runs,

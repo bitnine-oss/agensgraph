@@ -85,6 +85,8 @@ static void help(const char *progname);
 
 void		check_objfilter(void);
 
+static char *escape_quotes(const char *src);
+
 /* For analyze-in-stages mode */
 #define ANALYZE_NO_STAGE	-1
 #define ANALYZE_NUM_STAGES	3
@@ -270,7 +272,7 @@ main(int argc, char *argv[])
 				vacopts.process_main = false;
 				break;
 			case 13:
-				vacopts.buffer_usage_limit = pg_strdup(optarg);
+				vacopts.buffer_usage_limit = escape_quotes(optarg);
 				break;
 			default:
 				/* getopt_long already emitted a complaint */
@@ -453,6 +455,20 @@ check_objfilter(void)
 }
 
 /*
+ * Returns a newly malloc'd version of 'src' with escaped single quotes and
+ * backslashes.
+ */
+static char *
+escape_quotes(const char *src)
+{
+	char	   *result = escape_single_quotes_ascii(src);
+
+	if (!result)
+		pg_fatal("out of memory");
+	return result;
+}
+
+/*
  * vacuum_one_database
  *
  * Process tables in the given database.  If the 'tables' list is empty,
@@ -485,7 +501,6 @@ vacuum_one_database(ConnParams *cparams,
 	int			ntups;
 	bool		failed = false;
 	bool		objects_listed = false;
-	bool		has_where = false;
 	const char *initcmd;
 	const char *stage_commands[] = {
 		"SET default_statistics_target=1; SET vacuum_cost_delay=0;",
@@ -659,21 +674,41 @@ vacuum_one_database(ConnParams *cparams,
 						 " LEFT JOIN pg_catalog.pg_class t"
 						 " ON c.reltoastrelid OPERATOR(pg_catalog.=) t.oid\n");
 
-	/* Used to match the tables or schemas listed by the user */
+	/*
+	 * Used to match the tables or schemas listed by the user, completing the
+	 * JOIN clause.
+	 */
 	if (objects_listed)
 	{
-		appendPQExpBufferStr(&catalog_query, " JOIN listed_objects"
-							 " ON listed_objects.object_oid ");
-
-		if (objfilter & OBJFILTER_SCHEMA_EXCLUDE)
-			appendPQExpBufferStr(&catalog_query, "OPERATOR(pg_catalog.!=) ");
-		else
-			appendPQExpBufferStr(&catalog_query, "OPERATOR(pg_catalog.=) ");
+		appendPQExpBufferStr(&catalog_query, " LEFT JOIN listed_objects"
+							 " ON listed_objects.object_oid"
+							 " OPERATOR(pg_catalog.=) ");
 
 		if (objfilter & OBJFILTER_TABLE)
 			appendPQExpBufferStr(&catalog_query, "c.oid\n");
 		else
 			appendPQExpBufferStr(&catalog_query, "ns.oid\n");
+	}
+
+	/*
+	 * Exclude temporary tables, beginning the WHERE clause.
+	 */
+	appendPQExpBufferStr(&catalog_query,
+						 " WHERE c.relpersistence OPERATOR(pg_catalog.!=) "
+						 CppAsString2(RELPERSISTENCE_TEMP) "\n");
+
+	/*
+	 * Used to match the tables or schemas listed by the user, for the WHERE
+	 * clause.
+	 */
+	if (objects_listed)
+	{
+		if (objfilter & OBJFILTER_SCHEMA_EXCLUDE)
+			appendPQExpBuffer(&catalog_query,
+							  " AND listed_objects.object_oid IS NULL\n");
+		else
+			appendPQExpBuffer(&catalog_query,
+							  " AND listed_objects.object_oid IS NOT NULL\n");
 	}
 
 	/*
@@ -684,10 +719,10 @@ vacuum_one_database(ConnParams *cparams,
 	 */
 	if ((objfilter & OBJFILTER_TABLE) == 0)
 	{
-		appendPQExpBufferStr(&catalog_query, " WHERE c.relkind OPERATOR(pg_catalog.=) ANY (array["
-							 CppAsString2(RELKIND_RELATION) ", "
-							 CppAsString2(RELKIND_MATVIEW) "])\n");
-		has_where = true;
+		appendPQExpBuffer(&catalog_query,
+						  " AND c.relkind OPERATOR(pg_catalog.=) ANY (array["
+						  CppAsString2(RELKIND_RELATION) ", "
+						  CppAsString2(RELKIND_MATVIEW) "])\n");
 	}
 
 	/*
@@ -700,25 +735,23 @@ vacuum_one_database(ConnParams *cparams,
 	if (vacopts->min_xid_age != 0)
 	{
 		appendPQExpBuffer(&catalog_query,
-						  " %s GREATEST(pg_catalog.age(c.relfrozenxid),"
+						  " AND GREATEST(pg_catalog.age(c.relfrozenxid),"
 						  " pg_catalog.age(t.relfrozenxid)) "
 						  " OPERATOR(pg_catalog.>=) '%d'::pg_catalog.int4\n"
 						  " AND c.relfrozenxid OPERATOR(pg_catalog.!=)"
 						  " '0'::pg_catalog.xid\n",
-						  has_where ? "AND" : "WHERE", vacopts->min_xid_age);
-		has_where = true;
+						  vacopts->min_xid_age);
 	}
 
 	if (vacopts->min_mxid_age != 0)
 	{
 		appendPQExpBuffer(&catalog_query,
-						  " %s GREATEST(pg_catalog.mxid_age(c.relminmxid),"
+						  " AND GREATEST(pg_catalog.mxid_age(c.relminmxid),"
 						  " pg_catalog.mxid_age(t.relminmxid)) OPERATOR(pg_catalog.>=)"
 						  " '%d'::pg_catalog.int4\n"
 						  " AND c.relminmxid OPERATOR(pg_catalog.!=)"
 						  " '0'::pg_catalog.xid\n",
-						  has_where ? "AND" : "WHERE", vacopts->min_mxid_age);
-		has_where = true;
+						  vacopts->min_mxid_age);
 	}
 
 	/*
@@ -964,6 +997,13 @@ prepare_vacuum_command(PQExpBuffer sql, int serverVersion,
 				appendPQExpBuffer(sql, "%sVERBOSE", sep);
 				sep = comma;
 			}
+			if (vacopts->buffer_usage_limit)
+			{
+				Assert(serverVersion >= 160000);
+				appendPQExpBuffer(sql, "%sBUFFER_USAGE_LIMIT '%s'", sep,
+								  vacopts->buffer_usage_limit);
+				sep = comma;
+			}
 			if (sep != paren)
 				appendPQExpBufferChar(sql, ')');
 		}
@@ -1142,8 +1182,8 @@ help(const char *progname)
 	printf(_("      --no-process-main           skip the main relation\n"));
 	printf(_("      --no-process-toast          skip the TOAST table associated with the table to vacuum\n"));
 	printf(_("      --no-truncate               don't truncate empty pages at the end of the table\n"));
-	printf(_("  -n, --schema=PATTERN            vacuum tables in the specified schema(s) only\n"));
-	printf(_("  -N, --exclude-schema=PATTERN    do not vacuum tables in the specified schema(s)\n"));
+	printf(_("  -n, --schema=SCHEMA             vacuum tables in the specified schema(s) only\n"));
+	printf(_("  -N, --exclude-schema=SCHEMA     do not vacuum tables in the specified schema(s)\n"));
 	printf(_("  -P, --parallel=PARALLEL_WORKERS use this many background workers for vacuum, if available\n"));
 	printf(_("  -q, --quiet                     don't write any messages\n"));
 	printf(_("      --skip-locked               skip relations that cannot be immediately locked\n"));

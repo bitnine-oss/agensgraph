@@ -617,8 +617,8 @@ typedef struct TableAmRoutine
 									   const RelFileLocator *newrlocator);
 
 	/* See table_relation_copy_for_cluster() */
-	void		(*relation_copy_for_cluster) (Relation NewTable,
-											  Relation OldTable,
+	void		(*relation_copy_for_cluster) (Relation OldTable,
+											  Relation NewTable,
 											  Relation OldIndex,
 											  bool use_sort,
 											  TransactionId OldestXmin,
@@ -1479,8 +1479,8 @@ table_multi_insert(Relation rel, TupleTableSlot **slots, int nslots,
  * TM_BeingModified (the last only possible if wait == false).
  *
  * In the failure cases, the routine fills *tmfd with the tuple's t_ctid,
- * t_xmax, and, if possible, and, if possible, t_cmax.  See comments for
- * struct TM_FailureData for additional info.
+ * t_xmax, and, if possible, t_cmax.  See comments for struct
+ * TM_FailureData for additional info.
  */
 static inline TM_Result
 table_tuple_delete(Relation rel, ItemPointer tid, CommandId cid,

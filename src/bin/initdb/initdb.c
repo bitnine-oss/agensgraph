@@ -336,6 +336,61 @@ do { \
 		output_failed = true, output_errno = errno; \
 } while (0)
 
+#ifdef WIN32
+typedef wchar_t *save_locale_t;
+#else
+typedef char *save_locale_t;
+#endif
+
+/*
+ * Save a copy of the current global locale's name, for the given category.
+ * The returned value must be passed to restore_global_locale().
+ *
+ * Since names from the environment haven't been vetted for non-ASCII
+ * characters, we use the wchar_t variant of setlocale() on Windows.  Otherwise
+ * they might not survive a save-restore round trip: when restoring, the name
+ * itself might be interpreted with a different encoding by plain setlocale(),
+ * after we switch to another locale in between.  (This is a problem only in
+ * initdb, not in similar backend code where the global locale's name should
+ * already have been verified as ASCII-only.)
+ */
+static save_locale_t
+save_global_locale(int category)
+{
+	save_locale_t save;
+
+#ifdef WIN32
+	save = _wsetlocale(category, NULL);
+	if (!save)
+		pg_fatal("_wsetlocale() failed");
+	save = wcsdup(save);
+	if (!save)
+		pg_fatal("out of memory");
+#else
+	save = setlocale(category, NULL);
+	if (!save)
+		pg_fatal("setlocale() failed");
+	save = pg_strdup(save);
+#endif
+	return save;
+}
+
+/*
+ * Restore the global locale returned by save_global_locale().
+ */
+static void
+restore_global_locale(int category, save_locale_t save)
+{
+#ifdef WIN32
+	if (!_wsetlocale(category, save))
+		pg_fatal("failed to restore old locale");
+#else
+	if (!setlocale(category, save))
+		pg_fatal("failed to restore old locale \"%s\"", save);
+#endif
+	free(save);
+}
+
 /*
  * Escape single quotes and backslashes, suitably for insertions into
  * configuration files or SQL E'' strings.
@@ -482,6 +537,7 @@ replace_guc_value(char **lines, const char *guc_name, const char *guc_value,
 	for (i = 0; lines[i]; i++)
 	{
 		const char *where;
+		const char *namestart;
 
 		/*
 		 * Look for a line assigning to guc_name.  Typically it will be
@@ -492,15 +548,19 @@ replace_guc_value(char **lines, const char *guc_name, const char *guc_value,
 		where = lines[i];
 		while (*where == '#' || isspace((unsigned char) *where))
 			where++;
-		if (strncmp(where, guc_name, namelen) != 0)
+		if (pg_strncasecmp(where, guc_name, namelen) != 0)
 			continue;
+		namestart = where;
 		where += namelen;
 		while (isspace((unsigned char) *where))
 			where++;
 		if (*where != '=')
 			continue;
 
-		/* found it -- append the original comment if any */
+		/* found it -- let's use the canonical casing shown in the file */
+		memcpy(&newline->data[mark_as_comment ? 1 : 0], namestart, namelen);
+
+		/* now append the original comment if any */
 		where = strrchr(where, '#');
 		if (where)
 		{
@@ -1238,25 +1298,17 @@ setup_config(void)
 	conflines = replace_guc_value(conflines, "shared_buffers",
 								  repltok, false);
 
-	/*
-	 * Hack: don't replace the LC_XXX GUCs when their value is 'C', because
-	 * replace_guc_value will decide not to quote that, which looks strange.
-	 */
-	if (strcmp(lc_messages, "C") != 0)
-		conflines = replace_guc_value(conflines, "lc_messages",
-									  lc_messages, false);
+	conflines = replace_guc_value(conflines, "lc_messages",
+								  lc_messages, false);
 
-	if (strcmp(lc_monetary, "C") != 0)
-		conflines = replace_guc_value(conflines, "lc_monetary",
-									  lc_monetary, false);
+	conflines = replace_guc_value(conflines, "lc_monetary",
+								  lc_monetary, false);
 
-	if (strcmp(lc_numeric, "C") != 0)
-		conflines = replace_guc_value(conflines, "lc_numeric",
-									  lc_numeric, false);
+	conflines = replace_guc_value(conflines, "lc_numeric",
+								  lc_numeric, false);
 
-	if (strcmp(lc_time, "C") != 0)
-		conflines = replace_guc_value(conflines, "lc_time",
-									  lc_time, false);
+	conflines = replace_guc_value(conflines, "lc_time",
+								  lc_time, false);
 
 	switch (locale_date_order(lc_time))
 	{
@@ -2083,16 +2135,13 @@ locale_date_order(const char *locale)
 	char	   *posD;
 	char	   *posM;
 	char	   *posY;
-	char	   *save;
+	save_locale_t save;
 	size_t		res;
 	int			result;
 
 	result = DATEORDER_MDY;		/* default */
 
-	save = setlocale(LC_TIME, NULL);
-	if (!save)
-		return result;
-	save = pg_strdup(save);
+	save = save_global_locale(LC_TIME);
 
 	setlocale(LC_TIME, locale);
 
@@ -2103,8 +2152,7 @@ locale_date_order(const char *locale)
 
 	res = my_strftime(buf, sizeof(buf), "%x", &testtime);
 
-	setlocale(LC_TIME, save);
-	free(save);
+	restore_global_locale(LC_TIME, save);
 
 	if (res == 0)
 		return result;
@@ -2141,18 +2189,17 @@ locale_date_order(const char *locale)
 static void
 check_locale_name(int category, const char *locale, char **canonname)
 {
-	char	   *save;
+	save_locale_t save;
 	char	   *res;
+
+	/* Don't let Windows' non-ASCII locale names in. */
+	if (locale && !pg_is_ascii(locale))
+		pg_fatal("locale name \"%s\" contains non-ASCII characters", locale);
 
 	if (canonname)
 		*canonname = NULL;		/* in case of failure */
 
-	save = setlocale(category, NULL);
-	if (!save)
-		pg_fatal("setlocale() failed");
-
-	/* save may be pointing at a modifiable scratch variable, so copy it. */
-	save = pg_strdup(save);
+	save = save_global_locale(category);
 
 	/* for setlocale() call */
 	if (!locale)
@@ -2166,9 +2213,7 @@ check_locale_name(int category, const char *locale, char **canonname)
 		*canonname = pg_strdup(res);
 
 	/* restore old value. */
-	if (!setlocale(category, save))
-		pg_fatal("failed to restore old locale \"%s\"", save);
-	free(save);
+	restore_global_locale(category, save);
 
 	/* complain if locale wasn't valid */
 	if (res == NULL)
@@ -2192,6 +2237,11 @@ check_locale_name(int category, const char *locale, char **canonname)
 			pg_fatal("invalid locale settings; check LANG and LC_* environment variables");
 		}
 	}
+
+	/* Don't let Windows' non-ASCII locale names out. */
+	if (canonname && !pg_is_ascii(*canonname))
+		pg_fatal("locale name \"%s\" contains non-ASCII characters",
+				 *canonname);
 }
 
 /*

@@ -40,6 +40,7 @@
 #include "parser/parse_clause.h"
 #include "parser/parsetree.h"
 #include "partitioning/partprune.h"
+#include "tcop/tcopprot.h"
 #include "utils/lsyscache.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
@@ -2053,7 +2054,7 @@ create_projection_plan(PlannerInfo *root, ProjectionPath *best_path, int flags)
 	 * Convert our subpath to a Plan and determine whether we need a Result
 	 * node.
 	 *
-	 * In most cases where we don't need to project, creation_projection_path
+	 * In most cases where we don't need to project, create_projection_path
 	 * will have set dummypp, but not always.  First, some createplan.c
 	 * routines change the tlists of their nodes.  (An example is that
 	 * create_merge_append_plan might add resjunk sort columns to a
@@ -7399,7 +7400,19 @@ make_modifytable(PlannerInfo *root, Plan *subplan,
 
 			if (rte->rtekind == RTE_RELATION &&
 				rte->relkind == RELKIND_FOREIGN_TABLE)
+			{
+				/* Check if the access to foreign tables is restricted */
+				if (unlikely((restrict_nonsystem_relation_kind & RESTRICT_RELKIND_FOREIGN_TABLE) != 0))
+				{
+					/* there must not be built-in foreign tables */
+					Assert(rte->relid >= FirstNormalObjectId);
+					ereport(ERROR,
+							(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+							 errmsg("access to non-system foreign table is restricted")));
+				}
+
 				fdwroutine = GetFdwRoutineByRelId(rte->relid);
+			}
 			else
 				fdwroutine = NULL;
 		}

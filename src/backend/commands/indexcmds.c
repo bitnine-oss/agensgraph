@@ -27,6 +27,7 @@
 #include "catalog/index.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_am.h"
+#include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_inherits.h"
@@ -356,10 +357,12 @@ static bool
 CompareOpclassOptions(Datum *opts1, Datum *opts2, int natts)
 {
 	int			i;
+	FmgrInfo	fm;
 
 	if (!opts1 && !opts2)
 		return true;
 
+	fmgr_info(F_ARRAY_EQ, &fm);
 	for (i = 0; i < natts; i++)
 	{
 		Datum		opt1 = opts1 ? opts1[i] : (Datum) 0;
@@ -375,8 +378,12 @@ CompareOpclassOptions(Datum *opts1, Datum *opts2, int natts)
 		else if (opt2 == (Datum) 0)
 			return false;
 
-		/* Compare non-NULL text[] datums. */
-		if (!DatumGetBool(DirectFunctionCall2(array_eq, opt1, opt2)))
+		/*
+		 * Compare non-NULL text[] datums.  Use C collation to enforce binary
+		 * equivalence of texts, because we don't know anything about the
+		 * semantics of opclass options.
+		 */
+		if (!DatumGetBool(FunctionCall2Coll(&fm, C_COLLATION_OID, opt1, opt2)))
 			return false;
 	}
 
@@ -1015,9 +1022,12 @@ DefineIndex(Oid relationId,
 			{
 				if (key->partattrs[i] == indexInfo->ii_IndexAttrNumbers[j])
 				{
-					/* Matched the column, now what about the equality op? */
+					/* Matched the column, now what about the collation and equality op? */
 					Oid			idx_opfamily;
 					Oid			idx_opcintype;
+
+					if (key->partcollation[i] != collationObjectId[j])
+						continue;
 
 					if (get_opclass_opfamily_and_input_type(classObjectId[j],
 															&idx_opfamily,
@@ -1776,33 +1786,6 @@ DefineIndex(Oid relationId,
 
 
 /*
- * CheckMutability
- *		Test whether given expression is mutable
- */
-static bool
-CheckMutability(Expr *expr)
-{
-	/*
-	 * First run the expression through the planner.  This has a couple of
-	 * important consequences.  First, function default arguments will get
-	 * inserted, which may affect volatility (consider "default now()").
-	 * Second, inline-able functions will get inlined, which may allow us to
-	 * conclude that the function is really less volatile than it's marked. As
-	 * an example, polymorphic functions must be marked with the most volatile
-	 * behavior that they have for any input type, but once we inline the
-	 * function we may be able to conclude that it's not so volatile for the
-	 * particular input type we're dealing with.
-	 *
-	 * We assume here that expression_planner() won't scribble on its input.
-	 */
-	expr = expression_planner(expr);
-
-	/* Now we can search for non-immutable functions */
-	return contain_mutable_functions((Node *) expr);
-}
-
-
-/*
  * CheckPredicate
  *		Checks that the given partial-index predicate is valid.
  *
@@ -1825,7 +1808,7 @@ CheckPredicate(Expr *predicate)
 	 * A predicate using mutable functions is probably wrong, for the same
 	 * reasons that we don't allow an index expression to use one.
 	 */
-	if (CheckMutability(predicate))
+	if (contain_mutable_functions_after_planning(predicate))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 				 errmsg("functions in index predicate must be marked IMMUTABLE")));
@@ -1968,7 +1951,7 @@ ComputeIndexAttrs(IndexInfo *indexInfo,
 				 * same data every time, it's not clear what the index entries
 				 * mean at all.
 				 */
-				if (CheckMutability((Expr *) expr))
+				if (contain_mutable_functions_after_planning((Expr *) expr))
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 							 errmsg("functions in index expression must be marked IMMUTABLE")));
@@ -3799,8 +3782,8 @@ ReindexRelationConcurrently(Oid relationOid, ReindexParams *params)
 		save_nestlevel = NewGUCNestLevel();
 
 		/* determine safety of this index for set_indexsafe_procflags */
-		idx->safe = (indexRel->rd_indexprs == NIL &&
-					 indexRel->rd_indpred == NIL);
+		idx->safe = (RelationGetIndexExpressions(indexRel) == NIL &&
+					 RelationGetIndexPredicate(indexRel) == NIL);
 		idx->tableId = RelationGetRelid(heapRel);
 		idx->amId = indexRel->rd_rel->relam;
 
@@ -4364,7 +4347,10 @@ IndexSetParentIndex(Relation partitionIdx, Oid parentOid)
 
 	/* set relhassubclass if an index partition has been added to the parent */
 	if (OidIsValid(parentOid))
+	{
+		LockRelationOid(parentOid, ShareUpdateExclusiveLock);
 		SetRelationHasSubclass(parentOid, true);
+	}
 
 	/* set relispartition correctly on the partition */
 	update_relispartition(partRelid, OidIsValid(parentOid));
@@ -4415,14 +4401,17 @@ update_relispartition(Oid relationId, bool newval)
 {
 	HeapTuple	tup;
 	Relation	classRel;
+	ItemPointerData otid;
 
 	classRel = table_open(RelationRelationId, RowExclusiveLock);
-	tup = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relationId));
+	tup = SearchSysCacheLockedCopy1(RELOID, ObjectIdGetDatum(relationId));
 	if (!HeapTupleIsValid(tup))
 		elog(ERROR, "cache lookup failed for relation %u", relationId);
+	otid = tup->t_self;
 	Assert(((Form_pg_class) GETSTRUCT(tup))->relispartition != newval);
 	((Form_pg_class) GETSTRUCT(tup))->relispartition = newval;
-	CatalogTupleUpdate(classRel, &tup->t_self, tup);
+	CatalogTupleUpdate(classRel, &otid, tup);
+	UnlockTuple(classRel, &otid, InplaceUpdateTupleLock);
 	heap_freetuple(tup);
 	table_close(classRel, RowExclusiveLock);
 }

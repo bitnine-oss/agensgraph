@@ -2388,6 +2388,8 @@ expression_tree_walker_impl(Node *node,
 					return true;
 				if (WALK(wc->endOffset))
 					return true;
+				if (WALK(wc->runCondition))
+					return true;
 			}
 			break;
 		case T_CTECycleClause:
@@ -2829,6 +2831,8 @@ query_tree_walker_impl(Query *query,
 			if (WALK(wc->startOffset))
 				return true;
 			if (WALK(wc->endOffset))
+				return true;
+			if (WALK(wc->runCondition))
 				return true;
 		}
 	}
@@ -3515,6 +3519,7 @@ expression_tree_mutator_impl(Node *node,
 				MUTATE(newnode->orderClause, wc->orderClause, List *);
 				MUTATE(newnode->startOffset, wc->startOffset, Node *);
 				MUTATE(newnode->endOffset, wc->endOffset, Node *);
+				MUTATE(newnode->runCondition, wc->runCondition, List *);
 				return (Node *) newnode;
 			}
 			break;
@@ -3939,6 +3944,7 @@ query_tree_mutator_impl(Query *query,
 			FLATCOPY(newnode, wc, WindowClause);
 			MUTATE(newnode->startOffset, wc->startOffset, Node *);
 			MUTATE(newnode->endOffset, wc->endOffset, Node *);
+			MUTATE(newnode->runCondition, wc->runCondition, List *);
 
 			resultlist = lappend(resultlist, (Node *) newnode);
 		}

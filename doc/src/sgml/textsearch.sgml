@@ -1287,7 +1287,10 @@ ts_headline(<optional> <replaceable class="parameter">config</replaceable> <type
    <para>
     <function>ts_headline</function> accepts a document along
     with a query, and returns an excerpt from
-    the document in which terms from the query are highlighted.  The
+    the document in which terms from the query are highlighted.
+    Specifically, the function will use the query to select relevant
+    text fragments, and then highlight all words that appear in the query,
+    even if those word positions do not match the query's restrictions.  The
     configuration to be used to parse the document can be specified by
     <replaceable>config</replaceable>; if <replaceable>config</replaceable>
     is omitted, the
@@ -2218,7 +2221,7 @@ LIMIT 10;
 
    <para>
     <literal>email</literal> does not support all valid email characters as
-    defined by <ulink url="https://tools.ietf.org/html/rfc5322">RFC 5322</ulink>.
+    defined by <ulink url="https://datatracker.ietf.org/doc/html/rfc5322">RFC 5322</ulink>.
     Specifically, the only non-alphanumeric characters supported for
     email user names are period, dash, and underscore.
    </para>

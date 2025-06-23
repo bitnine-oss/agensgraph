@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 =pod
 
@@ -54,7 +54,7 @@ initiated by PostgreSQL::Test::Cluster.
 package PostgreSQL::Test::BackgroundPsql;
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use Carp;
 use Config;
@@ -68,7 +68,7 @@ use Test::More;
 
 =over
 
-=item PostgreSQL::Test::BackgroundPsql->new(interactive, @params)
+=item PostgreSQL::Test::BackgroundPsql->new(interactive, @psql_params, timeout)
 
 Builds a new object of class C<PostgreSQL::Test::BackgroundPsql> for either
 an interactive or background session and starts it. If C<interactive> is
@@ -81,7 +81,7 @@ string. For C<interactive> sessions, IO::Pty is required.
 sub new
 {
 	my $class = shift;
-	my ($interactive, $psql_params) = @_;
+	my ($interactive, $psql_params, $timeout) = @_;
 	my $psql = {
 		'stdin' => '',
 		'stdout' => '',
@@ -96,8 +96,10 @@ sub new
 	  "Forbidden caller of constructor: package: $package, file: $file:$line"
 	  unless $package->isa('PostgreSQL::Test::Cluster');
 
-	$psql->{timeout} =
-	  IPC::Run::timeout($PostgreSQL::Test::Utils::timeout_default);
+	$psql->{timeout} = IPC::Run::timeout(
+		defined($timeout)
+		? $timeout
+		: $PostgreSQL::Test::Utils::timeout_default);
 
 	if ($interactive)
 	{
@@ -221,7 +223,7 @@ sub query
 	$output = $self->{stdout};
 
 	# remove banner again, our caller doesn't care
-	$output =~ s/\n$banner$//s;
+	$output =~ s/\n$banner\n$//s;
 
 	# clear out output for the next query
 	$self->{stdout} = '';
@@ -301,7 +303,7 @@ sub set_query_timer_restart
 {
 	my $self = shift;
 
-	$self->{query_timer_restart} = shift if @_;
+	$self->{query_timer_restart} = 1;
 	return $self->{query_timer_restart};
 }
 

@@ -78,7 +78,7 @@ PG_STAT_GET_RELENTRY_INT64(ins_since_vacuum)
 /* pg_stat_get_live_tuples */
 PG_STAT_GET_RELENTRY_INT64(live_tuples)
 
-/* pg_stat_get_mods_since_analyze */
+/* pg_stat_get_mod_since_analyze */
 PG_STAT_GET_RELENTRY_INT64(mod_since_analyze)
 
 /* pg_stat_get_numscans */
@@ -1402,7 +1402,7 @@ pg_stat_get_io(PG_FUNCTION_ARGS)
 				values[IO_COL_BACKEND_TYPE] = bktype_desc;
 				values[IO_COL_CONTEXT] = CStringGetTextDatum(context_name);
 				values[IO_COL_OBJECT] = CStringGetTextDatum(obj_name);
-				values[IO_COL_RESET_TIME] = TimestampTzGetDatum(reset_time);
+				values[IO_COL_RESET_TIME] = reset_time;
 
 				/*
 				 * Hard-code this to the value of BLCKSZ for now. Future

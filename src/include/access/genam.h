@@ -139,6 +139,7 @@ typedef struct IndexOrderByDistance
 #define IndexScanIsValid(scan) PointerIsValid(scan)
 
 extern Relation index_open(Oid relationId, LOCKMODE lockmode);
+extern Relation try_index_open(Oid relationId, LOCKMODE lockmode);
 extern void index_close(Relation relation, LOCKMODE lockmode);
 
 extern bool index_insert(Relation indexRelation,
@@ -229,5 +230,14 @@ extern SysScanDesc systable_beginscan_ordered(Relation heapRelation,
 extern HeapTuple systable_getnext_ordered(SysScanDesc sysscan,
 										  ScanDirection direction);
 extern void systable_endscan_ordered(SysScanDesc sysscan);
+extern void systable_inplace_update_begin(Relation relation,
+										  Oid indexId,
+										  bool indexOK,
+										  Snapshot snapshot,
+										  int nkeys, const ScanKeyData *key,
+										  HeapTuple *oldtupcopy,
+										  void **state);
+extern void systable_inplace_update_finish(void *state, HeapTuple tuple);
+extern void systable_inplace_update_cancel(void *state);
 
 #endif							/* GENAM_H */

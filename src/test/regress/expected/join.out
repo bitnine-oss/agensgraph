@@ -2926,6 +2926,60 @@ select tt1.*, tt2.* from tt2 right join tt1 on tt1.joincol = tt2.joincol;
 reset enable_hashjoin;
 reset enable_nestloop;
 --
+-- regression test for bug #18522 (merge-right-anti-join in inner_unique cases)
+--
+create temp table tbl_ra(a int unique, b int);
+insert into tbl_ra select i, i%100 from generate_series(1,1000)i;
+create index on tbl_ra (b);
+analyze tbl_ra;
+set enable_hashjoin to off;
+set enable_nestloop to off;
+-- ensure we get a merge right anti join
+explain (costs off)
+select * from tbl_ra t1
+where not exists (select 1 from tbl_ra t2 where t2.b = t1.a) and t1.b < 2;
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Merge Right Anti Join
+   Merge Cond: (t2.b = t1.a)
+   ->  Index Only Scan using tbl_ra_b_idx on tbl_ra t2
+   ->  Sort
+         Sort Key: t1.a
+         ->  Bitmap Heap Scan on tbl_ra t1
+               Recheck Cond: (b < 2)
+               ->  Bitmap Index Scan on tbl_ra_b_idx
+                     Index Cond: (b < 2)
+(9 rows)
+
+-- and check we get the expected results
+select * from tbl_ra t1
+where not exists (select 1 from tbl_ra t2 where t2.b = t1.a) and t1.b < 2;
+  a   | b 
+------+---
+  100 | 0
+  101 | 1
+  200 | 0
+  201 | 1
+  300 | 0
+  301 | 1
+  400 | 0
+  401 | 1
+  500 | 0
+  501 | 1
+  600 | 0
+  601 | 1
+  700 | 0
+  701 | 1
+  800 | 0
+  801 | 1
+  900 | 0
+  901 | 1
+ 1000 | 0
+(19 rows)
+
+reset enable_hashjoin;
+reset enable_nestloop;
+--
 -- regression test for bug #13908 (hash join with skew tuples & nbatch increase)
 --
 set work_mem to '64kB';
@@ -4133,6 +4187,32 @@ select * from mki4(42);
 
 drop function mki8(bigint, bigint);
 drop function mki4(int);
+-- test const-folding of a whole-row Var into a per-field Var
+-- (need to inline a function to reach this case, else parser does it)
+create function f_field_select(t onek) returns int4 as
+$$ select t.unique2; $$ language sql immutable;
+explain (verbose, costs off)
+select (t2.*).unique1, f_field_select(t2) from tenk1 t1
+    left join onek t2 on t1.unique1 = t2.unique1
+    left join int8_tbl t3 on true;
+                             QUERY PLAN                             
+--------------------------------------------------------------------
+ Nested Loop Left Join
+   Output: t2.unique1, t2.unique2
+   ->  Hash Left Join
+         Output: t2.unique1, t2.unique2
+         Hash Cond: (t1.unique1 = t2.unique1)
+         ->  Index Only Scan using tenk1_unique1 on public.tenk1 t1
+               Output: t1.unique1
+         ->  Hash
+               Output: t2.unique1, t2.unique2
+               ->  Seq Scan on public.onek t2
+                     Output: t2.unique1, t2.unique2
+   ->  Materialize
+         ->  Seq Scan on public.int8_tbl t3
+(13 rows)
+
+drop function f_field_select(t onek);
 --
 -- test extraction of restriction OR clauses from join OR clause
 -- (we used to only do this for indexable clauses)
@@ -6986,6 +7066,33 @@ select * from
    ->  Result
          Output: (COALESCE((COALESCE(b.q2, '42'::bigint)), d.q2))
 (24 rows)
+
+-- another case requiring nested PlaceHolderVars
+explain (verbose, costs off)
+select * from
+  (select 0 as val0) as ss0
+  left join (select 1 as val) as ss1 on true
+  left join lateral (select ss1.val as val_filtered where false) as ss2 on true;
+           QUERY PLAN           
+--------------------------------
+ Nested Loop Left Join
+   Output: 0, (1), ((1))
+   Join Filter: false
+   ->  Result
+         Output: 1
+   ->  Result
+         Output: (1)
+         One-Time Filter: false
+(8 rows)
+
+select * from
+  (select 0 as val0) as ss0
+  left join (select 1 as val) as ss1 on true
+  left join lateral (select ss1.val as val_filtered where false) as ss2 on true;
+ val0 | val | val_filtered 
+------+-----+--------------
+    0 |   1 |             
+(1 row)
 
 -- case that breaks the old ph_may_need optimization
 explain (verbose, costs off)

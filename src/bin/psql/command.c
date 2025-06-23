@@ -471,7 +471,7 @@ exec_command_bind(PsqlScanState scan_state, bool active_branch)
 		int			nparams = 0;
 		int			nalloc = 0;
 
-		pset.bind_params = NULL;
+		clean_bind_state();
 
 		while ((opt = psql_scan_slash_option(scan_state, OT_NORMAL, NULL, false)))
 		{
@@ -5167,6 +5167,10 @@ do_shell(const char *command)
  *
  * We break this out of exec_command to avoid having to plaster "volatile"
  * onto a bunch of exec_command's variables to silence stupider compilers.
+ *
+ * "sleep" is the amount of time to sleep during each loop, measured in
+ * seconds.  The internals of this function should use "sleep_ms" for
+ * precise sleep time calculations.
  */
 static bool
 do_watch(PQExpBuffer query_buf, double sleep, int iter)
@@ -5292,10 +5296,10 @@ do_watch(PQExpBuffer query_buf, double sleep, int iter)
 
 		if (user_title)
 			snprintf(title, title_len, _("%s\t%s (every %gs)\n"),
-					 user_title, timebuf, sleep);
+					 user_title, timebuf, sleep_ms / 1000.0);
 		else
 			snprintf(title, title_len, _("%s (every %gs)\n"),
-					 timebuf, sleep);
+					 timebuf, sleep_ms / 1000.0);
 		myopt.title = title;
 
 		/* Run the query and print out the result */
@@ -5315,7 +5319,8 @@ do_watch(PQExpBuffer query_buf, double sleep, int iter)
 		if (pagerpipe && ferror(pagerpipe))
 			break;
 
-		if (sleep == 0)
+		/* Tight loop, no wait needed */
+		if (sleep_ms == 0)
 			continue;
 
 #ifdef WIN32

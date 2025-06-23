@@ -77,6 +77,15 @@ SELECT 1_000.;
 SELECT .000_005;
 SELECT 1_000.5e0_1;
 
+DO $$
+DECLARE
+  i int;
+BEGIN
+  FOR i IN 1_001..1_003 LOOP
+    RAISE NOTICE 'i = %', i;
+  END LOOP;
+END $$;
+
 -- error cases
 SELECT _100;
 SELECT 100_;
@@ -88,6 +97,7 @@ SELECT 1_000._5;
 SELECT 1_000.5_;
 SELECT 1_000.5e_1;
 
+PREPARE p1 AS SELECT $0_1;
 
 --
 -- Test implicit type conversions

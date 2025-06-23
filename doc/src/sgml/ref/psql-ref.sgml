@@ -540,7 +540,7 @@ EOF
     </varlistentry>
 
     <varlistentry id="app-psql-option-no-psqlrc">
-      <term><option>-X,</option></term>
+      <term><option>-X</option></term>
       <term><option>--no-psqlrc</option></term>
       <listitem>
       <para>
@@ -1119,6 +1119,10 @@ INSERT INTO tbl1 VALUES ($1, $2) \bind 'first value' 'second value' \g
         destination, because all data must pass through the client/server
         connection.  For large amounts of data the <acronym>SQL</acronym>
         command might be preferable.
+        Also, because of this pass-through method, <literal>\copy
+        ... from</literal> in <acronym>CSV</acronym> mode will erroneously
+        treat a <literal>\.</literal> data value alone on a line as an
+        end-of-input marker.
         </para>
         </tip>
 
@@ -2979,7 +2983,7 @@ lo_import 152801
           </indexterm>
           writes column values separated by commas, applying the quoting
           rules described in
-          <ulink url="https://tools.ietf.org/html/rfc4180">RFC 4180</ulink>.
+          <ulink url="https://datatracker.ietf.org/doc/html/rfc4180">RFC 4180</ulink>.
           This output is compatible with the CSV format of the server's
           <command>COPY</command> command.
           A header line with column names is generated unless

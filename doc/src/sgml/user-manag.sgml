@@ -103,11 +103,10 @@ SELECT rolname FROM pg_roles WHERE rolcanlogin;
   <para>
    In order to bootstrap the database system, a freshly initialized
    system always contains one predefined login-capable role. This role
-   is always a <quote>superuser</quote>, and by default it will have
+   is always a <quote>superuser</quote>, and it will have
    the same name as the operating system user that initialized the
-   database cluster, unless another name is specified while
-   running <command>initdb</command>.
-   It is common, but not required, to arrange for this role to be named
+   database cluster with <command>initdb</command> unless a different name
+   is specified.  This role is often named
    <literal>postgres</literal>. In order to create more roles you
    first have to connect as this initial role.
   </para>
@@ -410,10 +409,10 @@ REVOKE <replaceable>group_role</replaceable> FROM <replaceable>role1</replaceabl
    than the original login role, and any database objects created are
    considered owned by the group role not the login role.  Second, member
    roles that have been granted membership with the
-   <literal>INHERIT</literal> option automatically have use
-   of the privileges of those roles, including any
-   privileges inherited by those roles.
-   As an example, suppose we have done:
+   <literal>INHERIT</literal> option automatically have use of the
+   privileges of those directly or indirectly a member of, though the
+   chain stops at memberships lacking the inherit option.  As an example,
+   suppose we have done:
 <programlisting>
 CREATE ROLE joe LOGIN;
 CREATE ROLE admin;

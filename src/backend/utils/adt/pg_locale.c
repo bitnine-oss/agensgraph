@@ -57,6 +57,7 @@
 #include "access/htup_details.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_control.h"
+#include "common/string.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
@@ -80,6 +81,10 @@
 #ifdef WIN32
 #include <shlwapi.h>
 #endif
+
+/* Error triggered for locale-sensitive subroutines */
+#define		PGLOCALE_SUPPORT_ERROR(provider) \
+	elog(ERROR, "unsupported collprovider for %s: %c", __func__, provider)
 
 /*
  * This should be large enough that most strings will fit, but small enough
@@ -277,6 +282,16 @@ check_locale(int category, const char *locale, char **canonname)
 	char	   *save;
 	char	   *res;
 
+	/* Don't let Windows' non-ASCII locale names in. */
+	if (!pg_is_ascii(locale))
+	{
+		ereport(WARNING,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("locale name \"%s\" contains non-ASCII characters",
+						locale)));
+		return false;
+	}
+
 	if (canonname)
 		*canonname = NULL;		/* in case of failure */
 
@@ -298,6 +313,18 @@ check_locale(int category, const char *locale, char **canonname)
 	if (!setlocale(category, save))
 		elog(WARNING, "failed to restore old locale \"%s\"", save);
 	pfree(save);
+
+	/* Don't let Windows' non-ASCII locale names out. */
+	if (canonname && *canonname && !pg_is_ascii(*canonname))
+	{
+		ereport(WARNING,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("locale name \"%s\" contains non-ASCII characters",
+						*canonname)));
+		pfree(*canonname);
+		*canonname = NULL;
+		return false;
+	}
 
 	return (res != NULL);
 }
@@ -1679,7 +1706,7 @@ get_collation_actual_version(char collprovider, const char *collcollate)
 		locale_t	loc;
 
 		/* Look up FreeBSD collation version. */
-		loc = newlocale(LC_COLLATE, collcollate, NULL);
+		loc = newlocale(LC_COLLATE_MASK, collcollate, NULL);
 		if (loc)
 		{
 			collversion =
@@ -2016,7 +2043,7 @@ pg_strcoll(const char *arg1, const char *arg2, pg_locale_t locale)
 #endif
 	else
 		/* shouldn't happen */
-		elog(ERROR, "unsupported collprovider: %c", locale->provider);
+		PGLOCALE_SUPPORT_ERROR(locale->provider);
 
 	return result;
 }
@@ -2052,7 +2079,7 @@ pg_strncoll(const char *arg1, size_t len1, const char *arg2, size_t len2,
 #endif
 	else
 		/* shouldn't happen */
-		elog(ERROR, "unsupported collprovider: %c", locale->provider);
+		PGLOCALE_SUPPORT_ERROR(locale->provider);
 
 	return result;
 }
@@ -2073,7 +2100,7 @@ pg_strxfrm_libc(char *dest, const char *src, size_t destsize,
 		return strxfrm(dest, src, destsize);
 #else
 	/* shouldn't happen */
-	elog(ERROR, "unsupported collprovider: %c", locale->provider);
+	PGLOCALE_SUPPORT_ERROR(locale->provider);
 	return 0;					/* keep compiler quiet */
 #endif
 }
@@ -2269,7 +2296,7 @@ pg_strxfrm_enabled(pg_locale_t locale)
 		return true;
 	else
 		/* shouldn't happen */
-		elog(ERROR, "unsupported collprovider: %c", locale->provider);
+		PGLOCALE_SUPPORT_ERROR(locale->provider);
 
 	return false;				/* keep compiler quiet */
 }
@@ -2284,9 +2311,9 @@ pg_strxfrm_enabled(pg_locale_t locale)
  * The provided 'src' must be nul-terminated. If 'destsize' is zero, 'dest'
  * may be NULL.
  *
- * Returns the number of bytes needed to store the transformed string,
- * excluding the terminating nul byte. If the value returned is 'destsize' or
- * greater, the resulting contents of 'dest' are undefined.
+ * Returns the number of bytes needed (or more) to store the transformed
+ * string, excluding the terminating nul byte. If the value returned is
+ * 'destsize' or greater, the resulting contents of 'dest' are undefined.
  */
 size_t
 pg_strxfrm(char *dest, const char *src, size_t destsize, pg_locale_t locale)
@@ -2301,7 +2328,7 @@ pg_strxfrm(char *dest, const char *src, size_t destsize, pg_locale_t locale)
 #endif
 	else
 		/* shouldn't happen */
-		elog(ERROR, "unsupported collprovider: %c", locale->provider);
+		PGLOCALE_SUPPORT_ERROR(locale->provider);
 
 	return result;
 }
@@ -2316,9 +2343,9 @@ pg_strxfrm(char *dest, const char *src, size_t destsize, pg_locale_t locale)
  * 'src' does not need to be nul-terminated. If 'destsize' is zero, 'dest' may
  * be NULL.
  *
- * Returns the number of bytes needed to store the transformed string,
- * excluding the terminating nul byte. If the value returned is 'destsize' or
- * greater, the resulting contents of 'dest' are undefined.
+ * Returns the number of bytes needed (or more) to store the transformed
+ * string, excluding the terminating nul byte. If the value returned is
+ * 'destsize' or greater, the resulting contents of 'dest' are undefined.
  *
  * This function may need to nul-terminate the argument for libc functions;
  * so if the caller already has a nul-terminated string, it should call
@@ -2338,7 +2365,7 @@ pg_strnxfrm(char *dest, size_t destsize, const char *src, size_t srclen,
 #endif
 	else
 		/* shouldn't happen */
-		elog(ERROR, "unsupported collprovider: %c", locale->provider);
+		PGLOCALE_SUPPORT_ERROR(locale->provider);
 
 	return result;
 }
@@ -2356,7 +2383,7 @@ pg_strxfrm_prefix_enabled(pg_locale_t locale)
 		return true;
 	else
 		/* shouldn't happen */
-		elog(ERROR, "unsupported collprovider: %c", locale->provider);
+		PGLOCALE_SUPPORT_ERROR(locale->provider);
 
 	return false;				/* keep compiler quiet */
 }
@@ -2380,16 +2407,14 @@ pg_strxfrm_prefix(char *dest, const char *src, size_t destsize,
 {
 	size_t		result = 0;		/* keep compiler quiet */
 
-	if (!locale || locale->provider == COLLPROVIDER_LIBC)
-		elog(ERROR, "collprovider '%c' does not support pg_strxfrm_prefix()",
-			 locale->provider);
+	if (!locale)
+		PGLOCALE_SUPPORT_ERROR(COLLPROVIDER_LIBC);
 #ifdef USE_ICU
 	else if (locale->provider == COLLPROVIDER_ICU)
 		result = pg_strnxfrm_prefix_icu(dest, src, -1, destsize, locale);
 #endif
 	else
-		/* shouldn't happen */
-		elog(ERROR, "unsupported collprovider: %c", locale->provider);
+		PGLOCALE_SUPPORT_ERROR(locale->provider);
 
 	return result;
 }
@@ -2417,16 +2442,14 @@ pg_strnxfrm_prefix(char *dest, size_t destsize, const char *src,
 {
 	size_t		result = 0;		/* keep compiler quiet */
 
-	if (!locale || locale->provider == COLLPROVIDER_LIBC)
-		elog(ERROR, "collprovider '%c' does not support pg_strnxfrm_prefix()",
-			 locale->provider);
+	if (!locale)
+		PGLOCALE_SUPPORT_ERROR(COLLPROVIDER_LIBC);
 #ifdef USE_ICU
 	else if (locale->provider == COLLPROVIDER_ICU)
 		result = pg_strnxfrm_prefix_icu(dest, src, -1, destsize, locale);
 #endif
 	else
-		/* shouldn't happen */
-		elog(ERROR, "unsupported collprovider: %c", locale->provider);
+		PGLOCALE_SUPPORT_ERROR(locale->provider);
 
 	return result;
 }

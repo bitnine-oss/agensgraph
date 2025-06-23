@@ -1,9 +1,9 @@
 --
 -- HOROLOGY
 --
-SET DateStyle = 'Postgres, MDY';
 
-SHOW TimeZone;  -- Many of these tests depend on the prevailing setting
+SHOW TimeZone;  -- Many of these tests depend on the prevailing settings
+SHOW DateStyle;
 
 --
 -- Test various input formats
@@ -59,6 +59,35 @@ SELECT time with time zone 'T040506.789 -08';
 SELECT time with time zone 'T040506.789 America/Los_Angeles';
 SELECT time with time zone '2001-12-27 T040506.789 America/Los_Angeles';
 SELECT time with time zone 'J2452271 T040506.789 America/Los_Angeles';
+-- Check time formats required by ISO 8601
+SELECT time without time zone '040506.07';
+SELECT time without time zone '04:05:06.07';
+SELECT time without time zone '040506';
+SELECT time without time zone '04:05:06';
+SELECT time without time zone '0405';
+SELECT time without time zone '04:05';
+SELECT time without time zone 'T040506.07';
+SELECT time without time zone 'T04:05:06.07';
+SELECT time without time zone 'T040506';
+SELECT time without time zone 'T04:05:06';
+SELECT time without time zone 'T0405';
+SELECT time without time zone 'T04:05';
+-- 8601 says "Thh" is allowed, but we intentionally reject it as too vague
+SELECT time without time zone 'T04';
+SELECT time with time zone '040506.07+08';
+SELECT time with time zone '04:05:06.07+08';
+SELECT time with time zone '040506+08';
+SELECT time with time zone '04:05:06+08';
+SELECT time with time zone '0405+08';
+SELECT time with time zone '04:05+08';
+SELECT time with time zone 'T040506.07+08';
+SELECT time with time zone 'T04:05:06.07+08';
+SELECT time with time zone 'T040506+08';
+SELECT time with time zone 'T04:05:06+08';
+SELECT time with time zone 'T0405+08';
+SELECT time with time zone 'T04:05+08';
+-- 8601 says "Thh" is allowed, but we intentionally reject it as too vague
+SELECT time with time zone 'T04+08';
 SET DateStyle = 'Postgres, MDY';
 -- Check Julian dates BC
 SELECT date 'J1520447' AS "Confucius' Birthday";
@@ -120,6 +149,8 @@ SELECT timestamp without time zone '1999-12-01' + interval '1 month - 1 second' 
 SELECT timestamp without time zone 'Jan 1, 4713 BC' + interval '106000000 days' AS "Feb 23, 285506";
 SELECT timestamp without time zone 'Jan 1, 4713 BC' + interval '107000000 days' AS "Jan 20, 288244";
 SELECT timestamp without time zone 'Jan 1, 4713 BC' + interval '109203489 days' AS "Dec 31, 294276";
+SELECT timestamp without time zone '2000-01-01' - interval '2483590 days' AS "out of range";
+SELECT timestamp without time zone '294276-12-31 23:59:59' + interval '9223372036854775807 microseconds' AS "out of range";
 SELECT timestamp without time zone '12/31/294276' - timestamp without time zone '12/23/1999' AS "106751991 Days";
 
 -- Shorthand values
@@ -151,6 +182,8 @@ SELECT timestamp with time zone '1996-03-01' - interval '1 second' AS "Feb 29";
 SELECT timestamp with time zone '1999-03-01' - interval '1 second' AS "Feb 28";
 SELECT timestamp with time zone '2000-03-01' - interval '1 second' AS "Feb 29";
 SELECT timestamp with time zone '1999-12-01' + interval '1 month - 1 second' AS "Dec 31";
+SELECT timestamp with time zone '2000-01-01' - interval '2483590 days' AS "out of range";
+SELECT timestamp with time zone '294276-12-31 23:59:59 UTC' + interval '9223372036854775807 microseconds' AS "out of range";
 
 SELECT (timestamp with time zone 'today' = (timestamp with time zone 'yesterday' + interval '1 day')) as "True";
 SELECT (timestamp with time zone 'today' = (timestamp with time zone 'tomorrow' - interval '1 day')) as "True";

@@ -334,7 +334,8 @@ add_paths_to_joinrel(PlannerInfo *root,
 	/*
 	 * createplan.c does not currently support handling of pseudoconstant
 	 * clauses assigned to joins pushed down by extensions; check if the
-	 * restrictlist has such clauses, and if so, disallow pushing down joins.
+	 * restrictlist has such clauses, and if not, allow them to consider
+	 * pushing down joins.
 	 */
 	if ((joinrel->fdwroutine &&
 		 joinrel->fdwroutine->GetForeignJoinPaths) ||
@@ -355,7 +356,10 @@ add_paths_to_joinrel(PlannerInfo *root,
 												 jointype, &extra);
 
 	/*
-	 * 6. Finally, give extensions a chance to manipulate the path list.
+	 * 6. Finally, give extensions a chance to manipulate the path list.  They
+	 * could add new paths (such as CustomPaths) by calling add_path(), or
+	 * add_partial_path() if parallel aware.  They could also delete or modify
+	 * paths added by the core code.
 	 */
 	if (set_join_pathlist_hook &&
 		consider_join_pushdown)
@@ -736,7 +740,7 @@ get_memoize_path(PlannerInfo *root, RelOptInfo *innerrel,
 	 */
 	if (extra->inner_unique &&
 		(inner_path->param_info == NULL ||
-		 list_length(inner_path->param_info->ppi_clauses) <
+		 bms_num_members(inner_path->param_info->ppi_serials) <
 		 list_length(extra->restrictlist)))
 		return NULL;
 

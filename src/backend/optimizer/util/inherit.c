@@ -386,8 +386,17 @@ expand_partitioned_rtentry(PlannerInfo *root, RelOptInfo *relinfo,
 		Index		childRTindex;
 		RelOptInfo *childrelinfo;
 
-		/* Open rel, acquiring required locks */
-		childrel = table_open(childOID, lockmode);
+		/*
+		 * Open rel, acquiring required locks.  If a partition was recently
+		 * detached and subsequently dropped, then opening it will fail.  In
+		 * this case, behave as though the partition had been pruned.
+		 */
+		childrel = try_table_open(childOID, lockmode);
+		if (childrel == NULL)
+		{
+			relinfo->live_parts = bms_del_member(relinfo->live_parts, i);
+			continue;
+		}
 
 		/*
 		 * Temporary partitions belonging to other sessions should have been
@@ -457,7 +466,8 @@ expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
 								Index *childRTindex_p)
 {
 	Query	   *parse = root->parse;
-	Oid			parentOID = RelationGetRelid(parentrel);
+	Oid			parentOID PG_USED_FOR_ASSERTS_ONLY =
+		RelationGetRelid(parentrel);
 	Oid			childOID = RelationGetRelid(childrel);
 	RangeTblEntry *childrte;
 	Index		childRTindex;
@@ -494,13 +504,8 @@ expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
 		childrte->inh = false;
 	childrte->securityQuals = NIL;
 
-	/*
-	 * No permission checking for the child RTE unless it's the parent
-	 * relation in its child role, which only applies to traditional
-	 * inheritance.
-	 */
-	if (childOID != parentOID)
-		childrte->perminfoindex = 0;
+	/* No permission checking for child RTEs. */
+	childrte->perminfoindex = 0;
 
 	/* Link not-yet-fully-filled child RTE into data structures */
 	parse->rtable = lappend(parse->rtable, childrte);

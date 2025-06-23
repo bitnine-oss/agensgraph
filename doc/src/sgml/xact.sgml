@@ -122,7 +122,7 @@
    Subtransactions can be started explicitly using the
    <command>SAVEPOINT</command> command, but can also be started in
    other ways, such as PL/pgSQL's <command>EXCEPTION</command> clause.
-   PL/Python and PL/TCL also support explicit subtransactions.
+   PL/Python and PL/Tcl also support explicit subtransactions.
    Subtransactions can also be started from other subtransactions.
    The top-level transaction and its child subtransactions form a
    hierarchy or tree, which is why we refer to the main transaction as
@@ -156,7 +156,7 @@
   <para>
    When a top-level transaction with an xid commits, all of its
    subcommitted child subtransactions are also persistently recorded
-   as committed in the <filename>pg_xact</filename> directory.  If the
+   as committed in the <filename>pg_xact</filename> subdirectory.  If the
    top-level transaction aborts, all its subtransactions are also aborted,
    even if they were subcommitted.
   </para>

@@ -13,7 +13,16 @@ set -e
 
 packages="$@"
 
-macports_url="https://github.com/macports/macports-base/releases/download/v2.8.1/MacPorts-2.8.1-13-Ventura.pkg"
+macos_major_version="` sw_vers -productVersion | sed 's/\..*//' `"
+echo "macOS major version: $macos_major_version"
+
+# Scan the available MacPorts releases to find one that matches the running
+# macOS release.
+macports_release_list_url="https://api.github.com/repos/macports/macports-base/releases"
+macports_version_pattern="2\.10\.1"
+macports_url="$( curl -s $macports_release_list_url | grep "\"https://github.com/macports/macports-base/releases/download/v$macports_version_pattern/MacPorts-$macports_version_pattern-$macos_major_version-[A-Za-z]*\.pkg\"" | sed 's/.*: "//;s/".*//' | head -1 )"
+echo "MacPorts package URL: $macports_url"
+
 cache_dmg="macports.hfs.dmg"
 
 if [ "$CIRRUS_CI" != "true" ]; then
