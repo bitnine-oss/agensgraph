@@ -140,6 +140,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "access/genam.h"
 #include "access/table.h"
 #include "access/tableam.h"
 #include "access/twophase.h"
@@ -410,7 +411,7 @@ static void apply_handle_delete_internal(ApplyExecutionData *edata,
 										 ResultRelInfo *relinfo,
 										 TupleTableSlot *remoteslot,
 										 Oid localindexoid);
-static bool FindReplTupleInLocalRel(EState *estate, Relation localrel,
+static bool FindReplTupleInLocalRel(ApplyExecutionData *edata, Relation localrel,
 									LogicalRepRelation *remoterel,
 									Oid localidxoid,
 									TupleTableSlot *remoteslot,
@@ -434,20 +435,6 @@ static inline void reset_apply_error_context_info(void);
 
 static TransApplyAction get_transaction_apply_action(TransactionId xid,
 													 ParallelApplyWorkerInfo **winfo);
-
-/*
- * Return the name of the logical replication worker.
- */
-static const char *
-get_worker_name(void)
-{
-	if (am_tablesync_worker())
-		return _("logical replication table synchronization worker");
-	else if (am_parallel_apply_worker())
-		return _("logical replication parallel apply worker");
-	else
-		return _("logical replication apply worker");
-}
 
 /*
  * Form the origin name for the subscription.
@@ -2677,7 +2664,7 @@ apply_handle_update_internal(ApplyExecutionData *edata,
 	EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1, NIL);
 	ExecOpenIndices(relinfo, false);
 
-	found = FindReplTupleInLocalRel(estate, localrel,
+	found = FindReplTupleInLocalRel(edata, localrel,
 									&relmapentry->remoterel,
 									localindexoid,
 									remoteslot, &localslot);
@@ -2830,7 +2817,7 @@ apply_handle_delete_internal(ApplyExecutionData *edata,
 	EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1, NIL);
 	ExecOpenIndices(relinfo, false);
 
-	found = FindReplTupleInLocalRel(estate, localrel, remoterel, localindexoid,
+	found = FindReplTupleInLocalRel(edata, localrel, remoterel, localindexoid,
 									remoteslot, &localslot);
 
 	/* If found delete it. */
@@ -2869,12 +2856,13 @@ apply_handle_delete_internal(ApplyExecutionData *edata,
  * Local tuple, if found, is returned in '*localslot'.
  */
 static bool
-FindReplTupleInLocalRel(EState *estate, Relation localrel,
+FindReplTupleInLocalRel(ApplyExecutionData *edata, Relation localrel,
 						LogicalRepRelation *remoterel,
 						Oid localidxoid,
 						TupleTableSlot *remoteslot,
 						TupleTableSlot **localslot)
 {
+	EState	   *estate = edata->estate;
 	bool		found;
 
 	/*
@@ -2889,9 +2877,21 @@ FindReplTupleInLocalRel(EState *estate, Relation localrel,
 		   (remoterel->replident == REPLICA_IDENTITY_FULL));
 
 	if (OidIsValid(localidxoid))
+	{
+#ifdef USE_ASSERT_CHECKING
+		Relation	idxrel = index_open(localidxoid, AccessShareLock);
+
+		/* Index must be PK, RI, or usable for REPLICA IDENTITY FULL tables */
+		Assert(GetRelationIdentityOrPK(idxrel) == localidxoid ||
+			   IsIndexUsableForReplicaIdentityFull(BuildIndexInfo(idxrel),
+												   edata->targetRel->attrmap));
+		index_close(idxrel, AccessShareLock);
+#endif
+
 		found = RelationFindReplTupleByIndex(localrel, localidxoid,
 											 LockTupleExclusive,
 											 remoteslot, *localslot);
+	}
 	else
 		found = RelationFindReplTupleSeq(localrel, LockTupleExclusive,
 										 remoteslot, *localslot);
@@ -3009,7 +3009,7 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 				bool		found;
 
 				/* Get the matching local tuple from the partition. */
-				found = FindReplTupleInLocalRel(estate, partrel,
+				found = FindReplTupleInLocalRel(edata, partrel,
 												&part_entry->remoterel,
 												part_entry->localindexoid,
 												remoteslot_part, &localslot);
@@ -3381,7 +3381,7 @@ apply_dispatch(StringInfo s)
 		default:
 			ereport(ERROR,
 					(errcode(ERRCODE_PROTOCOL_VIOLATION),
-					 errmsg("invalid logical replication message type \"%c\"", action)));
+					 errmsg("invalid logical replication message type \"??? (%d)\"", action)));
 	}
 
 	/* Reset the current command */
@@ -3904,9 +3904,8 @@ maybe_reread_subscription(void)
 	if (!newsub)
 	{
 		ereport(LOG,
-		/* translator: first %s is the name of logical replication worker */
-				(errmsg("%s for subscription \"%s\" will stop because the subscription was removed",
-						get_worker_name(), MySubscription->name)));
+				(errmsg("logical replication worker for subscription \"%s\" will stop because the subscription was removed",
+						MySubscription->name)));
 
 		/* Ensure we remove no-longer-useful entry for worker's start time */
 		if (!am_tablesync_worker() && !am_parallel_apply_worker())
@@ -3918,9 +3917,8 @@ maybe_reread_subscription(void)
 	if (!newsub->enabled)
 	{
 		ereport(LOG,
-		/* translator: first %s is the name of logical replication worker */
-				(errmsg("%s for subscription \"%s\" will stop because the subscription was disabled",
-						get_worker_name(), MySubscription->name)));
+				(errmsg("logical replication worker for subscription \"%s\" will stop because the subscription was disabled",
+						MySubscription->name)));
 
 		apply_worker_exit();
 	}
@@ -3954,9 +3952,8 @@ maybe_reread_subscription(void)
 							MySubscription->name)));
 		else
 			ereport(LOG,
-			/* translator: first %s is the name of logical replication worker */
-					(errmsg("%s for subscription \"%s\" will restart because of a parameter change",
-							get_worker_name(), MySubscription->name)));
+					(errmsg("logical replication worker for subscription \"%s\" will restart because of a parameter change",
+							MySubscription->name)));
 
 		apply_worker_exit();
 	}
@@ -4478,9 +4475,8 @@ InitializeApplyWorker(void)
 	if (!MySubscription)
 	{
 		ereport(LOG,
-		/* translator: %s is the name of logical replication worker */
-				(errmsg("%s for subscription %u will not start because the subscription was removed during startup",
-						get_worker_name(), MyLogicalRepWorker->subid)));
+				(errmsg("logical replication worker for subscription %u will not start because the subscription was removed during startup",
+						MyLogicalRepWorker->subid)));
 
 		/* Ensure we remove no-longer-useful entry for worker's start time */
 		if (!am_tablesync_worker() && !am_parallel_apply_worker())
@@ -4494,9 +4490,8 @@ InitializeApplyWorker(void)
 	if (!MySubscription->enabled)
 	{
 		ereport(LOG,
-		/* translator: first %s is the name of logical replication worker */
-				(errmsg("%s for subscription \"%s\" will not start because the subscription was disabled during startup",
-						get_worker_name(), MySubscription->name)));
+				(errmsg("logical replication worker for subscription \"%s\" will not start because the subscription was disabled during startup",
+						MySubscription->name)));
 
 		apply_worker_exit();
 	}
@@ -4517,9 +4512,8 @@ InitializeApplyWorker(void)
 						get_rel_name(MyLogicalRepWorker->relid))));
 	else
 		ereport(LOG,
-		/* translator: first %s is the name of logical replication worker */
-				(errmsg("%s for subscription \"%s\" has started",
-						get_worker_name(), MySubscription->name)));
+				(errmsg("logical replication apply worker for subscription \"%s\" has started",
+						MySubscription->name)));
 
 	CommitTransactionCommand();
 }

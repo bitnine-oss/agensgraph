@@ -647,17 +647,6 @@ heapgettup_advance_block(HeapScanDesc scan, BlockNumber block, ScanDirection dir
 			if (block >= scan->rs_nblocks)
 				block = 0;
 
-			/* we're done if we're back at where we started */
-			if (block == scan->rs_startblock)
-				return InvalidBlockNumber;
-
-			/* check if the limit imposed by heap_setscanlimits() is met */
-			if (scan->rs_numblocks != InvalidBlockNumber)
-			{
-				if (--scan->rs_numblocks == 0)
-					return InvalidBlockNumber;
-			}
-
 			/*
 			 * Report our new scan position for synchronization purposes. We
 			 * don't do that when moving backwards, however. That would just
@@ -672,6 +661,17 @@ heapgettup_advance_block(HeapScanDesc scan, BlockNumber block, ScanDirection dir
 			 */
 			if (scan->rs_base.rs_flags & SO_ALLOW_SYNC)
 				ss_report_location(scan->rs_base.rs_rd, block);
+
+			/* we're done if we're back at where we started */
+			if (block == scan->rs_startblock)
+				return InvalidBlockNumber;
+
+			/* check if the limit imposed by heap_setscanlimits() is met */
+			if (scan->rs_numblocks != InvalidBlockNumber)
+			{
+				if (--scan->rs_numblocks == 0)
+					return InvalidBlockNumber;
+			}
 
 			return block;
 		}
@@ -1776,6 +1776,7 @@ GetBulkInsertState(void)
 	bistate->current_buf = InvalidBuffer;
 	bistate->next_free = InvalidBlockNumber;
 	bistate->last_free = InvalidBlockNumber;
+	bistate->already_extended_by = 0;
 	return bistate;
 }
 

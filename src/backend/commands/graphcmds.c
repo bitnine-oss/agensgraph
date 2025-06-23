@@ -611,7 +611,7 @@ DisableIndexCommand(DisableIndexStmt *disableStmt)
 	RangeVar   *relation = disableStmt->relation;
 
 	relid = RangeVarGetRelidExtended(relation, ShareLock, 0,
-									 RangeVarCallbackMaintainsTable, NULL);
+									 RangeVarCallbackOwnsTable, NULL);
 
 	if (!RangeVarIsLabel(relation))
 		elog(ERROR, "invalid DISABLE INDEX");

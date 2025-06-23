@@ -3210,27 +3210,16 @@ makeJsonByteaToTextConversion(Node *expr, JsonFormat *format, int location)
 }
 
 /*
- * Make a CaseTestExpr node.
- */
-static Node *
-makeCaseTestExpr(Node *expr)
-{
-	CaseTestExpr *placeholder = makeNode(CaseTestExpr);
-
-	placeholder->typeId = exprType(expr);
-	placeholder->typeMod = exprTypmod(expr);
-	placeholder->collation = exprCollation(expr);
-
-	return (Node *) placeholder;
-}
-
-/*
  * Transform JSON value expression using specified input JSON format or
  * default format otherwise.
+ *
+ * Returned expression is either ve->raw_expr coerced to text (if needed) or
+ * a JsonValueExpr with formatted_expr set to the coerced copy of raw_expr
+ * if the specified format requires it.
  */
 static Node *
-transformJsonValueExpr(ParseState *pstate, JsonValueExpr *ve,
-					   JsonFormatType default_format)
+transformJsonValueExpr(ParseState *pstate, const char *constructName,
+					   JsonValueExpr *ve, JsonFormatType default_format)
 {
 	Node	   *expr = transformExprRecurse(pstate, (Node *) ve->raw_expr);
 	Node	   *rawexpr;
@@ -3240,12 +3229,8 @@ transformJsonValueExpr(ParseState *pstate, JsonValueExpr *ve,
 	char		typcategory;
 	bool		typispreferred;
 
-	/*
-	 * Using JSON_VALUE here is slightly bogus: perhaps we need to be passed a
-	 * JsonConstructorType so that we can use one of JSON_OBJECTAGG, etc.
-	 */
 	if (exprType(expr) == UNKNOWNOID)
-		expr = coerce_to_specific_type(pstate, expr, TEXTOID, "JSON_VALUE");
+		expr = coerce_to_specific_type(pstate, expr, TEXTOID, constructName);
 
 	rawexpr = expr;
 	exprtype = exprType(expr);
@@ -3262,12 +3247,7 @@ transformJsonValueExpr(ParseState *pstate, JsonValueExpr *ve,
 					parser_errposition(pstate, ve->format->location));
 
 		if (exprtype == JSONOID || exprtype == JSONBOID)
-		{
 			format = JS_FORMAT_DEFAULT; /* do not format json[b] types */
-			ereport(WARNING,
-					errmsg("FORMAT JSON has no effect for json and jsonb types"),
-					parser_errposition(pstate, ve->format->location));
-		}
 		else
 			format = ve->format->format_type;
 	}
@@ -3279,17 +3259,14 @@ transformJsonValueExpr(ParseState *pstate, JsonValueExpr *ve,
 	if (format != JS_FORMAT_DEFAULT)
 	{
 		Oid			targettype = format == JS_FORMAT_JSONB ? JSONBOID : JSONOID;
-		Node	   *orig = makeCaseTestExpr(expr);
 		Node	   *coerced;
-
-		expr = orig;
 
 		if (exprtype != BYTEAOID && typcategory != TYPCATEGORY_STRING)
 			ereport(ERROR,
 					errcode(ERRCODE_DATATYPE_MISMATCH),
-					errmsg(ve->format->format_type == JS_FORMAT_DEFAULT ?
-						   "cannot use non-string types with implicit FORMAT JSON clause" :
-						   "cannot use non-string types with explicit FORMAT JSON clause"),
+					ve->format->format_type == JS_FORMAT_DEFAULT ?
+					errmsg("cannot use non-string types with implicit FORMAT JSON clause") :
+					errmsg("cannot use non-string types with explicit FORMAT JSON clause"),
 					parser_errposition(pstate, ve->format->location >= 0 ?
 									   ve->format->location : location));
 
@@ -3321,7 +3298,7 @@ transformJsonValueExpr(ParseState *pstate, JsonValueExpr *ve,
 			coerced = (Node *) fexpr;
 		}
 
-		if (coerced == orig)
+		if (coerced == expr)
 			expr = rawexpr;
 		else
 		{
@@ -3332,6 +3309,10 @@ transformJsonValueExpr(ParseState *pstate, JsonValueExpr *ve,
 			expr = (Node *) ve;
 		}
 	}
+
+	/* If returning a JsonValueExpr, formatted_expr must have been set. */
+	Assert(!IsA(expr, JsonValueExpr) ||
+		   ((JsonValueExpr *) expr)->formatted_expr != NULL);
 
 	return expr;
 }
@@ -3548,8 +3529,22 @@ makeJsonConstructorExpr(ParseState *pstate, JsonConstructorType type,
 	jsctor->absent_on_null = absent_on_null;
 	jsctor->location = location;
 
+	/*
+	 * Coerce to the RETURNING type and format, if needed.  We abuse
+	 * CaseTestExpr here as placeholder to pass the result of either
+	 * evaluating 'fexpr' or whatever is produced by ExecEvalJsonConstructor()
+	 * that is of type JSON or JSONB to the coercion function.
+	 */
 	if (fexpr)
-		placeholder = makeCaseTestExpr((Node *) fexpr);
+	{
+		CaseTestExpr *cte = makeNode(CaseTestExpr);
+
+		cte->typeId = exprType((Node *) fexpr);
+		cte->typeMod = exprTypmod((Node *) fexpr);
+		cte->collation = exprCollation((Node *) fexpr);
+
+		placeholder = (Node *) cte;
+	}
 	else
 	{
 		CaseTestExpr *cte = makeNode(CaseTestExpr);
@@ -3595,7 +3590,8 @@ transformJsonObjectConstructor(ParseState *pstate, JsonObjectConstructor *ctor)
 		{
 			JsonKeyValue *kv = castNode(JsonKeyValue, lfirst(lc));
 			Node	   *key = transformExprRecurse(pstate, (Node *) kv->key);
-			Node	   *val = transformJsonValueExpr(pstate, kv->value,
+			Node	   *val = transformJsonValueExpr(pstate, "JSON_OBJECT()",
+													 kv->value,
 													 JS_FORMAT_DEFAULT);
 
 			args = lappend(args, key);
@@ -3645,7 +3641,12 @@ transformJsonArrayQueryConstructor(ParseState *pstate,
 								makeString(pstrdup("a")));
 	colref->location = ctor->location;
 
-	agg->arg = makeJsonValueExpr((Expr *) colref, ctor->format);
+	/*
+	 * No formatting necessary, so set formatted_expr to be the same as
+	 * raw_expr.
+	 */
+	agg->arg = makeJsonValueExpr((Expr *) colref, (Expr *) colref,
+								 ctor->format);
 	agg->absent_on_null = ctor->absent_on_null;
 	agg->constructor = makeNode(JsonAggConstructor);
 	agg->constructor->agg_order = NIL;
@@ -3775,7 +3776,9 @@ transformJsonObjectAgg(ParseState *pstate, JsonObjectAgg *agg)
 	Oid			aggtype;
 
 	key = transformExprRecurse(pstate, (Node *) agg->arg->key);
-	val = transformJsonValueExpr(pstate, agg->arg->value, JS_FORMAT_DEFAULT);
+	val = transformJsonValueExpr(pstate, "JSON_OBJECTAGG()",
+								 agg->arg->value,
+								 JS_FORMAT_DEFAULT);
 	args = list_make2(key, val);
 
 	returning = transformJsonConstructorOutput(pstate, agg->constructor->output,
@@ -3831,7 +3834,9 @@ transformJsonArrayAgg(ParseState *pstate, JsonArrayAgg *agg)
 	Oid			aggfnoid;
 	Oid			aggtype;
 
-	arg = transformJsonValueExpr(pstate, agg->arg, JS_FORMAT_DEFAULT);
+	arg = transformJsonValueExpr(pstate, "JSON_ARRAYAGG()",
+								 agg->arg,
+								 JS_FORMAT_DEFAULT);
 
 	returning = transformJsonConstructorOutput(pstate, agg->constructor->output,
 											   list_make1(arg));
@@ -3877,7 +3882,8 @@ transformJsonArrayConstructor(ParseState *pstate, JsonArrayConstructor *ctor)
 		foreach(lc, ctor->exprs)
 		{
 			JsonValueExpr *jsval = castNode(JsonValueExpr, lfirst(lc));
-			Node	   *val = transformJsonValueExpr(pstate, jsval,
+			Node	   *val = transformJsonValueExpr(pstate, "JSON_ARRAY()",
+													 jsval,
 													 JS_FORMAT_DEFAULT);
 
 			args = lappend(args, val);
@@ -3905,13 +3911,11 @@ transformJsonParseArg(ParseState *pstate, Node *jsexpr, JsonFormat *format,
 	{
 		JsonValueExpr *jve;
 
-		expr = makeCaseTestExpr(raw_expr);
+		expr = raw_expr;
 		expr = makeJsonByteaToTextConversion(expr, format, exprLocation(expr));
 		*exprtype = TEXTOID;
 
-		jve = makeJsonValueExpr((Expr *) raw_expr, format);
-
-		jve->formatted_expr = (Expr *) expr;
+		jve = makeJsonValueExpr((Expr *) raw_expr, (Expr *) expr, format);
 		expr = (Node *) jve;
 	}
 	else

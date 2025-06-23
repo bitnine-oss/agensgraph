@@ -196,8 +196,9 @@ make check-world -j8 >/dev/null
    </listitem>
    <listitem>
     <para>
-     Regression tests for the ECPG interface library,
-     located in <filename>src/interfaces/ecpg/test</filename>.
+     Regression tests for the interface libraries,
+     located in <filename>src/interfaces/libpq/test</filename> and
+     <filename>src/interfaces/ecpg/test</filename>.
     </para>
    </listitem>
    <listitem>
@@ -252,11 +253,11 @@ make check-world -j8 >/dev/null
 
   <para>
    Some test suites are not run by default, either because they are not secure
-   to run on a multiuser system or because they require special software.  You
-   can decide which test suites to run additionally by setting the
-   <command>make</command> or environment variable
-   <varname>PG_TEST_EXTRA</varname> to a whitespace-separated list, for
-   example:
+   to run on a multiuser system, because they require special software or
+   because they are resource intensive.  You can decide which test suites to
+   run additionally by setting the <command>make</command> or environment
+   variable <varname>PG_TEST_EXTRA</varname> to a whitespace-separated list,
+   for example:
 <programlisting>
 make check-world PG_TEST_EXTRA='kerberos ldap ssl load_balance'
 </programlisting>
@@ -818,6 +819,8 @@ make check PROVE_TESTS='t/001_test1.pl t/003_test3.pl'
 <programlisting>
 PG_TEST_NOCLEAN=1 make -C src/bin/pg_dump check
 </programlisting>
+    This environment variable also prevents the test's temporary directories
+    from being removed.
    </para>
 
    <para>

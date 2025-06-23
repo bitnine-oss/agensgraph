@@ -651,23 +651,20 @@ static bool has_internal_default_prefix(char *str);
 %type <list>		hash_partbound
 %type <defelt>		hash_partbound_elem
 
+%type <node>	json_format_clause_opt
+				json_value_expr
+				json_output_clause_opt
+				json_name_and_value
+				json_aggregate_func
+%type <list>	json_name_and_value_list
+				json_value_expr_list
+				json_array_aggregate_order_by_clause_opt
+%type <ival>	json_encoding_clause_opt
+				json_predicate_type_constraint
+%type <boolean>	json_key_uniqueness_constraint_opt
+				json_object_constructor_null_clause_opt
+				json_array_constructor_null_clause_opt
 
-%type <node>		json_format_clause_opt
-					json_value_expr
-					json_output_clause_opt
-					json_name_and_value
-					json_aggregate_func
-
-%type <list>		json_name_and_value_list
-					json_value_expr_list
-					json_array_aggregate_order_by_clause_opt
-
-%type <ival>		json_encoding_clause_opt
-					json_predicate_type_constraint
-
-%type <boolean>		json_key_uniqueness_constraint_opt
-					json_object_constructor_null_clause_opt
-					json_array_constructor_null_clause_opt
 
 /* Agens Graph */
 %type <node>	CreateGraphStmt CreateLabelStmt AlterLabelStmt alter_label_cmd
@@ -16634,7 +16631,9 @@ opt_asymmetric: ASYMMETRIC
 json_value_expr:
 			a_expr json_format_clause_opt
 			{
-				$$ = (Node *) makeJsonValueExpr((Expr *) $1, castNode(JsonFormat, $2));
+				/* formatted_expr will be set during parse-analysis. */
+				$$ = (Node *) makeJsonValueExpr((Expr *) $1, NULL,
+												castNode(JsonFormat, $2));
 			}
 		;
 

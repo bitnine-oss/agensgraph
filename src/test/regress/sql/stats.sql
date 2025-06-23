@@ -376,6 +376,36 @@ COMMIT;
 SELECT seq_scan, :'test_last_seq' = last_seq_scan AS seq_ok, idx_scan, :'test_last_idx' < last_idx_scan AS idx_ok
 FROM pg_stat_all_tables WHERE relid = 'test_last_scan'::regclass;
 
+-----
+-- Test reset of some stats for shared table
+-----
+
+-- This updates the comment of the database currently in use in
+-- pg_shdescription with a fake value, then sets it back to its
+-- original value.
+SELECT shobj_description(d.oid, 'pg_database') as description_before
+  FROM pg_database d WHERE datname = current_database() \gset
+
+-- force some stats in pg_shdescription.
+BEGIN;
+SELECT current_database() as datname \gset
+COMMENT ON DATABASE :"datname" IS 'This is a test comment';
+SELECT pg_stat_force_next_flush();
+COMMIT;
+
+-- check that the stats are reset.
+SELECT (n_tup_ins + n_tup_upd) > 0 AS has_data FROM pg_stat_all_tables
+  WHERE relid = 'pg_shdescription'::regclass;
+SELECT pg_stat_reset_single_table_counters('pg_shdescription'::regclass);
+SELECT (n_tup_ins + n_tup_upd) > 0 AS has_data FROM pg_stat_all_tables
+  WHERE relid = 'pg_shdescription'::regclass;
+
+-- set back comment
+\if :{?description_before}
+  COMMENT ON DATABASE :"datname" IS :'description_before';
+\else
+  COMMENT ON DATABASE :"datname" IS NULL;
+\endif
 
 -----
 -- Test that various stats views are being properly populated
@@ -678,7 +708,11 @@ SELECT :io_sum_local_new_tblspc_writes > :io_sum_local_after_writes;
 RESET temp_buffers;
 
 -- Test that reuse of strategy buffers and reads of blocks into these reused
--- buffers while VACUUMing are tracked in pg_stat_io.
+-- buffers while VACUUMing are tracked in pg_stat_io. If there is sufficient
+-- demand for shared buffers from concurrent queries, some buffers may be
+-- pinned by other backends before they can be reused. In such cases, the
+-- backend will evict a buffer from outside the ring and add it to the
+-- ring. This is considered an eviction and not a reuse.
 
 -- Set wal_skip_threshold smaller than the expected size of
 -- test_io_vac_strategy so that, even if wal_level is minimal, VACUUM FULL will
@@ -687,21 +721,22 @@ RESET temp_buffers;
 -- shared buffers -- preventing us from testing BAS_VACUUM BufferAccessStrategy
 -- reads.
 SET wal_skip_threshold = '1 kB';
-SELECT sum(reuses) AS reuses, sum(reads) AS reads
+SELECT sum(reuses) AS reuses, sum(reads) AS reads, sum(evictions) AS evictions
   FROM pg_stat_io WHERE context = 'vacuum' \gset io_sum_vac_strategy_before_
 CREATE TABLE test_io_vac_strategy(a int, b int) WITH (autovacuum_enabled = 'false');
 INSERT INTO test_io_vac_strategy SELECT i, i from generate_series(1, 4500)i;
 -- Ensure that the next VACUUM will need to perform IO by rewriting the table
 -- first with VACUUM (FULL).
 VACUUM (FULL) test_io_vac_strategy;
--- Use the minimum BUFFER_USAGE_LIMIT to cause reuses with the smallest table
--- possible.
+-- Use the minimum BUFFER_USAGE_LIMIT to cause reuses or evictions with the
+-- smallest table possible.
 VACUUM (PARALLEL 0, BUFFER_USAGE_LIMIT 128) test_io_vac_strategy;
 SELECT pg_stat_force_next_flush();
-SELECT sum(reuses) AS reuses, sum(reads) AS reads
+SELECT sum(reuses) AS reuses, sum(reads) AS reads, sum(evictions) AS evictions
   FROM pg_stat_io WHERE context = 'vacuum' \gset io_sum_vac_strategy_after_
-SELECT :io_sum_vac_strategy_after_reads > :io_sum_vac_strategy_before_reads,
-       :io_sum_vac_strategy_after_reuses > :io_sum_vac_strategy_before_reuses;
+SELECT :io_sum_vac_strategy_after_reads > :io_sum_vac_strategy_before_reads;
+SELECT (:io_sum_vac_strategy_after_reuses + :io_sum_vac_strategy_after_evictions) >
+  (:io_sum_vac_strategy_before_reuses + :io_sum_vac_strategy_before_evictions);
 RESET wal_skip_threshold;
 
 -- Test that extends done by a CTAS, which uses a BAS_BULKWRITE

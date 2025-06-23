@@ -1599,7 +1599,6 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 		SpecialJoinInfo *child_sjinfo;
 		List	   *child_restrictlist;
 		RelOptInfo *child_joinrel;
-		Relids		child_joinrelids;
 		AppendRelInfo **appinfos;
 		int			nappinfos;
 
@@ -1696,13 +1695,11 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 											   child_rel1->relids,
 											   child_rel2->relids);
 
-		/* Build correct join relids for child join */
-		child_joinrelids = bms_union(child_rel1->relids, child_rel2->relids);
-		child_joinrelids = add_outer_joins_to_relids(root, child_joinrelids,
-													 child_sjinfo, NULL);
-
 		/* Find the AppendRelInfo structures */
-		appinfos = find_appinfos_by_relids(root, child_joinrelids, &nappinfos);
+		appinfos = find_appinfos_by_relids(root,
+										   bms_union(child_rel1->relids,
+													 child_rel2->relids),
+										   &nappinfos);
 
 		/*
 		 * Construct restrictions applicable to the child join from those
@@ -1712,8 +1709,8 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 			(List *) adjust_appendrel_attrs(root,
 											(Node *) parent_restrictlist,
 											nappinfos, appinfos);
-		pfree(appinfos);
 
+		/* Find or construct the child join's RelOptInfo */
 		child_joinrel = joinrel->part_rels[cnt_parts];
 		if (!child_joinrel)
 		{
@@ -1726,11 +1723,17 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 													child_joinrel->relids);
 		}
 
-		Assert(bms_equal(child_joinrel->relids, child_joinrelids));
+		/* Assert we got the right one */
+		Assert(bms_equal(child_joinrel->relids,
+						 adjust_child_relids(joinrel->relids,
+											 nappinfos, appinfos)));
 
+		/* And make paths for the child join */
 		populate_joinrel_with_paths(root, child_rel1, child_rel2,
 									child_joinrel, child_sjinfo,
 									child_restrictlist);
+
+		pfree(appinfos);
 	}
 }
 
