@@ -68,7 +68,7 @@ use Test::More;
 
 =over
 
-=item PostgreSQL::Test::BackgroundPsql->new(interactive, @psql_params, timeout)
+=item PostgreSQL::Test::BackgroundPsql->new(interactive, @psql_params, timeout, wait)
 
 Builds a new object of class C<PostgreSQL::Test::BackgroundPsql> for either
 an interactive or background session and starts it. If C<interactive> is
@@ -76,17 +76,21 @@ true then a PTY will be attached. C<psql_params> should contain the full
 command to run psql with all desired parameters and a complete connection
 string. For C<interactive> sessions, IO::Pty is required.
 
+This routine will not return until psql has started up and is ready to
+consume input. Set B<wait> to 0 to return immediately instead.
+
 =cut
 
 sub new
 {
 	my $class = shift;
-	my ($interactive, $psql_params, $timeout) = @_;
+	my ($interactive, $psql_params, $timeout, $wait) = @_;
 	my $psql = {
 		'stdin' => '',
 		'stdout' => '',
 		'stderr' => '',
-		'query_timer_restart' => undef
+		'query_timer_restart' => undef,
+		'query_cnt' => 1,
 	};
 	my $run;
 
@@ -119,14 +123,25 @@ sub new
 
 	my $self = bless $psql, $class;
 
-	$self->_wait_connect();
+	$wait = 1 unless defined($wait);
+	if ($wait)
+	{
+		$self->wait_connect();
+	}
 
 	return $self;
 }
 
-# Internal routine for awaiting psql starting up and being ready to consume
-# input.
-sub _wait_connect
+=pod
+
+=item $session->wait_connect
+
+Returns once psql has started up and is ready to consume input. This is called
+automatically for clients unless requested otherwise in the constructor.
+
+=cut
+
+sub wait_connect
 {
 	my ($self) = @_;
 
@@ -134,11 +149,25 @@ sub _wait_connect
 	# connection failures are caught here, relieving callers of the need to
 	# handle those.  (Right now, we have no particularly good handling for
 	# errors anyway, but that might be added later.)
+	#
+	# See query() for details about why/how the banner is used.
 	my $banner = "background_psql: ready";
-	$self->{stdin} .= "\\echo $banner\n";
+	my $banner_match = qr/(^|\n)$banner\r?\n/;
+	$self->{stdin} .= "\\echo $banner\n\\warn $banner\n";
 	$self->{run}->pump()
-	  until $self->{stdout} =~ /$banner/ || $self->{timeout}->is_expired;
-	$self->{stdout} = '';    # clear out banner
+	  until ($self->{stdout} =~ /$banner_match/
+		  && $self->{stderr} =~ /$banner\r?\n/)
+	  || $self->{timeout}->is_expired;
+
+	note "connect output:\n",
+	  explain {
+		stdout => $self->{stdout},
+		stderr => $self->{stderr},
+	  };
+
+	# clear out banners
+	$self->{stdout} = '';
+	$self->{stderr} = '';
 
 	die "psql startup timed out" if $self->{timeout}->is_expired;
 }
@@ -187,7 +216,7 @@ sub reconnect_and_clear
 	$self->{stdin} = '';
 	$self->{stdout} = '';
 
-	$self->_wait_connect();
+	$self->wait_connect();
 }
 
 =pod
@@ -205,25 +234,57 @@ sub query
 	my ($self, $query) = @_;
 	my $ret;
 	my $output;
+	my $query_cnt = $self->{query_cnt}++;
+
 	local $Test::Builder::Level = $Test::Builder::Level + 1;
 
-	note "issuing query via background psql: $query";
+	note "issuing query $query_cnt via background psql: $query";
 
 	$self->{timeout}->start() if (defined($self->{query_timer_restart}));
 
 	# Feed the query to psql's stdin, followed by \n (so psql processes the
 	# line), by a ; (so that psql issues the query, if it doesn't include a ;
-	# itself), and a separator echoed with \echo, that we can wait on.
-	my $banner = "background_psql: QUERY_SEPARATOR";
-	$self->{stdin} .= "$query\n;\n\\echo $banner\n";
-
-	pump_until($self->{run}, $self->{timeout}, \$self->{stdout}, qr/$banner/);
+	# itself), and a separator echoed both with \echo and \warn, that we can
+	# wait on.
+	#
+	# To avoid somehow confusing the separator from separately issued queries,
+	# and to make it easier to debug, we include a per-psql query counter in
+	# the separator.
+	#
+	# We need both \echo (printing to stdout) and \warn (printing to stderr),
+	# because on windows we can get data on stdout before seeing data on
+	# stderr (or vice versa), even if psql printed them in the opposite
+	# order. We therefore wait on both.
+	#
+	# We need to match for the newline, because we try to remove it below, and
+	# it's possible to consume just the input *without* the newline. In
+	# interactive psql we emit \r\n, so we need to allow for that. Also need
+	# to be careful that we don't e.g. match the echoed \echo command, rather
+	# than its output.
+	my $banner = "background_psql: QUERY_SEPARATOR $query_cnt:";
+	my $banner_match = qr/(^|\n)$banner\r?\n/;
+	$self->{stdin} .= "$query\n;\n\\echo $banner\n\\warn $banner\n";
+	pump_until(
+		$self->{run}, $self->{timeout},
+		\$self->{stdout}, qr/$banner_match/);
+	pump_until(
+		$self->{run}, $self->{timeout},
+		\$self->{stderr}, qr/$banner_match/);
 
 	die "psql query timed out" if $self->{timeout}->is_expired;
-	$output = $self->{stdout};
 
-	# remove banner again, our caller doesn't care
-	$output =~ s/\n$banner\n$//s;
+	note "results query $query_cnt:\n",
+	  explain {
+		stdout => $self->{stdout},
+		stderr => $self->{stderr},
+	  };
+
+	# Remove banner from stdout and stderr, our caller doesn't care.  The
+	# first newline is optional, as there would not be one if consuming an
+	# empty query result.
+	$output = $self->{stdout};
+	$output =~ s/$banner_match//;
+	$self->{stderr} =~ s/$banner_match//;
 
 	# clear out output for the next query
 	$self->{stdout} = '';

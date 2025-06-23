@@ -69,9 +69,8 @@
    url="https://www.ibm.com/">IBM</ulink>) picked up the code and
    commercialized it.  In late 1992,
    <productname>POSTGRES</productname> became the primary data manager
-   for the
-   <ulink url="http://meteora.ucsd.edu/s2k/s2k_home.html">
-   Sequoia 2000 scientific computing project</ulink>.
+   for the Sequoia 2000 scientific computing project described in
+   <xref linkend="ston92"/>.
   </para>
 
   <para>
@@ -198,11 +197,10 @@
   </para>
 
   <para>
-   Many people continue to refer to
-   <productname>PostgreSQL</productname> as <quote>Postgres</quote>
-   (now rarely in all capital letters) because of tradition or because
-   it is easier to pronounce.  This usage is widely accepted as a
-   nickname or alias.
+   <productname>Postgres</productname> is still considered an official
+   project name, both because of tradition and because people find it
+   easier to pronounce <productname>Postgres</productname> than
+   <productname>PostgreSQL</productname>.
   </para>
 
   <para>

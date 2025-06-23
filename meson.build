@@ -8,7 +8,7 @@
 
 project('postgresql',
   ['c'],
-  version: '16.6',
+  version: '16.9',
   license: 'PostgreSQL',
 
   # We want < 0.56 for python 3.5 compatibility on old platforms. EPEL for
@@ -553,7 +553,8 @@ test_c_args = cppflags + cflags
 bsd_authopt = get_option('bsd_auth')
 bsd_auth = not_found_dep
 if cc.check_header('bsd_auth.h', required: bsd_authopt,
-    args: test_c_args, include_directories: postgres_inc)
+    args: test_c_args, prefix: '#include <sys/types.h>',
+    include_directories: postgres_inc)
   cdata.set('USE_BSD_AUTH', 1)
   bsd_auth = declare_dependency()
 endif
@@ -1339,14 +1340,37 @@ if sslopt in ['auto', 'openssl']
 
   # via library + headers
   if not ssl.found()
+    is_windows = host_system == 'windows'
+
+    ssl_lib_common_params = {
+      'dirs': test_lib_d,
+      'header_include_directories': postgres_inc,
+      'has_headers': ['openssl/ssl.h', 'openssl/err.h'],
+    }
     ssl_lib = cc.find_library('ssl',
-      dirs: test_lib_d,
-      header_include_directories: postgres_inc,
-      has_headers: ['openssl/ssl.h', 'openssl/err.h'],
-      required: openssl_required)
+      kwargs: ssl_lib_common_params,
+      required: openssl_required and not is_windows
+    )
+    # Before OpenSSL 1.1.0, there was a different naming convention for
+    # libraries on Windows, so try the alternative name if ssl wasn't found
+    if not ssl_lib.found() and is_windows
+      ssl_lib = cc.find_library('ssleay32',
+        kwargs: ssl_lib_common_params,
+        required: openssl_required
+      )
+    endif
+
     crypto_lib = cc.find_library('crypto',
       dirs: test_lib_d,
-      required: openssl_required)
+      required: openssl_required and not is_windows)
+    # Before OpenSSL 1.1.0, there was a different naming convention for
+    # libraries on Windows, so try the alternatve name if crypto wasn't found
+    if not crypto_lib.found() and is_windows
+      crypto_lib = cc.find_library('libeay32',
+        dirs: test_lib_d,
+        required: openssl_required)
+    endif
+
     if ssl_lib.found() and crypto_lib.found()
       ssl_int = [ssl_lib, crypto_lib]
       ssl = declare_dependency(dependencies: ssl_int, include_directories: postgres_inc)
@@ -1463,7 +1487,10 @@ if uuidopt != 'none'
     error('unknown uuid build option value: @0@'.format(uuidopt))
   endif
 
-  if not cc.has_header_symbol(uuidheader, uuidfunc, args: test_c_args, dependencies: uuid)
+  if not cc.has_header_symbol(uuidheader, uuidfunc,
+                              args: test_c_args,
+                              include_directories: postgres_inc,
+                              dependencies: uuid)
     error('uuid library @0@ missing required function @1@'.format(uuidopt, uuidfunc))
   endif
   cdata.set('HAVE_@0@'.format(uuidheader.underscorify().to_upper()), 1)
@@ -1757,12 +1784,9 @@ if cc.compiles('''
 endif
 
 
-# We use <stdbool.h> if we have it and it declares type bool as having
-# size 1.  Otherwise, c.h will fall back to declaring bool as unsigned char.
-if cc.has_type('_Bool', args: test_c_args) \
-    and cc.has_type('bool', prefix: '#include <stdbool.h>', args: test_c_args) \
-    and cc.sizeof('bool', prefix: '#include <stdbool.h>', args: test_c_args) == 1
-  cdata.set('HAVE__BOOL', 1)
+# We use <stdbool.h> if bool has size 1 after including it.  Otherwise, c.h
+# will fall back to declaring bool as unsigned char.
+if cc.sizeof('bool', prefix: '#include <stdbool.h>', args: test_c_args) == 1
   cdata.set('PG_USE_STDBOOL', 1)
 endif
 
@@ -2181,6 +2205,13 @@ int main(void)
     # Use ARM CRC Extension unconditionally
     cdata.set('USE_ARMV8_CRC32C', 1)
     have_optimized_crc = true
+  elif cc.links(prog, name: '__crc32cb, __crc32ch, __crc32cw, and __crc32cd with -march=armv8-a+crc+simd',
+      args: test_c_args + ['-march=armv8-a+crc+simd'])
+    # Use ARM CRC Extension, with runtime check
+    cflags_crc += '-march=armv8-a+crc+simd'
+    cdata.set('USE_ARMV8_CRC32C', false)
+    cdata.set('USE_ARMV8_CRC32C_WITH_RUNTIME_CHECK', 1)
+    have_optimized_crc = true
   elif cc.links(prog, name: '__crc32cb, __crc32ch, __crc32cw, and __crc32cd with -march=armv8-a+crc',
       args: test_c_args + ['-march=armv8-a+crc'])
     # Use ARM CRC Extension, with runtime check
@@ -2254,7 +2285,6 @@ header_checks = [
   'ifaddrs.h',
   'langinfo.h',
   'mbarrier.h',
-  'stdbool.h',
   'strings.h',
   'sys/epoll.h',
   'sys/event.h',
@@ -2293,6 +2323,7 @@ decl_checks = [
 decl_checks += [
   ['preadv', 'sys/uio.h'],
   ['pwritev', 'sys/uio.h'],
+  ['strchrnul', 'string.h'],
 ]
 
 foreach c : decl_checks
@@ -2301,8 +2332,23 @@ foreach c : decl_checks
   args = c.get(2, {})
   varname = 'HAVE_DECL_' + func.underscorify().to_upper()
 
-  found = cc.has_header_symbol(header, func,
-    args: test_c_args, include_directories: postgres_inc,
+  found = cc.compiles('''
+#include <@0@>
+
+int main()
+{
+#ifndef @1@
+    (void) @1@;
+#endif
+
+return 0;
+}
+'''.format(header, func),
+    name: 'test whether @0@ is declared'.format(func),
+    # need to add cflags_warn to get at least
+    # -Werror=unguarded-availability-new if applicable
+    args: test_c_args + cflags_warn,
+    include_directories: postgres_inc,
     kwargs: args)
   cdata.set10(varname, found, description:
 '''Define to 1 if you have the declaration of `@0@', and to 0 if you
@@ -2549,7 +2595,6 @@ func_checks = [
   ['shm_unlink', {'dependencies': [rt_dep], 'define': false}],
   ['shmget', {'dependencies': [cygipc_dep], 'define': false}],
   ['socket', {'dependencies': [socket_dep], 'define': false}],
-  ['strchrnul'],
   ['strerror_r', {'dependencies': [thread_dep]}],
   ['strlcat'],
   ['strlcpy'],
@@ -2945,6 +2990,16 @@ frontend_shlib_code = declare_dependency(
   dependencies: [shlib_code, os_deps, libintl],
 )
 
+# For frontend code that doesn't use fe_utils - this mainly exists for libpq's
+# tests, which are defined before fe_utils is defined, as fe_utils depends on
+# libpq.
+frontend_no_fe_utils_code = declare_dependency(
+  include_directories: [postgres_inc],
+  link_with: [common_static, pgport_static],
+  sources: generated_headers,
+  dependencies: [os_deps, libintl],
+)
+
 # Dependencies both for static and shared libpq
 libpq_deps += [
   thread_dep,
@@ -3012,7 +3067,6 @@ subdir('src')
 subdir('contrib')
 
 subdir('src/test')
-subdir('src/interfaces/libpq/test')
 subdir('src/interfaces/ecpg/test')
 
 subdir('doc/src/sgml')
@@ -3106,15 +3160,21 @@ if libintl.found() and meson.version().version_compare('>=0.60')
 endif
 
 
-all_built = [
+# all targets that 'meson install' needs
+installed_targets = [
   backend_targets,
   bin_targets,
   libpq_st,
   pl_targets,
   contrib_targets,
   nls_mo_targets,
-  testprep_targets,
   ecpg_targets,
+]
+
+# all targets that require building code
+all_built = [
+  installed_targets,
+  testprep_targets,
 ]
 
 # Meson's default install target is quite verbose. Provide one that is quiet.
@@ -3123,7 +3183,7 @@ install_quiet = custom_target('install-quiet',
   build_always_stale: true,
   build_by_default: false,
   command: [meson_bin, meson_args, 'install', '--quiet', '--no-rebuild'],
-  depends: all_built,
+  depends: installed_targets,
 )
 
 # Target to install files used for tests, which aren't installed by default
@@ -3178,6 +3238,7 @@ test('tmp_install',
     priority: setup_tests_priority,
     timeout: 300,
     is_parallel: false,
+    depends: installed_targets,
     suite: ['setup'])
 
 test('install_test_files',
@@ -3201,6 +3262,8 @@ test_env = environment()
 test_initdb_template = meson.build_root() / 'tmp_install' / 'initdb-template'
 test_env.set('PG_REGRESS', pg_regress.full_path())
 test_env.set('REGRESS_SHLIB', regress_module.full_path())
+# for Cluster.pm's portlock logic
+test_env.set('top_builddir', meson.build_root())
 
 # Test suites that are not safe by default but can be run if selected
 # by the user via the whitespace-separated list in variable PG_TEST_EXTRA.

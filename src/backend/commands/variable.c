@@ -479,7 +479,7 @@ show_log_timezone(void)
  */
 
 /*
- * GUC check_hook for assign_timezone_abbreviations
+ * GUC check_hook for timezone_abbreviations
  */
 bool
 check_timezone_abbreviations(char **newval, void **extra, GucSource source)
@@ -511,7 +511,7 @@ check_timezone_abbreviations(char **newval, void **extra, GucSource source)
 }
 
 /*
- * GUC assign_hook for assign_timezone_abbreviations
+ * GUC assign_hook for timezone_abbreviations
  */
 void
 assign_timezone_abbreviations(const char *newval, void *extra)
@@ -1082,6 +1082,8 @@ check_application_name(char **newval, void **extra, GucSource source)
 		return false;
 	}
 
+	guc_free(*newval);
+
 	pfree(clean);
 	*newval = ret;
 	return true;
@@ -1117,6 +1119,8 @@ check_cluster_name(char **newval, void **extra, GucSource source)
 		pfree(clean);
 		return false;
 	}
+
+	guc_free(*newval);
 
 	pfree(clean);
 	*newval = ret;

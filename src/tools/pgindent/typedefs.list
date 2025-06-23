@@ -359,6 +359,7 @@ CaseTestExpr
 CaseWhen
 Cash
 CastInfo
+CatCInProgress
 CatCList
 CatCTup
 CatCache
@@ -3492,6 +3493,7 @@ network_sortsupport_state
 nodeitem
 normal_rand_fctx
 ntile_context
+nullingrel_info
 numeric
 object_access_hook_type
 object_access_hook_type_str
@@ -3514,6 +3516,9 @@ parallel_worker_main_type
 parse_error_callback_arg
 parser_context
 partition_method_t
+pe_test_config
+pe_test_escape_func
+pe_test_vector
 pendingPosition
 pgParameterStatus
 pg_atomic_flag

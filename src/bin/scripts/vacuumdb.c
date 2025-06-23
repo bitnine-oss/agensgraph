@@ -568,20 +568,32 @@ vacuum_one_database(ConnParams *cparams,
 	}
 
 	if (vacopts->min_xid_age != 0 && PQserverVersion(conn) < 90600)
+	{
+		PQfinish(conn);
 		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
 				 "--min-xid-age", "9.6");
+	}
 
 	if (vacopts->min_mxid_age != 0 && PQserverVersion(conn) < 90600)
+	{
+		PQfinish(conn);
 		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
 				 "--min-mxid-age", "9.6");
+	}
 
 	if (vacopts->parallel_workers >= 0 && PQserverVersion(conn) < 130000)
+	{
+		PQfinish(conn);
 		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
 				 "--parallel", "13");
+	}
 
 	if (vacopts->buffer_usage_limit && PQserverVersion(conn) < 160000)
+	{
+		PQfinish(conn);
 		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
 				 "--buffer-usage-limit", "16");
+	}
 
 	/* skip_database_stats is used automatically if server supports it */
 	vacopts->skip_database_stats = (PQserverVersion(conn) >= 160000);
@@ -783,8 +795,9 @@ vacuum_one_database(ConnParams *cparams,
 	for (i = 0; i < ntups; i++)
 	{
 		appendPQExpBufferStr(&buf,
-							 fmtQualifiedId(PQgetvalue(res, i, 1),
-											PQgetvalue(res, i, 0)));
+							 fmtQualifiedIdEnc(PQgetvalue(res, i, 1),
+											   PQgetvalue(res, i, 0),
+											   PQclientEncoding(conn)));
 
 		if (objects_listed && !PQgetisnull(res, i, 2))
 			appendPQExpBufferStr(&buf, PQgetvalue(res, i, 2));

@@ -583,6 +583,16 @@ ERROR:  unsupported XML feature
 LINE 1: ...EATE VIEW xmlview9 AS SELECT xmlserialize(content 'good' as ...
                                                              ^
 DETAIL:  This functionality requires the server to be built with libxml support.
+CREATE VIEW xmlview10 AS SELECT xmlserialize(document '<foo><bar>42</bar></foo>' AS text indent);
+ERROR:  unsupported XML feature
+LINE 1: ...TE VIEW xmlview10 AS SELECT xmlserialize(document '<foo><bar...
+                                                             ^
+DETAIL:  This functionality requires the server to be built with libxml support.
+CREATE VIEW xmlview11 AS SELECT xmlserialize(document '<foo><bar>42</bar></foo>' AS character varying no indent);
+ERROR:  unsupported XML feature
+LINE 1: ...TE VIEW xmlview11 AS SELECT xmlserialize(document '<foo><bar...
+                                                             ^
+DETAIL:  This functionality requires the server to be built with libxml support.
 SELECT table_name, view_definition FROM information_schema.views
   WHERE table_name LIKE 'xmlview%' ORDER BY 1;
  table_name |                                view_definition                                 
@@ -1046,10 +1056,10 @@ ERROR:  unsupported XML feature
 LINE 3:                       PASSING '<rows xmlns="http://x.y"><row...
                                       ^
 DETAIL:  This functionality requires the server to be built with libxml support.
-CREATE VIEW xmltableview2 AS SELECT * FROM XMLTABLE(XMLNAMESPACES('http://x.y' AS zz),
-                      '/zz:rows/zz:row'
+CREATE VIEW xmltableview2 AS SELECT * FROM XMLTABLE(XMLNAMESPACES('http://x.y' AS "Zz"),
+                      '/Zz:rows/Zz:row'
                       PASSING '<rows xmlns="http://x.y"><row><a>10</a></row></rows>'
-                      COLUMNS a int PATH 'zz:a');
+                      COLUMNS a int PATH 'Zz:a');
 ERROR:  unsupported XML feature
 LINE 3:                       PASSING '<rows xmlns="http://x.y"><row...
                                       ^
@@ -1058,6 +1068,8 @@ SELECT * FROM xmltableview2;
 ERROR:  relation "xmltableview2" does not exist
 LINE 1: SELECT * FROM xmltableview2;
                       ^
+\sv xmltableview2
+ERROR:  relation "xmltableview2" does not exist
 SELECT * FROM XMLTABLE(XMLNAMESPACES(DEFAULT 'http://x.y'),
                       '/rows/row'
                       PASSING '<rows xmlns="http://x.y"><row><a>10</a></row></rows>'
