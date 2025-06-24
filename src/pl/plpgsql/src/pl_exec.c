@@ -456,6 +456,7 @@ static char *format_preparedparamsdata(PLpgSQL_execstate *estate,
 									   ParamListInfo paramLI);
 static PLpgSQL_variable *make_callstmt_target(PLpgSQL_execstate *estate,
 											  PLpgSQL_expr *expr);
+extern GraphWriteStats graphWriteStats;
 
 
 /* ----------
@@ -4316,13 +4317,14 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 			break;
 
 		case SPI_OK_GRAPHWRITE:
-
 			/*
 			 * The command is to execute graphwrite type from pl module.
-			 *
-			 * But, this command is only executed when allow_graphwrite_type
-			 * (GUC variable) is true.
 			 */
+			SPI_processed = graphWriteStats.insertVertex +
+						graphWriteStats.insertEdge +
+						graphWriteStats.deleteVertex +
+						graphWriteStats.deleteEdge +
+						graphWriteStats.updateProperty;
 			break;
 
 		case SPI_OK_SELINTO:
