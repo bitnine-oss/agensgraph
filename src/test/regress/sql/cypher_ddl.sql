@@ -384,6 +384,83 @@ SELECT * FROM my_vertices;
 SELECT * FROM my_edges;
 SELECT * FROM my_detailed_paths;
 
+--
+-- issue 650
+--
+CREATE GRAPH issue_650;
+SET graph_path = issue_650;
+
+-- 1. CREATE single node
+DO $$
+DECLARE
+    dummy INTEGER;
+BEGIN
+    CREATE (m {"name": 'M1'});
+    GET DIAGNOSTICS dummy = ROW_COUNT;
+    RAISE NOTICE 'Number of rows created: %', dummy;
+END;
+$$;
+
+-- 2. CREATE multiple nodes
+DO $$
+DECLARE
+    dummy INTEGER;
+BEGIN
+    CREATE (:Person {name: 'Alice'}),
+           (:Person {name: 'Bob'});
+    GET DIAGNOSTICS dummy = ROW_COUNT;
+    RAISE NOTICE 'Rows created (nodes): %', dummy;
+END;
+$$;
+
+-- 3. UPDATE node
+DO $$
+DECLARE
+    dummy INTEGER;
+BEGIN
+    MATCH (p:Person {name: 'Alice'})
+    SET p.age = 30;
+    GET DIAGNOSTICS dummy = ROW_COUNT;
+    RAISE NOTICE 'Rows updated (SET): %', dummy;
+END;
+$$;
+
+-- 4. CREATE edge
+DO $$
+DECLARE
+    dummy INTEGER;
+BEGIN
+    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    CREATE (a)-[:KNOWS]->(b);
+    GET DIAGNOSTICS dummy = ROW_COUNT;
+    RAISE NOTICE 'Relationships created: %', dummy;
+END;
+$$;
+
+-- 5. UPDATE edge property
+DO $$
+DECLARE
+    dummy INTEGER;
+BEGIN
+    MATCH (:Person {name: 'Alice'})-[r:KNOWS]->(:Person {name: 'Bob'})
+    SET r.since = 2020;
+    GET DIAGNOSTICS dummy = ROW_COUNT;
+    RAISE NOTICE 'Relationships updated: %', dummy;
+END;
+$$;
+
+-- 6. DELETE everything
+DO $$
+DECLARE
+    dummy INTEGER;
+BEGIN
+    MATCH (p)
+    DETACH DELETE p;
+    GET DIAGNOSTICS dummy = ROW_COUNT;
+    RAISE NOTICE 'Entities deleted: %', dummy;
+END;
+$$;
+
 DROP TABLE my_vertices;
 DROP TABLE my_edges;
 DROP TABLE my_detailed_paths;
@@ -394,6 +471,7 @@ DROP TABLE my_detailed_paths;
 DROP GRAPH ddl;
 DROP GRAPH unknown;
 DROP GRAPH IF EXISTS unknown;
+DROP GRAPH issue_650 CASCADE;
 
 -- teardown
 

@@ -912,6 +912,82 @@ SELECT * FROM my_detailed_paths;
  person[29.9]{} | knows[30.5][29.9,29.10]{} | person[29.10]{} | [person[29.9]{},knows[30.5][29.9,29.10]{},person[29.10]{}]
 (5 rows)
 
+--
+-- issue 650
+--
+CREATE GRAPH issue_650;
+SET graph_path = issue_650;
+-- 1. CREATE single node
+DO $$
+DECLARE
+    dummy INTEGER;
+BEGIN
+    CREATE (m {"name": 'M1'});
+    GET DIAGNOSTICS dummy = ROW_COUNT;
+    RAISE NOTICE 'Number of rows created: %', dummy;
+END;
+$$;
+NOTICE:  Number of rows created: 1
+-- 2. CREATE multiple nodes
+DO $$
+DECLARE
+    dummy INTEGER;
+BEGIN
+    CREATE (:Person {name: 'Alice'}),
+           (:Person {name: 'Bob'});
+    GET DIAGNOSTICS dummy = ROW_COUNT;
+    RAISE NOTICE 'Rows created (nodes): %', dummy;
+END;
+$$;
+NOTICE:  Rows created (nodes): 2
+-- 3. UPDATE node
+DO $$
+DECLARE
+    dummy INTEGER;
+BEGIN
+    MATCH (p:Person {name: 'Alice'})
+    SET p.age = 30;
+    GET DIAGNOSTICS dummy = ROW_COUNT;
+    RAISE NOTICE 'Rows updated (SET): %', dummy;
+END;
+$$;
+NOTICE:  Rows updated (SET): 1
+-- 4. CREATE edge
+DO $$
+DECLARE
+    dummy INTEGER;
+BEGIN
+    MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+    CREATE (a)-[:KNOWS]->(b);
+    GET DIAGNOSTICS dummy = ROW_COUNT;
+    RAISE NOTICE 'Relationships created: %', dummy;
+END;
+$$;
+NOTICE:  Relationships created: 1
+-- 5. UPDATE edge property
+DO $$
+DECLARE
+    dummy INTEGER;
+BEGIN
+    MATCH (:Person {name: 'Alice'})-[r:KNOWS]->(:Person {name: 'Bob'})
+    SET r.since = 2020;
+    GET DIAGNOSTICS dummy = ROW_COUNT;
+    RAISE NOTICE 'Relationships updated: %', dummy;
+END;
+$$;
+NOTICE:  Relationships updated: 1
+-- 6. DELETE everything
+DO $$
+DECLARE
+    dummy INTEGER;
+BEGIN
+    MATCH (p)
+    DETACH DELETE p;
+    GET DIAGNOSTICS dummy = ROW_COUNT;
+    RAISE NOTICE 'Entities deleted: %', dummy;
+END;
+$$;
+NOTICE:  Entities deleted: 4
 DROP TABLE my_vertices;
 DROP TABLE my_edges;
 DROP TABLE my_detailed_paths;
@@ -924,5 +1000,7 @@ DROP GRAPH unknown;
 ERROR:  graph "unknown" does not exist
 DROP GRAPH IF EXISTS unknown;
 NOTICE:  graph "unknown" does not exist, skipping
+DROP GRAPH issue_650 CASCADE;
+NOTICE:  drop cascades to 5 other objects
 -- teardown
 RESET ROLE;
