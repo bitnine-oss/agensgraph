@@ -631,8 +631,17 @@ transformTypeCast(ParseState *pstate, TypeCast *tc)
 	if (loc < 0)
 		loc = tc->typeName->location;
 
-	node = coerce_expr(pstate, expr, ityp, otyp, otypmod,
-					   COERCION_EXPLICIT, COERCE_EXPLICIT_CAST, loc);
+	if (otyp != JSONBOID &&
+		TypeCategory(getBaseType(otyp)) == TYPCATEGORY_USER &&
+		can_coerce_type(1, &ityp, &otyp, COERCION_EXPLICIT))
+	{
+		node = coerce_to_target_type(pstate, expr, ityp, otyp, otypmod,
+									 COERCION_EXPLICIT, COERCE_EXPLICIT_CAST,
+								 	 loc);
+	}
+	else
+		node = coerce_expr(pstate, expr, ityp, otyp, otypmod,
+						   COERCION_EXPLICIT, COERCE_EXPLICIT_CAST, loc);
 	if (node == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_CANNOT_COERCE),
@@ -2266,17 +2275,19 @@ static Node *
 coerce_all_to_jsonb(ParseState *pstate, Node *expr)
 {
 	Oid			type = exprType(expr);
+	TYPCATEGORY tc = TypeCategory(getBaseType(type));
 
-	if (TypeCategory(getBaseType(type)) == TYPCATEGORY_STRING)
+	if (tc == TYPCATEGORY_STRING)
 	{
 		return (Node *) makeFuncExpr(F_CYPHER_TO_JSONB, JSONBOID,
 									 list_make1(expr), InvalidOid,
 									 InvalidOid, COERCE_EXPLICIT_CALL);
 	}
 
-	expr = coerce_expr(pstate, expr, type, JSONBOID, -1,
-					   COERCION_EXPLICIT, COERCE_IMPLICIT_CAST,
-					   exprLocation(expr));
+	if (tc != TYPCATEGORY_USER)
+		expr = coerce_expr(pstate, expr, type, JSONBOID, -1,
+						   COERCION_EXPLICIT, COERCE_IMPLICIT_CAST,
+					   	   exprLocation(expr));
 	Assert(expr != NULL);
 	return expr;
 }
@@ -2608,8 +2619,10 @@ resolveItemList(ParseState *pstate, List *items)
 			is_graph_type(restype) ||
 			type_is_array(restype))
 			continue;
-
-		te->expr = (Expr *) coerce_all_to_jsonb(pstate, (Node *) te->expr);
+		
+		if (!te->resjunk)
+			te->expr = (Expr *) coerce_all_to_jsonb(pstate,
+													(Node *) te->expr);
 	}
 }
 

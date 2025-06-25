@@ -342,6 +342,16 @@ MATCH (_agens_default_) RETURN _agens_default_;
 MATCH (_agens_default_a) RETURN _agens_default_a;
 MATCH (_agens_default_whatever) RETURN 0;
 
+-- Test to retain typecast to user-defined datatype
+CREATE (:tc {i: 1, s: 'test', b: true, l: [1, 2, 3], o: {p: 'p'}});
+SELECT pg_typeof(n) FROM (MATCH (n:tc) RETURN n::jsonb::json as n)a;
+SELECT pg_typeof(n) FROM (RETURN '08:00:2b:01:02:03'::macaddr as n)a;
+SELECT pg_typeof(n) FROM (MATCH (n:tc) return n.s::tsvector as n)a;
+
+EXPLAIN VERBOSE MATCH (n:tc) RETURN n::jsonb::json as n;
+EXPLAIN RETURN '08:00:2b:01:02:03'::macaddr as n;
+EXPLAIN VERBOSE MATCH (n:tc) return n.s::tsvector as n;
+
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;
