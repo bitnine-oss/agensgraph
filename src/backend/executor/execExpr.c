@@ -43,6 +43,7 @@
 #include "nodes/nodeFuncs.h"
 #include "nodes/subscripting.h"
 #include "optimizer/optimizer.h"
+#include "parser/parse_cypher_expr.h"
 #include "pgstat.h"
 #include "utils/acl.h"
 #include "utils/array.h"
@@ -4311,6 +4312,11 @@ ExecInitCypherMap(ExprEvalStep *scratch, CypherMapExpr *mapexpr,
 		 */
 		Assert(key->consttype == TEXTOID && !key->constisnull);
 		key_cstrings[i] = TextDatumGetCString(key->constvalue);
+
+		if (exprType((Node *) val) != JSONBOID)
+			val = (Expr *) coerce_expr(NULL, (Node *) val, exprType((Node *) val),
+									   JSONBOID, -1 , COERCION_EXPLICIT,
+									   COERCE_EXPLICIT_CAST, -1);
 
 		Assert(exprType((Node *) val) == JSONBOID);
 		ExecInitExprRec(val, state, &val_values[i], &val_nulls[i]);
