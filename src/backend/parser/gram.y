@@ -18985,6 +18985,15 @@ cypher_expr:
 					n->location = @3;
 					$$ = makeTypeCast($1, n, @2);
 				}
+			| cypher_expr TYPECAST type_function_name '(' cypher_expr_comma_list ')'
+				{
+					TypeName   *n;
+
+					n = (TypeName *) makeTypeName($3);
+					n->typmods = $5;
+					n->location = @3;
+					$$ = makeTypeCast($1, n, @2);
+				}
 			| cypher_expr '.' cypher_expr_escaped_name
 				{
 					A_Indirection *n;
