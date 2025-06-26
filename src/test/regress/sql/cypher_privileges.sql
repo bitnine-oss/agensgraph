@@ -39,21 +39,21 @@ ALTER DEFAULT PRIVILEGES FOR USER new_user GRANT SELECT ON TABLES TO group reado
 
 -- Create vertices
 
-create (:v1{'property':'1'});
-create (:v1{'property':'2'});
-create (:v1{'property':'3'});
-create (:v1{'property':'4'});
-create (:v1{'property':'a'});
-create (:v1{'property':'b'});
-create (:v1{'property':'c'});
-create (:v1{'property':'d'});
+CREATE (:v1{'property':'1'});
+CREATE (:v1{'property':'2'});
+CREATE (:v1{'property':'3'});
+CREATE (:v1{'property':'4'});
+CREATE (:v1{'property':'a'});
+CREATE (:v1{'property':'b'});
+CREATE (:v1{'property':'c'});
+CREATE (:v1{'property':'d'});
 
 -- Create edges
 
-match (n1:v1 {'property':'1'} ), (n2:v1 {'property':'a'}) create (n1)-[n3:e1 {property:'1a'}]->(n2);
-match (n1:v1 {'property':'2'} ), (n2:v1 {'property':'b'}) create (n1)-[n3:e1 {property:'2b'}]->(n2);
-match (n1:v1 {'property':'3'} ), (n2:v1 {'property':'c'}) create (n1)-[n3:e1 {property:'3c'}]->(n2);
-match (n1:v1 {'property':'4'} ), (n2:v1 {'property':'d'}) create (n1)-[n3:e1 {property:'4d'}]->(n2);
+MATCH (n1:v1 {'property':'1'} ), (n2:v1 {'property':'a'}) CREATE (n1)-[n3:e1 {property:'1a'}]->(n2);
+MATCH (n1:v1 {'property':'2'} ), (n2:v1 {'property':'b'}) CREATE (n1)-[n3:e1 {property:'2b'}]->(n2);
+MATCH (n1:v1 {'property':'3'} ), (n2:v1 {'property':'c'}) CREATE (n1)-[n3:e1 {property:'3c'}]->(n2);
+MATCH (n1:v1 {'property':'4'} ), (n2:v1 {'property':'d'}) CREATE (n1)-[n3:e1 {property:'4d'}]->(n2);
 
 -- Set current session as readonly user
 
@@ -65,15 +65,15 @@ MATCH (n{'property':'1'}) WHERE EXISTS ((n)-[*1]-()) return n;
 
 -- CREATE vertex by readonly user
 
-create (n1:v1 {'property':'5'} ), (n2:v1 {'property':'e'});
+CREATE (n1:v1 {'property':'5'} ), (n2:v1 {'property':'e'});
 
 -- CREATE edge by readonly user
 
-match (n1:v1 {'property':'1'} ), (n2:v1 {'property':'a'}) create (n1)-[n3:e1 {property:'nopriv'}]->(n2);
+MATCH (n1:v1 {'property':'1'} ), (n2:v1 {'property':'a'}) CREATE (n1)-[n3:e1 {property:'nopriv'}]->(n2);
 
 -- DELETE cypher query by readonly user
 
-MATCH (n{'property':'1'}) WHERE EXISTS ((n)-[*1]-()) delete n; -- issue #624, issue #512
+MATCH (n{'property':'1'}) WHERE EXISTS ((n)-[*1]-()) DELETE n; -- issue #624, issue #512
 
 -- SET cypher query by readonly user
 
@@ -85,4 +85,82 @@ MERGE (n{'property':'1'}) return n;
 
 -- Clear all
 RESET SESSION AUTHORIZATION;
+
+--
+-- Test ROW LEVEL SECURITY
+--
+CREATE ROLE group1;
+CREATE ROLE role2 IN ROLE group1;
+CREATE ROLE role3 IN ROLE group1;
+
+MATCH (a:v1) RETURN a;
+
+-- To allow group1 to access the graph_priv_test graph,
+-- USAGE on graph_priv_test is required
+GRANT USAGE ON SCHEMA graph_priv_test TO group1;
+
+-- Allow group1 to use MATCH, CREATE/MERGE, SET/REMOVE on v1 label
+GRANT SELECT, INSERT, UPDATE, DELETE ON graph_priv_test."v1" TO group1;
+GRANT SELECT, INSERT, UPDATE, DELETE ON graph_priv_test."ag_vertex" TO group1;
+GRANT SELECT, INSERT, UPDATE, DELETE ON graph_priv_test."ag_edge" TO group1;
+GRANT USAGE ON graph_priv_test."v1_id_seq" TO group1;
+ALTER TABLE graph_priv_test."v1" ENABLE ROW LEVEL SECURITY;
+
+-- Switch to role2
+SET role role2;
+
+-- Since we enabled rls without any policy, role2 should not be able to access/insert any data
+MATCH (a:v1) RETURN a;
+CREATE (a:v1 {name: 'A'});
+
+RESET ROLE;
+
+-- Add policy to allow role2 to access/insert data and role3 to access data
+CREATE POLICY v1_policy ON graph_priv_test.v1 TO group1
+USING (current_role = 'role2' OR current_role = 'role3')
+WITH CHECK (current_role = 'role2');
+
+-- Switch to role2 again
+SET role role2;
+
+MATCH (a:v1) RETURN a;
+CREATE (a:v1 {name: 'A'});
+MATCH (a:v1 {name: 'A'}) SET a.name = 'B' RETURN a;
+MERGE (a:v1 {name: 'A'}) return a;
+
+RESET ROLE;
+
+-- Switch to role3
+SET role role3;
+
+MATCH (a:v1) RETURN a;
+
+-- Should pass because its same as MATCH, as no new row will be created
+MERGE (a:v1 {name: 'A'});
+
+-- Should fail as role3
+CREATE (a:v1 {name: 'C'});
+MATCH (a:v1 {name: 'A'}) SET a.name = 'C' RETURN a;
+MERGE (a:v1 {name: 'C'}) return a;
+
+RESET ROLE;
+
+-- Allow role3 to access/update data where name is 'A'
+ALTER POLICY v1_policy ON graph_priv_test."v1"
+USING (current_role = 'role2' OR (current_role = 'role3' AND properties->>'name' = 'A'))
+WITH CHECK (current_role = 'role2' OR (current_role = 'role3' AND properties->>'name' = 'A'));
+
+-- Switch to role3 again
+SET role role3;
+
+MATCH (a:v1 {name: 'A'}) SET a.age=40 RETURN a;
+MATCH (a:v1 {name: 'A'}) DELETE a;
+
+-- Should fail as role3 can only update where name is 'A'
+MATCH (a:v1 {name: 'B'}) SET a.age=40;
+MATCH (a:v1 {name: 'B'}) DELETE a;
+
+RESET ROLE;
+
+-- Clean up
 DROP GRAPH IF EXISTS graph_priv_test CASCADE;

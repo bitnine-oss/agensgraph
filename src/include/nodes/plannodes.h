@@ -1612,6 +1612,7 @@ typedef struct ModifyGraph
 	List	   *resultRelations;	/* relation rtindex's of target labels */
 	int			resultRelIndex; /* start index of es_result_relations for
 								 * current plan */
+	List	   *withCheckOptionLists;
 } ModifyGraph;
 
 typedef struct GraphVLE

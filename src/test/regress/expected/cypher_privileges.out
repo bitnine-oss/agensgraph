@@ -23,19 +23,19 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA graph_priv_test GRANT SELECT ON SEQUENCES TO 
 ALTER DEFAULT PRIVILEGES IN SCHEMA graph_priv_test GRANT SELECT ON TABLES TO group readonly;
 ALTER DEFAULT PRIVILEGES FOR USER new_user GRANT SELECT ON TABLES TO group readonly;
 -- Create vertices
-create (:v1{'property':'1'});
-create (:v1{'property':'2'});
-create (:v1{'property':'3'});
-create (:v1{'property':'4'});
-create (:v1{'property':'a'});
-create (:v1{'property':'b'});
-create (:v1{'property':'c'});
-create (:v1{'property':'d'});
+CREATE (:v1{'property':'1'});
+CREATE (:v1{'property':'2'});
+CREATE (:v1{'property':'3'});
+CREATE (:v1{'property':'4'});
+CREATE (:v1{'property':'a'});
+CREATE (:v1{'property':'b'});
+CREATE (:v1{'property':'c'});
+CREATE (:v1{'property':'d'});
 -- Create edges
-match (n1:v1 {'property':'1'} ), (n2:v1 {'property':'a'}) create (n1)-[n3:e1 {property:'1a'}]->(n2);
-match (n1:v1 {'property':'2'} ), (n2:v1 {'property':'b'}) create (n1)-[n3:e1 {property:'2b'}]->(n2);
-match (n1:v1 {'property':'3'} ), (n2:v1 {'property':'c'}) create (n1)-[n3:e1 {property:'3c'}]->(n2);
-match (n1:v1 {'property':'4'} ), (n2:v1 {'property':'d'}) create (n1)-[n3:e1 {property:'4d'}]->(n2);
+MATCH (n1:v1 {'property':'1'} ), (n2:v1 {'property':'a'}) CREATE (n1)-[n3:e1 {property:'1a'}]->(n2);
+MATCH (n1:v1 {'property':'2'} ), (n2:v1 {'property':'b'}) CREATE (n1)-[n3:e1 {property:'2b'}]->(n2);
+MATCH (n1:v1 {'property':'3'} ), (n2:v1 {'property':'c'}) CREATE (n1)-[n3:e1 {property:'3c'}]->(n2);
+MATCH (n1:v1 {'property':'4'} ), (n2:v1 {'property':'d'}) CREATE (n1)-[n3:e1 {property:'4d'}]->(n2);
 -- Set current session as readonly user
 SET SESSION AUTHORIZATION readonly_user;
 -- MATCH cypher query by readonly user
@@ -46,20 +46,137 @@ MATCH (n{'property':'1'}) WHERE EXISTS ((n)-[*1]-()) return n;
 (1 row)
 
 -- CREATE vertex by readonly user
-create (n1:v1 {'property':'5'} ), (n2:v1 {'property':'e'});
-ERROR:  permission denied for schema graph_priv_test
+CREATE (n1:v1 {'property':'5'} ), (n2:v1 {'property':'e'});
+ERROR:  permission denied for table v1
 -- CREATE edge by readonly user
-match (n1:v1 {'property':'1'} ), (n2:v1 {'property':'a'}) create (n1)-[n3:e1 {property:'nopriv'}]->(n2);
-ERROR:  permission denied for schema graph_priv_test
+MATCH (n1:v1 {'property':'1'} ), (n2:v1 {'property':'a'}) CREATE (n1)-[n3:e1 {property:'nopriv'}]->(n2);
+ERROR:  permission denied for table e1
 -- DELETE cypher query by readonly user
-MATCH (n{'property':'1'}) WHERE EXISTS ((n)-[*1]-()) delete n; -- issue #624, issue #512
-ERROR:  permission denied for schema graph_priv_test
+MATCH (n{'property':'1'}) WHERE EXISTS ((n)-[*1]-()) DELETE n; -- issue #624, issue #512
+ERROR:  permission denied for table ag_vertex
 -- SET cypher query by readonly user
 MATCH (n{'property':'1'}) SET n.property = 'modified_1';  -- issue #512
-ERROR:  permission denied for schema graph_priv_test
+ERROR:  permission denied for table ag_vertex
 -- MERGE cypher query by readonly user
 MERGE (n{'property':'1'}) return n;
-ERROR:  permission denied for schema graph_priv_test
+ERROR:  permission denied for table ag_vertex
 -- Clear all
 RESET SESSION AUTHORIZATION;
+--
+-- Test ROW LEVEL SECURITY
+--
+CREATE ROLE group1;
+CREATE ROLE role2 IN ROLE group1;
+CREATE ROLE role3 IN ROLE group1;
+MATCH (a:v1) RETURN a;
+            a             
+--------------------------
+ v1[3.1]{"property": "1"}
+ v1[3.2]{"property": "2"}
+ v1[3.3]{"property": "3"}
+ v1[3.4]{"property": "4"}
+ v1[3.5]{"property": "a"}
+ v1[3.6]{"property": "b"}
+ v1[3.7]{"property": "c"}
+ v1[3.8]{"property": "d"}
+(8 rows)
+
+-- To allow group1 to access the graph_priv_test graph,
+-- USAGE on graph_priv_test is required
+GRANT USAGE ON SCHEMA graph_priv_test TO group1;
+-- Allow group1 to use MATCH, CREATE/MERGE, SET/REMOVE on v1 label
+GRANT SELECT, INSERT, UPDATE, DELETE ON graph_priv_test."v1" TO group1;
+GRANT SELECT, INSERT, UPDATE, DELETE ON graph_priv_test."ag_vertex" TO group1;
+GRANT SELECT, INSERT, UPDATE, DELETE ON graph_priv_test."ag_edge" TO group1;
+GRANT USAGE ON graph_priv_test."v1_id_seq" TO group1;
+ALTER TABLE graph_priv_test."v1" ENABLE ROW LEVEL SECURITY;
+-- Switch to role2
+SET role role2;
+-- Since we enabled rls without any policy, role2 should not be able to access/insert any data
+MATCH (a:v1) RETURN a;
+ a 
+---
+(0 rows)
+
+CREATE (a:v1 {name: 'A'});
+ERROR:  new row violates row-level security policy for table "v1"
+RESET ROLE;
+-- Add policy to allow role2 to access/insert data and role3 to access data
+CREATE POLICY v1_policy ON graph_priv_test.v1 TO group1
+USING (current_role = 'role2' OR current_role = 'role3')
+WITH CHECK (current_role = 'role2');
+-- Switch to role2 again
+SET role role2;
+MATCH (a:v1) RETURN a;
+            a             
+--------------------------
+ v1[3.1]{"property": "1"}
+ v1[3.2]{"property": "2"}
+ v1[3.3]{"property": "3"}
+ v1[3.4]{"property": "4"}
+ v1[3.5]{"property": "a"}
+ v1[3.6]{"property": "b"}
+ v1[3.7]{"property": "c"}
+ v1[3.8]{"property": "d"}
+(8 rows)
+
+CREATE (a:v1 {name: 'A'});
+MATCH (a:v1 {name: 'A'}) SET a.name = 'B' RETURN a;
+           a           
+-----------------------
+ v1[3.10]{"name": "B"}
+(1 row)
+
+MERGE (a:v1 {name: 'A'}) return a;
+           a           
+-----------------------
+ v1[3.11]{"name": "A"}
+(1 row)
+
+RESET ROLE;
+-- Switch to role3
+SET role role3;
+MATCH (a:v1) RETURN a;
+            a             
+--------------------------
+ v1[3.1]{"property": "1"}
+ v1[3.2]{"property": "2"}
+ v1[3.3]{"property": "3"}
+ v1[3.4]{"property": "4"}
+ v1[3.5]{"property": "a"}
+ v1[3.6]{"property": "b"}
+ v1[3.7]{"property": "c"}
+ v1[3.8]{"property": "d"}
+ v1[3.10]{"name": "B"}
+ v1[3.11]{"name": "A"}
+(10 rows)
+
+-- Should pass because its same as MATCH, as no new row will be created
+MERGE (a:v1 {name: 'A'});
+-- Should fail as role3
+CREATE (a:v1 {name: 'C'});
+ERROR:  new row violates row-level security policy for table "v1"
+MATCH (a:v1 {name: 'A'}) SET a.name = 'C' RETURN a;
+ERROR:  new row violates row-level security policy for table "v1"
+MERGE (a:v1 {name: 'C'}) return a;
+ERROR:  new row violates row-level security policy for table "v1"
+RESET ROLE;
+-- Allow role3 to access/update data where name is 'A'
+ALTER POLICY v1_policy ON graph_priv_test."v1"
+USING (current_role = 'role2' OR (current_role = 'role3' AND properties->>'name' = 'A'))
+WITH CHECK (current_role = 'role2' OR (current_role = 'role3' AND properties->>'name' = 'A'));
+-- Switch to role3 again
+SET role role3;
+MATCH (a:v1 {name: 'A'}) SET a.age=40 RETURN a;
+                a                 
+----------------------------------
+ v1[3.11]{"age": 40, "name": "A"}
+(1 row)
+
+MATCH (a:v1 {name: 'A'}) DELETE a;
+-- Should fail as role3 can only update where name is 'A'
+MATCH (a:v1 {name: 'B'}) SET a.age=40;
+MATCH (a:v1 {name: 'B'}) DELETE a;
+RESET ROLE;
+-- Clean up
 DROP GRAPH IF EXISTS graph_priv_test CASCADE;

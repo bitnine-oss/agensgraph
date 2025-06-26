@@ -201,6 +201,13 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	}
 
 	/*
+	 * ExecWithCheckOptions() will skip any WCOs which are not of the kind
+	 * we are looking for at this point.
+	 */
+	if (resultRelInfo->ri_WithCheckOptions != NIL)
+		ExecWithCheckOptions(WCO_RLS_INSERT_CHECK, resultRelInfo, slot, estate);
+
+	/*
 	 * Check the constraints of the tuple
 	 */
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
