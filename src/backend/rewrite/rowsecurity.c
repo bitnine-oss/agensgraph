@@ -117,6 +117,7 @@ get_row_security_policies(Query *root, RangeTblEntry *rte, int rt_index,
 	List	   *permissive_policies;
 	List	   *restrictive_policies;
 	RTEPermissionInfo *perminfo;
+	int resultRelation = 0;
 
 	/* Defaults for the return values */
 	*securityQuals = NIL;
@@ -172,8 +173,45 @@ get_row_security_policies(Query *root, RangeTblEntry *rte, int rt_index,
 	 */
 	rel = table_open(rte->relid, NoLock);
 
-	commandType = rt_index == root->resultRelation ?
+	if (root->commandType == CMD_GRAPHWRITE)
+	{
+		ListCell *lc;
+		foreach (lc, root->g_resultRelations)
+		{
+			resultRelation = lfirst_int(lc);
+			if (resultRelation == rt_index)
+				break;
+		}
+	}
+	else
+		resultRelation = root->resultRelation;
+
+	commandType = rt_index == resultRelation ?
 		root->commandType : CMD_SELECT;
+
+	if (commandType == CMD_GRAPHWRITE)
+	{
+		/*
+		 * For graph write operations, the specific operation is
+		 * determined by root->g_writeOp
+		 */
+		switch (root->g_writeOp)
+		{
+		case GWROP_CREATE:
+		case GWROP_MERGE:
+			commandType = CMD_INSERT;
+			break;
+		case GWROP_DELETE:
+			commandType = CMD_DELETE;
+			break;
+		case GWROP_SET:
+			commandType = CMD_UPDATE;
+			break;
+		
+		default:
+			break;
+		}
+	}
 
 	/*
 	 * In some cases, we need to apply USING policies (which control the
@@ -275,7 +313,7 @@ get_row_security_policies(Query *root, RangeTblEntry *rte, int rt_index,
 	if (commandType == CMD_INSERT || commandType == CMD_UPDATE)
 	{
 		/* This should be the target relation */
-		Assert(rt_index == root->resultRelation);
+		Assert(rt_index == resultRelation);
 
 		add_with_check_options(rel, rt_index,
 							   commandType == CMD_INSERT ?

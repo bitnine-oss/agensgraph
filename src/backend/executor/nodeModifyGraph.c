@@ -53,9 +53,6 @@ static bool isEdgeArrayOfPath(List *exprs, char *variable);
 
 static void openResultRelInfosIndices(ModifyGraphState *mgstate);
 
-/* ACL*/
-static void checkModifyGraphACL(ModifyGraphState *mgstate);
-
 ModifyGraphState *
 ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 {
@@ -110,6 +107,30 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 		Index		resultRelation = lfirst_int(l);
 
 		ExecInitResultRelation(estate, resultRelInfo, resultRelation);
+		resultRelInfo++;
+	}
+
+	/*
+	 * Initialize any WITH CHECK OPTION constraints if needed.
+	 */
+	resultRelInfo = mgstate->resultRelInfo;
+	foreach(l, mgplan->withCheckOptionLists)
+	{
+		List	   *wcoList = (List *) lfirst(l);
+		List	   *wcoExprs = NIL;
+		ListCell   *ll;
+
+		foreach(ll, wcoList)
+		{
+			WithCheckOption *wco = (WithCheckOption *) lfirst(ll);
+			ExprState  *wcoExpr = ExecInitQual((List *) wco->qual,
+											   &mgstate->ps);
+
+			wcoExprs = lappend(wcoExprs, wcoExpr);
+		}
+
+		resultRelInfo->ri_WithCheckOptions = wcoList;
+		resultRelInfo->ri_WithCheckOptionExprs = wcoExprs;
 		resultRelInfo++;
 	}
 
@@ -332,8 +353,6 @@ ExecModifyGraph(PlanState *pstate)
 						mgstate->modify_cid + MODIFY_CID_LOWER_BOUND;
 					break;
 			}
-
-			checkModifyGraphACL(mgstate);
 
 			slot = ExecProcNode(mgstate->subplan);
 
@@ -870,35 +889,4 @@ openResultRelInfosIndices(ModifyGraphState *mgstate)
 		ExecOpenIndices(resultRelInfo, false);
 		resultRelInfo++;
 	}
-}
-
-static void
-checkModifyGraphACL(ModifyGraphState *mgstate)
-{
-	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
-	AclResult	aclresult;
-	AclMode 	mode;
-
-	switch (plan->operation)
-	{
-		case GWROP_CREATE:
-		case GWROP_MERGE:
-			mode = ACL_INSERT;
-			break;
-		case GWROP_DELETE:
-			mode = ACL_DELETE;
-			break;
-		case GWROP_SET:
-			mode = ACL_UPDATE;
-			break;
-		default:
-			elog(ERROR, "unknown graph operation");
-	}
-
-	aclresult = object_aclcheck(NamespaceRelationId,
-								get_namespace_oid(graph_path, true),
-								GetUserId(), mode);
-
-	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, OBJECT_SCHEMA, graph_path);
 }

@@ -1924,6 +1924,11 @@ grouping_planner(PlannerInfo *root, double tuple_fraction)
 		}
 		else if (parse->commandType == CMD_GRAPHWRITE)
 		{
+			List *withCheckOptionLists = NIL;
+
+			if (parse->withCheckOptions)
+				withCheckOptionLists = list_make1(parse->withCheckOptions);
+
 			path = (Path *) create_modifygraph_path(root, final_rel,
 													parse->g_writeOp,
 													parse->g_last,
@@ -1935,6 +1940,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction)
 													parse->g_exprs,
 													parse->g_sets,
 													parse->g_resultRelations,
+													withCheckOptionLists,
 													assign_special_exec_param(root));
 		}
 

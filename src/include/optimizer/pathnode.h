@@ -366,6 +366,7 @@ extern ModifyGraphPath *create_modifygraph_path(PlannerInfo *root,
 												bool eager, List *pattern,
 												List *exprs, List *sets,
 												List *resultRelations,
+												List *withCheckOptionLists,
 												int epqParam);
 
 extern GraphVLEPath *create_graph_vle_path(PlannerInfo *root,
