@@ -307,8 +307,9 @@ static char *getDeleteTargetName(ParseState *pstate, Node *expr);
 
 /* graph write */
 static List *addRangeTableAllModifiedLabels(ParseState *pstate, Query *qry,
-											List *targets);
-static void addRangeTableLabels(ParseState *pstate, List *targets, Query *qry);
+											List *targets, AclMode requiredPerms);
+static void addRangeTableLabels(ParseState *pstate, List *targets, Query *qry,
+								AclMode requiredPerms);
 static Oid	find_target_label(Node *node, Query *qry);
 static bool find_target_label_walker(Node *node,
 									 find_target_label_context *ctx);
@@ -815,6 +816,7 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 	CypherCreateClause *detail;
 	CypherPath *cpath;
 	Query	   *qry;
+	AclMode		targetPerms;
 
 	detail = (CypherCreateClause *) clause->detail;
 	cpath = llast(detail->pattern);
@@ -851,7 +853,8 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 
 	qry->g_pattern = transformCreatePattern(pstate, cpath,
 											&qry->targetList);
-	addRangeTableLabels(pstate, pstate->p_target_labels, qry);
+	targetPerms = ACL_INSERT;
+	addRangeTableLabels(pstate, pstate->p_target_labels, qry, targetPerms);
 	qry->g_nr_modify = pstate->p_nr_modify_clause++;
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
@@ -881,6 +884,7 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	ParseNamespaceItem *nsitem;
 	ListCell   *le;
 	Query	   *qry;
+	AclMode		targetPerms;
 
 	/* DELETE cannot be the first clause */
 	Assert(clause->prev != NULL);
@@ -933,7 +937,8 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 
 	assign_query_eager(qry);
 
-	addRangeTableAllModifiedLabels(pstate, qry, NIL);
+	targetPerms = ACL_DELETE;
+	addRangeTableAllModifiedLabels(pstate, qry, NIL, targetPerms);
 	qry->rteperminfos = pstate->p_rteperminfos;
 
 	return qry;
@@ -946,6 +951,7 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 	Query	   *qry;
 	ParseNamespaceItem *nsitem;
 	ListCell   *le;
+	AclMode		targetPerms;
 
 	/* SET/REMOVE cannot be the first clause */
 	Assert(clause->prev != NULL);
@@ -1012,7 +1018,8 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 
 	assign_query_eager(qry);
 
-	addRangeTableAllModifiedLabels(pstate, qry, NIL);
+	targetPerms = ACL_UPDATE;
+	addRangeTableAllModifiedLabels(pstate, qry, NIL, targetPerms);
 	qry->rteperminfos = pstate->p_rteperminfos;
 
 	return qry;
@@ -1025,6 +1032,7 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	Query	   *qry;
 	ParseNamespaceItem *nsitem;
 	RangeTblEntry *prev_rte;
+	AclMode targetPerms;
 
 	if (list_length(detail->pattern) != 1)
 		ereport(ERROR,
@@ -1040,6 +1048,7 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	Assert(nsitem->p_rte->rtekind == RTE_SUBQUERY);
 
 	qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
+	targetPerms = ACL_INSERT;
 
 	/*
 	 * Make an expression list to create the MERGE path. We assume that the
@@ -1049,6 +1058,8 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	qry->g_pattern = transformMergeCreate(pstate, detail->pattern,
 										  prev_rte, qry->targetList);
 
+	if (detail->sets)
+		targetPerms |= ACL_UPDATE;
 	qry->g_sets = transformMergeOnSet(pstate, detail->sets);
 	qry->g_nr_modify = pstate->p_nr_modify_clause++;
 
@@ -1068,7 +1079,8 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 
 	assign_query_eager(qry);
 
-	addRangeTableAllModifiedLabels(pstate, qry, pstate->p_target_labels);
+	addRangeTableAllModifiedLabels(pstate, qry, pstate->p_target_labels,
+								   targetPerms);
 	qry->rteperminfos = pstate->p_rteperminfos;
 
 	return qry;
@@ -5080,6 +5092,7 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 	ParseNamespaceItem *nsitem;
 	Query	   *qry;
 	List	   *edges = NIL;
+	AclMode		targetPerms;
 
 	nsitem = transformClause(pstate, clause->prev);
 
@@ -5130,7 +5143,8 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 
 	assign_query_collations(pstate, qry);
 
-	addRangeTableAllModifiedLabels(pstate, qry, NIL);
+	targetPerms = ACL_DELETE;
+	addRangeTableAllModifiedLabels(pstate, qry, NIL, targetPerms);
 	qry->rteperminfos = pstate->p_rteperminfos;
 
 	return qry;
@@ -5476,7 +5490,8 @@ getDeleteTargetName(ParseState *pstate, Node *expr)
 }
 
 static List *
-addRangeTableAllModifiedLabels(ParseState *pstate, Query *qry, List *targets)
+addRangeTableAllModifiedLabels(ParseState *pstate, Query *qry,
+							   List *targets, AclMode requiredPerms)
 {
 	List	   *new_targets = NIL;
 	List	   *label_oids = NIL;
@@ -5516,13 +5531,14 @@ addRangeTableAllModifiedLabels(ParseState *pstate, Query *qry, List *targets)
 		new_targets = list_union_oid(new_targets, child_oids);
 	}
 
-	addRangeTableLabels(pstate, new_targets, qry);
+	addRangeTableLabels(pstate, new_targets, qry, requiredPerms);
 
 	return new_targets;
 }
 
 static void
-addRangeTableLabels(ParseState *pstate, List *targets, Query *qry)
+addRangeTableLabels(ParseState *pstate, List *targets, Query *qry,
+					AclMode requiredPerms)
 {
 	List	   *resultRelations = NIL;
 	ListCell   *lc;
@@ -5538,7 +5554,7 @@ addRangeTableLabels(ParseState *pstate, List *targets, Query *qry)
 																   NULL,
 																   false,
 																   false);
-
+		nsitem->p_perminfo->requiredPerms = requiredPerms;
 		table_close(relation, NoLock);
 		resultRelations = lappend_int(resultRelations, nsitem->p_rtindex);
 	}
