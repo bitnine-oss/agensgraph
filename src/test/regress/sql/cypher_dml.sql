@@ -1569,6 +1569,33 @@ MATCH (n) WITH n, 'n' as name RETURN name;
 CREATE (n1 {name: 'test'}) WITH NULL AS a0 RETURN a0;
 MATCH (n1) WITH n1, 'test' as name WHERE n1.name = name RETURN n1;
 
+--
+-- AGV2-416
+--
+MATCH (m1:movie),(m2:review) 
+MERGE (m1)-[e:reviewed]->(m2);
+
+MATCH (n:non) SET n.id = 1;
+MERGE (n:non) SET n.id = 1;
+CREATE (n:none) SET n.id = 1;
+
+MATCH (source:base {entity_id: 'CompanyA'})
+WITH source
+MATCH (target:base {entity_id: 'ProductX'})
+MERGE (source)-[r:DIRECTED]-(target)
+SET r += {'weight': 1.0, 'description': 'CompanyA develops ProductX', 'keywords': 'develop, produce', 'source_id': 'chunk-eeec0036b909839e8ec4fa150c939eec', 'file_path': 'custom_kg', 'created_at': 1751270491}
+RETURN r, source, target;
+
+CREATE (source:base {entity_id: 'CompanyA'}), 
+       (target:base {entity_id: 'ProductX'});
+
+MATCH (source:base {entity_id: 'CompanyA'})
+WITH source
+MATCH (target:base {entity_id: 'ProductX'})
+MERGE (source)-[r:DIRECTED]-(target)
+SET r += {'weight': 1.0, 'description': 'CompanyA develops ProductX', 'keywords': 'develop, produce', 'source_id': 'chunk-eeec0036b909839e8ec4fa150c939eec', 'file_path': 'custom_kg', 'created_at': 1751270491}
+RETURN r, source, target;
+
 -- cleanup
 
 DROP GRAPH srf CASCADE;

@@ -380,6 +380,7 @@ static List *repairTargetListCollations(List *targetList);
 static Node *resolveVarOrExpr(ParseState *pstate, Node *node,
 							  char *colname, bool node_is_nsitem);
 static void markRelsAsNulledBy(ParseState *pstate, Node *n, int jindex);
+static void createNonExistentLabels(ParseState *pstate, List *pattern);
 
 Query *
 transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
@@ -851,6 +852,11 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 	}
 
+	/*
+	 * Since they will be created if non-existent
+	 */
+	pstate->p_valid_labels = true;
+
 	qry->g_pattern = transformCreatePattern(pstate, cpath,
 											&qry->targetList);
 	targetPerms = ACL_INSERT;
@@ -871,7 +877,6 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 
 	assign_query_collations(pstate, qry);
-
 	assign_query_eager(qry);
 
 	return qry;
@@ -938,7 +943,9 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	assign_query_eager(qry);
 
 	targetPerms = ACL_DELETE;
-	addRangeTableAllModifiedLabels(pstate, qry, NIL, targetPerms);
+	if (pstate->p_valid_labels)
+		addRangeTableAllModifiedLabels(pstate, qry, NIL, targetPerms);
+
 	qry->rteperminfos = pstate->p_rteperminfos;
 
 	return qry;
@@ -1019,7 +1026,9 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 	assign_query_eager(qry);
 
 	targetPerms = ACL_UPDATE;
-	addRangeTableAllModifiedLabels(pstate, qry, NIL, targetPerms);
+	if (pstate->p_valid_labels)
+		addRangeTableAllModifiedLabels(pstate, qry, NIL, targetPerms);
+
 	qry->rteperminfos = pstate->p_rteperminfos;
 
 	return qry;
@@ -1047,6 +1056,10 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	nsitem = transformClauseBy(pstate, (Node *) clause, transformMergeMatch);
 	Assert(nsitem->p_rte->rtekind == RTE_SUBQUERY);
 
+	/*
+	 * Since they will be created if non-existent
+	 */
+	pstate->p_valid_labels = true;
 	qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 	targetPerms = ACL_INSERT;
 
@@ -4744,6 +4757,11 @@ transformMergeMatchJoin(ParseState *pstate, CypherClause *clause)
 
 	pstate->p_lateral_active = true;
 
+	/*
+	 * If there are any new labels involved in MERGE pattern,
+	 * create them before transforming MATCH for MERGE.
+	 */
+	createNonExistentLabels(pstate, detail->pattern);
 	r_alias = makeAliasNoDup(CYPHER_MERGEMATCH_ALIAS, NIL);
 	r_nsitem = transformClauseImpl(pstate, makeMatchForMerge(detail->pattern),
 								   transformStmt, r_alias);
@@ -4888,18 +4906,6 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 	{
 		labname = AG_VERTEX;
 	}
-	else
-	{
-		int			labloc = getCypherNameLoc(cnode->label);
-
-		if (strcmp(labname, AG_VERTEX) == 0)
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("specifying default label is not allowed"),
-					 parser_errposition(pstate, labloc)));
-
-		createVertexLabelIfNotExist(pstate, labname, labloc);
-	}
 
 	relation = openTargetLabel(pstate, labname);
 
@@ -4967,15 +4973,7 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 	type = linitial(crel->types);
 	typname = getCypherName(type);
 
-	if (strcmp(typname, AG_EDGE) == 0)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("cannot create edge on default label"),
-				 parser_errposition(pstate, getCypherNameLoc(type))));
-
-	createEdgeLabelIfNotExist(pstate, typname, getCypherNameLoc(type));
-
-	relation = openTargetLabel(pstate, getCypherName(linitial(crel->types)));
+	relation = openTargetLabel(pstate, typname);
 
 	edge = makeNewEdge(pstate, relation, crel->prop_map);
 	relid = RelationGetRelid(relation);
@@ -5144,7 +5142,8 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 	assign_query_collations(pstate, qry);
 
 	targetPerms = ACL_DELETE;
-	addRangeTableAllModifiedLabels(pstate, qry, NIL, targetPerms);
+	if (pstate->p_valid_labels)
+		addRangeTableAllModifiedLabels(pstate, qry, NIL, targetPerms);
 	qry->rteperminfos = pstate->p_rteperminfos;
 
 	return qry;
@@ -5976,6 +5975,7 @@ transformClauseImpl(ParseState *pstate, Node *clause,
 	childParseState->p_is_match_quals = pstate->p_is_match_quals;
 	childParseState->p_is_fp_processed = pstate->p_is_fp_processed;
 	childParseState->p_is_optional_match = pstate->p_is_optional_match;
+	childParseState->p_valid_labels = pstate->p_valid_labels;
 
 	qry = transform(childParseState, clause);
 
@@ -5985,6 +5985,7 @@ transformClauseImpl(ParseState *pstate, Node *clause,
 		pstate->p_nr_modify_clause = childParseState->p_nr_modify_clause;
 	pstate->p_delete_edges_resname = childParseState->p_delete_edges_resname;
 	pstate->p_hasGraphwriteClause = childParseState->p_hasGraphwriteClause;
+	pstate->p_valid_labels = childParseState->p_valid_labels;
 
 	mark_nodes_as_nonlocal(childParseState->p_entity_info_list);
 	pstate->p_entity_info_list = list_concat(pstate->p_entity_info_list,
@@ -6504,4 +6505,57 @@ markRelsAsNulledBy(ParseState *pstate, Node *n, int jindex)
 		pstate->p_nullingrels = lappend(pstate->p_nullingrels, NULL);
 	lc = list_nth_cell(pstate->p_nullingrels, varno - 1);
 	lfirst(lc) = bms_add_member((Bitmapset *) lfirst(lc), jindex);
+}
+
+/*
+ * Helper function used in transformCypherMergeClause
+ * create non existent labels.
+ */
+static void
+createNonExistentLabels(ParseState *pstate, List *pattern)
+{
+	CypherPath *path;
+	ListCell   *le;
+
+	path = linitial(pattern);
+
+	foreach(le, path->chain)
+	{
+		Node	   *elem = lfirst(le);
+
+		if (IsA(elem, CypherNode))
+		{
+			CypherNode *cnode = (CypherNode *) elem;
+			char 	   *labname = getCypherName(cnode->label);
+			int 		labloc = getCypherNameLoc(cnode->label);
+
+			if (labname == NULL)
+				continue;
+
+			if (strcmp(labname, AG_VERTEX) == 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						errmsg("specifying default label is not allowed"),
+						parser_errposition(pstate, labloc)));
+
+			createVertexLabelIfNotExist(pstate, labname, labloc);
+		}
+		else
+		{
+			CypherRel  *crel = (CypherRel *) elem;
+			Node 	   *type = crel->types ? linitial(crel->types) : NULL;
+			char 	   *typname = getCypherName(type);
+
+			if (typname == NULL)
+				continue;
+
+			if (strcmp(typname, AG_EDGE) == 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						errmsg("cannot create edge on default label"),
+						parser_errposition(pstate, getCypherNameLoc(type))));
+
+			createEdgeLabelIfNotExist(pstate, typname, getCypherNameLoc(type));
+		}
+	}
 }
