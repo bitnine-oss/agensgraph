@@ -4075,6 +4075,37 @@ MATCH (n1) WITH n1, 'test' as name WHERE n1.name = name RETURN n1;
 (1 row)
 
 --
+-- AGV2-416
+--
+MATCH (m1:movie),(m2:review) 
+MERGE (m1)-[e:reviewed]->(m2);
+MATCH (n:non) SET n.id = 1;
+MERGE (n:non) SET n.id = 1;
+CREATE (n:none) SET n.id = 1;
+MATCH (source:base {entity_id: 'CompanyA'})
+WITH source
+MATCH (target:base {entity_id: 'ProductX'})
+MERGE (source)-[r:DIRECTED]-(target)
+SET r += {'weight': 1.0, 'description': 'CompanyA develops ProductX', 'keywords': 'develop, produce', 'source_id': 'chunk-eeec0036b909839e8ec4fa150c939eec', 'file_path': 'custom_kg', 'created_at': 1751270491}
+RETURN r, source, target;
+ r | source | target 
+---+--------+--------
+(0 rows)
+
+CREATE (source:base {entity_id: 'CompanyA'}), 
+       (target:base {entity_id: 'ProductX'});
+MATCH (source:base {entity_id: 'CompanyA'})
+WITH source
+MATCH (target:base {entity_id: 'ProductX'})
+MERGE (source)-[r:DIRECTED]-(target)
+SET r += {'weight': 1.0, 'description': 'CompanyA develops ProductX', 'keywords': 'develop, produce', 'source_id': 'chunk-eeec0036b909839e8ec4fa150c939eec', 'file_path': 'custom_kg', 'created_at': 1751270491}
+RETURN r, source, target;
+                                                                                                                r                                                                                                                 |               source                |               target                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------+-------------------------------------
+ directed[22.1][23.1,23.2]{"weight": 1.0, "keywords": "develop, produce", "file_path": "custom_kg", "source_id": "chunk-eeec0036b909839e8ec4fa150c939eec", "created_at": 1751270491, "description": "CompanyA develops ProductX"} | base[23.1]{"entity_id": "CompanyA"} | base[23.2]{"entity_id": "ProductX"}
+(1 row)
+
+--
 -- AGV2-422
 --
 CREATE GRAPH rename_test;
@@ -4187,7 +4218,7 @@ DROP VLABEL repo;
 DROP ELABEL lib;
 DROP ELABEL doc;
 DROP GRAPH agens CASCADE;
-NOTICE:  drop cascades to 14 other objects
+NOTICE:  drop cascades to 19 other objects
 DETAIL:  drop cascades to sequence agens.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -4202,6 +4233,11 @@ drop cascades to elabel ag160
 drop cascades to elabel rel
 drop cascades to vlabel v1
 drop cascades to vlabel v2
+drop cascades to elabel reviewed
+drop cascades to vlabel non
+drop cascades to vlabel none
+drop cascades to elabel directed
+drop cascades to vlabel base
 DROP TABLE history;
 DROP GRAPH rename_test CASCADE;
 NOTICE:  drop cascades to 5 other objects
