@@ -380,7 +380,8 @@ static List *repairTargetListCollations(List *targetList);
 static Node *resolveVarOrExpr(ParseState *pstate, Node *node,
 							  char *colname, bool node_is_nsitem);
 static void markRelsAsNulledBy(ParseState *pstate, Node *n, int jindex);
-static void createNonExistentLabels(ParseState *pstate, List *pattern);
+static void preprocess_merge_pattern(ParseState *pstate, List *pattern, 
+									 ParseNamespaceItem *nsitem);
 
 Query *
 transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
@@ -4758,10 +4759,12 @@ transformMergeMatchJoin(ParseState *pstate, CypherClause *clause)
 	pstate->p_lateral_active = true;
 
 	/*
-	 * If there are any new labels involved in MERGE pattern,
-	 * create them before transforming MATCH for MERGE.
+	 * preprocess merge pattern to check for pattern
+	 * rules, variable duplication and create non-existent
+	 * labels if needed.
 	 */
-	createNonExistentLabels(pstate, detail->pattern);
+	preprocess_merge_pattern(pstate, detail->pattern, l_nsitem);
+
 	r_alias = makeAliasNoDup(CYPHER_MERGEMATCH_ALIAS, NIL);
 	r_nsitem = transformClauseImpl(pstate, makeMatchForMerge(detail->pattern),
 								   transformStmt, r_alias);
@@ -4884,7 +4887,6 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 				   List **targetList, List *resultList)
 {
 	char	   *varname = getCypherName(cnode->variable);
-	int			varloc = getCypherNameLoc(cnode->variable);
 	char	   *labname = getCypherName(cnode->label);
 	TargetEntry *te;
 	Relation	relation;
@@ -4900,12 +4902,10 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
 				 errmsg("duplicate variable \"%s\"", varname),
-				 parser_errposition(pstate, varloc)));
+				 parser_errposition(pstate, getCypherNameLoc(cnode->variable))));
 
 	if (labname == NULL)
-	{
 		labname = AG_VERTEX;
-	}
 
 	relation = openTargetLabel(pstate, labname);
 
@@ -4943,7 +4943,6 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 				  List *resultList)
 {
 	char	   *varname;
-	Node	   *type;
 	char	   *typname;
 	Relation	relation;
 	Node	   *edge;
@@ -4951,16 +4950,6 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 	TargetEntry *te;
 	AttrNumber	resno = InvalidAttrNumber;
 	GraphEdge  *gedge;
-
-	if (list_length(crel->types) != 1)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("only one relationship type is allowed for MERGE")));
-
-	if (crel->varlen != NULL)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("variable length relationship is not allowed for MERGE")));
 
 	varname = getCypherName(crel->variable);
 
@@ -4970,8 +4959,7 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 				 errmsg("duplicate variable \"%s\"", varname),
 				 parser_errposition(pstate, getCypherNameLoc(crel->variable))));
 
-	type = linitial(crel->types);
-	typname = getCypherName(type);
+	typname = getCypherName(linitial(crel->types));
 
 	relation = openTargetLabel(pstate, typname);
 
@@ -6508,16 +6496,33 @@ markRelsAsNulledBy(ParseState *pstate, Node *n, int jindex)
 }
 
 /*
- * Helper function used in transformCypherMergeClause
- * create non existent labels.
+ * Helper function for MERGE clause to check pattern rules,
+ * variable duplication, and label existence. If a label
+ * involved in pattern does not exist, it will be created.
  */
 static void
-createNonExistentLabels(ParseState *pstate, List *pattern)
+preprocess_merge_pattern(ParseState *pstate, List *pattern, 
+						 ParseNamespaceItem *nsitem)
 {
-	CypherPath *path;
-	ListCell   *le;
+	CypherPath	*path;
+	ListCell	*le;
+	char		*varname;
+	TargetEntry	*te;
+	List		*targetList;
+	bool		 singlenode;
 
+	targetList = nsitem->p_rte->subquery->targetList;
 	path = linitial(pattern);
+	varname = getCypherName(path->variable);
+	singlenode = (list_length(path->chain) == 1);
+
+	if (varname && findTarget(targetList, varname))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DUPLICATE_ALIAS),
+				 errmsg("duplicate variable \"%s\"", varname),
+				 parser_errposition(pstate, getCypherNameLoc(path->variable))));
+	}
 
 	foreach(le, path->chain)
 	{
@@ -6525,37 +6530,81 @@ createNonExistentLabels(ParseState *pstate, List *pattern)
 
 		if (IsA(elem, CypherNode))
 		{
-			CypherNode *cnode = (CypherNode *) elem;
-			char 	   *labname = getCypherName(cnode->label);
-			int 		labloc = getCypherNameLoc(cnode->label);
+			CypherNode	*cnode = (CypherNode *) elem;
+			char		*labname;
 
-			if (labname == NULL)
-				continue;
-
-			if (strcmp(labname, AG_VERTEX) == 0)
+			/* Check for duplicate variable */
+			varname = getCypherName(cnode->variable);
+			te = findTarget(targetList, varname);
+			if (te != NULL &&
+				(exprType((Node *) te->expr) != VERTEXOID ||
+				 !isNodeForRef(cnode) ||
+				 singlenode))
+			{
 				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						errmsg("specifying default label is not allowed"),
-						parser_errposition(pstate, labloc)));
+						(errcode(ERRCODE_DUPLICATE_ALIAS),
+						errmsg("duplicate variable \"%s\"", varname),
+						parser_errposition(pstate, getCypherNameLoc(cnode->variable))));
+			}
 
-			createVertexLabelIfNotExist(pstate, labname, labloc);
+			/* Check for default label and non-existent label */
+			labname = getCypherName(cnode->label);
+			if (labname != NULL)
+			{
+				int labloc = getCypherNameLoc(cnode->label);
+
+				if (strcmp(labname, AG_VERTEX) == 0)
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("specifying default label is not allowed"),
+							 parser_errposition(pstate, labloc)));
+
+				createVertexLabelIfNotExist(pstate, labname, labloc);
+			}
 		}
 		else
 		{
-			CypherRel  *crel = (CypherRel *) elem;
-			Node 	   *type = crel->types ? linitial(crel->types) : NULL;
-			char 	   *typname = getCypherName(type);
+			CypherRel	*crel = (CypherRel *) elem;
+			Node		*type;
+			char		*typname;
 
-			if (typname == NULL)
-				continue;
+			/* Check for duplicate variable */
+			varname = getCypherName(crel->variable);
+			if (varname && findTarget(targetList, varname))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_DUPLICATE_ALIAS),
+						 errmsg("duplicate variable \"%s\"", varname),
+						 parser_errposition(pstate, getCypherNameLoc(crel->variable))));
+			}
 
-			if (strcmp(typname, AG_EDGE) == 0)
+			/* General rule checks */
+			if (list_length(crel->types) != 1)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						errmsg("cannot create edge on default label"),
-						parser_errposition(pstate, getCypherNameLoc(type))));
+						 errmsg("Exactly one relationship type must be specified for MERGE")));
 
-			createEdgeLabelIfNotExist(pstate, typname, getCypherNameLoc(type));
+			if (crel->varlen != NULL)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("variable length relationship is not allowed for MERGE")));
+
+			/* Check for default label and non-existent label */
+			type = linitial(crel->types);
+			typname = getCypherName(type);
+			if (typname != NULL)
+			{
+				int typloc = getCypherNameLoc(type);
+
+				if (strcmp(typname, AG_EDGE) == 0)
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("cannot create edge on default label"),
+							 parser_errposition(pstate, typloc)));
+
+				createEdgeLabelIfNotExist(pstate, typname, typloc);
+			}
 		}
 	}
+
 }
