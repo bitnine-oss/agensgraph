@@ -3289,7 +3289,7 @@ ERROR:  duplicate variable "a"
 LINE 1: MERGE (a:v1) MERGE (b:v2 {name: a.name}) MERGE (a);
                                                         ^
 MERGE (a)-[r]->(b);
-ERROR:  only one relationship type is allowed for MERGE
+ERROR:  Exactly one relationship type must be specified for MERGE
 MERGE (a)-[r:e1]->(b) MERGE (a);
 ERROR:  duplicate variable "a"
 LINE 1: MERGE (a)-[r:e1]->(b) MERGE (a);
@@ -4105,6 +4105,33 @@ RETURN r, source, target;
  directed[22.1][23.1,23.2]{"weight": 1.0, "keywords": "develop, produce", "file_path": "custom_kg", "source_id": "chunk-eeec0036b909839e8ec4fa150c939eec", "created_at": 1751270491, "description": "CompanyA develops ProductX"} | base[23.1]{"entity_id": "CompanyA"} | base[23.2]{"entity_id": "ProductX"}
 (1 row)
 
+--
+-- Github issue #747
+--
+MATCH (n0) MERGE (n0 {k:1}) RETURN count(n0);
+ERROR:  duplicate variable "n0"
+LINE 1: MATCH (n0) MERGE (n0 {k:1}) RETURN count(n0);
+                          ^
+MERGE (n0) MERGE (n0 {k:1}) RETURN count(n0);
+ERROR:  duplicate variable "n0"
+LINE 1: MERGE (n0) MERGE (n0 {k:1}) RETURN count(n0);
+                          ^
+MATCH ()-[r]->() MERGE ()-[r {k:1}]->() RETURN count (r);
+ERROR:  duplicate variable "r"
+LINE 1: MATCH ()-[r]->() MERGE ()-[r {k:1}]->() RETURN count (r);
+                                   ^
+MERGE ()-[r:idk]->() MERGE ()-[r {k:1}]->() RETURN count (r);
+ERROR:  duplicate variable "r"
+LINE 1: MERGE ()-[r:idk]->() MERGE ()-[r {k:1}]->() RETURN count (r)...
+                                       ^
+MATCH p=() MERGE p=() RETURN p;
+ERROR:  duplicate variable "p"
+LINE 1: MATCH p=() MERGE p=() RETURN p;
+                         ^
+MATCH p=() MERGE a=(p) RETURN p;
+ERROR:  duplicate variable "p"
+LINE 1: MATCH p=() MERGE a=(p) RETURN p;
+                            ^
 -- cleanup
 DROP GRAPH srf CASCADE;
 NOTICE:  drop cascades to 5 other objects

@@ -1596,6 +1596,16 @@ MERGE (source)-[r:DIRECTED]-(target)
 SET r += {'weight': 1.0, 'description': 'CompanyA develops ProductX', 'keywords': 'develop, produce', 'source_id': 'chunk-eeec0036b909839e8ec4fa150c939eec', 'file_path': 'custom_kg', 'created_at': 1751270491}
 RETURN r, source, target;
 
+--
+-- Github issue #747
+--
+MATCH (n0) MERGE (n0 {k:1}) RETURN count(n0);
+MERGE (n0) MERGE (n0 {k:1}) RETURN count(n0);
+MATCH ()-[r]->() MERGE ()-[r {k:1}]->() RETURN count (r);
+MERGE ()-[r:idk]->() MERGE ()-[r {k:1}]->() RETURN count (r);
+MATCH p=() MERGE p=() RETURN p;
+MATCH p=() MERGE a=(p) RETURN p;
+
 -- cleanup
 
 DROP GRAPH srf CASCADE;
