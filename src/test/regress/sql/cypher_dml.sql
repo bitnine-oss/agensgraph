@@ -1597,6 +1597,16 @@ SET r += {'weight': 1.0, 'description': 'CompanyA develops ProductX', 'keywords'
 RETURN r, source, target;
 
 --
+-- Github issue #747
+--
+MATCH (n0) MERGE (n0 {k:1}) RETURN count(n0);
+MERGE (n0) MERGE (n0 {k:1}) RETURN count(n0);
+MATCH ()-[r]->() MERGE ()-[r {k:1}]->() RETURN count (r);
+MERGE ()-[r:idk]->() MERGE ()-[r {k:1}]->() RETURN count (r);
+MATCH p=() MERGE p=() RETURN p;
+MATCH p=() MERGE a=(p) RETURN p;
+
+--
 -- AGV2-422
 --
 CREATE GRAPH rename_test;

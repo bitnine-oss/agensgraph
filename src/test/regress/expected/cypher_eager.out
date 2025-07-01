@@ -529,7 +529,7 @@ ERROR:  duplicate variable "a"
 LINE 1: MERGE (a:v1) MERGE (b:v2 {name: a.name}) MERGE (a);
                                                         ^
 MERGE (a)-[r]->(b);
-ERROR:  only one relationship type is allowed for MERGE
+ERROR:  Exactly one relationship type must be specified for MERGE
 MERGE (a)-[r:e1]->(b) MERGE (a);
 ERROR:  duplicate variable "a"
 LINE 1: MERGE (a)-[r:e1]->(b) MERGE (a);
