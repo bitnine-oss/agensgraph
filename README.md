@@ -65,10 +65,10 @@ To build, install and setup AgensGraph for source, follow instructions in [Insta
 AgensGraph supports various drivers for seamless connection and interaction with the database. Below are the supported drivers:
 | Driver      | Description                                                                                       |
 |-------------|---------------------------------------------------------------------------------------------------|
-| **JDBC**    | [JDBC Driver](https://github.com/skaiworldwide-oss/agensgraph-jdbc) <br> Enables Java applications to interact with AgensGraph. |
-| **Python**  | [Python Driver](https://github.com/skaiworldwide-oss/agensgraph-python) <br> Facilitates interaction between Python applications and AgensGraph. |
-| **Node.js** | [Node.js Driver](https://github.com/skaiworldwide-oss/agensgraph-nodejs) <br> Allows Node.js applications to interface with AgensGraph. |
-| **Go**      | [Go Driver](https://github.com/skaiworldwide-oss/agensgraph-golang) <br> Provides connectivity for Go applications to AgensGraph. |
+| **JDBC**    | [JDBC Driver](https://github.com/skaiworldwide-oss/agensgraph-drivers/jdbc) <br> Enables Java applications to interact with AgensGraph. |
+| **Python**  | [Python Driver](https://github.com/skaiworldwide-oss/agensgraph-drivers/python) <br> Facilitates interaction between Python applications and AgensGraph. |
+| **Node.js** | [Node.js Driver](https://github.com/skaiworldwide-oss/agensgraph-drivers/nodejs) <br> Allows Node.js applications to interface with AgensGraph. |
+| **Go**      | [Go Driver](https://github.com/skaiworldwide-oss/agensgraph-drivers/golang) <br> Provides connectivity for Go applications to AgensGraph. |
 
 
 ## Documentation
