@@ -219,6 +219,52 @@
 
  </reference>
 
+ <reference id="cypher-commands">
+  <title>Cypher Commands</title>
+
+  <partintro>
+   <para>
+    This part contains reference information for the
+    Cypher commands supported by
+    <productname>Agensgraph</productname>.
+   </para>
+  </partintro>
+
+   &cypherAlterElabel;
+   &cypherAlterVlabel;
+   &cypherCreateConstraint;
+   &cypherCreateElabel;
+   &cypherCreateGraph;
+   &cypherCreatePropertyIndex;
+   &cypherCreateVlabel;
+   &cypherDropConstraint;
+   &cypherDropElabel;
+   &cypherDropGraph;
+   &cypherDropPropertyIndex;
+   &cypherDropVlabel;
+   &cypherLoadFrom;
+   &cypherRemove;
+   &cypherSkip;
+   &cypherUnwind;
+   &cypherMatch;
+   &cypherCreate;
+   &cypherMerge;
+
+ </reference>
+
+ <reference id="cypher-syntax">
+  <title>Cypher Syntax</title>
+
+  <partintro>
+   <para>
+    This part contains reference information for the
+    Cypher syntax.
+   </para>
+  </partintro>
+
+   &cypherPath;
+ </reference>
+
  <reference id="reference-client">
   <title>PostgreSQL Client Applications</title>
 

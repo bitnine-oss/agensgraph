@@ -1,0 +1,165 @@
+<!--
+doc/src/sgml/ref/create_constraint.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-createconstraint">
+ <indexterm zone="cypher-createconstraint">
+  <primary>CREATE CONSTRAINT</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>CREATE CONSTRAINT</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>CREATE CONSTRAINT</refname>
+  <refpurpose>define a new constraint to vertex/edge label</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+CREATE [ OR REPLACE ] CONSTRAINT [ <replaceable class="parameter">constraint_name</replaceable> ] ON <replaceable class="parameter">label_name</replaceable> ASSERT <replaceable class="parameter">cypher_expr</replaceable> [IS UNIQUE]
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   <command>CREATE CONSTRAINT</command> defines a new constraint to the vertex/edge label
+  </para>
+
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+   <variablelist>
+
+    <varlistentry>
+     <term><literal>OR REPLACE</literal></term>
+     <listitem>
+      <para>
+       The <literal>OR REPLACE</literal> will either define a new
+       constraint or replace an existing definition.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><replaceable class="parameter">constraint_name</replaceable></term>
+     <listitem>
+      <para>
+       The <replaceable class="parameter">constraint_name</replaceable> is the name of this constraint. It can be omitted.
+        <note>
+          <para>
+            Creating a constraint to the label is similar to creating the <literal>CHECK</literal> to the table.
+            Agensgraph will handle the label also table structure. Therefore, If you want to check the constraint of the label, 
+            You can use the <command>\d graph_name.label_name</command> command in the psql client.
+<programlisting>
+postgres=# CREATE CONSTRAINT ON senior ASSERT age &gt; 60 AND age &lt; 200;
+CREATE CONSTRAINT
+postgres=# \d g.senior;
+                                                       Table "g.senior"
+   Column   |  Type   | Collation | Nullable |                                     Default                                     
+------------+---------+-----------+----------+---------------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('g.senior'::cstring), nextval('g.senior_id_seq'::regclass))
+ properties | jsonb   |           | not null | jsonb_build_object()
+Indexes:
+    "senior_pkey" PRIMARY KEY, btree (id)
+Check constraints:
+    "senior_properties_check" CHECK ((properties.'age'::text) &gt; cypher_to_jsonb(60) AND (properties.'age'::text) &lt; cypher_to_jsonb(200))
+Inherits: g.ag_vertex
+</programlisting>    
+          </para>
+        </note>
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><replaceable class="parameter">label_name</replaceable></term>
+     <listitem>
+      <para>
+       The label name that constraint to be applied.
+      </para>
+     </listitem>
+    </varlistentry>
+ 
+    <varlistentry>
+     <term><replaceable class="parameter">cypher_expr</replaceable></term>
+     <listitem>
+      <para>
+       Basic expression of the cypher query.
+       See <xref linkend="cypher-expr"/> for more examples.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>IS UNIQUE</literal></term>
+     <listitem>
+      <para>
+       The <literal>IS UNIQUE</literal> is a unique row constraint of the label.
+      </para>
+     </listitem>
+    </varlistentry>
+
+   </variablelist>
+
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   To provides unique constraints on properties:
+<programlisting>
+
+-- Create UNIQUE constraint to the vertex label
+CREATE CONSTRAINT ON person ASSERT id IS UNIQUE;
+
+-- Input first id
+CREATE (E:person {id: 1, name: 'Edward', nickname: 'Ed'});
+UPDATE 1
+
+-- Error on create
+CREATE (E:person {id: 1, name: 'Edward', nickname: 'Ed'});
+ERROR:  conflicting key value violates exclusion constraint "person_unique_constraint"
+DETAIL:  Key ((properties.'id'::text))=(1) conflicts with existing key ((properties.'id'::text))=(1).
+
+</programlisting>
+  </para>
+
+  <para>
+   To Provides the ability to control data by setting constraints on properties:
+<programlisting>
+
+CREATE VLABEL senior;
+
+-- Create constraint to the vertex label
+CREATE CONSTRAINT ON senior ASSERT age &gt; 60 AND age &lt; 200;
+
+-- Input 
+MERGE (s:senior {name: 'David', age: 70});
+UPDATE 1
+
+-- Error on create
+CREATE (s:senior {name: 'Nick', age: 22});
+ERROR:  new row for relation "senior" violates check constraint "senior_properties_check"
+DETAIL:  Failing row contains (17.2, {"age": 22, "name": "Nick"}).
+</programlisting>
+  </para>
+ </refsect1>
+ <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="cypher-dropconstraint"/></member>
+   <member><xref linkend="ddl-constraints-check-constraints"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

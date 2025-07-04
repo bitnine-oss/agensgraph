@@ -1,0 +1,106 @@
+<!--
+doc/src/sgml/ref/drop_vlabel.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-dropvlabel">
+ <indexterm zone="cypher-dropvlabel">
+  <primary>DROP VLABEL</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>DROP VLABEL</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>DROP VLABEL</refname>
+  <refpurpose>drop the vertex label</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+DROP VLABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> [, ...] [ CASCADE | RESTRICT ]
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   <command>DROP VLABEL</command> statement drops the target vertex label.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><literal>IF EXISTS</literal></term>
+    <listitem>
+     <para>
+      Do not throw an error if the vertex label does not exist.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">label_name</replaceable></term>
+    <listitem>
+     <para>
+      The name of the vertex label that to be dropped.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>CASCADE</literal></term>
+    <listitem>
+     <para>
+      Automatically drop edges that is connected to this vertex.
+      And other dependent objects too.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>RESTRICT</literal></term>
+    <listitem>
+     <para>
+      Drop fails if any dependent objects exist to the vertex label.
+      This is the default.
+     </para>
+    </listitem>
+   </varlistentry>
+
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   To drop the vertex label:
+<programlisting>
+DROP VLABEL vlabelName;
+</programlisting>
+  </para>
+  <para>
+   To drop the multiple vertex labels:
+<programlisting>
+DROP VLABEL IF EXISTS vlabel1,vlabel2,vlabel3;
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="cypher-createvlabel"/></member>
+   <member><xref linkend="cypher-altervlabel"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

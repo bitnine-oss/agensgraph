@@ -1,0 +1,108 @@
+<!--
+doc/src/sgml/ref/drop_elabel.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-dropelabel">
+ <indexterm zone="cypher-dropelabel">
+  <primary>DROP ELABEL</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>DROP ELABEL</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>DROP ELABEL</refname>
+  <refpurpose>drop the edge label</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+
+DROP ELABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> [, ...] [ CASCADE | RESTRICT ]
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   <command>DROP ELABEL</command> statement drops the target edge label.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><literal>IF EXISTS</literal></term>
+    <listitem>
+     <para>
+      Do not throw an error if the edge label does not exist.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">label_name</replaceable></term>
+    <listitem>
+     <para>
+      The name of the edge label that to be created.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>CASCADE</literal></term>
+    <listitem>
+     <para>
+      Automatically drop vertices that have relationship on this edge.
+      And other dependent objects too.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>RESTRICT</literal></term>
+    <listitem>
+     <para>
+      Drop fails if any dependent objects exist to the edge label.
+      This is the default.
+     </para>
+    </listitem>
+   </varlistentry>
+
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   To drop the edge label:
+<programlisting>
+DROP ELABEL elabelName;
+</programlisting>
+  </para>
+  <para>
+   To drop the multiple edge labels:
+<programlisting>
+DROP ELABEL IF EXISTS elabel1,elabel2,elabel3;
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="cypher-createelabel"/></member>
+   <member><xref linkend="cypher-alterelabel"/></member>
+  </simplelist>
+ </refsect1>
+
+</refentry>
