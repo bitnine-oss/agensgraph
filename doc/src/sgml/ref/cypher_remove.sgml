@@ -1,0 +1,71 @@
+<!--
+doc/src/sgml/ref/remove.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-remove">
+ <indexterm zone="cypher-remove">
+  <primary>REMOVE</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>REMOVE</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>REMOVE</refname>
+  <refpurpose>remove properties</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+REMOVE property_name [, ...]
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   <command>REMOVE</command> clause will remove properties.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+  <variablelist>
+
+   <varlistentry>
+    <term><literal>property_name</literal></term>
+    <listitem>
+     <para>
+      The property name which will be removed.
+     </para>
+    </listitem>
+   </varlistentry>
+
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   To remove specified property:
+<programlisting>
+
+CREATE (E:person {name: 'Edward', nickname: 'Ed'});
+
+MATCH (E:person {name: 'Edward'})
+REMOVE E.nickname;
+
+MATCH (E:person {name: 'Edward'})
+RETURN E;
+
+</programlisting>
+  </para>
+ </refsect1>
+</refentry>

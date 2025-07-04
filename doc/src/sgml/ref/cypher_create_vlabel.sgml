@@ -1,0 +1,194 @@
+<!--
+doc/src/sgml/ref/create_vlabel.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-createvlabel">
+ <indexterm zone="cypher-createvlabel">
+  <primary>CREATE VLABEL</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>CREATE VLABEL</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>CREATE VLABEL</refname>
+  <refpurpose>create the vertex label</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+CREATE [UNLOGGED] VLABEL <replaceable class="parameter">label_specification</replaceable> [ option [ ... ] ]
+
+<phrase>where <replaceable class="parameter">label_specification</replaceable> can be:</phrase>
+
+    [IF NOT EXISTS] <replaceable class="parameter">label_name</replaceable>
+    ONLY <replaceable class="parameter">label_name</replaceable> ( <replaceable class="parameter">label_id</replaceable> )
+
+where option can be:
+
+    DISABLE INDEX
+    INHERITS ( <replaceable class="parameter">label_name</replaceable>, [ ...] )
+    TABLESPACE <replaceable class="parameter">tablespace_name</replaceable>
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   <command>CREATE VLABEL</command> statement creates the label of vertex.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><literal>UNLOGGED</literal></term>
+    <listitem>
+     <para>
+      If specified, the table of vertex label is created as an unlogged table.  Refer
+      to <xref linkend="sql-createtable"/> for details.
+     </para>
+    </listitem>
+   </varlistentry>
+   
+   <varlistentry>
+    <term><literal>IF NOT EXISTS</literal></term>
+    <listitem>
+     <para>
+      Do not throw an error if a vertex label with the same name already
+      exists;
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">label_name</replaceable></term>
+    <listitem>
+     <para>
+      The name of the vertex label that to be created.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>ONLY</literal></term>
+    <listitem>
+     <para>
+      If <literal>ONLY</literal> is mentioned, 
+      label will have a fixed <replaceable class="parameter">label_id</replaceable> 
+      provided as integer value. 
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">lable_id</replaceable></term>
+    <listitem>
+     <para>
+      The label id of the vertex that to be created. It must be an integer type.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>DISABLE INDEX</literal></term>
+    <listitem>
+     <para>
+      Disabling the index of the vertex label.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>INHERITS</literal></term>
+    <listitem>
+     <para>
+      The optional <literal>INHERITS</literal> clause specify the names of the parent labels along with the
+      corresponding keyword after the child label name. There can be multiple parent labels
+      for inheritance.
+        <note>
+          <para>
+            If you want to check the inheritance of the label, 
+            You can use the <command>\d graph_name.label_name</command> command in the psql client.
+<programlisting>
+postgres=# CREATE VLABEL childVlabelName inherits (parentVlabelName1, parentVlabelName2);
+CREATE VLABEL
+postgres=# \d g.childVlabelName;
+                                                            Table "g.childvlabelname"
+   Column   |  Type   | Collation | Nullable |                                              Default                                   
+           
+------------+---------+-----------+----------+----------------------------------------------------------------------------------------
+-----------
+ id         | graphid |           | not null | graphid(graph_labid('g.childvlabelname'::cstring), nextval('g.childvlabelname_id_seq'::
+regclass))
+ properties | jsonb   |           | not null | jsonb_build_object()
+Indexes:
+    "childvlabelname_pkey" PRIMARY KEY, btree (id)
+Inherits: g.parentvlabelname1,
+          g.parentvlabelname2
+</programlisting>    
+          </para>
+        </note>
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">tablespace_name</replaceable></term>
+    <listitem>
+     <para>
+      The vertex label will be created in the spcified <replaceable class="parameter">tablespace_name</replaceable>
+     </para>
+    </listitem>
+   </varlistentry>
+
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   To create vertex label:
+<programlisting>
+CREATE VLABEL vlabelName;
+</programlisting>
+  </para>
+  <para>
+   To create vertex label only if not exists in the graph:
+<programlisting>
+CREATE VLABEL if not exists vlabelName;
+</programlisting>
+  </para>
+  <para>
+   To create vertex label with inherits:
+<programlisting>
+CREATE VLABEL childVlabelName inherits (parentVlabelName1, parentVlabelName2);
+</programlisting>
+  </para>
+  <para>
+   To create with fixed label id as 2000:
+<programlisting>
+CREATE VLABEL ONLY vlabel (2000);
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="cypher-altervlabel"/></member>
+   <member><xref linkend="cypher-dropvlabel"/></member>
+   <member><xref linkend="sql-createtable"/></member>
+  </simplelist>
+ </refsect1>
+
+</refentry>

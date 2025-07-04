@@ -1,0 +1,130 @@
+<!--
+doc/src/sgml/ref/cypher_create.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-create">
+ <indexterm zone="cypher-create">
+  <primary>CYPHER CREATE</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>CYPHER CREATE</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>CYPHER CREATE</refname>
+  <refpurpose>create the cypher elements</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+
+CREATE <literal>path_pattern</literal>
+
+<literal>path_pattern</literal> can be one of:
+
+    <literal>node_pattern</literal>
+    <literal>path_pattern</literal> <literal>edge_pattern</literal> <literal>node_pattern</literal>
+    <replaceable class="parameter">path_variable_name</replaceable> = <literal>path_pattern</literal>
+
+and <literal>node_pattern</literal> is:
+
+    ( [<replaceable class="parameter">variable_name</replaceable>][<replaceable class="parameter">:label_name</replaceable>] [ ONLY ] [ <literal>cypher_property_map</literal> ] )
+
+and <literal>edge_pattern</literal> is:
+
+    { - | &lt;- } [ [<replaceable class="parameter">variable_name</replaceable>][<replaceable class="parameter">:label_name</replaceable>] [ONLY] [ <literal>cypher_range_pattern</literal> ] [ <literal>cypher_property_map</literal> ] ] { - | -&gt; }
+
+and <literal>cypher_property_map</literal> is:
+
+    { <replaceable class="parameter">property_name</replaceable> : <replaceable class="parameter">property_value</replaceable>, [ ...] }
+
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   The <command>CREATE</command> clause is a clause that creates graph elements such as vertices and edges.
+When you want to create a vertex, you need to write a vertex-related pattern in the CREATE clause. 
+You may create each element separately, but you may also create a pattern you want
+at a time by listing the path in the CREATE clause. Be careful when creating a path at once. 
+If it is not used with the MATCH clause like the first query, it creates a new data
+even if there is the same data as the corresponding pattern (i.e. duplicate data).
+
+You can use the <command>CREATE</command> command both standalone statement and clause that working with of another clause.
+  </para>
+
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+  <refsect2>
+   <title><literal>path_pattern</literal></title>
+   <para>
+    Mainly, represent about the cypher path expression.
+    See <xref linkend="cypher-path-pattern"/> for more examples.
+   </para>
+  </refsect2>
+
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   To create vertex:
+<programlisting>
+CREATE ( );
+CREATE (:person);
+CREATE (:person {name: 'Edward'});
+CREATE (:person {name: 'Alice', age: 20});
+CREATE (a {name:'Alice'}), (b {name:a.name})
+</programlisting>
+  </para>
+
+  <para>
+   To create edge:
+<programlisting>
+MATCH (E:person {name: 'Edward'}), (A:person {name: 'Alice'})
+CREATE (E)-[:likes]->(A);
+
+MATCH (E:person {name: 'Edward'}), (A:person {name: 'Alice'})
+CREATE (E)-[:likes {why: 'She is lovely'}]->(A);
+
+MATCH (E:person {name: 'Edward'})
+CREATE (E)-[:IS_PROUD_OF]->(E);
+</programlisting>
+  </para>
+
+  <para>
+   To create path:
+<programlisting>
+CREATE (E:person {name: 'Edward'})-[:likes]->(A:person {name: 'Alice'});
+
+MATCH (E:person {name: 'Edward'})
+CREATE (E)-[:likes]->(A:person {name: 'Alice'});
+
+MATCH (E:person {name: 'Edward'}), (A:person {name: 'Alice'})
+CREATE (E)-[:likes]->(A);
+</programlisting>
+  </para>
+
+ </refsect1>
+
+  <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="cypher-match"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>
+
+
+

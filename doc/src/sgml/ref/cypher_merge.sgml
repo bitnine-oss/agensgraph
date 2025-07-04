@@ -1,0 +1,178 @@
+<!--
+doc/src/sgml/ref/cypher_merge.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-merge">
+ <indexterm zone="cypher-merge">
+  <primary>CYPHER MERGE</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>CYPHER MERGE</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>CYPHER MERGE</refname>
+  <refpurpose>merge the cypher elements to target</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+
+MERGE <literal>path_pattern</literal>
+    [ { ON CREATE SET | ON MATCH SET } <replaceable class="parameter">cypher_expr</replaceable> = <replaceable class="parameter">cypher_expr</replaceable> ]
+
+<literal>path_pattern</literal> can be one of:
+
+    <literal>node_pattern</literal>
+    <literal>path_pattern</literal> <literal>edge_pattern</literal> <literal>node_pattern</literal>
+    <replaceable class="parameter">path_variable_name</replaceable> = <literal>path_pattern</literal>
+
+and <literal>node_pattern</literal> is:
+
+    ( [<replaceable class="parameter">variable_name</replaceable>][<replaceable class="parameter">:label_name</replaceable>] [ ONLY ] [ <literal>cypher_property_map</literal> ] )
+
+and <literal>edge_pattern</literal> is:
+
+    { - | &lt;- } [ [<replaceable class="parameter">variable_name</replaceable>][<replaceable class="parameter">:label_name</replaceable>] [ONLY] [ <literal>cypher_range_pattern</literal> ] [ <literal>cypher_property_map</literal> ] ] { - | -&gt; }
+
+and <literal>cypher_property_map</literal> is:
+
+    { <replaceable class="parameter">property_name</replaceable> : <replaceable class="parameter">property_value</replaceable>, [ ...] }
+
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   The <command>MERGE</command> clause is a clause that 
+     <orderedlist>
+       <listitem><para>If the specified pattern does not exist in the graph, adds a corresponding pattern (like the CREATE clause)</para></listitem>
+       <listitem><para>If it already exists in the graph, verifies existence of the pattern (like the Match clause).</para></listitem>
+     </orderedlist>
+   The MERGE clause recognizes the entire pattern specified in the clause.
+  </para>
+
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+   <variablelist>
+
+    <varlistentry>
+     <term><literal>ON CREATE SET</literal></term>
+     <listitem>
+      <para>
+       The <literal>ON CREATE SET</literal> clauses can be used to set properties depending
+       on how the MERGE clause behaves. If the MERGE clause behaves like a CREATE clause,
+       the ON CREATE SET clause will be performed;
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>ON MATCH SET</literal></term>
+     <listitem>
+      <para>
+       The <literal>ON CREATE SET</literal> clauses can be used to set properties depending
+       on how the MERGE clause behaves. If the MERGE clause behaves like a MATCH clause,
+       the ON MATCH SET clause will be performed;
+      </para>
+     </listitem>
+    </varlistentry>
+
+   </variablelist>
+
+  <refsect2>
+   <title><replaceable class="parameter">path_pattern</replaceable></title>
+   <para>
+    Mainly, represent about the cypher path expression.
+    See <xref linkend="cypher-path-pattern"/> for more examples.
+   </para>
+  </refsect2>
+
+  <refsect2>
+   <title><literal>cypher_expr</literal></title>
+   <para>
+    Basic expression of the cypher query.
+    See <xref linkend="cypher-expr"/> for more examples.
+   </para>
+  </refsect2>
+
+ </refsect1>
+
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   To merge a vertex:
+<programlisting>
+MERGE (:person {name: 'Edward'});
+</programlisting>
+  </para>
+
+  <para>
+   To merge a path:
+<programlisting>
+MERGE (E:person {name: 'Edward'})-[L:likes]->(A:person {name: 'Alice'})
+RETURN E, L, A;
+</programlisting>
+  </para>
+
+  <para>
+   To merge a path but step by step merge:
+<programlisting>
+MERGE (E:person {name: 'Edward'})
+MERGE (A:person {name: 'Alice'})
+MERGE (E)-[L:likes]->(A)
+RETURN E, L, A;
+</programlisting>
+  </para>
+
+  <para>
+   To merge a vertex with <literal>ON CREATE SET</literal> and <literal>ON MATCH SET</literal>:
+<programlisting>
+-- Vertex will be newly merged:
+MERGE (E:person {name: 'Edward'})
+ON CREATE SET E.lastop = 'CREATE'
+ON MATCH SET E.lastop = 'MATCH'
+RETURN E.lastop;
+  lastop  
+----------
+ "CREATE"
+(1 row)
+
+-- Do the same query again:
+MERGE (E:person {name: 'Edward'})
+ON CREATE SET E.lastop = 'CREATE'
+ON MATCH SET E.lastop = 'MATCH'
+RETURN E.lastop;
+  lastop  
+----------
+ "MATCH"
+(1 row)
+</programlisting>
+  </para>
+
+ </refsect1>
+
+
+  <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="cypher-match"/></member>
+   <member><xref linkend="cypher-create"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>
+
+
+

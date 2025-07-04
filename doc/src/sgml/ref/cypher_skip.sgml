@@ -1,0 +1,71 @@
+<!--
+doc/src/sgml/ref/skip.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-skip">
+ <indexterm zone="cypher-skip">
+  <primary>SKIP</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>SKIP</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>SKIP</refname>
+  <refpurpose>changes the search start location</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+SKIP <replaceable class="parameter">count</replaceable>
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   <command>SKIP</command> clause will changes the search start location.
+   When searching for a pattern in the MATCH clause, skip the number of patterns
+   specified in the SKIP clause and start the search.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">count</replaceable></term>
+    <listitem>
+     <para>
+      Specify how many results are skipping.
+     </para>
+    </listitem>
+   </varlistentry>
+
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   Specify how much result will be skipped:
+<programlisting>
+UNWIND [ 1, 2, 3, 4, 5 ] as seq 
+RETURN seq
+SKIP 3;
+ seq 
+-----
+ 4
+ 5
+(2 rows)
+</programlisting>
+  </para>
+ </refsect1>
+</refentry>
