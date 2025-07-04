@@ -1,0 +1,206 @@
+<!--
+doc/src/sgml/ref/alter_elabel.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-alterelabel">
+ <indexterm zone="cypher-alterelabel">
+  <primary>ALTER ELABEL</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>ALTER ELABEL</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>ALTER ELABEL</refname>
+  <refpurpose>alter the edge label</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+ALTER ELABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> [ option ]
+
+where option can be:
+    RENAME TO <replaceable class="parameter">label_name</replaceable>
+    SET TABLESPACE <replaceable class="parameter">tablespace_name</replaceable>
+    SET STORAGE { PLAIN | EXTERNAL | EXTENDED | MAIN | DEFAULT } 
+    SET { LOGGED | UNLOGGED }
+    { INHERIT | NO INHERIT } <replaceable class="parameter">qualified_name</replaceable>
+    DISABLE INDEX
+    OWNER TO <replaceable class="parameter">role_name</replaceable>
+    
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   <command>ALTER ELABEL</command> statement alters the label of edge.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+  <variablelist>
+
+   <varlistentry>
+    <term><literal>IF EXISTS</literal></term>
+    <listitem>
+     <para>
+      Do not throw an error if the edge label does not exist.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">label_name</replaceable></term>
+    <listitem>
+     <para>
+      The target edge label name that to be altered. 
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>RENAME TO</literal></term>
+    <listitem>
+     <para>
+      The edge label name that to be renamed.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>SET TABLESPACE</literal></term>
+    <listitem>
+     <para>
+      See <xref linkend="sql-altertable-desc-set-tablespace"/>
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>SET STORAGE { PLAIN | EXTERNAL | EXTENDED | MAIN | DEFAULT }</literal></term>
+    <listitem>
+     <para>
+      See <xref linkend="sql-altertable-desc-set-storage"/>
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>SET { LOGGED | UNLOGGED }</literal></term>
+    <listitem>
+     <para>
+      Alter the label as <literal>LOGGED</literal> or <literal>UNLOGGED</literal>
+      See <xref linkend="sql-createtable-unlogged"/>
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>INHERIT </literal><replaceable class="parameter">qualified_name</replaceable></term>
+    <listitem>
+     <para>
+     Alter the inheritance to the target <replaceable class="parameter">qualified_name</replaceable>.
+     See <xref linkend="sql-altertable-desc-inherit"/>
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>NO INHERIT </literal><replaceable class="parameter">qualified_name</replaceable></term>
+    <listitem>
+     <para>
+     See <xref linkend="sql-altertable-desc-no-inherit"/>
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>DISABLE INDEX</literal></term>
+    <listitem>
+     <para>
+      Disabling the index usage of the target edge label.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>OWNER TO </literal><replaceable class="parameter">role_name</replaceable></term>
+    <listitem>
+     <para>
+      Make edge label owner to specified role.
+     </para>
+    </listitem>
+   </varlistentry>
+
+  </variablelist>
+ </refsect1>
+ <refsect1>
+  <title>Examples</title>
+  <para>
+   To create edge label:
+<programlisting>
+CREATE ELABEL elabelName;
+</programlisting>
+  </para>
+  <para>
+   To rename edge label only if exists in the graph:
+<programlisting>
+ALTER ELABEL if exists elab1 RENAME TO elabel1;
+</programlisting>
+  </para>
+  <para>
+   To set edge label tablespace:
+<programlisting>
+ALTER ELABEL elable1 SET TABLESPACE pg_default;
+</programlisting>
+  </para>
+  <para>
+   This form sets the storage mode for a edge label.
+<programlisting>
+ALTER ELABEL elabel1 SET STORAGE PLAIN;
+</programlisting>
+  </para>
+  <para>
+   This form changes the edge label from unlogged to logged.
+<programlisting>
+ALTER ELABEL elabel1 SET LOGGED;
+</programlisting>
+  </para>
+  <para>
+   This form adds the target edge label as a new child of the specified parent edge label.
+<programlisting>
+ALTER ELABEL child_elabel INHERIT parent_elabel;
+</programlisting>
+  </para>
+  <para>
+   To disabling index of edge label:
+<programlisting>
+ALTER ELABEL child_elabel DISABLE INDEX;
+</programlisting>
+  </para>
+  <para>
+   To set owner to edge label:
+<programlisting>
+ALTER ELABEL child_elabel OWNER TO parents;
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="cypher-createelabel"/></member>
+   <member><xref linkend="cypher-dropelabel"/></member>
+   <member><xref linkend="cypher-altervlabel"/></member>
+  </simplelist>
+ </refsect1>
+
+</refentry>

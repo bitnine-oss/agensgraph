@@ -1,0 +1,171 @@
+<!--
+doc/src/sgml/ref/create_elabel.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-createelabel">
+ <indexterm zone="cypher-createelabel">
+  <primary>CREATE ELABEL</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>CREATE ELABEL</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>CREATE ELABEL</refname>
+  <refpurpose>create the edge label</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+CREATE [UNLOGGED] ELABEL <replaceable class="parameter">label_specification</replaceable> [ option [ ... ] ]
+
+where <replaceable class="parameter">label_specification</replaceable> can be:
+
+    [IF NOT EXISTS] <replaceable class="parameter">label_name</replaceable>
+    ONLY <replaceable class="parameter">label_name</replaceable> ( <replaceable class="parameter">label_id</replaceable> )
+
+where option can be:
+
+    DISABLE INDEX
+    INHERITS ( <replaceable class="parameter">label_name</replaceable>, [ ...] )
+    TABLESPACE <replaceable class="parameter">tablespace_name</replaceable>
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   <command>CREATE ELABEL</command> statement creates the label of edge.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><literal>UNLOGGED</literal></term>
+    <listitem>
+     <para>
+      If specified, the table of edge label is created as an unlogged table.  Refer
+      to <xref linkend="sql-createtable"/> for details.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>IF NOT EXISTS</literal></term>
+    <listitem>
+     <para>
+      Do not throw an error if a edge label with the same name already.
+      exists;
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">label_name</replaceable></term>
+    <listitem>
+     <para>
+      The name of the edge label that to be created.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>ONLY</literal></term>
+    <listitem>
+     <para>
+      If <literal>ONLY</literal> is mentioned, 
+      label will have a fixed <replaceable class="parameter">label_id</replaceable> 
+      provided as integer value. 
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">label_id</replaceable></term>
+    <listitem>
+     <para>
+      The label id of the edge that to be created. It must be an integer type.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>DISABLE INDEX</literal></term>
+    <listitem>
+     <para>
+      Disabling the index of the edge label.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>INHERITS</literal></term>
+    <listitem>
+     <para>
+      The optional <literal>INHERITS</literal> clause specify the names of the parent labels along with the
+      corresponding keyword after the child label name. There can be multiple parent labels
+      for inheritance.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">tablespace_name</replaceable></term>
+    <listitem>
+     <para>
+      The edge label will be created in the spcified <replaceable class="parameter">tablespace_name</replaceable>
+     </para>
+    </listitem>
+   </varlistentry>
+
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   To create edge label:
+<programlisting>
+CREATE ELABEL elabelName;
+</programlisting>
+  </para>
+  <para>
+   To create edge label only if not exists in the graph:
+<programlisting>
+CREATE ELABEL if not exists elabelName;
+</programlisting>
+  </para>
+  <para>
+   To create edge label with inherits:
+<programlisting>
+CREATE ELABEL childElabelName inherits (parentElabelName1, parentElabelName2);
+</programlisting>
+  </para>
+  <para>
+   To create label with fixed id as 1000:
+<programlisting>
+CREATE ELABEL ONLY elabel (1000);
+</programlisting>
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="cypher-alterelabel"/></member>
+   <member><xref linkend="cypher-dropelabel"/></member>
+   <member><xref linkend="sql-createtable"/></member>
+  </simplelist>
+ </refsect1>
+
+</refentry>

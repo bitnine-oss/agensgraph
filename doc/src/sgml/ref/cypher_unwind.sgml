@@ -1,0 +1,87 @@
+<!--
+doc/src/sgml/ref/unwind.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-unwind">
+ <indexterm zone="cypher-unwind">
+  <primary>UNWIND</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>UNWIND</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>UNWIND</refname>
+  <refpurpose>transform any list back into individual rows</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+UNWIND ( <replaceable class="parameter">cypher_expr</replaceable> ) AS <replaceable class="parameter">alias_name</replaceable>
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   <command>UNWIND</command> transform any list back into individual rows.
+  </para>
+
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+  <refsect2>
+   <title><replaceable class="parameter">cypher_expr</replaceable></title>
+   <para>
+    Basic expression of the cypher query.
+    See <xref linkend="cypher-expr"/> for more examples.
+   </para>
+  </refsect2>
+
+  <refsect2>
+   <title><replaceable class="parameter">alias_name</replaceable></title>
+   <para>
+    Alias name of this unwind result.
+   </para>
+  </refsect2>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   To transform list as rows:
+<programlisting>
+UNWIND [1, 2, 3, null] AS unwinded return unwinded;
+</programlisting>
+  </para>
+
+  <para>
+   To transform expression as rows:
+
+<programlisting>
+CREATE ({a: [1, 2, 3]}), ({a: [4, 5, 6]});
+MATCH (n) WITH n.a AS a UNWIND a AS i RETURN *;
+UPDATE 2
+     a     | i 
+-----------+---
+ [1, 2, 3] | 1
+ [1, 2, 3] | 2
+ [1, 2, 3] | 3
+ [4, 5, 6] | 4
+ [4, 5, 6] | 5
+ [4, 5, 6] | 6
+(6 rows)
+</programlisting>
+  </para>
+
+ </refsect1>
+
+</refentry>

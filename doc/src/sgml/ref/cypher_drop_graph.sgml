@@ -1,0 +1,110 @@
+<!--
+doc/src/sgml/ref/drop_graph.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-dropgraph">
+ <indexterm zone="cypher-dropgraph">
+  <primary>DROP GRAPH</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>DROP GRAPH</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>DROP GRAPH</refname>
+  <refpurpose>drop the graph</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+DROP GRAPH [ IF EXISTS ] <replaceable class="parameter">graph_names</replaceable> [ CASCADE | RESTRICT ]
+
+<phrase>where <replaceable class="parameter">graph_names</replaceable> can be:</phrase>
+
+  <replaceable class="parameter">graph_names</replaceable> [, ...]
+
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   <command>DROP GRAPH</command> statement drops the target graph.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><literal>IF EXISTS</literal></term>
+    <listitem>
+     <para>
+      Do not throw an error if the graph does not exist.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">graph_name</replaceable></term>
+    <listitem>
+     <para>
+      The name of the graph that will be dropped. 
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>CASCADE</literal></term>
+    <listitem>
+     <para>
+      Automatically drop graph element (vertices, edges) that are
+      contained in the graph. And other graph dependent objects too.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>RESTRICT</literal></term>
+    <listitem>
+     <para>
+      Drop fails if any dependent objects exist to the graph.
+      This is the default.
+     </para>
+    </listitem>
+   </varlistentry>
+
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   To drop the graph:
+<programlisting>
+DROP GRAPH example_graph;
+</programlisting>
+  </para>
+  <para>
+   To drop the multiple graph objects:
+<programlisting>
+DROP GRAPH IF EXISTS graph1, graph2, graph3;
+</programlisting>
+  </para>
+ </refsect1>
+
+  <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="cypher-creategraph"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

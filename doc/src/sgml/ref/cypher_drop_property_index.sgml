@@ -1,0 +1,111 @@
+<!--
+doc/src/sgml/ref/drop_property_index.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-droppropertyindex">
+ <indexterm zone="cypher-droppropertyindex">
+  <primary>DROP PROPERTY INDEX</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>DROP PROPERTY INDEX</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>DROP PROPERTY INDEX</refname>
+  <refpurpose>drop the property index</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+DROP PROPERTY INDEX [ IF EXISTS ] <replaceable class="parameter">property_index_name</replaceable> [, ...] [ CASCADE | RESTRICT ]
+
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   <command>DROP PROPERTY INDEX</command> drop the property index
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><literal>IF EXISTS</literal></term>
+    <listitem>
+     <para>
+      Only if target property index exists, then it drop the target property index.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">property_index_name</replaceable></term>
+    <listitem>
+     <para>
+      The property index name that to be dropped.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>CASCADE</literal></term>
+    <listitem>
+     <para>
+      Remove property index dependent objects too.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>RESTRICT</literal></term>
+    <listitem>
+     <para>
+      Drop fails if any dependent objects exist to the vertex label
+     </para>
+    </listitem>
+   </varlistentry>
+
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   To drop property index:
+<programlisting>
+DROP PROPERTY INDEX pidx1;
+</programlisting>
+  </para>
+  <para>
+   To drop property index if exists:
+<programlisting>
+DROP PROPERTY INDEX IF EXISTS pidx2;
+</programlisting>
+  </para>
+  <para>
+   To drop property index with CASCADE:
+<programlisting>
+DROP PROPERTY INDEX IF EXISTS pidx3 CASCADE;
+</programlisting>
+  </para>
+ </refsect1>
+ <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="cypher-createpropertyindex"/></member>
+   <member><xref linkend="sql-dropindex"/></member>
+  </simplelist>
+ </refsect1>
+
+</refentry>
