@@ -1,0 +1,312 @@
+<!--
+doc/src/sgml/ref/create_property_index.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-createpropertyindex">
+ <indexterm zone="cypher-createpropertyindex">
+  <primary>CREATE PROPERTY INDEX</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>CREATE PROPERTY INDEX</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>CREATE PROPERTY INDEX</refname>
+  <refpurpose>create the property index</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+CREATE [ UNIQUE ] PROPERTY INDEX [ CONCURRENTLY ] [ [ IF NOT EXISTS ] <replaceable class="parameter">property_index_name</replaceable> ] ON [ ONLY ] <replaceable class="parameter">label_name</replaceable> [ USING <replaceable class="parameter">method</replaceable> ]
+    ( { <replaceable class="parameter">property_name</replaceable> | ( <replaceable class="parameter">expression</replaceable> ) } 
+    [ <replaceable class="parameter">opclass</replaceable> [ ( <replaceable class="parameter">opclass_parameter</replaceable> = <replaceable class="parameter">value</replaceable> [, ... ] ) ] ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ] [, ...] )
+    [ NULLS [ NOT ] DISTINCT ]
+    [ WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] ) ]
+    [ TABLESPACE <replaceable class="parameter">tablespace_name</replaceable> ]
+    [ WHERE <replaceable class="parameter">predicate</replaceable> ]
+
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+    <command>CREATE PROPERTY INDEX</command> constructs an index on the specified property(properties) of the specified vertex/edge label.
+    Indexes are primarily used to enhance database performance (though inappropriate use can result in slower performance).
+    The key field(s) for the index are specified as property names, or alternatively as expressions written in parentheses. 
+    See <xref linkend="sql-createindex"/> for details.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><literal>UNIQUE</literal></term>
+    <listitem>
+     <para>
+      Causes the system to check for duplicate values in the table 
+      when the index is created (if data already exist) and each time data is added.
+      Attempts to insert or update data 
+      which would result in duplicate entries will generate an error. 
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>CONCURRENTLY</literal></term>
+    <listitem>
+     <para>
+      Support for the building indexes without locking out writes.
+      See <xref linkend="sql-createindex-concurrently"/> for details.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>IF NOT EXISTS</literal></term>
+    <listitem>
+     <para>
+      Do not throw an error if a property index with the same name already exists.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">property_index_name</replaceable></term>
+    <listitem>
+     <para>
+      The name of the property index that to be created.
+     </para>
+    </listitem>
+   </varlistentry>
+
+    <varlistentry>
+    <term><literal>ONLY</literal></term>
+    <listitem>
+      <para>
+      Indicates not to recurse creating indexes on partitions, if the
+      table is partitioned.  The default is to recurse.
+      </para>
+    </listitem>
+    </varlistentry>
+    
+   <varlistentry>
+    <term><replaceable class="parameter">label_name</replaceable></term>
+    <listitem>
+     <para>
+      The name of the vertex or edge label table to be property indexed.
+     </para>
+    </listitem>
+   </varlistentry>
+
+    <varlistentry>
+    <term><replaceable class="parameter">method</replaceable></term>
+    <listitem>
+      <para>
+      The name of the index method to be used.  
+      Choices are
+      <literal>btree</literal>, <literal>hash</literal>, <literal>gin</literal>.
+      The default method is <literal>btree</literal>.
+      
+      <note>
+        <para>
+          Property index is based on the <literal>jsonb</literal> object. 
+          So it's limited to using the method above that supports <literal>jsonb</literal> operations.
+          For instance, It cannot be used with <literal>gist</literal>, <literal>spgist</literal>, <literal>brin</literal> to the property index method.
+        </para>
+      </note>
+
+      </para>
+    </listitem>
+    </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">property_name</replaceable></term>
+    <listitem>
+     <para>
+      The property name.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">expression</replaceable></term>
+    <listitem>
+     <para>
+        An expression based on one or more property of the label.  The
+        expression usually must be written with surrounding parentheses,
+        as shown in the syntax.  However, the parentheses can be omitted
+        if the expression has the form of a function call.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">opclass</replaceable></term>
+    <listitem>
+     <para>
+      The name of an operator class. See below for details.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">opclass_parameter</replaceable></term>
+    <listitem>
+     <para>
+      The name of an operator class parameter. See below for details.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>ASC</literal></term>
+    <listitem>
+     <para>
+      Specifies ascending sort order (which is the default).
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>DESC</literal></term>
+    <listitem>
+     <para>
+      Specifies descending sort order.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>NULLS FIRST</literal></term>
+    <listitem>
+     <para>
+      Specifies that nulls sort before non-nulls.  This is the default
+      when <literal>DESC</literal> is specified.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>NULLS LAST</literal></term>
+    <listitem>
+     <para>
+      Specifies that nulls sort after non-nulls.  This is the default
+      when <literal>DESC</literal> is not specified.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>NULLS DISTINCT</literal></term>
+    <term><literal>NULLS NOT DISTINCT</literal></term>
+    <listitem>
+     <para>
+      Specifies whether for a unique index, null values should be considered
+      distinct (not equal).  The default is that they are distinct, so that
+      a unique index could contain multiple null values in a column.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">storage_parameter</replaceable></term>
+    <listitem>
+     <para>
+      The name of an index-method-specific storage parameter.  See
+      <xref linkend="sql-createindex-storage-parameters"/> below
+      for details.
+     </para>
+    </listitem>
+   </varlistentry>
+ 
+   <varlistentry>
+    <term><replaceable class="parameter">tablespace_name</replaceable></term>
+    <listitem>
+     <para>
+      The tablespace in which to create the index.  If not specified,
+        <xref linkend="guc-default-tablespace"/> is consulted, or
+        <xref linkend="guc-temp-tablespaces"/> for indexes on temporary
+        tables.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">predicate</replaceable></term>
+    <listitem>
+     <para>
+      The constraint expression for a partial property index
+     </para>
+    </listitem>
+   </varlistentry>
+
+  </variablelist>
+ </refsect1>
+
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   To create anonymous property index to label person:
+<programlisting>
+CREATE PROPERTY INDEX ON person (name);
+</programlisting>
+  </para>
+
+  <para>
+   To create a unique PROPERTY INDEX "pidx_name" on the property <literal>name</literal> in
+   the label <literal>person</literal>:
+<programlisting>
+CREATE UNIQUE PROPERTY INDEX pidx_name ON person (name);
+</programlisting>
+  </para>
+
+  <para>
+   To create PROPERTY INDEX using gin index method:
+<programlisting>
+CREATE PROPERTY INDEX pidx_gin ON person USING gin (name);
+</programlisting>
+  </para>
+
+  <para>
+   To create PROPERTY INDEX with deduplication disabled:
+<programlisting>
+CREATE PROPERTY INDEX pidx_dupoff_name ON person (name) WITH (deduplicate_items = off);
+</programlisting>
+  </para>
+
+  <para>
+   To create PROPERTY INDEX on the tablespace:
+<programlisting>
+CREATE PROPERTY INDEX pidx_default_tbspace ON person (name) TABLESPACE pg_default;
+</programlisting>
+  </para>
+
+  <para>
+   To create PROPERTY INDEX with partial index:
+<programlisting>
+CREATE PROPERTY INDEX pidx_fname_notnull ON person (name.first) WHERE (name IS NOT NULL);
+</programlisting>
+  </para>
+
+ </refsect1>
+
+ <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="cypher-droppropertyindex"/></member>
+   <member><xref linkend="sql-createindex"/></member>
+  </simplelist>
+ </refsect1>
+
+</refentry>

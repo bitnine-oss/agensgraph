@@ -222,3 +222,25 @@ Complete list of usable sgml source files in this directory.
 <!ENTITY psqlRef            SYSTEM "psql-ref.sgml">
 <!ENTITY reindexdb          SYSTEM "reindexdb.sgml">
 <!ENTITY vacuumdb           SYSTEM "vacuumdb.sgml">
+
+<!-- Cypher commands -->
+<!ENTITY cypherAlterElabel        SYSTEM "cypher_alter_elabel.sgml">
+<!ENTITY cypherAlterVlabel        SYSTEM "cypher_alter_vlabel.sgml">
+<!ENTITY cypherCreateConstraint   SYSTEM "cypher_create_constraint.sgml">
+<!ENTITY cypherCreateElabel       SYSTEM "cypher_create_elabel.sgml">
+<!ENTITY cypherCreateGraph        SYSTEM "cypher_create_graph.sgml">
+<!ENTITY cypherCreatePropertyIndex SYSTEM "cypher_create_property_index.sgml">
+<!ENTITY cypherCreateVlabel       SYSTEM "cypher_create_vlabel.sgml">
+<!ENTITY cypherDropConstraint     SYSTEM "cypher_drop_constraint.sgml">
+<!ENTITY cypherDropElabel         SYSTEM "cypher_drop_elabel.sgml">
+<!ENTITY cypherDropGraph          SYSTEM "cypher_drop_graph.sgml">
+<!ENTITY cypherDropPropertyIndex  SYSTEM "cypher_drop_property_index.sgml">
+<!ENTITY cypherDropVlabel         SYSTEM "cypher_drop_vlabel.sgml">
+<!ENTITY cypherLoadFrom           SYSTEM "cypher_load_from.sgml">
+<!ENTITY cypherRemove             SYSTEM "cypher_remove.sgml">
+<!ENTITY cypherSkip               SYSTEM "cypher_skip.sgml">
+<!ENTITY cypherUnwind             SYSTEM "cypher_unwind.sgml">
+<!ENTITY cypherMatch              SYSTEM "cypher_match.sgml">
+<!ENTITY cypherCreate             SYSTEM "cypher_create.sgml">
+<!ENTITY cypherMerge              SYSTEM "cypher_merge.sgml">
+<!ENTITY cypherPath               SYSTEM "cypher_path.sgml">
