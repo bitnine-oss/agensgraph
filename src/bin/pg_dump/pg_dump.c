@@ -18961,6 +18961,24 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 		}
 
 		/*
+		 * The default expression was not applied during the dump.
+		 * After the binary upgrade, creating a new vertex for old labels
+		 * failed with the following error message:
+		 * ERROR:  cache lookup failed for type 0
+		 * These lines resolve that error.
+		 */
+		if (tblinfo->attrdefs[j] != NULL && 
+			!tblinfo->attrdefs[j]->separate)
+		{
+			appendPQExpBuffer(q, "ALTER TABLE %s.%s "
+						      "ALTER COLUMN %s SET DEFAULT %s;",
+							  tblinfo->dobj.namespace->dobj.name,
+							  qrelname,
+							  AG_ELEM_PROP_MAP,
+							  tblinfo->attrdefs[j]->adef_expr);
+		}
+
+		/*
 		 * Dump per-column statistics information. We only issue an ALTER
 		 * TABLE statement if the attstattarget entry for this column is
 		 * non-negative (i.e. it's not the default value)
