@@ -1569,6 +1569,18 @@ MATCH (n) WITH n, 'n' as name RETURN name;
 CREATE (n1 {name: 'test'}) WITH NULL AS a0 RETURN a0;
 MATCH (n1) WITH n1, 'test' as name WHERE n1.name = name RETURN n1;
 
+--
+-- AGV2-422
+--
+CREATE GRAPH rename_test;
+SET graph_path = rename_test;
+CREATE (:v1)-[:e1]->(:v1);
+MATCH (v1:v1)-[e1:e1]->(v2:v1) RETURN v1,e1,v2;
+ALTER ELABEL e1 RENAME TO new_e1;
+ALTER VLABEL v1 RENAME TO new_v1;
+CREATE (:new_v1)-[:new_e1]->(:new_v1);
+MATCH (v1:new_v1)-[e1:new_e1]->(v2:new_v1) RETURN v1,e1,v2;
+
 -- cleanup
 
 DROP GRAPH srf CASCADE;
@@ -1594,3 +1606,5 @@ DROP ELABEL doc;
 DROP GRAPH agens CASCADE;
 
 DROP TABLE history;
+
+DROP GRAPH rename_test CASCADE;
