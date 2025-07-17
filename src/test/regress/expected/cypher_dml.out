@@ -3850,6 +3850,28 @@ drop cascades to vlabel vertex
 drop cascades to elabel edge
 drop cascades to vlabel city
 drop cascades to elabel road
+--
+-- AGV2-422
+--
+CREATE GRAPH rename_test;
+SET graph_path = rename_test;
+CREATE (:v1)-[:e1]->(:v1);
+MATCH (v1:v1)-[e1:e1]->(v2:v1) RETURN v1,e1,v2;
+    v1     |         e1         |    v2     
+-----------+--------------------+-----------
+ v1[3.1]{} | e1[4.1][3.1,3.2]{} | v1[3.2]{}
+(1 row)
+
+ALTER ELABEL e1 RENAME TO new_e1;
+ALTER VLABEL v1 RENAME TO new_v1;
+CREATE (:new_v1)-[:new_e1]->(:new_v1);
+MATCH (v1:new_v1)-[e1:new_e1]->(v2:new_v1) RETURN v1,e1,v2;
+      v1       |           e1           |      v2       
+---------------+------------------------+---------------
+ new_v1[3.1]{} | new_e1[4.1][3.1,3.2]{} | new_v1[3.2]{}
+ new_v1[3.3]{} | new_e1[4.2][3.3,3.4]{} | new_v1[3.4]{}
+(2 rows)
+
 -- cleanup
 DROP GRAPH srf CASCADE;
 NOTICE:  drop cascades to 5 other objects
@@ -3957,3 +3979,10 @@ drop cascades to elabel rel
 drop cascades to vlabel v1
 drop cascades to vlabel v2
 DROP TABLE history;
+DROP GRAPH rename_test CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence rename_test.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel new_v1
+drop cascades to elabel new_e1
