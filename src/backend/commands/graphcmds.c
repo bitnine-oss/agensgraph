@@ -42,6 +42,11 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 #include "catalog/pg_inherits.h"
+#include "nodes/makefuncs.h"
+#include "nodes/nodes.h"
+#include "access/relation.h"
+#include "catalog/pg_attrdef.h"
+#include "utils/fmgroids.h"
 
 static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind,
 								 const char *queryString, bool is_fixed_id,
@@ -53,6 +58,7 @@ static void SetMaxStatisticsTarget(Oid laboid);
 static bool IsLabel(const char *label_name, Oid namespaceId);
 static void SimpleProcessUtility(Node *node, const char *queryString,
 								 int stmt_location, int stmt_len);
+static void ReplaceLabelDefaultExpression(RenameStmt *stmt);
 
 /* See ProcessUtilitySlow() case T_CreateSchemaStmt */
 void
@@ -460,6 +466,7 @@ RenameLabel(RenameStmt *stmt)
 	table_close(rel, NoLock);
 	heap_freetuple(tup);
 
+	ReplaceLabelDefaultExpression(stmt);
 	return address;
 }
 
@@ -732,4 +739,63 @@ SimpleProcessUtility(Node *node, const char *queryString, int stmt_location,
 
 	ProcessUtility(wrapper, queryString, PROCESS_UTILITY_SUBCOMMAND,
 				   NULL, NULL, None_Receiver, NULL);
+}
+
+/* 
+ * Update default expression of id column
+ * See transformLabelIdDefinition()
+ */
+static void
+ReplaceLabelDefaultExpression(RenameStmt *stmt)
+{
+	AttrNumber		attnum;
+	HeapTuple		tup;
+	Form_ag_label	form_ag_label;
+	Relation 		rel;
+	FuncExpr	   *graphIdFuncExpr,
+				   *graphLabidFuncExpr;
+	char			buf[NAMEDATALEN] = {0};
+	Const		   *n;
+	Oid				graphid = get_graph_path_oid();
+
+	tup = SearchSysCacheCopy2(LABELNAMEGRAPH,
+							  CStringGetDatum(stmt->relation->relname),
+							  ObjectIdGetDatum(graphid));
+
+	if (!HeapTupleIsValid(tup))
+		elog(ERROR, "cache lookup failed for graph %u of lable name %u",
+			 graphid, stmt->relation->relname);
+
+	form_ag_label = (Form_ag_label) GETSTRUCT(tup);
+	attnum = get_attnum(form_ag_label->relid, AG_ELEM_LOCAL_ID);
+	rel = relation_open(form_ag_label->relid, AccessExclusiveLock);
+
+	graphIdFuncExpr = stringToNode(rel->rd_att->constr->defval->adbin);
+
+	/* First argument of graphid() is the graph_labid() */
+	graphLabidFuncExpr = (FuncExpr *) linitial(graphIdFuncExpr->args);
+
+	snprintf(buf, sizeof(buf), "%s.%s", stmt->relation->schemaname, 
+			 stmt->newname);
+
+	/* Create a replacement form for the graph_labid argument */
+	n = makeNode(Const);
+	n->consttype = CSTRINGOID;
+	n->consttypmod = -1;
+	n->constcollid = InvalidOid;
+	n->constlen = -2;
+	n->constbyval = false;
+	n->location = -1;
+	n->constvalue = CStringGetDatum(buf);
+
+	/* Rewrite the function expression */
+	graphLabidFuncExpr->args = list_delete_first(graphLabidFuncExpr->args);
+	graphLabidFuncExpr->args = lappend(graphLabidFuncExpr->args, n);
+
+	/* Update */
+	RemoveAttrDefault(rel->rd_id, attnum, DROP_RESTRICT, false, true);
+	StoreAttrDefault(rel, attnum, graphIdFuncExpr, true, false);
+
+	relation_close(rel, AccessExclusiveLock);
+	heap_freetuple(tup);
 }
