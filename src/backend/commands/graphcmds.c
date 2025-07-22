@@ -46,6 +46,7 @@
 #include "nodes/nodes.h"
 #include "access/relation.h"
 #include "catalog/pg_attrdef.h"
+#include "catalog/heap.h"
 #include "utils/fmgroids.h"
 
 static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind,
@@ -762,7 +763,7 @@ ReplaceLabelDefaultExpression(RenameStmt *stmt)
 							  ObjectIdGetDatum(graphid));
 
 	if (!HeapTupleIsValid(tup))
-		elog(ERROR, "cache lookup failed for graph %u of lable name %u",
+		elog(ERROR, "cache lookup failed for graph oid %u of label name %s",
 			 graphid, stmt->relation->relname);
 
 	form_ag_label = (Form_ag_label) GETSTRUCT(tup);
@@ -793,7 +794,7 @@ ReplaceLabelDefaultExpression(RenameStmt *stmt)
 
 	/* Update */
 	RemoveAttrDefault(rel->rd_id, attnum, DROP_RESTRICT, false, true);
-	StoreAttrDefault(rel, attnum, graphIdFuncExpr, true, false);
+	StoreAttrDefault(rel, attnum, (Node *) graphIdFuncExpr, true, false);
 
 	relation_close(rel, AccessExclusiveLock);
 	heap_freetuple(tup);
