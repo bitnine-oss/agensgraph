@@ -1,0 +1,620 @@
+CREATE EXTENSION meta;
+-- meta.graphs()
+SELECT meta.graphs();
+ graphs 
+--------
+(0 rows)
+
+CREATE GRAPH graph1;
+CREATE GRAPH graph2;
+SELECT meta.graphs();
+ graphs 
+--------
+ graph1
+ graph2
+(2 rows)
+
+DROP GRAPH graph1 CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to sequence graph1.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+SELECT meta.graphs();
+ graphs 
+--------
+ graph2
+(1 row)
+
+-- clean up
+DROP GRAPH graph2 CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to sequence graph2.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+--
+-- meta.labels(graph_name), meta.vertex_labels(graph_name), meta.edge_labels(graph_name)
+--
+SELECT meta.labels();
+NOTICE:  graph_path is not set. Provide graph name or set graph_path
+ labels 
+--------
+(0 rows)
+
+CREATE GRAPH graph1;
+SET graph_path = graph1;
+SELECT meta.labels();
+ labels 
+--------
+(0 rows)
+
+SELECT meta.vertex_labels();
+ vertex_labels 
+---------------
+(0 rows)
+
+SELECT meta.edge_labels();
+ edge_labels 
+-------------
+(0 rows)
+
+CREATE (:person {name: 'Alice'});
+CREATE (:person {name: 'Bob'});
+CREATE (:animal {name: 'Fluffy'});
+CREATE (:animal {name: 'Spot'});
+MATCH (a:person {name: 'Alice'}), (b:animal {name: 'Fluffy'})
+CREATE (a)-[:"HAS_PET"]->(b);
+SELECT meta.labels();
+ labels  
+---------
+ person
+ animal
+ HAS_PET
+(3 rows)
+
+SELECT meta.labels('graph1');
+ labels  
+---------
+ person
+ animal
+ HAS_PET
+(3 rows)
+
+SELECT meta.vertex_labels();
+ vertex_labels 
+---------------
+ person
+ animal
+(2 rows)
+
+SELECT meta.vertex_labels('graph1');
+ vertex_labels 
+---------------
+ person
+ animal
+(2 rows)
+
+SELECT meta.edge_labels();
+ edge_labels 
+-------------
+ HAS_PET
+(1 row)
+
+SELECT meta.edge_labels('graph1');
+ edge_labels 
+-------------
+ HAS_PET
+(1 row)
+
+--
+-- meta.label_id(label_name, graph_name), meta.label_kind(label_name, graph_name), meta.label_name(label_id, graph_name)
+--
+SELECT meta.label_id('person');
+ label_id 
+----------
+        3
+(1 row)
+
+SELECT meta.label_id('HAS_PET');
+ label_id 
+----------
+        5
+(1 row)
+
+SELECT meta.label_kind('person');
+ label_kind 
+------------
+ v
+(1 row)
+
+SELECT meta.label_kind('HAS_PET');
+ label_kind 
+------------
+ e
+(1 row)
+
+SELECT meta.label_name(1);
+ label_name 
+------------
+ ag_vertex
+(1 row)
+
+SELECT meta.label_name(2);
+ label_name 
+------------
+ ag_edge
+(1 row)
+
+SELECT meta.label_name(3);
+ label_name 
+------------
+ person
+(1 row)
+
+SELECT meta.label_name(4);
+ label_name 
+------------
+ animal
+(1 row)
+
+SELECT meta.label_id('hello');
+ERROR:  Label hello does not exist in graph graph1
+CONTEXT:  PL/pgSQL function meta.label_id(name,name) line 28 at RAISE
+SELECT meta.label_kind('hello');
+NOTICE:  Label hello does not exist in graph graph1
+ label_kind 
+------------
+ 
+(1 row)
+
+SELECT meta.label_name(100);
+NOTICE:  Label with id 100 does not exist in graph graph1
+ label_name 
+------------
+ 
+(1 row)
+
+--
+-- meta.graph_size(graph_name), meta.label_size(label_name, graph_name)
+--
+SELECT meta.graph_size();
+ graph_size 
+------------
+ 480 kB
+(1 row)
+
+SELECT meta.graph_size('graph1');
+ graph_size 
+------------
+ 480 kB
+(1 row)
+
+SELECT meta.graph_size('graph1', pretty => false);
+ graph_size 
+------------
+ 491520
+(1 row)
+
+SELECT meta.label_size('person');
+ label_size 
+------------
+ 32 kB
+(1 row)
+
+SELECT meta.label_size('animal');
+ label_size 
+------------
+ 32 kB
+(1 row)
+
+SELECT meta.label_size('HAS_PET', pretty => false);
+ label_size 
+------------
+ 98304
+(1 row)
+
+SELECT meta.graph_size('unknown');
+ graph_size 
+------------
+ 0 bytes
+(1 row)
+
+SELECT meta.label_size('unknown');
+ERROR:  relation "graph1.unknown" does not exist
+CONTEXT:  SQL statement "SELECT pg_total_relation_size(full_label)"
+PL/pgSQL function meta.label_size(text,name,boolean) line 18 at SQL statement
+--
+-- meta.count(), meta.estimated_count()
+--
+SELECT meta.count('person');
+ count 
+-------
+     2
+(1 row)
+
+SELECT meta.estimated_count('person');
+NOTICE:  Statistics not available for label graph1.person. Run ANALYZE graph1.person to gather statistics.
+ estimated_count 
+-----------------
+                
+(1 row)
+
+ANALYZE graph1.person;
+SELECT meta.estimated_count('person');
+ estimated_count 
+-----------------
+               2
+(1 row)
+
+SELECT meta.count('unknown');
+ERROR:  relation "graph1.unknown" does not exist
+LINE 1: SELECT COUNT(1) FROM "graph1"."unknown"
+                             ^
+QUERY:  SELECT COUNT(1) FROM "graph1"."unknown"
+CONTEXT:  PL/pgSQL function meta.count(text,name) line 18 at EXECUTE
+SELECT meta.estimated_count('unknown');
+ERROR:  relation "graph1.unknown" does not exist
+LINE 1: ...ELECT reltuples::BIGINT FROM pg_class WHERE oid = 'graph1.un...
+                                                             ^
+QUERY:  SELECT reltuples::BIGINT FROM pg_class WHERE oid = 'graph1.unknown'::regclass
+CONTEXT:  PL/pgSQL function meta.estimated_count(text,name) line 18 at EXECUTE
+--
+-- meta.get_last_graph_write_stats()
+--
+CREATE GRAPH ag222;
+SET graph_path = ag222;
+CREATE VLABEL vertices;
+CREATE ELABEL edges;
+-- Should return only 2 inserted vertices and 1 inserted edge
+create (:vertices {name: 'Boston'})-[:edges]->(:vertices {name: 'Miami'});
+SELECT * FROM meta.get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                2 |             1 |               0 |            0 |                 0
+(1 row)
+
+-- Should return only 2 updated properties
+MATCH (u:vertices) SET u.property = true;
+SELECT * FROM meta.get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                0 |             0 |               0 |            0 |                 2
+(1 row)
+
+-- Should return only 1 deleted edge
+match (u:vertices)-[e:edges]-() delete e;
+SELECT * FROM meta.get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                0 |             0 |               0 |            1 |                 0
+(1 row)
+
+-- Should return only 2 deleted vertices
+match (u) delete u;
+SELECT * FROM meta.get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                0 |             0 |               2 |            0 |                 0
+(1 row)
+
+-- cleanup
+DROP GRAPH ag222 CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence ag222.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel vertices
+drop cascades to elabel edges
+--
+-- meta.graph_exists(graph_name), meta.label_exists(label_name, graph_name)
+-- meta.vertex_label_exists(label_name, graph_name), meta.edge_label_exists(label_name, graph_name)
+--
+SET graph_path = graph1;
+SELECT meta.graph_exists('graph1');
+ graph_exists 
+--------------
+ t
+(1 row)
+
+SELECT meta.graph_exists('unknown');
+ graph_exists 
+--------------
+ f
+(1 row)
+
+SELECT meta.label_exists('person');
+ label_exists 
+--------------
+ t
+(1 row)
+
+SELECT meta.label_exists('HAS_PET', 'graph1');
+ label_exists 
+--------------
+ t
+(1 row)
+
+SELECT meta.label_exists('unknown');
+ label_exists 
+--------------
+ f
+(1 row)
+
+SELECT meta.vertex_label_exists('person');
+ vertex_label_exists 
+---------------------
+ t
+(1 row)
+
+SELECT meta.vertex_label_exists('animal', 'graph1');
+ vertex_label_exists 
+---------------------
+ t
+(1 row)
+
+SELECT meta.vertex_label_exists('HAS_PET');
+ vertex_label_exists 
+---------------------
+ f
+(1 row)
+
+SELECT meta.edge_label_exists('HAS_PET');
+ edge_label_exists 
+-------------------
+ t
+(1 row)
+
+SELECT meta.edge_label_exists('person');
+ edge_label_exists 
+-------------------
+ f
+(1 row)
+
+SELECT meta.edge_label_exists('unknown');
+ edge_label_exists 
+-------------------
+ f
+(1 row)
+
+--
+-- meta.get_child_labels(label_name, graph_name), meta.get_parent_labels(label_name, graph_name)
+--
+CREATE VLABEL employee INHERITS (person);
+SELECT meta.get_child_labels('person');
+ get_child_labels 
+------------------
+ employee
+(1 row)
+
+SELECT meta.get_child_labels('person', 'graph1');
+ get_child_labels 
+------------------
+ employee
+(1 row)
+
+SELECT meta.get_child_labels('employee');
+ get_child_labels 
+------------------
+(0 rows)
+
+SELECT meta.get_parent_labels('employee');
+ get_parent_labels 
+-------------------
+ person
+(1 row)
+
+SELECT meta.get_parent_labels('employee', 'graph1');
+ get_parent_labels 
+-------------------
+ person
+(1 row)
+
+SELECT meta.get_parent_labels('person');
+ get_parent_labels 
+-------------------
+ ag_vertex
+(1 row)
+
+--
+-- meta.cypher_type(anyelement), meta.cypher_types(jsonb), meta.is_cypher_type(anyelement)
+--
+SELECT meta.cypher_type(123);
+ cypher_type 
+-------------
+ INTEGER
+(1 row)
+
+SELECT meta.cypher_type(123.45);
+ cypher_type 
+-------------
+ FLOAT
+(1 row)
+
+SELECT meta.cypher_type('hello'::text);
+ cypher_type 
+-------------
+ STRING
+(1 row)
+
+SELECT meta.cypher_type(true);
+ cypher_type 
+-------------
+ BOOLEAN
+(1 row)
+
+SELECT meta.cypher_type('{"key": "value"}'::jsonb);
+ cypher_type 
+-------------
+ MAP
+(1 row)
+
+SELECT meta.cypher_type('["a", "b", "c"]'::jsonb);
+ cypher_type 
+-------------
+ LIST
+(1 row)
+
+SELECT meta.cypher_type('null'::jsonb);
+ cypher_type 
+-------------
+ NULL
+(1 row)
+
+SELECT meta.cypher_type(NULL);
+ERROR:  could not determine polymorphic type because input has type unknown
+SELECT meta.cypher_types('{"key": "value", "arr": [1, 2, 3], "num": 123, "float": 45.67, "bool": true, "null": null}'::jsonb);
+                                              cypher_types                                               
+---------------------------------------------------------------------------------------------------------
+ {"arr": "LIST", "key": "STRING", "num": "INTEGER", "bool": "BOOLEAN", "null": "NULL", "float": "FLOAT"}
+(1 row)
+
+SELECT meta.cypher_types('["a", 1, 2.3, true, {"key": "value"}, null]'::jsonb);
+ERROR:  expected object, got array
+CONTEXT:  PL/pgSQL function meta.cypher_types(jsonb) line 12 at RAISE
+SELECT meta.cypher_types('null'::jsonb);
+ERROR:  expected object, got null
+CONTEXT:  PL/pgSQL function meta.cypher_types(jsonb) line 12 at RAISE
+SELECT meta.cypher_types(NULL);
+ cypher_types 
+--------------
+ {}
+(1 row)
+
+SELECT meta.is_cypher_type(123, 'Integer');
+ is_cypher_type 
+----------------
+ t
+(1 row)
+
+SELECT meta.is_cypher_type(123.45, 'Float');
+ is_cypher_type 
+----------------
+ t
+(1 row)
+
+SELECT meta.is_cypher_type('hello'::text, 'String');
+ is_cypher_type 
+----------------
+ t
+(1 row)
+
+SELECT meta.is_cypher_type(true, 'Boolean');
+ is_cypher_type 
+----------------
+ t
+(1 row)
+
+SELECT meta.is_cypher_type('{"key": "value"}'::jsonb, 'Map');
+ is_cypher_type 
+----------------
+ t
+(1 row)
+
+SELECT meta.is_cypher_type('["a", "b", "c"]'::jsonb, 'List');
+ is_cypher_type 
+----------------
+ t
+(1 row)
+
+SELECT meta.is_cypher_type('null'::jsonb, 'Null');
+ is_cypher_type 
+----------------
+ t
+(1 row)
+
+SELECT meta.is_cypher_type(123, 'String');
+ is_cypher_type 
+----------------
+ f
+(1 row)
+
+SELECT meta.is_cypher_type('hello'::text, 'BIGINT');
+ERROR:  Unsupported expected_type: BIGINT
+CONTEXT:  PL/pgSQL function meta.is_cypher_type(anyelement,text) line 8 at RAISE
+--
+-- meta.count_self_loops(relationship_name, graph_name)
+--
+SELECT meta.count_self_loops();
+ count_self_loops 
+------------------
+                0
+(1 row)
+
+MATCH (a:person {name: 'Bob'})
+CREATE (a)-[:"KNOWS"]->(a);
+MATCH (a:animal {name: 'Spot'})
+CREATE (a)-[:"HAS_PET"]->(a);
+SELECT meta.count_self_loops(graph=>'graph1');
+ count_self_loops 
+------------------
+                2
+(1 row)
+
+SELECT meta.count_self_loops('HAS_PET');
+ count_self_loops 
+------------------
+                1
+(1 row)
+
+SELECT meta.count_self_loops('HAS_PET', 'graph1');
+ count_self_loops 
+------------------
+                1
+(1 row)
+
+SELECT meta.count_self_loops('unknown');
+ERROR:  relation "graph1.unknown" does not exist
+LINE 1: SELECT COUNT(1) FROM graph1.unknown WHERE start = "end"
+                             ^
+QUERY:  SELECT COUNT(1) FROM graph1.unknown WHERE start = "end"
+CONTEXT:  PL/pgSQL function meta.count_self_loops(text,text) line 24 at EXECUTE
+--
+-- meta.edge_density(graph_name), meta.estimated_edge_density(graph_name)
+--
+SELECT meta.edge_density();
+ edge_density 
+--------------
+         0.25
+(1 row)
+
+SELECT meta.edge_density('graph1');
+ edge_density 
+--------------
+         0.25
+(1 row)
+
+SELECT meta.estimated_edge_density();
+ estimated_edge_density 
+------------------------
+                      0
+(1 row)
+
+ANALYZE;
+SELECT meta.estimated_edge_density('graph1');
+ estimated_edge_density 
+------------------------
+                   0.25
+(1 row)
+
+SELECT meta.edge_density('unknown');
+ERROR:  relation "unknown.ag_vertex" does not exist
+LINE 1: SELECT count(*) FROM unknown.ag_vertex
+                             ^
+QUERY:  SELECT count(*) FROM unknown.ag_vertex
+CONTEXT:  PL/pgSQL function meta.edge_density(name) line 21 at EXECUTE
+SELECT meta.estimated_edge_density('unknown');
+ estimated_edge_density 
+------------------------
+                      0
+(1 row)
+
+-- clean up
+DROP GRAPH graph1 CASCADE;
+NOTICE:  drop cascades to 8 other objects
+DETAIL:  drop cascades to sequence graph1.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
+drop cascades to vlabel animal
+drop cascades to elabel HAS_PET
+drop cascades to vlabel employee
+drop cascades to elabel KNOWS

@@ -98,9 +98,6 @@ extern Datum datum_tobooleanornull(PG_FUNCTION_ARGS);
 /* math */
 extern Datum e(PG_FUNCTION_ARGS);
 
-/* utility */
-extern Datum get_last_graph_write_stats(PG_FUNCTION_ARGS);
-
 /* for date and time supports */
 extern Datum datetime(PG_FUNCTION_ARGS);
 extern Datum localdatetime(PG_FUNCTION_ARGS);

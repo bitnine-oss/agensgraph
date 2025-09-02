@@ -28,6 +28,7 @@ SUBDIRS = \
 		isn		\
 		lo		\
 		ltree		\
+		meta		\
 		oid2name	\
 		old_snapshot	\
 		pageinspect	\
