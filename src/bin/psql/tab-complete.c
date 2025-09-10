@@ -1169,6 +1169,10 @@ Alter_routine_options, "CALLED ON NULL INPUT", "RETURNS NULL ON NULL INPUT", \
 "SELECT graphname FROM pg_catalog.ag_graph "\
 " WHERE graphname LIKE '%s'"
 
+#define Query_for_list_of_labels \
+"SELECT labname FROM pg_catalog.ag_label "\
+" WHERE labname LIKE '%s'"
+
 /*
  * These object types were introduced later than our support cutoff of
  * server version 9.2.  We use the VersionedQuery infrastructure so that
@@ -1244,9 +1248,6 @@ static const pgsql_thing_t words_after_create[] = {
 	{"FOREIGN DATA WRAPPER", NULL, NULL, NULL},
 	{"FOREIGN TABLE", NULL, NULL, NULL},
 	{"FUNCTION", NULL, NULL, Query_for_list_of_functions},
-	{"GRAPH", Query_for_list_of_graphs},
-	{"VLABEL", NULL, NULL, NULL},
-	{"ELABEL", NULL, NULL, NULL},
 	{"GROUP", Query_for_list_of_roles},
 	{"INDEX", NULL, NULL, &Query_for_list_of_indexes},
 	{"LANGUAGE", Query_for_list_of_languages},
@@ -1287,6 +1288,13 @@ static const pgsql_thing_t words_after_create[] = {
 	{"USER", Query_for_list_of_roles, NULL, NULL, Keywords_for_user_thing},
 	{"USER MAPPING FOR", NULL, NULL, NULL},
 	{"VIEW", NULL, NULL, &Query_for_list_of_views},
+
+	/* Agensgraph */
+	{"GRAPH", NULL, NULL, NULL},
+	{"VLABEL", NULL, NULL, NULL},
+	{"ELABEL", NULL, NULL, NULL},
+	{"CONSTRAINT", NULL, NULL, NULL},
+	{"PROPERTY INDEX", NULL, NULL, NULL},
 	{NULL}						/* end of list */
 };
 
@@ -1790,6 +1798,121 @@ psql_completion(const char *text, int start, int end)
 	else if (previous_words_count == 0)
 		COMPLETE_WITH_LIST(sql_commands);
 
+/* Agensgraph: CREATE */
+	/* CREATE GRAPH */
+	else if (HeadMatches("CREATE", "GRAPH"))
+	{
+		if (TailMatches("GRAPH"))
+			COMPLETE_WITH("IF NOT EXISTS");
+		else if (TailMatches("GRAPH|EXISTS", MatchAny))
+			COMPLETE_WITH("AUTHORIZATION");
+		else if (TailMatches("AUTHORIZATION"))
+			COMPLETE_WITH_QUERY(Query_for_list_of_roles);
+	}
+
+	/* CREATE [UNLOGGED] VLABEL|ELABEL */
+	else if (HeadMatches("CREATE", "VLABEL|ELABEL") ||
+			 HeadMatches("CREATE", "UNLOGGED", "VLABEL|ELABEL"))
+	{
+		if (TailMatches("VLABEL|ELABEL"))
+			COMPLETE_WITH("IF NOT EXISTS");
+		else 
+			COMPLETE_WITH("DISABLE INDEX", "INHERITS (", "WITH", "TABLESPACE");
+	}
+
+	/* CREATE [UNIQUE] PROPERTY INDEX */
+	else if (HeadMatches("CREATE", "PROPERTY", "INDEX") ||
+			 HeadMatches("CREATE", "UNIQUE", "PROPERTY", "INDEX"))
+	{
+		if (TailMatches("INDEX"))
+			COMPLETE_WITH("CONCURRENTLY");
+	}	
+
+	/* CREATE [ OR REPLACE ] CONSTRAINT */
+	else if (HeadMatches("CREATE", "CONSTRAINT") ||
+			 HeadMatches("CREATE", "OR", "REPLACE", "CONSTRAINT"))
+	{
+		if (TailMatches("CONSTRAINT"))
+			COMPLETE_WITH("ON");
+		else if (TailMatches("ON", MatchAnyExcept("ASSERT")))
+			COMPLETE_WITH("ASSERT");
+		else if (TailMatches("ASSERT", MatchAny))
+			COMPLETE_WITH("IS UNIQUE");
+	}
+
+/* Agensgraph: DROP */
+	/* DROP GRAPH */
+	else if (HeadMatches("DROP", "GRAPH"))
+	{
+		if (TailMatches("GRAPH"))
+			COMPLETE_WITH_QUERY_PLUS(Query_for_list_of_graphs, "IF EXISTS");
+		else if (TailMatches("IF", "EXISTS") || TailMatches(","))
+			COMPLETE_WITH_QUERY(Query_for_list_of_graphs);
+		else
+			COMPLETE_WITH(",", "CASCADE", "RESTRICT");
+	}
+
+	/* DROP VLABEL|ELABEL */
+	else if (HeadMatches("DROP", "VLABEL|ELABEL"))
+	{
+		if (TailMatches("VLABEL|ELABEL"))
+			COMPLETE_WITH_QUERY_PLUS(Query_for_list_of_labels, "IF EXISTS");
+		else if (TailMatches("IF", "EXISTS") || TailMatches(","))
+			COMPLETE_WITH_QUERY(Query_for_list_of_labels);
+		else
+			COMPLETE_WITH(",", "CASCADE", "RESTRICT");
+	}
+
+	/* DROP PROPERTY INDEX */
+	else if (HeadMatches("DROP", "PROPERTY", "INDEX"))
+	{
+		if (TailMatches("INDEX"))
+			COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_indexes, "IF EXISTS");
+		else if (TailMatches("IF", "EXISTS") || TailMatches(","))
+			COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_indexes);
+		else
+			COMPLETE_WITH("CASCADE", "RESTRICT");
+	}
+
+	/* DROP CONSTRAINT */
+	else if (HeadMatches("DROP", "CONSTRAINT"))
+	{
+		if (TailMatches("CONSTRAINT"))
+			COMPLETE_WITH_QUERY(Query_for_all_table_constraints);
+		else if (TailMatches("CONSTRAINT", MatchAny, "ON"))
+			COMPLETE_WITH_QUERY(Query_for_list_of_labels);
+		else if (TailMatches("CONSTRAINT", MatchAny))
+			COMPLETE_WITH("ON");
+	}
+
+/* Agensgraph: ALTER */
+	/* ALTER GRAPH RENAME TO ... */
+	else if (HeadMatches("ALTER", "GRAPH"))
+	{
+		if (TailMatches("GRAPH"))
+			COMPLETE_WITH_QUERY(Query_for_list_of_graphs);
+		else if (TailMatches("GRAPH", MatchAnyExcept("TO")))
+			COMPLETE_WITH("RENAME TO");
+	}
+
+	/* ALTER VLABEL|ELABEL [ IF EXISTS ] ... */
+	else if (HeadMatches("ALTER", "VLABEL|ELABEL"))
+	{
+		if (TailMatches("VLABEL|ELABEL"))
+			COMPLETE_WITH_QUERY_PLUS(Query_for_list_of_labels, "IF EXISTS");
+		else if (TailMatches("IF", "EXISTS"))
+			COMPLETE_WITH_QUERY(Query_for_list_of_labels);
+		else
+			COMPLETE_WITH("RENAME TO", "SET", "OWNER TO", "INHERIT", "NO INHERIT", "DIABLE INDEX", "CLUSTER ON", "REPLICA IDENTITY");
+	}
+
+/* Agensgraph: MATCH */
+	/* do not auto-complete for match clause, search "naah" */
+
+/* Agensgraph: LOAD FROM */ 
+	else if (Matches("LOAD", "FROM", MatchAnyExcept("AS")))
+		COMPLETE_WITH("AS");
+
 /* CREATE */
 	/* complete with something you can create */
 	else if (TailMatches("CREATE"))
@@ -1798,7 +1921,7 @@ psql_completion(const char *text, int start, int end)
 	/* complete with something you can create or replace */
 	else if (TailMatches("CREATE", "OR", "REPLACE"))
 		COMPLETE_WITH("FUNCTION", "PROCEDURE", "LANGUAGE", "RULE", "VIEW",
-					  "AGGREGATE", "TRANSFORM", "TRIGGER");
+					  "AGGREGATE", "TRANSFORM", "TRIGGER", "CONSTRAINT");
 
 /* DROP, but not DROP embedded in other commands */
 	/* complete with something you can drop */
@@ -2956,7 +3079,7 @@ psql_completion(const char *text, int start, int end)
 	/* CREATE INDEX --- is allowed inside CREATE SCHEMA, so use TailMatches */
 	/* First off we complete CREATE UNIQUE with "INDEX" */
 	else if (TailMatches("CREATE", "UNIQUE"))
-		COMPLETE_WITH("INDEX");
+		COMPLETE_WITH("INDEX", "PROPERTY INDEX");
 
 	/*
 	 * If we have CREATE|UNIQUE INDEX, then add "ON", "CONCURRENTLY", and
@@ -3195,7 +3318,7 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("SEQUENCE", "TABLE", "VIEW");
 	/* Complete "CREATE UNLOGGED" with TABLE or MATVIEW */
 	else if (TailMatches("CREATE", "UNLOGGED"))
-		COMPLETE_WITH("TABLE", "MATERIALIZED VIEW");
+		COMPLETE_WITH("TABLE", "MATERIALIZED VIEW", "VLABEL", "ELABEL");
 	/* Complete PARTITION BY with RANGE ( or LIST ( or ... */
 	else if (TailMatches("PARTITION", "BY"))
 		COMPLETE_WITH("RANGE (", "LIST (", "HASH (");
