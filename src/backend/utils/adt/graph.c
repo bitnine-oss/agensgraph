@@ -1556,16 +1556,3 @@ gin_compare_partial_graphid(FunctionCallInfo fcinfo)
 
 	PG_RETURN_INT32(res);
 }
-
-Datum
-graph_exists(PG_FUNCTION_ARGS)
-{
-	text	   *graphName_text = PG_GETARG_TEXT_PP(0);
-	char	   *graphName;
-	Oid			gOID;
-
-	graphName = text_to_cstring(graphName_text);
-	gOID = get_graphname_oid(graphName);
-
-	PG_RETURN_BOOL(OidIsValid(gOID));
-}
