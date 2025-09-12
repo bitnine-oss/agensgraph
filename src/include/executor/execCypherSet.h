@@ -1,7 +1,7 @@
 /*
  * nodeModifyGraph.h
  *
- * Copyright (c) 2022 by Bitnine Global, Inc.
+ * Copyright (c) 2025 by SKAI Worldwide Co., Ltd.
  *
  * src/include/executor/execCypherSet.h
  */

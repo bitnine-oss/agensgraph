@@ -1,7 +1,7 @@
 /*
  * nodeDijkstra.h
  *
- * Copyright (c) 2017 by Bitnine Global, Inc.
+ * Copyright (c) 2017 by SKAI Worldwide Co., Ltd.
  *
  * src/include/executor/nodeDijkstra.h
  */

@@ -2,7 +2,7 @@
  * ag_label.c
  *	  code to create and destroy Agens Graph labels
  *
- * Copyright (c) 2016 by Bitnine Global, Inc.
+ * Copyright (c) 2016 by SKAI Worldwide Co., Ltd.
  *
  * IDENTIFICATION
  *	  src/backend/catalog/ag_label.c

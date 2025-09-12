@@ -2,7 +2,7 @@
  * graphcmds.c
  *	  Commands for creating and altering graph structures and settings
  *
- * Copyright (c) 2016 by Bitnine Global, Inc.
+ * Copyright (c) 2016 by SKAI Worldwide Co., Ltd.
  *
  * IDENTIFICATION
  *	  src/backend/commands/graphcmds.c

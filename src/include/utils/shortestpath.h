@@ -2,7 +2,7 @@
  * dijkstra.h
  *	  Declarations for dijkstra
  *
- * Copyright (c) 2017 by Bitnine Global, Inc.
+ * Copyright (c) 2017 by SKAI Worldwide Co., Ltd.
  *
  * src/include/utils/dijkstra.h
  */

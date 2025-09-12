@@ -2,7 +2,7 @@
  * graphcmds.h
  *	  prototypes for graphcmds.c
  *
- * Copyright (c) 2016 by Bitnine Global, Inc.
+ * Copyright (c) 2016 by SKAI Worldwide Co., Ltd.
  *
  * src/include/commands/graphcmds.h
  */

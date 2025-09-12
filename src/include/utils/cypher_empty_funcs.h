@@ -2,7 +2,7 @@
  * cypher_funcs.h
  *	  Functions in Cypher expressions.
  *
- * Copyright (c) 2022 by Bitnine Global, Inc.
+ * Copyright (c) 2025 by SKAI Worldwide Co., Ltd.
  *
  * src/include/utils/cypher_empty_funcs.h
  */

@@ -2,7 +2,7 @@
  * ag_const.h
  *	  constants used in the graph implementation
  *
- * Copyright (c) 2016 by Bitnine Global, Inc.
+ * Copyright (c) 2016 by SKAI Worldwide Co., Ltd.
  *
  * src/include/ag_const.h
  */

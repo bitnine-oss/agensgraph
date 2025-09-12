@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2022 by Bitnine Global, Inc.
+ * Copyright (c) 2025 by SKAI Worldwide Co., Ltd.
  *
  * src/bin/psql/cypher_describe.h
  */

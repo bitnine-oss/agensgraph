@@ -2,7 +2,7 @@
  * graph.h
  *	  Declarations for vertex and edge data type.
  *
- * Copyright (c) 2016 by Bitnine Global, Inc.
+ * Copyright (c) 2016 by SKAI Worldwide Co., Ltd.
  *
  * src/include/utils/graph.h
  */

@@ -2,7 +2,7 @@
  * parse_shortestpath.c
  *	  handle clauses for graph in parser
  *
- * Copyright (c) 2017 by Bitnine Global, Inc.
+ * Copyright (c) 2017 by SKAI Worldwide Co., Ltd.
  *
  * IDENTIFICATION
  *	  src/backend/parser/parse_shortestpath.c

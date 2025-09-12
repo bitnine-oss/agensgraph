@@ -1,7 +1,7 @@
 /*
  * parse_cypher_utils.h
  *
- * Copyright (c) 2022 by Bitnine Global, Inc.
+ * Copyright (c) 2025 by SKAI Worldwide Co., Ltd.
  *
  * IDENTIFICATION
  *	  src/include/parser/parse_cypher_utils.h

@@ -3,7 +3,7 @@
  *	  routines to support finding the shortest path between two nodes in
  *	  weighted directed graph
  *
- * Portions Copyright (c) 2017, Bitnine Inc.
+ * Portions Copyright (c) 2016 by SKAI Worldwide Co., Ltd.
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *

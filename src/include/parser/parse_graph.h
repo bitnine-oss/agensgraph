@@ -2,7 +2,7 @@
  * parse_graph.h
  *	  handle clauses for graph in parser
  *
- * Copyright (c) 2016 by Bitnine Global, Inc.
+ * Copyright (c) 2016 by SKAI Worldwide Co., Ltd.
  *
  * IDENTIFICATION
  *	  src/include/parser/parse_graph.h

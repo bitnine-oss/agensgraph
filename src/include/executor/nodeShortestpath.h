@@ -3,7 +3,7 @@
  * nodeShortestpath.h
  *	  prototypes for nodeShortestpath.c
  *
- * Copyright (c) 2018 by Bitnine Global, Inc.
+ * Copyright (c) 2018 by SKAI Worldwide Co., Ltd.
  *
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California

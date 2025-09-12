@@ -2,7 +2,7 @@
  * parse_cypher_expr.c
  *	  handle Cypher expressions in parser
  *
- * Copyright (c) 2017 by Bitnine Global, Inc.
+ * Copyright (c) 2017 by SKAI Worldwide Co., Ltd.
  *
  * IDENTIFICATION
  *	  src/backend/parser/parse_cypher_expr.c

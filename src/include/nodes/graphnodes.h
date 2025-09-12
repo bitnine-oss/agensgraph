@@ -2,7 +2,7 @@
  * graph.h
  *	  definitions for graph nodes
  *
- * Copyright (c) 2016 by Bitnine Global, Inc.
+ * Copyright (c) 2016 by SKAI Worldwide Co., Ltd.
  *
  * src/include/nodes/graphnodes.h
  */

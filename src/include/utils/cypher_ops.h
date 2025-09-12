@@ -2,7 +2,7 @@
  * cypher_ops.h
  *	  Functions for operators in Cypher expressions.
  *
- * Copyright (c) 2017 by Bitnine Global, Inc.
+ * Copyright (c) 2017 by SKAI Worldwide Co., Ltd.
  *
  * src/include/utils/cypher_ops.h
  */

@@ -2,7 +2,7 @@
  * graphmeta.c
  *		Functions for reset and collect graphmeta data.
  *
- * Copyright (c) 2016 by Bitnine Global, Inc.
+ * Copyright (c) 2016 by SKAI Worldwide Co., Ltd.
  *
  * IDENTIFICATION
  *	  src/backend/utils/adt/graphmeta.c

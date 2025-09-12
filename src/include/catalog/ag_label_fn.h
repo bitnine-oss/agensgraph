@@ -2,7 +2,7 @@
  * ag_label_fn.h
  *	  prototypes for functions in backend/catalog/ag_label.c
  *
- * Copyright (c) 2016 by Bitnine Global, Inc.
+ * Copyright (c) 2016 by SKAI Worldwide Co., Ltd.
  *
  * IDENTIFICATION
  *	  src/include/catalog/ag_label_fn.h
