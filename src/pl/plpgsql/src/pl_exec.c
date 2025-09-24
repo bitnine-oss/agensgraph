@@ -456,8 +456,6 @@ static char *format_preparedparamsdata(PLpgSQL_execstate *estate,
 									   ParamListInfo paramLI);
 static PLpgSQL_variable *make_callstmt_target(PLpgSQL_execstate *estate,
 											  PLpgSQL_expr *expr);
-extern GraphWriteStats graphWriteStats;
-
 
 /* ----------
  * plpgsql_exec_function	Called by the call handler for

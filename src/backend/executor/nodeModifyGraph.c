@@ -33,6 +33,7 @@
 #include "executor/execCypherDelete.h"
 #include "executor/execCypherMerge.h"
 #include "catalog/ag_label_fn.h"
+#include "tcop/tcopprot.h"
 
 bool		enable_multiple_update = true;
 bool		auto_gather_graphmeta = false;

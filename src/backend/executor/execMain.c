@@ -103,9 +103,6 @@ static char *ExecBuildSlotValueDescription(Oid reloid,
 										   int maxfieldlen);
 static void EvalPlanQualStart(EPQState *epqstate, Plan *planTree);
 
-/* global variable - see postgres.c */
-extern GraphWriteStats graphWriteStats;
-
 /* end of local decls */
 
 

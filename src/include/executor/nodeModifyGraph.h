@@ -18,9 +18,6 @@ extern ModifyGraphState *ExecInitModifyGraph(ModifyGraph *mgplan,
 											 EState *estate, int eflags);
 extern void ExecEndModifyGraph(ModifyGraphState *mgstate);
 
-/* global variable - see postgres.c */
-extern GraphWriteStats graphWriteStats;
-
 /* for visibility between Cypher clauses */
 typedef enum ModifyCid
 {

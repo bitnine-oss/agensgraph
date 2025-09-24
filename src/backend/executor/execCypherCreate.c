@@ -18,6 +18,7 @@
 #include "access/tableam.h"
 #include "pgstat.h"
 #include "commands/trigger.h"
+#include "tcop/tcopprot.h"
 
 static TupleTableSlot *createPath(ModifyGraphState *mgstate, GraphPath *path,
 								  TupleTableSlot *slot);
