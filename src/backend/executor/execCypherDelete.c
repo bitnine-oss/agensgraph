@@ -23,6 +23,7 @@
 #include "access/xact.h"
 #include "commands/trigger.h"
 #include "utils/fmgroids.h"
+#include "tcop/tcopprot.h"
 
 #define DatumGetItemPointer(X)		((ItemPointer) DatumGetPointer(X))
 #define ItemPointerGetDatum(X)		PointerGetDatum(X)

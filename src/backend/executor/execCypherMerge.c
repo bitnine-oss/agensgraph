@@ -20,6 +20,7 @@
 #include "pgstat.h"
 #include "access/xact.h"
 #include "commands/trigger.h"
+#include "tcop/tcopprot.h"
 
 static bool isMatchedMergePattern(PlanState *planstate);
 static TupleTableSlot *createMergePath(ModifyGraphState *mgstate,
