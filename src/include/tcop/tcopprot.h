@@ -17,6 +17,7 @@
 #include "nodes/params.h"
 #include "nodes/parsenodes.h"
 #include "nodes/plannodes.h"
+#include "nodes/execnodes.h"
 #include "storage/procsignal.h"
 #include "utils/guc.h"
 #include "utils/queryenvironment.h"
@@ -30,6 +31,7 @@ extern PGDLLIMPORT const char *debug_query_string;
 extern PGDLLIMPORT int max_stack_depth;
 extern PGDLLIMPORT int PostAuthDelay;
 extern PGDLLIMPORT int client_connection_check_interval;
+extern PGDLLIMPORT GraphWriteStats graphWriteStats;
 
 /* GUC-configurable parameters */
 
