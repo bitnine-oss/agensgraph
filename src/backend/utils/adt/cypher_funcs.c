@@ -27,12 +27,11 @@
 #include "parser/scansup.h"
 #include "utils/date.h"
 #include "utils/datetime.h"
+#include "tcop/tcopprot.h"
 #include "pgtime.h"
 #include <string.h>
 #include <math.h>
 
-/* global variable - see postgres.c*/
-extern GraphWriteStats graphWriteStats;
 
 #define FUNC_JSONB_MAX_ARGS 3
 

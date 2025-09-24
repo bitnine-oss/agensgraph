@@ -21,6 +21,7 @@
 #include "catalog/ag_vertex_d.h"
 #include "catalog/ag_edge_d.h"
 #include "commands/trigger.h"
+#include "tcop/tcopprot.h"
 
 #define DatumGetItemPointer(X)	 ((ItemPointer) DatumGetPointer(X))
 

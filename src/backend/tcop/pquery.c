@@ -27,6 +27,7 @@
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
 #include "catalog/ag_graph_fn.h"
+#include "tcop/tcopprot.h"
 
 
 /*
@@ -59,10 +60,6 @@ static uint64 DoPortalRunFetch(Portal portal,
 							   long count,
 							   DestReceiver *dest);
 static void DoPortalRewind(Portal portal);
-
-
-/* global variable - see postgres.c */
-extern GraphWriteStats graphWriteStats;
 
 /*
  * CreateQueryDesc
