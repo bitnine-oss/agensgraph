@@ -1,5 +1,4 @@
 # meta extension
 comment = 'Utility functions for agensgraph'
 default_version = '1.0'
-module_pathname = '$libdir/meta'
 schema = 'meta'

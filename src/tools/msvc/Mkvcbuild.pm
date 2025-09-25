@@ -50,7 +50,8 @@ my @contrib_excludes = (
 	'sepgsql', 'brin',
 	'test_extensions', 'test_misc',
 	'test_pg_dump', 'snapshot_too_old',
-	'unsafe_tests', 'test_escape');
+	'unsafe_tests', 'test_escape', 
+	'meta');
 
 # Set of variables for frontend modules
 my $frontend_defines = { 'pgbench' => 'FD_SETSIZE=1024' };

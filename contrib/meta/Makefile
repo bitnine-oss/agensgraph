@@ -1,6 +1,5 @@
 # contrib/meta/Makefile
 
-MODULE_big = meta
 EXTENSION = meta
 DATA = meta--1.0.sql
 PGFILEDESC = "meta - Utility functions for agensgraph"
