@@ -1244,6 +1244,13 @@ typedef struct RangeTblEntry
 	bool		inh;			/* inheritance requested? */
 	bool		inFromCl;		/* present in FROM clause? */
 	List	   *securityQuals;	/* security barrier quals to apply, if any */
+
+	/*
+	 * Used in agensgraph DELETE operation, only if
+	 * inh is true for the RTE.
+	 */
+	bool		hasDeleteOptimization; /* indicates if this RTE has optimization for DELETE in Cypher */
+	List	   *connected_relids; /* list of OIDs of connected edge relations */
 } RangeTblEntry;
 
 /*

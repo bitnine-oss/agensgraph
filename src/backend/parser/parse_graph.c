@@ -10,10 +10,16 @@
 
 #include "postgres.h"
 
+#include "access/genam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "ag_const.h"
+#include "catalog/ag_edge_d.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
+#include "catalog/ag_label_fn.h"
+#include "catalog/ag_vertex_d.h"
+#include "catalog/pg_inherits.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_collation.h"
@@ -35,6 +41,8 @@
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
 #include "parser/parsetree.h"
+#include "parser/parse_shortestpath.h"
+#include "pgstat.h"
 #include "rewrite/rewriteHandler.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
@@ -43,12 +51,6 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
-#include "catalog/pg_inherits.h"
-#include "access/table.h"
-#include "access/genam.h"
-#include "parser/parse_shortestpath.h"
-#include "catalog/ag_vertex_d.h"
-#include "catalog/ag_edge_d.h"
 
 #define EDGE_UNION_START_ID		"_start"
 #define EDGE_UNION_END_ID		"_end"
@@ -297,6 +299,7 @@ static Node *verticesConcat(Node *vertices, Node *expr);
 static Node *makeSelectEdgesVertices(Node *vertices,
 									 CypherDeleteClause *delete,
 									 char **edges_resname);
+static Node *makeEdgesForDetach(void);
 static RangeFunction *makeUnnestVertices(Node *vertices);
 static BoolExpr *makeEdgesVertexQual(void);
 static List *extractVerticesExpr(ParseState *pstate, List *exprlist,
@@ -919,6 +922,30 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	qry->g_exprs = extractVerticesExpr(pstate, detail->exprs,
 									   EXPR_KIND_OTHER);
 	qry->g_nr_modify = pstate->p_nr_modify_clause++;
+
+	/*
+	 * The edges of the vertices to remove are used only for removal, not for
+	 * the next clause.
+	 */
+	if (detail->detach && pstate->p_delete_edges_resname)
+	{
+		TargetEntry *te;
+		Node	   *edges;
+		GraphDelElem *gde = makeNode(GraphDelElem);
+
+		/* This assumes the edge array always comes last. */
+		te = llast(qry->targetList);
+		edges = llast(detail->exprs);
+		gde->variable = pstrdup(pstate->p_delete_edges_resname);
+		gde->elem = transformCypherExpr(pstate, edges, EXPR_KIND_OTHER);
+
+		/* Add expression for deleting edges related target vertices. */
+		qry->g_exprs = lappend(qry->g_exprs, gde);
+		if (strcmp(te->resname, pstate->p_delete_edges_resname) == 0)
+			te->resjunk = true;
+
+		pstate->p_delete_edges_resname = NULL;
+	}
 
 	foreach(le, qry->g_exprs)
 	{
@@ -5141,7 +5168,6 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 static ParseNamespaceItem *
 transformDeleteJoinNSItem(ParseState *pstate, CypherClause *clause)
 {
-	TargetEntry *edge;
 	CypherDeleteClause *detail = (CypherDeleteClause *) clause->detail;
 	ParseNamespaceItem *l_nsitem;
 	A_ArrayExpr *vertices_var = NULL;
@@ -5157,6 +5183,8 @@ transformDeleteJoinNSItem(ParseState *pstate, CypherClause *clause)
 	ParseNamespaceItem *r_nsitem;
 	Node	   *qual;
 	ParseNamespaceItem *join_nsitem;
+	Oid			graph_oid = get_graph_path_oid();
+	ListCell   *lc;
 
 	/*
 	 * Since targets of a DELETE clause refers the result of the previous
@@ -5226,9 +5254,54 @@ transformDeleteJoinNSItem(ParseState *pstate, CypherClause *clause)
 							  isLockedRefname(pstate, r_alias->aliasname),
 							  true);
 	Assert(r_qry->commandType == CMD_SELECT);
-	Assert(list_length(r_qry->targetList) == 1);
-	edge = linitial_node(TargetEntry, r_qry->targetList);
-	edge->resjunk = true;
+
+	if (auto_gather_graphmeta &&
+		list_length(exprs) == 1 && 
+		exprType(linitial(exprs)) == VERTEXOID)
+	{
+		char *varname;
+		EntityInfo *einfo;
+		char *labname;
+		RangeTblEntry *rte = NULL;
+		ColumnRef *cref = linitial_node(ColumnRef, detail->exprs);
+
+		foreach(lc, r_qry->rtable)
+		{
+			rte = lfirst_node(RangeTblEntry, lc);
+
+			if (rte->rtekind == RTE_RELATION &&
+				strcmp(rte->eref->aliasname, DELETE_EDGE_ALIAS) == 0)
+				break;
+		}
+
+		varname = strVal(linitial(cref->fields));
+		einfo = getEntityInfo(pstate, varname, T_CypherNode, false);
+		if (einfo != NULL)
+		{
+			labname = einfo->labname;
+			if (labname != NULL)
+			{
+				rte->hasDeleteOptimization = true;
+				rte->connected_relids = get_connected_edge_labels_for_vertex(
+												GetLatestSnapshot(),
+												graph_oid,
+												get_labname_labid(labname, graph_oid));
+			}
+		}
+	}
+
+	/*
+	 * edge variable is only used to determine if there is an edge connected
+	 * to the vertex.
+	 */
+	if (!detail->detach)
+	{
+		TargetEntry *edge;
+
+		Assert(list_length(r_qry->targetList) == 1);
+		edge = linitial_node(TargetEntry, r_qry->targetList);
+		edge->resjunk = true;
+	}
 
 	pstate->p_lateral_active = false;
 	pstate->p_expr_kind = EXPR_KIND_NONE;
@@ -5296,7 +5369,6 @@ static Node *
 makeSelectEdgesVertices(Node *vertices, CypherDeleteClause *delete,
 						char **edges_resname)
 {
-	TypeCast   *nulledge;
 	List	   *targetlist = NIL;
 	RangeVar   *ag_edge;
 	RangeFunction *unnest;
@@ -5304,13 +5376,34 @@ makeSelectEdgesVertices(Node *vertices, CypherDeleteClause *delete,
 
 	Assert(vertices != NULL);
 
-	nulledge = makeNode(TypeCast);
-	nulledge->arg = (Node *) makeNullAConst();
-	nulledge->typeName = makeTypeNameFromOid(EDGEOID, -1);
-	nulledge->location = -1;
+	if (delete->detach)
+	{
+		Node	   *edges;
+		char	   *edges_name;
+		Node	   *edges_col;
 
-	targetlist = list_make1(
-							makeResTarget((Node *) nulledge, NULL));
+		edges = makeEdgesForDetach();
+		edges_name = genUniqueName();
+		targetlist = list_make1(makeResTarget(edges, edges_name));
+
+		/* add delete target */
+		edges_col = makeColumnRef(genQualifiedName(NULL, edges_name));
+		delete->exprs = lappend(delete->exprs, edges_col);
+
+		*edges_resname = edges_name;
+	}
+	else
+	{
+		TypeCast   *nulledge;
+
+		nulledge = makeNode(TypeCast);
+		nulledge->arg = (Node *) makeNullAConst();
+		nulledge->typeName = makeTypeNameFromOid(EDGEOID, -1);
+		nulledge->location = -1;
+
+		targetlist = list_make1(
+								makeResTarget((Node *) nulledge, NULL));
+	}
 
 	ag_edge = makeRangeVar(get_graph_path(true), AG_EDGE, -1);
 	ag_edge->inh = true;
@@ -5324,6 +5417,29 @@ makeSelectEdgesVertices(Node *vertices, CypherDeleteClause *delete,
 	sel->whereClause = (Node *) makeEdgesVertexQual();
 
 	return (Node *) sel;
+}
+
+/* array_agg((id, start, end, NULL, ctid)::edge) */
+static Node *
+makeEdgesForDetach(void)
+{
+	Node	   *id;
+	Node	   *start;
+	Node	   *end;
+	A_Const    *prop_map;
+	Node	   *tid;
+	Node	   *edge;
+
+	id = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_ELEM_ID));
+	start = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_START_ID));
+	end = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_END_ID));
+	prop_map = makeNullAConst();
+	tid = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, "ctid"));
+
+	edge = makeRowExprWithTypeCast(list_make5(id, start, end, prop_map, tid),
+								   EDGEOID, -1);
+
+	return (Node *) makeArrayAggFuncCall(list_make1(edge), -1);
 }
 
 static RangeFunction *

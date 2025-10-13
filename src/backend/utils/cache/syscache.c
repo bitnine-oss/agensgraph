@@ -357,6 +357,24 @@ static const struct cachedesc cacheinfo[] = {
 			Anum_ag_graphmeta_end),
 		64
 	},
+	[GRAPHMETASTART] = {
+		GraphMetaRelationId,
+		GraphMetaFullStartIndexId,
+		KEY(Anum_ag_graphmeta_graph,
+			Anum_ag_graphmeta_start,
+			Anum_ag_graphmeta_end,
+			Anum_ag_graphmeta_edge),
+		64
+	},
+	[GRAPHMETAEND] = {
+		GraphMetaRelationId,
+		GraphMetaFullEndIndexId,
+		KEY(Anum_ag_graphmeta_graph,
+			Anum_ag_graphmeta_end, 
+			Anum_ag_graphmeta_start,
+			Anum_ag_graphmeta_edge),
+		64
+	},
 	[GRAPHNAME] = {
 		GraphRelationId,
 		GraphNameIndexId,

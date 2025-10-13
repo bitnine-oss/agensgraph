@@ -1618,6 +1618,36 @@ ALTER VLABEL v1 RENAME TO new_v1;
 CREATE (:new_v1)-[:new_e1]->(:new_v1);
 MATCH (v1:new_v1)-[e1:new_e1]->(v2:new_v1) RETURN v1,e1,v2;
 
+--
+-- DELETE/DETACH DELETE optimization
+--
+CREATE GRAPH delete_opt;
+SET graph_path = delete_opt;
+CREATE (:n1)-[:e1]->(:n2);
+CREATE (:n3)-[:e2]->(:n4);
+CREATE (:n5);
+
+-- Without auto_gather_graphmeta, append node should have all relations
+EXPLAIN MATCH (n:n1) DETACH DELETE (n);
+EXPLAIN MATCH (n:n2) DETACH DELETE (n);
+EXPLAIN MATCH (n:n3) DETACH DELETE (n);
+EXPLAIN MATCH (n:n4) DETACH DELETE (n);
+EXPLAIN MATCH (n:n5) DETACH DELETE (n);
+
+SET auto_gather_graphmeta = true;
+SELECT edge, start, "end"
+FROM ag_graphmeta
+ORDER BY edge, start, "end";
+
+-- Append node should not have relation e2, since n1 and n2 are not connected to e2 edge label.
+EXPLAIN MATCH (n:n1) DETACH DELETE (n);
+EXPLAIN MATCH (n:n2) DETACH DELETE (n);
+-- Append node should not have relation e1, since n3 is not connected to e1 edge label.
+EXPLAIN MATCH (n:n3) DETACH DELETE (n);
+EXPLAIN MATCH (n:n4) DETACH DELETE (n);
+-- Append node should not have any relations, since n5 is not connected to any edge labels
+EXPLAIN MATCH (n:n5) DETACH DELETE (n);
+
 -- cleanup
 
 DROP GRAPH srf CASCADE;
@@ -1631,6 +1661,7 @@ DROP GRAPH ag216 CASCADE;
 DROP GRAPH ag154 CASCADE;
 DROP GRAPH t CASCADE;
 DROP GRAPH o CASCADE;
+DROP GRAPH delete_opt CASCADE;
 
 SET graph_path = agens;
 

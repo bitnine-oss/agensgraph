@@ -36,6 +36,10 @@
 #include "partitioning/partprune.h"
 #include "utils/rel.h"
 
+/* Agensgraph */
+#include "storage/lmgr.h"
+#include "utils/syscache.h"
+
 
 static void expand_partitioned_rtentry(PlannerInfo *root, RelOptInfo *relinfo,
 									   RangeTblEntry *parentrte,
@@ -166,8 +170,44 @@ expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 		List	   *inhOIDs;
 		ListCell   *l;
 
-		/* Scan for all members of inheritance set, acquire needed locks */
-		inhOIDs = find_all_inheritors(parentOID, lockmode, NULL);
+		/* Agensgraph optimization */
+		if (rte->hasDeleteOptimization)
+		{
+			inhOIDs = list_make1_oid(parentOID);
+
+			/*
+			 * Acquire locks on all connected relations, and add them to the
+			 * list of child OIDs.
+			 */			
+			foreach(l, rte->connected_relids)
+			{
+				Oid crelid = lfirst_oid(l);
+
+				if (lockmode != NoLock)
+				{
+					/* Get the lock to synchronize against concurrent drop */
+					LockRelationOid(crelid, lockmode);
+
+					/*
+					 * Now that we have the lock, double-check to see if the relation
+					 * really exists or not.  If not, assume it was dropped while we
+					 * waited to acquire lock, and ignore it.
+					 */
+					if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(crelid)))
+					{
+						/* Release useless lock */
+						UnlockRelationOid(crelid, lockmode);
+						/* And ignore this relation */
+						continue;
+					}
+				}
+
+				inhOIDs = lappend_oid(inhOIDs, crelid);
+			}
+		}
+		else
+			/* Scan for all members of inheritance set, acquire needed locks */
+			inhOIDs = find_all_inheritors(parentOID, lockmode, NULL);
 
 		/*
 		 * We used to special-case the situation where the table no longer has
