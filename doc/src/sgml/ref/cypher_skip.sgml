@@ -1,5 +1,5 @@
 <!--
-doc/src/sgml/ref/skip.sgml
+doc/src/sgml/ref/cypher_skip.sgml
 PostgreSQL documentation
 -->
 
@@ -16,7 +16,7 @@ PostgreSQL documentation
 
  <refnamediv>
   <refname>SKIP</refname>
-  <refpurpose>changes the search start location</refpurpose>
+  <refpurpose>skip the result of cypher query</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
@@ -27,35 +27,28 @@ SKIP <replaceable class="parameter">count</replaceable>
 
  <refsect1>
   <title>Description</title>
-
   <para>
-   <command>SKIP</command> clause will changes the search start location.
-   When searching for a pattern in the MATCH clause, skip the number of patterns
-   specified in the SKIP clause and start the search.
+   SKIP clause will skip the number of result.
   </para>
  </refsect1>
 
  <refsect1>
   <title>Parameters</title>
-
   <variablelist>
    <varlistentry>
     <term><replaceable class="parameter">count</replaceable></term>
     <listitem>
      <para>
-      Specify how many results are skipping.
+      Specify how many results will be skipped.
      </para>
     </listitem>
    </varlistentry>
-
   </variablelist>
  </refsect1>
 
  <refsect1>
   <title>Examples</title>
-
   <para>
-   Specify how much result will be skipped:
 <programlisting>
 UNWIND [ 1, 2, 3, 4, 5 ] as seq 
 RETURN seq

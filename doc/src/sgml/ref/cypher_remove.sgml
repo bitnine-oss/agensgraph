@@ -1,5 +1,5 @@
 <!--
-doc/src/sgml/ref/remove.sgml
+doc/src/sgml/ref/cypher_remove.sgml
 PostgreSQL documentation
 -->
 
@@ -21,50 +21,40 @@ PostgreSQL documentation
 
  <refsynopsisdiv>
 <synopsis>
-REMOVE property_name [, ...]
+REMOVE <replaceable class="parameter">expression</replaceable> [ , ... ]
 </synopsis>
  </refsynopsisdiv>
 
  <refsect1>
   <title>Description</title>
-
   <para>
-   <command>REMOVE</command> clause will remove properties.
+   A <command>REMOVE</command> is a terminal clause. It will remove properties from target label or elements.
   </para>
  </refsect1>
 
  <refsect1>
   <title>Parameters</title>
-
   <variablelist>
-
    <varlistentry>
-    <term><literal>property_name</literal></term>
+    <term><literal>expression</literal></term>
     <listitem>
      <para>
-      The property name which will be removed.
+      The property expression that will be removed. 
+      See <xref linkend="cypher-expr"/> for more details.
      </para>
     </listitem>
    </varlistentry>
-
   </variablelist>
  </refsect1>
 
  <refsect1>
   <title>Examples</title>
-
   <para>
    To remove specified property:
 <programlisting>
-
-CREATE (E:person {name: 'Edward', nickname: 'Ed'});
-
+-- Remove property 'nickname' from matching vertex
 MATCH (E:person {name: 'Edward'})
 REMOVE E.nickname;
-
-MATCH (E:person {name: 'Edward'})
-RETURN E;
-
 </programlisting>
   </para>
  </refsect1>

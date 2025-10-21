@@ -1,0 +1,106 @@
+<!--
+doc/src/sgml/ref/cypher_delete.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-delete">
+ <indexterm zone="cypher-delete">
+  <primary>DELETE</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>DELETE</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>DELETE</refname>
+  <refpurpose>removes vertices or edges</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+[ DETACH ] DELETE <replaceable class="parameter">expression</replaceable> [ , ... ]
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+  <para>
+    The <command>DELETE</command> clause is a clause that removes vertices or edges.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+  <variablelist>
+   <varlistentry>
+    <term><literal>DETACH</literal></term>
+    <listitem>
+     <para>
+      If the DETACH keyword is used together, the edges associated with the vertices are
+      also removed. If the vertices you want to remove are linked to other vertices and edges,
+      you may skip the edge-removing process.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">expression</replaceable></term>
+    <listitem>
+     <para>
+      Find the vertices or edges that you want to remove through the MATCH clause. 
+      See <xref linkend="cypher-expr"/> for more details.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   Find the vertices you want to remove through the MATCH clause and remove them by
+   marking corresponding variables in the DELETE clause.
+<programlisting>
+MATCH (m:person {name: 'Michael'})
+DELETE m;
+</programlisting>
+  </para>
+
+  <para>
+   Find the edges you want to remove with the MATCH clause and remove them by
+   marking corresponding variables in the DELETE clause.
+<programlisting>
+MATCH (m:person {name: 'Michael'})-[l:likes]->(b:person {name: 'Bella'})
+DELETE l;
+</programlisting>
+  </para>
+
+  <para>
+   To find a property:
+<programlisting>
+MATCH (j {name: 'Jack'})
+RETURN j.age;
+</programlisting>
+  </para>
+
+  <para>
+   Delete a vertex with all its relationships
+<programlisting>
+MATCH (m:person {name: 'Michael'})
+DETACH DELETE m;
+</programlisting>
+  </para>
+ </refsect1>
+
+  <refsect1>
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-match"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>
+

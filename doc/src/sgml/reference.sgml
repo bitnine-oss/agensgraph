@@ -232,37 +232,29 @@
 
    &cypherAlterElabel;
    &cypherAlterVlabel;
+   &cypherCreate;
    &cypherCreateConstraint;
    &cypherCreateElabel;
    &cypherCreateGraph;
    &cypherCreatePropertyIndex;
    &cypherCreateVlabel;
+   &cypherDelete;
    &cypherDropConstraint;
    &cypherDropElabel;
    &cypherDropGraph;
    &cypherDropPropertyIndex;
    &cypherDropVlabel;
-   &cypherLoadFrom;
+   &cypherLoad;
+   &cypherMatch;
+   &cypherMerge;
    &cypherRemove;
+   &cypherReturn;
+   &cypherSet;
    &cypherSkip;
    &cypherUnwind;
-   &cypherMatch;
-   &cypherCreate;
-   &cypherMerge;
+   &cypherWhere;
+   &cypherWith;
 
- </reference>
-
- <reference id="cypher-syntax">
-  <title>Cypher Syntax</title>
-
-  <partintro>
-   <para>
-    This part contains reference information for the
-    Cypher syntax.
-   </para>
-  </partintro>
-
-   &cypherPath;
  </reference>
 
  <reference id="reference-client">

@@ -22,82 +22,79 @@ PostgreSQL documentation
  <refsynopsisdiv>
 <synopsis>
 
-CREATE GRAPH [IF NOT EXISTS] <replaceable class="parameter">schema_name</replaceable> [ option [ ... ] ]
+CREATE GRAPH [IF NOT EXISTS] <replaceable class="parameter">graph_name</replaceable> [ option [ ... ] ]
 
 where option can be:
 
     AUTHORIZATION <replaceable class="parameter">role_specification</replaceable> 
 
-<phrase>where <replaceable class="parameter">role_specification</replaceable> can be:</phrase>
-
-    <replaceable class="parameter">user_name</replaceable>
-  | CURRENT_ROLE
-  | CURRENT_USER
-  | SESSION_USER
 </synopsis>
  </refsynopsisdiv>
 
  <refsect1>
   <title>Description</title>
-
   <para>
-   <command>CREATE GRAPH</command> is used for graph creation and is similar to a schema structure in the postgresql.
-   Graph names must be unique.
+   <command>CREATE GRAPH</command> is used for graph creation and is similar to a schema structure in the postgresql. Caution: graph names must be unique.
   </para>
  </refsect1>
 
  <refsect1>
   <title>Parameters</title>
-
   <variablelist>
-
    <varlistentry>
     <term><literal>IF NOT EXISTS</literal></term>
     <listitem>
      <para>
-      Do not throw an error if a graph with the same name already.
-      exists;
+      Do not throw an error if a graph with the same name already exists.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><replaceable class="parameter">schema_name</replaceable></term>
+    <term><replaceable class="parameter">graph_name</replaceable></term>
     <listitem>
      <para>
-      The name of schema to be created.
+      The name of the graph that will be created.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><literal>AUTHORIZATION</literal></term>
+    <term><literal>AUTHORIZATION</literal> <replaceable class="parameter">role_specification</replaceable></term>
     <listitem>
      <para>
       If the <literal>AUTHORIZATION</literal> clause is used,
-   all the created objects will be owned by that user.
+      all the created objects will be owned by that user.
+     </para>
+
+     <para>
+      <phrase>where <replaceable class="parameter">role_specification</replaceable> can be:</phrase>
+      <replaceable class="parameter">user_name</replaceable>
+      | CURRENT_ROLE
+      | CURRENT_USER
+      | SESSION_USER
      </para>
     </listitem>
    </varlistentry>
-
   </variablelist>
  </refsect1>
 
  <refsect1>
   <title>Examples</title>
-
   <para>
    To create graph:
 <programlisting>
 CREATE GRAPH sample_graph;
 </programlisting>
   </para>
+
   <para>
    To create graph only if does not exists:
 <programlisting>
 CREATE GRAPH IF NOT EXISTS sample_graph;
 </programlisting>
   </para>
+
   <para>
    To create graph with specific rolespecs:
 <programlisting>
@@ -108,10 +105,8 @@ CREATE GRAPH guest_graph AUTHORIZATION guest;
 
   <refsect1>
   <title>See Also</title>
-
   <simplelist type="inline">
    <member><xref linkend="cypher-dropgraph"/></member>
   </simplelist>
  </refsect1>
- 
 </refentry>

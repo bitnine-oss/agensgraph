@@ -21,18 +21,16 @@ PostgreSQL documentation
 
  <refsynopsisdiv>
 <synopsis>
-CREATE [UNLOGGED] VLABEL <replaceable class="parameter">label_specification</replaceable> [ option [ ... ] ]
 
-<phrase>where <replaceable class="parameter">label_specification</replaceable> can be:</phrase>
-
-    [IF NOT EXISTS] <replaceable class="parameter">label_name</replaceable>
-    ONLY <replaceable class="parameter">label_name</replaceable> ( <replaceable class="parameter">label_id</replaceable> )
+CREATE [UNLOGGED] VLABEL [IF NOT EXISTS] <replaceable class="parameter">label_name</replaceable> [ option [ ... ] ]
 
 where option can be:
 
     DISABLE INDEX
-    INHERITS ( <replaceable class="parameter">label_name</replaceable>, [ ...] )
+    INHERITS ( <replaceable class="parameter">label_name</replaceable> [, ... ] )
+    WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] )
     TABLESPACE <replaceable class="parameter">tablespace_name</replaceable>
+
 </synopsis>
  </refsynopsisdiv>
 
@@ -78,30 +76,10 @@ where option can be:
    </varlistentry>
 
    <varlistentry>
-    <term><literal>ONLY</literal></term>
-    <listitem>
-     <para>
-      If <literal>ONLY</literal> is mentioned, 
-      label will have a fixed <replaceable class="parameter">label_id</replaceable> 
-      provided as integer value. 
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><replaceable class="parameter">lable_id</replaceable></term>
-    <listitem>
-     <para>
-      The label id of the vertex that to be created. It must be an integer type.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
     <term><literal>DISABLE INDEX</literal></term>
     <listitem>
      <para>
-      Disabling the index of the vertex label.
+      This commmand will disable all indexes of the given graph label
      </para>
     </listitem>
    </varlistentry>
@@ -141,10 +119,26 @@ Inherits: g.parentvlabelname1,
    </varlistentry>
 
    <varlistentry>
+    <term><literal>WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] )</literal></term>
+    <listitem>
+     <para>
+      This clause specifies optional storage parameters for a table or index;
+      see <xref linkend="sql-createtable-storage-parameters"/> below for more
+      information.  For backward-compatibility the <literal>WITH</literal>
+      clause for a table can also include <literal>OIDS=FALSE</literal> to
+      specify that rows of the new table should not contain OIDs (object
+      identifiers), <literal>OIDS=TRUE</literal> is not supported anymore.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
     <term><replaceable class="parameter">tablespace_name</replaceable></term>
     <listitem>
      <para>
-      The vertex label will be created in the spcified <replaceable class="parameter">tablespace_name</replaceable>
+      The <replaceable class="parameter">tablespace_name</replaceable> is the name
+      of the tablespace in which the new label is to be created.
+      If not specified, default_tablespace is consulted.
      </para>
     </listitem>
    </varlistentry>
@@ -161,22 +155,25 @@ Inherits: g.parentvlabelname1,
 CREATE VLABEL vlabelName;
 </programlisting>
   </para>
+
   <para>
    To create vertex label only if not exists in the graph:
 <programlisting>
 CREATE VLABEL if not exists vlabelName;
 </programlisting>
   </para>
+
   <para>
    To create vertex label with inherits:
 <programlisting>
 CREATE VLABEL childVlabelName inherits (parentVlabelName1, parentVlabelName2);
 </programlisting>
   </para>
+
   <para>
-   To create with fixed label id as 2000:
+   Create vlable with disable index and specifying tablespace:
 <programlisting>
-CREATE VLABEL ONLY vlabel (2000);
+CREATE VLABEL vlab DISABLE INDEX TABLESPACE my_tablespace;
 </programlisting>
   </para>
  </refsect1>

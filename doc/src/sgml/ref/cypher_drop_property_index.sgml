@@ -21,14 +21,13 @@ PostgreSQL documentation
 
  <refsynopsisdiv>
 <synopsis>
-DROP PROPERTY INDEX [ IF EXISTS ] <replaceable class="parameter">property_index_name</replaceable> [, ...] [ CASCADE | RESTRICT ]
+DROP PROPERTY INDEX [ IF EXISTS ] <replaceable class="parameter">property_index_name</replaceable> [ , ... ] [ CASCADE | RESTRICT ]
 
 </synopsis>
  </refsynopsisdiv>
 
  <refsect1>
   <title>Description</title>
-
   <para>
    <command>DROP PROPERTY INDEX</command> drop the property index
   </para>
@@ -36,7 +35,6 @@ DROP PROPERTY INDEX [ IF EXISTS ] <replaceable class="parameter">property_index_
 
  <refsect1>
   <title>Parameters</title>
-
   <variablelist>
    <varlistentry>
     <term><literal>IF EXISTS</literal></term>
@@ -73,25 +71,25 @@ DROP PROPERTY INDEX [ IF EXISTS ] <replaceable class="parameter">property_index_
      </para>
     </listitem>
    </varlistentry>
-
   </variablelist>
  </refsect1>
 
  <refsect1>
   <title>Examples</title>
-
   <para>
    To drop property index:
 <programlisting>
 DROP PROPERTY INDEX pidx1;
 </programlisting>
   </para>
+
   <para>
    To drop property index if exists:
 <programlisting>
 DROP PROPERTY INDEX IF EXISTS pidx2;
 </programlisting>
   </para>
+
   <para>
    To drop property index with CASCADE:
 <programlisting>
@@ -101,7 +99,6 @@ DROP PROPERTY INDEX IF EXISTS pidx3 CASCADE;
  </refsect1>
  <refsect1>
   <title>See Also</title>
-
   <simplelist type="inline">
    <member><xref linkend="cypher-createpropertyindex"/></member>
    <member><xref linkend="sql-dropindex"/></member>

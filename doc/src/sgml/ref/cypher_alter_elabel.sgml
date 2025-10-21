@@ -21,32 +21,34 @@ PostgreSQL documentation
 
  <refsynopsisdiv>
 <synopsis>
-ALTER ELABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> [ option ]
+ALTER ELABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> [ option [ , ... ] ]
+ALTER ELABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> RENAME TO <replaceable class="parameter">new_label_name</replaceable>
 
-where option can be:
-    RENAME TO <replaceable class="parameter">label_name</replaceable>
-    SET TABLESPACE <replaceable class="parameter">tablespace_name</replaceable>
+where option is one of:
     SET STORAGE { PLAIN | EXTERNAL | EXTENDED | MAIN | DEFAULT } 
-    SET { LOGGED | UNLOGGED }
-    { INHERIT | NO INHERIT } <replaceable class="parameter">qualified_name</replaceable>
-    DISABLE INDEX
     OWNER TO <replaceable class="parameter">role_name</replaceable>
-    
+    SET TABLESPACE <replaceable class="parameter">tablespace_name</replaceable>
+    CLUSTER ON <replaceable class="parameter">index_name</replaceable>
+    SET WITHOUT CLUSTER
+    SET { LOGGED | UNLOGGED }
+    INHERIT <replaceable class="parameter">qualified_name</replaceable>
+    NO INHERIT <replaceable class="parameter">qualified_name</replaceable>
+    REPLICA IDENTITY { DEFAULT | USING INDEX index_name | FULL | NOTHING }
+    DISABLE INDEX
+
 </synopsis>
  </refsynopsisdiv>
 
  <refsect1>
   <title>Description</title>
-
   <para>
-   <command>ALTER ELABEL</command> statement alters the label of edge.
+   <command>ALTER ELABEL</command> statement alters the option of edge label.
   </para>
  </refsect1>
 
  <refsect1>
   <title>Parameters</title>
   <variablelist>
-
    <varlistentry>
     <term><literal>IF EXISTS</literal></term>
     <listitem>
@@ -66,7 +68,7 @@ where option can be:
    </varlistentry>
 
    <varlistentry>
-    <term><literal>RENAME TO</literal></term>
+    <term><literal>RENAME TO</literal> <replaceable class="parameter">new_label_name</replaceable></term>
     <listitem>
      <para>
       The edge label name that to be renamed.
@@ -75,57 +77,29 @@ where option can be:
    </varlistentry>
 
    <varlistentry>
-    <term><literal>SET TABLESPACE</literal></term>
-    <listitem>
-     <para>
-      See <xref linkend="sql-altertable-desc-set-tablespace"/>
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
     <term><literal>SET STORAGE { PLAIN | EXTERNAL | EXTENDED | MAIN | DEFAULT }</literal></term>
     <listitem>
      <para>
-      See <xref linkend="sql-altertable-desc-set-storage"/>
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>SET { LOGGED | UNLOGGED }</literal></term>
-    <listitem>
-     <para>
-      Alter the label as <literal>LOGGED</literal> or <literal>UNLOGGED</literal>
-      See <xref linkend="sql-createtable-unlogged"/>
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>INHERIT </literal><replaceable class="parameter">qualified_name</replaceable></term>
-    <listitem>
-     <para>
-     Alter the inheritance to the target <replaceable class="parameter">qualified_name</replaceable>.
-     See <xref linkend="sql-altertable-desc-inherit"/>
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>NO INHERIT </literal><replaceable class="parameter">qualified_name</replaceable></term>
-    <listitem>
-     <para>
-     See <xref linkend="sql-altertable-desc-no-inherit"/>
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>DISABLE INDEX</literal></term>
-    <listitem>
-     <para>
-      Disabling the index usage of the target edge label.
+      This form sets the storage mode for a label and controls whether the
+      property information is held inline or in a secondary <acronym>TOAST</acronym> table,
+      and whether the data
+      should be compressed or not. <literal>PLAIN</literal> must be used
+      for fixed-length values such as <type>integer</type> and is
+      inline, uncompressed. <literal>MAIN</literal> is for inline,
+      compressible data. <literal>EXTERNAL</literal> is for external,
+      uncompressed data, and <literal>EXTENDED</literal> is for external,
+      compressed data.
+      Writing <literal>DEFAULT</literal> sets the storage mode to the default
+      mode for the label's property data.  <literal>EXTENDED</literal> is the
+      default for most data types that support non-<literal>PLAIN</literal>
+      storage.
+      Use of <literal>EXTERNAL</literal> will make substring operations on
+      very large <type>text</type> and <type>bytea</type> values run faster,
+      at the penalty of increased storage space.
+      Note that this command doesn't itself
+      change anything in the table; it just sets the strategy to be pursued
+      during future label updates.
+      See <xref linkend="storage-toast"/> for more information.
      </para>
     </listitem>
    </varlistentry>
@@ -134,13 +108,145 @@ where option can be:
     <term><literal>OWNER TO </literal><replaceable class="parameter">role_name</replaceable></term>
     <listitem>
      <para>
-      Make edge label owner to specified role.
+      This form changes the owner of the label to the specified user.
      </para>
     </listitem>
    </varlistentry>
 
+   <varlistentry>
+    <term><literal>SET TABLESPACE</literal> <replaceable class="parameter">tablespace_name</replaceable></term>
+    <listitem>
+     <para>
+      This form changes the label's tablespace to the specified tablespace and
+      moves the data file(s) associated with the label to the new tablespace.
+      Indexes on the table, if any, are not moved; but they can be moved
+      separately with additional <literal>SET TABLESPACE</literal> commands.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>CLUSTER ON</literal></term>
+    <listitem>
+     <para>
+      This form selects the default index for future operations.  It does not actually re-cluster the label.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>WITHOUT CLUSTER</literal></term>
+    <listitem>
+     <para>
+      This form removes the most recently used <command>CLUSTER</command>
+      index specification from the label.  This affects
+      future cluster operations that don't specify an index.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>SET { LOGGED | UNLOGGED }</literal></term>
+    <listitem>
+     <para>
+      This form changes the table from unlogged to logged or vice-versa.
+      This also changes the persistence of any sequences linked to the label.
+      That means the sequence used for numbering label IDs will also change.
+      However, it is also possible to change the persistence of such sequences separately.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>INHERIT </literal><replaceable class="parameter">qualified_name</replaceable></term>
+    <listitem>
+     <para>
+      This form adds the target label as a new child of the specified parent
+      label. Subsequently, queries against the parent will include elements
+      of the target child label.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>NO INHERIT </literal><replaceable class="parameter">qualified_name</replaceable></term>
+    <listitem>
+     <para>
+      This form removes the target label from the list of children of the
+      specified parent label.
+      Queries against the parent label will no longer include elements drawn
+      from the target label.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>REPLICA IDENTITY</literal></term>
+    <listitem>
+     <para>
+      This form changes the information which is written to the write-ahead log
+      to identify rows which are updated or deleted.
+      In most cases, the old value of each column is only logged if it differs
+      from the new value; however, if the old value is stored externally, it is
+      always logged regardless of whether it changed.
+      This option has no effect except when logical replication is in use.
+     <variablelist>
+      <varlistentry>
+       <term><literal>DEFAULT</literal></term>
+       <listitem>
+        <para>
+         Records the old values of the columns of the primary key, if any.
+         This is the default for non-system tables.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><literal>USING INDEX <replaceable class="parameter">index_name</replaceable></literal></term>
+       <listitem>
+        <para>
+         Records the old values of the columns covered by the named index,
+         that must be unique, not partial, not deferrable, and include only
+         columns marked <literal>NOT NULL</literal>. If this index is
+         dropped, the behavior is the same as <literal>NOTHING</literal>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><literal>FULL</literal></term>
+       <listitem>
+        <para>
+         Records the old values of all columns in the label element.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><literal>NOTHING</literal></term>
+       <listitem>
+        <para>
+         Records no information about the old label element. This is the default for
+         system tables.
+        </para>
+       </listitem>
+      </varlistentry>
+     </variablelist>
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>DISABLE INDEX</literal></term>
+    <listitem>
+     <para>
+      This commmand will disable all indexes of the given graph label
+     </para>
+    </listitem>
+   </varlistentry>
   </variablelist>
  </refsect1>
+
  <refsect1>
   <title>Examples</title>
   <para>

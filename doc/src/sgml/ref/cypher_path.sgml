@@ -3,195 +3,193 @@ doc/src/sgml/cypher_syntax.sgml
 PostgreSQL documentation
 -->
 
-<refentry id="cypher-path">
- <indexterm zone="cypher-path">
-  <primary>Cypher Path</primary>
- </indexterm>
-
- <refmeta>
-  <refentrytitle>Cypher Path</refentrytitle>
-  <manvolnum>7</manvolnum>
-  <refmiscinfo>SQL - Language Statements</refmiscinfo>
- </refmeta>
-
- <refnamediv>
-  <refname>Cypher Path</refname>
-  <refpurpose>cypher path</refpurpose>
- </refnamediv>
-
- <refsect1>
-  <title>Cypher Path Pattern</title>
-
-  <refsect2 id="cypher-path-pattern" xreflabel="cypher-path-pattern">
-   <title><literal>path_pattern</literal></title>
-  <para>
-    A cypher pattern is an expression that represents a graph. 
-    As a pattern is represented by a combination of one or more vertices or edges, 
-    how you create vertices and edges as a pattern is critical.
-  </para>
-
-   <refsect3 id="cypher-pattern-vertex" xreflabel="cypher-pattern-vertex">
-   <title><literal>Vertex</literal></title>
-  <para>
-    <literal>Vertex</literal> Vertex is expressed using parentheses, 
-    and can be specified with vlabel, property, and variable to further refine the vertex to be searched. 
-    Vertex is represented by <literal>( )</literal>. 
-    A pattern that does not have vlabel or property in parentheses, 
-    as in the example below, means all vertices.
-<synopsis>
-( )
-</synopsis>
-    To represent vlabel in a vertex, use <literal>(:vlabelName)</literal>. The name of vlabel is indicated with a
-    colon in parentheses indicating the vertex. The below example represents a vertex with
-    vlabel named "person."
-<synopsis>
-(:person)
-</synopsis>
-
-    If you want to assign a variable to the vertex, use <literal>(variableName)</literal>. 
-    A variable can be named a combination of alphanumeric (a~z, 0~9) and underbars.
-    When you want to display the variable and vlabel at the same time in
-    vertex, use <literal>(variableName: vlabelName)</literal>.
-
-    <note>
-     <para>
-      Cypher variable can not start with a number.
+<appendix id="appendix-cypher">
+ <title>Cypher Syntax</title>
+  <refentry id="cypher-path">
+   <indexterm zone="cypher-path">
+    <primary>Cypher Path</primary>
+   </indexterm>
+  
+   <refmeta>
+    <refentrytitle>Cypher Path</refentrytitle>
+    <manvolnum>7</manvolnum>
+    <refmiscinfo>SQL - Language Statements</refmiscinfo>
+   </refmeta>
+  
+   <refnamediv>
+    <refname>Cypher Path</refname>
+    <refpurpose>cypher path</refpurpose>
+   </refnamediv>
+  
+   <refsect1>
+    <title>Cypher Path Pattern</title>
+  
+    <refsect2 id="cypher-path-pattern" xreflabel="cypher-path-pattern">
+     <title><literal>path_pattern</literal></title>
+    <para>
+      A cypher pattern is an expression that represents a graph. 
+      As a pattern is represented by a combination of one or more vertices or edges, 
+      how you create vertices and edges as a pattern is critical.
+    </para>
+  
+     <refsect3 id="cypher-pattern-vertex" xreflabel="cypher-pattern-vertex">
+     <title><literal>Vertex</literal></title>
+    <para>
+      <literal>Vertex</literal> Vertex is expressed using parentheses, 
+      and can be specified with vlabel, property, and variable to further refine the vertex to be searched. 
+      Vertex is represented by <literal>( )</literal>. 
+      A pattern that does not have vlabel or property in parentheses, 
+      as in the example below, means all vertices.
+  <synopsis>
+  ( )
+  </synopsis>
+      To represent vlabel in a vertex, use <literal>(:vlabelName)</literal>. The name of vlabel is indicated with a
+      colon in parentheses indicating the vertex. The below example represents a vertex with
+      vlabel named "person."
+  <synopsis>
+  (:person)
+  </synopsis>
+  
+      If you want to assign a variable to the vertex, use <literal>(variableName)</literal>. 
+      A variable can be named a combination of alphanumeric (a~z, 0~9) and underbars.
+      When you want to display the variable and vlabel at the same time in
+      vertex, use <literal>(variableName: vlabelName)</literal>.
+  
+      <note>
+       <para>
+        Cypher variable can not start with a number.
+       </para>
+      </note>
+  
+  <synopsis>
+  (v)
+  (var)
+  (var_1)
+  (v:person)
+  </synopsis>
+  
+      You can further refine the properties by listing them in the vertex. If you want to represent
+      a property, use <literal>({propertyName:propertyValue})</literal>. 
+      If the value is a string, the value must be wrapped with <literal>' '</literal>. 
+      If you want to represent multiple properties, <literal>,</literal> should be used.
+  
+  <synopsis>
+  ({name: 'Jack'})
+  (v:person {name: 'Jack'})
+  (v:person {name: 'Jack', age: 24})
+  </synopsis>
      </para>
-    </note>
-
-<synopsis>
-(v)
-(var)
-(var_1)
-(v:person)
-</synopsis>
-
-    You can further refine the properties by listing them in the vertex. If you want to represent
-    a property, use <literal>({propertyName:propertyValue})</literal>. 
-    If the value is a string, the value must be wrapped with <literal>' '</literal>. 
-    If you want to represent multiple properties, <literal>,</literal> should be used.
-
-<synopsis>
-({name: 'Jack'})
-(v:person {name: 'Jack'})
-(v:person {name: 'Jack', age: 24})
-</synopsis>
-   </para>
-   </refsect3>
-
-
-    <refsect3 id="cypher-pattern-edge" xreflabel="cypher-pattern-edge">
-    <title><literal>Edge</literal></title>
-    <para>
-      An edge is expressed with two dashes, 
-      and can be marked along with elabel, property, and variable.
-
-        <note>
-          <para>
-            The brackets are mendatory for the cypher edge expression. It does not mean optional.
-          </para>
-        </note>
-    </para>
-
-<synopsis>
--[]-
--[]-&gt;
-&lt;-[]-
-</synopsis>
-    <para>
-      An edge is expressed using <literal>-[]-</literal>. You can express direction with &lt; &gt;. In the above example,
-      <literal>-[ ]-</literal> expressed as dashes only means "all edges" since no constraint is indicated. <literal>-[ ]-&gt; &lt;-[ ]-</literal>
-      with additional angle brackets means "all edges with one directionality."
-    </para>
-    <para>
-      If you want to express other elements in the edge, specify them in <literal>[ ]</literal>. If you want to
-      represent elabel on the edge, use <literal>-[:elabelName]-&gt;</literal>. The above example means an edge
-      with elabel named "knows."
-    </para>
-<synopsis>
--[:knows]-&gt;
-</synopsis>
-
-    <para>
-      If you want to assign a variable to an edge, use <literal>-[variableName]-&gt;</literal>. When you want to
-      display variable and elabel simultaneously on the edge, use <literal>-[variableName:elabelName]-&gt;</literal>
-    </para>
-<synopsis>
--[{why: 'She is lovely'}]-&gt;
--[:likes {why: 'She is lovely'}]-&gt;
--[e:likes {why: 'She is lovely'}]-&gt;
-</synopsis>
-    </refsect3>
-
-    <refsect3 id="cypher-pattern-vertices-and-edges" xreflabel="cypher-pattern-vertices-and-edges">
-      <title><literal>Vertices and Edges</literal></title>
+     </refsect3>
+  
+  
+      <refsect3 id="cypher-pattern-edge" xreflabel="cypher-pattern-edge">
+      <title><literal>Edge</literal></title>
       <para>
-        The basic frame of a pattern consisting of a combination of vertices and edges is <literal>( )-[]-
-        &gt;( )</literal>. It is good to give meaning to the pattern by specifying properties and labels on
-        vertices and edges. Variables can be assigned to individual vertices and edges, or the entire
-        pattern. If you want to assign a variable to the entire pattern, use <literal>=</literal>. In the above example, p
-        is a variable and is applied to the entire pattern by using <literal>=</literal>.
+        An edge is expressed with two dashes, 
+        and can be marked along with elabel, property, and variable.
+  
+          <note>
+            <para>
+              The brackets are mendatory for the cypher edge expression. It does not mean optional.
+            </para>
+          </note>
       </para>
-<synopsis>
-()-[]-&gt;()
-(jack:person {name: 'Jack'})-[k:knows]-&gt;(emily:person {name: 'Emily'})
-p = (:person)-[:knows]-&gt;(:person)
-</synopsis>
-
-    </refsect3>
-
-    <refsect3 id="cypher-pattern-path" xreflabel="cypher-pattern-path">
-      <title><literal>Path</literal></title>
+  
+  <synopsis>
+  -[]-
+  -[]-&gt;
+  &lt;-[]-
+  </synopsis>
       <para>
-        The number of vertices and edges in a pattern may continue to increase. The unit for a
-        series of path in a pattern is called a path.
-        In the case of a long path, it can be written in abbreviated form for better readability and
-        ease of writing. If n vertices go through an edge n-1 times, you can put an asterisk <literal>(*)</literal> and <literal>n-
-        1</literal> in brackets (see example below).
+        An edge is expressed using <literal>-[]-</literal>. You can express direction with &lt; &gt;. In the above example,
+        <literal>-[ ]-</literal> expressed as dashes only means "all edges" since no constraint is indicated. <literal>-[ ]-&gt; &lt;-[ ]-</literal>
+        with additional angle brackets means "all edges with one directionality."
       </para>
-<synopsis>
-(a)-[]-&gt;( )-[]-&gt;(c)
-(a)-[*2]-&gt;(c)
-(a)-[]-&gt;( )-[]-&gt;( )-[]-&gt;(d)
-(a)-[*3]-&gt;(d)
-(a)-[]-&gt;( )-[]-&gt;( )-[]-&gt;( )-[]-&gt;(e)
-(a)-[*4]-&gt;(e)
-</synopsis>
-
-    </refsect3>
-
-    <refsect3 id="cypher-pattern-flexible-length-path" xreflabel="cypher-pattern-flexible-length-path">
-      <title><literal>Flexible Length Path</literal></title>
       <para>
-        Depending on the situation, you may need to dynamically change the number of edges that
-        must be gone through in a query. If you want to give a dynamic change to the length of the path, <literal>..</literal> can be used. 
-        The example above shows a path with two or more edges, a path with seven or fewer paths, a path with
-        three or more and five or fewer paths, and an infinite path (in sequence from top to bottom).
+        If you want to express other elements in the edge, specify them in <literal>[ ]</literal>. If you want to
+        represent elabel on the edge, use <literal>-[:elabelName]-&gt;</literal>. The above example means an edge
+        with elabel named "knows."
       </para>
-<synopsis>
-(a)-[*2..]-&gt;(b)
-(a)-[*..7]-&gt;(b)
-(a)-[*3..5]-&gt;(b)
-(a)-[*]-&gt;(b)
-</synopsis>
-    </refsect3>
-
-  </refsect2>
-
-  <refsect2 id="cypher-expr" xreflabel="cypher-expr">
-   <title><literal>cypher_expr</literal></title>
-   <para>
-      Cypher expressions are similar to common SQL expressions, 
-      So the expression form is almost the same as in SQL.
-      The main difference is that Cypher handles labels and their properties using a Jsonb object structure. 
-      Therefore, properties within a label can be accessed using dot notation, which is similar to member access in Jsonb type.
-      For more information about expression of cypher, See <xref linkend="sql-expressions"/>
-   </para>
-  </refsect2>
-
- </refsect1>
-
-
-
-
-</refentry>
+  <synopsis>
+  -[:knows]-&gt;
+  </synopsis>
+  
+      <para>
+        If you want to assign a variable to an edge, use <literal>-[variableName]-&gt;</literal>. When you want to
+        display variable and elabel simultaneously on the edge, use <literal>-[variableName:elabelName]-&gt;</literal>
+      </para>
+  <synopsis>
+  -[{why: 'She is lovely'}]-&gt;
+  -[:likes {why: 'She is lovely'}]-&gt;
+  -[e:likes {why: 'She is lovely'}]-&gt;
+  </synopsis>
+      </refsect3>
+  
+      <refsect3 id="cypher-pattern-vertices-and-edges" xreflabel="cypher-pattern-vertices-and-edges">
+        <title><literal>Vertices and Edges</literal></title>
+        <para>
+          The basic frame of a pattern consisting of a combination of vertices and edges is <literal>( )-[]-
+          &gt;( )</literal>. It is good to give meaning to the pattern by specifying properties and labels on
+          vertices and edges. Variables can be assigned to individual vertices and edges, or the entire
+          pattern. If you want to assign a variable to the entire pattern, use <literal>=</literal>. In the above example, p
+          is a variable and is applied to the entire pattern by using <literal>=</literal>.
+        </para>
+  <synopsis>
+  ()-[]-&gt;()
+  (jack:person {name: 'Jack'})-[k:knows]-&gt;(emily:person {name: 'Emily'})
+  p = (:person)-[:knows]-&gt;(:person)
+  </synopsis>
+  
+      </refsect3>
+  
+      <refsect3 id="cypher-pattern-path" xreflabel="cypher-pattern-path">
+        <title><literal>Path</literal></title>
+        <para>
+          The number of vertices and edges in a pattern may continue to increase. The unit for a
+          series of path in a pattern is called a path.
+          In the case of a long path, it can be written in abbreviated form for better readability and
+          ease of writing. If n vertices go through an edge n-1 times, you can put an asterisk <literal>(*)</literal> and <literal>n-
+          1</literal> in brackets (see example below).
+        </para>
+  <synopsis>
+  (a)-[]-&gt;( )-[]-&gt;(c)
+  (a)-[*2]-&gt;(c)
+  (a)-[]-&gt;( )-[]-&gt;( )-[]-&gt;(d)
+  (a)-[*3]-&gt;(d)
+  (a)-[]-&gt;( )-[]-&gt;( )-[]-&gt;( )-[]-&gt;(e)
+  (a)-[*4]-&gt;(e)
+  </synopsis>
+  
+      </refsect3>
+  
+      <refsect3 id="cypher-pattern-flexible-length-path" xreflabel="cypher-pattern-flexible-length-path">
+        <title><literal>Flexible Length Path</literal></title>
+        <para>
+          Depending on the situation, you may need to dynamically change the number of edges that
+          must be gone through in a query. If you want to give a dynamic change to the length of the path, <literal>..</literal> can be used. 
+          The example above shows a path with two or more edges, a path with seven or fewer paths, a path with
+          three or more and five or fewer paths, and an infinite path (in sequence from top to bottom).
+        </para>
+  <synopsis>
+  (a)-[*2..]-&gt;(b)
+  (a)-[*..7]-&gt;(b)
+  (a)-[*3..5]-&gt;(b)
+  (a)-[*]-&gt;(b)
+  </synopsis>
+      </refsect3>
+  
+    </refsect2>
+  
+    <refsect2 id="cypher-expr" xreflabel="cypher-expr">
+     <title><literal>cypher_expr</literal></title>
+     <para>
+        Cypher expressions are similar to common SQL expressions, 
+        So the expression form is almost the same as in SQL.
+        The main difference is that Cypher handles labels and their properties using a Jsonb object structure. 
+        Therefore, properties within a label can be accessed using dot notation, which is similar to member access in Jsonb type.
+        For more information about expression of cypher, See <xref linkend="sql-expressions"/>
+     </para>
+    </refsect2>
+   </refsect1>
+  </refentry>
+</appendix>

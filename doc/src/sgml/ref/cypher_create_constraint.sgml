@@ -21,24 +21,19 @@ PostgreSQL documentation
 
  <refsynopsisdiv>
 <synopsis>
-CREATE [ OR REPLACE ] CONSTRAINT [ <replaceable class="parameter">constraint_name</replaceable> ] ON <replaceable class="parameter">label_name</replaceable> ASSERT <replaceable class="parameter">cypher_expr</replaceable> [IS UNIQUE]
+CREATE [ OR REPLACE ] CONSTRAINT [ <replaceable class="parameter">constraint_name</replaceable> ] ON <replaceable class="parameter">label_name</replaceable> ASSERT <replaceable class="parameter">expression</replaceable> [ IS UNIQUE ]
 </synopsis>
  </refsynopsisdiv>
-
  <refsect1>
   <title>Description</title>
-
   <para>
    <command>CREATE CONSTRAINT</command> defines a new constraint to the vertex/edge label
   </para>
-
  </refsect1>
 
  <refsect1>
   <title>Parameters</title>
-
    <variablelist>
-
     <varlistentry>
      <term><literal>OR REPLACE</literal></term>
      <listitem>
@@ -90,11 +85,11 @@ Inherits: g.ag_vertex
     </varlistentry>
  
     <varlistentry>
-     <term><replaceable class="parameter">cypher_expr</replaceable></term>
+     <term><replaceable class="parameter">expression</replaceable></term>
      <listitem>
       <para>
        Basic expression of the cypher query.
-       See <xref linkend="cypher-expr"/> for more examples.
+       See <xref linkend="cypher-expr"/> for more details.
       </para>
      </listitem>
     </varlistentry>
@@ -103,7 +98,7 @@ Inherits: g.ag_vertex
      <term><literal>IS UNIQUE</literal></term>
      <listitem>
       <para>
-       The <literal>IS UNIQUE</literal> is a unique row constraint of the label.
+       The <literal>IS UNIQUE</literal> restricts the value of a field to be unique in that label. 
       </para>
      </listitem>
     </varlistentry>

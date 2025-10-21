@@ -1,0 +1,105 @@
+<!--
+doc/src/sgml/ref/cypher_where.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-where">
+ <indexterm zone="cypher-where">
+  <primary>WHERE</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>WHERE</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>WHERE</refname>
+  <refpurpose>filter the results of cypher query</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+
+WHERE <replaceable class="parameter">expression</replaceable>
+
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+  <para>
+    The WHERE clause is a clause that adds constraints to the MATCH or OPTIONAL MATCH
+    clause or filters the results of the WITH clause. The WHERE clause cannot be used alone; it
+    is dependent on the MATCH, OPTIONAL MATCH, START, and WITH clauses when used.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">expression</replaceable></term>
+    <listitem>
+     <para>
+      where <replaceable class="parameter">expression</replaceable> is
+      any expression that evaluates to a result of type
+      <type>boolean</type>.  Any row that does not satisfy this
+      condition will be eliminated from the output.  A row satisfies the
+      condition if it returns true when the actual row values are
+      substituted for any variable references.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   Boolean operations:
+<programlisting>
+MATCH (v)
+WHERE v.name = 'Jack' AND v.age &lt; '30' OR NOT (v.name= 'Emily' OR v.name='Tom')
+RETURN v.name, v.age;
+</programlisting>
+  </para>
+
+  <para>
+   Filter on vertex label:
+<programlisting>
+MATCH (v)
+WHERE label(v) = 'person'
+RETURN v.name;
+</programlisting>
+  </para>
+
+  <para>
+   Filter on vertex property:
+<programlisting>
+MATCH (v)
+WHERE v.age &lt; '30'
+RETURN v.name, v.age;
+</programlisting>
+  </para>
+
+  <para>
+   Filter on edge property:
+<programlisting>
+MATCH (v)-[l:likes]-&gt;(p)
+WHERE l.why = 'She is lovely'
+RETURN p;
+</programlisting>
+  </para>
+ </refsect1>
+
+  <refsect1>
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-match"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>
+

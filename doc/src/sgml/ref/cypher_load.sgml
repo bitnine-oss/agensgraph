@@ -1,45 +1,66 @@
 <!--
-doc/src/sgml/ref/load_from.sgml
+doc/src/sgml/ref/cypher_load.sgml
 PostgreSQL documentation
 -->
 
-<refentry id="cypher-loadfrom">
- <indexterm zone="cypher-loadfrom">
-  <primary>LOAD FROM</primary>
+<refentry id="cypher-load">
+ <indexterm zone="cypher-load">
+  <primary>CYPHER LOAD</primary>
  </indexterm>
 
  <refmeta>
-  <refentrytitle>LOAD FROM</refentrytitle>
+  <refentrytitle>LOAD</refentrytitle>
   <manvolnum>7</manvolnum>
   <refmiscinfo>SQL - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
-  <refname>LOAD FROM</refname>
+  <refname>LOAD</refname>
   <refpurpose>load data from table</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
+
 LOAD FROM <replaceable class="parameter">table_name</replaceable> AS <replaceable class="parameter">alias_name</replaceable>
+
 </synopsis>
  </refsynopsisdiv>
 
  <refsect1>
   <title>Description</title>
-
   <para>
-    You can load data by using the LOAD FROM clause.
+    load the table data into cypher query context using LOAD clause.
   </para>
+ </refsect1>
 
+ <refsect1>
+  <title>Parameters</title>
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">table_name</replaceable></term>
+    <listitem>
+     <para>
+      The name of the table that to be loaded.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">alias_name</replaceable></term>
+    <listitem>
+     <para>
+      The alias name that will be used in the cypher cluases.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
  </refsect1>
 
  <refsect1>
   <title>Examples</title>
-
   <para>
    To load data from table person to the vertex label person:
-
 <programlisting>
 LOAD FROM person AS v
 CREATE (:person {id: v.id, name: v.name});
@@ -48,7 +69,6 @@ CREATE (:person {id: v.id, name: v.name});
 
   <para>
    To load data from table friend to the edge label friend:
-
 <programlisting>
 LOAD FROM friend AS e
 MATCH (a:person),(b:person)
@@ -57,7 +77,5 @@ AND id(b) = to_jsonb(e.end_id)
 CREATE (a)-[:friend {date: '2018'}]->(b);
 </programlisting>
   </para>
-
  </refsect1>
-
 </refentry>

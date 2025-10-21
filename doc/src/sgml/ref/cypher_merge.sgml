@@ -9,46 +9,25 @@ PostgreSQL documentation
  </indexterm>
 
  <refmeta>
-  <refentrytitle>CYPHER MERGE</refentrytitle>
+  <refentrytitle>MERGE</refentrytitle>
   <manvolnum>7</manvolnum>
   <refmiscinfo>SQL - Language Statements</refmiscinfo>
  </refmeta>
 
  <refnamediv>
-  <refname>CYPHER MERGE</refname>
+  <refname>MERGE</refname>
   <refpurpose>merge the cypher elements to target</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-
-MERGE <literal>path_pattern</literal>
-    [ { ON CREATE SET | ON MATCH SET } <replaceable class="parameter">cypher_expr</replaceable> = <replaceable class="parameter">cypher_expr</replaceable> ]
-
-<literal>path_pattern</literal> can be one of:
-
-    <literal>node_pattern</literal>
-    <literal>path_pattern</literal> <literal>edge_pattern</literal> <literal>node_pattern</literal>
-    <replaceable class="parameter">path_variable_name</replaceable> = <literal>path_pattern</literal>
-
-and <literal>node_pattern</literal> is:
-
-    ( [<replaceable class="parameter">variable_name</replaceable>][<replaceable class="parameter">:label_name</replaceable>] [ ONLY ] [ <literal>cypher_property_map</literal> ] )
-
-and <literal>edge_pattern</literal> is:
-
-    { - | &lt;- } [ [<replaceable class="parameter">variable_name</replaceable>][<replaceable class="parameter">:label_name</replaceable>] [ONLY] [ <literal>cypher_range_pattern</literal> ] [ <literal>cypher_property_map</literal> ] ] { - | -&gt; }
-
-and <literal>cypher_property_map</literal> is:
-
-    { <replaceable class="parameter">property_name</replaceable> : <replaceable class="parameter">property_value</replaceable>, [ ...] }
-
+MERGE <replaceable class="parameter">path_pattern</replaceable> 
+    [ ON { CREATE | MATCH } SET <replaceable class="parameter">set_expression</replaceable> [ , ... ] ] [ ... ]
 </synopsis>
  </refsynopsisdiv>
 
  <refsect1>
   <title>Description</title>
-
   <para>
    The <command>MERGE</command> clause is a clause that 
      <orderedlist>
@@ -57,21 +36,26 @@ and <literal>cypher_property_map</literal> is:
      </orderedlist>
    The MERGE clause recognizes the entire pattern specified in the clause.
   </para>
-
  </refsect1>
 
  <refsect1>
   <title>Parameters</title>
-
    <variablelist>
+    <varlistentry>
+     <term><replaceable class="parameter">path_pattern</replaceable> </term>
+     <listitem>
+      <para>
+       The graph pattern to be searched is described in the clause.
+       See both below example section and <xref linkend="cypher-path"/> for more details.
+      </para>
+     </listitem>
+    </varlistentry>
 
     <varlistentry>
      <term><literal>ON CREATE SET</literal></term>
      <listitem>
       <para>
-       The <literal>ON CREATE SET</literal> clauses can be used to set properties depending
-       on how the MERGE clause behaves. If the MERGE clause behaves like a CREATE clause,
-       the ON CREATE SET clause will be performed;
+       If the MERGE clause behaves like a <literal>CREATE</literal> clause, the <literal>ON CREATE SET</literal> clause will be performed.
       </para>
      </listitem>
     </varlistentry>
@@ -80,37 +64,25 @@ and <literal>cypher_property_map</literal> is:
      <term><literal>ON MATCH SET</literal></term>
      <listitem>
       <para>
-       The <literal>ON CREATE SET</literal> clauses can be used to set properties depending
-       on how the MERGE clause behaves. If the MERGE clause behaves like a MATCH clause,
-       the ON MATCH SET clause will be performed;
+       If the MERGE clause behaves like a <literal>MATCH</literal> clause, the <literal>ON MATCH SET</literal> clause will be performed.
       </para>
      </listitem>
     </varlistentry>
 
+    <varlistentry>
+     <term><replaceable class="parameter">set_expression</replaceable></term>
+     <listitem>
+      <para>
+       The set expression for SET operation. It's a subset clause of MERGE statement.
+       See both below example section and <xref linkend="cypher-set"/> for more details.
+      </para>
+     </listitem>
+    </varlistentry>
    </variablelist>
-
-  <refsect2>
-   <title><replaceable class="parameter">path_pattern</replaceable></title>
-   <para>
-    Mainly, represent about the cypher path expression.
-    See <xref linkend="cypher-path-pattern"/> for more examples.
-   </para>
-  </refsect2>
-
-  <refsect2>
-   <title><literal>cypher_expr</literal></title>
-   <para>
-    Basic expression of the cypher query.
-    See <xref linkend="cypher-expr"/> for more examples.
-   </para>
-  </refsect2>
-
  </refsect1>
-
 
  <refsect1>
   <title>Examples</title>
-
   <para>
    To merge a vertex:
 <programlisting>
@@ -160,19 +132,13 @@ RETURN E.lastop;
 (1 row)
 </programlisting>
   </para>
-
  </refsect1>
-
 
   <refsect1>
   <title>See Also</title>
-
   <simplelist type="inline">
    <member><xref linkend="cypher-match"/></member>
    <member><xref linkend="cypher-create"/></member>
   </simplelist>
  </refsect1>
 </refentry>
-
-
-

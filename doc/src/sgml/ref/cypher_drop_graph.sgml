@@ -21,18 +21,12 @@ PostgreSQL documentation
 
  <refsynopsisdiv>
 <synopsis>
-DROP GRAPH [ IF EXISTS ] <replaceable class="parameter">graph_names</replaceable> [ CASCADE | RESTRICT ]
-
-<phrase>where <replaceable class="parameter">graph_names</replaceable> can be:</phrase>
-
-  <replaceable class="parameter">graph_names</replaceable> [, ...]
-
+DROP GRAPH [ IF EXISTS ] <replaceable class="parameter">graph_name</replaceable> [ , ... ] [ CASCADE | RESTRICT ]
 </synopsis>
  </refsynopsisdiv>
 
  <refsect1>
   <title>Description</title>
-
   <para>
    <command>DROP GRAPH</command> statement drops the target graph.
   </para>
@@ -40,7 +34,6 @@ DROP GRAPH [ IF EXISTS ] <replaceable class="parameter">graph_names</replaceable
 
  <refsect1>
   <title>Parameters</title>
-
   <variablelist>
    <varlistentry>
     <term><literal>IF EXISTS</literal></term>
@@ -79,19 +72,18 @@ DROP GRAPH [ IF EXISTS ] <replaceable class="parameter">graph_names</replaceable
      </para>
     </listitem>
    </varlistentry>
-
   </variablelist>
  </refsect1>
 
  <refsect1>
   <title>Examples</title>
-
   <para>
    To drop the graph:
 <programlisting>
 DROP GRAPH example_graph;
 </programlisting>
   </para>
+
   <para>
    To drop the multiple graph objects:
 <programlisting>
@@ -102,7 +94,6 @@ DROP GRAPH IF EXISTS graph1, graph2, graph3;
 
   <refsect1>
   <title>See Also</title>
-
   <simplelist type="inline">
    <member><xref linkend="cypher-creategraph"/></member>
   </simplelist>
