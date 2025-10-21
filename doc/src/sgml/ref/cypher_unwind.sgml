@@ -21,27 +21,24 @@ PostgreSQL documentation
 
  <refsynopsisdiv>
 <synopsis>
-UNWIND ( <replaceable class="parameter">cypher_expr</replaceable> ) AS <replaceable class="parameter">alias_name</replaceable>
+UNWIND <replaceable class="parameter">expression</replaceable> AS <replaceable class="parameter">alias_name</replaceable>
 </synopsis>
  </refsynopsisdiv>
 
  <refsect1>
   <title>Description</title>
-
   <para>
    <command>UNWIND</command> transform any list back into individual rows.
   </para>
-
  </refsect1>
 
  <refsect1>
   <title>Parameters</title>
-
   <refsect2>
-   <title><replaceable class="parameter">cypher_expr</replaceable></title>
+   <title><replaceable class="parameter">expression</replaceable></title>
    <para>
     Basic expression of the cypher query.
-    See <xref linkend="cypher-expr"/> for more examples.
+    See <xref linkend="cypher-expr"/> for more details.
    </para>
   </refsect2>
 
@@ -55,7 +52,6 @@ UNWIND ( <replaceable class="parameter">cypher_expr</replaceable> ) AS <replacea
 
  <refsect1>
   <title>Examples</title>
-
   <para>
    To transform list as rows:
 <programlisting>
@@ -65,7 +61,6 @@ UNWIND [1, 2, 3, null] AS unwinded return unwinded;
 
   <para>
    To transform expression as rows:
-
 <programlisting>
 CREATE ({a: [1, 2, 3]}), ({a: [4, 5, 6]});
 MATCH (n) WITH n.a AS a UNWIND a AS i RETURN *;
@@ -81,7 +76,5 @@ UPDATE 2
 (6 rows)
 </programlisting>
   </para>
-
  </refsect1>
-
 </refentry>

@@ -21,18 +21,16 @@ PostgreSQL documentation
 
  <refsynopsisdiv>
 <synopsis>
-CREATE [UNLOGGED] ELABEL <replaceable class="parameter">label_specification</replaceable> [ option [ ... ] ]
 
-where <replaceable class="parameter">label_specification</replaceable> can be:
-
-    [IF NOT EXISTS] <replaceable class="parameter">label_name</replaceable>
-    ONLY <replaceable class="parameter">label_name</replaceable> ( <replaceable class="parameter">label_id</replaceable> )
+CREATE [UNLOGGED] ELABEL [IF NOT EXISTS] <replaceable class="parameter">label_name</replaceable> [ option [ ... ] ]
 
 where option can be:
 
     DISABLE INDEX
-    INHERITS ( <replaceable class="parameter">label_name</replaceable>, [ ...] )
+    INHERITS ( <replaceable class="parameter">label_name</replaceable> [, ... ] )
+    WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] )
     TABLESPACE <replaceable class="parameter">tablespace_name</replaceable>
+
 </synopsis>
  </refsynopsisdiv>
 
@@ -78,30 +76,10 @@ where option can be:
    </varlistentry>
 
    <varlistentry>
-    <term><literal>ONLY</literal></term>
-    <listitem>
-     <para>
-      If <literal>ONLY</literal> is mentioned, 
-      label will have a fixed <replaceable class="parameter">label_id</replaceable> 
-      provided as integer value. 
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><replaceable class="parameter">label_id</replaceable></term>
-    <listitem>
-     <para>
-      The label id of the edge that to be created. It must be an integer type.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
     <term><literal>DISABLE INDEX</literal></term>
     <listitem>
      <para>
-      Disabling the index of the edge label.
+      This commmand will disable all indexes of the given graph label
      </para>
     </listitem>
    </varlistentry>
@@ -113,19 +91,58 @@ where option can be:
       The optional <literal>INHERITS</literal> clause specify the names of the parent labels along with the
       corresponding keyword after the child label name. There can be multiple parent labels
       for inheritance.
+        <note>
+          <para>
+            If you want to check the inheritance of the label, 
+            You can use the <command>\d graph_name.label_name</command> command in the psql client.
+<programlisting>
+postgres=# CREATE ELABEL childElabelName inherits (parentElabelName1, parentElabelName2);
+CREATE ELABEL
+postgres=# \d g.childElabelName
+                                                            Table "g.childelabelname"
+   Column   |  Type   | Collation | Nullable |                                              Default                                              
+------------+---------+-----------+----------+---------------------------------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('g.childelabelname'::cstring), nextval('g.childelabelname_id_seq'::regclass))
+ start      | graphid |           | not null | 
+ end        | graphid |           | not null | 
+ properties | jsonb   |           | not null | jsonb_build_object()
+Indexes:
+    "childelabelname_end_idx" btree ("end", start)
+    "childelabelname_id_idx" brin (id)
+    "childelabelname_start_idx" btree (start, "end")
+Inherits: g.parentelabelname1,
+          g.parentelabelname2
+</programlisting>    
+          </para>
+        </note>
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><replaceable class="parameter">tablespace_name</replaceable></term>
+    <term><literal>WITH ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] )</literal></term>
     <listitem>
      <para>
-      The edge label will be created in the spcified <replaceable class="parameter">tablespace_name</replaceable>
+      This clause specifies optional storage parameters for a table or index;
+      see <xref linkend="sql-createtable-storage-parameters"/> below for more
+      information.  For backward-compatibility the <literal>WITH</literal>
+      clause for a table can also include <literal>OIDS=FALSE</literal> to
+      specify that rows of the new table should not contain OIDs (object
+      identifiers), <literal>OIDS=TRUE</literal> is not supported anymore.
      </para>
     </listitem>
    </varlistentry>
 
+   <varlistentry>
+    <term><literal>TABLESPACE</literal> <replaceable class="parameter">tablespace_name</replaceable></term>
+    <listitem>
+     <para>
+      The <replaceable class="parameter">tablespace_name</replaceable> is the name
+      of the tablespace in which the new label is to be created.
+      If not specified, default_tablespace is consulted.
+     </para>
+    </listitem>
+   </varlistentry>
   </variablelist>
  </refsect1>
 
@@ -138,22 +155,25 @@ where option can be:
 CREATE ELABEL elabelName;
 </programlisting>
   </para>
+
   <para>
    To create edge label only if not exists in the graph:
 <programlisting>
 CREATE ELABEL if not exists elabelName;
 </programlisting>
   </para>
+
   <para>
    To create edge label with inherits:
 <programlisting>
 CREATE ELABEL childElabelName inherits (parentElabelName1, parentElabelName2);
 </programlisting>
   </para>
+
   <para>
-   To create label with fixed id as 1000:
+   Create elable with disable index and specifying tablespace:
 <programlisting>
-CREATE ELABEL ONLY elabel (1000);
+CREATE ELABEL elab DISABLE INDEX TABLESPACE my_tablespace;
 </programlisting>
   </para>
  </refsect1>

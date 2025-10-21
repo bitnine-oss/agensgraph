@@ -22,13 +22,12 @@ PostgreSQL documentation
  <refsynopsisdiv>
 <synopsis>
 
-DROP ELABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> [, ...] [ CASCADE | RESTRICT ]
+DROP ELABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> [ , ... ] [ CASCADE | RESTRICT ]
 </synopsis>
  </refsynopsisdiv>
 
  <refsect1>
   <title>Description</title>
-
   <para>
    <command>DROP ELABEL</command> statement drops the target edge label.
   </para>
@@ -36,7 +35,6 @@ DROP ELABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable
 
  <refsect1>
   <title>Parameters</title>
-
   <variablelist>
    <varlistentry>
     <term><literal>IF EXISTS</literal></term>
@@ -75,19 +73,18 @@ DROP ELABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable
      </para>
     </listitem>
    </varlistentry>
-
   </variablelist>
  </refsect1>
 
  <refsect1>
   <title>Examples</title>
-
   <para>
    To drop the edge label:
 <programlisting>
 DROP ELABEL elabelName;
 </programlisting>
   </para>
+
   <para>
    To drop the multiple edge labels:
 <programlisting>
@@ -98,7 +95,6 @@ DROP ELABEL IF EXISTS elabel1,elabel2,elabel3;
 
  <refsect1>
   <title>See Also</title>
-
   <simplelist type="inline">
    <member><xref linkend="cypher-createelabel"/></member>
    <member><xref linkend="cypher-alterelabel"/></member>

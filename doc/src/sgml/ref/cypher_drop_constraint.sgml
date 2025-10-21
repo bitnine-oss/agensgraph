@@ -27,18 +27,14 @@ DROP CONSTRAINT <replaceable class="parameter">constraint_name</replaceable> ON 
 
  <refsect1>
   <title>Description</title>
-
   <para>
    <command>DROP CONSTRAINT</command> drop a constraint of the vertex/edge
   </para>
-
  </refsect1>
 
  <refsect1>
   <title>Parameters</title>
-
    <variablelist>
-
     <varlistentry>
      <term><replaceable class="parameter">constraint_name</replaceable></term>
      <listitem>
@@ -56,26 +52,22 @@ DROP CONSTRAINT <replaceable class="parameter">constraint_name</replaceable> ON 
       </para>
      </listitem>
     </varlistentry>
-
    </variablelist>
  </refsect1>
 
  <refsect1>
   <title>Examples</title>
-
   <para>
    To drop the label constraints:
 <programlisting>
-
 -- Drop constraint to the vertex label
 DROP CONSTRAINT id_unique_constraint ON person;
-
 </programlisting>
   </para>
  </refsect1>
+
  <refsect1>
   <title>See Also</title>
-
   <simplelist type="inline">
    <member><xref linkend="cypher-createconstraint"/></member>
   </simplelist>

@@ -16,90 +16,27 @@ PostgreSQL documentation
 
  <refnamediv>
   <refname>MATCH</refname>
-  <refname>OPTIONAL MATCH</refname>
-  <refpurpose>project the cypher element</refpurpose>
+  <refpurpose>describes the graph pattern</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
 <synopsis>
-
 [ OPTIONAL ] MATCH <replaceable class="parameter">path_pattern</replaceable> 
-    [ WITH <replaceable class="parameter">cypher_expr</replaceable> [, ...] ]
-    [ [ DETACH ] DELETE <replaceable class="parameter">cypher_expr</replaceable> [, ...] ]
-    [ SET <replaceable class="parameter">cypher_expr</replaceable> { = | += } <replaceable class="parameter">cypher_expr</replaceable> [, ...] ]
-    [ REMOVE <replaceable class="parameter">cypher_expr</replaceable> [, ...] ]
-    [ WHERE <replaceable class="parameter">cypher_expr</replaceable> ]
-     
-<replaceable class="parameter">path_pattern</replaceable> can be one of:
-
-    <replaceable class="parameter">cypher_path</replaceable> [, ...]
-    <replaceable class="parameter">cypher_shortestpath</replaceable>
-    <replaceable class="parameter">cypher_dijkstra</replaceable>
-
-and <replaceable class="parameter">cypher_path</replaceable> is:
-
-    <replaceable class="parameter">cypher_path_chain</replaceable>
-
-and <literal>cypher_shortestpath</literal> can be one of:
-
-    <literal>SHORTESTPATH</literal> ( <replaceable class="parameter">cypher_path_chain</replaceable> )
-    <literal>ALLSHORTESTPATHS</literal> ( <replaceable class="parameter">cypher_path_chain</replaceable> )
-
-and <literal>cypher_dijkstra</literal> can be one of:
-
-    <literal>DIJKSTRA</literal> ( <replaceable class="parameter">cypher_path_chain</replaceable> , <replaceable class="parameter">weight</replaceable> )
-    <literal>DIJKSTRA</literal> ( <replaceable class="parameter">cypher_path_chain</replaceable> , <replaceable class="parameter">weight</replaceable> , <replaceable class="parameter">condition</replaceable> )
-    <literal>DIJKSTRA</literal> ( <replaceable class="parameter">cypher_path_chain</replaceable> , <replaceable class="parameter">weight</replaceable> , <literal>LIMIT</literal> <replaceable class="parameter">count</replaceable> )
-    <literal>DIJKSTRA</literal> ( <replaceable class="parameter">cypher_path_chain</replaceable> , <replaceable class="parameter">weight</replaceable> , <replaceable class="parameter">condition</replaceable>, <literal>LIMIT</literal> <replaceable class="parameter">count</replaceable>)
-
-and <replaceable class="parameter">cypher_path_chain</replaceable> can be one of:
-
-    <replaceable class="parameter">node_pattern</replaceable>
-    <replaceable class="parameter">cypher_path_chain</replaceable> <replaceable class="parameter">edge_pattern</replaceable> <replaceable class="parameter">node_pattern</replaceable>
-
-and <replaceable class="parameter">node_pattern</replaceable> is:
-
-    ( [<replaceable class="parameter">variable_name</replaceable>][<replaceable class="parameter">:label_name</replaceable>] [ ONLY ] [ <replaceable class="parameter">cypher_property_map</replaceable>] )
-
-and <replaceable class="parameter">edge_pattern</replaceable> is:
-
-    <replaceable class="parameter">cypher_relationship_left</replaceable> [ [<replaceable class="parameter">variable_name</replaceable>][<replaceable class="parameter">:label_name</replaceable>] [ONLY] [ <replaceable class="parameter">cypher_range_pattern</replaceable> ] [ <replaceable class="parameter">cypher_property_map</replaceable> ] ] <replaceable class="parameter">cypher_relationship_right</replaceable>
-
-and <replaceable class="parameter">cypher_property_map</replaceable> is:
-
-    { <replaceable class="parameter">property_name</replaceable> : <replaceable class="parameter">property_value</replaceable>, [ ...] }
-
-and <replaceable class="parameter">cypher_range_pattern</replaceable> is:
-
-    <literal>*</literal> [ [ minimum_hop ] .. [ maximum_hop ] ]
-
-and <replaceable class="parameter">cypher_relationship_left</replaceable> is:
-    
-    { - | &lt;- }
-
-and <replaceable class="parameter">cypher_relationship_right</replaceable> is:
-    { - | -&gt; }
-
+  [ WHERE expression ]
 </synopsis>
  </refsynopsisdiv>
 
  <refsect1>
   <title>Description</title>
-
   <para>
-    The <command>MATCH</command> clause finds the graph element that you described.
-
-    For more information on the cypher path pattern specification, See <xref linkend="cypher-path-pattern"/>.
+    The <command>MATCH</command> clause is a clause that describes the graph pattern you want to find in the
+    database. This is the most basic way to import data.
   </para>
-
  </refsect1>
-
 
  <refsect1>
   <title>Parameters</title>
-
   <variablelist>
-
    <varlistentry>
     <term><literal>OPTIONAL</literal></term>
     <listitem>
@@ -111,179 +48,34 @@ and <replaceable class="parameter">cypher_relationship_right</replaceable> is:
     </listitem>
    </varlistentry>
 
-
    <varlistentry>
-    <term><replaceable class="parameter">variable_name</replaceable></term>
+    <term><replaceable class="parameter">path_pattern</replaceable> </term>
     <listitem>
      <para>
-      The variable name of the pattern. It can be a name of node, edge, path.
+      The graph pattern to be searched is described in the MATCH clause.
+      See both below example section and <xref linkend="cypher-path"/> for more details.
      </para>
     </listitem>
    </varlistentry>
 
    <varlistentry>
-    <term><replaceable class="parameter">label_name</replaceable></term>
+    <term><replaceable class="parameter">expression</replaceable></term>
     <listitem>
      <para>
-      The label name of the pattern. 
+      where <replaceable class="parameter">expression</replaceable> is
+      any expression that evaluates to a result of type
+      <type>boolean</type>.  Any row that does not satisfy this
+      condition will be eliminated from the output.  A row satisfies the
+      condition if it returns true when the actual row values are
+      substituted for any variable references.
      </para>
     </listitem>
    </varlistentry>
-
-   <varlistentry>
-    <term><literal>ONLY</literal></term>
-    <listitem>
-     <para>
-      The MATCH clause with keyword <literal>ONLY</literal> allows you to use the MATCH query to return results 
-      that exclude child labels.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><replaceable class="parameter">property_name</replaceable></term>
-    <listitem>
-     <para>
-      The key of property. 
-      Key string can be one of the single quoted or double quoted or just a string without quotation.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><replaceable class="parameter">property_value</replaceable></term>
-    <listitem>
-     <para>
-      The value of the property key. It could be a text, numeric, boolean.
-      It follows the json rule. See <xref linkend="datatype-json"/>
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><replaceable class="parameter">weight</replaceable></term>
-    <listitem>
-     <para>
-      The weight of the edge in the path. 
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><replaceable class="parameter">minimum_hop</replaceable></term>
-    <listitem>
-     <para>
-      Integer constant representing the minimum hop count of the connected edge.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><replaceable class="parameter">maximum_hop</replaceable></term>
-    <listitem>
-     <para>
-      Integer constant representing the maximum hop count of the connected edge.
-     </para>
-    </listitem>
-   </varlistentry>
-
   </variablelist>
- 
-  <refsect2 id="cypher-with-clause" xreflabel="WITH Clause">
-   <title><literal>WITH</literal> Clause</title>
-
-   <para>
-    The optional <literal>WITH</literal> clause has the general form
-<synopsis>
-WITH [ DISTINCT ] { <replaceable class="parameter">cypher_expr</replaceable> | <replaceable class="parameter">cypher_expr AS alias</replaceable> | * }
-[ ORDER BY cypher_sort_items ]
-[ SKIP cypher_expr ]
-[ LIMIT cypher_expr ]
-[ WHERE cypher_expr ]
-</synopsis>
-    The WITH clause is a clause that connects multiple cypher queries. It passes the result of
-the preceding WITH clause query to the following WITH clause query. That is, the WITH
-clause can be regarded as a RETURN clause that passes the value of the preceding query to
-the input of the following query.
-   </para>
-  </refsect2>
-
-
-  <refsect2 id="cypher-delete-clause" xreflabel="DELETE Clause">
-   <title><literal>DELETE</literal> Clause</title>
-
-   <para>
-    The optional <literal>DELETE</literal> clause has the general form
-<synopsis>
-[DETACH] DELETE <replaceable class="parameter">cypher_expr</replaceable> [, ...]
-</synopsis>
-    The DELETE clause is a clause that removes vertices or edges.
-
-    Find the vertices you want to remove through the MATCH clause and remove them by
-    marking corresponding variables in the DELETE clause. However, if the vertices you
-    want to remove are connected to other vertices and edges, remove the edges first
-    before removing the vertices.
-
-    Find the edges you want to remove with the MATCH clause and remove them by
-    marking corresponding variables in the DELETE clause.
-
-   </para>
-  </refsect2>
-
-
-  <refsect2 id="cypher-set-clause" xreflabel="SET Clause">
-   <title><literal>SET</literal> Clause</title>
-
-   <para>
-    The optional <literal>SET</literal> clause has the general form
-<synopsis>
-SET <replaceable class="parameter">cypher_expr</replaceable> { = | += } <replaceable class="parameter">cypher_expr</replaceable>
-</synopsis>
-    The SET clause is a clause that adds, sets, or removes properties, or adds vlabels.
-    Use the += operator to change existing properties of the vertex/edge or add new ones.
-    You can set multiple properties using one SET clause, use the comma(,).
-   </para>
-  </refsect2>
-
-  <refsect2 id="cypher-remove-clause" xreflabel="REMOVE Clause">
-   <title><literal>REMOVE</literal> Clause</title>
-
-   <para>
-    The optional <literal>REMOVE</literal> clause has the general form
-<synopsis>
-REMOVE <replaceable class="parameter">cypher_expr</replaceable>
-</synopsis>
-    The REMOVE clause is a clause that removes properties.
-    Locate the element from which you want to remove the property through the MATCH
-    clause, and name the property to be removed in the REMOVE clause.
-   </para>
-  </refsect2>
-
-  <refsect2 id="cypher-where-clause" xreflabel="WHERE Clause">
-   <title><literal>WHERE</literal> Clause</title>
-
-   <para>
-    The optional <literal>WHERE</literal> clause has the general form
-<synopsis>
-WHERE <replaceable class="parameter">cypher_expr</replaceable>
-</synopsis>
-    The WHERE clause is a clause that adds constraints to the MATCH or OPTIONAL MATCH
-clause or filters the results of the WITH clause. The WHERE clause cannot be used alone; it
-is dependent on the MATCH, OPTIONAL MATCH, START, and WITH clauses when used.
-You can use the boolean operators such as AND, OR.
-   </para>
-  </refsect2>
-
-
- 
  </refsect1>
-
-
-
 
  <refsect1>
   <title>Examples</title>
-
   <para>
    To search with OPTIONAL MATCH:
 <programlisting>
@@ -293,11 +85,16 @@ RETURN e.hobby;
   </para>
 
   <para>
-   To find a vertex, edge:
+   To find a vertex:
 <programlisting>
 MATCH (j {name: 'Jack'})
 RETURN j;
+</programlisting>
+  </para>
 
+  <para>
+   To find a edge:
+<programlisting>
 MATCH (j {name: 'Jack'})-[k:knows]->(e)
 RETURN k;
 </programlisting>
@@ -318,8 +115,6 @@ MATCH p=(j {name: 'Jack'})-[k:knows]->(e)
 RETURN p;
 </programlisting>
   </para>
-
-
 
   <para>
    Delete a vertex:
@@ -354,11 +149,16 @@ SET E.name = 'Edward Williams';
   </para>
 
   <para>
-   Remove a property, Use SET or REMOVE:
+   Remove a property, Using SET:
 <programlisting>
 MATCH (E:person {name: 'Edward'})
 SET E.hobby = NULL;
+</programlisting>
+  </para>
 
+  <para>
+   Remove a property, Using REMOVE:
+<programlisting>
 MATCH (E:person {name: 'Edward'})
 REMOVE E.habit;
 </programlisting>
@@ -371,6 +171,14 @@ MATCH (j:person {name:'Jack'})-[:knows]-&gt;(common:person)&lt;-[:knows]-(other:
 WITH other, count(common) AS cnt
 WHERE to_jsonb(cnt) > 1
 RETURN other;
+</programlisting>
+  </para>
+
+  <para>
+   Use "ONLY" to find result that excluding child label:
+<programlisting>
+MATCH (n:person ONLY) RETURN n;
+MATCH ()-[r:knows ONLY]->() RETURN r;
 </programlisting>
   </para>
 
@@ -415,16 +223,13 @@ MATCH (v1:v {id: 0}), (v2:v {id: 3}),
 RETURN nodes(p);
 </programlisting>
   </para>
-
  </refsect1>
 
   <refsect1>
   <title>See Also</title>
-
   <simplelist type="inline">
    <member><xref linkend="cypher-merge"/></member>
    <member><xref linkend="cypher-create"/></member>
-   <member><xref linkend="cypher-syntax"/></member>
   </simplelist>
  </refsect1>
 </refentry>

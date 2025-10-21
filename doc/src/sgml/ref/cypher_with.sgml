@@ -1,0 +1,171 @@
+<!--
+doc/src/sgml/ref/cypher_with.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-with">
+ <indexterm zone="cypher-with">
+  <primary>WITH</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>WITH</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>WITH</refname>
+  <refpurpose>connects multiple cypher queries</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+
+WITH [ DISTINCT ] { * | <replaceable class="parameter">expression</replaceable> [ AS <replaceable class="parameter">output_name</replaceable> ] } [ , ... ]
+  [ ORDER BY <replaceable class="parameter">expression</replaceable> [ ASC | DESC ] [ NULLS { FIRST | LAST } ] [ , ... ] ]
+  [ SKIP <replaceable class="parameter">expression</replaceable> ] 
+  [ LIMIT <replaceable class="parameter">count</replaceable> ] 
+  [ WHERE <replaceable class="parameter">expression</replaceable> ]
+
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+  <para>
+    The <command>WITH</command> clause is a clause that connects multiple cypher queries.
+    It passes the result of the preceding WITH clause query to the following WITH clause query. 
+    That is, the WITH clause can be regarded as a RETURN clause that passes the value of the preceding query to
+    the input of the following query.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+  <variablelist>
+   <varlistentry>
+    <term><literal>DISTINCT</literal></term>
+    <listitem>
+     <para>
+      If <literal>DISTINCT</literal> is specified, all duplicate rows are
+      removed from the result set.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">expression</replaceable></term>
+    <listitem>
+     <para>
+      The cypher expression that you want to use from previous cypher clauses.
+      See <xref linkend="cypher-expr"/> for more details.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>ORDER BY</literal></term>
+    <listitem>
+     <para>
+      If the <literal>ORDER BY</literal> clause is specified, the
+      returned rows are sorted in the specified order.  If
+      <literal>ORDER BY</literal> is not given, the rows are returned
+      in whatever order the system finds fastest to produce.  (See
+      <xref linkend="sql-orderby"/> below.)
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>ASC | DESC</literal></term>
+    <listitem>
+     <para>
+      Optionally one can add the key word <literal>ASC</literal> (ascending) or
+      <literal>DESC</literal> (descending) after any expression in the
+      <literal>ORDER BY</literal> clause.  If not specified, <literal>ASC</literal> is
+      assumed by default.  Alternatively, a specific ordering operator
+      name can be specified in the <literal>USING</literal> clause.
+      An ordering operator must be a less-than or greater-than
+      member of some B-tree operator family.
+      <literal>ASC</literal> is usually equivalent to <literal>USING &lt;</literal> and
+      <literal>DESC</literal> is usually equivalent to <literal>USING &gt;</literal>.
+      (But the creator of a user-defined data type can define exactly what the
+      default sort ordering is, and it might correspond to operators with other
+      names.)
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>NULLS { LAST | FIRST }</literal></term>
+    <listitem>
+     <para>
+      If <literal>NULLS LAST</literal> is specified, null values sort after all
+      non-null values; if <literal>NULLS FIRST</literal> is specified, null values
+      sort before all non-null values.  If neither is specified, the default
+      behavior is <literal>NULLS LAST</literal> when <literal>ASC</literal> is specified
+      or implied, and <literal>NULLS FIRST</literal> when <literal>DESC</literal> is specified
+      (thus, the default is to act as though nulls are larger than non-nulls).
+      When <literal>USING</literal> is specified, the default nulls ordering depends
+      on whether the operator is a less-than or greater-than operator.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>SKIP</literal></term>
+    <listitem>
+     <para>
+      <command>SKIP</command> clause will changes the search start location.
+      The number of patterns specified in the SKIP clause will be skipped in the result.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>LIMIT</literal></term>
+    <listitem>
+     <para>
+      The parameter <replaceable class="parameter">count</replaceable> specifies the
+      maximum number of rows to return.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>WHERE</literal> <replaceable class="parameter">expression</replaceable></term>
+    <listitem>
+     <para>
+      where <replaceable class="parameter">expression</replaceable> is
+      any expression that evaluates to a result of type
+      <type>boolean</type>.  Any row that does not satisfy this
+      condition will be eliminated from the output.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+  <para>
+   Extract the variable from the first MATCH query and filter the result.
+<programlisting>
+
+MATCH (j:person {name:'Jack'})-[:knows]-&gt;(common:person)&lt;-[:knows]-(other:person)
+WITH other, count(common) AS cnt
+WHERE to_jsonb(cnt) > 1
+RETURN other;
+</programlisting>
+  </para>
+ </refsect1>
+
+  <refsect1>
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-match"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>
+

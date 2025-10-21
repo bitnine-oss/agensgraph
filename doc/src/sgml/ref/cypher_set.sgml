@@ -1,0 +1,132 @@
+<!--
+doc/src/sgml/ref/cypher_set.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="cypher-set">
+ <indexterm zone="cypher-set">
+  <primary>SET</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>SET</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>SET</refname>
+  <refpurpose>modify properties of graph elements</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+SET { <replaceable class="parameter">expression</replaceable> = <replaceable class="parameter">expression</replaceable> | <replaceable class="parameter">expression</replaceable> += <replaceable class="parameter">expression</replaceable> } [ , ... ]
+</synopsis>
+ </refsynopsisdiv>
+ <refsect1>
+  <title>Description</title>
+  <para>
+    The <command>SET</command> clause is a clause that modifies, copies, or removes properties.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">expression</replaceable></term>
+    <listitem>
+     <para>
+      Expression that you want to modifiy property. Find the vertices or edges to which you want to add properties through the MATCH
+      clause, and specify the names and values of the properties to add to the SET clause.
+      When describing a property, mark it with single or double quotation marks.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+  <para>
+   Add Property:
+<programlisting>
+MATCH (E:person {name: 'Edward'})
+SET E.habit = 'play the guitar';
+</programlisting>
+  </para>
+
+  <para>
+   Modify Property:
+<programlisting>
+MATCH (E:person {name: 'Edward'})
+SET E.name = 'Edward Williams';
+</programlisting>
+  </para>
+
+  <para>
+   Remove Property:
+<programlisting>
+MATCH (E:person {name: 'Edward'})
+SET E.hobby = NULL;
+</programlisting>
+  </para>
+
+  <para>
+   Copy properties between nodes and relationships:
+<programlisting>
+MATCH (at {name:'Edward'}), (pn {name: 'Peter'})
+SET at = pn
+RETURN at.name, at.age, pn.name, pn.age;
+</programlisting>
+SET can be used to copy all properties from one vertex/edge to another vertex/edge.
+Caution: All properties of "pn" are copied to the properties of "at", and all existing properties of
+"at" are removed.
+  </para>
+
+  <para>
+   Replace all properties using a map and =
+<programlisting>
+MATCH (p { name: 'Edward' })
+SET p = { name: 'Edward William', position: 'Enterpreneur' }
+RETURN p.name, p.age, p.position;
+</programlisting>
+  </para>
+
+  <para>
+   Remove all properties using an empty map and =
+<programlisting>
+MATCH (p { name: 'Edward' })
+SET p = { }
+RETURN p.name, p.age, p.position;
+</programlisting>
+  </para>
+
+  <para>
+   Mutate specific properties using a map and +=
+<programlisting>
+MATCH (p { name: 'Edward' })
+SET p += { age: 38, hungry: TRUE, position: 'Enterpreneur' }
+RETURN p.name, p.age, p.hungry, p.position;
+</programlisting>
+Use the += operator to change existing properties of the vertex/edge or add new ones.
+  </para>
+
+  <para>
+   Set multiple properties using one SET clause
+<programlisting>
+MATCH (n { name: 'Peter' })
+SET n.position = 'Developer', n.surname = 'Taylor';
+</programlisting>
+  </para>
+ </refsect1>
+
+  <refsect1>
+  <title>See Also</title>
+  <simplelist type="inline">
+   <member><xref linkend="cypher-match"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>
+

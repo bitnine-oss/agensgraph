@@ -21,13 +21,12 @@ PostgreSQL documentation
 
  <refsynopsisdiv>
 <synopsis>
-DROP VLABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> [, ...] [ CASCADE | RESTRICT ]
+DROP VLABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable> [ , ... ] [ CASCADE | RESTRICT ]
 </synopsis>
  </refsynopsisdiv>
 
  <refsect1>
   <title>Description</title>
-
   <para>
    <command>DROP VLABEL</command> statement drops the target vertex label.
   </para>
@@ -35,7 +34,6 @@ DROP VLABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable
 
  <refsect1>
   <title>Parameters</title>
-
   <variablelist>
    <varlistentry>
     <term><literal>IF EXISTS</literal></term>
@@ -74,19 +72,18 @@ DROP VLABEL [ IF EXISTS ] <replaceable class="parameter">label_name</replaceable
      </para>
     </listitem>
    </varlistentry>
-
   </variablelist>
  </refsect1>
 
  <refsect1>
   <title>Examples</title>
-
   <para>
    To drop the vertex label:
 <programlisting>
 DROP VLABEL vlabelName;
 </programlisting>
   </para>
+
   <para>
    To drop the multiple vertex labels:
 <programlisting>
@@ -97,7 +94,6 @@ DROP VLABEL IF EXISTS vlabel1,vlabel2,vlabel3;
 
  <refsect1>
   <title>See Also</title>
-
   <simplelist type="inline">
    <member><xref linkend="cypher-createvlabel"/></member>
    <member><xref linkend="cypher-altervlabel"/></member>
