@@ -820,6 +820,7 @@
 #enable_eager = off
 #auto_gather_graphmeta = off
 #cypher_allow_unsafe_ddl = off
+#enable_graph_dml = off
 #allow_null_properties = off
 #enable_multiple_update = off
 #graph_path = ''                    # graph/schema names

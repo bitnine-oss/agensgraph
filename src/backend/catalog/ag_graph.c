@@ -30,7 +30,7 @@
 
 /* a global variable for the GUC variable */
 char	   *graph_path = NULL;
-bool		enableGraphDML = false;
+bool		enable_graph_dml = false;
 bool		cypher_allow_unsafe_ddl = false;
 
 /* Potentially set by pg_upgrade_support functions */
