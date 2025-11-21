@@ -1618,6 +1618,32 @@ ALTER VLABEL v1 RENAME TO new_v1;
 CREATE (:new_v1)-[:new_e1]->(:new_v1);
 MATCH (v1:new_v1)-[e1:new_e1]->(v2:new_v1) RETURN v1,e1,v2;
 
+--
+-- AGV2-324
+--
+CREATE GRAPH ag324;
+SET graph_path = ag324;
+
+CREATE (:person {name: 'Alice', age: 30}), 
+       (:person {name: 'Bob', age: 25}), 
+       (:person {name: 'Charlie', age: 35});
+
+MATCH (p:person)
+RETURN p.name AS name
+ORDER BY p.age;
+
+MATCH (p:person)
+RETURN p.name AS name
+ORDER BY p.age DESC;
+
+MATCH (p:person)
+RETURN p.name AS name
+ORDER BY name, p.age;
+
+MATCH (p:person)
+RETURN p.name AS name
+ORDER BY p.age, name DESC;
+
 -- cleanup
 
 DROP GRAPH srf CASCADE;
@@ -1631,6 +1657,7 @@ DROP GRAPH ag216 CASCADE;
 DROP GRAPH ag154 CASCADE;
 DROP GRAPH t CASCADE;
 DROP GRAPH o CASCADE;
+DROP GRAPH ag324 CASCADE;
 
 SET graph_path = agens;
 

@@ -2526,32 +2526,67 @@ transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
 	foreach(lsi, sortitems)
 	{
 		SortBy	   *sortby = lfirst(lsi);
-		Node	   *expr;
+		Node	   *expr = NULL;
 		ListCell   *lt;
 		TargetEntry *te = NULL;
 
-		expr = transformCypherExpr(pstate, sortby->node, exprKind);
-
-		foreach(lt, *targetlist)
+		/*
+		 * First, check if this is a simple column reference that matches
+		 * an alias in the target list. This allows ORDER BY to reference
+		 * RETURN clause aliases (e.g., "RETURN p.name AS name ORDER BY name")
+		 */
+		if (sortby->node && IsA(sortby->node, ColumnRef))
 		{
-			TargetEntry *tmp;
-			Node	   *texpr;
+			ColumnRef  *cref = (ColumnRef *) sortby->node;
 
-			tmp = lfirst(lt);
-			texpr = strip_implicit_coercions((Node *) tmp->expr);
-			if (equal(texpr, expr))
+			if (list_length(cref->fields) == 1 &&
+				IsA(linitial(cref->fields), String))
 			{
-				te = tmp;
-				break;
+				char	   *colname = strVal(linitial(cref->fields));
+
+				/* Try to find a matching alias in the target list */
+				foreach(lt, *targetlist)
+				{
+					TargetEntry *tmp = lfirst(lt);
+
+					if (tmp->resname && strcmp(tmp->resname, colname) == 0)
+					{
+						te = tmp;
+						break;
+					}
+				}
 			}
 		}
 
+		/*
+		 * If not found as an alias, transform the expression and check if
+		 * it matches an expression in the target list or add it as resjunk
+		 */
 		if (te == NULL)
 		{
-			te = transformTargetEntry(pstate, sortby->node, expr, exprKind,
-									  NULL, true);
+			expr = transformCypherExpr(pstate, sortby->node, exprKind);
 
-			*targetlist = lappend(*targetlist, te);
+			foreach(lt, *targetlist)
+			{
+				TargetEntry *tmp;
+				Node	   *texpr;
+
+				tmp = lfirst(lt);
+				texpr = strip_implicit_coercions((Node *) tmp->expr);
+				if (equal(texpr, expr))
+				{
+					te = tmp;
+					break;
+				}
+			}
+
+			if (te == NULL)
+			{
+				te = transformTargetEntry(pstate, sortby->node, expr, exprKind,
+										  NULL, true);
+
+				*targetlist = lappend(*targetlist, te);
+			}
 		}
 
 		sortgroups = addTargetToSortList(pstate, te, sortgroups, *targetlist,

@@ -4154,6 +4154,54 @@ MATCH (v1:new_v1)-[e1:new_e1]->(v2:new_v1) RETURN v1,e1,v2;
  new_v1[3.3]{} | new_e1[4.2][3.3,3.4]{} | new_v1[3.4]{}
 (2 rows)
 
+--
+-- AGV2-324
+--
+CREATE GRAPH ag324;
+SET graph_path = ag324;
+CREATE (:person {name: 'Alice', age: 30}), 
+       (:person {name: 'Bob', age: 25}), 
+       (:person {name: 'Charlie', age: 35});
+MATCH (p:person)
+RETURN p.name AS name
+ORDER BY p.age;
+   name    
+-----------
+ "Bob"
+ "Alice"
+ "Charlie"
+(3 rows)
+
+MATCH (p:person)
+RETURN p.name AS name
+ORDER BY p.age DESC;
+   name    
+-----------
+ "Charlie"
+ "Alice"
+ "Bob"
+(3 rows)
+
+MATCH (p:person)
+RETURN p.name AS name
+ORDER BY name, p.age;
+   name    
+-----------
+ "Alice"
+ "Bob"
+ "Charlie"
+(3 rows)
+
+MATCH (p:person)
+RETURN p.name AS name
+ORDER BY p.age, name DESC;
+   name    
+-----------
+ "Bob"
+ "Alice"
+ "Charlie"
+(3 rows)
+
 -- cleanup
 DROP GRAPH srf CASCADE;
 NOTICE:  drop cascades to 5 other objects
@@ -4238,6 +4286,12 @@ drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel person
 drop cascades to elabel knows
+DROP GRAPH ag324 CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence ag324.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
 SET graph_path = agens;
 DROP VLABEL feature;
 DROP ELABEL supported;

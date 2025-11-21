@@ -11,6 +11,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "access/stratnum.h"
 #include "ag_const.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
@@ -48,6 +49,7 @@
 #include "access/genam.h"
 #include "parser/parse_shortestpath.h"
 #include "catalog/ag_vertex_d.h"
+#include "optimizer/optimizer.h"
 #include "catalog/ag_edge_d.h"
 
 #define EDGE_UNION_START_ID		"_start"
@@ -140,6 +142,7 @@ typedef struct
 
 /* projection (RETURN and WITH) */
 static void checkNameInItems(ParseState *pstate, List *items, List *targetList);
+static void updateSortOperatorsForJsonb(List *sortClause, List *targetList);
 
 /* MATCH - OPTIONAL */
 static ParseNamespaceItem *transformMatchOptional(ParseState *pstate,
@@ -451,6 +454,55 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 	return qry;
 }
 
+static void
+updateSortOperatorsForJsonb(List *sortClause, List *targetList)
+{
+	ListCell   *lc;
+
+	foreach(lc, sortClause)
+	{
+		SortGroupClause *sortcl = (SortGroupClause *) lfirst(lc);
+		TargetEntry *tle;
+		Oid			restype;
+		Oid			sortop;
+		Oid			eqop;
+		bool		hashable;
+		Oid			opfamily;
+		Oid			opcintype;
+		int16		strategy;
+
+		tle = get_sortgroupref_tle(sortcl->tleSortGroupRef, targetList);
+		if (!tle)
+			continue;
+
+		restype = exprType((Node *) tle->expr);
+
+		if (!get_ordering_op_properties(sortcl->sortop,
+										&opfamily, &opcintype, &strategy))
+			continue;
+
+		if (strategy == BTLessStrategyNumber)
+		{
+			get_sort_group_operators(restype,
+									 true, true, false,
+									 &sortop, &eqop, NULL,
+									 &hashable);
+		}
+		else if (strategy == BTGreaterStrategyNumber)
+		{
+			get_sort_group_operators(restype,
+									 false, true, true,
+									 NULL, &eqop, &sortop,
+									 &hashable);
+		}
+		else
+			continue;
+
+		sortcl->eqop = eqop;
+		sortcl->sortop = sortop;
+	}
+}
+
 Query *
 transformCypherProjection(ParseState *pstate, CypherClause *clause)
 {
@@ -478,55 +530,6 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		qual = transformCypherWhere(pstate, where, EXPR_KIND_WHERE);
 		qual = resolve_future_vertex(pstate, qual, 0);
 	}
-	else if (detail->distinct != NULL || detail->order != NULL ||
-			 detail->skip != NULL || detail->limit != NULL)
-	{
-		List	   *distinct = detail->distinct;
-		List	   *order = detail->order;
-		Node	   *skip = detail->skip;
-		Node	   *limit = detail->limit;
-
-		/*
-		 * detach options so that this function passes through this if
-		 * statement when the function is called again recursively
-		 */
-		detail->distinct = NIL;
-		detail->order = NIL;
-		detail->skip = NULL;
-		detail->limit = NULL;
-		nsitem = transformClause(pstate, (Node *) clause);
-		detail->distinct = distinct;
-		detail->order = order;
-		detail->skip = skip;
-		detail->limit = limit;
-
-		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
-
-		qry->sortClause = transformCypherOrderBy(pstate, order,
-												 &qry->targetList);
-
-		if (distinct == NIL)
-		{
-			/* intentionally blank, do nothing */
-		}
-		else
-		{
-			Assert(linitial(distinct) == NULL);
-
-			qry->distinctClause = transformDistinctClause(pstate,
-														  &qry->targetList,
-														  qry->sortClause,
-														  false);
-		}
-
-		qry->limitOffset = transformCypherLimit(pstate, skip, EXPR_KIND_OFFSET,
-												"SKIP");
-		qry->limitOffset = resolve_future_vertex(pstate, qry->limitOffset, 0);
-
-		qry->limitCount = transformCypherLimit(pstate, limit, EXPR_KIND_LIMIT,
-											   "LIMIT");
-		qry->limitCount = resolve_future_vertex(pstate, qry->limitCount, 0);
-	}
 	else
 	{
 		if (clause->prev != NULL)
@@ -538,8 +541,32 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		if (detail->kind == CP_WITH)
 			checkNameInItems(pstate, detail->items, qry->targetList);
 
+		if (detail->order)
+		{
+			qry->sortClause = transformCypherOrderBy(pstate, detail->order,
+													 &qry->targetList);
+		}
+
+		if (detail->distinct)
+		{
+			Assert(linitial(detail->distinct) == NULL);
+
+			qry->distinctClause = transformDistinctClause(pstate,
+														  &qry->targetList,
+														  qry->sortClause,
+														  false);
+		}
+
+		qry->limitCount = transformCypherLimit(pstate, detail->limit,
+												EXPR_KIND_LIMIT, "LIMIT");
+		qry->limitCount = resolve_future_vertex(pstate, qry->limitCount, 0);
+
+		qry->limitOffset = transformCypherLimit(pstate, detail->skip,
+												EXPR_KIND_OFFSET, "SKIP");
+		qry->limitOffset = resolve_future_vertex(pstate, qry->limitOffset, 0);
+
 		qry->groupClause = generateGroupClause(pstate, &qry->targetList,
-											   qry->sortClause);
+												qry->sortClause);
 	}
 
 	if (detail->kind == CP_WITH)
@@ -570,6 +597,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	{
 		flags = 0;
 	}
+
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
 													 flags);
@@ -578,7 +606,16 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	qual = qualAndExpr(qual, pstate->p_resolved_qual);
 
 	if (detail->kind == CP_RETURN)
+	{
 		resolveItemList(pstate, qry->targetList);
+		/*
+		 * After applying JSONB coercion, update sort operators in
+		 * sortClause to use JSONB comparison operators instead
+		 * of the original type's operators
+		 */
+		if (qry->sortClause)
+			updateSortOperatorsForJsonb(qry->sortClause, qry->targetList);
+	}
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
@@ -3743,6 +3780,9 @@ static Node *
 resolve_future_vertex(ParseState *pstate, Node *node, int flags)
 {
 	resolve_future_vertex_context ctx;
+
+	if (node == NULL)
+		return NULL;
 
 	ctx.pstate = pstate;
 	ctx.flags = flags;
