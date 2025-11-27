@@ -16,6 +16,7 @@
 
 #include "executor/nodeAgg.h"
 #include "nodes/execnodes.h"
+#include "utils/array.h"
 #include "utils/jsonb.h"
 #include "utils/arrayaccess.h"
 
@@ -731,7 +732,9 @@ typedef struct ExprEvalStep
 		{
 			Datum	   *elemvalue;
 			bool	   *elemnull;
-			JsonbParseState **liststate;
+			ArrayBuildState **astate; /* array build state */
+			JsonbParseState **jstate; /* jsonb parse state */
+			Oid		   *result_type; /* result array type */
 		}			cypherlistcomp;
 
 		struct
