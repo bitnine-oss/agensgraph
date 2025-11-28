@@ -79,6 +79,7 @@ my %replace_types = (
 	'parse_toplevel' => 'ignore',
 	'stmtmulti' => 'ignore',
 	'CreateAsStmt' => 'ignore',
+	'CtasStmt' => 'ignore',
 	'DeallocateStmt' => 'ignore',
 	'ColId' => 'ignore',
 	'type_function_name' => 'ignore',
