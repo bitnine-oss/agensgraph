@@ -352,6 +352,36 @@ EXPLAIN VERBOSE MATCH (n:tc) RETURN n::jsonb::json as n;
 EXPLAIN RETURN '08:00:2b:01:02:03'::macaddr as n;
 EXPLAIN VERBOSE MATCH (n:tc) return n.s::tsvector as n;
 
+-- AGV2-437
+CREATE GRAPH agv2_437;
+SET graph_path = agv2_437;
+
+CREATE (:item {id: '1', tags: '1,2,3', name: 'Alice'});
+CREATE (:item {id: '2', tags: '4,5,6', name: 'Bob'});
+CREATE (:item {id: '3', tags: '1,5,9', name: 'Charlie'});
+CREATE (:item)-[:KNOWS]->(:item);
+CREATE (:item)-[:LIKES]->(:item);
+
+MATCH (n:item) WHERE n.id IN split(n.tags, ',') RETURN n.id;
+MATCH (n:item) WHERE '1' IN split(n.tags, ',') RETURN n.id;
+MATCH (n:item) WHERE '5' IN split(n.tags, ',') RETURN n.id;
+
+RETURN 1 IN split('1,2,3', ',');
+RETURN '1' IN split('1,2,3', ',');
+RETURN 'x' IN split('a,b,c', ',');
+
+MATCH (n:item) WHERE n.id IN ['1', '2'] RETURN n.id;
+MATCH (n:item) WHERE n.name IN ['Alice', 'Bob'] RETURN n.name;
+MATCH (n:item) WHERE toLower(n.name) IN ['alice', 'charlie'] RETURN n.name;
+
+MATCH ()-[r]->() WHERE type(r) IN ['KNOWS', 'LIKES'] RETURN type(r);
+MATCH ()-[r]->() WHERE type(r) IN ['KNOWS'] RETURN type(r);
+
+RETURN 1 IN [];
+RETURN 'a' IN [];
+
+DROP GRAPH agv2_437 CASCADE;
+
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;

@@ -1888,12 +1888,33 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 									  a->location);
 			break;
 		default:
-			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("CypherList is expected but %s",
-							format_type_be(exprType(rexpr))),
-					 parser_errposition(pstate, exprLocation(a->rexpr))));
+		{
+			/*
+			 * For other expr types, check if the result type is compatible
+			 * with JSONB containment.
+			 */
+			Oid rtype = exprType(rexpr);
+
+			if (rtype == JSONBOID || type_is_array(rtype) || rtype == ANYARRAYOID)
+			{
+				/* Coerce anyarray to jsonb for containment operator */
+				if (rtype == ANYARRAYOID || type_is_array(rtype))
+					rexpr = coerce_to_jsonb(pstate, rexpr, "list");
+
+				result = (Node *) make_op(pstate, list_make1(makeString("@>")),
+										  rexpr, lexpr, pstate->p_last_srf,
+										  a->location);
+			}
+			else
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("CypherList is expected but %s",
+								format_type_be(rtype)),
+						 parser_errposition(pstate, exprLocation(a->rexpr))));
+			}
 			break;
+		}
 	}
 
 	/*
@@ -1978,6 +1999,12 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 			result = (Node *) makeBoolExpr(OR_EXPR, list_make2(result, cmp),
 										   a->location);
 	}
+
+	/*
+	 * Handle empty list case: value IN [] is always FALSE
+	 */
+	if (result == NULL)
+		result = (Node *) makeBoolConst(false, false);
 
 	return result;
 }
