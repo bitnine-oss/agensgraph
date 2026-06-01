@@ -122,17 +122,28 @@ scan_label(Oid relid, Oid graphid)
 Datum
 regather_graphmeta(PG_FUNCTION_ARGS)
 {
-	Relation	rel;
-	HeapTuple	tup;
-	Snapshot	snapshot;
-	TableScanDesc scan;
-
 	if (auto_gather_graphmeta)
 	{
 		ereport(NOTICE,
 				(errmsg("Set auto_gather_graphmeta to FALSE before regather_graphmeta()")));
 		PG_RETURN_BOOL(false);
 	}
+
+	regather_graphmeta_internal();
+
+	PG_RETURN_BOOL(true);
+}
+
+void
+regather_graphmeta_internal(void)
+{
+	Relation	rel;
+	HeapTuple	tup;
+	Snapshot	snapshot;
+	TableScanDesc scan;
+
+	ereport(NOTICE,
+			(errmsg("regathering graphmeta...")));
 
 	rel = table_open(LabelRelationId, AccessShareLock);
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
@@ -189,6 +200,4 @@ regather_graphmeta(PG_FUNCTION_ARGS)
 	table_endscan(scan);
 	UnregisterSnapshot(snapshot);
 	table_close(rel, RowExclusiveLock);
-
-	PG_RETURN_BOOL(true);
 }

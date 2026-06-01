@@ -14,12 +14,15 @@
 #include "access/heapam.h"
 #include "access/htup_details.h"
 #include "catalog/ag_graph_fn.h"
+#include "catalog/ag_label_fn.h"
+#include "catalog/ag_graphmeta.h"
 #include "catalog/ag_label.h"
 #include "catalog/ag_label_fn.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "commands/sequence.h"
 #include "utils/builtins.h"
+#include "utils/catcache.h"
 #include "utils/graph.h"
 #include "utils/rel.h"
 #include "utils/lsyscache.h"
@@ -164,48 +167,50 @@ GetNewLabelId(char *graphname, Oid graphid)
 }
 
 /*
- * Retrieves a list of all the names of a graph.
+ * Retrieves a list of edge label OIDs that are connected to a specific vertex label.
+ * Finds edges where the given vertex label appears as either start or end vertex.
  */
 List *
-get_all_edge_labels_per_graph(Snapshot snapshot, Oid graph_oid)
+get_connected_edge_labels_for_vertex(Snapshot snapshot, Oid graph_oid, Labid vertex_labid)
 {
-	List	   *labels = NIL;
-	ScanKeyData scan_keys[2];
-	Relation	ag_label;
-	TableScanDesc scan_desc;
-	HeapTuple	tuple;
+	List	   *edge_labels = NIL;
+	List	   *seen_edge_labels = NIL;
+	int i;
+	CatCList   *tuplist = SearchSysCacheList2(GRAPHMETASTART, graph_oid, vertex_labid);
 
-	ScanKeyInit(&scan_keys[0],
-				Anum_ag_label_graphid,
-				BTEqualStrategyNumber,
-				F_OIDEQ,
-				ObjectIdGetDatum(graph_oid));
-	ScanKeyInit(&scan_keys[1],
-				Anum_ag_label_labkind,
-				BTEqualStrategyNumber,
-				F_CHAREQ,
-				CharGetDatum(LABEL_KIND_EDGE));
-
-	ag_label = table_open(LabelRelationId, RowExclusiveLock);
-	scan_desc = table_beginscan(ag_label, snapshot, 2, scan_keys);
-
-	while ((tuple = heap_getnext(scan_desc, ForwardScanDirection)) != NULL)
+	for (i = 0; i < tuplist->n_members; i++)
 	{
-		Oid			label_rel_oid;
-		bool		isnull;
-		Datum		datum;
+		HeapTuple	tup = &tuplist->members[i]->tuple;
+		Form_ag_graphmeta metatup = (Form_ag_graphmeta) GETSTRUCT(tup);
+		Labid		edge_labid = metatup->edge;
 
-		datum = heap_getattr(tuple,
-							 Anum_ag_label_relid,
-							 RelationGetDescr(ag_label),
-							 &isnull);
-		label_rel_oid = DatumGetObjectId(datum);
-
-		labels = lappend_oid(labels, label_rel_oid);
+		/* Avoid duplicates */
+		if (!list_member_int(seen_edge_labels, edge_labid))
+		{
+			Oid			edge_relid = get_labid_relid(graph_oid, edge_labid);
+			edge_labels = lappend_oid(edge_labels, edge_relid);
+			seen_edge_labels = lappend_int(seen_edge_labels, edge_labid);
+		}
 	}
+	ReleaseCatCacheList(tuplist);
 
-	table_endscan(scan_desc);
-	table_close(ag_label, RowExclusiveLock);
+	tuplist = SearchSysCacheList2(GRAPHMETAEND, graph_oid, vertex_labid);
+	for (i = 0; i < tuplist->n_members; i++)
+	{
+		HeapTuple	tup = &tuplist->members[i]->tuple;
+		Form_ag_graphmeta metatup = (Form_ag_graphmeta) GETSTRUCT(tup);
+		Labid		edge_labid = metatup->edge;
 
-	return labels;
+		/* Avoid duplicates */
+		if (!list_member_int(seen_edge_labels, edge_labid))
+		{
+			Oid			edge_relid = get_labid_relid(graph_oid, edge_labid);
+			edge_labels = lappend_oid(edge_labels, edge_relid);
+			seen_edge_labels = lappend_int(seen_edge_labels, edge_labid);
+		}
+	}
+	ReleaseCatCacheList(tuplist);
+
+	list_free(seen_edge_labels);
+	return edge_labels;
 }

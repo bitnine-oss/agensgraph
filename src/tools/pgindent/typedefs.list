@@ -3982,7 +3982,6 @@ zic_t
 ModifyGraph
 ModifyGraphPath
 ModifyGraphState
-DeleteGraphState
 Shortestpath
 ShortestpathPath
 ShortestpathState

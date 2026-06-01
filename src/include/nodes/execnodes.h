@@ -2783,15 +2783,6 @@ typedef struct LimitState
 /*
  * Graph nodes
  */
-
-typedef struct DeleteGraphState
-{
-	ResultRelInfo *edge_labels; /* Used to find connected edges. */
-	int			num_edge_labels;
-	Datum	   *cached_values;
-	bool	   *cached_isnull;
-} DeleteGraphState;
-
 typedef struct ModifyGraphState
 {
 	PlanState	ps;
@@ -2807,7 +2798,6 @@ typedef struct ModifyGraphState
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE
 								 * with `es_prop_map` */
 	List	   *exprs;			/* expression state list for DELETE */
-	DeleteGraphState *delete_graph_state;
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
 	bool	   *update_cols;	/* array of columns to update */
 	HTAB	   *elemTable;
