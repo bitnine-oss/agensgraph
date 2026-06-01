@@ -4404,8 +4404,24 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 	null_stepno = state->steps_len - 1;
 
 	begin_step.opcode = EEOP_CYPHERLISTCOMP_BEGIN;
-	begin_step.d.cypherlistcomp.liststate =
-		(JsonbParseState **) palloc(sizeof(JsonbParseState *));
+	begin_step.d.cypherlistcomp.result_type =
+		(Oid *) palloc(sizeof(Oid));
+	*begin_step.d.cypherlistcomp.result_type =
+		exprType((Node *) listcompexpr);
+
+	/* Only allocate the state pointer we'll actually use */
+	if (*begin_step.d.cypherlistcomp.result_type == JSONBOID)
+	{
+		begin_step.d.cypherlistcomp.jstate =
+			(JsonbParseState **) palloc(sizeof(JsonbParseState *));
+		begin_step.d.cypherlistcomp.astate = NULL;
+	}
+	else
+	{
+		begin_step.d.cypherlistcomp.astate =
+			(ArrayBuildState **) palloc(sizeof(ArrayBuildState *));
+		begin_step.d.cypherlistcomp.jstate = NULL;
+	}
 	ExprEvalPushStep(state, &begin_step);
 
 	init_step.opcode = EEOP_CYPHERLISTCOMP_ITER_INIT;
@@ -4480,8 +4496,12 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 	elem_step.opcode = EEOP_CYPHERLISTCOMP_ELEM;
 	elem_step.d.cypherlistcomp.elemvalue = elem_resvalue;
 	elem_step.d.cypherlistcomp.elemnull = elem_resnull;
-	elem_step.d.cypherlistcomp.liststate =
-		begin_step.d.cypherlistcomp.liststate;
+	elem_step.d.cypherlistcomp.astate =
+		begin_step.d.cypherlistcomp.astate;
+	elem_step.d.cypherlistcomp.jstate =
+		begin_step.d.cypherlistcomp.jstate;
+	elem_step.d.cypherlistcomp.result_type =
+		begin_step.d.cypherlistcomp.result_type;
 	ExprEvalPushStep(state, &elem_step);
 
 	loop_step.opcode = EEOP_JUMP;
@@ -4489,8 +4509,12 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 	ExprEvalPushStep(state, &loop_step);
 
 	scratch->opcode = EEOP_CYPHERLISTCOMP_END;
-	scratch->d.cypherlistcomp.liststate =
-		begin_step.d.cypherlistcomp.liststate;
+	scratch->d.cypherlistcomp.astate =
+		begin_step.d.cypherlistcomp.astate;
+	scratch->d.cypherlistcomp.jstate =
+		begin_step.d.cypherlistcomp.jstate;
+	scratch->d.cypherlistcomp.result_type =
+		begin_step.d.cypherlistcomp.result_type;
 	ExprEvalPushStep(state, scratch);
 	end_stepno = state->steps_len - 1;
 

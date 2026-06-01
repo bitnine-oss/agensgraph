@@ -5534,54 +5534,122 @@ cypher_access_index(CypherIndexResult *cidxres, const int nelems)
 	return -1;
 }
 
+/*
+ * ExecEvalCypherListCompBegin
+ *		Initialize array building state for list comprehension.
+ *
+ * For JSONB results, initializes JsonbParseState with array container.
+ * For typed arrays (vertex/edge), uses ArrayBuildState.
+ */
 void
 ExecEvalCypherListCompBegin(ExprState *state, ExprEvalStep *op)
 {
-	*op->d.cypherlistcomp.liststate = NULL;
-	pushJsonbValue(op->d.cypherlistcomp.liststate,
-				   WJB_BEGIN_ARRAY, NULL);
-}
+	Oid			result_type = *op->d.cypherlistcomp.result_type;
 
-void
-ExecEvalCypherListCompElem(ExprState *state, ExprEvalStep *op)
-{
-	JsonbValue	_ejv;
-	JsonbValue *ejv;
-
-	if (*op->d.cypherlistcomp.elemnull)
+	if (result_type == JSONBOID)
 	{
-		_ejv.type = jbvNull;
-		ejv = &_ejv;
+		*op->d.cypherlistcomp.jstate = NULL;
+		pushJsonbValue(op->d.cypherlistcomp.jstate,
+					   WJB_BEGIN_ARRAY, NULL);
 	}
 	else
 	{
-		Jsonb	   *ejb;
+		Oid			elem_type;
 
-		ejb = DatumGetJsonbP(*op->d.cypherlistcomp.elemvalue);
-		if (JB_ROOT_IS_SCALAR(ejb))
+		elem_type = get_element_type(result_type);
+		if (elem_type == InvalidOid)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("cannot get element type for list comprehension")));
+
+		*op->d.cypherlistcomp.astate = initArrayResult(elem_type,
+													   CurrentMemoryContext,
+													   false);
+	}
+}
+
+/*
+ * ExecEvalCypherListCompElem
+ *		Accumulate one element into the list comprehension result.
+ *
+ * For jsonb, converts element to JsonbValue and pushes to JsonbParseState.
+ * For typed arrays, uses accumArrayResult to append to ArrayBuildState.
+ */
+void
+ExecEvalCypherListCompElem(ExprState *state, ExprEvalStep *op)
+{
+	Datum		elemvalue = *op->d.cypherlistcomp.elemvalue;
+	bool		elemnull = *op->d.cypherlistcomp.elemnull;
+	Oid			result_type = *op->d.cypherlistcomp.result_type;
+
+	if (result_type == JSONBOID)
+	{
+		JsonbValue	_ejv;
+		JsonbValue *ejv;
+
+		if (elemnull)
 		{
-			ejv = getIthJsonbValueFromContainer(&ejb->root, 0);
+			_ejv.type = jbvNull;
+			ejv = &_ejv;
 		}
 		else
 		{
-			_ejv.type = jbvBinary;
-			_ejv.val.binary.data = &ejb->root;
-			ejv = &_ejv;
-		}
-	}
+			Jsonb	   *ejb = DatumGetJsonbP(elemvalue);
 
-	pushJsonbValue(op->d.cypherlistcomp.liststate, WJB_ELEM, ejv);
+			if (JB_ROOT_IS_SCALAR(ejb))
+			{
+				ejv = getIthJsonbValueFromContainer(&ejb->root, 0);
+			}
+			else
+			{
+				_ejv.type = jbvBinary;
+				_ejv.val.binary.data = &ejb->root;
+				ejv = &_ejv;
+			}
+		}
+
+		pushJsonbValue(op->d.cypherlistcomp.jstate, WJB_ELEM, ejv);
+	}
+	else
+	{
+		ArrayBuildState *astate = *op->d.cypherlistcomp.astate;
+		Oid			elem_type = astate->element_type;
+
+		*op->d.cypherlistcomp.astate = accumArrayResult(astate,
+														elemvalue,
+														elemnull,
+														elem_type,
+														CurrentMemoryContext);
+	}
 }
 
+/*
+ * ExecEvalCypherListCompEnd
+ *		Finalize the list comprehension result into a complete array.
+ *
+ * For jsonb, finalizes JsonbParseState into a complete JSONB array.
+ * For typed arrays, calls makeArrayResult to build the final typed array.
+ */
 void
 ExecEvalCypherListCompEnd(ExprState *state, ExprEvalStep *op)
 {
-	JsonbValue *jv;
+	Oid			result_type = *op->d.cypherlistcomp.result_type;
 
-	jv = pushJsonbValue(op->d.cypherlistcomp.liststate,
-						WJB_END_ARRAY, NULL);
+	if (result_type == JSONBOID)
+	{
+		JsonbValue *jv;
 
-	*op->resvalue = JsonbPGetDatum(JsonbValueToJsonb(jv));
+		jv = pushJsonbValue(op->d.cypherlistcomp.jstate,
+							WJB_END_ARRAY, NULL);
+		*op->resvalue = JsonbPGetDatum(JsonbValueToJsonb(jv));
+	}
+	else
+	{
+		ArrayBuildState *astate = *op->d.cypherlistcomp.astate;
+
+		*op->resvalue = makeArrayResult(astate, CurrentMemoryContext);
+	}
+
 	*op->resnull = false;
 }
 
@@ -5653,8 +5721,10 @@ ExecEvalCypherListCompIterInitNext(ExprState *state, ExprEvalStep *op)
 	}
 	else
 	{
-		CypherListCompArrayIterator *array_iter = op->d.cypherlistcomp_iter.array_iterator;
+		CypherListCompArrayIterator *array_iter;
 		Datum		vertex_or_edge_datum;
+
+		array_iter = op->d.cypherlistcomp_iter.array_iterator;
 
 		if (array_iter->array_position >= array_iter->array_size)
 		{
@@ -5674,15 +5744,7 @@ ExecEvalCypherListCompIterInitNext(ExprState *state, ExprEvalStep *op)
 		{
 			return;
 		}
-
-		if (array_iter->array_typid == VERTEXOID)
-		{
-			*op->resvalue = getVertexPropDatum(vertex_or_edge_datum);
-		}
-		else
-		{
-			*op->resvalue = getEdgePropDatum(vertex_or_edge_datum);
-		}
+		*op->resvalue = vertex_or_edge_datum;
 	}
 }
 

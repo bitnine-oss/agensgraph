@@ -4431,6 +4431,142 @@ EXPLAIN MATCH (n:n5) DETACH DELETE (n);
                      ->  Function Scan on unnest v  (cost=0.00..0.01 rows=1 width=8)
 (8 rows)
 
+--
+-- AGV2-315
+--
+CREATE GRAPH agv2_315;
+SET graph_path = agv2_315;
+CREATE (:person {name: 'Alice'})-[:knows {since: 2020}]->(:person {name: 'Bob'});
+CREATE (:person {name: 'Bob'})-[:knows {since: 2021}]->(:person {name: 'Charlie'});
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p)];
+               ?column?               
+--------------------------------------
+ [knows[4.1][3.1,3.2]{"since": 2020}]
+ [knows[4.2][3.3,3.4]{"since": 2021}]
+(2 rows)
+
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) | l];
+               ?column?               
+--------------------------------------
+ [knows[4.1][3.1,3.2]{"since": 2020}]
+ [knows[4.2][3.3,3.4]{"since": 2021}]
+(2 rows)
+
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) WHERE type(l) = 'knows'];
+               ?column?               
+--------------------------------------
+ [knows[4.1][3.1,3.2]{"since": 2020}]
+ [knows[4.2][3.3,3.4]{"since": 2021}]
+(2 rows)
+
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) WHERE type(l) = 'knows' | l];
+               ?column?               
+--------------------------------------
+ [knows[4.1][3.1,3.2]{"since": 2020}]
+ [knows[4.2][3.3,3.4]{"since": 2021}]
+(2 rows)
+
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) WHERE type(l) = 'knows' | type(l)];
+ ?column?  
+-----------
+ ["knows"]
+ ["knows"]
+(2 rows)
+
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) WHERE label(startNode(l)) = 'person' | startNode(l)];
+            ?column?            
+--------------------------------
+ [person[3.1]{"name": "Alice"}]
+ [person[3.3]{"name": "Bob"}]
+(2 rows)
+
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) | type(l)];
+ ?column?  
+-----------
+ ["knows"]
+ ["knows"]
+(2 rows)
+
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) | l.since];
+ ?column? 
+----------
+ [2020]
+ [2021]
+(2 rows)
+
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p)];
+                          ?column?                           
+-------------------------------------------------------------
+ [person[3.1]{"name": "Alice"},person[3.2]{"name": "Bob"}]
+ [person[3.3]{"name": "Bob"},person[3.4]{"name": "Charlie"}]
+(2 rows)
+
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) | n];
+                          ?column?                           
+-------------------------------------------------------------
+ [person[3.1]{"name": "Alice"},person[3.2]{"name": "Bob"}]
+ [person[3.3]{"name": "Bob"},person[3.4]{"name": "Charlie"}]
+(2 rows)
+
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) WHERE n.name = 'Bob'];
+           ?column?           
+------------------------------
+ [person[3.2]{"name": "Bob"}]
+ [person[3.3]{"name": "Bob"}]
+(2 rows)
+
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) WHERE n.name = 'Bob' | n];
+           ?column?           
+------------------------------
+ [person[3.2]{"name": "Bob"}]
+ [person[3.3]{"name": "Bob"}]
+(2 rows)
+
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) WHERE label(n) = 'person' | n.name];
+      ?column?      
+--------------------
+ ["Alice", "Bob"]
+ ["Bob", "Charlie"]
+(2 rows)
+
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) | label(n)];
+       ?column?       
+----------------------
+ ["person", "person"]
+ ["person", "person"]
+(2 rows)
+
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) | n.name];
+      ?column?      
+--------------------
+ ["Alice", "Bob"]
+ ["Bob", "Charlie"]
+(2 rows)
+
+MATCH p=(n1)-[r*1..2]->(n2) WHERE all(x in r where x.since >= 2020) RETURN count(p);
+ count 
+-------
+ 2
+(1 row)
+
+MATCH p=(n1)-[r*1..2]->(n2) WHERE all(x in r where x.since IS NOT NULL) RETURN count(p);
+ count 
+-------
+ 2
+(1 row)
+
+MATCH p=(n1)-[r*1..2]->(n2) WHERE any(x in r where x.since = 2021) RETURN count(p);
+ count 
+-------
+ 1
+(1 row)
+
+MATCH p=(:person)-[r]->(:person) WHERE length([l in relationships(p) | type(l)]) > 0 RETURN count(p);
+ count 
+-------
+ 2
+(1 row)
+
 -- cleanup
 DROP GRAPH srf CASCADE;
 NOTICE:  drop cascades to 5 other objects
@@ -4527,6 +4663,13 @@ drop cascades to vlabel n3
 drop cascades to elabel e2
 drop cascades to vlabel n4
 drop cascades to vlabel n5
+DROP GRAPH agv2_315 CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence agv2_315.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
+drop cascades to elabel knows
 SET graph_path = agens;
 DROP VLABEL feature;
 DROP ELABEL supported;

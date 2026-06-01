@@ -2074,6 +2074,7 @@ typedef struct CypherListCompVar
 {
 	Expr		xpr;
 	char	   *varname;
+	Oid			elem_type;
 	int			location;
 } CypherListCompVar;
 

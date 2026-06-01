@@ -1648,6 +1648,37 @@ EXPLAIN MATCH (n:n4) DETACH DELETE (n);
 -- Append node should not have any relations, since n5 is not connected to any edge labels
 EXPLAIN MATCH (n:n5) DETACH DELETE (n);
 
+--
+-- AGV2-315
+--
+CREATE GRAPH agv2_315;
+SET graph_path = agv2_315;
+
+CREATE (:person {name: 'Alice'})-[:knows {since: 2020}]->(:person {name: 'Bob'});
+CREATE (:person {name: 'Bob'})-[:knows {since: 2021}]->(:person {name: 'Charlie'});
+
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p)];
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) | l];
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) WHERE type(l) = 'knows'];
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) WHERE type(l) = 'knows' | l];
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) WHERE type(l) = 'knows' | type(l)];
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) WHERE label(startNode(l)) = 'person' | startNode(l)];
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) | type(l)];
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) | l.since];
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p)];
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) | n];
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) WHERE n.name = 'Bob'];
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) WHERE n.name = 'Bob' | n];
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) WHERE label(n) = 'person' | n.name];
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) | label(n)];
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) | n.name];
+
+MATCH p=(n1)-[r*1..2]->(n2) WHERE all(x in r where x.since >= 2020) RETURN count(p);
+MATCH p=(n1)-[r*1..2]->(n2) WHERE all(x in r where x.since IS NOT NULL) RETURN count(p);
+MATCH p=(n1)-[r*1..2]->(n2) WHERE any(x in r where x.since = 2021) RETURN count(p);
+
+MATCH p=(:person)-[r]->(:person) WHERE length([l in relationships(p) | type(l)]) > 0 RETURN count(p);
+
 -- cleanup
 
 DROP GRAPH srf CASCADE;
@@ -1662,6 +1693,7 @@ DROP GRAPH ag154 CASCADE;
 DROP GRAPH t CASCADE;
 DROP GRAPH o CASCADE;
 DROP GRAPH delete_opt CASCADE;
+DROP GRAPH agv2_315 CASCADE;
 
 SET graph_path = agens;
 
