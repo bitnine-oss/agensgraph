@@ -846,9 +846,6 @@ PortalRun(Portal portal, long count, bool isTopLevel, bool run_once,
 			CurrentResourceOwner = saveResourceOwner;
 		PortalContext = savePortalContext;
 
-		/* todo: Is it using now? */
-		enableGraphDML = false;
-
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
