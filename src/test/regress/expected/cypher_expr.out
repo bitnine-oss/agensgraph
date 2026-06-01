@@ -936,6 +936,103 @@ EXPLAIN VERBOSE MATCH (n:tc) return n.s::tsvector as n;
    Output: (n.properties.'s'::text)::tsvector
 (2 rows)
 
+-- AGV2-437
+CREATE GRAPH agv2_437;
+SET graph_path = agv2_437;
+CREATE (:item {id: '1', tags: '1,2,3', name: 'Alice'});
+CREATE (:item {id: '2', tags: '4,5,6', name: 'Bob'});
+CREATE (:item {id: '3', tags: '1,5,9', name: 'Charlie'});
+CREATE (:item)-[:KNOWS]->(:item);
+CREATE (:item)-[:LIKES]->(:item);
+MATCH (n:item) WHERE n.id IN split(n.tags, ',') RETURN n.id;
+ id  
+-----
+ "1"
+(1 row)
+
+MATCH (n:item) WHERE '1' IN split(n.tags, ',') RETURN n.id;
+ id  
+-----
+ "1"
+ "3"
+(2 rows)
+
+MATCH (n:item) WHERE '5' IN split(n.tags, ',') RETURN n.id;
+ id  
+-----
+ "2"
+ "3"
+(2 rows)
+
+RETURN 1 IN split('1,2,3', ',');
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN '1' IN split('1,2,3', ',');
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN 'x' IN split('a,b,c', ',');
+ ?column? 
+----------
+ f
+(1 row)
+
+MATCH (n:item) WHERE n.id IN ['1', '2'] RETURN n.id;
+ id  
+-----
+ "1"
+ "2"
+(2 rows)
+
+MATCH (n:item) WHERE n.name IN ['Alice', 'Bob'] RETURN n.name;
+  name   
+---------
+ "Alice"
+ "Bob"
+(2 rows)
+
+MATCH (n:item) WHERE toLower(n.name) IN ['alice', 'charlie'] RETURN n.name;
+   name    
+-----------
+ "Alice"
+ "Charlie"
+(2 rows)
+
+MATCH ()-[r]->() WHERE type(r) IN ['KNOWS', 'LIKES'] RETURN type(r);
+ type 
+------
+(0 rows)
+
+MATCH ()-[r]->() WHERE type(r) IN ['KNOWS'] RETURN type(r);
+ type 
+------
+(0 rows)
+
+RETURN 1 IN [];
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN 'a' IN [];
+ ?column? 
+----------
+ f
+(1 row)
+
+DROP GRAPH agv2_437 CASCADE;
+NOTICE:  drop cascades to 6 other objects
+DETAIL:  drop cascades to sequence agv2_437.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel item
+drop cascades to elabel knows
+drop cascades to elabel likes
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;
