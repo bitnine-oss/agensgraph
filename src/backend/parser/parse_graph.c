@@ -4483,13 +4483,27 @@ transformSetProp(ParseState *pstate, CypherSetProp *sp, bool is_remove,
 		if (sp->add)
 		{
 			FuncCall   *concat;
+			Node	   *concat_result;
+			CoalesceExpr *coalesce;
 
 			concat = makeFuncCall(list_make1(makeString("jsonb_concat")), NIL,
 								  COERCE_EXPLICIT_CALL,
 								  -1);
-			prop_map = ParseFuncOrColumn(pstate, concat->funcname,
-										 list_make2(prop_map, expr),
-										 pstate->p_last_srf, concat, false, -1);
+			concat_result = ParseFuncOrColumn(pstate, concat->funcname,
+											  list_make2(prop_map, expr),
+											  pstate->p_last_srf, concat, false, -1);
+
+			/*
+			 * Wrap with COALESCE to handle NULL values gracefully.
+			 * If expr is NULL, jsonb_concat returns NULL, so we fall back
+			 * to the original prop_map.
+			 */
+			coalesce = makeNode(CoalesceExpr);
+			coalesce->args = list_make2(concat_result, prop_map);
+			coalesce->coalescetype = JSONBOID;
+			coalesce->location = -1;
+
+			prop_map = (Node *) coalesce;
 		}
 		else
 		{

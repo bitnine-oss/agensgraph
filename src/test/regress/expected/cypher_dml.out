@@ -4567,7 +4567,28 @@ MATCH p=(:person)-[r]->(:person) WHERE length([l in relationships(p) | type(l)])
  2
 (1 row)
 
+--
+-- AGV2-308
+--
+CREATE GRAPH agv2_308;
+SET graph_path = agv2_308;
+CREATE (:test);
+UNWIND [{}] AS row
+MATCH (t:test)
+SET t += row.id
+RETURN t;
+      t      
+-------------
+ test[3.1]{}
+(1 row)
+
 -- cleanup
+DROP GRAPH agv2_308 CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence agv2_308.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel test
 DROP GRAPH srf CASCADE;
 NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to sequence srf.ag_label_seq

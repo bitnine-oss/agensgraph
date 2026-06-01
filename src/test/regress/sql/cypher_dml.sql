@@ -1679,8 +1679,20 @@ MATCH p=(n1)-[r*1..2]->(n2) WHERE any(x in r where x.since = 2021) RETURN count(
 
 MATCH p=(:person)-[r]->(:person) WHERE length([l in relationships(p) | type(l)]) > 0 RETURN count(p);
 
+--
+-- AGV2-308
+--
+CREATE GRAPH agv2_308;
+SET graph_path = agv2_308;
+CREATE (:test);
+UNWIND [{}] AS row
+MATCH (t:test)
+SET t += row.id
+RETURN t;
+
 -- cleanup
 
+DROP GRAPH agv2_308 CASCADE;
 DROP GRAPH srf CASCADE;
 DROP GRAPH impload CASCADE;
 DROP GRAPH gid CASCADE;
