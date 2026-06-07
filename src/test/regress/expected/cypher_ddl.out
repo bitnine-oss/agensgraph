@@ -209,8 +209,8 @@ WHERE attrelid = 'ddl.e1'::regclass;
  xmin       |              
  ctid       |              
  id         |              
- start      |         10000
- end        |         10000
+ start      |          1000
+ end        |          1000
  properties |              
 (10 rows)
 

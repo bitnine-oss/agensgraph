@@ -308,14 +308,25 @@ DefineLabel(CreateStmt *stmt, char labkind, const char *queryString,
 	return labaddr;
 }
 
-/* See ATExecSetStatistics() */
+/*
+ * Raise the statistics target on an edge label's start/end columns so the
+ * planner has good cardinality for traversal joins on a skewed (power-law)
+ * degree distribution.
+ *
+ * NOTE: this used to be 10000 (the maximum).  eqjoinsel is O(MCV^2) over the
+ * most-common-value lists, so a 10000-entry MCV makes selectivity estimation
+ * cost ~290ms PER edge join on a large edge label -- i.e. multi-hop pattern
+ * queries spent hundreds of ms in the PLANNER (a 2-hop query: ~3ms exec but
+ * ~290ms plan).  1000 still captures the high-degree hubs that matter for
+ * traversal cardinality, at ~1/100th of the planning cost (~3ms/join).
+ */
 static void
 SetMaxStatisticsTarget(Oid laboid)
 {
 	Relation	attrelation;
 	HeapTuple	tuple,
 				newtuple;
-	int			maxtarget = 10000;
+	int			maxtarget = 1000;
 	Datum		repl_val[Natts_pg_attribute];
 	bool		repl_null[Natts_pg_attribute];
 	bool		repl_repl[Natts_pg_attribute];
