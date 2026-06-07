@@ -19,8 +19,13 @@
 #include "access/table.h"
 #include "access/relscan.h"
 #include "access/tableam.h"
+#include "access/genam.h"
 #include "access/skey.h"
+#include "catalog/pg_am_d.h"
+#include "catalog/pg_index.h"
 #include "utils/fmgroids.h"
+#include "utils/rel.h"
+#include "utils/relcache.h"
 
 #define VAR_START_VID	0
 #define VAR_END_VID		1
@@ -51,7 +56,8 @@ static inline bool array_has(ArrayBuildState *astate, Graphid edge_id);
 
 typedef struct VLEDepthCtx
 {
-	TableScanDesc desc;
+	IndexScanDesc iss;			/* preferred: btree index scan on start/end */
+	TableScanDesc desc;			/* fallback: filtered heap scan */
 	int			rel_index;
 	Graphid		start_id;
 	Graphid		end_id;
@@ -65,6 +71,20 @@ static bool create_scan_desc(GraphVLEState *vle_state, VLEDepthCtx *vle_depth_ct
 static bool create_none_direction_scan_desc(GraphVLEState *vle_state,
 											VLEDepthCtx *vle_depth_ctx);
 static void free_scan_desc(VLEDepthCtx *vle_depth_ctx);
+
+/* expand one hop on rel_index, keyed on `key`, using the start or end index */
+static void open_depth_scan(GraphVLEState *vle_state, VLEDepthCtx *ctx,
+							bool by_start, Graphid key);
+/* end whichever scan (index or heap) is open on ctx */
+static void end_depth_scan(VLEDepthCtx *ctx);
+/* fetch the next edge from ctx's open scan into slot */
+static inline bool
+depth_getnext(VLEDepthCtx *ctx, TupleTableSlot *slot)
+{
+	if (ctx->iss != NULL)
+		return index_getnext_slot(ctx->iss, ForwardScanDirection, slot);
+	return table_scan_getnextslot(ctx->desc, ForwardScanDirection, slot);
+}
 
 GraphVLEState *
 ExecInitGraphVLE(GraphVLE *vleplan, EState *estate, int eflags)
@@ -166,26 +186,75 @@ ExecInitGraphVLE(GraphVLE *vleplan, EState *estate, int eflags)
 												list_length(scan_label_oids) * sizeof(ResultRelInfo));
 	vle_state->target_rel_infos = target_rel_infos;
 	vle_state->num_target_rel_info = list_length(scan_label_oids);
+	vle_state->start_index_rels = (Relation *)
+		palloc0(vle_state->num_target_rel_info * sizeof(Relation));
+	vle_state->end_index_rels = (Relation *)
+		palloc0(vle_state->num_target_rel_info * sizeof(Relation));
 
 	/* Will be filled by below logic. */
 	vle_state->current_scan_tuple = NULL;
 
-	foreach(list_cell, scan_label_oids)
 	{
-		Oid			label_oid = lfirst_oid(list_cell);
-		Relation	relation = table_open(label_oid, AccessShareLock);
+		int			rel_idx = 0;
 
-		if (vle_state->current_scan_tuple == NULL)
+		foreach(list_cell, scan_label_oids)
 		{
-			vle_state->current_scan_tuple = table_slot_create(relation, NULL);
+			Oid			label_oid = lfirst_oid(list_cell);
+			Relation	relation = table_open(label_oid, AccessShareLock);
+			int			k;
+
+			if (vle_state->current_scan_tuple == NULL)
+			{
+				vle_state->current_scan_tuple = table_slot_create(relation, NULL);
+			}
+			InitResultRelInfo(target_rel_infos,
+							  relation,
+							  0,	/* dummy rangetable index */
+							  NULL,
+							  0);
+			ExecOpenIndices(target_rel_infos, false);
+
+			/*
+			 * Identify the (start,end) and (end,start) btree indexes by the
+			 * heap attno of their leading key column, so each hop can be
+			 * expanded with an index probe instead of a full edge-label scan.
+			 * (The id index, if any, leads with a different column and is
+			 * ignored; a label with neither falls back to a heap scan.)
+			 */
+			for (k = 0; k < target_rel_infos->ri_NumIndices; k++)
+			{
+				Relation	idx = target_rel_infos->ri_IndexRelationDescs[k];
+				AttrNumber	leadattr;
+
+				if (idx->rd_rel->relam != BTREE_AM_OID)
+					continue;
+
+				/*
+				 * Only substitute an index probe for the heap scan when the
+				 * index is safe to read in full.  Skip a disabled or
+				 * not-yet-ready index (DISABLE INDEX, or an in-progress /
+				 * failed CREATE INDEX CONCURRENTLY), whose contents are stale
+				 * or incomplete, and skip a partial index, which omits the
+				 * edges excluded by its predicate.  Leaving the slot NULL makes
+				 * the hop fall back to the always-correct heap scan.
+				 */
+				if (!idx->rd_index->indisvalid || !idx->rd_index->indisready)
+					continue;
+				if (RelationGetIndexPredicate(idx) != NIL)
+					continue;
+
+				leadattr = idx->rd_index->indkey.values[0];
+				if (leadattr == Anum_table_edge_start &&
+					vle_state->start_index_rels[rel_idx] == NULL)
+					vle_state->start_index_rels[rel_idx] = idx;
+				else if (leadattr == Anum_table_edge_end &&
+						 vle_state->end_index_rels[rel_idx] == NULL)
+					vle_state->end_index_rels[rel_idx] = idx;
+			}
+
+			target_rel_infos++;
+			rel_idx++;
 		}
-		InitResultRelInfo(target_rel_infos,
-						  relation,
-						  0,	/* dummy rangetable index */
-						  NULL,
-						  0);
-		ExecOpenIndices(target_rel_infos, false);
-		target_rel_infos++;
 	}
 
 	list_free(scan_label_oids);
@@ -339,6 +408,7 @@ ExecGraphVLEDFS(GraphVLEState *vle_state, Graphid start_id)
 	if (vle_state->table_scan_desc_list == NIL)
 	{
 		vle_depth_ctx = (VLEDepthCtx *) palloc(sizeof(VLEDepthCtx));
+		vle_depth_ctx->iss = NULL;
 		vle_depth_ctx->desc = NULL;
 		vle_depth_ctx->rel_index = 0;
 		vle_depth_ctx->start_id = start_id;
@@ -362,9 +432,7 @@ ExecGraphVLEDFS(GraphVLEState *vle_state, Graphid start_id)
 
 		vle_depth_ctx = llast(vle_state->table_scan_desc_list);
 
-		if (!table_scan_getnextslot(vle_depth_ctx->desc,
-									ForwardScanDirection,
-									vle_state->current_scan_tuple))
+		if (!depth_getnext(vle_depth_ctx, vle_state->current_scan_tuple))
 		{
 			/* find next target relation */
 			if (!create_scan_desc(vle_state, vle_depth_ctx))
@@ -477,6 +545,7 @@ ExecGraphVLEDFS(GraphVLEState *vle_state, Graphid start_id)
 			VLEDepthCtx *top_vle_depth_ctx = vle_depth_ctx;
 
 			vle_depth_ctx = (VLEDepthCtx *) palloc(sizeof(VLEDepthCtx));
+			vle_depth_ctx->iss = NULL;
 			vle_depth_ctx->desc = NULL;
 			vle_depth_ctx->rel_index = 0;
 			vle_depth_ctx->start_id = new_start_id;
@@ -502,34 +571,88 @@ ExecGraphVLEDFS(GraphVLEState *vle_state, Graphid start_id)
 }
 
 static void
-free_scan_desc(VLEDepthCtx *vle_depth_ctx)
+end_depth_scan(VLEDepthCtx *vle_depth_ctx)
 {
+	if (vle_depth_ctx->iss)
+	{
+		index_endscan(vle_depth_ctx->iss);
+		vle_depth_ctx->iss = NULL;
+	}
 	if (vle_depth_ctx->desc)
 	{
 		table_endscan(vle_depth_ctx->desc);
+		vle_depth_ctx->desc = NULL;
 	}
+}
+
+static void
+free_scan_desc(VLEDepthCtx *vle_depth_ctx)
+{
+	end_depth_scan(vle_depth_ctx);
 	pfree(vle_depth_ctx);
+}
+
+/*
+ * Begin a one-hop expansion on the current target label (rel_index): fetch the
+ * edges whose start (by_start = true) or end column equals `key`.  Uses the
+ * matching btree index when present (an O(degree) index probe); otherwise falls
+ * back to a filtered heap scan of the whole edge label so correctness never
+ * depends on the index existing.
+ */
+static void
+open_depth_scan(GraphVLEState *vle_state, VLEDepthCtx *vle_depth_ctx,
+				bool by_start, Graphid key)
+{
+	ResultRelInfo *result_rel_info =
+		vle_state->target_rel_infos + vle_depth_ctx->rel_index;
+	Relation	heap_rel = result_rel_info->ri_RelationDesc;
+	Relation	index_rel = by_start ?
+		vle_state->start_index_rels[vle_depth_ctx->rel_index] :
+		vle_state->end_index_rels[vle_depth_ctx->rel_index];
+	ScanKeyData scan_key_data;
+
+	if (index_rel != NULL)
+	{
+		/* index probe: `key` matches the leading (and only scanned) column */
+		ScanKeyInit(&scan_key_data,
+					1,
+					BTEqualStrategyNumber,
+					F_GRAPHID_EQ,
+					GraphidGetDatum(key));
+		vle_depth_ctx->iss = index_beginscan(heap_rel, index_rel,
+											 vle_state->ps.state->es_snapshot,
+											 1, 0);
+		index_rescan(vle_depth_ctx->iss, &scan_key_data, 1, NULL, 0);
+	}
+	else
+	{
+		/* fallback: filtered heap scan keyed on the heap column */
+		ScanKeyInit(&scan_key_data,
+					by_start ? Anum_table_edge_start : Anum_table_edge_end,
+					BTEqualStrategyNumber,
+					F_GRAPHID_EQ,
+					GraphidGetDatum(key));
+		vle_depth_ctx->desc = table_beginscan(heap_rel,
+											  vle_state->ps.state->es_snapshot,
+											  1, &scan_key_data);
+	}
 }
 
 static bool
 create_scan_desc(GraphVLEState *vle_state,
 				 VLEDepthCtx *vle_depth_ctx)
 {
-	ScanKeyData scan_key_data;
-	ResultRelInfo *result_rel_info = vle_state->target_rel_infos + vle_depth_ctx->rel_index;
 	uint32		cypher_rel_direction = vle_state->cypher_rel_direction;
 
-	if (vle_state->cypher_rel_direction == CYPHER_REL_DIR_NONE)
+	if (cypher_rel_direction == CYPHER_REL_DIR_NONE)
 	{
 		return create_none_direction_scan_desc(vle_state, vle_depth_ctx);
 	}
 
-	if (vle_depth_ctx->desc != NULL)
+	if (vle_depth_ctx->iss != NULL || vle_depth_ctx->desc != NULL)
 	{
-		table_endscan(vle_depth_ctx->desc);
-		vle_depth_ctx->desc = NULL;
-
-		result_rel_info++;
+		/* current label exhausted; advance to the next target label */
+		end_depth_scan(vle_depth_ctx);
 		vle_depth_ctx->rel_index++;
 
 		if (vle_depth_ctx->rel_index >= vle_state->num_target_rel_info)
@@ -538,32 +661,17 @@ create_scan_desc(GraphVLEState *vle_state,
 		}
 	}
 
-	Assert(cypher_rel_direction != CYPHER_REL_DIR_NONE);
-
 	if (cypher_rel_direction == CYPHER_REL_DIR_RIGHT)
 	{
-		/* CYPHER_REL_DIR_RIGHT, CYPHER_REL_DIR_NONE */
-		ScanKeyInit(&scan_key_data,
-					Anum_table_edge_start,
-					BTEqualStrategyNumber,
-					F_GRAPHID_EQ,
-					vle_depth_ctx->end_id);
+		/* outgoing: edges whose start == end_id (use the start index) */
+		open_depth_scan(vle_state, vle_depth_ctx, true, vle_depth_ctx->end_id);
 	}
-	else if (cypher_rel_direction == CYPHER_REL_DIR_LEFT)
+	else
 	{
-		/* CYPHER_REL_DIR_LEFT, CYPHER_REL_DIR_NONE */
-		ScanKeyInit(&scan_key_data,
-					Anum_table_edge_end,
-					BTEqualStrategyNumber,
-					F_GRAPHID_EQ,
-					vle_depth_ctx->start_id);
+		Assert(cypher_rel_direction == CYPHER_REL_DIR_LEFT);
+		/* incoming: edges whose end == start_id (use the end index) */
+		open_depth_scan(vle_state, vle_depth_ctx, false, vle_depth_ctx->start_id);
 	}
-
-	/* Create TableScanDesc */
-	vle_depth_ctx->desc = table_beginscan(result_rel_info->ri_RelationDesc,
-										  vle_state->ps.state->es_snapshot,
-										  1,
-										  &scan_key_data);
 
 	return true;
 }
@@ -572,18 +680,13 @@ static bool
 create_none_direction_scan_desc(GraphVLEState *vle_state,
 								VLEDepthCtx *vle_depth_ctx)
 {
-	ScanKeyData scan_key_data;
-	ResultRelInfo *result_rel_info = vle_state->target_rel_infos + vle_depth_ctx->rel_index;
-
-	if (vle_depth_ctx->desc != NULL)
+	if (vle_depth_ctx->iss != NULL || vle_depth_ctx->desc != NULL)
 	{
-		table_endscan(vle_depth_ctx->desc);
-		vle_depth_ctx->desc = NULL;
+		end_depth_scan(vle_depth_ctx);
 
 		if (vle_depth_ctx->direction_rotate > 0)
 		{
 			vle_depth_ctx->direction_rotate = -1;
-			result_rel_info++;
 			vle_depth_ctx->rel_index++;
 
 			if (vle_depth_ctx->rel_index >= vle_state->num_target_rel_info)
@@ -595,30 +698,10 @@ create_none_direction_scan_desc(GraphVLEState *vle_state,
 		vle_depth_ctx->direction_rotate++;
 	}
 
-	if (vle_depth_ctx->direction_rotate == 0)
-	{
-		/* CYPHER_REL_DIR_RIGHT, CYPHER_REL_DIR_NONE */
-		ScanKeyInit(&scan_key_data,
-					Anum_table_edge_start,
-					BTEqualStrategyNumber,
-					F_GRAPHID_EQ,
+	/* rotate 0: edges with start == prev_end_id; rotate 1: end == prev_end_id */
+	open_depth_scan(vle_state, vle_depth_ctx,
+					vle_depth_ctx->direction_rotate == 0,
 					vle_depth_ctx->prev_end_id);
-	}
-	else
-	{
-		/* CYPHER_REL_DIR_LEFT, CYPHER_REL_DIR_NONE */
-		ScanKeyInit(&scan_key_data,
-					Anum_table_edge_end,
-					BTEqualStrategyNumber,
-					F_GRAPHID_EQ,
-					vle_depth_ctx->prev_end_id);
-	}
-
-	/* Create TableScanDesc */
-	vle_depth_ctx->desc = table_beginscan(result_rel_info->ri_RelationDesc,
-										  vle_state->ps.state->es_snapshot,
-										  1,
-										  &scan_key_data);
 
 	return true;
 }
@@ -660,6 +743,8 @@ ExecEndGraphVLE(GraphVLEState *vle_state)
 		result_rel_info++;
 	}
 	pfree(vle_state->target_rel_infos);
+	pfree(vle_state->start_index_rels);
+	pfree(vle_state->end_index_rels);
 
 	/*
 	 * clean out the tuple table

@@ -3000,6 +3000,14 @@ typedef struct GraphVLEState
 	ResultRelInfo *target_rel_infos;
 	TupleTableSlot *current_scan_tuple;
 	int			num_target_rel_info;
+	/*
+	 * Per target label, the btree indexes used to expand a hop without
+	 * scanning the whole edge label: start_index_rels[i] is the (start,end)
+	 * index, end_index_rels[i] the (end,start) index.  NULL if the label has
+	 * no such index (then we fall back to a filtered heap scan).
+	 */
+	Relation   *start_index_rels;
+	Relation   *end_index_rels;
 
 	/* Results */
 	Graphid		first_start_id;
