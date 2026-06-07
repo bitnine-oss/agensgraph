@@ -1231,11 +1231,9 @@ WHERE o1.oprcanmerge AND NOT EXISTS
   (SELECT 1 FROM pg_amop
    WHERE amopmethod = (SELECT oid FROM pg_am WHERE amname = 'btree') AND
          amopopr = o1.oid AND amopstrategy = 3);
- oid  | oprname 
-------+---------
- 7136 | =
- 7148 | =
-(2 rows)
+ oid | oprname 
+-----+---------
+(0 rows)
 
 -- And the converse.
 SELECT o1.oid, o1.oprname, p.amopfamily
@@ -2221,6 +2219,7 @@ ORDER BY 1, 2, 3;
  btvarstrequalimage | text_ops         | text_ops         | text
  btvarstrequalimage | text_ops         | varchar_ops      | text
                     | array_ops        | array_ops        | anyarray
+                    | edge_ops         | edge_ops         | edge
                     | float_ops        | float4_ops       | real
                     | float_ops        | float8_ops       | double precision
                     | graphid_ops      | graphid_ops      | graphid
@@ -2234,7 +2233,8 @@ ORDER BY 1, 2, 3;
                     | rowid_ops        | rowid_ops        | rowid
                     | tsquery_ops      | tsquery_ops      | tsquery
                     | tsvector_ops     | tsvector_ops     | tsvector
-(18 rows)
+                    | vertex_ops       | vertex_ops       | vertex
+(20 rows)
 
 -- **************** pg_index ****************
 -- Look for illegal values in pg_index fields.

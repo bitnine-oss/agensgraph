@@ -316,6 +316,8 @@
   opfmethod => 'brin', opfname => 'graphid_minmax_ops' },
 { oid => '7106',
   opfmethod => 'hash', opfname => 'vertex_ops' },
+{ oid => '7023', opfmethod => 'btree', opfname => 'vertex_ops' },
+{ oid => '7025', opfmethod => 'btree', opfname => 'edge_ops' },
 { oid => '7167',
   opfmethod => 'btree', opfname => 'rowid_ops' },
 

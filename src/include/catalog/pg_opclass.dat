@@ -500,6 +500,10 @@
 
 { opcmethod => 'hash', opcname => 'vertex_ops', opcfamily => 'hash/vertex_ops',
   opcintype => 'vertex' },
+{ opcmethod => 'btree', opcname => 'vertex_ops', opcfamily => 'btree/vertex_ops',
+  opcintype => 'vertex' },
+{ opcmethod => 'btree', opcname => 'edge_ops', opcfamily => 'btree/edge_ops',
+  opcintype => 'edge' },
 
 { opcmethod => 'btree', opcname => 'rowid_ops', opcfamily => 'btree/rowid_ops',
   opcintype => 'rowid' },

@@ -120,6 +120,7 @@ extern Datum vertex_lt(PG_FUNCTION_ARGS);
 extern Datum vertex_gt(PG_FUNCTION_ARGS);
 extern Datum vertex_le(PG_FUNCTION_ARGS);
 extern Datum vertex_ge(PG_FUNCTION_ARGS);
+extern Datum vertex_cmp(PG_FUNCTION_ARGS);
 
 /* edge */
 extern Datum edge_out(PG_FUNCTION_ARGS);
@@ -135,6 +136,7 @@ extern Datum edge_lt(PG_FUNCTION_ARGS);
 extern Datum edge_gt(PG_FUNCTION_ARGS);
 extern Datum edge_le(PG_FUNCTION_ARGS);
 extern Datum edge_ge(PG_FUNCTION_ARGS);
+extern Datum edge_cmp(PG_FUNCTION_ARGS);
 
 /* graphpath */
 extern Datum graphpath_out(PG_FUNCTION_ARGS);

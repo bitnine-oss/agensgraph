@@ -2017,10 +2017,14 @@
   amprocrighttype => 'graphid', amprocnum => '4',
   amproc => 'brin_minmax_union' },
 
-# graphid_ops
+# vertex_ops
 # Hash
 { amprocfamily => 'hash/vertex_ops', amproclefttype => 'vertex',
   amprocrighttype => 'vertex', amprocnum => '1', amproc => 'vertex_hash' },
+{ amprocfamily => 'btree/vertex_ops', amproclefttype => 'vertex',
+  amprocrighttype => 'vertex', amprocnum => '1', amproc => 'vertex_cmp' },
+{ amprocfamily => 'btree/edge_ops', amproclefttype => 'edge',
+  amprocrighttype => 'edge', amprocnum => '1', amproc => 'edge_cmp' },
 
 # rowid_ops
 # BTree

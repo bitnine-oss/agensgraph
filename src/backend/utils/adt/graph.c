@@ -525,7 +525,7 @@ vertex_ne(PG_FUNCTION_ARGS)
 	Datum		id1 = getVertexIdDatum(PG_GETARG_DATUM(0));
 	Datum		id2 = getVertexIdDatum(PG_GETARG_DATUM(1));
 
-	PG_RETURN_DATUM(DirectFunctionCall2(graphid_ne, id1, id2) != 0);
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_ne, id1, id2));
 }
 
 Datum
@@ -534,7 +534,7 @@ vertex_lt(PG_FUNCTION_ARGS)
 	Datum		id1 = getVertexIdDatum(PG_GETARG_DATUM(0));
 	Datum		id2 = getVertexIdDatum(PG_GETARG_DATUM(1));
 
-	PG_RETURN_DATUM(DirectFunctionCall2(graphid_lt, id1, id2) < 0);
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_lt, id1, id2));
 }
 
 Datum
@@ -543,7 +543,7 @@ vertex_gt(PG_FUNCTION_ARGS)
 	Datum		id1 = getVertexIdDatum(PG_GETARG_DATUM(0));
 	Datum		id2 = getVertexIdDatum(PG_GETARG_DATUM(1));
 
-	PG_RETURN_DATUM(DirectFunctionCall2(graphid_gt, id1, id2) > 0);
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_gt, id1, id2));
 }
 
 Datum
@@ -552,7 +552,7 @@ vertex_le(PG_FUNCTION_ARGS)
 	Datum		id1 = getVertexIdDatum(PG_GETARG_DATUM(0));
 	Datum		id2 = getVertexIdDatum(PG_GETARG_DATUM(1));
 
-	PG_RETURN_DATUM(DirectFunctionCall2(graphid_le, id1, id2) <= 0);
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_le, id1, id2));
 }
 
 Datum
@@ -561,7 +561,17 @@ vertex_ge(PG_FUNCTION_ARGS)
 	Datum		id1 = getVertexIdDatum(PG_GETARG_DATUM(0));
 	Datum		id2 = getVertexIdDatum(PG_GETARG_DATUM(1));
 
-	PG_RETURN_DATUM(DirectFunctionCall2(graphid_ge, id1, id2) >= 0);
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_ge, id1, id2));
+}
+
+Datum
+vertex_cmp(PG_FUNCTION_ARGS)
+{
+	Datum		id1 = getVertexIdDatum(PG_GETARG_DATUM(0));
+	Datum		id2 = getVertexIdDatum(PG_GETARG_DATUM(1));
+
+	/* identity-only btree ordering: graphid is a total order */
+	PG_RETURN_DATUM(DirectFunctionCall2(btgraphidcmp, id1, id2));
 }
 
 Datum
@@ -670,7 +680,7 @@ edge_eq(PG_FUNCTION_ARGS)
 	Datum		id1 = getEdgeIdDatum(PG_GETARG_DATUM(0));
 	Datum		id2 = getEdgeIdDatum(PG_GETARG_DATUM(1));
 
-	PG_RETURN_DATUM(DirectFunctionCall2(graphid_eq, id1, id2) == 0);
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_eq, id1, id2));
 }
 
 Datum
@@ -679,7 +689,7 @@ edge_ne(PG_FUNCTION_ARGS)
 	Datum		id1 = getEdgeIdDatum(PG_GETARG_DATUM(0));
 	Datum		id2 = getEdgeIdDatum(PG_GETARG_DATUM(1));
 
-	PG_RETURN_DATUM(DirectFunctionCall2(graphid_ne, id1, id2) != 0);
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_ne, id1, id2));
 }
 
 Datum
@@ -688,7 +698,7 @@ edge_lt(PG_FUNCTION_ARGS)
 	Datum		id1 = getEdgeIdDatum(PG_GETARG_DATUM(0));
 	Datum		id2 = getEdgeIdDatum(PG_GETARG_DATUM(1));
 
-	PG_RETURN_DATUM(DirectFunctionCall2(graphid_lt, id1, id2) < 0);
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_lt, id1, id2));
 }
 
 Datum
@@ -697,7 +707,7 @@ edge_gt(PG_FUNCTION_ARGS)
 	Datum		id1 = getEdgeIdDatum(PG_GETARG_DATUM(0));
 	Datum		id2 = getEdgeIdDatum(PG_GETARG_DATUM(1));
 
-	PG_RETURN_DATUM(DirectFunctionCall2(graphid_gt, id1, id2) > 0);
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_gt, id1, id2));
 }
 
 Datum
@@ -706,7 +716,7 @@ edge_le(PG_FUNCTION_ARGS)
 	Datum		id1 = getEdgeIdDatum(PG_GETARG_DATUM(0));
 	Datum		id2 = getEdgeIdDatum(PG_GETARG_DATUM(1));
 
-	PG_RETURN_DATUM(DirectFunctionCall2(graphid_le, id1, id2) <= 0);
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_le, id1, id2));
 }
 
 Datum
@@ -715,7 +725,17 @@ edge_ge(PG_FUNCTION_ARGS)
 	Datum		id1 = getEdgeIdDatum(PG_GETARG_DATUM(0));
 	Datum		id2 = getEdgeIdDatum(PG_GETARG_DATUM(1));
 
-	PG_RETURN_DATUM(DirectFunctionCall2(graphid_ge, id1, id2) >= 0);
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_ge, id1, id2));
+}
+
+Datum
+edge_cmp(PG_FUNCTION_ARGS)
+{
+	Datum		id1 = getEdgeIdDatum(PG_GETARG_DATUM(0));
+	Datum		id2 = getEdgeIdDatum(PG_GETARG_DATUM(1));
+
+	/* identity-only btree ordering: graphid is a total order */
+	PG_RETURN_DATUM(DirectFunctionCall2(btgraphidcmp, id1, id2));
 }
 
 static LabelOutData *
