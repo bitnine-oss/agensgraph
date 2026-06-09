@@ -98,7 +98,7 @@
  *	support the decoding of the in-progress transactions.  See
  *	CommandEndInvalidationMessages.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -119,7 +119,6 @@
 #include "storage/sinval.h"
 #include "storage/smgr.h"
 #include "utils/catcache.h"
-#include "utils/guc.h"
 #include "utils/inval.h"
 #include "utils/memdebug.h"
 #include "utils/memutils.h"
@@ -605,6 +604,97 @@ RegisterSnapshotInvalidation(Oid dbId, Oid relId)
 }
 
 /*
+ * PrepareInvalidationState
+ *		Initialize inval data for the current (sub)transaction.
+ */
+static void
+PrepareInvalidationState(void)
+{
+	TransInvalidationInfo *myInfo;
+
+	if (transInvalInfo != NULL &&
+		transInvalInfo->my_level == GetCurrentTransactionNestLevel())
+		return;
+
+	myInfo = (TransInvalidationInfo *)
+		MemoryContextAllocZero(TopTransactionContext,
+							   sizeof(TransInvalidationInfo));
+	myInfo->parent = transInvalInfo;
+	myInfo->my_level = GetCurrentTransactionNestLevel();
+
+	/* Now, do we have a previous stack entry? */
+	if (transInvalInfo != NULL)
+	{
+		/* Yes; this one should be for a deeper nesting level. */
+		Assert(myInfo->my_level > transInvalInfo->my_level);
+
+		/*
+		 * The parent (sub)transaction must not have any current (i.e.,
+		 * not-yet-locally-processed) messages.  If it did, we'd have a
+		 * semantic problem: the new subtransaction presumably ought not be
+		 * able to see those events yet, but since the CommandCounter is
+		 * linear, that can't work once the subtransaction advances the
+		 * counter.  This is a convenient place to check for that, as well as
+		 * being important to keep management of the message arrays simple.
+		 */
+		if (NumMessagesInGroup(&transInvalInfo->CurrentCmdInvalidMsgs) != 0)
+			elog(ERROR, "cannot start a subtransaction when there are unprocessed inval messages");
+
+		/*
+		 * MemoryContextAllocZero set firstmsg = nextmsg = 0 in each group,
+		 * which is fine for the first (sub)transaction, but otherwise we need
+		 * to update them to follow whatever is already in the arrays.
+		 */
+		SetGroupToFollow(&myInfo->PriorCmdInvalidMsgs,
+						 &transInvalInfo->CurrentCmdInvalidMsgs);
+		SetGroupToFollow(&myInfo->CurrentCmdInvalidMsgs,
+						 &myInfo->PriorCmdInvalidMsgs);
+	}
+	else
+	{
+		/*
+		 * Here, we need only clear any array pointers left over from a prior
+		 * transaction.
+		 */
+		InvalMessageArrays[CatCacheMsgs].msgs = NULL;
+		InvalMessageArrays[CatCacheMsgs].maxmsgs = 0;
+		InvalMessageArrays[RelCacheMsgs].msgs = NULL;
+		InvalMessageArrays[RelCacheMsgs].maxmsgs = 0;
+	}
+
+	transInvalInfo = myInfo;
+}
+
+/* ----------------------------------------------------------------
+ *					  public functions
+ * ----------------------------------------------------------------
+ */
+
+void
+InvalidateSystemCachesExtended(bool debug_discard)
+{
+	int			i;
+
+	InvalidateCatalogSnapshot();
+	ResetCatalogCaches();
+	RelationCacheInvalidate(debug_discard); /* gets smgr and relmap too */
+
+	for (i = 0; i < syscache_callback_count; i++)
+	{
+		struct SYSCACHECALLBACK *ccitem = syscache_callback_list + i;
+
+		ccitem->function(ccitem->arg, ccitem->id, 0);
+	}
+
+	for (i = 0; i < relcache_callback_count; i++)
+	{
+		struct RELCACHECALLBACK *ccitem = relcache_callback_list + i;
+
+		ccitem->function(ccitem->arg, InvalidOid);
+	}
+}
+
+/*
  * LocalExecuteInvalidationMessage
  *
  * Process a single invalidation message (which could be of any type).
@@ -665,7 +755,7 @@ LocalExecuteInvalidationMessage(SharedInvalidationMessage *msg)
 
 		rlocator.locator = msg->sm.rlocator;
 		rlocator.backend = (msg->sm.backend_hi << 16) | (int) msg->sm.backend_lo;
-		smgrcloserellocator(rlocator);
+		smgrreleaserellocator(rlocator);
 	}
 	else if (msg->id == SHAREDINVALRELMAP_ID)
 	{
@@ -703,36 +793,6 @@ InvalidateSystemCaches(void)
 {
 	InvalidateSystemCachesExtended(false);
 }
-
-void
-InvalidateSystemCachesExtended(bool debug_discard)
-{
-	int			i;
-
-	InvalidateCatalogSnapshot();
-	ResetCatalogCaches();
-	RelationCacheInvalidate(debug_discard); /* gets smgr and relmap too */
-
-	for (i = 0; i < syscache_callback_count; i++)
-	{
-		struct SYSCACHECALLBACK *ccitem = syscache_callback_list + i;
-
-		ccitem->function(ccitem->arg, ccitem->id, 0);
-	}
-
-	for (i = 0; i < relcache_callback_count; i++)
-	{
-		struct RELCACHECALLBACK *ccitem = relcache_callback_list + i;
-
-		ccitem->function(ccitem->arg, InvalidOid);
-	}
-}
-
-
-/* ----------------------------------------------------------------
- *					  public functions
- * ----------------------------------------------------------------
- */
 
 /*
  * AcceptInvalidationMessages
@@ -785,68 +845,6 @@ AcceptInvalidationMessages(void)
 		}
 	}
 #endif
-}
-
-/*
- * PrepareInvalidationState
- *		Initialize inval data for the current (sub)transaction.
- */
-static void
-PrepareInvalidationState(void)
-{
-	TransInvalidationInfo *myInfo;
-
-	if (transInvalInfo != NULL &&
-		transInvalInfo->my_level == GetCurrentTransactionNestLevel())
-		return;
-
-	myInfo = (TransInvalidationInfo *)
-		MemoryContextAllocZero(TopTransactionContext,
-							   sizeof(TransInvalidationInfo));
-	myInfo->parent = transInvalInfo;
-	myInfo->my_level = GetCurrentTransactionNestLevel();
-
-	/* Now, do we have a previous stack entry? */
-	if (transInvalInfo != NULL)
-	{
-		/* Yes; this one should be for a deeper nesting level. */
-		Assert(myInfo->my_level > transInvalInfo->my_level);
-
-		/*
-		 * The parent (sub)transaction must not have any current (i.e.,
-		 * not-yet-locally-processed) messages.  If it did, we'd have a
-		 * semantic problem: the new subtransaction presumably ought not be
-		 * able to see those events yet, but since the CommandCounter is
-		 * linear, that can't work once the subtransaction advances the
-		 * counter.  This is a convenient place to check for that, as well as
-		 * being important to keep management of the message arrays simple.
-		 */
-		if (NumMessagesInGroup(&transInvalInfo->CurrentCmdInvalidMsgs) != 0)
-			elog(ERROR, "cannot start a subtransaction when there are unprocessed inval messages");
-
-		/*
-		 * MemoryContextAllocZero set firstmsg = nextmsg = 0 in each group,
-		 * which is fine for the first (sub)transaction, but otherwise we need
-		 * to update them to follow whatever is already in the arrays.
-		 */
-		SetGroupToFollow(&myInfo->PriorCmdInvalidMsgs,
-						 &transInvalInfo->CurrentCmdInvalidMsgs);
-		SetGroupToFollow(&myInfo->CurrentCmdInvalidMsgs,
-						 &myInfo->PriorCmdInvalidMsgs);
-	}
-	else
-	{
-		/*
-		 * Here, we need only clear any array pointers left over from a prior
-		 * transaction.
-		 */
-		InvalMessageArrays[CatCacheMsgs].msgs = NULL;
-		InvalMessageArrays[CatCacheMsgs].maxmsgs = 0;
-		InvalMessageArrays[RelCacheMsgs].msgs = NULL;
-		InvalMessageArrays[RelCacheMsgs].maxmsgs = 0;
-	}
-
-	transInvalInfo = myInfo;
 }
 
 /*
@@ -967,13 +965,12 @@ ProcessCommittedInvalidationMessages(SharedInvalidationMessage *msgs,
 	if (nmsgs <= 0)
 		return;
 
-	elog(trace_recovery(DEBUG4), "replaying commit with %d messages%s", nmsgs,
+	elog(DEBUG4, "replaying commit with %d messages%s", nmsgs,
 		 (RelcacheInitFileInval ? " and relcache file invalidation" : ""));
 
 	if (RelcacheInitFileInval)
 	{
-		elog(trace_recovery(DEBUG4), "removing relcache init files for database %u",
-			 dbid);
+		elog(DEBUG4, "removing relcache init files for database %u", dbid);
 
 		/*
 		 * RelationCacheInitFilePreInvalidate, when the invalidation message
@@ -1455,8 +1452,8 @@ CacheInvalidateRelcacheByRelid(Oid relid)
  * replaying WAL as well as when creating it.
  *
  * Note: In order to avoid bloating SharedInvalidationMessage, we store only
- * three bytes of the backend ID using what would otherwise be padding space.
- * Thus, the maximum possible backend ID is 2^23-1.
+ * three bytes of the ProcNumber using what would otherwise be padding space.
+ * Thus, the maximum possible ProcNumber is 2^23-1.
  */
 void
 CacheInvalidateSmgr(RelFileLocatorBackend rlocator)

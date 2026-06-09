@@ -2,7 +2,7 @@
 #
 # Makefile for src/test/subscription
 #
-# Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/test/subscription/Makefile
@@ -23,5 +23,5 @@ check:
 installcheck:
 	$(prove_installcheck)
 
-clean distclean maintainer-clean:
+clean distclean:
 	rm -rf tmp_check

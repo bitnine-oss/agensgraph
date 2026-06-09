@@ -6,7 +6,7 @@
  * for developers.  If you edit any of these, be sure to do a *full*
  * rebuild (and an initdb if noted).
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/pg_config_manual.h
@@ -217,13 +217,13 @@
 #define DEFAULT_EVENT_SOURCE  "PostgreSQL"
 
 /*
- * Assumed cache line size. This doesn't affect correctness, but can be used
- * for low-level optimizations. Currently, this is used to pad some data
- * structures in xlog.c, to ensure that highly-contended fields are on
- * different cache lines. Too small a value can hurt performance due to false
- * sharing, while the only downside of too large a value is a few bytes of
- * wasted memory. The default is 128, which should be large enough for all
- * supported platforms.
+ * Assumed cache line size.  This doesn't affect correctness, but can be used
+ * for low-level optimizations.  This is mostly used to pad various data
+ * structures, to ensure that highly-contended fields are on different cache
+ * lines.  Too small a value can hurt performance due to false sharing, while
+ * the only downside of too large a value is a few bytes of wasted memory.
+ * The default is 128, which should be large enough for all supported
+ * platforms.
  */
 #define PG_CACHE_LINE_SIZE		128
 
@@ -239,6 +239,13 @@
  * controlling user-visible features or resource limits.
  *------------------------------------------------------------------------
  */
+
+/*
+ * Force use of the non-recursive JSON parser in all cases. This is useful
+ * to validate the working of the parser, and the regression tests should
+ * pass except for some different error messages about the stack limit.
+ */
+/* #define FORCE_JSON_PSTACK */
 
 /*
  * Include Valgrind "client requests", mostly in the memory allocator, so
@@ -334,6 +341,12 @@
  * copyObject().
  */
 /* #define COPY_PARSE_PLAN_TREES */
+
+/*
+ * Define this to force Bitmapset reallocation on each modification.  Helps
+ * to find dangling pointers to Bitmapset's.
+ */
+/* #define REALLOCATE_BITMAPSETS */
 
 /*
  * Define this to force all parse and plan trees to be passed through

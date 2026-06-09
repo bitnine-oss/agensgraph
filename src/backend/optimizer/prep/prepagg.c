@@ -22,7 +22,7 @@
  * at executor startup.  The Agg nodes are constructed much later in the
  * planning, however, so it's not trivial.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -39,7 +39,6 @@
 #include "catalog/pg_type.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/pathnodes.h"
-#include "optimizer/clauses.h"
 #include "optimizer/cost.h"
 #include "optimizer/optimizer.h"
 #include "optimizer/plancat.h"

@@ -2,7 +2,7 @@
  * gistfuncs.c
  *		Functions to investigate the content of GiST indexes
  *
- * Copyright (c) 2014-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2014-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		contrib/pageinspect/gistfuncs.c
@@ -21,8 +21,8 @@
 #include "storage/itemptr.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
-#include "utils/pg_lsn.h"
 #include "utils/lsyscache.h"
+#include "utils/pg_lsn.h"
 #include "utils/rel.h"
 #include "utils/ruleutils.h"
 #include "utils/varlena.h"

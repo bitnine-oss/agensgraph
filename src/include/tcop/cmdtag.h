@@ -3,7 +3,7 @@
  * cmdtag.h
  *	  Declarations for commandtag names and enumeration.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/tcop/cmdtag.h
@@ -22,7 +22,6 @@
 typedef enum CommandTag
 {
 #include "tcop/cmdtaglist.h"
-	COMMAND_TAG_NEXTTAG
 } CommandTag;
 
 #undef PG_CMDTAG

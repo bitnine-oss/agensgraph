@@ -153,14 +153,6 @@ CREATE TABLE partitioned (
 	a2 int
 ) PARTITION BY LIST (a1, a2);	-- fail
 ERROR:  cannot use "list" partition strategy with more than one column
--- unsupported constraint type for partitioned tables
-CREATE TABLE partitioned (
-	a int,
-	EXCLUDE USING gist (a WITH &&)
-) PARTITION BY RANGE (a);
-ERROR:  exclusion constraints are not supported on partitioned tables
-LINE 3:  EXCLUDE USING gist (a WITH &&)
-         ^
 -- prevent using prohibited expressions in the key
 CREATE FUNCTION retset (a int) RETURNS SETOF int AS $$ SELECT 1; $$ LANGUAGE SQL IMMUTABLE;
 CREATE TABLE partitioned (
@@ -766,21 +758,21 @@ CREATE TABLE part_b PARTITION OF parted (
 ) FOR VALUES IN ('b');
 NOTICE:  merging constraint "check_a" with inherited definition
 -- conislocal should be false for any merged constraints, true otherwise
-SELECT conislocal, coninhcount FROM pg_constraint WHERE conrelid = 'part_b'::regclass ORDER BY conislocal, coninhcount;
- conislocal | coninhcount 
-------------+-------------
- f          |           1
- t          |           0
+SELECT conname, conislocal, coninhcount FROM pg_constraint WHERE conrelid = 'part_b'::regclass ORDER BY coninhcount DESC, conname;
+ conname | conislocal | coninhcount 
+---------+------------+-------------
+ check_a | f          |           1
+ check_b | t          |           0
 (2 rows)
 
 -- Once check_b is added to the parent, it should be made non-local for part_b
 ALTER TABLE parted ADD CONSTRAINT check_b CHECK (b >= 0);
 NOTICE:  merging constraint "check_b" with inherited definition
-SELECT conislocal, coninhcount FROM pg_constraint WHERE conrelid = 'part_b'::regclass;
- conislocal | coninhcount 
-------------+-------------
- f          |           1
- f          |           1
+SELECT conname, conislocal, coninhcount FROM pg_constraint WHERE conrelid = 'part_b'::regclass ORDER BY coninhcount DESC, conname;
+ conname | conislocal | coninhcount 
+---------+------------+-------------
+ check_a | f          |           1
+ check_b | f          |           1
 (2 rows)
 
 -- Neither check_a nor check_b are droppable from part_b
@@ -792,9 +784,9 @@ ERROR:  cannot drop inherited constraint "check_b" of relation "part_b"
 -- traditional inheritance where they will be left behind, because they would
 -- be local constraints.
 ALTER TABLE parted DROP CONSTRAINT check_a, DROP CONSTRAINT check_b;
-SELECT conislocal, coninhcount FROM pg_constraint WHERE conrelid = 'part_b'::regclass;
- conislocal | coninhcount 
-------------+-------------
+SELECT conname, conislocal, coninhcount FROM pg_constraint WHERE conrelid = 'part_b'::regclass ORDER BY coninhcount DESC, conname;
+ conname | conislocal | coninhcount 
+---------+------------+-------------
 (0 rows)
 
 -- specify PARTITION BY for a partition
@@ -990,7 +982,7 @@ DROP TABLE parted_col_comment;
 -- specifying storage parameters for partitioned tables is not supported
 CREATE TABLE parted_col_comment (a int, b text) PARTITION BY LIST (a) WITH (fillfactor=100);
 ERROR:  cannot specify storage parameters for a partitioned table
-HINT:  Specify storage parameters for its leaf partitions, instead.
+HINT:  Specify storage parameters for its leaf partitions instead.
 -- list partitioning on array type column
 CREATE TABLE arrlp (a int[]) PARTITION BY LIST (a);
 CREATE TABLE arrlp12 PARTITION OF arrlp FOR VALUES IN ('{1}', '{2}');

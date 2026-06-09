@@ -4,7 +4,7 @@
  *	  POSTGRES index tuple definitions.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/itup.h
@@ -75,9 +75,9 @@ typedef IndexAttributeBitMapData * IndexAttributeBitMap;
 
 /* routines in indextuple.c */
 extern IndexTuple index_form_tuple(TupleDesc tupleDescriptor,
-								   Datum *values, bool *isnull);
+								   const Datum *values, const bool *isnull);
 extern IndexTuple index_form_tuple_context(TupleDesc tupleDescriptor,
-										   Datum *values, bool *isnull,
+										   const Datum *values, const bool *isnull,
 										   MemoryContext context);
 extern Datum nocache_index_getattr(IndexTuple tup, int attnum,
 								   TupleDesc tupleDesc);

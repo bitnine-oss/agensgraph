@@ -1,8 +1,8 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -24,7 +24,7 @@ command_like([ 'pg_controldata', $node->data_dir ],
 # check with a corrupted pg_control
 
 my $pg_control = $node->data_dir . '/global/pg_control';
-my $size = (stat($pg_control))[7];
+my $size = -s $pg_control;
 
 open my $fh, '>', $pg_control or BAIL_OUT($!);
 binmode $fh;
@@ -36,11 +36,11 @@ close $fh;
 command_checks_all(
 	[ 'pg_controldata', $node->data_dir ],
 	0,
+	[qr/./],
 	[
-		qr/WARNING: Calculated CRC checksum does not match value stored in file/,
-		qr/WARNING: invalid WAL segment size/
+		qr/warning: calculated CRC checksum does not match value stored in control file/,
+		qr/warning: invalid WAL segment size/
 	],
-	[qr/^$/],
 	'pg_controldata with corrupted pg_control');
 
 done_testing();

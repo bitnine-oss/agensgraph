@@ -11,7 +11,7 @@
  * The following code is written with the assumption that the OUI field
  * size is 24 bits.
  *
- * Portions Copyright (c) 1998-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1998-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/backend/utils/adt/mac8.c
@@ -23,7 +23,8 @@
 
 #include "common/hashfn.h"
 #include "libpq/pqformat.h"
-#include "utils/builtins.h"
+#include "nodes/nodes.h"
+#include "utils/fmgrprotos.h"
 #include "utils/inet.h"
 
 /*

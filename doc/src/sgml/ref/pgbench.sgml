@@ -162,7 +162,8 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
     <variablelist>
 
      <varlistentry id="pgbench-option-dbname">
-      <term><replaceable class="parameter">dbname</replaceable></term>
+      <term><option><optional>-d</optional> <replaceable class="parameter">dbname</replaceable></option></term>
+      <term><option><optional>--dbname=</optional><replaceable class="parameter">dbname</replaceable></option></term>
       <listitem>
        <para>
         Specifies the name of the database to test in. If this is
@@ -229,12 +230,14 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
             data is generated in <command>pgbench</command> client and then
             sent to the server. This uses the client/server bandwidth
             extensively through a <command>COPY</command>.
-            <command>pgbench</command> uses the FREEZE option with version 14 or later
+            <command>pgbench</command> uses the <option>FREEZE</option> option
+            with version 14 or later
             of <productname>PostgreSQL</productname> to speed up
-            subsequent <command>VACUUM</command>, unless partitions are enabled.
-            Using <literal>g</literal> causes logging to print one message
-            every 100,000 rows while generating data for the
-            <structname>pgbench_accounts</structname> table.
+            subsequent <command>VACUUM</command>, except on the
+            <literal>pgbench_accounts</literal> table if partitions are
+            enabled. Using <literal>g</literal> causes logging to
+            print one message every 100,000 rows while generating data for all
+            tables.
            </para>
            <para>
             With <literal>G</literal> (server-side data generation),
@@ -456,16 +459,6 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
         Establish a new connection for each transaction, rather than
         doing it just once per client session.
         This is useful to measure the connection overhead.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="pgbench-option-debug">
-      <term><option>-d</option></term>
-      <term><option>--debug</option></term>
-      <listitem>
-       <para>
-        Print debugging output.
        </para>
       </listitem>
      </varlistentry>
@@ -767,6 +760,24 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
       </listitem>
      </varlistentry>
 
+     <varlistentry id="pgbench-option-exit-on-abort">
+      <term><option>--exit-on-abort</option></term>
+      <listitem>
+       <para>
+        Exit immediately when any client is aborted due to some error. Without
+        this option, even when a client is aborted, other clients could
+        continue their run as specified by <option>-t</option>
+        or <option>-T</option> option, and <application>pgbench</application>
+        will print an incomplete results in this case.
+       </para>
+       <para>
+        Note that serialization failures or deadlock failures do not abort the
+        client, so they are not affected by this option.
+        See <xref linkend="failures-and-retries"/> for more information.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="pgbench-option-failures-detailed">
       <term><option>--failures-detailed</option></term>
       <listitem>
@@ -914,9 +925,17 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
 
    <para>
     <application>pgbench</application> also accepts the following common command-line
-    arguments for connection parameters:
+    arguments for connection parameters and other common settings:
 
     <variablelist>
+     <varlistentry id="pgbench-option-debug">
+      <term><option>--debug</option></term>
+      <listitem>
+       <para>
+        Print debugging output.
+       </para>
+      </listitem>
+     </varlistentry>
 
      <varlistentry id="pgbench-option-host">
       <term><option>-h</option> <replaceable>hostname</replaceable></term>
@@ -984,7 +1003,8 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
    benchmark such as initial connection failures also exit with status 1.
    Errors during the run such as database errors or problems in the script
    will result in exit status 2. In the latter case,
-   <application>pgbench</application> will print partial results.
+   <application>pgbench</application> will print partial results if
+   <option>--exit-on-abort</option> option is not specified.
   </para>
  </refsect1>
 
@@ -1098,7 +1118,8 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
     each SQL command on a single line ending with a semicolon.
    </para>
    <para>
-    It is assumed that pgbench scripts do not contain incomplete blocks of SQL
+    It is assumed that <application>pgbench</application> scripts do not contain
+    incomplete blocks of SQL
     transactions. If at runtime the client reaches the end of the script without
     completing the last transaction block, it will be aborted.
    </para>
@@ -1364,13 +1385,19 @@ SELECT 4 AS four \; SELECT 5 AS five \aset
 
    <varlistentry id="pgbench-metacommand-pipeline">
     <term><literal>\startpipeline</literal></term>
+    <term><literal>\syncpipeline</literal></term>
     <term><literal>\endpipeline</literal></term>
 
     <listitem>
       <para>
-        These commands delimit the start and end of a pipeline of SQL
-        statements.  In pipeline mode, statements are sent to the server
-        without waiting for the results of previous statements.  See
+        This group of commands implements pipelining of SQL statements.
+        A pipeline must begin with a <command>\startpipeline</command>
+        and end with an <command>\endpipeline</command>. In between there
+        may be any number of <command>\syncpipeline</command> commands,
+        which sends a <link linkend="protocol-flow-ext-query">sync message</link>
+        without ending the ongoing pipeline and flushing the send buffer.
+        In pipeline mode, statements are sent to the server without waiting
+        for the results of previous statements.  See
         <xref linkend="libpq-pipeline-mode"/> for more details.
         Pipeline mode requires the use of extended query protocol.
      </para>
@@ -2616,7 +2643,7 @@ END;
   </para>
 
   <para>
-   Here is some example output generated with these options:
+   Here is some example output generated with this option:
 <screen>
 <userinput>pgbench --aggregate-interval=10 --time=20 --client=10 --log --rate=1000 --latency-limit=10 --failures-detailed --max-tries=10 test</userinput>
 
@@ -2800,14 +2827,17 @@ statement latencies in milliseconds, failures and retries:
          start a connection to the database server / the socket for connecting
          the client to the database server has become invalid). In such cases
          all clients of this thread stop while other threads continue to work.
+         However, <option>--exit-on-abort</option> is specified, all of the
+         threads stop immediately in this case.
        </para>
      </listitem>
      <listitem>
        <para>
          Direct client errors. They lead to immediate exit from
          <application>pgbench</application> with the corresponding error message
-         only in the case of an internal <application>pgbench</application>
-         error (which are supposed to never occur...). Otherwise in the worst
+         in the case of an internal <application>pgbench</application>
+         error (which are supposed to never occur...) or when
+         <option>--exit-on-abort</option> is specified. Otherwise in the worst
          case they only lead to the abortion of the failed client while other
          clients continue their run (but some client errors are handled without
          an abortion of the client and reported separately, see below). Later in

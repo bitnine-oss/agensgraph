@@ -147,17 +147,17 @@ SELECT U&'d\0061t\+000061' AS U&"d\0061t\+000061";
 ERROR:  unsafe use of string constant with Unicode escapes
 LINE 1: SELECT U&'d\0061t\+000061' AS U&"d\0061t\+000061";
                ^
-DETAIL:  String constants with Unicode escapes cannot be used when standard_conforming_strings is off.
+DETAIL:  String constants with Unicode escapes cannot be used when "standard_conforming_strings" is off.
 SELECT U&'d!0061t\+000061' UESCAPE '!' AS U&"d*0061t\+000061" UESCAPE '*';
 ERROR:  unsafe use of string constant with Unicode escapes
 LINE 1: SELECT U&'d!0061t\+000061' UESCAPE '!' AS U&"d*0061t\+000061...
                ^
-DETAIL:  String constants with Unicode escapes cannot be used when standard_conforming_strings is off.
+DETAIL:  String constants with Unicode escapes cannot be used when "standard_conforming_strings" is off.
 SELECT U&' \' UESCAPE '!' AS "tricky";
 ERROR:  unsafe use of string constant with Unicode escapes
 LINE 1: SELECT U&' \' UESCAPE '!' AS "tricky";
                ^
-DETAIL:  String constants with Unicode escapes cannot be used when standard_conforming_strings is off.
+DETAIL:  String constants with Unicode escapes cannot be used when "standard_conforming_strings" is off.
 SELECT 'tricky' AS U&"\" UESCAPE '!';
    \    
 --------
@@ -168,17 +168,17 @@ SELECT U&'wrong: \061';
 ERROR:  unsafe use of string constant with Unicode escapes
 LINE 1: SELECT U&'wrong: \061';
                ^
-DETAIL:  String constants with Unicode escapes cannot be used when standard_conforming_strings is off.
+DETAIL:  String constants with Unicode escapes cannot be used when "standard_conforming_strings" is off.
 SELECT U&'wrong: \+0061';
 ERROR:  unsafe use of string constant with Unicode escapes
 LINE 1: SELECT U&'wrong: \+0061';
                ^
-DETAIL:  String constants with Unicode escapes cannot be used when standard_conforming_strings is off.
+DETAIL:  String constants with Unicode escapes cannot be used when "standard_conforming_strings" is off.
 SELECT U&'wrong: +0061' UESCAPE '+';
 ERROR:  unsafe use of string constant with Unicode escapes
 LINE 1: SELECT U&'wrong: +0061' UESCAPE '+';
                ^
-DETAIL:  String constants with Unicode escapes cannot be used when standard_conforming_strings is off.
+DETAIL:  String constants with Unicode escapes cannot be used when "standard_conforming_strings" is off.
 RESET standard_conforming_strings;
 -- bytea
 SET bytea_output TO hex;
@@ -2129,8 +2129,68 @@ select split_part('@joeuser@mydatabase@','@',-2) AS "mydatabase";
 (1 row)
 
 --
--- test to_hex
+-- test to_bin, to_oct, and to_hex
 --
+select to_bin(-1234) AS "11111111111111111111101100101110";
+ 11111111111111111111101100101110 
+----------------------------------
+ 11111111111111111111101100101110
+(1 row)
+
+select to_bin(-1234::bigint);
+                              to_bin                              
+------------------------------------------------------------------
+ 1111111111111111111111111111111111111111111111111111101100101110
+(1 row)
+
+select to_bin(256*256*256 - 1) AS "111111111111111111111111";
+ 111111111111111111111111 
+--------------------------
+ 111111111111111111111111
+(1 row)
+
+select to_bin(256::bigint*256::bigint*256::bigint*256::bigint - 1) AS "11111111111111111111111111111111";
+ 11111111111111111111111111111111 
+----------------------------------
+ 11111111111111111111111111111111
+(1 row)
+
+select to_oct(-1234) AS "37777775456";
+ 37777775456 
+-------------
+ 37777775456
+(1 row)
+
+select to_oct(-1234::bigint) AS "1777777777777777775456";
+ 1777777777777777775456 
+------------------------
+ 1777777777777777775456
+(1 row)
+
+select to_oct(256*256*256 - 1) AS "77777777";
+ 77777777 
+----------
+ 77777777
+(1 row)
+
+select to_oct(256::bigint*256::bigint*256::bigint*256::bigint - 1) AS "37777777777";
+ 37777777777 
+-------------
+ 37777777777
+(1 row)
+
+select to_hex(-1234) AS "fffffb2e";
+ fffffb2e 
+----------
+ fffffb2e
+(1 row)
+
+select to_hex(-1234::bigint) AS "fffffffffffffb2e";
+ fffffffffffffb2e 
+------------------
+ fffffffffffffb2e
+(1 row)
+
 select to_hex(256*256*256 - 1) AS "ffffff";
  ffffff 
 --------

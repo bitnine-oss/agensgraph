@@ -11,7 +11,7 @@
  * Note: This file must be includable in both frontend and backend contexts,
  * to allow stand-alone tools like pg_receivewal to deal with WAL files.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/xlog_internal.h
@@ -31,7 +31,7 @@
 /*
  * Each page of XLOG file has a header like this:
  */
-#define XLOG_PAGE_MAGIC 0xD113	/* can be used as WAL version indicator */
+#define XLOG_PAGE_MAGIC 0xD115	/* can be used as WAL version indicator */
 
 typedef struct XLogPageHeaderData
 {
@@ -322,7 +322,7 @@ typedef enum
 {
 	RECOVERY_TARGET_ACTION_PAUSE,
 	RECOVERY_TARGET_ACTION_PROMOTE,
-	RECOVERY_TARGET_ACTION_SHUTDOWN
+	RECOVERY_TARGET_ACTION_SHUTDOWN,
 }			RecoveryTargetAction;
 
 struct LogicalDecodingContext;

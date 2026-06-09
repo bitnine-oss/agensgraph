@@ -15016,30 +15016,34 @@ match p = shortestpath( (o1:o)<-[:e*0..]->(o2:o) ) where o1.id = 1 and o1.id = 1
                      Output: "<0000000420>"."end", "<0000000420>".ltableoid, "<0000000420>".lctid
                      ->  Subquery Scan on "<0000000420>"
                            Output: "<0000000420>"."end", "<0000000420>".ltableoid, "<0000000420>".lctid
-                           ->  HashAggregate
+                           ->  Unique
                                  Output: e.start, e."end", e.tableoid, e.ctid
-                                 Group Key: e.start, e."end", e.tableoid, e.ctid
-                                 ->  Append
-                                       ->  Index Scan using e_start_idx on shortestpath.e
-                                             Output: e.start, e."end", e.tableoid, e.ctid
-                                             Index Cond: (e.start = o1.id)
-                                       ->  Index Scan using e_end_idx on shortestpath.e e_1
-                                             Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
-                                             Index Cond: (e_1."end" = o1.id)
+                                 ->  Sort
+                                       Output: e.start, e."end", e.tableoid, e.ctid
+                                       Sort Key: e.start, e."end", e.tableoid, e.ctid
+                                       ->  Append
+                                             ->  Index Scan using e_start_idx on shortestpath.e
+                                                   Output: e.start, e."end", e.tableoid, e.ctid
+                                                   Index Cond: (e.start = o1.id)
+                                             ->  Index Scan using e_end_idx on shortestpath.e e_1
+                                                   Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
+                                                   Index Cond: (e_1."end" = o1.id)
                ->  Hash2Side
                      Output: "<0000000422>".start, "<0000000422>".ltableoid, "<0000000422>".lctid
                      ->  Subquery Scan on "<0000000422>"
                            Output: "<0000000422>".start, "<0000000422>".ltableoid, "<0000000422>".lctid
-                           ->  HashAggregate
+                           ->  Unique
                                  Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                 Group Key: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                 ->  Append
-                                       ->  Index Scan using e_end_idx on shortestpath.e e_2
-                                             Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                             Index Cond: (e_2."end" = o2.id)
-                                       ->  Index Scan using e_start_idx on shortestpath.e e_3
-                                             Output: e_3."end", e_3.start, e_3.tableoid, e_3.ctid
-                                             Index Cond: (e_3.start = o2.id)
+                                 ->  Sort
+                                       Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                       Sort Key: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                       ->  Append
+                                             ->  Index Scan using e_end_idx on shortestpath.e e_2
+                                                   Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                                   Index Cond: (e_2."end" = o2.id)
+                                             ->  Index Scan using e_start_idx on shortestpath.e e_3
+                                                   Output: e_3."end", e_3.start, e_3.tableoid, e_3.ctid
+                                                   Index Cond: (e_3.start = o2.id)
    SubPlan 2
      ->  Aggregate
            Output: array_agg((SubPlan 1))
@@ -15085,7 +15089,7 @@ match p = shortestpath( (o1:o)<-[:e*0..]->(o2:o) ) where o1.id = 1 and o1.id = 1
                    Output: ROW(e_4.id, e_4.start, e_4."end", e_4.properties, e_4.ctid)::edge
                    TID Cond: (e_4.ctid = rowid_ctid(eid.eid))
                    Filter: (e_4.tableoid = rowid_tableoid(eid.eid))
-(85 rows)
+(89 rows)
 
 explain ( analyze false, verbose true, costs false, buffers false, timing false )
 match p = shortestpath( (o1:o)<-[:e*1..]->(o2:o) ) where o1.id = 1 and o1.id = 1 return p;
@@ -15107,30 +15111,34 @@ match p = shortestpath( (o1:o)<-[:e*1..]->(o2:o) ) where o1.id = 1 and o1.id = 1
                      Output: "<0000000425>"."end", "<0000000425>".ltableoid, "<0000000425>".lctid
                      ->  Subquery Scan on "<0000000425>"
                            Output: "<0000000425>"."end", "<0000000425>".ltableoid, "<0000000425>".lctid
-                           ->  HashAggregate
+                           ->  Unique
                                  Output: e.start, e."end", e.tableoid, e.ctid
-                                 Group Key: e.start, e."end", e.tableoid, e.ctid
-                                 ->  Append
-                                       ->  Index Scan using e_start_idx on shortestpath.e
-                                             Output: e.start, e."end", e.tableoid, e.ctid
-                                             Index Cond: (e.start = o1.id)
-                                       ->  Index Scan using e_end_idx on shortestpath.e e_1
-                                             Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
-                                             Index Cond: (e_1."end" = o1.id)
+                                 ->  Sort
+                                       Output: e.start, e."end", e.tableoid, e.ctid
+                                       Sort Key: e.start, e."end", e.tableoid, e.ctid
+                                       ->  Append
+                                             ->  Index Scan using e_start_idx on shortestpath.e
+                                                   Output: e.start, e."end", e.tableoid, e.ctid
+                                                   Index Cond: (e.start = o1.id)
+                                             ->  Index Scan using e_end_idx on shortestpath.e e_1
+                                                   Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
+                                                   Index Cond: (e_1."end" = o1.id)
                ->  Hash2Side
                      Output: "<0000000427>".start, "<0000000427>".ltableoid, "<0000000427>".lctid
                      ->  Subquery Scan on "<0000000427>"
                            Output: "<0000000427>".start, "<0000000427>".ltableoid, "<0000000427>".lctid
-                           ->  HashAggregate
+                           ->  Unique
                                  Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                 Group Key: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                 ->  Append
-                                       ->  Index Scan using e_end_idx on shortestpath.e e_2
-                                             Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                             Index Cond: (e_2."end" = o2.id)
-                                       ->  Index Scan using e_start_idx on shortestpath.e e_3
-                                             Output: e_3."end", e_3.start, e_3.tableoid, e_3.ctid
-                                             Index Cond: (e_3.start = o2.id)
+                                 ->  Sort
+                                       Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                       Sort Key: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                       ->  Append
+                                             ->  Index Scan using e_end_idx on shortestpath.e e_2
+                                                   Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                                   Index Cond: (e_2."end" = o2.id)
+                                             ->  Index Scan using e_start_idx on shortestpath.e e_3
+                                                   Output: e_3."end", e_3.start, e_3.tableoid, e_3.ctid
+                                                   Index Cond: (e_3.start = o2.id)
    SubPlan 2
      ->  Aggregate
            Output: array_agg((SubPlan 1))
@@ -15176,7 +15184,7 @@ match p = shortestpath( (o1:o)<-[:e*1..]->(o2:o) ) where o1.id = 1 and o1.id = 1
                    Output: ROW(e_4.id, e_4.start, e_4."end", e_4.properties, e_4.ctid)::edge
                    TID Cond: (e_4.ctid = rowid_ctid(eid.eid))
                    Filter: (e_4.tableoid = rowid_tableoid(eid.eid))
-(85 rows)
+(89 rows)
 
 explain ( analyze false, verbose true, costs false, buffers false, timing false )
 match p = shortestpath( (o1:o)<-[:e*0..1]->(o2:o) ) where o1.id = 1 and o1.id = 1 return p;
@@ -15198,30 +15206,34 @@ match p = shortestpath( (o1:o)<-[:e*0..1]->(o2:o) ) where o1.id = 1 and o1.id = 
                      Output: "<0000000430>"."end", "<0000000430>".ltableoid, "<0000000430>".lctid
                      ->  Subquery Scan on "<0000000430>"
                            Output: "<0000000430>"."end", "<0000000430>".ltableoid, "<0000000430>".lctid
-                           ->  HashAggregate
+                           ->  Unique
                                  Output: e.start, e."end", e.tableoid, e.ctid
-                                 Group Key: e.start, e."end", e.tableoid, e.ctid
-                                 ->  Append
-                                       ->  Index Scan using e_start_idx on shortestpath.e
-                                             Output: e.start, e."end", e.tableoid, e.ctid
-                                             Index Cond: (e.start = o1.id)
-                                       ->  Index Scan using e_end_idx on shortestpath.e e_1
-                                             Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
-                                             Index Cond: (e_1."end" = o1.id)
+                                 ->  Sort
+                                       Output: e.start, e."end", e.tableoid, e.ctid
+                                       Sort Key: e.start, e."end", e.tableoid, e.ctid
+                                       ->  Append
+                                             ->  Index Scan using e_start_idx on shortestpath.e
+                                                   Output: e.start, e."end", e.tableoid, e.ctid
+                                                   Index Cond: (e.start = o1.id)
+                                             ->  Index Scan using e_end_idx on shortestpath.e e_1
+                                                   Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
+                                                   Index Cond: (e_1."end" = o1.id)
                ->  Hash2Side
                      Output: "<0000000432>".start, "<0000000432>".ltableoid, "<0000000432>".lctid
                      ->  Subquery Scan on "<0000000432>"
                            Output: "<0000000432>".start, "<0000000432>".ltableoid, "<0000000432>".lctid
-                           ->  HashAggregate
+                           ->  Unique
                                  Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                 Group Key: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                 ->  Append
-                                       ->  Index Scan using e_end_idx on shortestpath.e e_2
-                                             Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                             Index Cond: (e_2."end" = o2.id)
-                                       ->  Index Scan using e_start_idx on shortestpath.e e_3
-                                             Output: e_3."end", e_3.start, e_3.tableoid, e_3.ctid
-                                             Index Cond: (e_3.start = o2.id)
+                                 ->  Sort
+                                       Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                       Sort Key: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                       ->  Append
+                                             ->  Index Scan using e_end_idx on shortestpath.e e_2
+                                                   Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                                   Index Cond: (e_2."end" = o2.id)
+                                             ->  Index Scan using e_start_idx on shortestpath.e e_3
+                                                   Output: e_3."end", e_3.start, e_3.tableoid, e_3.ctid
+                                                   Index Cond: (e_3.start = o2.id)
    SubPlan 2
      ->  Aggregate
            Output: array_agg((SubPlan 1))
@@ -15267,7 +15279,7 @@ match p = shortestpath( (o1:o)<-[:e*0..1]->(o2:o) ) where o1.id = 1 and o1.id = 
                    Output: ROW(e_4.id, e_4.start, e_4."end", e_4.properties, e_4.ctid)::edge
                    TID Cond: (e_4.ctid = rowid_ctid(eid.eid))
                    Filter: (e_4.tableoid = rowid_tableoid(eid.eid))
-(85 rows)
+(89 rows)
 
 explain ( analyze false, verbose true, costs false, buffers false, timing false )
 match p = shortestpath( (o1:o)<-[:e*1..2]->(o2:o) ) where o1.id = 1 and o1.id = 1 return p;
@@ -15289,30 +15301,34 @@ match p = shortestpath( (o1:o)<-[:e*1..2]->(o2:o) ) where o1.id = 1 and o1.id = 
                      Output: "<0000000435>"."end", "<0000000435>".ltableoid, "<0000000435>".lctid
                      ->  Subquery Scan on "<0000000435>"
                            Output: "<0000000435>"."end", "<0000000435>".ltableoid, "<0000000435>".lctid
-                           ->  HashAggregate
+                           ->  Unique
                                  Output: e.start, e."end", e.tableoid, e.ctid
-                                 Group Key: e.start, e."end", e.tableoid, e.ctid
-                                 ->  Append
-                                       ->  Index Scan using e_start_idx on shortestpath.e
-                                             Output: e.start, e."end", e.tableoid, e.ctid
-                                             Index Cond: (e.start = o1.id)
-                                       ->  Index Scan using e_end_idx on shortestpath.e e_1
-                                             Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
-                                             Index Cond: (e_1."end" = o1.id)
+                                 ->  Sort
+                                       Output: e.start, e."end", e.tableoid, e.ctid
+                                       Sort Key: e.start, e."end", e.tableoid, e.ctid
+                                       ->  Append
+                                             ->  Index Scan using e_start_idx on shortestpath.e
+                                                   Output: e.start, e."end", e.tableoid, e.ctid
+                                                   Index Cond: (e.start = o1.id)
+                                             ->  Index Scan using e_end_idx on shortestpath.e e_1
+                                                   Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
+                                                   Index Cond: (e_1."end" = o1.id)
                ->  Hash2Side
                      Output: "<0000000437>".start, "<0000000437>".ltableoid, "<0000000437>".lctid
                      ->  Subquery Scan on "<0000000437>"
                            Output: "<0000000437>".start, "<0000000437>".ltableoid, "<0000000437>".lctid
-                           ->  HashAggregate
+                           ->  Unique
                                  Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                 Group Key: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                 ->  Append
-                                       ->  Index Scan using e_end_idx on shortestpath.e e_2
-                                             Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                             Index Cond: (e_2."end" = o2.id)
-                                       ->  Index Scan using e_start_idx on shortestpath.e e_3
-                                             Output: e_3."end", e_3.start, e_3.tableoid, e_3.ctid
-                                             Index Cond: (e_3.start = o2.id)
+                                 ->  Sort
+                                       Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                       Sort Key: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                       ->  Append
+                                             ->  Index Scan using e_end_idx on shortestpath.e e_2
+                                                   Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                                   Index Cond: (e_2."end" = o2.id)
+                                             ->  Index Scan using e_start_idx on shortestpath.e e_3
+                                                   Output: e_3."end", e_3.start, e_3.tableoid, e_3.ctid
+                                                   Index Cond: (e_3.start = o2.id)
    SubPlan 2
      ->  Aggregate
            Output: array_agg((SubPlan 1))
@@ -15358,7 +15374,7 @@ match p = shortestpath( (o1:o)<-[:e*1..2]->(o2:o) ) where o1.id = 1 and o1.id = 
                    Output: ROW(e_4.id, e_4.start, e_4."end", e_4.properties, e_4.ctid)::edge
                    TID Cond: (e_4.ctid = rowid_ctid(eid.eid))
                    Filter: (e_4.tableoid = rowid_tableoid(eid.eid))
-(85 rows)
+(89 rows)
 
 explain ( analyze false, verbose true, costs false, buffers false, timing false )
 match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, ids(nodes(shortestpath((s1)-[:e]->(s2)))) order by s1id, s2id;

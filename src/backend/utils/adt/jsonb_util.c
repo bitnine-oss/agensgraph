@@ -3,7 +3,7 @@
  * jsonb_util.c
  *	  converting between Jsonb and JsonbValues, and iterating.
  *
- * Copyright (c) 2014-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2014-2024, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -14,13 +14,11 @@
 #include "postgres.h"
 
 #include "catalog/pg_collation.h"
-#include "catalog/pg_type.h"
 #include "common/hashfn.h"
-#include "common/jsonapi.h"
 #include "miscadmin.h"
 #include "port/pg_bitutils.h"
-#include "utils/builtins.h"
 #include "utils/datetime.h"
+#include "utils/fmgrprotos.h"
 #include "utils/json.h"
 #include "utils/jsonb.h"
 #include "utils/memutils.h"
@@ -1955,7 +1953,7 @@ uniqueifyJsonbObject(JsonbValue *object, bool unique_keys, bool skip_nulls)
 	if (hasNonUniq && unique_keys)
 		ereport(ERROR,
 				errcode(ERRCODE_DUPLICATE_JSON_OBJECT_KEY_VALUE),
-				errmsg("duplicate JSON object key"));
+				errmsg("duplicate JSON object key value"));
 
 	if (hasNonUniq || skip_nulls)
 	{

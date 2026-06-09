@@ -2,7 +2,7 @@
  * llvmjit.h
  *	  LLVM JIT provider.
  *
- * Copyright (c) 2016-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2024, PostgreSQL Global Development Group
  *
  * src/include/jit/llvmjit.h
  *
@@ -42,6 +42,13 @@ typedef struct LLVMJitContext
 	/* number of modules created */
 	size_t		module_generation;
 
+	/*
+	 * The LLVM Context used by this JIT context. An LLVM context is reused
+	 * across many compilations, but occasionally reset to prevent it using
+	 * too much memory due to more and more types accumulating.
+	 */
+	LLVMContextRef llvm_context;
+
 	/* current, "open for write", module */
 	LLVMModuleRef module;
 
@@ -55,9 +62,6 @@ typedef struct LLVMJitContext
 	List	   *handles;
 } LLVMJitContext;
 
-/* llvm module containing information about types */
-extern PGDLLIMPORT LLVMModuleRef llvm_types_module;
-
 /* type and struct definitions */
 extern PGDLLIMPORT LLVMTypeRef TypeParamBool;
 extern PGDLLIMPORT LLVMTypeRef TypePGFunction;
@@ -67,6 +71,8 @@ extern PGDLLIMPORT LLVMTypeRef TypeStorageBool;
 extern PGDLLIMPORT LLVMTypeRef StructNullableDatum;
 extern PGDLLIMPORT LLVMTypeRef StructTupleDescData;
 extern PGDLLIMPORT LLVMTypeRef StructHeapTupleData;
+extern PGDLLIMPORT LLVMTypeRef StructHeapTupleHeaderData;
+extern PGDLLIMPORT LLVMTypeRef StructMinimalTupleData;
 extern PGDLLIMPORT LLVMTypeRef StructTupleTableSlot;
 extern PGDLLIMPORT LLVMTypeRef StructHeapTupleTableSlot;
 extern PGDLLIMPORT LLVMTypeRef StructMinimalTupleTableSlot;
@@ -78,8 +84,11 @@ extern PGDLLIMPORT LLVMTypeRef StructExprState;
 extern PGDLLIMPORT LLVMTypeRef StructAggState;
 extern PGDLLIMPORT LLVMTypeRef StructAggStatePerTransData;
 extern PGDLLIMPORT LLVMTypeRef StructAggStatePerGroupData;
+extern PGDLLIMPORT LLVMTypeRef StructPlanState;
 
 extern PGDLLIMPORT LLVMValueRef AttributeTemplate;
+extern PGDLLIMPORT LLVMValueRef ExecEvalBoolSubroutineTemplate;
+extern PGDLLIMPORT LLVMValueRef ExecEvalSubroutineTemplate;
 
 
 extern void llvm_enter_fatal_on_oom(void);
@@ -102,6 +111,7 @@ extern LLVMValueRef llvm_function_reference(LLVMJitContext *context,
 						LLVMModuleRef mod,
 						FunctionCallInfo fcinfo);
 
+extern void llvm_inline_reset_caches(void);
 extern void llvm_inline(LLVMModuleRef mod);
 
 /*
@@ -120,19 +130,8 @@ extern LLVMValueRef slot_compile_deform(struct LLVMJitContext *context, TupleDes
  * Error handling related functions.
  ****************************************************************************
  */
-#if defined(HAVE_DECL_LLVMGETHOSTCPUNAME) && !HAVE_DECL_LLVMGETHOSTCPUNAME
-/** Get the host CPU as a string. The result needs to be disposed with
-  LLVMDisposeMessage. */
-extern char *LLVMGetHostCPUName(void);
-#endif
-
-#if defined(HAVE_DECL_LLVMGETHOSTCPUFEATURES) && !HAVE_DECL_LLVMGETHOSTCPUFEATURES
-/** Get the host CPU features as a string. The result needs to be disposed
-  with LLVMDisposeMessage. */
-extern char *LLVMGetHostCPUFeatures(void);
-#endif
-
-extern unsigned LLVMGetAttributeCountAtIndexPG(LLVMValueRef F, uint32 Idx);
+extern LLVMTypeRef LLVMGetFunctionReturnType(LLVMValueRef r);
+extern LLVMTypeRef LLVMGetFunctionType(LLVMValueRef r);
 
 #ifdef __cplusplus
 } /* extern "C" */

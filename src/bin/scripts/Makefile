@@ -2,7 +2,7 @@
 #
 # Makefile for src/bin/scripts
 #
-# Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/bin/scripts/Makefile
@@ -48,7 +48,7 @@ installdirs:
 uninstall:
 	rm -f $(addprefix '$(DESTDIR)$(bindir)'/, $(addsuffix $(X), $(PROGRAMS)))
 
-clean distclean maintainer-clean:
+clean distclean:
 	rm -f $(addsuffix $(X), $(PROGRAMS)) $(addsuffix .o, $(PROGRAMS))
 	rm -f common.o $(WIN32RES)
 	rm -rf tmp_check

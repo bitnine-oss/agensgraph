@@ -4,7 +4,7 @@
  *		handle operator things for parser
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/parser/parse_oper.h
@@ -41,6 +41,9 @@ extern Operator compatible_oper(ParseState *pstate, List *op,
 								bool noError, int location);
 
 /* currently no need for compatible_left_oper/compatible_right_oper */
+
+/* Error reporting support */
+extern const char *op_signature_string(List *op, Oid arg1, Oid arg2);
 
 /* Routines for identifying "<", "=", ">" operators for a type */
 extern void get_sort_group_operators(Oid argtype,

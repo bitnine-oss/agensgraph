@@ -54,7 +54,7 @@ static char sccsid[] = "@(#)indent.c	5.17 (Berkeley) 6/7/93";
 #include "indent.h"
 
 static void bakcopy(void);
-static void indent_declaration(int, int);
+static void indent_declaration(int cur_dec_ind, int tabs_to_var);
 
 const char *in_name = "Standard Input";	/* will always point to name of input
 					 * file */
@@ -608,7 +608,7 @@ check_type:
 
 		parse(hd_type);	/* let parser worry about if, or whatever */
 	    }
-	    ps.search_brace = btype_2;	/* this should insure that constructs
+	    ps.search_brace = btype_2;	/* this should ensure that constructs
 					 * such as main(){...} and int[]{...}
 					 * have their braces put in the right
 					 * place */

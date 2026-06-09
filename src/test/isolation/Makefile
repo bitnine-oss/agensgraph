@@ -38,12 +38,10 @@ pg_regress.o: | submake-regress
 	rm -f $@ && $(LN_S) $(top_builddir)/src/test/regress/pg_regress.o .
 
 pg_isolation_regress$(X): isolation_main.o pg_regress.o $(WIN32RES)
-	$(CC) $(CFLAGS) $^ $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@
+	$(CC) $(CFLAGS) $^ $(libpq_pgport) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@
 
 isolationtester$(X): $(OBJS) | submake-libpq submake-libpgport
 	$(CC) $(CFLAGS) $^ $(libpq_pgport) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@
-
-distprep: specparse.c specscanner.c
 
 # See notes in src/backend/parser/Makefile about the following two rules
 specparse.h: specparse.c
@@ -54,14 +52,10 @@ specparse.c: BISONFLAGS += -d
 # Force these dependencies to be known even without dependency info built:
 specparse.o specscanner.o: specparse.h
 
-# specparse.c and specscanner.c are in the distribution tarball,
-# so do not clean them here
 clean distclean:
 	rm -f isolationtester$(X) pg_isolation_regress$(X) $(OBJS) isolation_main.o
 	rm -f pg_regress.o
 	rm -rf $(pg_regress_clean_files)
-
-maintainer-clean: distclean
 	rm -f specparse.h specparse.c specscanner.c
 
 installcheck: all

@@ -1,9 +1,9 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Logical replication tests for schema publications
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -15,7 +15,7 @@ $node_publisher->start;
 
 # Create subscriber node
 my $node_subscriber = PostgreSQL::Test::Cluster->new('subscriber');
-$node_subscriber->init(allows_streaming => 'logical');
+$node_subscriber->init;
 $node_subscriber->start;
 
 # Test replication with publications created using FOR TABLES IN SCHEMA

@@ -28,7 +28,7 @@ test: strings md5 numerology point lseg line box path polygon circle date time t
 # geometry depends on point, lseg, line, box, path, polygon, circle
 # horology depends on date, time, timetz, timestamp, timestamptz, interval
 # ----------
-test: geometry horology tstypes regex type_sanity opr_sanity misc_sanity comments expressions unicode xid mvcc
+test: geometry horology tstypes regex type_sanity opr_sanity misc_sanity comments expressions unicode xid mvcc database
 
 # ----------
 # Load huge amounts of data
@@ -78,9 +78,9 @@ test: brin_bloom brin_multi
 # psql depends on create_am
 # amutils depends on geometry, create_index_spgist, hash_index, brin
 # ----------
-test: create_table_like alter_generic alter_operator misc async dbsize merge misc_functions sysviews tsrf tid tidscan tidrangescan collate.icu.utf8 incremental_sort create_role
+test: create_table_like alter_generic alter_operator misc async dbsize merge misc_functions sysviews tsrf tid tidscan tidrangescan collate.utf8 collate.icu.utf8 incremental_sort create_role
 
-# collate.*.utf8 tests cannot be run in parallel with each other
+# collate.linux.utf8 and collate.icu.utf8 tests cannot be run in parallel with each other
 test: rules psql psql_crosstab amutils stats_ext collate.linux.utf8 collate.windows.win1252
 
 # ----------
@@ -103,7 +103,7 @@ test: select_views portals_p2 foreign_key cluster dependency guc bitmapops combo
 # ----------
 # Another group of parallel tests (JSON related)
 # ----------
-test: json jsonb json_encoding jsonpath jsonpath_encoding jsonb_jsonpath sqljson
+test: json jsonb json_encoding jsonpath jsonpath_encoding jsonb_jsonpath sqljson sqljson_queryfuncs sqljson_jsontable
 
 # ----------
 # Another group of parallel tests
@@ -119,11 +119,16 @@ test: plancache limit plpgsql copy2 temp domain rangefuncs prepare conversion tr
 # The stats test resets stats, so nothing else needing stats access can be in
 # this group.
 # ----------
-test: partition_join partition_prune reloptions hash_part indexing partition_aggregate partition_info tuplesort explain compression memoize stats
+test: partition_merge partition_split partition_join partition_prune reloptions hash_part indexing partition_aggregate partition_info tuplesort explain compression memoize stats predicate
 
-# event_trigger cannot run concurrently with any test that runs DDL
+# event_trigger depends on create_am and cannot run concurrently with
+# any test that runs DDL
 # oidjoins is read-only, though, and should run late for best coverage
-test: event_trigger oidjoins
+test: oidjoins event_trigger
+
+# event_trigger_login cannot run concurrently with any other tests because
+# on-login event handling could catch connection of a concurrent test.
+test: event_trigger_login
 
 # this test also uses event triggers, so likewise run it by itself
 test: fast_default

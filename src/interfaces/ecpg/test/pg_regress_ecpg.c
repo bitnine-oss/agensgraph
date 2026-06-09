@@ -8,7 +8,7 @@
  *
  * This code is released under the terms of the PostgreSQL License.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/interfaces/ecpg/test/pg_regress_ecpg.c
@@ -18,9 +18,9 @@
 
 #include "postgres_fe.h"
 
-#include "pg_regress.h"
 #include "common/string.h"
 #include "lib/stringinfo.h"
+#include "pg_regress.h"
 
 
 /*

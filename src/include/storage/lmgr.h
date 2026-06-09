@@ -4,7 +4,7 @@
  *	  POSTGRES lock manager definitions.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/lmgr.h
@@ -31,7 +31,7 @@ typedef enum XLTW_Oper
 	XLTW_InsertIndex,
 	XLTW_InsertIndexUnique,
 	XLTW_FetchUpdated,
-	XLTW_RecheckExclusionConstr
+	XLTW_RecheckExclusionConstr,
 } XLTW_Oper;
 
 extern void RelationInitLockInfo(Relation relation);
@@ -48,6 +48,8 @@ extern bool ConditionalLockRelation(Relation relation, LOCKMODE lockmode);
 extern void UnlockRelation(Relation relation, LOCKMODE lockmode);
 extern bool CheckRelationLockedByMe(Relation relation, LOCKMODE lockmode,
 									bool orstronger);
+extern bool CheckRelationOidLockedByMe(Oid relid, LOCKMODE lockmode,
+									   bool orstronger);
 extern bool LockHasWaitersRelation(Relation relation, LOCKMODE lockmode);
 
 extern void LockRelationIdForSession(LockRelId *relid, LOCKMODE lockmode);
@@ -93,12 +95,16 @@ extern void SpeculativeInsertionWait(TransactionId xid, uint32 token);
 /* Lock a general object (other than a relation) of the current database */
 extern void LockDatabaseObject(Oid classid, Oid objid, uint16 objsubid,
 							   LOCKMODE lockmode);
+extern bool ConditionalLockDatabaseObject(Oid classid, Oid objid,
+										  uint16 objsubid, LOCKMODE lockmode);
 extern void UnlockDatabaseObject(Oid classid, Oid objid, uint16 objsubid,
 								 LOCKMODE lockmode);
 
 /* Lock a shared-across-databases object (other than a relation) */
 extern void LockSharedObject(Oid classid, Oid objid, uint16 objsubid,
 							 LOCKMODE lockmode);
+extern bool ConditionalLockSharedObject(Oid classid, Oid objid, uint16 objsubid,
+										LOCKMODE lockmode);
 extern void UnlockSharedObject(Oid classid, Oid objid, uint16 objsubid,
 							   LOCKMODE lockmode);
 

@@ -3,7 +3,7 @@
  * tupdesc.c
  *	  POSTGRES tuple descriptor support code
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -25,14 +25,36 @@
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "common/hashfn.h"
-#include "miscadmin.h"
-#include "parser/parse_type.h"
-#include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
-#include "utils/resowner_private.h"
+#include "utils/resowner.h"
 #include "utils/syscache.h"
 
+/* ResourceOwner callbacks to hold tupledesc references  */
+static void ResOwnerReleaseTupleDesc(Datum res);
+static char *ResOwnerPrintTupleDesc(Datum res);
+
+static const ResourceOwnerDesc tupdesc_resowner_desc =
+{
+	.name = "tupdesc reference",
+	.release_phase = RESOURCE_RELEASE_AFTER_LOCKS,
+	.release_priority = RELEASE_PRIO_TUPDESC_REFS,
+	.ReleaseResource = ResOwnerReleaseTupleDesc,
+	.DebugPrint = ResOwnerPrintTupleDesc
+};
+
+/* Convenience wrappers over ResourceOwnerRemember/Forget */
+static inline void
+ResourceOwnerRememberTupleDesc(ResourceOwner owner, TupleDesc tupdesc)
+{
+	ResourceOwnerRemember(owner, PointerGetDatum(tupdesc), &tupdesc_resowner_desc);
+}
+
+static inline void
+ResourceOwnerForgetTupleDesc(ResourceOwner owner, TupleDesc tupdesc)
+{
+	ResourceOwnerForget(owner, PointerGetDatum(tupdesc), &tupdesc_resowner_desc);
+}
 
 /*
  * CreateTemplateTupleDesc
@@ -367,7 +389,7 @@ IncrTupleDescRefCount(TupleDesc tupdesc)
 {
 	Assert(tupdesc->tdrefcount >= 0);
 
-	ResourceOwnerEnlargeTupleDescs(CurrentResourceOwner);
+	ResourceOwnerEnlarge(CurrentResourceOwner);
 	tupdesc->tdrefcount++;
 	ResourceOwnerRememberTupleDesc(CurrentResourceOwner, tupdesc);
 }
@@ -392,11 +414,6 @@ DecrTupleDescRefCount(TupleDesc tupdesc)
 
 /*
  * Compare two TupleDesc structures for logical equality
- *
- * Note: we deliberately do not check the attrelid and tdtypmod fields.
- * This allows typcache.c to use this routine to see if a cached record type
- * matches a requested type, and is harmless for relcache.c's uses.
- * We don't compare tdrefcount, either.
  */
 bool
 equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2)
@@ -408,6 +425,8 @@ equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2)
 		return false;
 	if (tupdesc1->tdtypeid != tupdesc2->tdtypeid)
 		return false;
+
+	/* tdtypmod and tdrefcount are not checked */
 
 	for (i = 0; i < tupdesc1->natts; i++)
 	{
@@ -430,8 +449,6 @@ equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2)
 		if (strcmp(NameStr(attr1->attname), NameStr(attr2->attname)) != 0)
 			return false;
 		if (attr1->atttypid != attr2->atttypid)
-			return false;
-		if (attr1->attstattarget != attr2->attstattarget)
 			return false;
 		if (attr1->attlen != attr2->attlen)
 			return false;
@@ -541,17 +558,68 @@ equalTupleDescs(TupleDesc tupdesc1, TupleDesc tupdesc2)
 }
 
 /*
- * hashTupleDesc
- *		Compute a hash value for a tuple descriptor.
+ * equalRowTypes
  *
- * If two tuple descriptors would be considered equal by equalTupleDescs()
+ * This determines whether two tuple descriptors have equal row types.  This
+ * only checks those fields in pg_attribute that are applicable for row types,
+ * while ignoring those fields that define the physical row storage or those
+ * that define table column metadata.
+ *
+ * Specifically, this checks:
+ *
+ * - same number of attributes
+ * - same composite type ID (but could both be zero)
+ * - corresponding attributes (in order) have same the name, type, typmod,
+ *   collation
+ *
+ * This is used to check whether two record types are compatible, whether
+ * function return row types are the same, and other similar situations.
+ *
+ * (XXX There was some discussion whether attndims should be checked here, but
+ * for now it has been decided not to.)
+ *
+ * Note: We deliberately do not check the tdtypmod field.  This allows
+ * typcache.c to use this routine to see if a cached record type matches a
+ * requested type.
+ */
+bool
+equalRowTypes(TupleDesc tupdesc1, TupleDesc tupdesc2)
+{
+	if (tupdesc1->natts != tupdesc2->natts)
+		return false;
+	if (tupdesc1->tdtypeid != tupdesc2->tdtypeid)
+		return false;
+
+	for (int i = 0; i < tupdesc1->natts; i++)
+	{
+		Form_pg_attribute attr1 = TupleDescAttr(tupdesc1, i);
+		Form_pg_attribute attr2 = TupleDescAttr(tupdesc2, i);
+
+		if (strcmp(NameStr(attr1->attname), NameStr(attr2->attname)) != 0)
+			return false;
+		if (attr1->atttypid != attr2->atttypid)
+			return false;
+		if (attr1->atttypmod != attr2->atttypmod)
+			return false;
+		if (attr1->attcollation != attr2->attcollation)
+			return false;
+
+		/* Record types derived from tables could have dropped fields. */
+		if (attr1->attisdropped != attr2->attisdropped)
+			return false;
+	}
+
+	return true;
+}
+
+/*
+ * hashRowType
+ *
+ * If two tuple descriptors would be considered equal by equalRowTypes()
  * then their hash value will be equal according to this function.
- *
- * Note that currently contents of constraint are not hashed - it'd be a bit
- * painful to do so, and conflicts just due to constraints are unlikely.
  */
 uint32
-hashTupleDesc(TupleDesc desc)
+hashRowType(TupleDesc desc)
 {
 	uint32		s;
 	int			i;
@@ -617,7 +685,6 @@ TupleDescInitEntry(TupleDesc desc,
 	else if (attributeName != NameStr(att->attname))
 		namestrcpy(&(att->attname), attributeName);
 
-	att->attstattarget = -1;
 	att->attcacheoff = -1;
 	att->atttypmod = typmod;
 
@@ -680,7 +747,6 @@ TupleDescInitBuiltinEntry(TupleDesc desc,
 	Assert(attributeName != NULL);
 	namestrcpy(&(att->attname), attributeName);
 
-	att->attstattarget = -1;
 	att->attcacheoff = -1;
 	att->atttypmod = typmod;
 
@@ -778,107 +844,6 @@ TupleDescInitEntryCollation(TupleDesc desc,
 	TupleDescAttr(desc, attributeNumber - 1)->attcollation = collationid;
 }
 
-
-/*
- * BuildDescForRelation
- *
- * Given a relation schema (list of ColumnDef nodes), build a TupleDesc.
- *
- * Note: tdtypeid will need to be filled in later on.
- */
-TupleDesc
-BuildDescForRelation(List *schema)
-{
-	int			natts;
-	AttrNumber	attnum;
-	ListCell   *l;
-	TupleDesc	desc;
-	bool		has_not_null;
-	char	   *attname;
-	Oid			atttypid;
-	int32		atttypmod;
-	Oid			attcollation;
-	int			attdim;
-
-	/*
-	 * allocate a new tuple descriptor
-	 */
-	natts = list_length(schema);
-	desc = CreateTemplateTupleDesc(natts);
-	has_not_null = false;
-
-	attnum = 0;
-
-	foreach(l, schema)
-	{
-		ColumnDef  *entry = lfirst(l);
-		AclResult	aclresult;
-		Form_pg_attribute att;
-
-		/*
-		 * for each entry in the list, get the name and type information from
-		 * the list and have TupleDescInitEntry fill in the attribute
-		 * information we need.
-		 */
-		attnum++;
-
-		attname = entry->colname;
-		typenameTypeIdAndMod(NULL, entry->typeName, &atttypid, &atttypmod);
-
-		aclresult = object_aclcheck(TypeRelationId, atttypid, GetUserId(), ACL_USAGE);
-		if (aclresult != ACLCHECK_OK)
-			aclcheck_error_type(aclresult, atttypid);
-
-		attcollation = GetColumnDefCollation(NULL, entry, atttypid);
-		attdim = list_length(entry->typeName->arrayBounds);
-		if (attdim > PG_INT16_MAX)
-			ereport(ERROR,
-					errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-					errmsg("too many array dimensions"));
-
-		if (entry->typeName->setof)
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-					 errmsg("column \"%s\" cannot be declared SETOF",
-							attname)));
-
-		TupleDescInitEntry(desc, attnum, attname,
-						   atttypid, atttypmod, attdim);
-		att = TupleDescAttr(desc, attnum - 1);
-
-		/* Override TupleDescInitEntry's settings as requested */
-		TupleDescInitEntryCollation(desc, attnum, attcollation);
-		if (entry->storage)
-			att->attstorage = entry->storage;
-
-		/* Fill in additional stuff not handled by TupleDescInitEntry */
-		att->attnotnull = entry->is_not_null;
-		has_not_null |= entry->is_not_null;
-		att->attislocal = entry->is_local;
-		att->attinhcount = entry->inhcount;
-	}
-
-	if (has_not_null)
-	{
-		TupleConstr *constr = (TupleConstr *) palloc0(sizeof(TupleConstr));
-
-		constr->has_not_null = true;
-		constr->has_generated_stored = false;
-		constr->defval = NULL;
-		constr->missing = NULL;
-		constr->num_defval = 0;
-		constr->check = NULL;
-		constr->num_check = 0;
-		desc->constr = constr;
-	}
-	else
-	{
-		desc->constr = NULL;
-	}
-
-	return desc;
-}
-
 /*
  * BuildDescFromLists
  *
@@ -887,11 +852,10 @@ BuildDescForRelation(List *schema)
  *
  * No constraints are generated.
  *
- * This is essentially a cut-down version of BuildDescForRelation for use
- * with functions returning RECORD.
+ * This is for use with functions returning RECORD.
  */
 TupleDesc
-BuildDescFromLists(List *names, List *types, List *typmods, List *collations)
+BuildDescFromLists(const List *names, const List *types, const List *typmods, const List *collations)
 {
 	int			natts;
 	AttrNumber	attnum;
@@ -926,4 +890,51 @@ BuildDescFromLists(List *names, List *types, List *typmods, List *collations)
 	}
 
 	return desc;
+}
+
+/*
+ * Get default expression (or NULL if none) for the given attribute number.
+ */
+Node *
+TupleDescGetDefault(TupleDesc tupdesc, AttrNumber attnum)
+{
+	Node	   *result = NULL;
+
+	if (tupdesc->constr)
+	{
+		AttrDefault *attrdef = tupdesc->constr->defval;
+
+		for (int i = 0; i < tupdesc->constr->num_defval; i++)
+		{
+			if (attrdef[i].adnum == attnum)
+			{
+				result = stringToNode(attrdef[i].adbin);
+				break;
+			}
+		}
+	}
+
+	return result;
+}
+
+/* ResourceOwner callbacks */
+
+static void
+ResOwnerReleaseTupleDesc(Datum res)
+{
+	TupleDesc	tupdesc = (TupleDesc) DatumGetPointer(res);
+
+	/* Like DecrTupleDescRefCount, but don't call ResourceOwnerForget() */
+	Assert(tupdesc->tdrefcount > 0);
+	if (--tupdesc->tdrefcount == 0)
+		FreeTupleDesc(tupdesc);
+}
+
+static char *
+ResOwnerPrintTupleDesc(Datum res)
+{
+	TupleDesc	tupdesc = (TupleDesc) DatumGetPointer(res);
+
+	return psprintf("TupleDesc %p (%u,%d)",
+					tupdesc, tupdesc->tdtypeid, tupdesc->tdtypmod);
 }

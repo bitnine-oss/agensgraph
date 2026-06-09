@@ -1,10 +1,10 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Test collations, in particular nondeterministic ones
 # (only works with ICU)
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -21,9 +21,7 @@ $node_publisher->init(
 $node_publisher->start;
 
 my $node_subscriber = PostgreSQL::Test::Cluster->new('subscriber');
-$node_subscriber->init(
-	allows_streaming => 'logical',
-	extra => [ '--locale=C', '--encoding=UTF8' ]);
+$node_subscriber->init(extra => [ '--locale=C', '--encoding=UTF8' ]);
 $node_subscriber->start;
 
 my $publisher_connstr = $node_publisher->connstr . ' dbname=postgres';

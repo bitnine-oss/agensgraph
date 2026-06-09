@@ -9,7 +9,7 @@
  * into a lot of low-level code.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/reloptions.h
@@ -32,7 +32,7 @@ typedef enum relopt_type
 	RELOPT_TYPE_INT,
 	RELOPT_TYPE_REAL,
 	RELOPT_TYPE_ENUM,
-	RELOPT_TYPE_STRING
+	RELOPT_TYPE_STRING,
 } relopt_type;
 
 /* kinds supported by reloptions */

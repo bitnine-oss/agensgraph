@@ -45,7 +45,7 @@ SELECT [ ALL | DISTINCT [ ON ( <replaceable class="parameter">expression</replac
     [ LIMIT { <replaceable class="parameter">count</replaceable> | ALL } ]
     [ OFFSET <replaceable class="parameter">start</replaceable> [ ROW | ROWS ] ]
     [ FETCH { FIRST | NEXT } [ <replaceable class="parameter">count</replaceable> ] { ROW | ROWS } { ONLY | WITH TIES } ]
-    [ FOR { UPDATE | NO KEY UPDATE | SHARE | KEY SHARE } [ OF <replaceable class="parameter">table_name</replaceable> [, ...] ] [ NOWAIT | SKIP LOCKED ] [...] ]
+    [ FOR { UPDATE | NO KEY UPDATE | SHARE | KEY SHARE } [ OF <replaceable class="parameter">from_reference</replaceable> [, ...] ] [ NOWAIT | SKIP LOCKED ] [...] ]
 
 <phrase>where <replaceable class="parameter">from_item</replaceable> can be one of:</phrase>
 
@@ -74,7 +74,7 @@ SELECT [ ALL | DISTINCT [ ON ( <replaceable class="parameter">expression</replac
 
 <phrase>and <replaceable class="parameter">with_query</replaceable> is:</phrase>
 
-    <replaceable class="parameter">with_query_name</replaceable> [ ( <replaceable class="parameter">column_name</replaceable> [, ...] ) ] AS [ [ NOT ] MATERIALIZED ] ( <replaceable class="parameter">select</replaceable> | <replaceable class="parameter">values</replaceable> | <replaceable class="parameter">insert</replaceable> | <replaceable class="parameter">update</replaceable> | <replaceable class="parameter">delete</replaceable> )
+    <replaceable class="parameter">with_query_name</replaceable> [ ( <replaceable class="parameter">column_name</replaceable> [, ...] ) ] AS [ [ NOT ] MATERIALIZED ] ( <replaceable class="parameter">select</replaceable> | <replaceable class="parameter">values</replaceable> | <replaceable class="parameter">insert</replaceable> | <replaceable class="parameter">update</replaceable> | <replaceable class="parameter">delete</replaceable> | <replaceable class="parameter">merge</replaceable> )
         [ SEARCH { BREADTH | DEPTH } FIRST BY <replaceable>column_name</replaceable> [, ...] SET <replaceable>search_seq_col_name</replaceable> ]
         [ CYCLE <replaceable>column_name</replaceable> [, ...] SET <replaceable>cycle_mark_col_name</replaceable> [ TO <replaceable>cycle_mark_value</replaceable> DEFAULT <replaceable>cycle_mark_default</replaceable> ] USING <replaceable>cycle_path_col_name</replaceable> ]
 
@@ -131,6 +131,9 @@ TABLE [ ONLY ] <replaceable class="parameter">table_name</replaceable> [ * ]
       eliminates groups that do not satisfy the given condition.  (See
       <xref linkend="sql-groupby"/> and
       <xref linkend="sql-having"/> below.)
+      Although query output columns are nominally computed in the next
+      step, they can also be referenced (by name or ordinal number)
+      in the <literal>GROUP BY</literal> clause.
      </para>
     </listitem>
 
@@ -227,10 +230,10 @@ TABLE [ ONLY ] <replaceable class="parameter">table_name</replaceable> [ * ]
     The subqueries effectively act as temporary tables or views
     for the duration of the primary query.
     Each subquery can be a <command>SELECT</command>, <command>TABLE</command>, <command>VALUES</command>,
-    <command>INSERT</command>, <command>UPDATE</command> or
-    <command>DELETE</command> statement.
+    <command>INSERT</command>, <command>UPDATE</command>,
+    <command>DELETE</command>, or <command>MERGE</command> statement.
     When writing a data-modifying statement (<command>INSERT</command>,
-    <command>UPDATE</command> or <command>DELETE</command>) in
+    <command>UPDATE</command>, <command>DELETE</command>, or <command>MERGE</command>) in
     <literal>WITH</literal>, it is usual to include a <literal>RETURNING</literal> clause.
     It is the output of <literal>RETURNING</literal>, <emphasis>not</emphasis> the underlying
     table that the statement modifies, that forms the temporary table that is
@@ -1574,7 +1577,7 @@ FETCH { FIRST | NEXT } [ <replaceable class="parameter">count</replaceable> ] { 
     The locking clause has the general form
 
 <synopsis>
-FOR <replaceable>lock_strength</replaceable> [ OF <replaceable class="parameter">table_name</replaceable> [, ...] ] [ NOWAIT | SKIP LOCKED ]
+FOR <replaceable>lock_strength</replaceable> [ OF <replaceable class="parameter">from_reference</replaceable> [, ...] ] [ NOWAIT | SKIP LOCKED ]
 </synopsis>
 
     where <replaceable>lock_strength</replaceable> can be one of
@@ -1588,8 +1591,11 @@ KEY SHARE
    </para>
 
    <para>
-    For more information on each row-level lock mode, refer to
-    <xref linkend="locking-rows"/>.
+    <replaceable class="parameter">from_reference</replaceable> must be a
+    table <replaceable class="parameter">alias</replaceable> or non-hidden
+    <replaceable class="parameter">table_name</replaceable> referenced
+    in the <literal>FROM</literal> clause.  For more information on each
+    row-level lock mode, refer to <xref linkend="locking-rows"/>.
    </para>
 
    <para>
@@ -1915,8 +1921,7 @@ WITH t AS (
   )
 SELECT * FROM t
 UNION ALL
-SELECT * FROM t
-
+SELECT * FROM t;
          x
 --------------------
   0.534150459803641
@@ -2179,7 +2184,8 @@ SELECT 2+2;
 
    <para>
     <productname>PostgreSQL</productname> allows <command>INSERT</command>,
-    <command>UPDATE</command>, and <command>DELETE</command> to be used as <literal>WITH</literal>
+    <command>UPDATE</command>, <command>DELETE</command>, and
+    <command>MERGE</command> to be used as <literal>WITH</literal>
     queries.  This is not found in the SQL standard.
    </para>
   </refsect2>

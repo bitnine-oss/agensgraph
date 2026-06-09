@@ -6,7 +6,7 @@
  * See also lsyscache.h, which provides convenience routines for
  * common cache-lookup operations.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/syscache.h
@@ -20,110 +20,7 @@
 #include "access/htup.h"
 /* we intentionally do not include utils/catcache.h here */
 
-/*
- *		SysCache identifiers.
- *
- *		The order of these identifiers must match the order
- *		of the entries in the array cacheinfo[] in syscache.c.
- *		Keep them in alphabetical order (renumbering only costs a
- *		backend rebuild).
- */
-
-enum SysCacheIdentifier
-{
-	AGGFNOID = 0,
-	AMNAME,
-	AMOID,
-	AMOPOPID,
-	AMOPSTRATEGY,
-	AMPROCNUM,
-	ATTNAME,
-	ATTNUM,
-	AUTHMEMMEMROLE,
-	AUTHMEMROLEMEM,
-	AUTHNAME,
-	AUTHOID,
-	CASTSOURCETARGET,
-	CLAAMNAMENSP,
-	CLAOID,
-	COLLNAMEENCNSP,
-	COLLOID,
-	CONDEFAULT,
-	CONNAMENSP,
-	CONSTROID,
-	CONVOID,
-	DATABASEOID,
-	DEFACLROLENSPOBJ,
-	ENUMOID,
-	ENUMTYPOIDNAME,
-	EVENTTRIGGERNAME,
-	EVENTTRIGGEROID,
-	FOREIGNDATAWRAPPERNAME,
-	FOREIGNDATAWRAPPEROID,
-	FOREIGNSERVERNAME,
-	FOREIGNSERVEROID,
-	FOREIGNTABLEREL,
-	GRAPHMETAFULL,
-	GRAPHNAME,
-	GRAPHOID,
-	INDEXRELID,
-	LABELLABID,
-	LABELNAMEGRAPH,
-	LABELOID,
-	LABELRELID,
-	LANGNAME,
-	LANGOID,
-	NAMESPACENAME,
-	NAMESPACEOID,
-	OPERNAMENSP,
-	OPEROID,
-	OPFAMILYAMNAMENSP,
-	OPFAMILYOID,
-	PARAMETERACLNAME,
-	PARAMETERACLOID,
-	PARTRELID,
-	PROCNAMEARGSNSP,
-	PROCOID,
-	PUBLICATIONNAME,
-	PUBLICATIONNAMESPACE,
-	PUBLICATIONNAMESPACEMAP,
-	PUBLICATIONOID,
-	PUBLICATIONREL,
-	PUBLICATIONRELMAP,
-	RANGEMULTIRANGE,
-	RANGETYPE,
-	RELNAMENSP,
-	RELOID,
-	REPLORIGIDENT,
-	REPLORIGNAME,
-	RULERELNAME,
-	SEQRELID,
-	STATEXTDATASTXOID,
-	STATEXTNAMENSP,
-	STATEXTOID,
-	STATRELATTINH,
-	SUBSCRIPTIONNAME,
-	SUBSCRIPTIONOID,
-	SUBSCRIPTIONRELMAP,
-	TABLESPACEOID,
-	TRFOID,
-	TRFTYPELANG,
-	TSCONFIGMAP,
-	TSCONFIGNAMENSP,
-	TSCONFIGOID,
-	TSDICTNAMENSP,
-	TSDICTOID,
-	TSPARSERNAMENSP,
-	TSPARSEROID,
-	TSTEMPLATENAMENSP,
-	TSTEMPLATEOID,
-	TYPENAMENSP,
-	TYPEOID,
-	USERMAPPINGOID,
-	USERMAPPINGUSERSERVER
-
-#define SysCacheSize (USERMAPPINGUSERSERVER + 1)
-};
+#include "catalog/syscache_ids.h"
 
 extern void InitCatalogCache(void);
 extern void InitCatalogCachePhase2(void);

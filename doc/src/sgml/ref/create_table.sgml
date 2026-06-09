@@ -104,7 +104,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
 
 <phrase><replaceable class="parameter">exclude_element</replaceable> in an <literal>EXCLUDE</literal> constraint is:</phrase>
 
-{ <replaceable class="parameter">column_name</replaceable> | ( <replaceable class="parameter">expression</replaceable> ) } [ <replaceable class="parameter">opclass</replaceable> ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ]
+{ <replaceable class="parameter">column_name</replaceable> | ( <replaceable class="parameter">expression</replaceable> ) } [ COLLATE <replaceable class="parameter">collation</replaceable> ] [ <replaceable class="parameter">opclass</replaceable> [ ( <replaceable class="parameter">opclass_parameter</replaceable> = <replaceable class="parameter">value</replaceable> [, ... ] ) ] ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ]
 
 <phrase><replaceable class="parameter">referential_action</replaceable> in a <literal>FOREIGN KEY</literal>/<literal>REFERENCES</literal> constraint is:</phrase>
 
@@ -1000,7 +1000,8 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
 
      <para>
       Adding a unique constraint will automatically create a unique btree
-      index on the column or group of columns used in the constraint.
+      index on the column or group of columns used in the constraint.  The
+      created index has the same name as the unique constraint.
      </para>
 
      <para>
@@ -1052,7 +1053,8 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
 
      <para>
       Adding a <literal>PRIMARY KEY</literal> constraint will automatically
-      create a unique btree index on the column or group of columns used in the
+      create a unique btree index on the column or group of columns used in
+      the constraint.  That index has the same name as the primary key
       constraint.
      </para>
 
@@ -1086,19 +1088,19 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       no two rows in the table contain overlapping circles
       (see <xref linkend="datatype-geometric"/>) by using the
       <literal>&amp;&amp;</literal> operator.
+      The operator(s) are required to be commutative.
      </para>
 
      <para>
       Exclusion constraints are implemented using
-      an index, so each specified operator must be associated with an
-      appropriate operator class
+      an index that has the same name as the constraint, so each specified
+      operator must be associated with an appropriate operator class
       (see <xref linkend="indexes-opclass"/>) for the index access
       method <replaceable>index_method</replaceable>.
-      The operators are required to be commutative.
       Each <replaceable class="parameter">exclude_element</replaceable>
-      can optionally specify an operator class and/or ordering options;
-      these are described fully under
-      <xref linkend="sql-createindex"/>.
+      defines a column of the index, so it can optionally specify a collation,
+      an operator class, operator class parameters, and/or ordering options;
+      these are described fully under <xref linkend="sql-createindex"/>.
      </para>
 
      <para>
@@ -1137,10 +1139,11 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       column(s) of some row of the referenced table.  If the <replaceable
       class="parameter">refcolumn</replaceable> list is omitted, the
       primary key of the <replaceable class="parameter">reftable</replaceable>
-      is used.  The referenced columns must be the columns of a non-deferrable
-      unique or primary key constraint in the referenced table.  The user
-      must have <literal>REFERENCES</literal> permission on the referenced table
-      (either the whole table, or the specific referenced columns).  The
+      is used.  Otherwise, the <replaceable class="parameter">refcolumn</replaceable>
+      list must refer to the columns of a non-deferrable unique or primary key
+      constraint or be the columns of a non-partial unique index.  The user
+      must have <literal>REFERENCES</literal> permission on the referenced
+      table (either the whole table, or the specific referenced columns).  The
       addition of a foreign key constraint requires a
       <literal>SHARE ROW EXCLUSIVE</literal> lock on the referenced table.
       Note that foreign key constraints cannot be defined between temporary
@@ -1298,6 +1301,10 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       information.  If this option is not specified, the default table access
       method is chosen for the new table. See <xref
       linkend="guc-default-table-access-method"/> for more information.
+     </para>
+     <para>
+      When creating a partition, the table access method is the access method
+      of its partitioned table, if set.
      </para>
     </listitem>
    </varlistentry>
@@ -2277,12 +2284,18 @@ CREATE TABLE cities_partdef
   </refsect2>
 
   <refsect2>
-   <title>Foreign-Key Constraint Actions</title>
+   <title>Foreign Key Constraints</title>
 
    <para>
-    The ability to specify column lists in the foreign-key actions
+    The ability to specify column lists in the foreign key actions
     <literal>SET DEFAULT</literal> and <literal>SET NULL</literal> is a
     <productname>PostgreSQL</productname> extension.
+   </para>
+
+   <para>
+    It is a <productname>PostgreSQL</productname> extension that a
+    foreign key constraint may reference columns of a unique index instead of
+    columns of a primary key or unique constraint.
    </para>
   </refsect2>
 
@@ -2317,7 +2330,7 @@ CREATE TABLE cities_partdef
 
    <para>
     Currently, <productname>PostgreSQL</productname> does not record names
-    for <literal>NOT NULL</literal> constraints at all, so they are not
+    for not-null constraints at all, so they are not
     subject to the uniqueness restriction.  This might change in a future
     release.
    </para>

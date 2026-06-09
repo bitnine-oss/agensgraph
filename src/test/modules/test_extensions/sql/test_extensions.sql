@@ -1,18 +1,20 @@
+CREATE SCHEMA has$dollar;
+
 -- test some errors
 CREATE EXTENSION test_ext1;
 CREATE EXTENSION test_ext1 SCHEMA test_ext1;
 CREATE EXTENSION test_ext1 SCHEMA test_ext;
-CREATE SCHEMA test_ext;
-CREATE EXTENSION test_ext1 SCHEMA test_ext;
+CREATE EXTENSION test_ext1 SCHEMA has$dollar;
 
 -- finally success
-CREATE EXTENSION test_ext1 SCHEMA test_ext CASCADE;
+CREATE EXTENSION test_ext1 SCHEMA has$dollar CASCADE;
 
 SELECT extname, nspname, extversion, extrelocatable FROM pg_extension e, pg_namespace n WHERE extname LIKE 'test_ext%' AND e.extnamespace = n.oid ORDER BY 1;
 
 CREATE EXTENSION test_ext_cyclic1 CASCADE;
 
-DROP SCHEMA test_ext CASCADE;
+DROP SCHEMA has$dollar CASCADE;
+CREATE SCHEMA has$dollar;
 
 CREATE EXTENSION test_ext6;
 DROP EXTENSION test_ext6;
@@ -64,6 +66,19 @@ end';
 
 -- dropping it should still work
 drop extension test_ext8;
+
+-- check handling of types as extension members
+create extension test_ext9;
+\dx+ test_ext9
+alter extension test_ext9 drop type varbitrange;
+\dx+ test_ext9
+alter extension test_ext9 add type varbitrange;
+\dx+ test_ext9
+alter extension test_ext9 drop table sometable;
+\dx+ test_ext9
+alter extension test_ext9 add table sometable;
+\dx+ test_ext9
+drop extension test_ext9;
 
 -- Test creation of extension in temporary schema with two-phase commit,
 -- which should not work.  This function wrapper is useful for portability.
@@ -211,8 +226,60 @@ ALTER EXTENSION test_ext_cine UPDATE TO '1.1';
 \dx+ test_ext_cine
 
 --
+-- Test @extschema@ syntax.
+--
+CREATE SCHEMA "has space";
+CREATE EXTENSION test_ext_extschema SCHEMA has$dollar;
+CREATE EXTENSION test_ext_extschema SCHEMA "has space";
+
+--
+-- Test basic SET SCHEMA handling.
+--
+CREATE SCHEMA s1;
+CREATE SCHEMA s2;
+CREATE EXTENSION test_ext_set_schema SCHEMA s1;
+ALTER EXTENSION test_ext_set_schema SET SCHEMA s2;
+\dx+ test_ext_set_schema
+\sf s2.ess_func(int)
+
+--
+-- Test extension with objects outside the extension's schema.
+--
+CREATE SCHEMA test_func_dep1;
+CREATE SCHEMA test_func_dep2;
+CREATE SCHEMA test_func_dep3;
+CREATE EXTENSION test_ext_req_schema1 SCHEMA test_func_dep1;
+ALTER FUNCTION test_func_dep1.dep_req1() SET SCHEMA test_func_dep2;
+SELECT pg_describe_object(classid, objid, objsubid) as obj,
+       pg_describe_object(refclassid, refobjid, refobjsubid) as objref,
+       deptype
+  FROM pg_depend
+  WHERE classid = 'pg_extension'::regclass AND
+        objid = (SELECT oid FROM pg_extension WHERE extname = 'test_ext_req_schema1')
+  ORDER BY 1, 2;
+-- fails, as function dep_req1 is not in the same schema as the extension.
+ALTER EXTENSION test_ext_req_schema1 SET SCHEMA test_func_dep3;
+-- Move back the function, and the extension can be moved.
+ALTER FUNCTION test_func_dep2.dep_req1() SET SCHEMA test_func_dep1;
+ALTER EXTENSION test_ext_req_schema1 SET SCHEMA test_func_dep3;
+SELECT pg_describe_object(classid, objid, objsubid) as obj,
+       pg_describe_object(refclassid, refobjid, refobjsubid) as objref,
+       deptype
+  FROM pg_depend
+  WHERE classid = 'pg_extension'::regclass AND
+        objid = (SELECT oid FROM pg_extension WHERE extname = 'test_ext_req_schema1')
+  ORDER BY 1, 2;
+DROP EXTENSION test_ext_req_schema1 CASCADE;
+DROP SCHEMA test_func_dep1;
+DROP SCHEMA test_func_dep2;
+DROP SCHEMA test_func_dep3;
+
+--
 -- Test @extschema:extname@ syntax and no_relocate option
 --
+CREATE EXTENSION test_ext_req_schema1 SCHEMA has$dollar;
+CREATE EXTENSION test_ext_req_schema3 CASCADE;
+DROP EXTENSION test_ext_req_schema1;
 CREATE SCHEMA test_s_dep;
 CREATE EXTENSION test_ext_req_schema1 SCHEMA test_s_dep;
 CREATE EXTENSION test_ext_req_schema3 CASCADE;

@@ -4,7 +4,7 @@
  *	  Miscellaneous functions for bit-wise operations.
  *
  *
- * Copyright (c) 2019-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2019-2024, PostgreSQL Global Development Group
  *
  * src/include/port/pg_bitutils.h
  *
@@ -48,8 +48,9 @@ pg_leftmost_one_pos32(uint32 word)
 	unsigned long result;
 	bool		non_zero;
 
+	Assert(word != 0);
+
 	non_zero = _BitScanReverse(&result, word);
-	Assert(non_zero);
 	return (int) result;
 #else
 	int			shift = 32 - 8;
@@ -85,8 +86,9 @@ pg_leftmost_one_pos64(uint64 word)
 	unsigned long result;
 	bool		non_zero;
 
+	Assert(word != 0);
+
 	non_zero = _BitScanReverse64(&result, word);
-	Assert(non_zero);
 	return (int) result;
 #else
 	int			shift = 64 - 8;
@@ -116,8 +118,9 @@ pg_rightmost_one_pos32(uint32 word)
 	unsigned long result;
 	bool		non_zero;
 
+	Assert(word != 0);
+
 	non_zero = _BitScanForward(&result, word);
-	Assert(non_zero);
 	return (int) result;
 #else
 	int			result = 0;
@@ -156,8 +159,9 @@ pg_rightmost_one_pos64(uint64 word)
 	unsigned long result;
 	bool		non_zero;
 
+	Assert(word != 0);
+
 	non_zero = _BitScanForward64(&result, word);
-	Assert(non_zero);
 	return (int) result;
 #else
 	int			result = 0;
@@ -296,18 +300,96 @@ pg_ceil_log2_64(uint64 num)
 
 #ifdef TRY_POPCNT_FAST
 /* Attempt to use the POPCNT instruction, but perform a runtime check first */
-extern int	(*pg_popcount32) (uint32 word);
-extern int	(*pg_popcount64) (uint64 word);
+extern PGDLLIMPORT int (*pg_popcount32) (uint32 word);
+extern PGDLLIMPORT int (*pg_popcount64) (uint64 word);
+extern PGDLLIMPORT uint64 (*pg_popcount_optimized) (const char *buf, int bytes);
+extern PGDLLIMPORT uint64 (*pg_popcount_masked_optimized) (const char *buf, int bytes, bits8 mask);
+
+/*
+ * We can also try to use the AVX-512 popcount instruction on some systems.
+ * The implementation of that is located in its own file because it may
+ * require special compiler flags that we don't want to apply to any other
+ * files.
+ */
+#ifdef USE_AVX512_POPCNT_WITH_RUNTIME_CHECK
+extern bool pg_popcount_avx512_available(void);
+extern uint64 pg_popcount_avx512(const char *buf, int bytes);
+extern uint64 pg_popcount_masked_avx512(const char *buf, int bytes, bits8 mask);
+#endif
 
 #else
 /* Use a portable implementation -- no need for a function pointer. */
 extern int	pg_popcount32(uint32 word);
 extern int	pg_popcount64(uint64 word);
+extern uint64 pg_popcount_optimized(const char *buf, int bytes);
+extern uint64 pg_popcount_masked_optimized(const char *buf, int bytes, bits8 mask);
 
 #endif							/* TRY_POPCNT_FAST */
 
-/* Count the number of one-bits in a byte array */
-extern uint64 pg_popcount(const char *buf, int bytes);
+/*
+ * Returns the number of 1-bits in buf.
+ *
+ * If there aren't many bytes to process, the function call overhead of the
+ * optimized versions isn't worth taking, so we inline a loop that consults
+ * pg_number_of_ones in that case.  If there are many bytes to process, we
+ * accept the function call overhead because the optimized versions are likely
+ * to be faster.
+ */
+static inline uint64
+pg_popcount(const char *buf, int bytes)
+{
+	/*
+	 * We set the threshold to the point at which we'll first use special
+	 * instructions in the optimized version.
+	 */
+#if SIZEOF_VOID_P >= 8
+	int			threshold = 8;
+#else
+	int			threshold = 4;
+#endif
+
+	if (bytes < threshold)
+	{
+		uint64		popcnt = 0;
+
+		while (bytes--)
+			popcnt += pg_number_of_ones[(unsigned char) *buf++];
+		return popcnt;
+	}
+
+	return pg_popcount_optimized(buf, bytes);
+}
+
+/*
+ * Returns the number of 1-bits in buf after applying the mask to each byte.
+ *
+ * Similar to pg_popcount(), we only take on the function pointer overhead when
+ * it's likely to be faster.
+ */
+static inline uint64
+pg_popcount_masked(const char *buf, int bytes, bits8 mask)
+{
+	/*
+	 * We set the threshold to the point at which we'll first use special
+	 * instructions in the optimized version.
+	 */
+#if SIZEOF_VOID_P >= 8
+	int			threshold = 8;
+#else
+	int			threshold = 4;
+#endif
+
+	if (bytes < threshold)
+	{
+		uint64		popcnt = 0;
+
+		while (bytes--)
+			popcnt += pg_number_of_ones[(unsigned char) *buf++ & mask];
+		return popcnt;
+	}
+
+	return pg_popcount_masked_optimized(buf, bytes, mask);
+}
 
 /*
  * Rotate the bits of "word" to the right/left by n bits.

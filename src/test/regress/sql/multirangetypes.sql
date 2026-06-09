@@ -701,6 +701,27 @@ drop type textrange1;
 drop type textrange2;
 
 --
+-- Multiranges don't have their own ownership or permissions.
+--
+create type textrange1 as range(subtype=text, multirange_type_name=multitextrange1, collation="C");
+create role regress_multirange_owner;
+
+alter type multitextrange1 owner to regress_multirange_owner;  -- fail
+alter type textrange1 owner to regress_multirange_owner;
+set role regress_multirange_owner;
+revoke usage on type multitextrange1 from public;  -- fail
+revoke usage on type textrange1 from public;
+\dT+ *textrange1*
+create temp table test1(f1 multitextrange1[]);
+revoke usage on type textrange1 from regress_multirange_owner;
+create temp table test2(f1 multitextrange1[]);  -- fail
+
+drop table test1;
+drop type textrange1;
+reset role;
+drop role regress_multirange_owner;
+
+--
 -- Test polymorphic type system
 --
 
@@ -802,7 +823,7 @@ drop type two_ints cascade;
 
 set enable_sort = off;  -- try to make it pick a hash setop implementation
 
-select '{(2,5)}'::cashmultirange except select '{(5,6)}'::cashmultirange;
+select '{(01,10)}'::varbitmultirange except select '{(10,11)}'::varbitmultirange;
 
 reset enable_sort;
 

@@ -539,6 +539,33 @@ CREATE TEMP TABLE z (b TEXT, PRIMARY KEY(aa, b)) inherits (a);
 INSERT INTO z VALUES (NULL, 'text'); -- should fail
 ERROR:  null value in column "aa" of relation "z" violates not-null constraint
 DETAIL:  Failing row contains (null, text).
+-- Check inherited UPDATE with first child excluded
+create table some_tab (f1 int, f2 int, f3 int, check (f1 < 10) no inherit);
+create table some_tab_child () inherits(some_tab);
+insert into some_tab_child select i, i+1, 0 from generate_series(1,1000) i;
+create index on some_tab_child(f1, f2);
+-- while at it, also check that statement-level triggers fire
+create function some_tab_stmt_trig_func() returns trigger as
+$$begin raise notice 'updating some_tab'; return NULL; end;$$
+language plpgsql;
+create trigger some_tab_stmt_trig
+  before update on some_tab execute function some_tab_stmt_trig_func();
+explain (costs off)
+update some_tab set f3 = 11 where f1 = 12 and f2 = 13;
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
+ Update on some_tab
+   Update on some_tab_child some_tab_1
+   ->  Result
+         ->  Index Scan using some_tab_child_f1_f2_idx on some_tab_child some_tab_1
+               Index Cond: ((f1 = 12) AND (f2 = 13))
+(5 rows)
+
+update some_tab set f3 = 11 where f1 = 12 and f2 = 13;
+NOTICE:  updating some_tab
+drop table some_tab cascade;
+NOTICE:  drop cascades to table some_tab_child
+drop function some_tab_stmt_trig_func();
 -- Check inherited UPDATE with all children excluded
 create table some_tab (a int, b int);
 create table some_tab_child () inherits (some_tab);
@@ -1061,6 +1088,23 @@ Inherits: inht1,
           inhs1
 
 DROP TABLE inhts;
+-- Test for adding a column to a parent table with complex inheritance
+CREATE TABLE inhta ();
+CREATE TABLE inhtb () INHERITS (inhta);
+CREATE TABLE inhtc () INHERITS (inhtb);
+CREATE TABLE inhtd () INHERITS (inhta, inhtb, inhtc);
+ALTER TABLE inhta ADD COLUMN i int;
+NOTICE:  merging definition of column "i" for child "inhtd"
+NOTICE:  merging definition of column "i" for child "inhtd"
+\d+ inhta
+                                   Table "public.inhta"
+ Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+--------------+-------------
+ i      | integer |           |          |         | plain   |              | 
+Child tables: inhtb,
+              inhtd
+
+DROP TABLE inhta, inhtb, inhtc, inhtd;
 -- Test for renaming in diamond inheritance
 CREATE TABLE inht2 (x int) INHERITS (inht1);
 CREATE TABLE inht3 (y int) INHERITS (inht1);
@@ -1283,6 +1327,115 @@ order by 1, 2;
 
 drop table p1 cascade;
 NOTICE:  drop cascades to table p1_c1
+--
+-- Test DROP behavior of multiply-defined CHECK constraints
+--
+create table p1(f1 int constraint f1_pos CHECK (f1 > 0));
+create table p1_c1 (f1 int constraint f1_pos CHECK (f1 > 0)) inherits (p1);
+NOTICE:  merging column "f1" with inherited definition
+NOTICE:  merging constraint "f1_pos" with inherited definition
+alter table p1_c1 drop constraint f1_pos;
+ERROR:  cannot drop inherited constraint "f1_pos" of relation "p1_c1"
+alter table p1 drop constraint f1_pos;
+\d p1_c1
+               Table "public.p1_c1"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ f1     | integer |           |          | 
+Check constraints:
+    "f1_pos" CHECK (f1 > 0)
+Inherits: p1
+
+drop table p1 cascade;
+NOTICE:  drop cascades to table p1_c1
+create table p1(f1 int constraint f1_pos CHECK (f1 > 0));
+create table p2(f1 int constraint f1_pos CHECK (f1 > 0));
+create table p1p2_c1 (f1 int) inherits (p1, p2);
+NOTICE:  merging multiple inherited definitions of column "f1"
+NOTICE:  merging column "f1" with inherited definition
+create table p1p2_c2 (f1 int constraint f1_pos CHECK (f1 > 0)) inherits (p1, p2);
+NOTICE:  merging multiple inherited definitions of column "f1"
+NOTICE:  merging column "f1" with inherited definition
+NOTICE:  merging constraint "f1_pos" with inherited definition
+alter table p2 drop constraint f1_pos;
+alter table p1 drop constraint f1_pos;
+\d p1p2_c*
+              Table "public.p1p2_c1"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ f1     | integer |           |          | 
+Inherits: p1,
+          p2
+
+              Table "public.p1p2_c2"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ f1     | integer |           |          | 
+Check constraints:
+    "f1_pos" CHECK (f1 > 0)
+Inherits: p1,
+          p2
+
+drop table p1, p2 cascade;
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to table p1p2_c1
+drop cascades to table p1p2_c2
+create table p1(f1 int constraint f1_pos CHECK (f1 > 0));
+create table p1_c1() inherits (p1);
+create table p1_c2() inherits (p1);
+create table p1_c1c2() inherits (p1_c1, p1_c2);
+NOTICE:  merging multiple inherited definitions of column "f1"
+\d p1_c1c2
+              Table "public.p1_c1c2"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ f1     | integer |           |          | 
+Check constraints:
+    "f1_pos" CHECK (f1 > 0)
+Inherits: p1_c1,
+          p1_c2
+
+alter table p1 drop constraint f1_pos;
+\d p1_c1c2
+              Table "public.p1_c1c2"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ f1     | integer |           |          | 
+Inherits: p1_c1,
+          p1_c2
+
+drop table p1 cascade;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to table p1_c1
+drop cascades to table p1_c2
+drop cascades to table p1_c1c2
+create table p1(f1 int constraint f1_pos CHECK (f1 > 0));
+create table p1_c1() inherits (p1);
+create table p1_c2(constraint f1_pos CHECK (f1 > 0)) inherits (p1);
+NOTICE:  merging constraint "f1_pos" with inherited definition
+create table p1_c1c2() inherits (p1_c1, p1_c2, p1);
+NOTICE:  merging multiple inherited definitions of column "f1"
+NOTICE:  merging multiple inherited definitions of column "f1"
+alter table p1_c2 drop constraint f1_pos;
+ERROR:  cannot drop inherited constraint "f1_pos" of relation "p1_c2"
+alter table p1 drop constraint f1_pos;
+alter table p1_c1c2 drop constraint f1_pos;
+ERROR:  cannot drop inherited constraint "f1_pos" of relation "p1_c1c2"
+alter table p1_c2 drop constraint f1_pos;
+\d p1_c1c2
+              Table "public.p1_c1c2"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ f1     | integer |           |          | 
+Inherits: p1_c1,
+          p1_c2,
+          p1
+
+drop table p1 cascade;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to table p1_c1
+drop cascades to table p1_c2
+drop cascades to table p1_c1c2
 -- Test that a valid child can have not-valid parent, but not vice versa
 create table invalid_check_con(f1 int);
 create table invalid_check_con_child() inherits(invalid_check_con);
@@ -1490,8 +1643,8 @@ explain (verbose, costs off) select min(1-id) from matest0;
                                    QUERY PLAN                                    
 ---------------------------------------------------------------------------------
  Result
-   Output: $0
-   InitPlan 1 (returns $0)
+   Output: (InitPlan 1).col1
+   InitPlan 1
      ->  Limit
            Output: ((1 - matest0.id))
            ->  Result
@@ -1563,6 +1716,29 @@ order by t1.b limit 10;
 reset enable_nestloop;
 drop table matest0 cascade;
 NOTICE:  drop cascades to table matest1
+-- Test a MergeAppend plan where one child requires a sort
+create table matest0(a int primary key);
+create table matest1() inherits (matest0);
+insert into matest0 select generate_series(1, 400);
+insert into matest1 select generate_series(1, 200);
+analyze matest0;
+analyze matest1;
+explain (costs off)
+select * from matest0 where a < 100 order by a;
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Merge Append
+   Sort Key: matest0.a
+   ->  Index Only Scan using matest0_pkey on matest0 matest0_1
+         Index Cond: (a < 100)
+   ->  Sort
+         Sort Key: matest0_2.a
+         ->  Seq Scan on matest1 matest0_2
+               Filter: (a < 100)
+(8 rows)
+
+drop table matest0 cascade;
+NOTICE:  drop cascades to table matest1
 --
 -- Test merge-append for UNION ALL append relations
 --
@@ -1624,7 +1800,7 @@ SELECT min(x) FROM
                              QUERY PLAN                             
 --------------------------------------------------------------------
  Result
-   InitPlan 1 (returns $0)
+   InitPlan 1
      ->  Limit
            ->  Merge Append
                  Sort Key: a.unique1
@@ -1642,7 +1818,7 @@ SELECT min(y) FROM
                              QUERY PLAN                             
 --------------------------------------------------------------------
  Result
-   InitPlan 1 (returns $0)
+   InitPlan 1
      ->  Limit
            ->  Merge Append
                  Sort Key: a.unique1
@@ -1722,19 +1898,19 @@ insert into inhpar select x, x::text from generate_series(1,5) x;
 insert into inhcld select x::text, x from generate_series(6,10) x;
 explain (verbose, costs off)
 update inhpar i set (f1, f2) = (select i.f1, i.f2 || '-' from int4_tbl limit 1);
-                               QUERY PLAN                                
--------------------------------------------------------------------------
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
  Update on public.inhpar i
    Update on public.inhpar i_1
    Update on public.inhcld i_2
    ->  Result
-         Output: $2, $3, (SubPlan 1 (returns $2,$3)), i.tableoid, i.ctid
+         Output: (SubPlan 1).col1, (SubPlan 1).col2, (rescan SubPlan 1), i.tableoid, i.ctid
          ->  Append
                ->  Seq Scan on public.inhpar i_1
                      Output: i_1.f1, i_1.f2, i_1.tableoid, i_1.ctid
                ->  Seq Scan on public.inhcld i_2
                      Output: i_2.f1, i_2.f2, i_2.tableoid, i_2.ctid
-         SubPlan 1 (returns $2,$3)
+         SubPlan 1
            ->  Limit
                  Output: (i.f1), (((i.f2)::text || '-'::text))
                  ->  Seq Scan on public.int4_tbl
@@ -1770,21 +1946,21 @@ alter table inhpar attach partition inhcld2 for values from (5) to (100);
 insert into inhpar select x, x::text from generate_series(1,10) x;
 explain (verbose, costs off)
 update inhpar i set (f1, f2) = (select i.f1, i.f2 || '-' from int4_tbl limit 1);
-                                    QUERY PLAN                                     
------------------------------------------------------------------------------------
+                                              QUERY PLAN                                              
+------------------------------------------------------------------------------------------------------
  Update on public.inhpar i
    Update on public.inhcld1 i_1
    Update on public.inhcld2 i_2
    ->  Append
          ->  Seq Scan on public.inhcld1 i_1
-               Output: $2, $3, (SubPlan 1 (returns $2,$3)), i_1.tableoid, i_1.ctid
-               SubPlan 1 (returns $2,$3)
+               Output: (SubPlan 1).col1, (SubPlan 1).col2, (rescan SubPlan 1), i_1.tableoid, i_1.ctid
+               SubPlan 1
                  ->  Limit
                        Output: (i_1.f1), (((i_1.f2)::text || '-'::text))
                        ->  Seq Scan on public.int4_tbl
                              Output: i_1.f1, ((i_1.f2)::text || '-'::text)
          ->  Seq Scan on public.inhcld2 i_2
-               Output: $2, $3, (SubPlan 1 (returns $2,$3)), i_2.tableoid, i_2.ctid
+               Output: (SubPlan 1).col1, (SubPlan 1).col2, (rescan SubPlan 1), i_2.tableoid, i_2.ctid
 (13 rows)
 
 update inhpar i set (f1, f2) = (select i.f1, i.f2 || '-' from int4_tbl limit 1);
@@ -1846,6 +2022,27 @@ select * from cnullparent where f1 = 2;
 
 drop table cnullparent cascade;
 NOTICE:  drop cascades to table cnullchild
+--
+-- Mixed ownership inheritance tree
+--
+create role regress_alice;
+create role regress_bob;
+grant all on schema public to regress_alice, regress_bob;
+grant regress_alice to regress_bob;
+set session authorization regress_alice;
+create table inh_parent (a int not null);
+set session authorization regress_bob;
+create table inh_child () inherits (inh_parent);
+set session authorization regress_alice;
+-- alice can't do this: she doesn't own inh_child
+alter table inh_parent alter a drop not null;
+ERROR:  must be owner of table inh_child
+set session authorization regress_bob;
+alter table inh_parent alter a drop not null;
+reset session authorization;
+drop table inh_parent, inh_child;
+revoke all on schema public from regress_alice, regress_bob;
+drop role regress_alice, regress_bob;
 --
 -- Check use of temporary tables with inheritance trees
 --
@@ -2174,11 +2371,11 @@ explain (costs off) select min(a), max(a) from parted_minmax where b = '12345';
                                            QUERY PLAN                                           
 ------------------------------------------------------------------------------------------------
  Result
-   InitPlan 1 (returns $0)
+   InitPlan 1
      ->  Limit
            ->  Index Only Scan using parted_minmax1i on parted_minmax1 parted_minmax
                  Index Cond: ((a IS NOT NULL) AND (b = '12345'::text))
-   InitPlan 2 (returns $1)
+   InitPlan 2
      ->  Limit
            ->  Index Only Scan Backward using parted_minmax1i on parted_minmax1 parted_minmax_1
                  Index Cond: ((a IS NOT NULL) AND (b = '12345'::text))

@@ -4,7 +4,7 @@
  *	  private declarations for GiST -- declarations related to the
  *	  internal implementation of GiST, not the public API
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/gist_private.h
@@ -187,8 +187,8 @@ typedef struct gistxlogPage
 	int			num;			/* number of index tuples following */
 } gistxlogPage;
 
-/* SplitedPageLayout - gistSplit function result */
-typedef struct SplitedPageLayout
+/* SplitPageLayout - gistSplit function result */
+typedef struct SplitPageLayout
 {
 	gistxlogPage block;
 	IndexTupleData *list;
@@ -197,8 +197,8 @@ typedef struct SplitedPageLayout
 	Page		page;			/* to operate */
 	Buffer		buffer;			/* to write after all proceed */
 
-	struct SplitedPageLayout *next;
-} SplitedPageLayout;
+	struct SplitPageLayout *next;
+} SplitPageLayout;
 
 /*
  * GISTInsertStack used for locking buffers and transfer arguments during
@@ -385,7 +385,7 @@ typedef enum GistOptBufferingMode
 {
 	GIST_OPTION_BUFFERING_AUTO,
 	GIST_OPTION_BUFFERING_ON,
-	GIST_OPTION_BUFFERING_OFF
+	GIST_OPTION_BUFFERING_OFF,
 } GistOptBufferingMode;
 
 /*
@@ -432,8 +432,8 @@ extern bool gistplacetopage(Relation rel, Size freespace, GISTSTATE *giststate,
 							Relation heapRel,
 							bool is_build);
 
-extern SplitedPageLayout *gistSplit(Relation r, Page page, IndexTuple *itup,
-									int len, GISTSTATE *giststate);
+extern SplitPageLayout *gistSplit(Relation r, Page page, IndexTuple *itup,
+								  int len, GISTSTATE *giststate);
 
 /* gistxlog.c */
 extern XLogRecPtr gistXLogPageDelete(Buffer buffer,
@@ -453,7 +453,7 @@ extern XLogRecPtr gistXLogDelete(Buffer buffer, OffsetNumber *todelete,
 								 Relation heaprel);
 
 extern XLogRecPtr gistXLogSplit(bool page_is_leaf,
-								SplitedPageLayout *dist,
+								SplitPageLayout *dist,
 								BlockNumber origrlink, GistNSN orignsn,
 								Buffer leftchildbuf, bool markfollowright);
 
@@ -502,9 +502,9 @@ extern IndexTuple gistgetadjusted(Relation r,
 								  IndexTuple addtup,
 								  GISTSTATE *giststate);
 extern IndexTuple gistFormTuple(GISTSTATE *giststate,
-								Relation r, Datum *attdata, bool *isnull, bool isleaf);
+								Relation r, const Datum *attdata, const bool *isnull, bool isleaf);
 extern void gistCompressValues(GISTSTATE *giststate, Relation r,
-							   Datum *attdata, bool *isnull, bool isleaf, Datum *compatt);
+							   const Datum *attdata, const bool *isnull, bool isleaf, Datum *compatt);
 
 extern OffsetNumber gistchoose(Relation r, Page p,
 							   IndexTuple it,

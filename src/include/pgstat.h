@@ -3,7 +3,7 @@
  *
  *	Definitions for the PostgreSQL cumulative statistics system.
  *
- *	Copyright (c) 2001-2023, PostgreSQL Global Development Group
+ *	Copyright (c) 2001-2024, PostgreSQL Global Development Group
  *
  *	src/include/pgstat.h
  * ----------
@@ -64,7 +64,7 @@ typedef enum TrackFunctionsLevel
 {
 	TRACK_FUNC_OFF,
 	TRACK_FUNC_PL,
-	TRACK_FUNC_ALL
+	TRACK_FUNC_ALL,
 }			TrackFunctionsLevel;
 
 typedef enum PgStat_FetchConsistency
@@ -81,7 +81,7 @@ typedef enum SessionEndType
 	DISCONNECT_NORMAL,
 	DISCONNECT_CLIENT_EOF,
 	DISCONNECT_FATAL,
-	DISCONNECT_KILLED
+	DISCONNECT_KILLED,
 } SessionEndType;
 
 /* ----------
@@ -262,13 +262,15 @@ typedef struct PgStat_BgWriterStats
 
 typedef struct PgStat_CheckpointerStats
 {
-	PgStat_Counter timed_checkpoints;
-	PgStat_Counter requested_checkpoints;
-	PgStat_Counter checkpoint_write_time;	/* times in milliseconds */
-	PgStat_Counter checkpoint_sync_time;
-	PgStat_Counter buf_written_checkpoints;
-	PgStat_Counter buf_written_backend;
-	PgStat_Counter buf_fsync_backend;
+	PgStat_Counter num_timed;
+	PgStat_Counter num_requested;
+	PgStat_Counter restartpoints_timed;
+	PgStat_Counter restartpoints_requested;
+	PgStat_Counter restartpoints_performed;
+	PgStat_Counter write_time;	/* times in milliseconds */
+	PgStat_Counter sync_time;
+	PgStat_Counter buffers_written;
+	TimestampTz stat_reset_timestamp;
 } PgStat_CheckpointerStats;
 
 
@@ -522,7 +524,7 @@ extern bool pgstat_bktype_io_stats_valid(PgStat_BktypeIO *backend_io,
 										 BackendType bktype);
 extern void pgstat_count_io_op(IOObject io_object, IOContext io_context, IOOp io_op);
 extern void pgstat_count_io_op_n(IOObject io_object, IOContext io_context, IOOp io_op, uint32 cnt);
-extern instr_time pgstat_prepare_io_time(void);
+extern instr_time pgstat_prepare_io_time(bool track_io_guc);
 extern void pgstat_count_io_op_time(IOObject io_object, IOContext io_context,
 									IOOp io_op, instr_time start_time, uint32 cnt);
 

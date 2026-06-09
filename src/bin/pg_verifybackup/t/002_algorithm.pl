@@ -1,10 +1,10 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Verify that we can take and verify backups with various checksum types.
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use File::Path qw(rmtree);
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;

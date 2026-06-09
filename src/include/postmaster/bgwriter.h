@@ -6,7 +6,7 @@
  * The bgwriter process used to handle checkpointing duties too.  Now
  * there is a separate process, but we did not bother to split this header.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  * src/include/postmaster/bgwriter.h
  *
@@ -27,8 +27,8 @@ extern PGDLLIMPORT int CheckPointTimeout;
 extern PGDLLIMPORT int CheckPointWarning;
 extern PGDLLIMPORT double CheckPointCompletionTarget;
 
-extern void BackgroundWriterMain(void) pg_attribute_noreturn();
-extern void CheckpointerMain(void) pg_attribute_noreturn();
+extern void BackgroundWriterMain(char *startup_data, size_t startup_data_len) pg_attribute_noreturn();
+extern void CheckpointerMain(char *startup_data, size_t startup_data_len) pg_attribute_noreturn();
 
 extern void RequestCheckpoint(int flags);
 extern void CheckpointWriteDelay(int flags, double progress);

@@ -40,6 +40,7 @@ install: all installdirs
 	$(INSTALL_DATA) $(srcdir)/port.h         '$(DESTDIR)$(includedir_internal)'
 	$(INSTALL_DATA) $(srcdir)/postgres_fe.h  '$(DESTDIR)$(includedir_internal)'
 	$(INSTALL_DATA) $(srcdir)/libpq/pqcomm.h '$(DESTDIR)$(includedir_internal)/libpq'
+	$(INSTALL_DATA) $(srcdir)/libpq/protocol.h '$(DESTDIR)$(includedir_internal)/libpq'
 # These headers are needed for server-side development
 	$(INSTALL_DATA) pg_config.h     '$(DESTDIR)$(includedir_server)'
 	$(INSTALL_DATA) pg_config_ext.h '$(DESTDIR)$(includedir_server)'
@@ -53,10 +54,11 @@ install: all installdirs
 	  $(INSTALL_DATA) $(srcdir)/$$dir/*.h '$(DESTDIR)$(includedir_server)'/$$dir || exit; \
 	done
 ifeq ($(vpath_build),yes)
-	for file in catalog/schemapg.h catalog/system_fk_info.h catalog/pg_*_d.h catalog/ag_*_d.h storage/lwlocknames.h utils/probes.h; do \
+	for file in storage/lwlocknames.h utils/probes.h utils/wait_event_types.h; do \
 	  $(INSTALL_DATA) $$file '$(DESTDIR)$(includedir_server)'/$$file || exit; \
 	done
 endif
+	$(MAKE) -C catalog install
 
 installdirs:
 	$(MKDIR_P) '$(DESTDIR)$(includedir)/libpq' '$(DESTDIR)$(includedir_internal)/libpq'
@@ -65,17 +67,17 @@ installdirs:
 
 uninstall:
 	rm -f $(addprefix '$(DESTDIR)$(includedir)'/, pg_config.h pg_config_ext.h pg_config_os.h pg_config_manual.h postgres_ext.h libpq/libpq-fs.h)
-	rm -f $(addprefix '$(DESTDIR)$(includedir_internal)'/, c.h port.h postgres_fe.h libpq/pqcomm.h)
+	rm -f $(addprefix '$(DESTDIR)$(includedir_internal)'/, c.h port.h postgres_fe.h libpq/pqcomm.h libpq/protocol.h)
 # heuristic...
 	rm -rf $(addprefix '$(DESTDIR)$(includedir_server)'/, $(SUBDIRS) *.h)
+	$(MAKE) -C catalog uninstall
 
 
 clean:
 	rm -f utils/fmgroids.h utils/fmgrprotos.h utils/errcodes.h utils/header-stamp
-	rm -f storage/lwlocknames.h utils/probes.h
-	rm -f catalog/schemapg.h catalog/system_fk_info.h
-	rm -f catalog/pg_*_d.h catalog/ag_*_d.h catalog/header-stamp
+	rm -f storage/lwlocknames.h utils/probes.h utils/wait_event_types.h
 	rm -f nodes/nodetags.h nodes/header-stamp
+	$(MAKE) -C catalog clean
 
-distclean maintainer-clean: clean
+distclean: clean
 	rm -f pg_config.h pg_config_ext.h pg_config_os.h stamp-h stamp-ext-h

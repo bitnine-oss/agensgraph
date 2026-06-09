@@ -3,7 +3,7 @@
  * backup_manifest.c
  *	  code for generating and sending a backup manifest
  *
- * Portions Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/backup/backup_manifest.c
@@ -13,10 +13,9 @@
 #include "postgres.h"
 
 #include "access/timeline.h"
+#include "access/xlog.h"
 #include "backup/backup_manifest.h"
 #include "backup/basebackup_sink.h"
-#include "libpq/libpq.h"
-#include "libpq/pqformat.h"
 #include "mb/pg_wchar.h"
 #include "utils/builtins.h"
 #include "utils/json.h"
@@ -79,8 +78,10 @@ InitializeBackupManifest(backup_manifest_info *manifest,
 
 	if (want_manifest != MANIFEST_OPTION_NO)
 		AppendToManifest(manifest,
-						 "{ \"PostgreSQL-Backup-Manifest-Version\": 1,\n"
-						 "\"Files\": [");
+						 "{ \"PostgreSQL-Backup-Manifest-Version\": 2,\n"
+						 "\"System-Identifier\": " UINT64_FORMAT ",\n"
+						 "\"Files\": [",
+						 GetSystemIdentifier());
 }
 
 /*
@@ -97,7 +98,7 @@ FreeBackupManifest(backup_manifest_info *manifest)
  * Add an entry to the backup manifest for a file.
  */
 void
-AddFileToBackupManifest(backup_manifest_info *manifest, const char *spcoid,
+AddFileToBackupManifest(backup_manifest_info *manifest, Oid spcoid,
 						const char *pathname, size_t size, pg_time_t mtime,
 						pg_checksum_context *checksum_ctx)
 {
@@ -114,9 +115,9 @@ AddFileToBackupManifest(backup_manifest_info *manifest, const char *spcoid,
 	 * pathname relative to the data directory (ignoring the intermediate
 	 * symlink traversal).
 	 */
-	if (spcoid != NULL)
+	if (OidIsValid(spcoid))
 	{
-		snprintf(pathbuf, sizeof(pathbuf), "pg_tblspc/%s/%s", spcoid,
+		snprintf(pathbuf, sizeof(pathbuf), "pg_tblspc/%u/%s", spcoid,
 				 pathname);
 		pathname = pathbuf;
 	}

@@ -4,7 +4,7 @@
  *	  definition of the "index" system catalog (pg_index)
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_index.h
@@ -69,8 +69,10 @@ CATALOG(pg_index,2610,IndexRelationId) BKI_SCHEMA_MACRO
  */
 typedef FormData_pg_index *Form_pg_index;
 
-DECLARE_INDEX(pg_index_indrelid_index, 2678, IndexIndrelidIndexId, on pg_index using btree(indrelid oid_ops));
-DECLARE_UNIQUE_INDEX_PKEY(pg_index_indexrelid_index, 2679, IndexRelidIndexId, on pg_index using btree(indexrelid oid_ops));
+DECLARE_INDEX(pg_index_indrelid_index, 2678, IndexIndrelidIndexId, pg_index, btree(indrelid oid_ops));
+DECLARE_UNIQUE_INDEX_PKEY(pg_index_indexrelid_index, 2679, IndexRelidIndexId, pg_index, btree(indexrelid oid_ops));
+
+MAKE_SYSCACHE(INDEXRELID, pg_index_indexrelid_index, 64);
 
 /* indkey can contain zero (InvalidAttrNumber) to represent expressions */
 DECLARE_ARRAY_FOREIGN_KEY_OPT((indrelid, indkey), pg_attribute, (attrelid, attnum));

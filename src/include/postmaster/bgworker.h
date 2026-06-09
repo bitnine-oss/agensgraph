@@ -31,7 +31,7 @@
  * different) code.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -78,7 +78,7 @@ typedef enum
 {
 	BgWorkerStart_PostmasterStart,
 	BgWorkerStart_ConsistentState,
-	BgWorkerStart_RecoveryFinished
+	BgWorkerStart_RecoveryFinished,
 } BgWorkerStartTime;
 
 #define BGW_DEFAULT_RESTART_INTERVAL	60
@@ -93,7 +93,7 @@ typedef struct BackgroundWorker
 	int			bgw_flags;
 	BgWorkerStartTime bgw_start_time;
 	int			bgw_restart_time;	/* in seconds, or BGW_NEVER_RESTART */
-	char		bgw_library_name[BGW_MAXLEN];
+	char		bgw_library_name[MAXPGPATH];
 	char		bgw_function_name[BGW_MAXLEN];
 	Datum		bgw_main_arg;
 	char		bgw_extra[BGW_EXTRALEN];
@@ -105,7 +105,7 @@ typedef enum BgwHandleStatus
 	BGWH_STARTED,				/* worker is running */
 	BGWH_NOT_YET_STARTED,		/* worker hasn't been started yet */
 	BGWH_STOPPED,				/* worker has exited */
-	BGWH_POSTMASTER_DIED		/* postmaster died; worker status unclear */
+	BGWH_POSTMASTER_DIED,		/* postmaster died; worker status unclear */
 } BgwHandleStatus;
 
 struct BackgroundWorkerHandle;
@@ -150,9 +150,11 @@ extern void BackgroundWorkerInitializeConnectionByOid(Oid dboid, Oid useroid, ui
  * Flags to BackgroundWorkerInitializeConnection et al
  *
  *
- * Allow bypassing datallowconn restrictions when connecting to database
+ * Allow bypassing datallowconn restrictions and login check when connecting
+ * to database
  */
-#define BGWORKER_BYPASS_ALLOWCONN 1
+#define BGWORKER_BYPASS_ALLOWCONN 0x0001
+#define BGWORKER_BYPASS_ROLELOGINCHECK 0x0002
 
 
 /* Block/unblock signals in a background worker process */

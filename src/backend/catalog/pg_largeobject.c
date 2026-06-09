@@ -3,7 +3,7 @@
  * pg_largeobject.c
  *	  routines to support manipulation of the pg_largeobject relation
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -16,15 +16,12 @@
 
 #include "access/genam.h"
 #include "access/htup_details.h"
-#include "access/sysattr.h"
 #include "access/table.h"
 #include "catalog/catalog.h"
-#include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_largeobject.h"
 #include "catalog/pg_largeobject_metadata.h"
 #include "miscadmin.h"
-#include "utils/acl.h"
 #include "utils/fmgroids.h"
 #include "utils/rel.h"
 

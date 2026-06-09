@@ -1,10 +1,10 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Test primary/standby scenario where the track_commit_timestamp GUC is
 # repeatedly toggled on and off.
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use PostgreSQL::Test::Utils;
 use Test::More;

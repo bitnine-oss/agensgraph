@@ -4,7 +4,7 @@
  *	  definition of the system catalog containing the state for each
  *	  replicated table in each subscription (pg_subscription_rel)
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_subscription_rel.h
@@ -49,7 +49,9 @@ CATALOG(pg_subscription_rel,6102,SubscriptionRelRelationId)
 
 typedef FormData_pg_subscription_rel *Form_pg_subscription_rel;
 
-DECLARE_UNIQUE_INDEX_PKEY(pg_subscription_rel_srrelid_srsubid_index, 6117, SubscriptionRelSrrelidSrsubidIndexId, on pg_subscription_rel using btree(srrelid oid_ops, srsubid oid_ops));
+DECLARE_UNIQUE_INDEX_PKEY(pg_subscription_rel_srrelid_srsubid_index, 6117, SubscriptionRelSrrelidSrsubidIndexId, pg_subscription_rel, btree(srrelid oid_ops, srsubid oid_ops));
+
+MAKE_SYSCACHE(SUBSCRIPTIONRELMAP, pg_subscription_rel_srrelid_srsubid_index, 64);
 
 #ifdef EXPOSE_TO_CLIENT_CODE
 
@@ -81,7 +83,7 @@ typedef struct SubscriptionRelState
 } SubscriptionRelState;
 
 extern void AddSubscriptionRelState(Oid subid, Oid relid, char state,
-									XLogRecPtr sublsn);
+									XLogRecPtr sublsn, bool retain_lock);
 extern void UpdateSubscriptionRelState(Oid subid, Oid relid, char state,
 									   XLogRecPtr sublsn);
 extern char GetSubscriptionRelState(Oid subid, Oid relid, XLogRecPtr *sublsn);

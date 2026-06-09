@@ -8,7 +8,7 @@
  * exit-time cleanup for either a postmaster or a backend.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/ipc.h
@@ -79,6 +79,9 @@ extern PGDLLIMPORT shmem_startup_hook_type shmem_startup_hook;
 
 extern Size CalculateShmemSize(int *num_semaphores);
 extern void CreateSharedMemoryAndSemaphores(void);
+#ifdef EXEC_BACKEND
+extern void AttachSharedMemoryStructs(void);
+#endif
 extern void InitializeShmemGUCs(void);
 
 #endif							/* IPC_H */

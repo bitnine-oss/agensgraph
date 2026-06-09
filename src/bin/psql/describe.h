@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2024, PostgreSQL Global Development Group
  *
  * src/bin/psql/describe.h
  */
@@ -36,6 +36,9 @@ extern bool describeRoles(const char *pattern, bool verbose, bool showSystem);
 
 /* \drds */
 extern bool listDbRoleSettings(const char *pattern, const char *pattern2);
+
+/* \drg */
+extern bool describeRoleGrants(const char *pattern, bool showSystem);
 
 /* \z (or \dp) */
 extern bool permissionsList(const char *pattern, bool showSystem);

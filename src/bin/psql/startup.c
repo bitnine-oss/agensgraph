@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2024, PostgreSQL Global Development Group
  *
  * src/bin/psql/startup.c
  */
@@ -47,7 +47,7 @@ enum _actions
 {
 	ACT_SINGLE_QUERY,
 	ACT_SINGLE_SLASH,
-	ACT_FILE
+	ACT_FILE,
 };
 
 typedef struct SimpleActionListCell

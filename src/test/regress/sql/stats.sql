@@ -376,6 +376,36 @@ COMMIT;
 SELECT seq_scan, :'test_last_seq' = last_seq_scan AS seq_ok, idx_scan, :'test_last_idx' < last_idx_scan AS idx_ok
 FROM pg_stat_all_tables WHERE relid = 'test_last_scan'::regclass;
 
+-----
+-- Test reset of some stats for shared table
+-----
+
+-- This updates the comment of the database currently in use in
+-- pg_shdescription with a fake value, then sets it back to its
+-- original value.
+SELECT shobj_description(d.oid, 'pg_database') as description_before
+  FROM pg_database d WHERE datname = current_database() \gset
+
+-- force some stats in pg_shdescription.
+BEGIN;
+SELECT current_database() as datname \gset
+COMMENT ON DATABASE :"datname" IS 'This is a test comment';
+SELECT pg_stat_force_next_flush();
+COMMIT;
+
+-- check that the stats are reset.
+SELECT (n_tup_ins + n_tup_upd) > 0 AS has_data FROM pg_stat_all_tables
+  WHERE relid = 'pg_shdescription'::regclass;
+SELECT pg_stat_reset_single_table_counters('pg_shdescription'::regclass);
+SELECT (n_tup_ins + n_tup_upd) > 0 AS has_data FROM pg_stat_all_tables
+  WHERE relid = 'pg_shdescription'::regclass;
+
+-- set back comment
+\if :{?description_before}
+  COMMENT ON DATABASE :"datname" IS :'description_before';
+\else
+  COMMENT ON DATABASE :"datname" IS NULL;
+\endif
 
 -----
 -- Test that various stats views are being properly populated
@@ -387,8 +417,8 @@ SELECT sessions AS db_stat_sessions FROM pg_stat_database WHERE datname = (SELEC
 SELECT pg_stat_force_next_flush();
 SELECT sessions > :db_stat_sessions FROM pg_stat_database WHERE datname = (SELECT current_database());
 
--- Test pg_stat_bgwriter checkpointer-related stats, together with pg_stat_wal
-SELECT checkpoints_req AS rqst_ckpts_before FROM pg_stat_bgwriter \gset
+-- Test pg_stat_checkpointer checkpointer-related stats, together with pg_stat_wal
+SELECT num_requested AS rqst_ckpts_before FROM pg_stat_checkpointer \gset
 
 -- Test pg_stat_wal (and make a temp table so our temp schema exists)
 SELECT wal_bytes AS wal_bytes_before FROM pg_stat_wal \gset
@@ -402,7 +432,7 @@ DROP TABLE test_stats_temp;
 CHECKPOINT;
 CHECKPOINT;
 
-SELECT checkpoints_req > :rqst_ckpts_before FROM pg_stat_bgwriter;
+SELECT num_requested > :rqst_ckpts_before FROM pg_stat_checkpointer;
 SELECT wal_bytes > :wal_bytes_before FROM pg_stat_wal;
 
 -- Test pg_stat_get_backend_idset() and some allied functions.
@@ -417,40 +447,49 @@ WHERE pg_stat_get_backend_pid(beid) = pg_backend_pid();
 -----
 
 -- Test that reset_slru with a specified SLRU works.
-SELECT stats_reset AS slru_commit_ts_reset_ts FROM pg_stat_slru WHERE name = 'CommitTs' \gset
-SELECT stats_reset AS slru_notify_reset_ts FROM pg_stat_slru WHERE name = 'Notify' \gset
-SELECT pg_stat_reset_slru('CommitTs');
-SELECT stats_reset > :'slru_commit_ts_reset_ts'::timestamptz FROM pg_stat_slru WHERE name = 'CommitTs';
-SELECT stats_reset AS slru_commit_ts_reset_ts FROM pg_stat_slru WHERE name = 'CommitTs' \gset
+SELECT stats_reset AS slru_commit_ts_reset_ts FROM pg_stat_slru WHERE name = 'commit_timestamp' \gset
+SELECT stats_reset AS slru_notify_reset_ts FROM pg_stat_slru WHERE name = 'notify' \gset
+SELECT pg_stat_reset_slru('commit_timestamp');
+SELECT stats_reset > :'slru_commit_ts_reset_ts'::timestamptz FROM pg_stat_slru WHERE name = 'commit_timestamp';
+SELECT stats_reset AS slru_commit_ts_reset_ts FROM pg_stat_slru WHERE name = 'commit_timestamp' \gset
 
 -- Test that multiple SLRUs are reset when no specific SLRU provided to reset function
-SELECT pg_stat_reset_slru(NULL);
-SELECT stats_reset > :'slru_commit_ts_reset_ts'::timestamptz FROM pg_stat_slru WHERE name = 'CommitTs';
-SELECT stats_reset > :'slru_notify_reset_ts'::timestamptz FROM pg_stat_slru WHERE name = 'Notify';
+SELECT pg_stat_reset_slru();
+SELECT stats_reset > :'slru_commit_ts_reset_ts'::timestamptz FROM pg_stat_slru WHERE name = 'commit_timestamp';
+SELECT stats_reset > :'slru_notify_reset_ts'::timestamptz FROM pg_stat_slru WHERE name = 'notify';
 
 -- Test that reset_shared with archiver specified as the stats type works
 SELECT stats_reset AS archiver_reset_ts FROM pg_stat_archiver \gset
 SELECT pg_stat_reset_shared('archiver');
 SELECT stats_reset > :'archiver_reset_ts'::timestamptz FROM pg_stat_archiver;
-SELECT stats_reset AS archiver_reset_ts FROM pg_stat_archiver \gset
 
 -- Test that reset_shared with bgwriter specified as the stats type works
 SELECT stats_reset AS bgwriter_reset_ts FROM pg_stat_bgwriter \gset
 SELECT pg_stat_reset_shared('bgwriter');
 SELECT stats_reset > :'bgwriter_reset_ts'::timestamptz FROM pg_stat_bgwriter;
-SELECT stats_reset AS bgwriter_reset_ts FROM pg_stat_bgwriter \gset
+
+-- Test that reset_shared with checkpointer specified as the stats type works
+SELECT stats_reset AS checkpointer_reset_ts FROM pg_stat_checkpointer \gset
+SELECT pg_stat_reset_shared('checkpointer');
+SELECT stats_reset > :'checkpointer_reset_ts'::timestamptz FROM pg_stat_checkpointer;
+
+-- Test that reset_shared with recovery_prefetch specified as the stats type works
+SELECT stats_reset AS recovery_prefetch_reset_ts FROM pg_stat_recovery_prefetch \gset
+SELECT pg_stat_reset_shared('recovery_prefetch');
+SELECT stats_reset > :'recovery_prefetch_reset_ts'::timestamptz FROM pg_stat_recovery_prefetch;
+
+-- Test that reset_shared with slru specified as the stats type works
+SELECT max(stats_reset) AS slru_reset_ts FROM pg_stat_slru \gset
+SELECT pg_stat_reset_shared('slru');
+SELECT max(stats_reset) > :'slru_reset_ts'::timestamptz FROM pg_stat_slru;
 
 -- Test that reset_shared with wal specified as the stats type works
 SELECT stats_reset AS wal_reset_ts FROM pg_stat_wal \gset
 SELECT pg_stat_reset_shared('wal');
 SELECT stats_reset > :'wal_reset_ts'::timestamptz FROM pg_stat_wal;
-SELECT stats_reset AS wal_reset_ts FROM pg_stat_wal \gset
 
--- Test that reset_shared with no specified stats type doesn't reset anything
-SELECT pg_stat_reset_shared(NULL);
-SELECT stats_reset = :'archiver_reset_ts'::timestamptz FROM pg_stat_archiver;
-SELECT stats_reset = :'bgwriter_reset_ts'::timestamptz FROM pg_stat_bgwriter;
-SELECT stats_reset = :'wal_reset_ts'::timestamptz FROM pg_stat_wal;
+-- Test error case for reset_shared with unknown stats type
+SELECT pg_stat_reset_shared('unknown');
 
 -- Test that reset works for pg_stat_database
 
@@ -678,7 +717,11 @@ SELECT :io_sum_local_new_tblspc_writes > :io_sum_local_after_writes;
 RESET temp_buffers;
 
 -- Test that reuse of strategy buffers and reads of blocks into these reused
--- buffers while VACUUMing are tracked in pg_stat_io.
+-- buffers while VACUUMing are tracked in pg_stat_io. If there is sufficient
+-- demand for shared buffers from concurrent queries, some buffers may be
+-- pinned by other backends before they can be reused. In such cases, the
+-- backend will evict a buffer from outside the ring and add it to the
+-- ring. This is considered an eviction and not a reuse.
 
 -- Set wal_skip_threshold smaller than the expected size of
 -- test_io_vac_strategy so that, even if wal_level is minimal, VACUUM FULL will
@@ -687,21 +730,22 @@ RESET temp_buffers;
 -- shared buffers -- preventing us from testing BAS_VACUUM BufferAccessStrategy
 -- reads.
 SET wal_skip_threshold = '1 kB';
-SELECT sum(reuses) AS reuses, sum(reads) AS reads
+SELECT sum(reuses) AS reuses, sum(reads) AS reads, sum(evictions) AS evictions
   FROM pg_stat_io WHERE context = 'vacuum' \gset io_sum_vac_strategy_before_
 CREATE TABLE test_io_vac_strategy(a int, b int) WITH (autovacuum_enabled = 'false');
 INSERT INTO test_io_vac_strategy SELECT i, i from generate_series(1, 4500)i;
 -- Ensure that the next VACUUM will need to perform IO by rewriting the table
 -- first with VACUUM (FULL).
 VACUUM (FULL) test_io_vac_strategy;
--- Use the minimum BUFFER_USAGE_LIMIT to cause reuses with the smallest table
--- possible.
+-- Use the minimum BUFFER_USAGE_LIMIT to cause reuses or evictions with the
+-- smallest table possible.
 VACUUM (PARALLEL 0, BUFFER_USAGE_LIMIT 128) test_io_vac_strategy;
 SELECT pg_stat_force_next_flush();
-SELECT sum(reuses) AS reuses, sum(reads) AS reads
+SELECT sum(reuses) AS reuses, sum(reads) AS reads, sum(evictions) AS evictions
   FROM pg_stat_io WHERE context = 'vacuum' \gset io_sum_vac_strategy_after_
-SELECT :io_sum_vac_strategy_after_reads > :io_sum_vac_strategy_before_reads,
-       :io_sum_vac_strategy_after_reuses > :io_sum_vac_strategy_before_reuses;
+SELECT :io_sum_vac_strategy_after_reads > :io_sum_vac_strategy_before_reads;
+SELECT (:io_sum_vac_strategy_after_reuses + :io_sum_vac_strategy_after_evictions) >
+  (:io_sum_vac_strategy_before_reuses + :io_sum_vac_strategy_before_evictions);
 RESET wal_skip_threshold;
 
 -- Test that extends done by a CTAS, which uses a BAS_BULKWRITE

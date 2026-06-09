@@ -3,7 +3,7 @@
  * parse_agg.c
  *	  handle aggregates and window functions in parser
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,6 +18,7 @@
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_type.h"
+#include "common/int.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/optimizer.h"
@@ -110,18 +111,6 @@ transformAggregateCall(ParseState *pstate, Aggref *agg,
 	AttrNumber	attno = 1;
 	int			save_next_resno;
 	ListCell   *lc;
-
-	/*
-	 * Before separating the args into direct and aggregated args, make a list
-	 * of their data type OIDs for use later.
-	 */
-	foreach(lc, args)
-	{
-		Expr	   *arg = (Expr *) lfirst(lc);
-
-		argtypes = lappend_oid(argtypes, exprType((Node *) arg));
-	}
-	agg->aggargtypes = argtypes;
 
 	if (AGGKIND_IS_ORDERED_SET(agg->aggkind))
 	{
@@ -233,6 +222,29 @@ transformAggregateCall(ParseState *pstate, Aggref *agg,
 	agg->args = tlist;
 	agg->aggorder = torder;
 	agg->aggdistinct = tdistinct;
+
+	/*
+	 * Now build the aggargtypes list with the type OIDs of the direct and
+	 * aggregated args, ignoring any resjunk entries that might have been
+	 * added by ORDER BY/DISTINCT processing.  We can't do this earlier
+	 * because said processing can modify some args' data types, in particular
+	 * by resolving previously-unresolved "unknown" literals.
+	 */
+	foreach(lc, agg->aggdirectargs)
+	{
+		Expr	   *arg = (Expr *) lfirst(lc);
+
+		argtypes = lappend_oid(argtypes, exprType((Node *) arg));
+	}
+	foreach(lc, tlist)
+	{
+		TargetEntry *tle = (TargetEntry *) lfirst(lc);
+
+		if (tle->resjunk)
+			continue;			/* ignore junk */
+		argtypes = lappend_oid(argtypes, exprType((Node *) tle->expr));
+	}
+	agg->aggargtypes = argtypes;
 
 	check_agglevels_and_constraints(pstate, (Node *) agg);
 }
@@ -456,6 +468,7 @@ check_agglevels_and_constraints(ParseState *pstate, Node *expr)
 			errkind = true;
 			break;
 		case EXPR_KIND_RETURNING:
+		case EXPR_KIND_MERGE_RETURNING:
 			errkind = true;
 			break;
 		case EXPR_KIND_VALUES:
@@ -903,6 +916,7 @@ transformWindowFuncCall(ParseState *pstate, WindowFunc *wfunc,
 			errkind = true;
 			break;
 		case EXPR_KIND_RETURNING:
+		case EXPR_KIND_MERGE_RETURNING:
 			errkind = true;
 			break;
 		case EXPR_KIND_VALUES:
@@ -1749,7 +1763,7 @@ cmp_list_len_asc(const ListCell *a, const ListCell *b)
 	int			la = list_length((const List *) lfirst(a));
 	int			lb = list_length((const List *) lfirst(b));
 
-	return (la > lb) ? 1 : (la == lb) ? 0 : -1;
+	return pg_cmp_s32(la, lb);
 }
 
 /* list_sort comparator to sort sub-lists by length and contents */

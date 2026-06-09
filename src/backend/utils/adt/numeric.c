@@ -11,7 +11,7 @@
  * Transactions on Mathematical Software, Vol. 24, No. 4, December 1998,
  * pages 359-367.
  *
- * Copyright (c) 1998-2023, PostgreSQL Global Development Group
+ * Copyright (c) 1998-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/adt/numeric.c
@@ -26,7 +26,6 @@
 #include <limits.h>
 #include <math.h>
 
-#include "catalog/pg_type.h"
 #include "common/hashfn.h"
 #include "common/int.h"
 #include "funcapi.h"
@@ -584,6 +583,8 @@ static void power_var(const NumericVar *base, const NumericVar *exp,
 static void power_var_int(const NumericVar *base, int exp, int exp_dscale,
 						  NumericVar *result);
 static void power_ten_int(int exp, NumericVar *result);
+static void random_var(pg_prng_state *state, const NumericVar *rmin,
+					   const NumericVar *rmax, NumericVar *result);
 
 static int	cmp_abs(const NumericVar *var1, const NumericVar *var2);
 static int	cmp_abs_common(const NumericDigit *var1digits, int var1ndigits,
@@ -4220,6 +4221,56 @@ numeric_trim_scale(PG_FUNCTION_ARGS)
 	PG_RETURN_NUMERIC(res);
 }
 
+/*
+ * Return a random numeric value in the range [rmin, rmax].
+ */
+Numeric
+random_numeric(pg_prng_state *state, Numeric rmin, Numeric rmax)
+{
+	NumericVar	rmin_var;
+	NumericVar	rmax_var;
+	NumericVar	result;
+	Numeric		res;
+
+	/* Range bounds must not be NaN/infinity */
+	if (NUMERIC_IS_SPECIAL(rmin))
+	{
+		if (NUMERIC_IS_NAN(rmin))
+			ereport(ERROR,
+					errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("lower bound cannot be NaN"));
+		else
+			ereport(ERROR,
+					errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("lower bound cannot be infinity"));
+	}
+	if (NUMERIC_IS_SPECIAL(rmax))
+	{
+		if (NUMERIC_IS_NAN(rmax))
+			ereport(ERROR,
+					errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("upper bound cannot be NaN"));
+		else
+			ereport(ERROR,
+					errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("upper bound cannot be infinity"));
+	}
+
+	/* Return a random value in the range [rmin, rmax] */
+	init_var_from_num(rmin, &rmin_var);
+	init_var_from_num(rmax, &rmax_var);
+
+	init_var(&result);
+
+	random_var(state, &rmin_var, &rmax_var, &result);
+
+	res = make_result(&result);
+
+	free_var(&result);
+
+	return res;
+}
+
 
 /* ----------------------------------------------------------------------
  *
@@ -4430,35 +4481,62 @@ int8_numeric(PG_FUNCTION_ARGS)
 	PG_RETURN_NUMERIC(int64_to_numeric(val));
 }
 
+int64
+numeric_int8_opt_error(Numeric num, bool *have_error)
+{
+	NumericVar	x;
+	int64		result;
+
+	if (have_error)
+		*have_error = false;
+
+	if (NUMERIC_IS_SPECIAL(num))
+	{
+		if (have_error)
+		{
+			*have_error = true;
+			return 0;
+		}
+		else
+		{
+			if (NUMERIC_IS_NAN(num))
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("cannot convert NaN to %s", "bigint")));
+			else
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("cannot convert infinity to %s", "bigint")));
+		}
+	}
+
+	/* Convert to variable format, then convert to int8 */
+	init_var_from_num(num, &x);
+
+	if (!numericvar_to_int64(&x, &result))
+	{
+		if (have_error)
+		{
+			*have_error = true;
+			return 0;
+		}
+		else
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+					 errmsg("bigint out of range")));
+		}
+	}
+
+	return result;
+}
 
 Datum
 numeric_int8(PG_FUNCTION_ARGS)
 {
 	Numeric		num = PG_GETARG_NUMERIC(0);
-	NumericVar	x;
-	int64		result;
 
-	if (NUMERIC_IS_SPECIAL(num))
-	{
-		if (NUMERIC_IS_NAN(num))
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("cannot convert NaN to %s", "bigint")));
-		else
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("cannot convert infinity to %s", "bigint")));
-	}
-
-	/* Convert to variable format and thence to int8 */
-	init_var_from_num(num, &x);
-
-	if (!numericvar_to_int64(&x, &result))
-		ereport(ERROR,
-				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-				 errmsg("bigint out of range")));
-
-	PG_RETURN_INT64(result);
+	PG_RETURN_INT64(numeric_int8_opt_error(num, NULL));
 }
 
 
@@ -5190,12 +5268,11 @@ numeric_avg_deserialize(PG_FUNCTION_ARGS)
 	init_var(&tmp_var);
 
 	/*
-	 * Copy the bytea into a StringInfo so that we can "receive" it using the
-	 * standard recv-function infrastructure.
+	 * Initialize a StringInfo so that we can "receive" it using the standard
+	 * recv-function infrastructure.
 	 */
-	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf,
-						   VARDATA_ANY(sstate), VARSIZE_ANY_EXHDR(sstate));
+	initReadOnlyStringInfo(&buf, VARDATA_ANY(sstate),
+						   VARSIZE_ANY_EXHDR(sstate));
 
 	result = makeNumericAggStateCurrentContext(false);
 
@@ -5222,7 +5299,6 @@ numeric_avg_deserialize(PG_FUNCTION_ARGS)
 	result->nInfcount = pq_getmsgint64(&buf);
 
 	pq_getmsgend(&buf);
-	pfree(buf.data);
 
 	free_var(&tmp_var);
 
@@ -5306,12 +5382,11 @@ numeric_deserialize(PG_FUNCTION_ARGS)
 	init_var(&tmp_var);
 
 	/*
-	 * Copy the bytea into a StringInfo so that we can "receive" it using the
-	 * standard recv-function infrastructure.
+	 * Initialize a StringInfo so that we can "receive" it using the standard
+	 * recv-function infrastructure.
 	 */
-	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf,
-						   VARDATA_ANY(sstate), VARSIZE_ANY_EXHDR(sstate));
+	initReadOnlyStringInfo(&buf, VARDATA_ANY(sstate),
+						   VARSIZE_ANY_EXHDR(sstate));
 
 	result = makeNumericAggStateCurrentContext(false);
 
@@ -5342,7 +5417,6 @@ numeric_deserialize(PG_FUNCTION_ARGS)
 	result->nInfcount = pq_getmsgint64(&buf);
 
 	pq_getmsgend(&buf);
-	pfree(buf.data);
 
 	free_var(&tmp_var);
 
@@ -5677,12 +5751,11 @@ numeric_poly_deserialize(PG_FUNCTION_ARGS)
 	init_var(&tmp_var);
 
 	/*
-	 * Copy the bytea into a StringInfo so that we can "receive" it using the
-	 * standard recv-function infrastructure.
+	 * Initialize a StringInfo so that we can "receive" it using the standard
+	 * recv-function infrastructure.
 	 */
-	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf,
-						   VARDATA_ANY(sstate), VARSIZE_ANY_EXHDR(sstate));
+	initReadOnlyStringInfo(&buf, VARDATA_ANY(sstate),
+						   VARSIZE_ANY_EXHDR(sstate));
 
 	result = makePolyNumAggStateCurrentContext(false);
 
@@ -5706,7 +5779,6 @@ numeric_poly_deserialize(PG_FUNCTION_ARGS)
 #endif
 
 	pq_getmsgend(&buf);
-	pfree(buf.data);
 
 	free_var(&tmp_var);
 
@@ -5868,12 +5940,11 @@ int8_avg_deserialize(PG_FUNCTION_ARGS)
 	init_var(&tmp_var);
 
 	/*
-	 * Copy the bytea into a StringInfo so that we can "receive" it using the
-	 * standard recv-function infrastructure.
+	 * Initialize a StringInfo so that we can "receive" it using the standard
+	 * recv-function infrastructure.
 	 */
-	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf,
-						   VARDATA_ANY(sstate), VARSIZE_ANY_EXHDR(sstate));
+	initReadOnlyStringInfo(&buf, VARDATA_ANY(sstate),
+						   VARSIZE_ANY_EXHDR(sstate));
 
 	result = makePolyNumAggStateCurrentContext(false);
 
@@ -5889,7 +5960,6 @@ int8_avg_deserialize(PG_FUNCTION_ARGS)
 #endif
 
 	pq_getmsgend(&buf);
-	pfree(buf.data);
 
 	free_var(&tmp_var);
 
@@ -11242,6 +11312,173 @@ power_ten_int(int exp, NumericVar *result)
 	/* Final adjustment of the result's single NBASE digit */
 	while (exp-- > 0)
 		result->digits[0] *= 10;
+}
+
+/*
+ * random_var() - return a random value in the range [rmin, rmax].
+ */
+static void
+random_var(pg_prng_state *state, const NumericVar *rmin,
+		   const NumericVar *rmax, NumericVar *result)
+{
+	int			rscale;
+	NumericVar	rlen;
+	int			res_ndigits;
+	int			n;
+	int			pow10;
+	int			i;
+	uint64		rlen64;
+	int			rlen64_ndigits;
+
+	rscale = Max(rmin->dscale, rmax->dscale);
+
+	/* Compute rlen = rmax - rmin and check the range bounds */
+	init_var(&rlen);
+	sub_var(rmax, rmin, &rlen);
+
+	if (rlen.sign == NUMERIC_NEG)
+		ereport(ERROR,
+				errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("lower bound must be less than or equal to upper bound"));
+
+	/* Special case for an empty range */
+	if (rlen.ndigits == 0)
+	{
+		set_var_from_var(rmin, result);
+		result->dscale = rscale;
+		free_var(&rlen);
+		return;
+	}
+
+	/*
+	 * Otherwise, select a random value in the range [0, rlen = rmax - rmin],
+	 * and shift it to the required range by adding rmin.
+	 */
+
+	/* Required result digits */
+	res_ndigits = rlen.weight + 1 + (rscale + DEC_DIGITS - 1) / DEC_DIGITS;
+
+	/*
+	 * To get the required rscale, the final result digit must be a multiple
+	 * of pow10 = 10^n, where n = (-rscale) mod DEC_DIGITS.
+	 */
+	n = ((rscale + DEC_DIGITS - 1) / DEC_DIGITS) * DEC_DIGITS - rscale;
+	pow10 = 1;
+	for (i = 0; i < n; i++)
+		pow10 *= 10;
+
+	/*
+	 * To choose a random value uniformly from the range [0, rlen], we choose
+	 * from the slightly larger range [0, rlen2], where rlen2 is formed from
+	 * rlen by copying the first 4 NBASE digits, and setting all remaining
+	 * decimal digits to "9".
+	 *
+	 * Without loss of generality, we can ignore the weight of rlen2 and treat
+	 * it as a pure integer for the purposes of this discussion.  The process
+	 * above gives rlen2 + 1 = rlen64 * 10^N, for some integer N, where rlen64
+	 * is a 64-bit integer formed from the first 4 NBASE digits copied from
+	 * rlen.  Since this trivially factors into smaller pieces that fit in
+	 * 64-bit integers, the task of choosing a random value uniformly from the
+	 * rlen2 + 1 possible values in [0, rlen2] is much simpler.
+	 *
+	 * If the random value selected is too large, it is rejected, and we try
+	 * again until we get a result <= rlen, ensuring that the overall result
+	 * is uniform (no particular value is any more likely than any other).
+	 *
+	 * Since rlen64 holds 4 NBASE digits from rlen, it contains at least
+	 * DEC_DIGITS * 3 + 1 decimal digits (i.e., at least 13 decimal digits,
+	 * when DEC_DIGITS is 4). Therefore the probability of needing to reject
+	 * the value chosen and retry is less than 1e-13.
+	 */
+	rlen64 = (uint64) rlen.digits[0];
+	rlen64_ndigits = 1;
+	while (rlen64_ndigits < res_ndigits && rlen64_ndigits < 4)
+	{
+		rlen64 *= NBASE;
+		if (rlen64_ndigits < rlen.ndigits)
+			rlen64 += rlen.digits[rlen64_ndigits];
+		rlen64_ndigits++;
+	}
+
+	/* Loop until we get a result <= rlen */
+	do
+	{
+		NumericDigit *res_digits;
+		uint64		rand;
+		int			whole_ndigits;
+
+		alloc_var(result, res_ndigits);
+		result->sign = NUMERIC_POS;
+		result->weight = rlen.weight;
+		result->dscale = rscale;
+		res_digits = result->digits;
+
+		/*
+		 * Set the first rlen64_ndigits using a random value in [0, rlen64].
+		 *
+		 * If this is the whole result, and rscale is not a multiple of
+		 * DEC_DIGITS (pow10 from above is not 1), then we need this to be a
+		 * multiple of pow10.
+		 */
+		if (rlen64_ndigits == res_ndigits && pow10 != 1)
+			rand = pg_prng_uint64_range(state, 0, rlen64 / pow10) * pow10;
+		else
+			rand = pg_prng_uint64_range(state, 0, rlen64);
+
+		for (i = rlen64_ndigits - 1; i >= 0; i--)
+		{
+			res_digits[i] = (NumericDigit) (rand % NBASE);
+			rand = rand / NBASE;
+		}
+
+		/*
+		 * Set the remaining digits to random values in range [0, NBASE),
+		 * noting that the last digit needs to be a multiple of pow10.
+		 */
+		whole_ndigits = res_ndigits;
+		if (pow10 != 1)
+			whole_ndigits--;
+
+		/* Set whole digits in groups of 4 for best performance */
+		i = rlen64_ndigits;
+		while (i < whole_ndigits - 3)
+		{
+			rand = pg_prng_uint64_range(state, 0,
+										(uint64) NBASE * NBASE * NBASE * NBASE - 1);
+			res_digits[i++] = (NumericDigit) (rand % NBASE);
+			rand = rand / NBASE;
+			res_digits[i++] = (NumericDigit) (rand % NBASE);
+			rand = rand / NBASE;
+			res_digits[i++] = (NumericDigit) (rand % NBASE);
+			rand = rand / NBASE;
+			res_digits[i++] = (NumericDigit) rand;
+		}
+
+		/* Remaining whole digits */
+		while (i < whole_ndigits)
+		{
+			rand = pg_prng_uint64_range(state, 0, NBASE - 1);
+			res_digits[i++] = (NumericDigit) rand;
+		}
+
+		/* Final partial digit (multiple of pow10) */
+		if (i < res_ndigits)
+		{
+			rand = pg_prng_uint64_range(state, 0, NBASE / pow10 - 1) * pow10;
+			res_digits[i] = (NumericDigit) rand;
+		}
+
+		/* Remove leading/trailing zeroes */
+		strip_var(result);
+
+		/* If result > rlen, try again */
+
+	} while (cmp_var(result, &rlen) > 0);
+
+	/* Offset the result to the required range */
+	add_var(result, rmin, result);
+
+	free_var(&rlen);
 }
 
 

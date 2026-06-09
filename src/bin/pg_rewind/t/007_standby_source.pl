@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 #
 # Test using a standby server as the source.
@@ -25,7 +25,7 @@
 # as is.
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Utils;
 use Test::More;
 
@@ -86,7 +86,7 @@ $node_c->promote;
 
 
 # Insert a row in A. This causes A/B and C to have "diverged", so that it's
-# no longer possible to just apply the standy's logs over primary directory
+# no longer possible to just apply the standby's logs over primary directory
 # - you need to rewind.
 $node_a->safe_psql('postgres',
 	"INSERT INTO tbl1 VALUES ('in A, after C was promoted')");

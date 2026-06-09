@@ -3,7 +3,7 @@
  *
  *		Object access hooks.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  */
 
@@ -52,7 +52,7 @@ typedef enum ObjectAccessType
 	OAT_POST_ALTER,
 	OAT_NAMESPACE_SEARCH,
 	OAT_FUNCTION_EXECUTE,
-	OAT_TRUNCATE
+	OAT_TRUNCATE,
 } ObjectAccessType;
 
 /*

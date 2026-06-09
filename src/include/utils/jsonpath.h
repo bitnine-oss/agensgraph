@@ -3,7 +3,7 @@
  * jsonpath.h
  *	Definitions for jsonpath datatype
  *
- * Copyright (c) 2019-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2019-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	src/include/utils/jsonpath.h
@@ -14,8 +14,10 @@
 #ifndef JSONPATH_H
 #define JSONPATH_H
 
+#include "executor/tablefunc.h"
 #include "fmgr.h"
 #include "nodes/pg_list.h"
+#include "nodes/primnodes.h"
 #include "utils/jsonb.h"
 
 typedef struct
@@ -49,6 +51,13 @@ DatumGetJsonPathPCopy(Datum d)
 
 /*
  * All node's type of jsonpath expression
+ *
+ * These become part of the on-disk representation of the jsonpath type.
+ * Therefore, to preserve pg_upgradability, the order must not be changed, and
+ * new values must be added at the end.
+ *
+ * It is recommended that switch cases etc. in other parts of the code also
+ * use this order, to maintain some consistency.
  */
 typedef enum JsonPathItemType
 {
@@ -95,6 +104,17 @@ typedef enum JsonPathItemType
 	jpiLast,					/* LAST array subscript */
 	jpiStartsWith,				/* STARTS WITH predicate */
 	jpiLikeRegex,				/* LIKE_REGEX predicate */
+	jpiBigint,					/* .bigint() item method */
+	jpiBoolean,					/* .boolean() item method */
+	jpiDate,					/* .date() item method */
+	jpiDecimal,					/* .decimal() item method */
+	jpiInteger,					/* .integer() item method */
+	jpiNumber,					/* .number() item method */
+	jpiStringFunc,				/* .string() item method */
+	jpiTime,					/* .time() item method */
+	jpiTimeTz,					/* .time_tz() item method */
+	jpiTimestamp,				/* .timestamp() item method */
+	jpiTimestampTz,				/* .timestamp_tz() item method */
 } JsonPathItemType;
 
 /* XQuery regex mode flags for LIKE_REGEX predicate */
@@ -184,6 +204,7 @@ extern bool jspGetBool(JsonPathItem *v);
 extern char *jspGetString(JsonPathItem *v, int32 *len);
 extern bool jspGetArraySubscript(JsonPathItem *v, JsonPathItem *from,
 								 JsonPathItem *to, int i);
+extern bool jspIsMutable(JsonPath *path, List *varnames, List *varexprs);
 
 extern const char *jspOperationName(JsonPathItemType type);
 
@@ -260,5 +281,30 @@ extern JsonPathParseResult *parsejsonpath(const char *str, int len,
 extern bool jspConvertRegexFlags(uint32 xflags, int *result,
 								 struct Node *escontext);
 
+/*
+ * Struct for details about external variables passed into jsonpath executor
+ */
+typedef struct JsonPathVariable
+{
+	char	   *name;
+	int			namelen;		/* strlen(name) as cache for GetJsonPathVar() */
+	Oid			typid;
+	int32		typmod;
+	Datum		value;
+	bool		isnull;
+} JsonPathVariable;
+
+
+/* SQL/JSON query functions */
+extern bool JsonPathExists(Datum jb, JsonPath *jp, bool *error, List *vars);
+extern Datum JsonPathQuery(Datum jb, JsonPath *jp, JsonWrapper wrapper,
+						   bool *empty, bool *error, List *vars,
+						   const char *column_name);
+extern JsonbValue *JsonPathValue(Datum jb, JsonPath *jp, bool *empty,
+								 bool *error, List *vars,
+								 const char *column_name);
+
+/* For JSON_TABLE() */
+extern PGDLLIMPORT const TableFuncRoutine JsonbTableRoutine;
 
 #endif

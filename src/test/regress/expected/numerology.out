@@ -297,6 +297,17 @@ SELECT 1_000.5e0_1;
     10005
 (1 row)
 
+DO $$
+DECLARE
+  i int;
+BEGIN
+  FOR i IN 1_001..1_003 LOOP
+    RAISE NOTICE 'i = %', i;
+  END LOOP;
+END $$;
+NOTICE:  i = 1001
+NOTICE:  i = 1002
+NOTICE:  i = 1003
 -- error cases
 SELECT _100;
 ERROR:  column "_100" does not exist
@@ -330,6 +341,10 @@ SELECT 1_000.5e_1;
 ERROR:  trailing junk after numeric literal at or near "1_000.5e"
 LINE 1: SELECT 1_000.5e_1;
                ^
+PREPARE p1 AS SELECT $0_1;
+ERROR:  trailing junk after parameter at or near "$0_"
+LINE 1: PREPARE p1 AS SELECT $0_1;
+                             ^
 --
 -- Test implicit type conversions
 -- This fails for Postgres v6.1 (and earlier?)

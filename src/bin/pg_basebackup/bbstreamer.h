@@ -12,7 +12,7 @@
  * make further decisions about how to process the data; for example,
  * it might choose to modify the archive contents.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/bbstreamer.h
@@ -56,7 +56,7 @@ typedef enum
 	BBSTREAMER_MEMBER_HEADER,
 	BBSTREAMER_MEMBER_CONTENTS,
 	BBSTREAMER_MEMBER_TRAILER,
-	BBSTREAMER_ARCHIVE_TRAILER
+	BBSTREAMER_ARCHIVE_TRAILER,
 } bbstreamer_archive_context;
 
 /*

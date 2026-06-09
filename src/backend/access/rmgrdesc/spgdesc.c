@@ -3,7 +3,7 @@
  * spgdesc.c
  *	  rmgr descriptor routines for access/spgist/spgxlog.c
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -118,10 +118,11 @@ spg_desc(StringInfo buf, XLogReaderState *record)
 			{
 				spgxlogVacuumRedirect *xlrec = (spgxlogVacuumRedirect *) rec;
 
-				appendStringInfo(buf, "ntoplaceholder: %u, firstplaceholder: %u, snapshotConflictHorizon: %u",
+				appendStringInfo(buf, "ntoplaceholder: %u, firstplaceholder: %u, snapshotConflictHorizon: %u, isCatalogRel: %c",
 								 xlrec->nToPlaceholder,
 								 xlrec->firstPlaceholder,
-								 xlrec->snapshotConflictHorizon);
+								 xlrec->snapshotConflictHorizon,
+								 xlrec->isCatalogRel ? 'T' : 'F');
 			}
 			break;
 	}

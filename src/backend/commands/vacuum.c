@@ -12,7 +12,7 @@
  * CLUSTER, handled in cluster.c.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -34,11 +34,10 @@
 #include "access/tableam.h"
 #include "access/transam.h"
 #include "access/xact.h"
-#include "catalog/namespace.h"
 #include "catalog/index.h"
+#include "catalog/namespace.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_inherits.h"
-#include "catalog/pg_namespace.h"
 #include "commands/cluster.h"
 #include "commands/defrem.h"
 #include "commands/vacuum.h"
@@ -58,7 +57,6 @@
 #include "utils/guc.h"
 #include "utils/guc_hooks.h"
 #include "utils/memutils.h"
-#include "utils/pg_rusage.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
@@ -118,7 +116,6 @@ static bool vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params,
 static double compute_parallel_delay(void);
 static VacOptValue get_vacoptval_from_boolean(DefElem *def);
 static bool vac_tid_reaped(ItemPointer itemptr, void *state);
-static int	vac_cmp_itemptr(const void *left, const void *right);
 
 /*
  * GUC check function to ensure GUC value specified is within the allowable
@@ -171,6 +168,9 @@ ExecVacuum(ParseState *pstate, VacuumStmt *vacstmt, bool isTopLevel)
 
 	/* By default parallel vacuum is enabled */
 	params.nworkers = 0;
+
+	/* Will be set later if we recurse to a TOAST table. */
+	params.toast_parent = InvalidOid;
 
 	/*
 	 * Set this to an invalid value so it is clear whether or not a
@@ -564,7 +564,7 @@ vacuum(List *relations, VacuumParams *params, BufferAccessStrategy bstrategy,
 	else
 	{
 		Assert(params->options & VACOPT_ANALYZE);
-		if (IsAutoVacuumWorkerProcess())
+		if (AmAutoVacuumWorkerProcess())
 			use_own_xacts = true;
 		else if (in_outer_xact)
 			use_own_xacts = false;
@@ -710,13 +710,6 @@ vacuum_is_permitted_for_relation(Oid relid, Form_pg_class reltuple,
 
 	Assert((options & (VACOPT_VACUUM | VACOPT_ANALYZE)) != 0);
 
-	/*
-	 * Privilege checks are bypassed in some cases (e.g., when recursing to a
-	 * relation's TOAST table).
-	 */
-	if (options & VACOPT_SKIP_PRIVS)
-		return true;
-
 	/*----------
 	 * A role has privileges to vacuum or analyze the relation if any of the
 	 * following are true:
@@ -724,7 +717,8 @@ vacuum_is_permitted_for_relation(Oid relid, Form_pg_class reltuple,
 	 *   - the role has the MAINTAIN privilege on the relation
 	 *----------
 	 */
-	if ((object_ownercheck(DatabaseRelationId, MyDatabaseId, GetUserId()) && !reltuple->relisshared) ||
+	if ((object_ownercheck(DatabaseRelationId, MyDatabaseId, GetUserId()) &&
+		 !reltuple->relisshared) ||
 		pg_class_aclcheck(relid, GetUserId(), ACL_MAINTAIN) == ACLCHECK_OK)
 		return true;
 
@@ -812,7 +806,7 @@ vacuum_open_relation(Oid relid, RangeVar *relation, bits32 options,
 	 * statements in the permission checks; otherwise, only log if the caller
 	 * so requested.
 	 */
-	if (!IsAutoVacuumWorkerProcess())
+	if (!AmAutoVacuumWorkerProcess())
 		elevel = WARNING;
 	else if (verbose)
 		elevel = LOG;
@@ -899,7 +893,7 @@ expand_vacuum_rel(VacuumRelation *vrel, MemoryContext vac_context,
 		 * Since autovacuum workers supply OIDs when calling vacuum(), no
 		 * autovacuum worker should reach this code.
 		 */
-		Assert(!IsAutoVacuumWorkerProcess());
+		Assert(!AmAutoVacuumWorkerProcess());
 
 		/*
 		 * We transiently take AccessShareLock to protect the syscache lookup
@@ -1113,25 +1107,6 @@ vacuum_get_cutoffs(Relation rel, const VacuumParams *params,
 	 */
 	cutoffs->OldestXmin = GetOldestNonRemovableTransactionId(rel);
 
-	if (OldSnapshotThresholdActive())
-	{
-		TransactionId limit_xmin;
-		TimestampTz limit_ts;
-
-		if (TransactionIdLimitedForOldSnapshots(cutoffs->OldestXmin, rel,
-												&limit_xmin, &limit_ts))
-		{
-			/*
-			 * TODO: We should only set the threshold if we are pruning on the
-			 * basis of the increased limits.  Not as crucial here as it is
-			 * for opportunistic pruning (which often happens at a much higher
-			 * frequency), but would still be a significant improvement.
-			 */
-			SetOldSnapshotThresholdTimestamp(limit_ts, limit_xmin);
-			cutoffs->OldestXmin = limit_xmin;
-		}
-	}
-
 	Assert(TransactionIdIsNormal(cutoffs->OldestXmin));
 
 	/* Acquire OldestMxact */
@@ -1225,7 +1200,7 @@ vacuum_get_cutoffs(Relation rel, const VacuumParams *params,
 	aggressiveXIDCutoff = nextXID - freeze_table_age;
 	if (!TransactionIdIsNormal(aggressiveXIDCutoff))
 		aggressiveXIDCutoff = FirstNormalTransactionId;
-	if (TransactionIdPrecedesOrEquals(rel->rd_rel->relfrozenxid,
+	if (TransactionIdPrecedesOrEquals(cutoffs->relfrozenxid,
 									  aggressiveXIDCutoff))
 		return true;
 
@@ -1246,7 +1221,7 @@ vacuum_get_cutoffs(Relation rel, const VacuumParams *params,
 	aggressiveMXIDCutoff = nextMXID - multixact_freeze_table_age;
 	if (aggressiveMXIDCutoff < FirstMultiXactId)
 		aggressiveMXIDCutoff = FirstMultiXactId;
-	if (MultiXactIdPrecedesOrEquals(rel->rd_rel->relminmxid,
+	if (MultiXactIdPrecedesOrEquals(cutoffs->relminmxid,
 									aggressiveMXIDCutoff))
 		return true;
 
@@ -1636,6 +1611,8 @@ vac_update_datfrozenxid(void)
 	/*
 	 * We must seqscan pg_class to find the minimum Xid, because there is no
 	 * index that can help us here.
+	 *
+	 * See vac_truncate_clog() for the race condition to prevent.
 	 */
 	relation = table_open(RelationRelationId, AccessShareLock);
 
@@ -1644,7 +1621,9 @@ vac_update_datfrozenxid(void)
 
 	while ((classTup = systable_getnext(scan)) != NULL)
 	{
-		Form_pg_class classForm = (Form_pg_class) GETSTRUCT(classTup);
+		volatile FormData_pg_class *classForm = (Form_pg_class) GETSTRUCT(classTup);
+		TransactionId relfrozenxid = classForm->relfrozenxid;
+		TransactionId relminmxid = classForm->relminmxid;
 
 		/*
 		 * Only consider relations able to hold unfrozen XIDs (anything else
@@ -1654,8 +1633,8 @@ vac_update_datfrozenxid(void)
 			classForm->relkind != RELKIND_MATVIEW &&
 			classForm->relkind != RELKIND_TOASTVALUE)
 		{
-			Assert(!TransactionIdIsValid(classForm->relfrozenxid));
-			Assert(!MultiXactIdIsValid(classForm->relminmxid));
+			Assert(!TransactionIdIsValid(relfrozenxid));
+			Assert(!MultiXactIdIsValid(relminmxid));
 			continue;
 		}
 
@@ -1674,34 +1653,34 @@ vac_update_datfrozenxid(void)
 		 * before those relations have been scanned and cleaned up.
 		 */
 
-		if (TransactionIdIsValid(classForm->relfrozenxid))
+		if (TransactionIdIsValid(relfrozenxid))
 		{
-			Assert(TransactionIdIsNormal(classForm->relfrozenxid));
+			Assert(TransactionIdIsNormal(relfrozenxid));
 
 			/* check for values in the future */
-			if (TransactionIdPrecedes(lastSaneFrozenXid, classForm->relfrozenxid))
+			if (TransactionIdPrecedes(lastSaneFrozenXid, relfrozenxid))
 			{
 				bogus = true;
 				break;
 			}
 
 			/* determine new horizon */
-			if (TransactionIdPrecedes(classForm->relfrozenxid, newFrozenXid))
-				newFrozenXid = classForm->relfrozenxid;
+			if (TransactionIdPrecedes(relfrozenxid, newFrozenXid))
+				newFrozenXid = relfrozenxid;
 		}
 
-		if (MultiXactIdIsValid(classForm->relminmxid))
+		if (MultiXactIdIsValid(relminmxid))
 		{
 			/* check for values in the future */
-			if (MultiXactIdPrecedes(lastSaneMinMulti, classForm->relminmxid))
+			if (MultiXactIdPrecedes(lastSaneMinMulti, relminmxid))
 			{
 				bogus = true;
 				break;
 			}
 
 			/* determine new horizon */
-			if (MultiXactIdPrecedes(classForm->relminmxid, newMinMulti))
-				newMinMulti = classForm->relminmxid;
+			if (MultiXactIdPrecedes(relminmxid, newMinMulti))
+				newMinMulti = relminmxid;
 		}
 	}
 
@@ -1854,6 +1833,20 @@ vac_truncate_clog(TransactionId frozenXID,
 		Assert(MultiXactIdIsValid(datminmxid));
 
 		/*
+		 * If database is in the process of getting dropped, or has been
+		 * interrupted while doing so, no connections to it are possible
+		 * anymore. Therefore we don't need to take it into account here.
+		 * Which is good, because it can't be processed by autovacuum either.
+		 */
+		if (database_is_invalid_form((Form_pg_database) dbform))
+		{
+			elog(DEBUG2,
+				 "skipping invalid database \"%s\" while computing relfrozenxid",
+				 NameStr(dbform->datname));
+			continue;
+		}
+
+		/*
 		 * If things are working properly, no database should have a
 		 * datfrozenxid or datminmxid that is "in the future".  However, such
 		 * cases have been known to arise due to bugs in pg_upgrade.  If we
@@ -1896,12 +1889,16 @@ vac_truncate_clog(TransactionId frozenXID,
 		ereport(WARNING,
 				(errmsg("some databases have not been vacuumed in over 2 billion transactions"),
 				 errdetail("You might have already suffered transaction-wraparound data loss.")));
+		LWLockRelease(WrapLimitsVacuumLock);
 		return;
 	}
 
 	/* chicken out if data is bogus in any other way */
 	if (bogus)
+	{
+		LWLockRelease(WrapLimitsVacuumLock);
 		return;
+	}
 
 	/*
 	 * Advance the oldest value for commit timestamps before truncating, so
@@ -1958,6 +1955,7 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params,
 	LOCKMODE	lmode;
 	Relation	rel;
 	LockRelId	lockrelid;
+	Oid			priv_relid;
 	Oid			toast_relid;
 	Oid			save_userid;
 	int			save_sec_context;
@@ -2034,13 +2032,23 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params,
 	}
 
 	/*
+	 * When recursing to a TOAST table, check privileges on the parent.  NB:
+	 * This is only safe to do because we hold a session lock on the main
+	 * relation that prevents concurrent deletion.
+	 */
+	if (OidIsValid(params->toast_parent))
+		priv_relid = params->toast_parent;
+	else
+		priv_relid = RelationGetRelid(rel);
+
+	/*
 	 * Check if relation needs to be skipped based on privileges.  This check
 	 * happens also when building the relation list to vacuum for a manual
 	 * operation, and needs to be done additionally here as VACUUM could
 	 * happen across multiple transactions where privileges could have changed
 	 * in-between.  Make sure to only generate logs for VACUUM in this case.
 	 */
-	if (!vacuum_is_permitted_for_relation(RelationGetRelid(rel),
+	if (!vacuum_is_permitted_for_relation(priv_relid,
 										  rel->rd_rel,
 										  params->options & ~VACOPT_ANALYZE))
 	{
@@ -2171,6 +2179,7 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params,
 	SetUserIdAndSecContext(rel->rd_rel->relowner,
 						   save_sec_context | SECURITY_RESTRICTED_OPERATION);
 	save_nestlevel = NewGUCNestLevel();
+	RestrictSearchPath();
 
 	/*
 	 * If PROCESS_MAIN is set (the default), it's time to vacuum the main
@@ -2230,12 +2239,13 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params,
 
 		/*
 		 * Force VACOPT_PROCESS_MAIN so vacuum_rel() processes it.  Likewise,
-		 * set VACOPT_SKIP_PRIVS since privileges on the main relation are
-		 * sufficient to process it.
+		 * set toast_parent so that the privilege checks are done on the main
+		 * relation.  NB: This is only safe to do because we hold a session
+		 * lock on the main relation that prevents concurrent deletion.
 		 */
 		memcpy(&toast_vacuum_params, params, sizeof(VacuumParams));
 		toast_vacuum_params.options |= VACOPT_PROCESS_MAIN;
-		toast_vacuum_params.options |= VACOPT_SKIP_PRIVS;
+		toast_vacuum_params.toast_parent = relid;
 
 		vacuum_rel(toast_relid, NULL, &toast_vacuum_params, bstrategy);
 	}
@@ -2344,7 +2354,7 @@ vacuum_delay_point(void)
 	 * [autovacuum_]vacuum_cost_delay to take effect while a table is being
 	 * vacuumed or analyzed.
 	 */
-	if (ConfigReloadPending && IsAutoVacuumWorkerProcess())
+	if (ConfigReloadPending && AmAutoVacuumWorkerProcess())
 	{
 		ConfigReloadPending = false;
 		ProcessConfigFile(PGC_SIGHUP);
@@ -2482,16 +2492,16 @@ get_vacoptval_from_boolean(DefElem *def)
  */
 IndexBulkDeleteResult *
 vac_bulkdel_one_index(IndexVacuumInfo *ivinfo, IndexBulkDeleteResult *istat,
-					  VacDeadItems *dead_items)
+					  TidStore *dead_items, VacDeadItemsInfo *dead_items_info)
 {
 	/* Do bulk deletion */
 	istat = index_bulk_delete(ivinfo, istat, vac_tid_reaped,
 							  (void *) dead_items);
 
 	ereport(ivinfo->message_level,
-			(errmsg("scanned index \"%s\" to remove %d row versions",
+			(errmsg("scanned index \"%s\" to remove %lld row versions",
 					RelationGetRelationName(ivinfo->index),
-					dead_items->num_items)));
+					(long long) dead_items_info->num_items)));
 
 	return istat;
 }
@@ -2523,81 +2533,14 @@ vac_cleanup_one_index(IndexVacuumInfo *ivinfo, IndexBulkDeleteResult *istat)
 }
 
 /*
- * Returns the total required space for VACUUM's dead_items array given a
- * max_items value.
- */
-Size
-vac_max_items_to_alloc_size(int max_items)
-{
-	Assert(max_items <= MAXDEADITEMS(MaxAllocSize));
-
-	return offsetof(VacDeadItems, items) + sizeof(ItemPointerData) * max_items;
-}
-
-/*
  *	vac_tid_reaped() -- is a particular tid deletable?
  *
  *		This has the right signature to be an IndexBulkDeleteCallback.
- *
- *		Assumes dead_items array is sorted (in ascending TID order).
  */
 static bool
 vac_tid_reaped(ItemPointer itemptr, void *state)
 {
-	VacDeadItems *dead_items = (VacDeadItems *) state;
-	int64		litem,
-				ritem,
-				item;
-	ItemPointer res;
+	TidStore   *dead_items = (TidStore *) state;
 
-	litem = itemptr_encode(&dead_items->items[0]);
-	ritem = itemptr_encode(&dead_items->items[dead_items->num_items - 1]);
-	item = itemptr_encode(itemptr);
-
-	/*
-	 * Doing a simple bound check before bsearch() is useful to avoid the
-	 * extra cost of bsearch(), especially if dead items on the heap are
-	 * concentrated in a certain range.  Since this function is called for
-	 * every index tuple, it pays to be really fast.
-	 */
-	if (item < litem || item > ritem)
-		return false;
-
-	res = (ItemPointer) bsearch(itemptr,
-								dead_items->items,
-								dead_items->num_items,
-								sizeof(ItemPointerData),
-								vac_cmp_itemptr);
-
-	return (res != NULL);
-}
-
-/*
- * Comparator routines for use with qsort() and bsearch().
- */
-static int
-vac_cmp_itemptr(const void *left, const void *right)
-{
-	BlockNumber lblk,
-				rblk;
-	OffsetNumber loff,
-				roff;
-
-	lblk = ItemPointerGetBlockNumber((ItemPointer) left);
-	rblk = ItemPointerGetBlockNumber((ItemPointer) right);
-
-	if (lblk < rblk)
-		return -1;
-	if (lblk > rblk)
-		return 1;
-
-	loff = ItemPointerGetOffsetNumber((ItemPointer) left);
-	roff = ItemPointerGetOffsetNumber((ItemPointer) right);
-
-	if (loff < roff)
-		return -1;
-	if (loff > roff)
-		return 1;
-
-	return 0;
+	return TidStoreIsMember(dead_items, itemptr);
 }

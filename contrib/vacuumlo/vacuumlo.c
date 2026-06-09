@@ -3,7 +3,7 @@
  * vacuumlo.c
  *	  This removes orphaned large objects from a database.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -35,7 +35,7 @@ enum trivalue
 {
 	TRI_DEFAULT,
 	TRI_NO,
-	TRI_YES
+	TRI_YES,
 };
 
 struct _param

@@ -29,6 +29,11 @@ INSERT INTO VARBIT_TABLE VALUES (B'101011111010'); -- too long
 --INSERT INTO VARBIT_TABLE VALUES ('X555');
 SELECT * FROM VARBIT_TABLE;
 
+-- Literals with syntax errors
+SELECT b' 0';
+SELECT b'0 ';
+SELECT x' 0';
+SELECT x'0 ';
 
 -- Concatenation
 SELECT v, b, (v || b) AS concat
@@ -218,6 +223,10 @@ SELECT overlay(B'0101011100' placing '001' from 20);
 -- bit_count
 SELECT bit_count(B'0101011100'::bit(10));
 SELECT bit_count(B'1111111111'::bit(10));
+SELECT bit_count(repeat('0', 100)::bit(100));
+SELECT bit_count(repeat('1', 100)::bit(100));
+SELECT bit_count(repeat('01', 500)::bit(1000));
+SELECT bit_count(repeat('10101', 200)::bit(1000));
 
 -- This table is intentionally left around to exercise pg_dump/pg_upgrade
 CREATE TABLE bit_defaults(

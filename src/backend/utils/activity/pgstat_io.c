@@ -7,7 +7,7 @@
  * from pgstat.c to enforce the line between the statistics access / storage
  * implementation and the details about individual types of statistics.
  *
- * Copyright (c) 2021-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2021-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/activity/pgstat_io.c
@@ -92,15 +92,25 @@ pgstat_count_io_op_n(IOObject io_object, IOContext io_context, IOOp io_op, uint3
 	have_iostats = true;
 }
 
+/*
+ * Initialize the internal timing for an IO operation, depending on an
+ * IO timing GUC.
+ */
 instr_time
-pgstat_prepare_io_time(void)
+pgstat_prepare_io_time(bool track_io_guc)
 {
 	instr_time	io_start;
 
-	if (track_io_timing)
+	if (track_io_guc)
 		INSTR_TIME_SET_CURRENT(io_start);
 	else
+	{
+		/*
+		 * There is no need to set io_start when an IO timing GUC is disabled,
+		 * still initialize it to zero to avoid compiler warnings.
+		 */
 		INSTR_TIME_SET_ZERO(io_start);
+	}
 
 	return io_start;
 }
@@ -119,17 +129,21 @@ pgstat_count_io_op_time(IOObject io_object, IOContext io_context, IOOp io_op,
 		INSTR_TIME_SET_CURRENT(io_time);
 		INSTR_TIME_SUBTRACT(io_time, start_time);
 
-		if (io_op == IOOP_WRITE)
+		if (io_op == IOOP_WRITE || io_op == IOOP_EXTEND)
 		{
 			pgstat_count_buffer_write_time(INSTR_TIME_GET_MICROSEC(io_time));
 			if (io_object == IOOBJECT_RELATION)
-				INSTR_TIME_ADD(pgBufferUsage.blk_write_time, io_time);
+				INSTR_TIME_ADD(pgBufferUsage.shared_blk_write_time, io_time);
+			else if (io_object == IOOBJECT_TEMP_RELATION)
+				INSTR_TIME_ADD(pgBufferUsage.local_blk_write_time, io_time);
 		}
 		else if (io_op == IOOP_READ)
 		{
 			pgstat_count_buffer_read_time(INSTR_TIME_GET_MICROSEC(io_time));
 			if (io_object == IOOBJECT_RELATION)
-				INSTR_TIME_ADD(pgBufferUsage.blk_read_time, io_time);
+				INSTR_TIME_ADD(pgBufferUsage.shared_blk_read_time, io_time);
+			else if (io_object == IOOBJECT_TEMP_RELATION)
+				INSTR_TIME_ADD(pgBufferUsage.local_blk_read_time, io_time);
 		}
 
 		INSTR_TIME_ADD(PendingIOStats.pending_times[io_object][io_context][io_op],
@@ -292,7 +306,8 @@ pgstat_io_snapshot_cb(void)
 * - Syslogger because it is not connected to shared memory
 * - Archiver because most relevant archiving IO is delegated to a
 *   specialized command or module
-* - WAL Receiver and WAL Writer IO is not tracked in pg_stat_io for now
+* - WAL Receiver, WAL Writer, and WAL Summarizer IO are not tracked in
+*   pg_stat_io for now
 *
 * Function returns true if BackendType participates in the cumulative stats
 * subsystem for IO and false if it does not.
@@ -314,6 +329,7 @@ pgstat_tracks_io_bktype(BackendType bktype)
 		case B_LOGGER:
 		case B_WAL_RECEIVER:
 		case B_WAL_WRITER:
+		case B_WAL_SUMMARIZER:
 			return false;
 
 		case B_AUTOVAC_LAUNCHER:
@@ -322,6 +338,7 @@ pgstat_tracks_io_bktype(BackendType bktype)
 		case B_BG_WORKER:
 		case B_BG_WRITER:
 		case B_CHECKPOINTER:
+		case B_SLOTSYNC_WORKER:
 		case B_STANDALONE_BACKEND:
 		case B_STARTUP:
 		case B_WAL_SENDER:

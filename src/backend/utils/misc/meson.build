@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 backend_sources += files(
   'conffiles.c',
@@ -6,6 +6,7 @@ backend_sources += files(
   'guc_funcs.c',
   'guc_tables.c',
   'help_config.c',
+  'injection_point.c',
   'pg_config.c',
   'pg_controldata.c',
   'pg_rusage.c',

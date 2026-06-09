@@ -853,6 +853,46 @@ SHOW transaction_deferrable;
 (1 row)
 
 COMMIT;
+START TRANSACTION ISOLATION LEVEL READ COMMITTED, READ WRITE, DEFERRABLE;
+SHOW transaction_isolation;
+ transaction_isolation 
+-----------------------
+ read committed
+(1 row)
+
+SHOW transaction_read_only;
+ transaction_read_only 
+-----------------------
+ off
+(1 row)
+
+SHOW transaction_deferrable;
+ transaction_deferrable 
+------------------------
+ on
+(1 row)
+
+SAVEPOINT x;
+COMMIT AND CHAIN;  -- TBLOCK_SUBCOMMIT
+SHOW transaction_isolation;
+ transaction_isolation 
+-----------------------
+ read committed
+(1 row)
+
+SHOW transaction_read_only;
+ transaction_read_only 
+-----------------------
+ off
+(1 row)
+
+SHOW transaction_deferrable;
+ transaction_deferrable 
+------------------------
+ on
+(1 row)
+
+COMMIT;
 -- different mix of options just for fun
 START TRANSACTION ISOLATION LEVEL SERIALIZABLE, READ WRITE, NOT DEFERRABLE;
 SHOW transaction_isolation;
@@ -1148,6 +1188,17 @@ SELECT * FROM trans_abc ORDER BY 1;
 (3 rows)
 
 DROP TABLE trans_abc;
+-- TRANSACTION SNAPSHOT
+-- Incorrect identifier.
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+SET TRANSACTION SNAPSHOT 'Incorrect Identifier';
+ERROR:  invalid snapshot identifier: "Incorrect Identifier"
+ROLLBACK;
+-- Correct identifier, missing file.
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+SET TRANSACTION SNAPSHOT 'FFF-FFF-F';
+ERROR:  snapshot "FFF-FFF-F" does not exist
+ROLLBACK;
 -- Test for successful cleanup of an aborted transaction at session exit.
 -- THIS MUST BE THE LAST TEST IN THIS FILE.
 begin;

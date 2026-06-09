@@ -3,7 +3,7 @@
 # pg_collation.dat
 #    Initial contents of the pg_collation system catalog.
 #
-# Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/include/catalog/pg_collation.dat
@@ -23,12 +23,16 @@
   descr => 'standard POSIX collation',
   collname => 'POSIX', collprovider => 'c', collencoding => '-1',
   collcollate => 'POSIX', collctype => 'POSIX' },
-{ oid => '962', descr => 'sorts by Unicode code point',
-  collname => 'ucs_basic', collprovider => 'c', collencoding => '6',
-  collcollate => 'C', collctype => 'C' },
+{ oid => '962', descr => 'sorts by Unicode code point, C character semantics',
+  collname => 'ucs_basic', collprovider => 'b', collencoding => '6',
+  colllocale => 'C', collversion => '1' },
 { oid => '963',
   descr => 'sorts using the Unicode Collation Algorithm with default settings',
   collname => 'unicode', collprovider => 'i', collencoding => '-1',
-  colliculocale => 'und' },
+  colllocale => 'und' },
+{ oid => '811',
+  descr => 'sorts by Unicode code point; Unicode and POSIX character semantics',
+  collname => 'pg_c_utf8', collprovider => 'b', collencoding => '6',
+  colllocale => 'C.UTF-8', collversion => '1' },
 
 ]

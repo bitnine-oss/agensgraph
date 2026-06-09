@@ -28,7 +28,7 @@
  * For an introduction to using memory barriers within the PostgreSQL backend,
  * see src/backend/storage/lmgr/README.barrier
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/port/atomics.h
@@ -84,11 +84,9 @@
  * using compiler intrinsics are a good idea.
  */
 /*
- * gcc or compatible, including clang and icc.  Exclude xlc.  The ppc64le "IBM
- * XL C/C++ for Linux, V13.1.2" emulates gcc, but __sync_lock_test_and_set()
- * of one-byte types elicits SIGSEGV.  That bug was gone by V13.1.5 (2016-12).
+ * gcc or compatible, including clang and icc.
  */
-#if (defined(__GNUC__) || defined(__INTEL_COMPILER)) && !(defined(__IBMC__) || defined(__IBMCPP__))
+#if defined(__GNUC__) || defined(__INTEL_COMPILER)
 #include "port/atomics/generic-gcc.h"
 #elif defined(_MSC_VER)
 #include "port/atomics/generic-msvc.h"
@@ -240,6 +238,26 @@ pg_atomic_read_u32(volatile pg_atomic_uint32 *ptr)
 }
 
 /*
+ * pg_atomic_read_membarrier_u32 - read with barrier semantics.
+ *
+ * This read is guaranteed to return the current value, provided that the value
+ * is only ever updated via operations with barrier semantics, such as
+ * pg_atomic_compare_exchange_u32() and pg_atomic_write_membarrier_u32().
+ * While this may be less performant than pg_atomic_read_u32(), it may be
+ * easier to reason about correctness with this function in less performance-
+ * sensitive code.
+ *
+ * Full barrier semantics.
+ */
+static inline uint32
+pg_atomic_read_membarrier_u32(volatile pg_atomic_uint32 *ptr)
+{
+	AssertPointerAlignment(ptr, 4);
+
+	return pg_atomic_read_membarrier_u32_impl(ptr);
+}
+
+/*
  * pg_atomic_write_u32 - write to atomic variable.
  *
  * The write is guaranteed to succeed as a whole, i.e. it's not possible to
@@ -274,6 +292,26 @@ pg_atomic_unlocked_write_u32(volatile pg_atomic_uint32 *ptr, uint32 val)
 	AssertPointerAlignment(ptr, 4);
 
 	pg_atomic_unlocked_write_u32_impl(ptr, val);
+}
+
+/*
+ * pg_atomic_write_membarrier_u32 - write with barrier semantics.
+ *
+ * The write is guaranteed to succeed as a whole, i.e., it's not possible to
+ * observe a partial write for any reader.  Note that this correctly interacts
+ * with both pg_atomic_compare_exchange_u32() and
+ * pg_atomic_read_membarrier_u32().  While this may be less performant than
+ * pg_atomic_write_u32(), it may be easier to reason about correctness with
+ * this function in less performance-sensitive code.
+ *
+ * Full barrier semantics.
+ */
+static inline void
+pg_atomic_write_membarrier_u32(volatile pg_atomic_uint32 *ptr, uint32 val)
+{
+	AssertPointerAlignment(ptr, 4);
+
+	pg_atomic_write_membarrier_u32_impl(ptr, val);
 }
 
 /*
@@ -429,6 +467,15 @@ pg_atomic_read_u64(volatile pg_atomic_uint64 *ptr)
 	return pg_atomic_read_u64_impl(ptr);
 }
 
+static inline uint64
+pg_atomic_read_membarrier_u64(volatile pg_atomic_uint64 *ptr)
+{
+#ifndef PG_HAVE_ATOMIC_U64_SIMULATION
+	AssertPointerAlignment(ptr, 8);
+#endif
+	return pg_atomic_read_membarrier_u64_impl(ptr);
+}
+
 static inline void
 pg_atomic_write_u64(volatile pg_atomic_uint64 *ptr, uint64 val)
 {
@@ -436,6 +483,15 @@ pg_atomic_write_u64(volatile pg_atomic_uint64 *ptr, uint64 val)
 	AssertPointerAlignment(ptr, 8);
 #endif
 	pg_atomic_write_u64_impl(ptr, val);
+}
+
+static inline void
+pg_atomic_write_membarrier_u64(volatile pg_atomic_uint64 *ptr, uint64 val)
+{
+#ifndef PG_HAVE_ATOMIC_U64_SIMULATION
+	AssertPointerAlignment(ptr, 8);
+#endif
+	pg_atomic_write_membarrier_u64_impl(ptr, val);
 }
 
 static inline uint64
@@ -512,6 +568,42 @@ pg_atomic_sub_fetch_u64(volatile pg_atomic_uint64 *ptr, int64 sub_)
 #endif
 	Assert(sub_ != PG_INT64_MIN);
 	return pg_atomic_sub_fetch_u64_impl(ptr, sub_);
+}
+
+/*
+ * Monotonically advance the given variable using only atomic operations until
+ * it's at least the target value.  Returns the latest value observed, which
+ * may or may not be the target value.
+ *
+ * Full barrier semantics (even when value is unchanged).
+ */
+static inline uint64
+pg_atomic_monotonic_advance_u64(volatile pg_atomic_uint64 *ptr, uint64 target_)
+{
+	uint64		currval;
+
+#ifndef PG_HAVE_ATOMIC_U64_SIMULATION
+	AssertPointerAlignment(ptr, 8);
+#endif
+
+	currval = pg_atomic_read_u64_impl(ptr);
+	if (currval >= target_)
+	{
+		pg_memory_barrier();
+		return currval;
+	}
+
+#ifndef PG_HAVE_ATOMIC_U64_SIMULATION
+	AssertPointerAlignment(&currval, 8);
+#endif
+
+	while (currval < target_)
+	{
+		if (pg_atomic_compare_exchange_u64_impl(ptr, &currval, target_))
+			break;
+	}
+
+	return Max(target_, currval);
 }
 
 #undef INSIDE_ATOMICS_H

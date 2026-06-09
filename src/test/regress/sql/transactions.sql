@@ -489,6 +489,17 @@ SHOW transaction_read_only;
 SHOW transaction_deferrable;
 COMMIT;
 
+START TRANSACTION ISOLATION LEVEL READ COMMITTED, READ WRITE, DEFERRABLE;
+SHOW transaction_isolation;
+SHOW transaction_read_only;
+SHOW transaction_deferrable;
+SAVEPOINT x;
+COMMIT AND CHAIN;  -- TBLOCK_SUBCOMMIT
+SHOW transaction_isolation;
+SHOW transaction_read_only;
+SHOW transaction_deferrable;
+COMMIT;
+
 -- different mix of options just for fun
 START TRANSACTION ISOLATION LEVEL SERIALIZABLE, READ WRITE, NOT DEFERRABLE;
 SHOW transaction_isolation;
@@ -613,6 +624,15 @@ SELECT * FROM trans_abc ORDER BY 1;
 
 DROP TABLE trans_abc;
 
+-- TRANSACTION SNAPSHOT
+-- Incorrect identifier.
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+SET TRANSACTION SNAPSHOT 'Incorrect Identifier';
+ROLLBACK;
+-- Correct identifier, missing file.
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+SET TRANSACTION SNAPSHOT 'FFF-FFF-F';
+ROLLBACK;
 
 -- Test for successful cleanup of an aborted transaction at session exit.
 -- THIS MUST BE THE LAST TEST IN THIS FILE.

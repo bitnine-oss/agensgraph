@@ -4,7 +4,7 @@
  *	  utilities routines for the postgres GiST index access method.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -18,12 +18,11 @@
 #include "access/gist_private.h"
 #include "access/htup_details.h"
 #include "access/reloptions.h"
-#include "catalog/pg_opclass.h"
 #include "common/pg_prng.h"
 #include "storage/indexfsm.h"
-#include "storage/lmgr.h"
 #include "utils/float.h"
 #include "utils/lsyscache.h"
+#include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
@@ -573,7 +572,7 @@ gistdentryinit(GISTSTATE *giststate, int nkey, GISTENTRY *e,
 
 IndexTuple
 gistFormTuple(GISTSTATE *giststate, Relation r,
-			  Datum *attdata, bool *isnull, bool isleaf)
+			  const Datum *attdata, const bool *isnull, bool isleaf)
 {
 	Datum		compatt[INDEX_MAX_KEYS];
 	IndexTuple	res;
@@ -594,7 +593,7 @@ gistFormTuple(GISTSTATE *giststate, Relation r,
 
 void
 gistCompressValues(GISTSTATE *giststate, Relation r,
-				   Datum *attdata, bool *isnull, bool isleaf, Datum *compatt)
+				   const Datum *attdata, const bool *isnull, bool isleaf, Datum *compatt)
 {
 	int			i;
 
@@ -877,7 +876,7 @@ gistNewBuffer(Relation r, Relation heaprel)
 	}
 
 	/* Must extend the file */
-	buffer = ExtendBufferedRel(EB_REL(r), MAIN_FORKNUM, NULL,
+	buffer = ExtendBufferedRel(BMR_REL(r), MAIN_FORKNUM, NULL,
 							   EB_LOCK_FIRST);
 
 	return buffer;

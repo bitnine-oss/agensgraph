@@ -33,11 +33,11 @@ SELECT * FROM t;
 
 -- UNION DISTINCT requires hashable type
 WITH RECURSIVE t(n) AS (
-    VALUES (1::money)
+    VALUES ('01'::varbit)
 UNION
-    SELECT n+1::money FROM t WHERE n < 100::money
+    SELECT n || '10'::varbit FROM t WHERE n < '100'::varbit
 )
-SELECT sum(n) FROM t;
+SELECT n FROM t;
 
 -- recursive view
 CREATE RECURSIVE VIEW nums (n) AS
@@ -346,6 +346,25 @@ UNION ALL
 )
 SELECT t1.id, t2.path, t2 FROM t AS t1 JOIN t AS t2 ON
 (t1.id=t2.id);
+
+-- test that column statistics from a materialized CTE are available
+-- to upper planner (otherwise, we'd get a stupider plan)
+explain (costs off)
+with x as materialized (select unique1 from tenk1 b)
+select count(*) from tenk1 a
+  where unique1 in (select * from x);
+
+explain (costs off)
+with x as materialized (insert into tenk1 default values returning unique1)
+select count(*) from tenk1 a
+  where unique1 in (select * from x);
+
+-- test that pathkeys from a materialized CTE are propagated up to the
+-- outer query
+explain (costs off)
+with x as materialized (select unique1 from tenk1 b order by unique1)
+select count(*) from tenk1 a
+  where unique1 in (select * from x);
 
 -- SEARCH clause
 
@@ -1576,6 +1595,14 @@ VALUES(FALSE);
 -- no RETURNING in a referenced data-modifying WITH
 WITH t AS (
 	INSERT INTO y VALUES(0)
+)
+SELECT * FROM t;
+
+-- RETURNING tries to return its own output
+WITH RECURSIVE t(action, a) AS (
+	MERGE INTO y USING (VALUES (11)) v(a) ON y.a = v.a
+		WHEN NOT MATCHED THEN INSERT VALUES (v.a)
+		RETURNING merge_action(), (SELECT a FROM t)
 )
 SELECT * FROM t;
 

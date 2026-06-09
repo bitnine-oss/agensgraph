@@ -24,6 +24,7 @@ TESTS = array array.c \
         quote quote.c \
         show show.c \
         sqljson sqljson.c \
+        sqljson_jsontable sqljson_jsontable.c \
         insupd insupd.c \
         twophase twophase.c \
         insupd insupd.c \
@@ -32,6 +33,9 @@ TESTS = array array.c \
 		prepareas prepareas.c
 
 all: $(TESTS)
+
+define.c: define.pgc define_prelim.pgc $(ECPG_TEST_DEPENDENCIES)
+	$(ECPG) -DCMDLINESYM=123 -o $@ $(srcdir)/define_prelim.pgc $<
 
 oldexec.c: oldexec.pgc $(ECPG_TEST_DEPENDENCIES)
 	$(ECPG) -r questionmarks -o $@ $<

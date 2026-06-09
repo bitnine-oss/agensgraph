@@ -3,7 +3,7 @@
  * relfilenumbermap.c
  *	  relfilenumber to oid mapping cache.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -19,12 +19,10 @@
 #include "catalog/pg_class.h"
 #include "catalog/pg_tablespace.h"
 #include "miscadmin.h"
-#include "utils/builtins.h"
 #include "utils/catcache.h"
 #include "utils/fmgroids.h"
 #include "utils/hsearch.h"
 #include "utils/inval.h"
-#include "utils/rel.h"
 #include "utils/relfilenumbermap.h"
 #include "utils/relmapper.h"
 

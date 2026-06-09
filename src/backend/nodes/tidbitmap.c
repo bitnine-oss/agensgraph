@@ -29,7 +29,7 @@
  * and a non-lossy page.
  *
  *
- * Copyright (c) 2003-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2003-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/nodes/tidbitmap.c
@@ -42,6 +42,7 @@
 
 #include "access/htup_details.h"
 #include "common/hashfn.h"
+#include "common/int.h"
 #include "nodes/bitmapset.h"
 #include "nodes/tidbitmap.h"
 #include "storage/lwlock.h"
@@ -129,7 +130,7 @@ typedef enum
 {
 	TBM_EMPTY,					/* no hashtable, nentries == 0 */
 	TBM_ONE_PAGE,				/* entry1 contains the single entry */
-	TBM_HASH					/* pagetable is valid, entry1 is not */
+	TBM_HASH,					/* pagetable is valid, entry1 is not */
 } TBMStatus;
 
 /*
@@ -139,7 +140,7 @@ typedef enum
 {
 	TBM_NOT_ITERATING,			/* not yet converted to page and chunk array */
 	TBM_ITERATING_PRIVATE,		/* converted to local page and chunk array */
-	TBM_ITERATING_SHARED		/* converted to shared page and chunk array */
+	TBM_ITERATING_SHARED,		/* converted to shared page and chunk array */
 } TBMIteratingState;
 
 /*
@@ -1425,11 +1426,7 @@ tbm_comparator(const void *left, const void *right)
 	BlockNumber l = (*((PagetableEntry *const *) left))->blockno;
 	BlockNumber r = (*((PagetableEntry *const *) right))->blockno;
 
-	if (l < r)
-		return -1;
-	else if (l > r)
-		return 1;
-	return 0;
+	return pg_cmp_u32(l, r);
 }
 
 /*

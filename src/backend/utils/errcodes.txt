@@ -2,7 +2,7 @@
 # errcodes.txt
 #      PostgreSQL error codes
 #
-# Copyright (c) 2003-2023, PostgreSQL Global Development Group
+# Copyright (c) 2003-2024, PostgreSQL Global Development Group
 #
 # This list serves as the basis for generating source files containing error
 # codes. It is kept in a common format to make sure all these source files have
@@ -252,6 +252,7 @@ Section: Class 25 - Invalid Transaction State
 25P01    E    ERRCODE_NO_ACTIVE_SQL_TRANSACTION                              no_active_sql_transaction
 25P02    E    ERRCODE_IN_FAILED_SQL_TRANSACTION                              in_failed_sql_transaction
 25P03    E    ERRCODE_IDLE_IN_TRANSACTION_SESSION_TIMEOUT                    idle_in_transaction_session_timeout
+25P04    E    ERRCODE_TRANSACTION_TIMEOUT                                    transaction_timeout
 
 Section: Class 26 - Invalid SQL Statement Name
 
@@ -438,10 +439,6 @@ Section: Class 58 - System Error (errors external to PostgreSQL itself)
 58030    E    ERRCODE_IO_ERROR                                               io_error
 58P01    E    ERRCODE_UNDEFINED_FILE                                         undefined_file
 58P02    E    ERRCODE_DUPLICATE_FILE                                         duplicate_file
-
-Section: Class 72 - Snapshot Failure
-# (class borrowed from Oracle)
-72000    E    ERRCODE_SNAPSHOT_TOO_OLD                                       snapshot_too_old
 
 Section: Class F0 - Configuration File Error
 

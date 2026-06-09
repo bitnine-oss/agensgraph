@@ -363,14 +363,14 @@ SET icu_validation_level = disabled;
 do $$
 BEGIN
   EXECUTE 'CREATE COLLATION test0 (provider = icu, locale = ' ||
-          quote_literal((SELECT CASE WHEN datlocprovider='i' THEN daticulocale ELSE datcollate END FROM pg_database WHERE datname = current_database())) || ');';
+          quote_literal((SELECT CASE WHEN datlocprovider='i' THEN datlocale ELSE datcollate END FROM pg_database WHERE datname = current_database())) || ');';
 END
 $$;
 CREATE COLLATION test0 FROM "C"; -- fail, duplicate name
 do $$
 BEGIN
   EXECUTE 'CREATE COLLATION test1 (provider = icu, locale = ' ||
-          quote_literal((SELECT CASE WHEN datlocprovider='i' THEN daticulocale ELSE datcollate END FROM pg_database WHERE datname = current_database())) || ');';
+          quote_literal((SELECT CASE WHEN datlocprovider='i' THEN datlocale ELSE datcollate END FROM pg_database WHERE datname = current_database())) || ');';
 END
 $$;
 
@@ -555,6 +555,7 @@ SELECT x FROM test3cs WHERE x LIKE 'a%';
 SELECT x FROM test3cs WHERE x ILIKE 'a%';
 SELECT x FROM test3cs WHERE x SIMILAR TO 'a%';
 SELECT x FROM test3cs WHERE x ~ 'a';
+SET enable_hashagg TO off;
 SELECT x FROM test1cs UNION SELECT x FROM test2cs ORDER BY x;
 SELECT x FROM test2cs UNION SELECT x FROM test1cs ORDER BY x;
 SELECT x FROM test1cs INTERSECT SELECT x FROM test2cs;
@@ -562,6 +563,7 @@ SELECT x FROM test2cs INTERSECT SELECT x FROM test1cs;
 SELECT x FROM test1cs EXCEPT SELECT x FROM test2cs;
 SELECT x FROM test2cs EXCEPT SELECT x FROM test1cs;
 SELECT DISTINCT x FROM test3cs ORDER BY x;
+RESET enable_hashagg;
 SELECT count(DISTINCT x) FROM test3cs;
 SELECT x, count(*) FROM test3cs GROUP BY x ORDER BY x;
 SELECT x, row_number() OVER (ORDER BY x), rank() OVER (ORDER BY x) FROM test3cs ORDER BY x;

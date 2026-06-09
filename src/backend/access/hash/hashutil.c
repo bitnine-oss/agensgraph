@@ -3,7 +3,7 @@
  * hashutil.c
  *	  Utility code for Postgres hash implementation.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,7 +18,6 @@
 #include "access/reloptions.h"
 #include "access/relscan.h"
 #include "port/pg_bitutils.h"
-#include "storage/buf_internals.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 

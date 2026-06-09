@@ -38,7 +38,7 @@
  *
  * This code is released under the terms of the PostgreSQL License.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/initdb/initdb.c
@@ -76,6 +76,7 @@
 #include "common/restricted_token.h"
 #include "common/string.h"
 #include "common/username.h"
+#include "fe_utils/option_utils.h"
 #include "fe_utils/string_utils.h"
 #include "getopt_long.h"
 #include "mb/pg_wchar.h"
@@ -101,7 +102,7 @@ static const char *const auth_methods_host[] = {
 	"sspi",
 #endif
 #ifdef USE_PAM
-	"pam", "pam ",
+	"pam",
 #endif
 #ifdef USE_BSD_AUTH
 	"bsd",
@@ -117,7 +118,7 @@ static const char *const auth_methods_host[] = {
 static const char *const auth_methods_local[] = {
 	"trust", "reject", "scram-sha-256", "md5", "password", "peer", "radius",
 #ifdef USE_PAM
-	"pam", "pam ",
+	"pam",
 #endif
 #ifdef USE_BSD_AUTH
 	"bsd",
@@ -144,7 +145,9 @@ static char *lc_numeric = NULL;
 static char *lc_time = NULL;
 static char *lc_messages = NULL;
 static char locale_provider = COLLPROVIDER_LIBC;
-static char *icu_locale = NULL;
+static bool builtin_locale_specified = false;
+static char *datlocale = NULL;
+static bool icu_locale_specified = false;
 static char *icu_rules = NULL;
 static const char *default_text_search_config = NULL;
 static char *username = NULL;
@@ -163,8 +166,8 @@ static bool sync_only = false;
 static bool show_setting = false;
 static bool data_checksums = false;
 static char *xlog_dir = NULL;
-static char *str_wal_segment_size_mb = NULL;
-static int	wal_segment_size_mb;
+static int	wal_segment_size_mb = (DEFAULT_XLOG_SEG_SIZE) / (1024 * 1024);
+static DataDirSyncMethod sync_method = DATA_DIR_SYNC_METHOD_FSYNC;
 
 
 /* internal vars */
@@ -217,8 +220,8 @@ static bool authwarning = false;
  * but here it is more convenient to pass it as an environment variable
  * (no quoting to worry about).
  */
-static const char *boot_options = "-F -c log_checkpoints=false";
-static const char *backend_options = "--single -F -O -j -c search_path=pg_catalog -c exit_on_error=true -c log_checkpoints=false";
+static const char *const boot_options = "-F -c log_checkpoints=false";
+static const char *const backend_options = "--single -F -O -j -c search_path=pg_catalog -c exit_on_error=true -c log_checkpoints=false";
 
 /* Additional switches to pass to backend (either boot or standalone) */
 static char *extra_options = "";
@@ -226,6 +229,7 @@ static char *extra_options = "";
 static const char *const subdirs[] = {
 	"global",
 	"pg_wal/archive_status",
+	"pg_wal/summaries",
 	"pg_commit_ts",
 	"pg_dynshmem",
 	"pg_notify",
@@ -309,16 +313,16 @@ void		initialize_data_directory(void);
 /*
  * macros for running pipes to postgres
  */
-#define PG_CMD_DECL		char cmd[MAXPGPATH]; FILE *cmdfd
+#define PG_CMD_DECL		FILE *cmdfd
 
-#define PG_CMD_OPEN \
+#define PG_CMD_OPEN(cmd) \
 do { \
 	cmdfd = popen_check(cmd, "w"); \
 	if (cmdfd == NULL) \
 		exit(1); /* message already printed by popen_check */ \
 } while (0)
 
-#define PG_CMD_CLOSE \
+#define PG_CMD_CLOSE() \
 do { \
 	if (pclose_check(cmdfd)) \
 		exit(1); /* message already printed by pclose_check */ \
@@ -482,6 +486,7 @@ replace_guc_value(char **lines, const char *guc_name, const char *guc_value,
 	for (i = 0; lines[i]; i++)
 	{
 		const char *where;
+		const char *namestart;
 
 		/*
 		 * Look for a line assigning to guc_name.  Typically it will be
@@ -492,15 +497,19 @@ replace_guc_value(char **lines, const char *guc_name, const char *guc_value,
 		where = lines[i];
 		while (*where == '#' || isspace((unsigned char) *where))
 			where++;
-		if (strncmp(where, guc_name, namelen) != 0)
+		if (pg_strncasecmp(where, guc_name, namelen) != 0)
 			continue;
+		namestart = where;
 		where += namelen;
 		while (isspace((unsigned char) *where))
 			where++;
 		if (*where != '=')
 			continue;
 
-		/* found it -- append the original comment if any */
+		/* found it -- let's use the canonical casing shown in the file */
+		memcpy(&newline->data[mark_as_comment ? 1 : 0], namestart, namelen);
+
+		/* now append the original comment if any */
 		where = strrchr(where, '#');
 		if (where)
 		{
@@ -1098,7 +1107,7 @@ test_config_settings(void)
 	 * Probe for max_connections before shared_buffers, since it is subject to
 	 * more constraints than shared_buffers.
 	 */
-	printf(_("selecting default max_connections ... "));
+	printf(_("selecting default \"max_connections\" ... "));
 	fflush(stdout);
 
 	for (i = 0; i < connslen; i++)
@@ -1118,7 +1127,7 @@ test_config_settings(void)
 
 	printf("%d\n", n_connections);
 
-	printf(_("selecting default shared_buffers ... "));
+	printf(_("selecting default \"shared_buffers\" ... "));
 	fflush(stdout);
 
 	for (i = 0; i < bufslen; i++)
@@ -1153,13 +1162,15 @@ test_config_settings(void)
 static bool
 test_specific_config_settings(int test_conns, int test_buffs)
 {
-	PQExpBuffer cmd = createPQExpBuffer();
+	PQExpBufferData cmd;
 	_stringlist *gnames,
 			   *gvalues;
 	int			status;
 
+	initPQExpBuffer(&cmd);
+
 	/* Set up the test postmaster invocation */
-	printfPQExpBuffer(cmd,
+	printfPQExpBuffer(&cmd,
 					  "\"%s\" --check %s %s "
 					  "-c max_connections=%d "
 					  "-c shared_buffers=%d "
@@ -1173,18 +1184,18 @@ test_specific_config_settings(int test_conns, int test_buffs)
 		 gnames != NULL;		/* assume lists have the same length */
 		 gnames = gnames->next, gvalues = gvalues->next)
 	{
-		appendPQExpBuffer(cmd, " -c %s=", gnames->str);
-		appendShellString(cmd, gvalues->str);
+		appendPQExpBuffer(&cmd, " -c %s=", gnames->str);
+		appendShellString(&cmd, gvalues->str);
 	}
 
-	appendPQExpBuffer(cmd,
+	appendPQExpBuffer(&cmd,
 					  " < \"%s\" > \"%s\" 2>&1",
 					  DEVNULL, DEVNULL);
 
 	fflush(NULL);
-	status = system(cmd->data);
+	status = system(cmd.data);
 
-	destroyPQExpBuffer(cmd);
+	termPQExpBuffer(&cmd);
 
 	return (status == 0);
 }
@@ -1238,25 +1249,17 @@ setup_config(void)
 	conflines = replace_guc_value(conflines, "shared_buffers",
 								  repltok, false);
 
-	/*
-	 * Hack: don't replace the LC_XXX GUCs when their value is 'C', because
-	 * replace_guc_value will decide not to quote that, which looks strange.
-	 */
-	if (strcmp(lc_messages, "C") != 0)
-		conflines = replace_guc_value(conflines, "lc_messages",
-									  lc_messages, false);
+	conflines = replace_guc_value(conflines, "lc_messages",
+								  lc_messages, false);
 
-	if (strcmp(lc_monetary, "C") != 0)
-		conflines = replace_guc_value(conflines, "lc_monetary",
-									  lc_monetary, false);
+	conflines = replace_guc_value(conflines, "lc_monetary",
+								  lc_monetary, false);
 
-	if (strcmp(lc_numeric, "C") != 0)
-		conflines = replace_guc_value(conflines, "lc_numeric",
-									  lc_numeric, false);
+	conflines = replace_guc_value(conflines, "lc_numeric",
+								  lc_numeric, false);
 
-	if (strcmp(lc_time, "C") != 0)
-		conflines = replace_guc_value(conflines, "lc_time",
-									  lc_time, false);
+	conflines = replace_guc_value(conflines, "lc_time",
+								  lc_time, false);
 
 	switch (locale_date_order(lc_time))
 	{
@@ -1484,6 +1487,7 @@ static void
 bootstrap_template1(void)
 {
 	PG_CMD_DECL;
+	PQExpBufferData cmd;
 	char	  **line;
 	char	  **bki_lines;
 	char		headerline[MAXPGPATH];
@@ -1533,8 +1537,8 @@ bootstrap_template1(void)
 	bki_lines = replace_token(bki_lines, "LC_CTYPE",
 							  escape_quotes_bki(lc_ctype));
 
-	bki_lines = replace_token(bki_lines, "ICU_LOCALE",
-							  icu_locale ? escape_quotes_bki(icu_locale) : "_null_");
+	bki_lines = replace_token(bki_lines, "DATLOCALE",
+							  datlocale ? escape_quotes_bki(datlocale) : "_null_");
 
 	bki_lines = replace_token(bki_lines, "ICU_RULES",
 							  icu_rules ? escape_quotes_bki(icu_rules) : "_null_");
@@ -1545,16 +1549,17 @@ bootstrap_template1(void)
 	/* Also ensure backend isn't confused by this environment var: */
 	unsetenv("PGCLIENTENCODING");
 
-	snprintf(cmd, sizeof(cmd),
-			 "\"%s\" --boot -X %d %s %s %s %s",
-			 backend_exec,
-			 wal_segment_size_mb * (1024 * 1024),
-			 data_checksums ? "-k" : "",
-			 boot_options, extra_options,
-			 debug ? "-d 5" : "");
+	initPQExpBuffer(&cmd);
+
+	printfPQExpBuffer(&cmd, "\"%s\" --boot %s %s", backend_exec, boot_options, extra_options);
+	appendPQExpBuffer(&cmd, " -X %d", wal_segment_size_mb * (1024 * 1024));
+	if (data_checksums)
+		appendPQExpBuffer(&cmd, " -k");
+	if (debug)
+		appendPQExpBuffer(&cmd, " -d 5");
 
 
-	PG_CMD_OPEN;
+	PG_CMD_OPEN(cmd.data);
 
 	for (line = bki_lines; *line != NULL; line++)
 	{
@@ -1562,8 +1567,9 @@ bootstrap_template1(void)
 		free(*line);
 	}
 
-	PG_CMD_CLOSE;
+	PG_CMD_CLOSE();
 
+	termPQExpBuffer(&cmd);
 	free(bki_lines);
 
 	check_ok();
@@ -2363,7 +2369,7 @@ setlocales(void)
 {
 	char	   *canonname;
 
-	/* set empty lc_* and iculocale values to locale config if set */
+	/* set empty lc_* and datlocale values to locale config if set */
 
 	if (locale)
 	{
@@ -2379,8 +2385,8 @@ setlocales(void)
 			lc_monetary = locale;
 		if (!lc_messages)
 			lc_messages = locale;
-		if (!icu_locale && locale_provider == COLLPROVIDER_ICU)
-			icu_locale = locale;
+		if (!datlocale && locale_provider != COLLPROVIDER_LIBC)
+			datlocale = locale;
 	}
 
 	/*
@@ -2406,22 +2412,35 @@ setlocales(void)
 	lc_messages = canonname;
 #endif
 
-	if (locale_provider == COLLPROVIDER_ICU)
+	if (locale_provider != COLLPROVIDER_LIBC && datlocale == NULL)
+		pg_fatal("locale must be specified if provider is %s",
+				 collprovider_name(locale_provider));
+
+	if (locale_provider == COLLPROVIDER_BUILTIN)
+	{
+		if (strcmp(datlocale, "C") == 0)
+			canonname = "C";
+		else if (strcmp(datlocale, "C.UTF-8") == 0 ||
+				 strcmp(datlocale, "C.UTF8") == 0)
+			canonname = "C.UTF-8";
+		else
+			pg_fatal("invalid locale name \"%s\" for builtin provider",
+					 datlocale);
+
+		datlocale = canonname;
+	}
+	else if (locale_provider == COLLPROVIDER_ICU)
 	{
 		char	   *langtag;
 
-		/* acquire default locale from the environment, if not specified */
-		if (icu_locale == NULL)
-			pg_fatal("ICU locale must be specified");
-
 		/* canonicalize to a language tag */
-		langtag = icu_language_tag(icu_locale);
+		langtag = icu_language_tag(datlocale);
 		printf(_("Using language tag \"%s\" for ICU locale \"%s\".\n"),
-			   langtag, icu_locale);
-		pg_free(icu_locale);
-		icu_locale = langtag;
+			   langtag, datlocale);
+		pg_free(datlocale);
+		datlocale = langtag;
 
-		icu_validate_locale(icu_locale);
+		icu_validate_locale(datlocale);
 
 		/*
 		 * In supported builds, the ICU locale ID will be opened during
@@ -2458,7 +2477,9 @@ usage(const char *progname)
 			 "                            set default locale in the respective category for\n"
 			 "                            new databases (default taken from environment)\n"));
 	printf(_("      --no-locale           equivalent to --locale=C\n"));
-	printf(_("      --locale-provider={libc|icu}\n"
+	printf(_("      --builtin-locale=LOCALE\n"
+			 "                            set builtin locale name for new databases\n"));
+	printf(_("      --locale-provider={builtin|libc|icu}\n"
 			 "                            set default locale provider for new databases\n"));
 	printf(_("      --pwfile=FILE         read password for the new superuser from file\n"));
 	printf(_("  -T, --text-search-config=CFG\n"
@@ -2475,7 +2496,8 @@ usage(const char *progname)
 	printf(_("  -n, --no-clean            do not clean up after errors\n"));
 	printf(_("  -N, --no-sync             do not wait for changes to be written safely to disk\n"));
 	printf(_("      --no-instructions     do not print instructions for next steps\n"));
-	printf(_("  -s, --show                show internal settings\n"));
+	printf(_("  -s, --show                show internal settings, then exit\n"));
+	printf(_("      --sync-method=METHOD  set method for syncing files to disk\n"));
 	printf(_("  -S, --sync-only           only sync database files to disk, then exit\n"));
 	printf(_("\nOther options:\n"));
 	printf(_("  -V, --version             output version information, then exit\n"));
@@ -2505,10 +2527,6 @@ check_authmethod_valid(const char *authmethod, const char *const *valid_methods,
 	{
 		if (strcmp(authmethod, *p) == 0)
 			return;
-		/* with space = param */
-		if (strchr(authmethod, ' '))
-			if (strncmp(authmethod, *p, (authmethod - strchr(authmethod, ' '))) == 0)
-				return;
 	}
 
 	pg_fatal("invalid authentication method \"%s\" for \"%s\" connections",
@@ -2621,14 +2639,14 @@ setup_locale_encoding(void)
 		strcmp(lc_ctype, lc_numeric) == 0 &&
 		strcmp(lc_ctype, lc_monetary) == 0 &&
 		strcmp(lc_ctype, lc_messages) == 0 &&
-		(!icu_locale || strcmp(lc_ctype, icu_locale) == 0))
+		(!datlocale || strcmp(lc_ctype, datlocale) == 0))
 		printf(_("The database cluster will be initialized with locale \"%s\".\n"), lc_ctype);
 	else
 	{
 		printf(_("The database cluster will be initialized with this locale configuration:\n"));
-		printf(_("  provider:    %s\n"), collprovider_name(locale_provider));
-		if (icu_locale)
-			printf(_("  ICU locale:  %s\n"), icu_locale);
+		printf(_("  locale provider:   %s\n"), collprovider_name(locale_provider));
+		if (locale_provider != COLLPROVIDER_LIBC)
+			printf(_("  default collation: %s\n"), datlocale);
 		printf(_("  LC_COLLATE:  %s\n"
 				 "  LC_CTYPE:    %s\n"
 				 "  LC_MESSAGES: %s\n"
@@ -2701,6 +2719,13 @@ setup_locale_encoding(void)
 	if (!check_locale_encoding(lc_ctype, encodingid) ||
 		!check_locale_encoding(lc_collate, encodingid))
 		exit(1);				/* check_locale_encoding printed the error */
+
+	if (locale_provider == COLLPROVIDER_BUILTIN)
+	{
+		if (strcmp(datlocale, "C.UTF-8") == 0 && encodingid != PG_UTF8)
+			pg_fatal("builtin provider locale \"%s\" requires encoding \"%s\"",
+					 datlocale, "UTF-8");
+	}
 
 	if (locale_provider == COLLPROVIDER_ICU &&
 		!check_icu_locale_encoding(encodingid))
@@ -2973,6 +2998,7 @@ void
 initialize_data_directory(void)
 {
 	PG_CMD_DECL;
+	PQExpBufferData cmd;
 	int			i;
 
 	setup_signals();
@@ -3036,12 +3062,11 @@ initialize_data_directory(void)
 	fputs(_("performing post-bootstrap initialization ... "), stdout);
 	fflush(stdout);
 
-	snprintf(cmd, sizeof(cmd),
-			 "\"%s\" %s %s template1 >%s",
-			 backend_exec, backend_options, extra_options,
-			 DEVNULL);
+	initPQExpBuffer(&cmd);
+	printfPQExpBuffer(&cmd, "\"%s\" %s %s template1 >%s",
+					  backend_exec, backend_options, extra_options, DEVNULL);
 
-	PG_CMD_OPEN;
+	PG_CMD_OPEN(cmd.data);
 
 	setup_auth(cmdfd);
 
@@ -3076,7 +3101,8 @@ initialize_data_directory(void)
 
 	make_postgres(cmdfd);
 
-	PG_CMD_CLOSE;
+	PG_CMD_CLOSE();
+	termPQExpBuffer(&cmd);
 
 	check_ok();
 }
@@ -3120,8 +3146,10 @@ main(int argc, char *argv[])
 		{"allow-group-access", no_argument, NULL, 'g'},
 		{"discard-caches", no_argument, NULL, 14},
 		{"locale-provider", required_argument, NULL, 15},
-		{"icu-locale", required_argument, NULL, 16},
-		{"icu-rules", required_argument, NULL, 17},
+		{"builtin-locale", required_argument, NULL, 16},
+		{"icu-locale", required_argument, NULL, 17},
+		{"icu-rules", required_argument, NULL, 18},
+		{"sync-method", required_argument, NULL, 19},
 		{NULL, 0, NULL, 0}
 	};
 
@@ -3274,7 +3302,8 @@ main(int argc, char *argv[])
 				xlog_dir = pg_strdup(optarg);
 				break;
 			case 12:
-				str_wal_segment_size_mb = pg_strdup(optarg);
+				if (!option_parse_int(optarg, "--wal-segsize", 1, 1024, &wal_segment_size_mb))
+					exit(1);
 				break;
 			case 13:
 				noinstructions = true;
@@ -3288,7 +3317,9 @@ main(int argc, char *argv[])
 										 "-c debug_discard_caches=1");
 				break;
 			case 15:
-				if (strcmp(optarg, "icu") == 0)
+				if (strcmp(optarg, "builtin") == 0)
+					locale_provider = COLLPROVIDER_BUILTIN;
+				else if (strcmp(optarg, "icu") == 0)
 					locale_provider = COLLPROVIDER_ICU;
 				else if (strcmp(optarg, "libc") == 0)
 					locale_provider = COLLPROVIDER_LIBC;
@@ -3296,10 +3327,19 @@ main(int argc, char *argv[])
 					pg_fatal("unrecognized locale provider: %s", optarg);
 				break;
 			case 16:
-				icu_locale = pg_strdup(optarg);
+				datlocale = pg_strdup(optarg);
+				builtin_locale_specified = true;
 				break;
 			case 17:
+				datlocale = pg_strdup(optarg);
+				icu_locale_specified = true;
+				break;
+			case 18:
 				icu_rules = pg_strdup(optarg);
+				break;
+			case 19:
+				if (!parse_sync_method(optarg, &sync_method))
+					exit(1);
 				break;
 			default:
 				/* getopt_long already emitted a complaint */
@@ -3327,7 +3367,11 @@ main(int argc, char *argv[])
 		exit(1);
 	}
 
-	if (icu_locale && locale_provider != COLLPROVIDER_ICU)
+	if (builtin_locale_specified && locale_provider != COLLPROVIDER_BUILTIN)
+		pg_fatal("%s cannot be specified unless locale provider \"%s\" is chosen",
+				 "--builtin-locale", "builtin");
+
+	if (icu_locale_specified && locale_provider != COLLPROVIDER_ICU)
 		pg_fatal("%s cannot be specified unless locale provider \"%s\" is chosen",
 				 "--icu-locale", "icu");
 
@@ -3337,7 +3381,7 @@ main(int argc, char *argv[])
 
 	atexit(cleanup_directories_atexit);
 
-	/* If we only need to fsync, just do it and exit */
+	/* If we only need to sync, just do it and exit */
 	if (sync_only)
 	{
 		setup_pgdata();
@@ -3348,7 +3392,7 @@ main(int argc, char *argv[])
 
 		fputs(_("syncing data to disk ... "), stdout);
 		fflush(stdout);
-		fsync_pgdata(pg_data, PG_VERSION_NUM);
+		sync_pgdata(pg_data, PG_VERSION_NUM, sync_method);
 		check_ok();
 		return 0;
 	}
@@ -3364,22 +3408,8 @@ main(int argc, char *argv[])
 
 	check_need_password(authmethodlocal, authmethodhost);
 
-	/* set wal segment size */
-	if (str_wal_segment_size_mb == NULL)
-		wal_segment_size_mb = (DEFAULT_XLOG_SEG_SIZE) / (1024 * 1024);
-	else
-	{
-		char	   *endptr;
-
-		/* check that the argument is a number */
-		wal_segment_size_mb = strtol(str_wal_segment_size_mb, &endptr, 10);
-
-		/* verify that wal segment size is valid */
-		if (endptr == str_wal_segment_size_mb || *endptr != '\0')
-			pg_fatal("argument of --wal-segsize must be a number");
-		if (!IsValidWalSegSize(wal_segment_size_mb * 1024 * 1024))
-			pg_fatal("argument of --wal-segsize must be a power of 2 between 1 and 1024");
-	}
+	if (!IsValidWalSegSize(wal_segment_size_mb * 1024 * 1024))
+		pg_fatal("argument of %s must be a power of two between 1 and 1024", "--wal-segsize");
 
 	get_restricted_token();
 
@@ -3425,7 +3455,7 @@ main(int argc, char *argv[])
 	{
 		fputs(_("syncing data to disk ... "), stdout);
 		fflush(stdout);
-		fsync_pgdata(pg_data, PG_VERSION_NUM);
+		sync_pgdata(pg_data, PG_VERSION_NUM, sync_method);
 		check_ok();
 	}
 	else

@@ -3,7 +3,7 @@
  * rmgrdesc_utils.c
  *	  Support functions for rmgrdesc routines
  *
- * Copyright (c) 2023, PostgreSQL Global Development Group
+ * Copyright (c) 2023-2024, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -16,6 +16,10 @@
 #include "access/rmgrdesc_utils.h"
 #include "storage/off.h"
 
+/*
+ * Helper function to print an array, in the format described in the
+ * README.
+ */
 void
 array_desc(StringInfo buf, void *array, size_t elem_size, int count,
 		   void (*elem_desc) (StringInfo buf, void *elem, void *data),
@@ -33,7 +37,7 @@ array_desc(StringInfo buf, void *array, size_t elem_size, int count,
 		if (i < count - 1)
 			appendStringInfoString(buf, ", ");
 	}
-	appendStringInfoString(buf, "]");
+	appendStringInfoChar(buf, ']');
 }
 
 void

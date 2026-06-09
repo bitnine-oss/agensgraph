@@ -5,7 +5,7 @@
  * SQL commands and SQL-accessible functions related to GUC variables.
  *
  *
- * Copyright (c) 2000-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2024, PostgreSQL Global Development Group
  * Written by Peter Eisentraut <peter_e@gmx.net>.
  *
  * IDENTIFICATION
@@ -24,9 +24,9 @@
 #include "catalog/pg_parameter_acl.h"
 #include "funcapi.h"
 #include "guc_internal.h"
+#include "miscadmin.h"
 #include "parser/parse_type.h"
 #include "utils/acl.h"
-#include "utils/backend_status.h"
 #include "utils/builtins.h"
 #include "utils/guc_tables.h"
 #include "utils/snapmgr.h"

@@ -4,7 +4,7 @@
  *	  implementation of k-d tree over points for SP-GiST
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -19,8 +19,8 @@
 #include "access/spgist_private.h"
 #include "access/stratnum.h"
 #include "catalog/pg_type.h"
-#include "utils/builtins.h"
 #include "utils/float.h"
+#include "utils/fmgrprotos.h"
 #include "utils/geo_decls.h"
 
 

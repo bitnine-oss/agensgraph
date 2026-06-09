@@ -3,7 +3,7 @@
  * pg_publication.c
  *		publication C API manipulation
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -18,15 +18,12 @@
 #include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/tableam.h"
-#include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
-#include "catalog/index.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
-#include "catalog/partition.h"
-#include "catalog/objectaccess.h"
 #include "catalog/objectaddress.h"
+#include "catalog/partition.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_publication.h"
@@ -35,12 +32,10 @@
 #include "catalog/pg_type.h"
 #include "commands/publicationcmds.h"
 #include "funcapi.h"
-#include "miscadmin.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
 #include "utils/fmgroids.h"
-#include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"

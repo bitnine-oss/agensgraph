@@ -3,7 +3,7 @@
  * joinpath.c
  *	  Routines to find all possible paths for processing a set of joins
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -30,8 +30,9 @@
 set_join_pathlist_hook_type set_join_pathlist_hook = NULL;
 
 /*
- * Paths parameterized by the parent can be considered to be parameterized by
- * any of its child.
+ * Paths parameterized by a parent rel can be considered to be parameterized
+ * by any of its children, when we are performing partitionwise joins.  These
+ * macros simplify checking for such cases.  Beware multiple eval of args.
  */
 #define PATH_PARAM_BY_PARENT(path, rel)	\
 	((path)->param_info && bms_overlap(PATH_REQ_OUTER(path),	\
@@ -341,7 +342,10 @@ add_paths_to_joinrel(PlannerInfo *root,
 												 jointype, &extra);
 
 	/*
-	 * 6. Finally, give extensions a chance to manipulate the path list.
+	 * 6. Finally, give extensions a chance to manipulate the path list.  They
+	 * could add new paths (such as CustomPaths) by calling add_path(), or
+	 * add_partial_path() if parallel aware.  They could also delete or modify
+	 * paths added by the core code.
 	 */
 	if (set_join_pathlist_hook)
 		set_join_pathlist_hook(root, joinrel, outerrel, innerrel,
@@ -578,8 +582,16 @@ paraminfo_get_equal_hashops(PlannerInfo *root, ParamPathInfo *param_info,
 				return false;
 			}
 
-			*operators = lappend_oid(*operators, hasheqoperator);
-			*param_exprs = lappend(*param_exprs, expr);
+			/*
+			 * 'expr' may already exist as a parameter from a previous item in
+			 * ppi_clauses.  No need to include it again, however we'd better
+			 * ensure we do switch into binary mode if required.  See below.
+			 */
+			if (!list_member(*param_exprs, expr))
+			{
+				*operators = lappend_oid(*operators, hasheqoperator);
+				*param_exprs = lappend(*param_exprs, expr);
+			}
 
 			/*
 			 * When the join operator is not hashable then it's possible that
@@ -603,7 +615,7 @@ paraminfo_get_equal_hashops(PlannerInfo *root, ParamPathInfo *param_info,
 		Node	   *expr = (Node *) lfirst(lc);
 		TypeCacheEntry *typentry;
 
-		/* Reject if there are any volatile functions in PHVs */
+		/* Reject if there are any volatile functions in lateral vars */
 		if (contain_volatile_functions(expr))
 		{
 			list_free(*operators);
@@ -622,8 +634,16 @@ paraminfo_get_equal_hashops(PlannerInfo *root, ParamPathInfo *param_info,
 			return false;
 		}
 
-		*operators = lappend_oid(*operators, typentry->eq_opr);
-		*param_exprs = lappend(*param_exprs, expr);
+		/*
+		 * 'expr' may already exist as a parameter from the ppi_clauses.  No
+		 * need to include it again, however we'd better ensure we do switch
+		 * into binary mode.
+		 */
+		if (!list_member(*param_exprs, expr))
+		{
+			*operators = lappend_oid(*operators, typentry->eq_opr);
+			*param_exprs = lappend(*param_exprs, expr);
+		}
 
 		/*
 		 * We must go into binary mode as we don't have too much of an idea of
@@ -721,7 +741,7 @@ get_memoize_path(PlannerInfo *root, RelOptInfo *innerrel,
 	 */
 	if (extra->inner_unique &&
 		(inner_path->param_info == NULL ||
-		 list_length(inner_path->param_info->ppi_clauses) <
+		 bms_num_members(inner_path->param_info->ppi_serials) <
 		 list_length(extra->restrictlist)))
 		return NULL;
 
@@ -739,6 +759,23 @@ get_memoize_path(PlannerInfo *root, RelOptInfo *innerrel,
 
 		if (contain_volatile_functions((Node *) rinfo))
 			return NULL;
+	}
+
+	/*
+	 * Also check the parameterized path restrictinfos for volatile functions.
+	 * Indexed functions must be immutable so shouldn't have any volatile
+	 * functions, however, with a lateral join the inner scan may not be an
+	 * index scan.
+	 */
+	if (inner_path->param_info != NULL)
+	{
+		foreach(lc, inner_path->param_info->ppi_clauses)
+		{
+			RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
+
+			if (contain_volatile_functions((Node *) rinfo))
+				return NULL;
+		}
 	}
 
 	/* Check if we have hash ops for each parameter to the path */
@@ -800,8 +837,11 @@ try_nestloop_path(PlannerInfo *root,
 		return;
 
 	/*
-	 * Paths are parameterized by top-level parents, so run parameterization
-	 * tests on the parent relids.
+	 * Any parameterization of the input paths refers to topmost parents of
+	 * the relevant relations, because reparameterize_path_by_child() hasn't
+	 * been called yet.  So we must consider topmost parents of the relations
+	 * being joined, too, while determining parameterization of the result and
+	 * checking for disallowed parameterization cases.
 	 */
 	if (innerrel->top_parent_relids)
 		innerrelids = innerrel->top_parent_relids;
@@ -836,6 +876,20 @@ try_nestloop_path(PlannerInfo *root,
 	Assert(!have_unsafe_outer_join_ref(root, outerrelids, inner_paramrels));
 
 	/*
+	 * If the inner path is parameterized, it is parameterized by the topmost
+	 * parent of the outer rel, not the outer rel itself.  We will need to
+	 * translate the parameterization, if this path is chosen, during
+	 * create_plan().  Here we just check whether we will be able to perform
+	 * the translation, and if not avoid creating a nestloop path.
+	 */
+	if (PATH_PARAM_BY_PARENT(inner_path, outer_path->parent) &&
+		!path_is_reparameterizable_by_child(inner_path, outer_path->parent))
+	{
+		bms_free(required_outer);
+		return;
+	}
+
+	/*
 	 * Do a precheck to quickly eliminate obviously-inferior paths.  We
 	 * calculate a cheap lower bound on the path's cost and then use
 	 * add_path_precheck() to see if the path is clearly going to be dominated
@@ -851,27 +905,6 @@ try_nestloop_path(PlannerInfo *root,
 						  workspace.startup_cost, workspace.total_cost,
 						  pathkeys, required_outer))
 	{
-		/*
-		 * If the inner path is parameterized, it is parameterized by the
-		 * topmost parent of the outer rel, not the outer rel itself.  Fix
-		 * that.
-		 */
-		if (PATH_PARAM_BY_PARENT(inner_path, outer_path->parent))
-		{
-			inner_path = reparameterize_path_by_child(root, inner_path,
-													  outer_path->parent);
-
-			/*
-			 * If we could not translate the path, we can't create nest loop
-			 * path.
-			 */
-			if (!inner_path)
-			{
-				bms_free(required_outer);
-				return;
-			}
-		}
-
 		if (parse->shortestpathSource != NULL && parse->shortestpathEndIdLeft != NULL)
 		{
 			if (joinrel->pathlist == NULL)
@@ -955,6 +988,17 @@ try_partial_nestloop_path(PlannerInfo *root,
 	}
 
 	/*
+	 * If the inner path is parameterized, it is parameterized by the topmost
+	 * parent of the outer rel, not the outer rel itself.  We will need to
+	 * translate the parameterization, if this path is chosen, during
+	 * create_plan().  Here we just check whether we will be able to perform
+	 * the translation, and if not avoid creating a nestloop path.
+	 */
+	if (PATH_PARAM_BY_PARENT(inner_path, outer_path->parent) &&
+		!path_is_reparameterizable_by_child(inner_path, outer_path->parent))
+		return;
+
+	/*
 	 * Before creating a path, get a quick lower bound on what it is likely to
 	 * cost.  Bail out right away if it looks terrible.
 	 */
@@ -962,22 +1006,6 @@ try_partial_nestloop_path(PlannerInfo *root,
 						  outer_path, inner_path, extra);
 	if (!add_partial_path_precheck(joinrel, workspace.total_cost, pathkeys))
 		return;
-
-	/*
-	 * If the inner path is parameterized, it is parameterized by the topmost
-	 * parent of the outer rel, not the outer rel itself.  Fix that.
-	 */
-	if (PATH_PARAM_BY_PARENT(inner_path, outer_path->parent))
-	{
-		inner_path = reparameterize_path_by_child(root, inner_path,
-												  outer_path->parent);
-
-		/*
-		 * If we could not translate the path, we can't create nest loop path.
-		 */
-		if (!inner_path)
-			return;
-	}
 
 	/* Might be good enough to be worth trying, so let's try it. */
 	add_partial_path(joinrel, (Path *)

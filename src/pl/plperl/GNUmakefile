@@ -108,11 +108,11 @@ uninstall: uninstall-lib uninstall-data
 
 install-data: installdirs
 	$(INSTALL_DATA) $(addprefix $(srcdir)/, $(DATA)) '$(DESTDIR)$(datadir)/extension/'
-	$(INSTALL_DATA) $(srcdir)/plperl.h $(srcdir)/ppport.h '$(DESTDIR)$(includedir_server)'
+	$(INSTALL_DATA) $(srcdir)/plperl.h $(srcdir)/plperl_system.h $(srcdir)/ppport.h '$(DESTDIR)$(includedir_server)'
 
 uninstall-data:
 	rm -f $(addprefix '$(DESTDIR)$(datadir)/extension'/, $(notdir $(DATA)))
-	rm -f $(addprefix '$(DESTDIR)$(includedir_server)'/, plperl.h ppport.h)
+	rm -f $(addprefix '$(DESTDIR)$(includedir_server)'/, plperl.h plperl_system.h ppport.h)
 
 .PHONY: install-data uninstall-data
 
@@ -127,7 +127,7 @@ installcheck: submake
 submake:
 	$(MAKE) -C $(top_builddir)/src/test/regress pg_regress$(X)
 
-clean distclean maintainer-clean: clean-lib
+clean distclean: clean-lib
 	rm -f SPI.c Util.c $(OBJS) perlchunks.h plperl_opmask.h
 	rm -rf $(pg_regress_clean_files)
 ifeq ($(PORTNAME), win32)

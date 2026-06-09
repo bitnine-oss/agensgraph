@@ -1,9 +1,9 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Test streaming of transaction containing multiple subtransactions and rollbacks
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -36,21 +36,21 @@ sub test_streaming
 	$node_publisher->safe_psql(
 		'postgres', q{
 	BEGIN;
-	INSERT INTO test_tab VALUES (3, md5(3::text));
+	INSERT INTO test_tab VALUES (3, sha256(3::text::bytea));
 	SAVEPOINT s1;
-	INSERT INTO test_tab VALUES (4, md5(4::text));
+	INSERT INTO test_tab VALUES (4, sha256(4::text::bytea));
 	SAVEPOINT s2;
-	INSERT INTO test_tab VALUES (5, md5(5::text));
+	INSERT INTO test_tab VALUES (5, sha256(5::text::bytea));
 	SAVEPOINT s3;
-	INSERT INTO test_tab VALUES (6, md5(6::text));
+	INSERT INTO test_tab VALUES (6, sha256(6::text::bytea));
 	ROLLBACK TO s2;
-	INSERT INTO test_tab VALUES (7, md5(7::text));
+	INSERT INTO test_tab VALUES (7, sha256(7::text::bytea));
 	ROLLBACK TO s1;
-	INSERT INTO test_tab VALUES (8, md5(8::text));
+	INSERT INTO test_tab VALUES (8, sha256(8::text::bytea));
 	SAVEPOINT s4;
-	INSERT INTO test_tab VALUES (9, md5(9::text));
+	INSERT INTO test_tab VALUES (9, sha256(9::text::bytea));
 	SAVEPOINT s5;
-	INSERT INTO test_tab VALUES (10, md5(10::text));
+	INSERT INTO test_tab VALUES (10, sha256(10::text::bytea));
 	COMMIT;
 	});
 
@@ -73,15 +73,15 @@ sub test_streaming
 	$node_publisher->safe_psql(
 		'postgres', q{
 	BEGIN;
-	INSERT INTO test_tab VALUES (11, md5(11::text));
+	INSERT INTO test_tab VALUES (11, sha256(11::text::bytea));
 	SAVEPOINT s1;
-	INSERT INTO test_tab VALUES (12, md5(12::text));
+	INSERT INTO test_tab VALUES (12, sha256(12::text::bytea));
 	SAVEPOINT s2;
-	INSERT INTO test_tab VALUES (13, md5(13::text));
+	INSERT INTO test_tab VALUES (13, sha256(13::text::bytea));
 	SAVEPOINT s3;
-	INSERT INTO test_tab VALUES (14, md5(14::text));
+	INSERT INTO test_tab VALUES (14, sha256(14::text::bytea));
 	RELEASE s2;
-	INSERT INTO test_tab VALUES (15, md5(15::text));
+	INSERT INTO test_tab VALUES (15, sha256(15::text::bytea));
 	ROLLBACK TO s1;
 	COMMIT;
 	});
@@ -103,11 +103,11 @@ sub test_streaming
 	$node_publisher->safe_psql(
 		'postgres', q{
 	BEGIN;
-	INSERT INTO test_tab VALUES (16, md5(16::text));
+	INSERT INTO test_tab VALUES (16, sha256(16::text::bytea));
 	SAVEPOINT s1;
-	INSERT INTO test_tab VALUES (17, md5(17::text));
+	INSERT INTO test_tab VALUES (17, sha256(17::text::bytea));
 	SAVEPOINT s2;
-	INSERT INTO test_tab VALUES (18, md5(18::text));
+	INSERT INTO test_tab VALUES (18, sha256(18::text::bytea));
 	ROLLBACK;
 	});
 
@@ -130,17 +130,17 @@ sub test_streaming
 my $node_publisher = PostgreSQL::Test::Cluster->new('publisher');
 $node_publisher->init(allows_streaming => 'logical');
 $node_publisher->append_conf('postgresql.conf',
-	'logical_replication_mode = immediate');
+	'debug_logical_replication_streaming = immediate');
 $node_publisher->start;
 
 # Create subscriber node
 my $node_subscriber = PostgreSQL::Test::Cluster->new('subscriber');
-$node_subscriber->init(allows_streaming => 'logical');
+$node_subscriber->init;
 $node_subscriber->start;
 
 # Create some preexisting content on publisher
 $node_publisher->safe_psql('postgres',
-	"CREATE TABLE test_tab (a int primary key, b varchar)");
+	"CREATE TABLE test_tab (a int primary key, b bytea)");
 $node_publisher->safe_psql('postgres',
 	"INSERT INTO test_tab VALUES (1, 'foo'), (2, 'bar')");
 $node_publisher->safe_psql('postgres', "CREATE TABLE test_tab_2 (a int)");
@@ -203,7 +203,7 @@ test_streaming($node_publisher, $node_subscriber, $appname, 1);
 # Test serializing changes to files and notify the parallel apply worker to
 # apply them at the end of the transaction.
 $node_subscriber->append_conf('postgresql.conf',
-	'logical_replication_mode = immediate');
+	'debug_logical_replication_streaming = immediate');
 # Reset the log_min_messages to default.
 $node_subscriber->append_conf('postgresql.conf',
 	"log_min_messages = warning");

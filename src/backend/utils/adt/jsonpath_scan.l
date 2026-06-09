@@ -7,7 +7,7 @@
  * Splits jsonpath string into tokens represented as JsonPathString structs.
  * Decodes unicode and hex escaped strings.
  *
- * Copyright (c) 2019-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2019-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	src/backend/utils/adt/jsonpath_scan.l
@@ -171,13 +171,13 @@ hex_fail	\\x{hexdigit}{0,1}
 
 <xnq,xq,xvq>{unicode}*{unicodefail} {
 								jsonpath_yyerror(NULL, escontext,
-												 "invalid unicode sequence");
+												 "invalid Unicode escape sequence");
 								yyterminate();
 							}
 
 <xnq,xq,xvq>{hex_fail}		{
 								jsonpath_yyerror(NULL, escontext,
-												 "invalid hex character sequence");
+												 "invalid hexadecimal character sequence");
 								yyterminate();
 							}
 
@@ -198,7 +198,7 @@ hex_fail	\\x{hexdigit}{0,1}
 
 <xq,xvq><<EOF>>				{
 							  jsonpath_yyerror(NULL, escontext,
-											   "unexpected end of quoted string");
+											   "unterminated quoted string");
 							  yyterminate();
 							}
 
@@ -401,24 +401,35 @@ static const JsonPathKeyword keywords[] = {
 	{ 2, false,	TO_P,		"to"},
 	{ 3, false,	ABS_P,		"abs"},
 	{ 3, false,	LAX_P,		"lax"},
+	{ 4, false,	DATE_P,		"date"},
 	{ 4, false,	FLAG_P,		"flag"},
 	{ 4, false,	LAST_P,		"last"},
 	{ 4, true,	NULL_P,		"null"},
 	{ 4, false,	SIZE_P,		"size"},
+	{ 4, false,	TIME_P,		"time"},
 	{ 4, true,	TRUE_P,		"true"},
 	{ 4, false,	TYPE_P,		"type"},
 	{ 4, false,	WITH_P,		"with"},
 	{ 5, true,	FALSE_P,	"false"},
 	{ 5, false,	FLOOR_P,	"floor"},
+	{ 6, false,	BIGINT_P,	"bigint"},
 	{ 6, false,	DOUBLE_P,	"double"},
 	{ 6, false,	EXISTS_P,	"exists"},
+	{ 6, false,	NUMBER_P,	"number"},
 	{ 6, false,	STARTS_P,	"starts"},
 	{ 6, false,	STRICT_P,	"strict"},
+	{ 6, false,	STRINGFUNC_P, "string"},
+	{ 7, false,	BOOLEAN_P,	"boolean"},
 	{ 7, false,	CEILING_P,	"ceiling"},
+	{ 7, false,	DECIMAL_P,	"decimal"},
+	{ 7, false,	INTEGER_P,	"integer"},
+	{ 7, false,	TIME_TZ_P,	"time_tz"},
 	{ 7, false,	UNKNOWN_P,	"unknown"},
 	{ 8, false,	DATETIME_P,	"datetime"},
 	{ 8, false,	KEYVALUE_P,	"keyvalue"},
+	{ 9, false,	TIMESTAMP_P, "timestamp"},
 	{ 10,false, LIKE_REGEX_P, "like_regex"},
+	{ 12,false, TIMESTAMP_TZ_P, "timestamp_tz"},
 };
 
 /* Check if current scanstring value is a keyword */
@@ -554,7 +565,7 @@ parsejsonpath(const char *str, int len, struct Node *escontext)
 	jsonpath_scanner_init(str, len);
 
 	if (jsonpath_yyparse((void *) &parseresult, escontext) != 0)
-		jsonpath_yyerror(NULL, escontext, "bogus input"); /* shouldn't happen */
+		jsonpath_yyerror(NULL, escontext, "invalid input"); /* shouldn't happen */
 
 	jsonpath_scanner_finish();
 
@@ -611,7 +622,7 @@ addUnicodeChar(int ch, struct Node *escontext)
 		else if (!pg_unicode_to_server_noerror(ch, (unsigned char *) cbuf))
 			ereturn(escontext, false,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("could not convert unicode to server encoding")));
+					 errmsg("could not convert Unicode to server encoding")));
 		addstring(false, cbuf, strlen(cbuf));
 	}
 	return true;

@@ -586,11 +586,6 @@ ExecEndDijkstra(DijkstraState *node)
 		heap_freetuple(node->vertexRow);
 
 	/*
-	 * Free the exprcontext
-	 */
-	ExecFreeExprContext(&node->ps);
-
-	/*
 	 * clean out the tuple table
 	 */
 	ExecClearTuple(node->ps.ps_ResultTupleSlot);

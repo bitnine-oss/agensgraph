@@ -2,7 +2,7 @@
  * SQL Information Schema
  * as defined in ISO/IEC 9075-11:2023
  *
- * Copyright (c) 2003-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2003-2024, PostgreSQL Global Development Group
  *
  * src/backend/catalog/information_schema.sql
  *
@@ -43,11 +43,8 @@ SET search_path TO information_schema;
 CREATE FUNCTION _pg_expandarray(IN anyarray, OUT x anyelement, OUT n int)
     RETURNS SETOF RECORD
     LANGUAGE sql STRICT IMMUTABLE PARALLEL SAFE
-    AS 'select $1[s],
-        s operator(pg_catalog.-) pg_catalog.array_lower($1,1) operator(pg_catalog.+) 1
-        from pg_catalog.generate_series(pg_catalog.array_lower($1,1),
-                                        pg_catalog.array_upper($1,1),
-                                        1) as g(s)';
+    ROWS 100 SUPPORT pg_catalog.array_unnest_support
+    AS 'SELECT * FROM pg_catalog.unnest($1) WITH ORDINALITY';
 
 /* Given an index's OID and an underlying-table column number, return the
  * column's position in the index (NULL if not there) */
@@ -435,8 +432,7 @@ CREATE VIEW check_constraints AS
     SELECT CAST(current_database() AS sql_identifier) AS constraint_catalog,
            CAST(rs.nspname AS sql_identifier) AS constraint_schema,
            CAST(con.conname AS sql_identifier) AS constraint_name,
-           CAST(substring(pg_get_constraintdef(con.oid) from 7) AS character_data)
-             AS check_clause
+           CAST(pg_get_expr(con.conbin, coalesce(c.oid, 0)) AS character_data) AS check_clause
     FROM pg_constraint con
            LEFT OUTER JOIN pg_namespace rs ON (rs.oid = con.connamespace)
            LEFT OUTER JOIN pg_class c ON (c.oid = con.conrelid)
@@ -445,7 +441,22 @@ CREATE VIEW check_constraints AS
       AND con.contype = 'c'
 
     UNION
-    -- not-null constraints
+    -- not-null constraints on domains
+
+    SELECT current_database()::information_schema.sql_identifier AS constraint_catalog,
+           rs.nspname::information_schema.sql_identifier AS constraint_schema,
+           con.conname::information_schema.sql_identifier AS constraint_name,
+           pg_catalog.format('%s IS NOT NULL', coalesce(at.attname, 'VALUE'))::information_schema.character_data AS check_clause
+     FROM pg_constraint con
+            LEFT JOIN pg_namespace rs ON rs.oid = con.connamespace
+            LEFT JOIN pg_class c ON c.oid = con.conrelid
+            LEFT JOIN pg_type t ON t.oid = con.contypid
+            LEFT JOIN pg_attribute at ON (con.conrelid = at.attrelid AND con.conkey[1] = at.attnum)
+     WHERE pg_has_role(coalesce(c.relowner, t.typowner), 'USAGE'::text)
+       AND con.contype = 'n'
+
+    UNION
+    -- not-null constraints on relations
 
     SELECT CAST(current_database() AS sql_identifier) AS constraint_catalog,
            CAST(n.nspname AS sql_identifier) AS constraint_schema,
@@ -2740,8 +2751,6 @@ CREATE VIEW element_types AS
            CAST(null AS cardinal_number) AS datetime_precision,
            CAST(null AS character_data) AS interval_type,
            CAST(null AS cardinal_number) AS interval_precision,
-
-           CAST(null AS character_data) AS domain_default, -- XXX maybe a bug in the standard
 
            CAST(current_database() AS sql_identifier) AS udt_catalog,
            CAST(nbt.nspname AS sql_identifier) AS udt_schema,

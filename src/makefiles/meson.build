@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 ### Compute pgxs_data, used in src/meson.build to generate Makefile.global
 ### etc, that's complete enough for PGXS to work.
@@ -52,9 +52,9 @@ pgxs_kv = {
   'abs_top_builddir': meson.build_root(),
   'abs_top_srcdir': meson.source_root(),
 
-  'enable_thread_safety': 'yes',
   'enable_rpath': get_option('rpath') ? 'yes' : 'no',
   'enable_nls': libintl.found() ? 'yes' : 'no',
+  'enable_injection_points': get_option('injection_points') ? 'yes' : 'no',
   'enable_tap_tests': tap_tests_enabled ? 'yes' : 'no',
   'enable_debug': get_option('debug') ? 'yes' : 'no',
   'enable_coverage': 'no',
@@ -100,8 +100,10 @@ pgxs_kv = {
     ' '.join(cflags_no_decl_after_statement),
 
   'CFLAGS_CRC': ' '.join(cflags_crc),
+  'CFLAGS_POPCNT': ' '.join(cflags_popcnt),
   'CFLAGS_UNROLL_LOOPS': ' '.join(unroll_loops_cflags),
   'CFLAGS_VECTORIZE': ' '.join(vectorize_cflags),
+  'CFLAGS_XSAVE': ' '.join(cflags_xsave),
 
   'LDFLAGS': var_ldflags,
   'LDFLAGS_EX': var_ldflags_ex,
@@ -177,7 +179,7 @@ pgxs_empty = [
   'WANTED_LANGUAGES',
 
   # Not needed because we don't build the server / PLs with the generated makefile
-  'LIBOBJS', 'PG_CRC32C_OBJS', 'TAS',
+  'LIBOBJS', 'PG_CRC32C_OBJS', 'PG_POPCNT_OBJS', 'TAS',
   'DTRACEFLAGS', # only server has dtrace probes
 
   'perl_archlibexp', 'perl_embed_ccflags', 'perl_embed_ldflags', 'perl_includespec', 'perl_privlibexp',

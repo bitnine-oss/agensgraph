@@ -1,8 +1,8 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
@@ -23,7 +23,7 @@ command_ok([ 'pg_ctl', 'initdb', '-D', "$tempdir/data", '-o', '-N' ],
 command_ok([ $ENV{PG_REGRESS}, '--config-auth', "$tempdir/data" ],
 	'configure authentication');
 my $node_port = PostgreSQL::Test::Cluster::get_free_port();
-open my $conf, '>>', "$tempdir/data/postgresql.conf";
+open my $conf, '>>', "$tempdir/data/postgresql.conf" or die $!;
 print $conf "fsync = off\n";
 print $conf "port = $node_port\n";
 print $conf PostgreSQL::Test::Utils::slurp_file($ENV{TEMP_CONFIG})
@@ -79,7 +79,8 @@ $logFileName = "$tempdir/data/perm-test-640.log";
 
 SKIP:
 {
-	skip "group access not supported on Windows", 3 if ($windows_os);
+	skip "group access not supported on Windows", 3
+	  if ($windows_os || $Config::Config{osname} eq 'cygwin');
 
 	system_or_bail 'pg_ctl', 'stop', '-D', "$tempdir/data";
 

@@ -3,7 +3,7 @@
  * nodeWorktablescan.c
  *	  routines to handle WorkTableScan nodes.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -15,7 +15,7 @@
 
 #include "postgres.h"
 
-#include "executor/execdebug.h"
+#include "executor/executor.h"
 #include "executor/nodeWorktablescan.h"
 
 static TupleTableSlot *WorkTableScanNext(WorkTableScanState *node);
@@ -179,28 +179,6 @@ ExecInitWorkTableScan(WorkTableScan *node, EState *estate, int eflags)
 	 */
 
 	return scanstate;
-}
-
-/* ----------------------------------------------------------------
- *		ExecEndWorkTableScan
- *
- *		frees any storage allocated through C routines.
- * ----------------------------------------------------------------
- */
-void
-ExecEndWorkTableScan(WorkTableScanState *node)
-{
-	/*
-	 * Free exprcontext
-	 */
-	ExecFreeExprContext(&node->ss.ps);
-
-	/*
-	 * clean out the tuple table
-	 */
-	if (node->ss.ps.ps_ResultTupleSlot)
-		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
-	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 }
 
 /* ----------------------------------------------------------------

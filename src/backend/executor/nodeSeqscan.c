@@ -3,7 +3,7 @@
  * nodeSeqscan.c
  *	  Support routines for sequential scans of relations.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -29,7 +29,7 @@
 
 #include "access/relscan.h"
 #include "access/tableam.h"
-#include "executor/execdebug.h"
+#include "executor/executor.h"
 #include "executor/nodeSeqscan.h"
 #include "utils/rel.h"
 
@@ -189,18 +189,6 @@ ExecEndSeqScan(SeqScanState *node)
 	 * get information from node
 	 */
 	scanDesc = node->ss.ss_currentScanDesc;
-
-	/*
-	 * Free the exprcontext
-	 */
-	ExecFreeExprContext(&node->ss.ps);
-
-	/*
-	 * clean out the tuple table
-	 */
-	if (node->ss.ps.ps_ResultTupleSlot)
-		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
-	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 
 	/*
 	 * close heap scan

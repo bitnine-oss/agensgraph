@@ -2,7 +2,7 @@
  * relation.c
  *	   PostgreSQL logical replication relation mapping cache
  *
- * Copyright (c) 2016-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/relation.c
@@ -17,10 +17,12 @@
 
 #include "postgres.h"
 
+#ifdef USE_ASSERT_CHECKING
+#include "access/amapi.h"
+#endif
 #include "access/genam.h"
 #include "access/table.h"
 #include "catalog/namespace.h"
-#include "catalog/pg_am_d.h"
 #include "catalog/pg_subscription_rel.h"
 #include "executor/executor.h"
 #include "nodes/makefuncs.h"
@@ -654,7 +656,6 @@ logicalrep_partition_open(LogicalRepRelMapEntry *root,
 		int			i;
 
 		/* Remote relation is copied as-is from the root entry. */
-		entry = &part_entry->relmapentry;
 		entry->remoterel.remoteid = remoterel->remoteid;
 		entry->remoterel.nspname = pstrdup(remoterel->nspname);
 		entry->remoterel.relname = pstrdup(remoterel->relname);
@@ -732,73 +733,8 @@ logicalrep_partition_open(LogicalRepRelMapEntry *root,
 }
 
 /*
- * Returns true if the given index consists only of expressions such as:
- * 	CREATE INDEX idx ON table(foo(col));
- *
- * Returns false even if there is one column reference:
- * 	 CREATE INDEX idx ON table(foo(col), col_2);
- */
-static bool
-IsIndexOnlyOnExpression(IndexInfo *indexInfo)
-{
-	for (int i = 0; i < indexInfo->ii_NumIndexKeyAttrs; i++)
-	{
-		AttrNumber	attnum = indexInfo->ii_IndexAttrNumbers[i];
-
-		if (AttributeNumberIsValid(attnum))
-			return false;
-	}
-
-	return true;
-}
-
-/*
- * Returns true if the attrmap contains the leftmost column of the index.
- * Otherwise returns false.
- *
- * attrmap is a map of local attributes to remote ones. We can consult this
- * map to check whether the local index attribute has a corresponding remote
- * attribute.
- */
-static bool
-RemoteRelContainsLeftMostColumnOnIdx(IndexInfo *indexInfo, AttrMap *attrmap)
-{
-	AttrNumber	keycol;
-
-	Assert(indexInfo->ii_NumIndexAttrs >= 1);
-
-	keycol = indexInfo->ii_IndexAttrNumbers[0];
-	if (!AttributeNumberIsValid(keycol))
-		return false;
-
-	if (attrmap->maplen <= AttrNumberGetAttrOffset(keycol))
-		return false;
-
-	return attrmap->attnums[AttrNumberGetAttrOffset(keycol)] >= 0;
-}
-
-/*
  * Returns the oid of an index that can be used by the apply worker to scan
- * the relation. The index must be btree, non-partial, and have at least
- * one column reference (i.e. cannot consist of only expressions). These
- * limitations help to keep the index scan similar to PK/RI index scans.
- *
- * Note that the limitations of index scans for replica identity full only
- * adheres to a subset of the limitations of PK/RI. For example, we support
- * columns that are marked as [NULL] or we are not interested in the [NOT
- * DEFERRABLE] aspect of constraints here. It works for us because we always
- * compare the tuples for non-PK/RI index scans. See
- * RelationFindReplTupleByIndex().
- *
- * XXX: There are no fundamental problems for supporting non-btree indexes.
- * We mostly need to relax the limitations in RelationFindReplTupleByIndex().
- * For partial indexes, the required changes are likely to be larger. If
- * none of the tuples satisfy the expression for the index scan, we fall-back
- * to sequential execution, which might not be a good idea in some cases.
- *
- * We also skip indexes if the remote relation does not contain the leftmost
- * column of the index. This is because in most such cases sequential scan is
- * favorable over index scan.
+ * the relation.
  *
  * We expect to call this function when REPLICA IDENTITY FULL is defined for
  * the remote relation.
@@ -809,25 +745,20 @@ static Oid
 FindUsableIndexForReplicaIdentityFull(Relation localrel, AttrMap *attrmap)
 {
 	List	   *idxlist = RelationGetIndexList(localrel);
-	ListCell   *lc;
 
-	foreach(lc, idxlist)
+	foreach_oid(idxoid, idxlist)
 	{
-		Oid			idxoid = lfirst_oid(lc);
 		bool		isUsableIdx;
-		bool		containsLeftMostCol;
 		Relation	idxRel;
 		IndexInfo  *idxInfo;
 
 		idxRel = index_open(idxoid, AccessShareLock);
 		idxInfo = BuildIndexInfo(idxRel);
-		isUsableIdx = IsIndexUsableForReplicaIdentityFull(idxInfo);
-		containsLeftMostCol =
-			RemoteRelContainsLeftMostColumnOnIdx(idxInfo, attrmap);
+		isUsableIdx = IsIndexUsableForReplicaIdentityFull(idxInfo, attrmap);
 		index_close(idxRel, AccessShareLock);
 
 		/* Return the first eligible index found */
-		if (isUsableIdx && containsLeftMostCol)
+		if (isUsableIdx)
 			return idxoid;
 	}
 
@@ -835,23 +766,86 @@ FindUsableIndexForReplicaIdentityFull(Relation localrel, AttrMap *attrmap)
 }
 
 /*
- * Returns true if the index is usable for replica identity full. For details,
- * see FindUsableIndexForReplicaIdentityFull.
+ * Returns true if the index is usable for replica identity full.
+ *
+ * The index must be btree or hash, non-partial, and the leftmost field must be
+ * a column (not an expression) that references the remote relation column. These
+ * limitations help to keep the index scan similar to PK/RI index scans.
+ *
+ * attrmap is a map of local attributes to remote ones. We can consult this
+ * map to check whether the local index attribute has a corresponding remote
+ * attribute.
+ *
+ * Note that the limitations of index scans for replica identity full only
+ * adheres to a subset of the limitations of PK/RI. For example, we support
+ * columns that are marked as [NULL] or we are not interested in the [NOT
+ * DEFERRABLE] aspect of constraints here. It works for us because we always
+ * compare the tuples for non-PK/RI index scans. See
+ * RelationFindReplTupleByIndex().
+ *
+ * The reasons why only Btree and Hash indexes can be considered as usable are:
+ *
+ * 1) Other index access methods don't have a fixed strategy for equality
+ * operation. Refer get_equal_strategy_number_for_am().
+ *
+ * 2) For indexes other than PK and REPLICA IDENTITY, we need to match the
+ * local and remote tuples. The equality routine tuples_equal() cannot accept
+ * a datatype (e.g. point or box) that does not have a default operator class
+ * for Btree or Hash.
+ *
+ * XXX: Note that BRIN and GIN indexes do not implement "amgettuple" which
+ * will be used later to fetch the tuples. See RelationFindReplTupleByIndex().
+ *
+ * XXX: To support partial indexes, the required changes are likely to be larger.
+ * If none of the tuples satisfy the expression for the index scan, we fall-back
+ * to sequential execution, which might not be a good idea in some cases.
  */
 bool
-IsIndexUsableForReplicaIdentityFull(IndexInfo *indexInfo)
+IsIndexUsableForReplicaIdentityFull(IndexInfo *indexInfo, AttrMap *attrmap)
 {
-	bool		is_btree = (indexInfo->ii_Am == BTREE_AM_OID);
-	bool		is_partial = (indexInfo->ii_Predicate != NIL);
-	bool		is_only_on_expression = IsIndexOnlyOnExpression(indexInfo);
+	AttrNumber	keycol;
 
-	return is_btree && !is_partial && !is_only_on_expression;
+	/* Ensure that the index access method has a valid equal strategy */
+	if (get_equal_strategy_number_for_am(indexInfo->ii_Am) == InvalidStrategy)
+		return false;
+
+	/* The index must not be a partial index */
+	if (indexInfo->ii_Predicate != NIL)
+		return false;
+
+	Assert(indexInfo->ii_NumIndexAttrs >= 1);
+
+	/* The leftmost index field must not be an expression */
+	keycol = indexInfo->ii_IndexAttrNumbers[0];
+	if (!AttributeNumberIsValid(keycol))
+		return false;
+
+	/*
+	 * And the leftmost index field must reference the remote relation column.
+	 * This is because if it doesn't, the sequential scan is favorable over
+	 * index scan in most cases.
+	 */
+	if (attrmap->maplen <= AttrNumberGetAttrOffset(keycol) ||
+		attrmap->attnums[AttrNumberGetAttrOffset(keycol)] < 0)
+		return false;
+
+#ifdef USE_ASSERT_CHECKING
+	{
+		IndexAmRoutine *amroutine;
+
+		/* The given index access method must implement amgettuple. */
+		amroutine = GetIndexAmRoutineByAmId(indexInfo->ii_Am, false);
+		Assert(amroutine->amgettuple != NULL);
+	}
+#endif
+
+	return true;
 }
 
 /*
- * Get replica identity index or if it is not defined a primary key.
- *
- * If neither is defined, returns InvalidOid
+ * Return the OID of the replica identity index if one is defined;
+ * the OID of the PK if one exists and is not deferrable;
+ * otherwise, InvalidOid.
  */
 Oid
 GetRelationIdentityOrPK(Relation rel)

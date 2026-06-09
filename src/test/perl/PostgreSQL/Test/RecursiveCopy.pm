@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 =pod
 
@@ -19,7 +19,7 @@ PostgreSQL::Test::RecursiveCopy::copypath($from, $to);
 package PostgreSQL::Test::RecursiveCopy;
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use Carp;
 use File::Basename;

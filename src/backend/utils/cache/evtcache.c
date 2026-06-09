@@ -3,7 +3,7 @@
  * evtcache.c
  *	  Special-purpose cache for event trigger data.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -28,14 +28,13 @@
 #include "utils/inval.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
-#include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
 typedef enum
 {
 	ETCS_NEEDS_REBUILD,
 	ETCS_REBUILD_STARTED,
-	ETCS_VALID
+	ETCS_VALID,
 } EventTriggerCacheStateType;
 
 typedef struct
@@ -91,7 +90,7 @@ BuildEventTriggerCache(void)
 		 * This can happen either because a previous rebuild failed, or
 		 * because an invalidation happened before the rebuild was complete.
 		 */
-		MemoryContextResetAndDeleteChildren(EventTriggerCacheContext);
+		MemoryContextReset(EventTriggerCacheContext);
 	}
 	else
 	{
@@ -121,7 +120,7 @@ BuildEventTriggerCache(void)
 	ctl.keysize = sizeof(EventTriggerEvent);
 	ctl.entrysize = sizeof(EventTriggerCacheEntry);
 	ctl.hcxt = EventTriggerCacheContext;
-	cache = hash_create("Event Trigger Cache", 32, &ctl,
+	cache = hash_create("EventTriggerCacheHash", 32, &ctl,
 						HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 
 	/*
@@ -167,6 +166,8 @@ BuildEventTriggerCache(void)
 			event = EVT_SQLDrop;
 		else if (strcmp(evtevent, "table_rewrite") == 0)
 			event = EVT_TableRewrite;
+		else if (strcmp(evtevent, "login") == 0)
+			event = EVT_Login;
 		else
 			continue;
 
@@ -260,7 +261,7 @@ InvalidateEventCacheCallback(Datum arg, int cacheid, uint32 hashvalue)
 	 */
 	if (EventTriggerCacheState == ETCS_VALID)
 	{
-		MemoryContextResetAndDeleteChildren(EventTriggerCacheContext);
+		MemoryContextReset(EventTriggerCacheContext);
 		EventTriggerCache = NULL;
 	}
 

@@ -2,7 +2,7 @@
  * applyparallelworker.c
  *	   Support routines for applying xact by parallel apply worker
  *
- * Copyright (c) 2023, PostgreSQL Global Development Group
+ * Copyright (c) 2023-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/applyparallelworker.c
@@ -435,7 +435,8 @@ pa_launch_parallel_worker(void)
 		return NULL;
 	}
 
-	launched = logicalrep_worker_launch(MyLogicalRepWorker->dbid,
+	launched = logicalrep_worker_launch(WORKERTYPE_PARALLEL_APPLY,
+										MyLogicalRepWorker->dbid,
 										MySubscription->oid,
 										MySubscription->name,
 										MyLogicalRepWorker->userid,
@@ -508,7 +509,6 @@ pa_allocate_worker(TransactionId xid)
 	winfo->in_use = true;
 	winfo->serialize_changes = false;
 	entry->winfo = winfo;
-	entry->xid = xid;
 }
 
 /*
@@ -773,10 +773,7 @@ LogicalParallelApplyLoop(shm_mq_handle *mqh)
 			if (len == 0)
 				elog(ERROR, "invalid message length");
 
-			s.cursor = 0;
-			s.maxlen = -1;
-			s.data = (char *) data;
-			s.len = len;
+			initReadOnlyStringInfo(&s, data, len);
 
 			/*
 			 * The first byte of messages sent from leader apply worker to
@@ -848,7 +845,7 @@ pa_shutdown(int code, Datum arg)
 {
 	SendProcSignal(MyLogicalRepWorker->leader_pid,
 				   PROCSIG_PARALLEL_APPLY_MESSAGE,
-				   InvalidBackendId);
+				   INVALID_PROC_NUMBER);
 
 	dsm_detach((dsm_segment *) DatumGetPointer(arg));
 }
@@ -937,12 +934,12 @@ ParallelApplyWorkerMain(Datum main_arg)
 
 	pq_redirect_to_shm_mq(seg, error_mqh);
 	pq_set_parallel_leader(MyLogicalRepWorker->leader_pid,
-						   InvalidBackendId);
+						   INVALID_PROC_NUMBER);
 
 	MyLogicalRepWorker->last_send_time = MyLogicalRepWorker->last_recv_time =
 		MyLogicalRepWorker->reply_time = 0;
 
-	InitializeApplyWorker();
+	InitializeLogRepWorker();
 
 	InitializingApplyWorker = false;
 
@@ -1159,7 +1156,7 @@ pa_send_data(ParallelApplyWorkerInfo *winfo, Size nbytes, const void *data)
 	 * We don't try to send data to parallel worker for 'immediate' mode. This
 	 * is primarily used for testing purposes.
 	 */
-	if (unlikely(logical_replication_mode == LOGICAL_REP_MODE_IMMEDIATE))
+	if (unlikely(debug_logical_replication_streaming == DEBUG_LOGICAL_REP_STREAMING_IMMEDIATE))
 		return false;
 
 /*

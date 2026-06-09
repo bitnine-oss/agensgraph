@@ -1,9 +1,12 @@
+
+# Copyright (c) 2024, PostgreSQL Global Development Group
+
 # Simple tablespace tests that can't be replicated on the same host
 # due to the use of absolute paths, so we keep them out of the regular
 # regression tests.
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;

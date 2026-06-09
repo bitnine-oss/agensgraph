@@ -3,7 +3,7 @@
  * auth-sasl.c
  *	  Routines to handle authentication via SASL
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -87,7 +87,7 @@ CheckSASLAuth(const pg_be_sasl_mech *mech, Port *port, char *shadow_pass,
 	{
 		pq_startmsgread();
 		mtype = pq_getbyte();
-		if (mtype != 'p')
+		if (mtype != PqMsg_SASLResponse)
 		{
 			/* Only log error if client didn't disconnect. */
 			if (mtype != EOF)

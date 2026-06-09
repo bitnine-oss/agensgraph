@@ -6,7 +6,7 @@
  * We don't support copying RelOptInfo, IndexOptInfo, or Path nodes.
  * There are some subsidiary structs that are useful to copy, though.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/pathnodes.h
@@ -78,7 +78,7 @@ typedef enum UpperRelationKind
 	UPPERREL_ORDERED,			/* result of ORDER BY, if any */
 	UPPERREL_SHORTESTPATH,		/* result of shortestpath */
 	UPPERREL_DIJKSTRA,			/* result of dijkstra */
-	UPPERREL_FINAL				/* result of any remaining top-level actions */
+	UPPERREL_FINAL,				/* result of any remaining top-level actions */
 	/* NB: UPPERREL_FINAL must be last enum entry; it's used to size arrays */
 } UpperRelationKind;
 
@@ -105,6 +105,9 @@ typedef struct PlannerGlobal
 
 	/* Plans for SubPlan nodes */
 	List	   *subplans;
+
+	/* Paths from which the SubPlan Plans were made */
+	List	   *subpaths;
 
 	/* PlannerInfos for SubPlan nodes */
 	List	   *subroots pg_node_attr(read_write_ignore);
@@ -399,6 +402,8 @@ struct PlannerInfo
 	List	   *distinct_pathkeys;
 	/* sortClause pathkeys, if any */
 	List	   *sort_pathkeys;
+	/* set operator pathkeys, if any */
+	List	   *setop_pathkeys;
 
 	/* Canonicalised partition schemes used in the query. */
 	List	   *part_schemes pg_node_attr(read_write_ignore);
@@ -423,7 +428,11 @@ struct PlannerInfo
 	 * items to be proven redundant, implying that there is only one group
 	 * containing all the query's rows.  Hence, if you want to check whether
 	 * GROUP BY was specified, test for nonempty parse->groupClause, not for
-	 * nonempty processed_groupClause.
+	 * nonempty processed_groupClause.  Optimizer chooses specific order of
+	 * group-by clauses during the upper paths generation process, attempting
+	 * to use different strategies to minimize number of sorts or engage
+	 * incremental sort.  See preprocess_groupclause() and
+	 * get_useful_group_keys_orderings() for details.
 	 *
 	 * Currently, when grouping sets are specified we do not attempt to
 	 * optimize the groupClause, so that processed_groupClause will be
@@ -816,7 +825,7 @@ typedef enum RelOptKind
 	RELOPT_OTHER_MEMBER_REL,
 	RELOPT_OTHER_JOINREL,
 	RELOPT_UPPER_REL,
-	RELOPT_OTHER_UPPER_REL
+	RELOPT_OTHER_UPPER_REL,
 } RelOptKind;
 
 /*
@@ -915,6 +924,12 @@ typedef struct RelOptInfo
 	Relids	   *attr_needed pg_node_attr(read_write_ignore);
 	/* array indexed [min_attr .. max_attr] */
 	int32	   *attr_widths pg_node_attr(read_write_ignore);
+
+	/*
+	 * Zero-based set containing attnums of NOT NULL columns.  Not populated
+	 * for rels corresponding to non-partitioned inh==true RTEs.
+	 */
+	Bitmapset  *notnullattnums;
 	/* relids of outer joins that can null this baserel */
 	Relids		nulling_relids;
 	/* LATERAL Vars and PHVs referenced by rel */
@@ -1459,6 +1474,23 @@ typedef struct PathKey
 } PathKey;
 
 /*
+ * Contains an order of group-by clauses and the corresponding list of
+ * pathkeys.
+ *
+ * The elements of 'clauses' list should have the same order as the head of
+ * 'pathkeys' list.  The tleSortGroupRef of the clause should be equal to
+ * ec_sortref of the pathkey equivalence class.  If there are redundant
+ * clauses with the same tleSortGroupRef, they must be grouped together.
+ */
+typedef struct GroupByOrdering
+{
+	NodeTag		type;
+
+	List	   *pathkeys;
+	List	   *clauses;
+} GroupByOrdering;
+
+/*
  * VolatileFunctionStatus -- allows nodes to cache their
  * contain_volatile_functions properties. VOLATILITY_UNKNOWN means not yet
  * determined.
@@ -1467,7 +1499,7 @@ typedef enum VolatileFunctionStatus
 {
 	VOLATILITY_UNKNOWN = 0,
 	VOLATILITY_VOLATILE,
-	VOLATILITY_NOVOLATILE
+	VOLATILITY_NOVOLATILE,
 } VolatileFunctionStatus;
 
 /*
@@ -1824,6 +1856,10 @@ typedef struct SubqueryScanPath
  * ForeignPath represents a potential scan of a foreign table, foreign join
  * or foreign upper-relation.
  *
+ * In the case of a foreign join, fdw_restrictinfo stores the RestrictInfos to
+ * apply to the join, which are used by createplan.c to get pseudoconstant
+ * clauses evaluated as one-time quals in a gating Result plan node.
+ *
  * fdw_private stores FDW private data about the scan.  While fdw_private is
  * not actually touched by the core code during normal operations, it's
  * generally a good idea to use a representation that can be dumped by
@@ -1834,19 +1870,27 @@ typedef struct ForeignPath
 {
 	Path		path;
 	Path	   *fdw_outerpath;
+	List	   *fdw_restrictinfo;
 	List	   *fdw_private;
 } ForeignPath;
 
 /*
- * CustomPath represents a table scan done by some out-of-core extension.
+ * CustomPath represents a table scan or a table join done by some out-of-core
+ * extension.
  *
  * We provide a set of hooks here - which the provider must take care to set
  * up correctly - to allow extensions to supply their own methods of scanning
- * a relation.  For example, a provider might provide GPU acceleration, a
- * cache-based scan, or some other kind of logic we haven't dreamed up yet.
+ * a relation or join relations.  For example, a provider might provide GPU
+ * acceleration, a cache-based scan, or some other kind of logic we haven't
+ * dreamed up yet.
  *
- * CustomPaths can be injected into the planning process for a relation by
- * set_rel_pathlist_hook functions.
+ * CustomPaths can be injected into the planning process for a base or join
+ * relation by set_rel_pathlist_hook or set_join_pathlist_hook functions,
+ * respectively.
+ *
+ * In the case of a table join, custom_restrictinfo stores the RestrictInfos
+ * to apply to the join, which are used by createplan.c to get pseudoconstant
+ * clauses evaluated as one-time quals in a gating Result plan node.
  *
  * Core code must avoid assuming that the CustomPath is only as large as
  * the structure declared here; providers are allowed to make it the first
@@ -1864,6 +1908,7 @@ typedef struct CustomPath
 	uint32		flags;			/* mask of CUSTOMPATH_* flags, see
 								 * nodes/extensible.h */
 	List	   *custom_paths;	/* list of child Path nodes, if any */
+	List	   *custom_restrictinfo;
 	List	   *custom_private;
 	const struct CustomPathMethods *methods;
 } CustomPath;
@@ -1976,7 +2021,7 @@ typedef enum UniquePathMethod
 {
 	UNIQUE_PATH_NOOP,			/* input is known unique already */
 	UNIQUE_PATH_HASH,			/* use hashing */
-	UNIQUE_PATH_SORT			/* use sorting */
+	UNIQUE_PATH_SORT,			/* use sorting */
 } UniquePathMethod;
 
 typedef struct UniquePath
@@ -2276,6 +2321,7 @@ typedef struct WindowAggPath
 	Path	   *subpath;		/* path representing input source */
 	WindowClause *winclause;	/* WindowClause we'll be using */
 	List	   *qual;			/* lower-level WindowAgg runconditions */
+	List	   *runCondition;	/* OpExpr List to short-circuit execution */
 	bool		topwindow;		/* false for all apart from the WindowAgg
 								 * that's closest to the root of the plan */
 } WindowAggPath;
@@ -2333,7 +2379,7 @@ typedef struct ModifyTablePath
 	CmdType		operation;		/* INSERT, UPDATE, DELETE, or MERGE */
 	bool		canSetTag;		/* do we set the command tag/es_processed? */
 	Index		nominalRelation;	/* Parent RT index for use of EXPLAIN */
-	Index		rootRelation;	/* Root RT index, if target is partitioned */
+	Index		rootRelation;	/* Root RT index, if partitioned/inherited */
 	bool		partColsUpdated;	/* some part key in hierarchy updated? */
 	List	   *resultRelations;	/* integer list of RT indexes */
 	List	   *updateColnosLists;	/* per-target-table update_colnos lists */
@@ -2344,6 +2390,8 @@ typedef struct ModifyTablePath
 	int			epqParam;		/* ID of Param for EvalPlanQual re-eval */
 	List	   *mergeActionLists;	/* per-target-table lists of actions for
 									 * MERGE */
+	List	   *mergeJoinConditions;	/* per-target-table join conditions
+										 * for MERGE */
 } ModifyTablePath;
 
 /*
@@ -2633,7 +2681,10 @@ typedef struct RestrictInfo
 	 * 2. If we manufacture a commuted version of a qual to use as an index
 	 * condition, it copies the original's rinfo_serial, since it is in
 	 * practice the same condition.
-	 * 3. RestrictInfos made for a child relation copy their parent's
+	 * 3. If we reduce a qual to constant-FALSE, the new constant-FALSE qual
+	 * copies the original's rinfo_serial, since it is in practice the same
+	 * condition.
+	 * 4. RestrictInfos made for a child relation copy their parent's
 	 * rinfo_serial.  Likewise, when an EquivalenceClass makes a derived
 	 * equality clause for a child relation, it copies the rinfo_serial of
 	 * the matching equality clause for the parent.  This allows detection
@@ -2884,6 +2935,9 @@ typedef struct PlaceHolderVar
  * cost estimation purposes it is sometimes useful to know the join size under
  * plain innerjoin semantics.  Note that lhs_strict and the semi_xxx fields
  * are not set meaningfully within such structs.
+ *
+ * We also create transient SpecialJoinInfos for child joins during
+ * partitionwise join planning, which are also not present in join_info_list.
  */
 #ifndef HAVE_SPECIALJOININFO_TYPEDEF
 typedef struct SpecialJoinInfo SpecialJoinInfo;
@@ -3273,7 +3327,7 @@ typedef enum
 {
 	PARTITIONWISE_AGGREGATE_NONE,
 	PARTITIONWISE_AGGREGATE_FULL,
-	PARTITIONWISE_AGGREGATE_PARTIAL
+	PARTITIONWISE_AGGREGATE_PARTIAL,
 } PartitionwiseAggregateType;
 
 /*

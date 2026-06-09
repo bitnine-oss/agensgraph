@@ -4,7 +4,7 @@
  *	  prototypes for the creator functions of various nodes
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/makefuncs.h
@@ -100,6 +100,7 @@ extern IndexInfo *makeIndexInfo(int numattrs, int numkeyattrs, Oid amoid,
 								bool isready, bool concurrent,
 								bool summarizing);
 
+extern Node *makeStringConst(char *str, int location);
 extern DefElem *makeDefElem(char *name, Node *arg, int location);
 extern DefElem *makeDefElemExtended(char *nameSpace, char *name, Node *arg,
 									DefElemAction defaction, int location);
@@ -110,11 +111,17 @@ extern VacuumRelation *makeVacuumRelation(RangeVar *relation, Oid oid, List *va_
 
 extern JsonFormat *makeJsonFormat(JsonFormatType type, JsonEncoding encoding,
 								  int location);
-extern JsonValueExpr *makeJsonValueExpr(Expr *expr, JsonFormat *format);
+extern JsonValueExpr *makeJsonValueExpr(Expr *raw_expr, Expr *formatted_expr,
+										JsonFormat *format);
 extern Node *makeJsonKeyValue(Node *key, Node *value);
 extern Node *makeJsonIsPredicate(Node *expr, JsonFormat *format,
 								 JsonValueType item_type, bool unique_keys,
 								 int location);
-extern JsonEncoding makeJsonEncoding(char *name);
+extern JsonBehavior *makeJsonBehavior(JsonBehaviorType btype, Node *expr,
+									  int location);
+extern JsonTablePath *makeJsonTablePath(Const *pathvalue, char *pathname);
+extern JsonTablePathSpec *makeJsonTablePathSpec(char *string, char *name,
+												int string_location,
+												int name_location);
 
 #endif							/* MAKEFUNC_H */

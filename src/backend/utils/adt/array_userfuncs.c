@@ -3,7 +3,7 @@
  * array_userfuncs.c
  *	  Misc user-visible array support functions
  *
- * Copyright (c) 2003-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2003-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/adt/array_userfuncs.c
@@ -13,13 +13,13 @@
 #include "postgres.h"
 
 #include "catalog/pg_type.h"
-#include "libpq/pqformat.h"
 #include "common/int.h"
 #include "common/pg_prng.h"
+#include "libpq/pqformat.h"
 #include "port/pg_bitutils.h"
 #include "utils/array.h"
-#include "utils/datum.h"
 #include "utils/builtins.h"
+#include "utils/datum.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
 
@@ -723,12 +723,11 @@ array_agg_deserialize(PG_FUNCTION_ARGS)
 	sstate = PG_GETARG_BYTEA_PP(0);
 
 	/*
-	 * Copy the bytea into a StringInfo so that we can "receive" it using the
-	 * standard recv-function infrastructure.
+	 * Initialize a StringInfo so that we can "receive" it using the standard
+	 * recv-function infrastructure.
 	 */
-	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf,
-						   VARDATA_ANY(sstate), VARSIZE_ANY_EXHDR(sstate));
+	initReadOnlyStringInfo(&buf, VARDATA_ANY(sstate),
+						   VARSIZE_ANY_EXHDR(sstate));
 
 	/* element_type */
 	element_type = pq_getmsgint(&buf, 4);
@@ -784,7 +783,6 @@ array_agg_deserialize(PG_FUNCTION_ARGS)
 		{
 			int			itemlen;
 			StringInfoData elem_buf;
-			char		csave;
 
 			if (result->dnulls[i])
 			{
@@ -799,33 +797,23 @@ array_agg_deserialize(PG_FUNCTION_ARGS)
 						 errmsg("insufficient data left in message")));
 
 			/*
-			 * Rather than copying data around, we just set up a phony
-			 * StringInfo pointing to the correct portion of the input buffer.
-			 * We assume we can scribble on the input buffer so as to maintain
-			 * the convention that StringInfos have a trailing null.
+			 * Rather than copying data around, we just initialize a
+			 * StringInfo pointing to the correct portion of the message
+			 * buffer.
 			 */
-			elem_buf.data = &buf.data[buf.cursor];
-			elem_buf.maxlen = itemlen + 1;
-			elem_buf.len = itemlen;
-			elem_buf.cursor = 0;
+			initReadOnlyStringInfo(&elem_buf, &buf.data[buf.cursor], itemlen);
 
 			buf.cursor += itemlen;
-
-			csave = buf.data[buf.cursor];
-			buf.data[buf.cursor] = '\0';
 
 			/* Now call the element's receiveproc */
 			result->dvalues[i] = ReceiveFunctionCall(&iodata->typreceive,
 													 &elem_buf,
 													 iodata->typioparam,
 													 -1);
-
-			buf.data[buf.cursor] = csave;
 		}
 	}
 
 	pq_getmsgend(&buf);
-	pfree(buf.data);
 
 	PG_RETURN_POINTER(result);
 }
@@ -1134,12 +1122,11 @@ array_agg_array_deserialize(PG_FUNCTION_ARGS)
 	sstate = PG_GETARG_BYTEA_PP(0);
 
 	/*
-	 * Copy the bytea into a StringInfo so that we can "receive" it using the
-	 * standard recv-function infrastructure.
+	 * Initialize a StringInfo so that we can "receive" it using the standard
+	 * recv-function infrastructure.
 	 */
-	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf,
-						   VARDATA_ANY(sstate), VARSIZE_ANY_EXHDR(sstate));
+	initReadOnlyStringInfo(&buf, VARDATA_ANY(sstate),
+						   VARSIZE_ANY_EXHDR(sstate));
 
 	/* element_type */
 	element_type = pq_getmsgint(&buf, 4);
@@ -1197,7 +1184,6 @@ array_agg_array_deserialize(PG_FUNCTION_ARGS)
 	memcpy(result->lbs, temp, sizeof(result->lbs));
 
 	pq_getmsgend(&buf);
-	pfree(buf.data);
 
 	PG_RETURN_POINTER(result);
 }

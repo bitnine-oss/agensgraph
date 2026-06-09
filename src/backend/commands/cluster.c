@@ -6,7 +6,7 @@
  * There is hardly anything left of Paul Brown's original implementation...
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  *
@@ -25,14 +25,12 @@
 #include "access/toast_internals.h"
 #include "access/transam.h"
 #include "access/xact.h"
-#include "access/xlog.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
 #include "catalog/namespace.h"
 #include "catalog/objectaccess.h"
-#include "catalog/partition.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_inherits.h"
@@ -58,7 +56,6 @@
 #include "utils/relmapper.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
-#include "utils/tuplesort.h"
 
 /*
  * This struct is used to pass around the information on tables to be
@@ -355,6 +352,7 @@ cluster_rel(Oid tableOid, Oid indexOid, ClusterParams *params)
 	SetUserIdAndSecContext(OldHeap->rd_rel->relowner,
 						   save_sec_context | SECURITY_RESTRICTED_OPERATION);
 	save_nestlevel = NewGUCNestLevel();
+	RestrictSearchPath();
 
 	/*
 	 * Since we may open a new transaction for each relation, we have to check
@@ -921,18 +919,24 @@ copy_table_data(Oid OIDNewHeap, Oid OIDOldHeap, Oid OIDOldIndex, bool verbose,
 	 * FreezeXid will become the table's new relfrozenxid, and that mustn't go
 	 * backwards, so take the max.
 	 */
-	if (TransactionIdIsValid(OldHeap->rd_rel->relfrozenxid) &&
-		TransactionIdPrecedes(cutoffs.FreezeLimit,
-							  OldHeap->rd_rel->relfrozenxid))
-		cutoffs.FreezeLimit = OldHeap->rd_rel->relfrozenxid;
+	{
+		TransactionId relfrozenxid = OldHeap->rd_rel->relfrozenxid;
+
+		if (TransactionIdIsValid(relfrozenxid) &&
+			TransactionIdPrecedes(cutoffs.FreezeLimit, relfrozenxid))
+			cutoffs.FreezeLimit = relfrozenxid;
+	}
 
 	/*
 	 * MultiXactCutoff, similarly, shouldn't go backwards either.
 	 */
-	if (MultiXactIdIsValid(OldHeap->rd_rel->relminmxid) &&
-		MultiXactIdPrecedes(cutoffs.MultiXactCutoff,
-							OldHeap->rd_rel->relminmxid))
-		cutoffs.MultiXactCutoff = OldHeap->rd_rel->relminmxid;
+	{
+		MultiXactId relminmxid = OldHeap->rd_rel->relminmxid;
+
+		if (MultiXactIdIsValid(relminmxid) &&
+			MultiXactIdPrecedes(cutoffs.MultiXactCutoff, relminmxid))
+			cutoffs.MultiXactCutoff = relminmxid;
+	}
 
 	/*
 	 * Decide whether to use an indexscan or seqscan-and-optional-sort to scan
@@ -1273,7 +1277,7 @@ swap_relation_files(Oid r1, Oid r2, bool target_is_pg_class,
 								AccessMethodRelationId,
 								relam1,
 								relam2) != 1)
-			elog(ERROR, "failed to change access method dependency for relation \"%s.%s\"",
+			elog(ERROR, "could not change access method dependency for relation \"%s.%s\"",
 				 get_namespace_name(get_rel_namespace(r1)),
 				 get_rel_name(r1));
 		if (changeDependencyFor(RelationRelationId,
@@ -1281,7 +1285,7 @@ swap_relation_files(Oid r1, Oid r2, bool target_is_pg_class,
 								AccessMethodRelationId,
 								relam2,
 								relam1) != 1)
-			elog(ERROR, "failed to change access method dependency for relation \"%s.%s\"",
+			elog(ERROR, "could not change access method dependency for relation \"%s.%s\"",
 				 get_namespace_name(get_rel_namespace(r2)),
 				 get_rel_name(r2));
 	}
@@ -1424,25 +1428,6 @@ swap_relation_files(Oid r1, Oid r2, bool target_is_pg_class,
 	heap_freetuple(reltup2);
 
 	table_close(relRelation, RowExclusiveLock);
-
-	/*
-	 * Close both relcache entries' smgr links.  We need this kluge because
-	 * both links will be invalidated during upcoming CommandCounterIncrement.
-	 * Whichever of the rels is the second to be cleared will have a dangling
-	 * reference to the other's smgr entry.  Rather than trying to avoid this
-	 * by ordering operations just so, it's easiest to close the links first.
-	 * (Fortunately, since one of the entries is local in our transaction,
-	 * it's sufficient to clear out our own relcache this way; the problem
-	 * cannot arise for other backends when they see our update on the
-	 * non-transient relation.)
-	 *
-	 * Caution: the placement of this step interacts with the decision to
-	 * handle toast rels by recursion.  When we are trying to rebuild pg_class
-	 * itself, the smgr close on pg_class must happen after all accesses in
-	 * this function.
-	 */
-	RelationCloseSmgrByOid(r1);
-	RelationCloseSmgrByOid(r2);
 }
 
 /*
@@ -1520,7 +1505,7 @@ finish_heap_swap(Oid OIDOldHeap, Oid OIDNewHeap,
 	pgstat_progress_update_param(PROGRESS_CLUSTER_PHASE,
 								 PROGRESS_CLUSTER_PHASE_REBUILD_INDEX);
 
-	reindex_relation(OIDOldHeap, reindex_flags, &reindex_params);
+	reindex_relation(NULL, OIDOldHeap, reindex_flags, &reindex_params);
 
 	/* Report that we are now doing clean up */
 	pgstat_progress_update_param(PROGRESS_CLUSTER_PHASE,

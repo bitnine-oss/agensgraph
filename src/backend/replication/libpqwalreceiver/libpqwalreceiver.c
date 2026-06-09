@@ -6,7 +6,10 @@
  * loaded as a dynamic module to avoid linking the main server binary with
  * libpq.
  *
- * Portions Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ * Apart from walreceiver, the libpq-specific routines are now being used by
+ * logical replication workers and slot synchronization.
+ *
+ * Portions Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -19,12 +22,9 @@
 #include <unistd.h>
 #include <sys/time.h>
 
-#include "access/xlog.h"
-#include "catalog/pg_type.h"
 #include "common/connect.h"
 #include "funcapi.h"
 #include "libpq-fe.h"
-#include "libpq/libpq-be-fe-helpers.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "pgstat.h"
@@ -49,7 +49,8 @@ struct WalReceiverConn
 
 /* Prototypes for interface functions */
 static WalReceiverConn *libpqrcv_connect(const char *conninfo,
-										 bool logical, bool must_use_password,
+										 bool replication, bool logical,
+										 bool must_use_password,
 										 const char *appname, char **err);
 static void libpqrcv_check_conninfo(const char *conninfo,
 									bool must_use_password);
@@ -58,6 +59,7 @@ static void libpqrcv_get_senderinfo(WalReceiverConn *conn,
 									char **sender_host, int *sender_port);
 static char *libpqrcv_identify_system(WalReceiverConn *conn,
 									  TimeLineID *primary_tli);
+static char *libpqrcv_get_dbname_from_conninfo(const char *connInfo);
 static int	libpqrcv_server_version(WalReceiverConn *conn);
 static void libpqrcv_readtimelinehistoryfile(WalReceiverConn *conn,
 											 TimeLineID tli, char **filename,
@@ -74,8 +76,11 @@ static char *libpqrcv_create_slot(WalReceiverConn *conn,
 								  const char *slotname,
 								  bool temporary,
 								  bool two_phase,
+								  bool failover,
 								  CRSSnapshotAction snapshot_action,
 								  XLogRecPtr *lsn);
+static void libpqrcv_alter_slot(WalReceiverConn *conn, const char *slotname,
+								bool failover);
 static pid_t libpqrcv_get_backend_pid(WalReceiverConn *conn);
 static WalRcvExecResult *libpqrcv_exec(WalReceiverConn *conn,
 									   const char *query,
@@ -96,6 +101,8 @@ static WalReceiverFunctionsType PQWalReceiverFunctions = {
 	.walrcv_receive = libpqrcv_receive,
 	.walrcv_send = libpqrcv_send,
 	.walrcv_create_slot = libpqrcv_create_slot,
+	.walrcv_alter_slot = libpqrcv_alter_slot,
+	.walrcv_get_dbname_from_conninfo = libpqrcv_get_dbname_from_conninfo,
 	.walrcv_get_backend_pid = libpqrcv_get_backend_pid,
 	.walrcv_exec = libpqrcv_exec,
 	.walrcv_disconnect = libpqrcv_disconnect
@@ -118,7 +125,11 @@ _PG_init(void)
 }
 
 /*
- * Establish the connection to the primary server for XLOG streaming
+ * Establish the connection to the primary server.
+ *
+ * This function can be used for both replication and regular connections.
+ * If it is a replication connection, it could be either logical or physical
+ * based on input argument 'logical'.
  *
  * If an error occurs, this function will normally return NULL and set *err
  * to a palloc'ed error message. However, if must_use_password is true and
@@ -129,13 +140,23 @@ _PG_init(void)
  * case.
  */
 static WalReceiverConn *
-libpqrcv_connect(const char *conninfo, bool logical, bool must_use_password,
-				 const char *appname, char **err)
+libpqrcv_connect(const char *conninfo, bool replication, bool logical,
+				 bool must_use_password, const char *appname, char **err)
 {
 	WalReceiverConn *conn;
+	PostgresPollingStatusType status;
 	const char *keys[6];
 	const char *vals[6];
 	int			i = 0;
+
+	/*
+	 * Re-validate connection string. The validation already happened at DDL
+	 * time, but the subscription owner may have changed. If we don't recheck
+	 * with the correct must_use_password, it's possible that the connection
+	 * will obtain the password from a different source, such as PGPASSFILE or
+	 * PGPASSWORD.
+	 */
+	libpqrcv_check_conninfo(conninfo, must_use_password);
 
 	/*
 	 * We use the expand_dbname parameter to process the connection string (or
@@ -143,63 +164,116 @@ libpqrcv_connect(const char *conninfo, bool logical, bool must_use_password,
 	 */
 	keys[i] = "dbname";
 	vals[i] = conninfo;
-	keys[++i] = "replication";
-	vals[i] = logical ? "database" : "true";
-	if (!logical)
+
+	/* We can not have logical without replication */
+	Assert(replication || !logical);
+
+	if (replication)
 	{
-		/*
-		 * The database name is ignored by the server in replication mode, but
-		 * specify "replication" for .pgpass lookup.
-		 */
-		keys[++i] = "dbname";
-		vals[i] = "replication";
+		keys[++i] = "replication";
+		vals[i] = logical ? "database" : "true";
+
+		if (logical)
+		{
+			/* Tell the publisher to translate to our encoding */
+			keys[++i] = "client_encoding";
+			vals[i] = GetDatabaseEncodingName();
+
+			/*
+			 * Force assorted GUC parameters to settings that ensure that the
+			 * publisher will output data values in a form that is unambiguous
+			 * to the subscriber.  (We don't want to modify the subscriber's
+			 * GUC settings, since that might surprise user-defined code
+			 * running in the subscriber, such as triggers.)  This should
+			 * match what pg_dump does.
+			 */
+			keys[++i] = "options";
+			vals[i] = "-c datestyle=ISO -c intervalstyle=postgres -c extra_float_digits=3";
+		}
+		else
+		{
+			/*
+			 * The database name is ignored by the server in replication mode,
+			 * but specify "replication" for .pgpass lookup.
+			 */
+			keys[++i] = "dbname";
+			vals[i] = "replication";
+		}
 	}
+
 	keys[++i] = "fallback_application_name";
 	vals[i] = appname;
-	if (logical)
-	{
-		/* Tell the publisher to translate to our encoding */
-		keys[++i] = "client_encoding";
-		vals[i] = GetDatabaseEncodingName();
 
-		/*
-		 * Force assorted GUC parameters to settings that ensure that the
-		 * publisher will output data values in a form that is unambiguous to
-		 * the subscriber.  (We don't want to modify the subscriber's GUC
-		 * settings, since that might surprise user-defined code running in
-		 * the subscriber, such as triggers.)  This should match what pg_dump
-		 * does.
-		 */
-		keys[++i] = "options";
-		vals[i] = "-c datestyle=ISO -c intervalstyle=postgres -c extra_float_digits=3";
-	}
 	keys[++i] = NULL;
 	vals[i] = NULL;
 
 	Assert(i < sizeof(keys));
 
 	conn = palloc0(sizeof(WalReceiverConn));
-	conn->streamConn =
-		libpqsrv_connect_params(keys, vals,
-								 /* expand_dbname = */ true,
-								WAIT_EVENT_LIBPQWALRECEIVER_CONNECT);
+	conn->streamConn = PQconnectStartParams(keys, vals,
+											 /* expand_dbname = */ true);
+	if (PQstatus(conn->streamConn) == CONNECTION_BAD)
+		goto bad_connection_errmsg;
+
+	/*
+	 * Poll connection until we have OK or FAILED status.
+	 *
+	 * Per spec for PQconnectPoll, first wait till socket is write-ready.
+	 */
+	status = PGRES_POLLING_WRITING;
+	do
+	{
+		int			io_flag;
+		int			rc;
+
+		if (status == PGRES_POLLING_READING)
+			io_flag = WL_SOCKET_READABLE;
+#ifdef WIN32
+		/* Windows needs a different test while waiting for connection-made */
+		else if (PQstatus(conn->streamConn) == CONNECTION_STARTED)
+			io_flag = WL_SOCKET_CONNECTED;
+#endif
+		else
+			io_flag = WL_SOCKET_WRITEABLE;
+
+		rc = WaitLatchOrSocket(MyLatch,
+							   WL_EXIT_ON_PM_DEATH | WL_LATCH_SET | io_flag,
+							   PQsocket(conn->streamConn),
+							   0,
+							   WAIT_EVENT_LIBPQWALRECEIVER_CONNECT);
+
+		/* Interrupted? */
+		if (rc & WL_LATCH_SET)
+		{
+			ResetLatch(MyLatch);
+			ProcessWalRcvInterrupts();
+		}
+
+		/* If socket is ready, advance the libpq state machine */
+		if (rc & io_flag)
+			status = PQconnectPoll(conn->streamConn);
+	} while (status != PGRES_POLLING_OK && status != PGRES_POLLING_FAILED);
 
 	if (PQstatus(conn->streamConn) != CONNECTION_OK)
 		goto bad_connection_errmsg;
 
 	if (must_use_password && !PQconnectionUsedPassword(conn->streamConn))
 	{
-		libpqsrv_disconnect(conn->streamConn);
+		PQfinish(conn->streamConn);
 		pfree(conn);
 
 		ereport(ERROR,
 				(errcode(ERRCODE_S_R_E_PROHIBITED_SQL_STATEMENT_ATTEMPTED),
 				 errmsg("password is required"),
 				 errdetail("Non-superuser cannot connect if the server does not request a password."),
-				 errhint("Target server's authentication method must be changed. or set password_required=false in the subscription attributes.")));
+				 errhint("Target server's authentication method must be changed, or set password_required=false in the subscription parameters.")));
 	}
 
-	if (logical)
+	/*
+	 * Set always-secure search path for the cases where the connection is
+	 * used to run SQL queries, so malicious users can't get control.
+	 */
+	if (!replication || logical)
 	{
 		PGresult   *res;
 
@@ -225,7 +299,7 @@ bad_connection_errmsg:
 
 	/* error path, error already set */
 bad_connection:
-	libpqsrv_disconnect(conn->streamConn);
+	PQfinish(conn->streamConn);
 	pfree(conn);
 	return NULL;
 }
@@ -275,10 +349,15 @@ libpqrcv_check_conninfo(const char *conninfo, bool must_use_password)
 		}
 
 		if (!uses_password)
+		{
+			/* malloc'd, so we must free it explicitly */
+			PQconninfoFree(opts);
+
 			ereport(ERROR,
 					(errcode(ERRCODE_S_R_E_PROHIBITED_SQL_STATEMENT_ATTEMPTED),
 					 errmsg("password is required"),
 					 errdetail("Non-superusers must provide a password in the connection string.")));
+		}
 	}
 
 	PQconninfoFree(opts);
@@ -381,6 +460,11 @@ libpqrcv_identify_system(WalReceiverConn *conn, TimeLineID *primary_tli)
 						"the primary server: %s",
 						pchomp(PQerrorMessage(conn->streamConn)))));
 	}
+
+	/*
+	 * IDENTIFY_SYSTEM returns 3 columns in 9.3 and earlier, and 4 columns in
+	 * 9.4 and onwards.
+	 */
 	if (PQnfields(res) < 3 || PQntuples(res) != 1)
 	{
 		int			ntuples = PQntuples(res);
@@ -391,7 +475,7 @@ libpqrcv_identify_system(WalReceiverConn *conn, TimeLineID *primary_tli)
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
 				 errmsg("invalid response from primary server"),
 				 errdetail("Could not identify system: got %d rows and %d fields, expected %d rows and %d or more fields.",
-						   ntuples, nfields, 3, 1)));
+						   ntuples, nfields, 1, 3)));
 	}
 	primary_sysid = pstrdup(PQgetvalue(res, 0, 0));
 	*primary_tli = pg_strtoint32(PQgetvalue(res, 0, 1));
@@ -407,6 +491,50 @@ static int
 libpqrcv_server_version(WalReceiverConn *conn)
 {
 	return PQserverVersion(conn->streamConn);
+}
+
+/*
+ * Get database name from the primary server's conninfo.
+ *
+ * If dbname is not found in connInfo, return NULL value.
+ */
+static char *
+libpqrcv_get_dbname_from_conninfo(const char *connInfo)
+{
+	PQconninfoOption *opts;
+	char	   *dbname = NULL;
+	char	   *err = NULL;
+
+	opts = PQconninfoParse(connInfo, &err);
+	if (opts == NULL)
+	{
+		/* The error string is malloc'd, so we must free it explicitly */
+		char	   *errcopy = err ? pstrdup(err) : "out of memory";
+
+		PQfreemem(err);
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("invalid connection string syntax: %s", errcopy)));
+	}
+
+	for (PQconninfoOption *opt = opts; opt->keyword != NULL; ++opt)
+	{
+		/*
+		 * If multiple dbnames are specified, then the last one will be
+		 * returned
+		 */
+		if (strcmp(opt->keyword, "dbname") == 0 && opt->val &&
+			*opt->val)
+		{
+			if (dbname)
+				pfree(dbname);
+
+			dbname = pstrdup(opt->val);
+		}
+	}
+
+	PQconninfoFree(opts);
+	return dbname;
 }
 
 /*
@@ -648,12 +776,9 @@ libpqrcv_readtimelinehistoryfile(WalReceiverConn *conn,
  * Send a query and wait for the results by using the asynchronous libpq
  * functions and socket readiness events.
  *
- * We must not use the regular blocking libpq functions like PQexec()
- * since they are uninterruptible by signals on some platforms, such as
- * Windows.
- *
- * The function is modeled on PQexec() in libpq, but only implements
- * those parts that are in use in the walreceiver api.
+ * The function is modeled on libpqsrv_exec(), with the behavior difference
+ * being that it calls ProcessWalRcvInterrupts().  As an optimization, it
+ * skips try/catch, since all errors terminate the process.
  *
  * May return NULL, rather than an error result, on failure.
  */
@@ -754,7 +879,7 @@ libpqrcv_PQgetResult(PGconn *streamConn)
 static void
 libpqrcv_disconnect(WalReceiverConn *conn)
 {
-	libpqsrv_disconnect(conn->streamConn);
+	PQfinish(conn->streamConn);
 	PQfreemem(conn->recvBuf);
 	pfree(conn);
 }
@@ -883,8 +1008,8 @@ libpqrcv_send(WalReceiverConn *conn, const char *buffer, int nbytes)
  */
 static char *
 libpqrcv_create_slot(WalReceiverConn *conn, const char *slotname,
-					 bool temporary, bool two_phase, CRSSnapshotAction snapshot_action,
-					 XLogRecPtr *lsn)
+					 bool temporary, bool two_phase, bool failover,
+					 CRSSnapshotAction snapshot_action, XLogRecPtr *lsn)
 {
 	PGresult   *res;
 	StringInfoData cmd;
@@ -908,6 +1033,15 @@ libpqrcv_create_slot(WalReceiverConn *conn, const char *slotname,
 		if (two_phase)
 		{
 			appendStringInfoString(&cmd, "TWO_PHASE");
+			if (use_new_options_syntax)
+				appendStringInfoString(&cmd, ", ");
+			else
+				appendStringInfoChar(&cmd, ' ');
+		}
+
+		if (failover)
+		{
+			appendStringInfoString(&cmd, "FAILOVER");
 			if (use_new_options_syntax)
 				appendStringInfoString(&cmd, ", ");
 			else
@@ -980,6 +1114,33 @@ libpqrcv_create_slot(WalReceiverConn *conn, const char *slotname,
 	PQclear(res);
 
 	return snapshot;
+}
+
+/*
+ * Change the definition of the replication slot.
+ */
+static void
+libpqrcv_alter_slot(WalReceiverConn *conn, const char *slotname,
+					bool failover)
+{
+	StringInfoData cmd;
+	PGresult   *res;
+
+	initStringInfo(&cmd);
+	appendStringInfo(&cmd, "ALTER_REPLICATION_SLOT %s ( FAILOVER %s )",
+					 quote_identifier(slotname),
+					 failover ? "true" : "false");
+
+	res = libpqrcv_PQexec(conn->streamConn, cmd.data);
+	pfree(cmd.data);
+
+	if (PQresultStatus(res) != PGRES_COMMAND_OK)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg("could not alter replication slot \"%s\": %s",
+						slotname, pchomp(PQerrorMessage(conn->streamConn)))));
+
+	PQclear(res);
 }
 
 /*
@@ -1087,8 +1248,9 @@ libpqrcv_exec(WalReceiverConn *conn, const char *query,
 
 	switch (PQresultStatus(pgres))
 	{
-		case PGRES_SINGLE_TUPLE:
 		case PGRES_TUPLES_OK:
+		case PGRES_SINGLE_TUPLE:
+		case PGRES_TUPLES_CHUNK:
 			walres->status = WALRCV_OK_TUPLES;
 			libpqrcv_processTuples(pgres, walres, nRetTypes, retTypes);
 			break;

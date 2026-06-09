@@ -3,7 +3,7 @@
  * dummy_index_am.c
  *		Index AM template main file.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -32,7 +32,7 @@ relopt_kind di_relopt_kind;
 typedef enum DummyAmEnum
 {
 	DUMMY_AM_ENUM_ONE,
-	DUMMY_AM_ENUM_TWO
+	DUMMY_AM_ENUM_TWO,
 }			DummyAmEnum;
 
 /* Dummy index options */
@@ -294,6 +294,7 @@ dihandler(PG_FUNCTION_ARGS)
 	amroutine->amclusterable = false;
 	amroutine->ampredlocks = false;
 	amroutine->amcanparallel = false;
+	amroutine->amcanbuildparallel = false;
 	amroutine->amcaninclude = false;
 	amroutine->amusemaintenanceworkmem = false;
 	amroutine->amsummarizing = false;

@@ -47,12 +47,17 @@ typedef FormData_ag_label *Form_ag_label;
 #define LABEL_KIND_EDGE		'e'
 
 #define LabelOidIndexId 7046
-DECLARE_UNIQUE_INDEX_PKEY(ag_label_oid_index, 7046, LabelOidIndexId, on ag_label using btree(oid oid_ops));
+DECLARE_UNIQUE_INDEX_PKEY(ag_label_oid_index, 7046, LabelOidIndexId, ag_label, btree(oid oid_ops));
 #define LabelNameGraphIndexId 7047
-DECLARE_UNIQUE_INDEX(ag_label_labname_graph_index, 7047, LabelNameGraphIndexId, on ag_label using btree(labname name_ops, graphid oid_ops));
+DECLARE_UNIQUE_INDEX(ag_label_labname_graph_index, 7047, LabelNameGraphIndexId, ag_label, btree(labname name_ops, graphid oid_ops));
 #define LabelGraphLabelIndexId 7048
-DECLARE_UNIQUE_INDEX(ag_label_graph_labid_index, 7048, LabelGraphLabelIndexId, on ag_label using btree(graphid oid_ops, labid int4_ops));
+DECLARE_UNIQUE_INDEX(ag_label_graph_labid_index, 7048, LabelGraphLabelIndexId, ag_label, btree(graphid oid_ops, labid int4_ops));
 #define LabelRelidIndexId 7049
-DECLARE_UNIQUE_INDEX(ag_label_relid_index, 7049, LabelRelidIndexId, on ag_label using btree(relid oid_ops));
+DECLARE_UNIQUE_INDEX(ag_label_relid_index, 7049, LabelRelidIndexId, ag_label, btree(relid oid_ops));
+
+MAKE_SYSCACHE(LABELLABID, ag_label_graph_labid_index, 64);
+MAKE_SYSCACHE(LABELNAMEGRAPH, ag_label_labname_graph_index, 128);
+MAKE_SYSCACHE(LABELOID, ag_label_oid_index, 64);
+MAKE_SYSCACHE(LABELRELID, ag_label_relid_index, 64);
 
 #endif							/* AG_LABEL_H */

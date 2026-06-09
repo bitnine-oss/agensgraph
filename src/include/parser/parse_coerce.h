@@ -4,7 +4,7 @@
  *	Routines for type coercion.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/parser/parse_coerce.h
@@ -27,7 +27,7 @@ typedef enum CoercionPathType
 	COERCION_PATH_FUNC,			/* apply the specified coercion function */
 	COERCION_PATH_RELABELTYPE,	/* binary-compatible cast, no function */
 	COERCION_PATH_ARRAYCOERCE,	/* need an ArrayCoerceExpr node */
-	COERCION_PATH_COERCEVIAIO	/* need a CoerceViaIO node */
+	COERCION_PATH_COERCEVIAIO,	/* need a CoerceViaIO node */
 } CoercionPathType;
 
 

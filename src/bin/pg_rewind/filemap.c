@@ -16,7 +16,7 @@
  * for each file.  Finally, it sorts the array to the final order that the
  * actions should be executed in.
  *
- * Copyright (c) 2013-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2024, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
@@ -27,23 +27,22 @@
 #include <unistd.h>
 
 #include "catalog/pg_tablespace_d.h"
-#include "common/hashfn.h"
+#include "common/file_utils.h"
+#include "common/hashfn_unstable.h"
 #include "common/string.h"
 #include "datapagemap.h"
 #include "filemap.h"
 #include "pg_rewind.h"
-#include "storage/fd.h"
 
 /*
  * Define a hash table which we can use to store information about the files
  * appearing in source and target systems.
  */
-static uint32 hash_string_pointer(const char *s);
 #define SH_PREFIX		filehash
 #define SH_ELEMENT_TYPE	file_entry_t
 #define SH_KEY_TYPE		const char *
 #define	SH_KEY			path
-#define SH_HASH_KEY(tb, key)	hash_string_pointer(key)
+#define SH_HASH_KEY(tb, key)	hash_string(key)
 #define SH_EQUAL(tb, a, b)		(strcmp(a, b) == 0)
 #define	SH_SCOPE		static inline
 #define SH_RAW_ALLOCATOR	pg_malloc0
@@ -85,7 +84,7 @@ struct exclude_list_item
  * they are defined in backend-only headers.  So this list is maintained
  * with a best effort in mind.
  */
-static const char *excludeDirContents[] =
+static const char *const excludeDirContents[] =
 {
 	/*
 	 * Skip temporary statistics files. PG_STAT_TMP_DIR must be skipped
@@ -647,6 +646,10 @@ decide_file_action(file_entry_t *entry)
 	if (strcmp(path, "global/pg_control") == 0)
 		return FILE_ACTION_NONE;
 
+	/* Skip macOS system files */
+	if (strstr(path, ".DS_Store") != NULL)
+		return FILE_ACTION_NONE;
+
 	/*
 	 * Remove all files matching the exclusion filters in the target.
 	 */
@@ -816,16 +819,4 @@ decide_file_actions(void)
 		  final_filemap_cmp);
 
 	return filemap;
-}
-
-
-/*
- * Helper function for filemap hash table.
- */
-static uint32
-hash_string_pointer(const char *s)
-{
-	unsigned char *ss = (unsigned char *) s;
-
-	return hash_bytes(ss, strlen(s));
 }

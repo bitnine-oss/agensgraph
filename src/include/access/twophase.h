@@ -4,7 +4,7 @@
  *	  Two-phase-commit related declarations.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/twophase.h
@@ -37,7 +37,7 @@ extern void PostPrepare_Twophase(void);
 extern TransactionId TwoPhaseGetXidByVirtualXID(VirtualTransactionId vxid,
 												bool *have_more);
 extern PGPROC *TwoPhaseGetDummyProc(TransactionId xid, bool lock_held);
-extern BackendId TwoPhaseGetDummyBackendId(TransactionId xid, bool lock_held);
+extern int	TwoPhaseGetDummyProcNumber(TransactionId xid, bool lock_held);
 
 extern GlobalTransaction MarkAsPreparing(TransactionId xid, const char *gid,
 										 TimestampTz prepared_at,

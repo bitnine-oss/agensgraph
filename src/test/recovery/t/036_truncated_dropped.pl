@@ -1,11 +1,11 @@
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Tests recovery scenarios where the files are shorter than in the common
 # cases, e.g. due to replaying WAL records of a relation that was subsequently
 # truncated or dropped.
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use Test::More;
 

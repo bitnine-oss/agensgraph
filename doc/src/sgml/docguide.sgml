@@ -393,28 +393,6 @@ LOGLEVEL=-Dorg.apache.commons.logging.simplelog.defaultlog=WARN
    </para>
   </sect2>
 
-  <sect2 id="docguide-build-plain-text">
-   <title>Plain Text Files</title>
-
-   <para>
-    The installation instructions are also distributed as plain text,
-    in case they are needed in a situation where better reading tools
-    are not available.  The <filename>INSTALL</filename> file
-    corresponds to <xref linkend="installation"/>, with some minor
-    changes to account for the different context.  To recreate the
-    file, change to the directory <filename>doc/src/sgml</filename>
-    and enter <userinput>make INSTALL</userinput>.  Building text output
-    requires <productname>Pandoc</productname> version 1.13 or newer as an
-    additional build tool.
-   </para>
-
-   <para>
-    In the past, the release notes and regression testing instructions
-    were also distributed as plain text, but this practice has been
-    discontinued.
-   </para>
-  </sect2>
-
   <sect2 id="docguide-build-syntax-check">
    <title>Syntax Check</title>
 
@@ -434,20 +412,19 @@ LOGLEVEL=-Dorg.apache.commons.logging.simplelog.defaultlog=WARN
   <title>Building the Documentation with Meson</title>
 
    <para>
-    Two options are provided for building the documentation using Meson.
-    Change to the <filename>build</filename> directory before running
-    one of these commands, or add <option>-C build</option> to the command.
+    To build the documentation using Meson, change to the
+    <filename>build</filename> directory before running one of these commands,
+    or add <option>-C build</option> to the command.
    </para>
 
    <para>
     To build just the <acronym>HTML</acronym> version of the documentation:
 <screen>
-<prompt>build$ </prompt><userinput>ninja docs</userinput>
+<prompt>build$ </prompt><userinput>ninja html</userinput>
 </screen>
-    To build all forms of the documentation:
-<screen>
-<prompt>build$ </prompt><userinput>ninja alldocs</userinput>
-</screen>
+    For a list of other documentation targets see
+    <xref linkend="targets-meson-documentation"/>.
+
     The output appears in the
     subdirectory <filename>build/doc/src/sgml</filename>.
    </para>

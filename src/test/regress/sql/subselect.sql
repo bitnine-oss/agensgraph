@@ -82,6 +82,20 @@ SELECT f1 AS "Correlated Field"
   WHERE (f1, f2) IN (SELECT f2, CAST(f3 AS int4) FROM SUBSELECT_TBL
                      WHERE f3 IS NOT NULL);
 
+-- Check ROWCOMPARE cases, both correlated and not
+
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT ROW(1, 2) = (SELECT f1, f2) AS eq FROM SUBSELECT_TBL;
+
+SELECT ROW(1, 2) = (SELECT f1, f2) AS eq FROM SUBSELECT_TBL;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT ROW(1, 2) = (SELECT 3, 4) AS eq FROM SUBSELECT_TBL;
+
+SELECT ROW(1, 2) = (SELECT 3, 4) AS eq FROM SUBSELECT_TBL;
+
+SELECT ROW(1, 2) = (SELECT f1, f2 FROM SUBSELECT_TBL);  -- error
+
 -- Subselects without aliases
 
 SELECT count FROM (SELECT COUNT(DISTINCT name) FROM road);
@@ -958,7 +972,7 @@ explain (verbose, costs off)
 with x as materialized (select * from int4_tbl)
 select * from (with y as (select * from x) select * from y) ss;
 
--- Ensure that we inline the currect CTE when there are
+-- Ensure that we inline the correct CTE when there are
 -- multiple CTEs with the same name
 explain (verbose, costs off)
 with x as (select 1 as y)
@@ -968,3 +982,41 @@ select * from (with x as (select 2 as y) select * from x) ss;
 explain (verbose, costs off)
 with x as (select * from subselect_tbl)
 select * from x for update;
+
+-- Pull up direct-correlated ANY_SUBLINKs
+explain (costs off)
+select * from tenk1 A where hundred in (select hundred from tenk2 B where B.odd = A.odd);
+
+explain (costs off)
+select * from tenk1 A where exists
+(select 1 from tenk2 B
+where A.hundred in (select C.hundred FROM tenk2 C
+WHERE c.odd = b.odd));
+
+-- we should only try to pull up the sublink into RHS of a left join
+-- but a.hundred is not available.
+explain (costs off)
+SELECT * FROM tenk1 A LEFT JOIN tenk2 B
+ON A.hundred in (SELECT c.hundred FROM tenk2 C WHERE c.odd = b.odd);
+
+-- we should only try to pull up the sublink into RHS of a left join
+-- but a.odd is not available for this.
+explain (costs off)
+SELECT * FROM tenk1 A LEFT JOIN tenk2 B
+ON B.hundred in (SELECT c.hundred FROM tenk2 C WHERE c.odd = a.odd);
+
+-- should be able to pull up since all the references are available.
+explain (costs off)
+SELECT * FROM tenk1 A LEFT JOIN tenk2 B
+ON B.hundred in (SELECT c.hundred FROM tenk2 C WHERE c.odd = b.odd);
+
+-- we can pull up the sublink into the inner JoinExpr.
+explain (costs off)
+SELECT * FROM tenk1 A INNER JOIN tenk2 B
+ON A.hundred in (SELECT c.hundred FROM tenk2 C WHERE c.odd = b.odd)
+WHERE a.thousand < 750;
+
+-- we can pull up the aggregate sublink into RHS of a left join.
+explain (costs off)
+SELECT * FROM tenk1 A LEFT JOIN tenk2 B
+ON B.hundred in (SELECT min(c.hundred) FROM tenk2 C WHERE c.odd = b.odd);

@@ -3,7 +3,7 @@
  * varlena.c
  *	  Functions for the variable-length built-in types.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -23,7 +23,9 @@
 #include "catalog/pg_type.h"
 #include "common/hashfn.h"
 #include "common/int.h"
+#include "common/unicode_category.h"
 #include "common/unicode_norm.h"
+#include "common/unicode_version.h"
 #include "funcapi.h"
 #include "lib/hyperloglog.h"
 #include "libpq/pqformat.h"
@@ -454,7 +456,7 @@ byteaout(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		elog(ERROR, "unrecognized bytea_output setting: %d",
+		elog(ERROR, "unrecognized \"bytea_output\" setting: %d",
 			 bytea_output);
 		rp = result = NULL;		/* keep compiler quiet */
 	}
@@ -889,8 +891,9 @@ text_substring(Datum str, int32 start, int32 length, bool length_not_specified)
 	int32		E;				/* end position */
 
 	/*
-	 * SQL99 says S can be zero or negative, but we still must fetch from the
-	 * start of the string.
+	 * SQL99 says S can be zero or negative (which we don't document), but we
+	 * still must fetch from the start of the string.
+	 * https://www.postgresql.org/message-id/170905442373.643.11536838320909376197%40wrigleys.postgresql.org
 	 */
 	S1 = Max(S, 1);
 
@@ -4919,53 +4922,87 @@ array_to_text_internal(FunctionCallInfo fcinfo, ArrayType *v,
 	return result;
 }
 
-#define HEXBASE 16
 /*
- * Convert an int32 to a string containing a base 16 (hex) representation of
+ * Workhorse for to_bin, to_oct, and to_hex.  Note that base must be > 1 and <=
+ * 16.
+ */
+static inline text *
+convert_to_base(uint64 value, int base)
+{
+	const char *digits = "0123456789abcdef";
+
+	/* We size the buffer for to_bin's longest possible return value. */
+	char		buf[sizeof(uint64) * BITS_PER_BYTE];
+	char	   *const end = buf + sizeof(buf);
+	char	   *ptr = end;
+
+	Assert(base > 1);
+	Assert(base <= 16);
+
+	do
+	{
+		*--ptr = digits[value % base];
+		value /= base;
+	} while (ptr > buf && value);
+
+	return cstring_to_text_with_len(ptr, end - ptr);
+}
+
+/*
+ * Convert an integer to a string containing a base-2 (binary) representation
+ * of the number.
+ */
+Datum
+to_bin32(PG_FUNCTION_ARGS)
+{
+	uint64		value = (uint32) PG_GETARG_INT32(0);
+
+	PG_RETURN_TEXT_P(convert_to_base(value, 2));
+}
+Datum
+to_bin64(PG_FUNCTION_ARGS)
+{
+	uint64		value = (uint64) PG_GETARG_INT64(0);
+
+	PG_RETURN_TEXT_P(convert_to_base(value, 2));
+}
+
+/*
+ * Convert an integer to a string containing a base-8 (oct) representation of
+ * the number.
+ */
+Datum
+to_oct32(PG_FUNCTION_ARGS)
+{
+	uint64		value = (uint32) PG_GETARG_INT32(0);
+
+	PG_RETURN_TEXT_P(convert_to_base(value, 8));
+}
+Datum
+to_oct64(PG_FUNCTION_ARGS)
+{
+	uint64		value = (uint64) PG_GETARG_INT64(0);
+
+	PG_RETURN_TEXT_P(convert_to_base(value, 8));
+}
+
+/*
+ * Convert an integer to a string containing a base-16 (hex) representation of
  * the number.
  */
 Datum
 to_hex32(PG_FUNCTION_ARGS)
 {
-	uint32		value = (uint32) PG_GETARG_INT32(0);
-	char	   *ptr;
-	const char *digits = "0123456789abcdef";
-	char		buf[32];		/* bigger than needed, but reasonable */
+	uint64		value = (uint32) PG_GETARG_INT32(0);
 
-	ptr = buf + sizeof(buf) - 1;
-	*ptr = '\0';
-
-	do
-	{
-		*--ptr = digits[value % HEXBASE];
-		value /= HEXBASE;
-	} while (ptr > buf && value);
-
-	PG_RETURN_TEXT_P(cstring_to_text(ptr));
+	PG_RETURN_TEXT_P(convert_to_base(value, 16));
 }
-
-/*
- * Convert an int64 to a string containing a base 16 (hex) representation of
- * the number.
- */
 Datum
 to_hex64(PG_FUNCTION_ARGS)
 {
 	uint64		value = (uint64) PG_GETARG_INT64(0);
-	char	   *ptr;
-	const char *digits = "0123456789abcdef";
-	char		buf[32];		/* bigger than needed, but reasonable */
 
-	ptr = buf + sizeof(buf) - 1;
-	*ptr = '\0';
-
-	do
-	{
-		*--ptr = digits[value % HEXBASE];
-		value /= HEXBASE;
-	} while (ptr > buf && value);
-
-	PG_RETURN_TEXT_P(cstring_to_text(ptr));
+	PG_RETURN_TEXT_P(convert_to_base(value, 16));
 }
 
 /*
@@ -5067,6 +5104,47 @@ pg_column_compression(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
+}
+
+/*
+ * Return the chunk_id of the on-disk TOASTed value.  Return NULL if the value
+ * is un-TOASTed or not on-disk.
+ */
+Datum
+pg_column_toast_chunk_id(PG_FUNCTION_ARGS)
+{
+	int			typlen;
+	struct varlena *attr;
+	struct varatt_external toast_pointer;
+
+	/* On first call, get the input type's typlen, and save at *fn_extra */
+	if (fcinfo->flinfo->fn_extra == NULL)
+	{
+		/* Lookup the datatype of the supplied argument */
+		Oid			argtypeid = get_fn_expr_argtype(fcinfo->flinfo, 0);
+
+		typlen = get_typlen(argtypeid);
+		if (typlen == 0)		/* should not happen */
+			elog(ERROR, "cache lookup failed for type %u", argtypeid);
+
+		fcinfo->flinfo->fn_extra = MemoryContextAlloc(fcinfo->flinfo->fn_mcxt,
+													  sizeof(int));
+		*((int *) fcinfo->flinfo->fn_extra) = typlen;
+	}
+	else
+		typlen = *((int *) fcinfo->flinfo->fn_extra);
+
+	if (typlen != -1)
+		PG_RETURN_NULL();
+
+	attr = (struct varlena *) DatumGetPointer(PG_GETARG_DATUM(0));
+
+	if (!VARATT_IS_EXTERNAL_ONDISK(attr))
+		PG_RETURN_NULL();
+
+	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
+
+	PG_RETURN_OID(toast_pointer.va_valueid);
 }
 
 /*
@@ -5255,12 +5333,11 @@ string_agg_deserialize(PG_FUNCTION_ARGS)
 	sstate = PG_GETARG_BYTEA_PP(0);
 
 	/*
-	 * Copy the bytea into a StringInfo so that we can "receive" it using the
-	 * standard recv-function infrastructure.
+	 * Initialize a StringInfo so that we can "receive" it using the standard
+	 * recv-function infrastructure.
 	 */
-	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf,
-						   VARDATA_ANY(sstate), VARSIZE_ANY_EXHDR(sstate));
+	initReadOnlyStringInfo(&buf, VARDATA_ANY(sstate),
+						   VARSIZE_ANY_EXHDR(sstate));
 
 	result = makeStringAggState(fcinfo);
 
@@ -5273,7 +5350,6 @@ string_agg_deserialize(PG_FUNCTION_ARGS)
 	appendBinaryStringInfo(result, data, datalen);
 
 	pq_getmsgend(&buf);
-	pfree(buf.data);
 
 	PG_RETURN_POINTER(result);
 }
@@ -6203,6 +6279,65 @@ unicode_norm_form_from_string(const char *formstr)
 				 errmsg("invalid normalization form: %s", formstr)));
 
 	return form;
+}
+
+/*
+ * Returns version of Unicode used by Postgres in "major.minor" format (the
+ * same format as the Unicode version reported by ICU). The third component
+ * ("update version") never involves additions to the character repertoire and
+ * is unimportant for most purposes.
+ *
+ * See: https://unicode.org/versions/
+ */
+Datum
+unicode_version(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_TEXT_P(cstring_to_text(PG_UNICODE_VERSION));
+}
+
+/*
+ * Returns version of Unicode used by ICU, if enabled; otherwise NULL.
+ */
+Datum
+icu_unicode_version(PG_FUNCTION_ARGS)
+{
+#ifdef USE_ICU
+	PG_RETURN_TEXT_P(cstring_to_text(U_UNICODE_VERSION));
+#else
+	PG_RETURN_NULL();
+#endif
+}
+
+/*
+ * Check whether the string contains only assigned Unicode code
+ * points. Requires that the database encoding is UTF-8.
+ */
+Datum
+unicode_assigned(PG_FUNCTION_ARGS)
+{
+	text	   *input = PG_GETARG_TEXT_PP(0);
+	unsigned char *p;
+	int			size;
+
+	if (GetDatabaseEncoding() != PG_UTF8)
+		ereport(ERROR,
+				(errmsg("Unicode categorization can only be performed if server encoding is UTF8")));
+
+	/* convert to pg_wchar */
+	size = pg_mbstrlen_with_len(VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
+	p = (unsigned char *) VARDATA_ANY(input);
+	for (int i = 0; i < size; i++)
+	{
+		pg_wchar	uchar = utf8_to_unicode(p);
+		int			category = unicode_category(uchar);
+
+		if (category == PG_U_UNASSIGNED)
+			PG_RETURN_BOOL(false);
+
+		p += pg_utf_mblen(p);
+	}
+
+	PG_RETURN_BOOL(true);
 }
 
 Datum

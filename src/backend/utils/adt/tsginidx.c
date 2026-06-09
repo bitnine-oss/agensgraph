@@ -3,7 +3,7 @@
  * tsginidx.c
  *	 GIN support functions for tsvector_ops
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -14,8 +14,6 @@
 #include "postgres.h"
 
 #include "access/gin.h"
-#include "access/stratnum.h"
-#include "miscadmin.h"
 #include "tsearch/ts_type.h"
 #include "tsearch/ts_utils.h"
 #include "utils/builtins.h"

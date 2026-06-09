@@ -3,7 +3,7 @@
  *
  *	controldata functions
  *
- *	Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/controldata.c
  */
 
@@ -11,8 +11,8 @@
 
 #include <ctype.h>
 
-#include "pg_upgrade.h"
 #include "common/string.h"
+#include "pg_upgrade.h"
 
 
 /*
@@ -126,8 +126,7 @@ get_control_data(ClusterInfo *cluster, bool live_check)
 		fflush(NULL);
 
 		if ((output = popen(cmd, "r")) == NULL)
-			pg_fatal("could not get control data using %s: %s",
-					 cmd, strerror(errno));
+			pg_fatal("could not get control data using %s: %m", cmd);
 
 		/* we have the result of cmd in "output". so parse it line by line now */
 		while (fgets(bufin, sizeof(bufin), output))
@@ -149,22 +148,23 @@ get_control_data(ClusterInfo *cluster, bool live_check)
 				 * the server was shut down cleanly, from the controldata
 				 * perspective.
 				 */
-				/* remove leading spaces */
+				/* Remove trailing newline and leading spaces */
+				(void) pg_strip_crlf(p);
 				while (*p == ' ')
 					p++;
-				if (strcmp(p, "shut down in recovery\n") == 0)
+				if (strcmp(p, "shut down in recovery") == 0)
 				{
 					if (cluster == &old_cluster)
 						pg_fatal("The source cluster was shut down while in recovery mode.  To upgrade, use \"rsync\" as documented or shut it down as a primary.");
 					else
 						pg_fatal("The target cluster was shut down while in recovery mode.  To upgrade, use \"rsync\" as documented or shut it down as a primary.");
 				}
-				else if (strcmp(p, "shut down\n") != 0)
+				else if (strcmp(p, "shut down") != 0)
 				{
 					if (cluster == &old_cluster)
-						pg_fatal("The source cluster was not shut down cleanly.");
+						pg_fatal("The source cluster was not shut down cleanly, state reported as: \"%s\"", p);
 					else
-						pg_fatal("The target cluster was not shut down cleanly.");
+						pg_fatal("The target cluster was not shut down cleanly, state reported as: \"%s\"", p);
 				}
 				got_cluster_state = true;
 			}
@@ -196,8 +196,7 @@ get_control_data(ClusterInfo *cluster, bool live_check)
 	fflush(NULL);
 
 	if ((output = popen(cmd, "r")) == NULL)
-		pg_fatal("could not get control data using %s: %s",
-				 cmd, strerror(errno));
+		pg_fatal("could not get control data using %s: %m", cmd);
 
 	/* Only in <= 9.2 */
 	if (GET_MAJOR_VERSION(cluster->major_version) <= 902)

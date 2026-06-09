@@ -22,7 +22,7 @@
  * the logic directly into that file as it's fairly simple, but it seems
  * cleaner to have everything related to progress reporting in one place.)
  *
- * Portions Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/backup/basebackup_progress.c
@@ -31,13 +31,9 @@
  */
 #include "postgres.h"
 
-#include "backup/basebackup.h"
 #include "backup/basebackup_sink.h"
 #include "commands/progress.h"
-#include "miscadmin.h"
 #include "pgstat.h"
-#include "storage/latch.h"
-#include "utils/timestamp.h"
 
 static void bbsink_progress_begin_backup(bbsink *sink);
 static void bbsink_progress_archive_contents(bbsink *sink, size_t len);

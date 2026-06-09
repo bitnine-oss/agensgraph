@@ -7,7 +7,7 @@
  * we need two sets of code.  Ought to look at trying to unify the cases.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -27,7 +27,7 @@
  */
 #include "postgres.h"
 
-#include "executor/execdebug.h"
+#include "executor/executor.h"
 #include "executor/nodeSubqueryscan.h"
 
 static TupleTableSlot *SubqueryNext(SubqueryScanState *node);
@@ -167,18 +167,6 @@ ExecInitSubqueryScan(SubqueryScan *node, EState *estate, int eflags)
 void
 ExecEndSubqueryScan(SubqueryScanState *node)
 {
-	/*
-	 * Free the exprcontext
-	 */
-	ExecFreeExprContext(&node->ss.ps);
-
-	/*
-	 * clean out the upper tuple table
-	 */
-	if (node->ss.ps.ps_ResultTupleSlot)
-		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
-	ExecClearTuple(node->ss.ss_ScanTupleSlot);
-
 	/*
 	 * close down subquery
 	 */

@@ -4,7 +4,7 @@
  * src/backend/utils/adt/formatting.c
  *
  *
- *	 Portions Copyright (c) 1999-2023, PostgreSQL Global Development Group
+ *	 Portions Copyright (c) 1999-2024, PostgreSQL Global Development Group
  *
  *
  *	 TO_CHAR(); TO_TIMESTAMP(); TO_DATE(); TO_NUMBER();
@@ -77,13 +77,14 @@
 
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
+#include "common/unicode_case.h"
+#include "common/unicode_category.h"
 #include "mb/pg_wchar.h"
 #include "nodes/miscnodes.h"
 #include "parser/scansup.h"
 #include "utils/builtins.h"
 #include "utils/date.h"
 #include "utils/datetime.h"
-#include "utils/float.h"
 #include "utils/formatting.h"
 #include "utils/memutils.h"
 #include "utils/numeric.h"
@@ -137,7 +138,7 @@ typedef enum
 {
 	FROM_CHAR_DATE_NONE = 0,	/* Value does not affect date mode. */
 	FROM_CHAR_DATE_GREGORIAN,	/* Gregorian (day, month, year) style date */
-	FROM_CHAR_DATE_ISOWEEK		/* ISO 8601 week date */
+	FROM_CHAR_DATE_ISOWEEK,		/* ISO 8601 week date */
 } FromCharDateMode;
 
 typedef struct
@@ -418,13 +419,23 @@ typedef struct
 				us,
 				yysz,			/* is it YY or YYYY ? */
 				clock,			/* 12 or 24 hour clock? */
-				tzsign,			/* +1, -1 or 0 if timezone info is absent */
+				tzsign,			/* +1, -1, or 0 if no TZH/TZM fields */
 				tzh,
 				tzm,
 				ff;				/* fractional precision */
+	bool		has_tz;			/* was there a TZ field? */
+	int			gmtoffset;		/* GMT offset of fixed-offset zone abbrev */
+	pg_tz	   *tzp;			/* pg_tz for dynamic abbrev */
+	char	   *abbrev;			/* dynamic abbrev */
 } TmFromChar;
 
 #define ZERO_tmfc(_X) memset(_X, 0, sizeof(TmFromChar))
+
+struct fmt_tz					/* do_to_timestamp's timezone info output */
+{
+	bool		has_tz;			/* was there any TZ/TZH/TZM field? */
+	int			gmtoffset;		/* GMT offset in seconds */
+};
 
 /* ----------
  * Debug
@@ -1058,8 +1069,8 @@ static bool from_char_seq_search(int *dest, const char **src,
 								 char **localized_array, Oid collid,
 								 FormatNode *node, Node *escontext);
 static bool do_to_timestamp(text *date_txt, text *fmt, Oid collid, bool std,
-							struct pg_tm *tm, fsec_t *fsec, int *fprec,
-							uint32 *flags, Node *escontext);
+							struct pg_tm *tm, fsec_t *fsec, struct fmt_tz *tz,
+							int *fprec, uint32 *flags, Node *escontext);
 static char *fill_str(char *str, int c, int max);
 static FormatNode *NUM_cache(int len, NUMDesc *Num, text *pars_str, bool *shouldFree);
 static char *int_to_roman(int number);
@@ -1613,12 +1624,6 @@ u_strToTitle_default_BI(UChar *dest, int32_t destCapacity,
  * in multibyte character sets.  Note that in either case we are effectively
  * assuming that the database character encoding matches the encoding implied
  * by LC_CTYPE.
- *
- * If the system provides locale_t and associated functions (which are
- * standardized by Open Group's XBD), we can support collations that are
- * neither default nor C.  The code is written to handle both combinations
- * of have-wide-characters and have-locale_t, though it's rather unlikely
- * a platform would have the latter without the former.
  */
 
 /*
@@ -1676,7 +1681,37 @@ str_tolower(const char *buff, size_t nbytes, Oid collid)
 		}
 		else
 #endif
+		if (mylocale && mylocale->provider == COLLPROVIDER_BUILTIN)
 		{
+			const char *src = buff;
+			size_t		srclen = nbytes;
+			size_t		dstsize;
+			char	   *dst;
+			size_t		needed;
+
+			Assert(GetDatabaseEncoding() == PG_UTF8);
+
+			/* first try buffer of equal size plus terminating NUL */
+			dstsize = srclen + 1;
+			dst = palloc(dstsize);
+
+			needed = unicode_strlower(dst, dstsize, src, srclen);
+			if (needed + 1 > dstsize)
+			{
+				/* grow buffer if needed and retry */
+				dstsize = needed + 1;
+				dst = repalloc(dst, dstsize);
+				needed = unicode_strlower(dst, dstsize, src, srclen);
+				Assert(needed + 1 == dstsize);
+			}
+
+			Assert(dst[needed] == '\0');
+			result = dst;
+		}
+		else
+		{
+			Assert(!mylocale || mylocale->provider == COLLPROVIDER_LIBC);
+
 			if (pg_database_encoding_max_length() > 1)
 			{
 				wchar_t    *workspace;
@@ -1696,11 +1731,9 @@ str_tolower(const char *buff, size_t nbytes, Oid collid)
 
 				for (curr_char = 0; workspace[curr_char] != 0; curr_char++)
 				{
-#ifdef HAVE_LOCALE_T
 					if (mylocale)
 						workspace[curr_char] = towlower_l(workspace[curr_char], mylocale->info.lt);
 					else
-#endif
 						workspace[curr_char] = towlower(workspace[curr_char]);
 				}
 
@@ -1729,11 +1762,9 @@ str_tolower(const char *buff, size_t nbytes, Oid collid)
 				 */
 				for (p = result; *p; p++)
 				{
-#ifdef HAVE_LOCALE_T
 					if (mylocale)
 						*p = tolower_l((unsigned char) *p, mylocale->info.lt);
 					else
-#endif
 						*p = pg_tolower((unsigned char) *p);
 				}
 			}
@@ -1798,7 +1829,37 @@ str_toupper(const char *buff, size_t nbytes, Oid collid)
 		}
 		else
 #endif
+		if (mylocale && mylocale->provider == COLLPROVIDER_BUILTIN)
 		{
+			const char *src = buff;
+			size_t		srclen = nbytes;
+			size_t		dstsize;
+			char	   *dst;
+			size_t		needed;
+
+			Assert(GetDatabaseEncoding() == PG_UTF8);
+
+			/* first try buffer of equal size plus terminating NUL */
+			dstsize = srclen + 1;
+			dst = palloc(dstsize);
+
+			needed = unicode_strupper(dst, dstsize, src, srclen);
+			if (needed + 1 > dstsize)
+			{
+				/* grow buffer if needed and retry */
+				dstsize = needed + 1;
+				dst = repalloc(dst, dstsize);
+				needed = unicode_strupper(dst, dstsize, src, srclen);
+				Assert(needed + 1 == dstsize);
+			}
+
+			Assert(dst[needed] == '\0');
+			result = dst;
+		}
+		else
+		{
+			Assert(!mylocale || mylocale->provider == COLLPROVIDER_LIBC);
+
 			if (pg_database_encoding_max_length() > 1)
 			{
 				wchar_t    *workspace;
@@ -1818,11 +1879,9 @@ str_toupper(const char *buff, size_t nbytes, Oid collid)
 
 				for (curr_char = 0; workspace[curr_char] != 0; curr_char++)
 				{
-#ifdef HAVE_LOCALE_T
 					if (mylocale)
 						workspace[curr_char] = towupper_l(workspace[curr_char], mylocale->info.lt);
 					else
-#endif
 						workspace[curr_char] = towupper(workspace[curr_char]);
 				}
 
@@ -1851,11 +1910,9 @@ str_toupper(const char *buff, size_t nbytes, Oid collid)
 				 */
 				for (p = result; *p; p++)
 				{
-#ifdef HAVE_LOCALE_T
 					if (mylocale)
 						*p = toupper_l((unsigned char) *p, mylocale->info.lt);
 					else
-#endif
 						*p = pg_toupper((unsigned char) *p);
 				}
 			}
@@ -1863,6 +1920,47 @@ str_toupper(const char *buff, size_t nbytes, Oid collid)
 	}
 
 	return result;
+}
+
+struct WordBoundaryState
+{
+	const char *str;
+	size_t		len;
+	size_t		offset;
+	bool		init;
+	bool		prev_alnum;
+};
+
+/*
+ * Simple word boundary iterator that draws boundaries each time the result of
+ * pg_u_isalnum() changes.
+ */
+static size_t
+initcap_wbnext(void *state)
+{
+	struct WordBoundaryState *wbstate = (struct WordBoundaryState *) state;
+
+	while (wbstate->offset < wbstate->len &&
+		   wbstate->str[wbstate->offset] != '\0')
+	{
+		pg_wchar	u = utf8_to_unicode((unsigned char *) wbstate->str +
+										wbstate->offset);
+		bool		curr_alnum = pg_u_isalnum(u, true);
+
+		if (!wbstate->init || curr_alnum != wbstate->prev_alnum)
+		{
+			size_t		prev_offset = wbstate->offset;
+
+			wbstate->init = true;
+			wbstate->offset += unicode_utf8len(u);
+			wbstate->prev_alnum = curr_alnum;
+			return prev_offset;
+		}
+
+		wbstate->offset += unicode_utf8len(u);
+	}
+
+	return wbstate->len;
 }
 
 /*
@@ -1921,7 +2019,49 @@ str_initcap(const char *buff, size_t nbytes, Oid collid)
 		}
 		else
 #endif
+		if (mylocale && mylocale->provider == COLLPROVIDER_BUILTIN)
 		{
+			const char *src = buff;
+			size_t		srclen = nbytes;
+			size_t		dstsize;
+			char	   *dst;
+			size_t		needed;
+			struct WordBoundaryState wbstate = {
+				.str = src,
+				.len = srclen,
+				.offset = 0,
+				.init = false,
+				.prev_alnum = false,
+			};
+
+			Assert(GetDatabaseEncoding() == PG_UTF8);
+
+			/* first try buffer of equal size plus terminating NUL */
+			dstsize = srclen + 1;
+			dst = palloc(dstsize);
+
+			needed = unicode_strtitle(dst, dstsize, src, srclen,
+									  initcap_wbnext, &wbstate);
+			if (needed + 1 > dstsize)
+			{
+				/* reset iterator */
+				wbstate.offset = 0;
+				wbstate.init = false;
+
+				/* grow buffer if needed and retry */
+				dstsize = needed + 1;
+				dst = repalloc(dst, dstsize);
+				needed = unicode_strtitle(dst, dstsize, src, srclen,
+										  initcap_wbnext, &wbstate);
+				Assert(needed + 1 == dstsize);
+			}
+
+			result = dst;
+		}
+		else
+		{
+			Assert(!mylocale || mylocale->provider == COLLPROVIDER_LIBC);
+
 			if (pg_database_encoding_max_length() > 1)
 			{
 				wchar_t    *workspace;
@@ -1941,7 +2081,6 @@ str_initcap(const char *buff, size_t nbytes, Oid collid)
 
 				for (curr_char = 0; workspace[curr_char] != 0; curr_char++)
 				{
-#ifdef HAVE_LOCALE_T
 					if (mylocale)
 					{
 						if (wasalnum)
@@ -1951,7 +2090,6 @@ str_initcap(const char *buff, size_t nbytes, Oid collid)
 						wasalnum = iswalnum_l(workspace[curr_char], mylocale->info.lt);
 					}
 					else
-#endif
 					{
 						if (wasalnum)
 							workspace[curr_char] = towlower(workspace[curr_char]);
@@ -1986,7 +2124,6 @@ str_initcap(const char *buff, size_t nbytes, Oid collid)
 				 */
 				for (p = result; *p; p++)
 				{
-#ifdef HAVE_LOCALE_T
 					if (mylocale)
 					{
 						if (wasalnum)
@@ -1996,7 +2133,6 @@ str_initcap(const char *buff, size_t nbytes, Oid collid)
 						wasalnum = isalnum_l((unsigned char) *p, mylocale->info.lt);
 					}
 					else
-#endif
 					{
 						if (wasalnum)
 							*p = pg_tolower((unsigned char) *p);
@@ -3462,7 +3598,7 @@ DCH_from_char(FormatNode *node, const char *in, TmFromChar *out,
 			case DCH_FF5:
 			case DCH_FF6:
 				out->ff = n->key->id - DCH_FF1 + 1;
-				/* fall through */
+				/* FALLTHROUGH */
 			case DCH_US:		/* microsecond */
 				len = from_char_parse_int_len(&out->us, &s,
 											  n->key->id == DCH_US ? 6 :
@@ -3485,11 +3621,63 @@ DCH_from_char(FormatNode *node, const char *in, TmFromChar *out,
 				break;
 			case DCH_tz:
 			case DCH_TZ:
+				{
+					int			tzlen;
+
+					tzlen = DecodeTimezoneAbbrevPrefix(s,
+													   &out->gmtoffset,
+													   &out->tzp);
+					if (tzlen > 0)
+					{
+						out->has_tz = true;
+						/* we only need the zone abbrev for DYNTZ case */
+						if (out->tzp)
+							out->abbrev = pnstrdup(s, tzlen);
+						out->tzsign = 0;	/* drop any earlier TZH/TZM info */
+						s += tzlen;
+						break;
+					}
+					else if (isalpha((unsigned char) *s))
+					{
+						/*
+						 * It doesn't match any abbreviation, but it starts
+						 * with a letter.  OF format certainly won't succeed;
+						 * assume it's a misspelled abbreviation and complain
+						 * accordingly.
+						 */
+						ereturn(escontext,,
+								(errcode(ERRCODE_INVALID_DATETIME_FORMAT),
+								 errmsg("invalid value \"%s\" for \"%s\"",
+										s, n->key->name),
+								 errdetail("Time zone abbreviation is not recognized.")));
+					}
+					/* otherwise parse it like OF */
+				}
+				/* FALLTHROUGH */
 			case DCH_OF:
-				ereturn(escontext,,
-						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("formatting field \"%s\" is only supported in to_char",
-								n->key->name)));
+				/* OF is equivalent to TZH or TZH:TZM */
+				/* see TZH comments below */
+				if (*s == '+' || *s == '-' || *s == ' ')
+				{
+					out->tzsign = *s == '-' ? -1 : +1;
+					s++;
+				}
+				else
+				{
+					if (extra_skip > 0 && *(s - 1) == '-')
+						out->tzsign = -1;
+					else
+						out->tzsign = +1;
+				}
+				if (from_char_parse_int_len(&out->tzh, &s, 2, n, escontext) < 0)
+					return;
+				if (*s == ':')
+				{
+					s++;
+					if (from_char_parse_int_len(&out->tzm, &s, 2, n,
+												escontext) < 0)
+						return;
+				}
 				break;
 			case DCH_TZH:
 
@@ -4145,7 +4333,7 @@ interval_to_char(PG_FUNCTION_ARGS)
 	struct pg_itm tt,
 			   *itm = &tt;
 
-	if (VARSIZE_ANY_EXHDR(fmt) <= 0)
+	if (VARSIZE_ANY_EXHDR(fmt) <= 0 || INTERVAL_NOT_FINITE(it))
 		PG_RETURN_NULL();
 
 	ZERO_tmtc(&tmtc);
@@ -4185,22 +4373,16 @@ to_timestamp(PG_FUNCTION_ARGS)
 	Timestamp	result;
 	int			tz;
 	struct pg_tm tm;
+	struct fmt_tz ftz;
 	fsec_t		fsec;
 	int			fprec;
 
 	do_to_timestamp(date_txt, fmt, collid, false,
-					&tm, &fsec, &fprec, NULL, NULL);
+					&tm, &fsec, &ftz, &fprec, NULL, NULL);
 
 	/* Use the specified time zone, if any. */
-	if (tm.tm_zone)
-	{
-		DateTimeErrorExtra extra;
-		int			dterr = DecodeTimezone(tm.tm_zone, &tz);
-
-		if (dterr)
-			DateTimeParseError(dterr, &extra, text_to_cstring(date_txt),
-							   "timestamptz", NULL);
-	}
+	if (ftz.has_tz)
+		tz = ftz.gmtoffset;
 	else
 		tz = DetermineTimeZoneOffset(&tm, session_timezone);
 
@@ -4229,10 +4411,11 @@ to_date(PG_FUNCTION_ARGS)
 	Oid			collid = PG_GET_COLLATION();
 	DateADT		result;
 	struct pg_tm tm;
+	struct fmt_tz ftz;
 	fsec_t		fsec;
 
 	do_to_timestamp(date_txt, fmt, collid, false,
-					&tm, &fsec, NULL, NULL, NULL);
+					&tm, &fsec, &ftz, NULL, NULL, NULL);
 
 	/* Prevent overflow in Julian-day routines */
 	if (!IS_VALID_JULIAN(tm.tm_year, tm.tm_mon, tm.tm_mday))
@@ -4274,12 +4457,13 @@ parse_datetime(text *date_txt, text *fmt, Oid collid, bool strict,
 			   Node *escontext)
 {
 	struct pg_tm tm;
+	struct fmt_tz ftz;
 	fsec_t		fsec;
 	int			fprec;
 	uint32		flags;
 
 	if (!do_to_timestamp(date_txt, fmt, collid, strict,
-						 &tm, &fsec, &fprec, &flags, escontext))
+						 &tm, &fsec, &ftz, &fprec, &flags, escontext))
 		return (Datum) 0;
 
 	*typmod = fprec ? fprec : -1;	/* fractional part precision */
@@ -4292,18 +4476,9 @@ parse_datetime(text *date_txt, text *fmt, Oid collid, bool strict,
 			{
 				TimestampTz result;
 
-				if (tm.tm_zone)
+				if (ftz.has_tz)
 				{
-					DateTimeErrorExtra extra;
-					int			dterr = DecodeTimezone(tm.tm_zone, tz);
-
-					if (dterr)
-					{
-						DateTimeParseError(dterr, &extra,
-										   text_to_cstring(date_txt),
-										   "timestamptz", escontext);
-						return (Datum) 0;
-					}
+					*tz = ftz.gmtoffset;
 				}
 				else
 				{
@@ -4384,18 +4559,9 @@ parse_datetime(text *date_txt, text *fmt, Oid collid, bool strict,
 		{
 			TimeTzADT  *result = palloc(sizeof(TimeTzADT));
 
-			if (tm.tm_zone)
+			if (ftz.has_tz)
 			{
-				DateTimeErrorExtra extra;
-				int			dterr = DecodeTimezone(tm.tm_zone, tz);
-
-				if (dterr)
-				{
-					DateTimeParseError(dterr, &extra,
-									   text_to_cstring(date_txt),
-									   "timetz", escontext);
-					return (Datum) 0;
-				}
+				*tz = ftz.gmtoffset;
 			}
 			else
 			{
@@ -4445,10 +4611,54 @@ parse_datetime(text *date_txt, text *fmt, Oid collid, bool strict,
 }
 
 /*
+ * Parses the datetime format string in 'fmt_str' and returns true if it
+ * contains a timezone specifier, false if not.
+ */
+bool
+datetime_format_has_tz(const char *fmt_str)
+{
+	bool		incache;
+	int			fmt_len = strlen(fmt_str);
+	int			result;
+	FormatNode *format;
+
+	if (fmt_len > DCH_CACHE_SIZE)
+	{
+		/*
+		 * Allocate new memory if format picture is bigger than static cache
+		 * and do not use cache (call parser always)
+		 */
+		incache = false;
+
+		format = (FormatNode *) palloc((fmt_len + 1) * sizeof(FormatNode));
+
+		parse_format(format, fmt_str, DCH_keywords,
+					 DCH_suff, DCH_index, DCH_FLAG, NULL);
+	}
+	else
+	{
+		/*
+		 * Use cache buffers
+		 */
+		DCHCacheEntry *ent = DCH_cache_fetch(fmt_str, false);
+
+		incache = true;
+		format = ent->format;
+	}
+
+	result = DCH_datetime_type(format);
+
+	if (!incache)
+		pfree(format);
+
+	return result & DCH_ZONED;
+}
+
+/*
  * do_to_timestamp: shared code for to_timestamp and to_date
  *
  * Parse the 'date_txt' according to 'fmt', return results as a struct pg_tm,
- * fractional seconds, and fractional precision.
+ * fractional seconds, struct fmt_tz, and fractional precision.
  *
  * 'collid' identifies the collation to use, if needed.
  * 'std' specifies standard parsing mode.
@@ -4465,12 +4675,12 @@ parse_datetime(text *date_txt, text *fmt, Oid collid, bool strict,
  * 'date_txt'.
  *
  * The TmFromChar is then analysed and converted into the final results in
- * struct 'tm', 'fsec', and 'fprec'.
+ * struct 'tm', 'fsec', struct 'tz', and 'fprec'.
  */
 static bool
 do_to_timestamp(text *date_txt, text *fmt, Oid collid, bool std,
-				struct pg_tm *tm, fsec_t *fsec, int *fprec,
-				uint32 *flags, Node *escontext)
+				struct pg_tm *tm, fsec_t *fsec, struct fmt_tz *tz,
+				int *fprec, uint32 *flags, Node *escontext)
 {
 	FormatNode *format = NULL;
 	TmFromChar	tmfc;
@@ -4487,6 +4697,7 @@ do_to_timestamp(text *date_txt, text *fmt, Oid collid, bool std,
 	ZERO_tmfc(&tmfc);
 	ZERO_tm(tm);
 	*fsec = 0;
+	tz->has_tz = false;
 	if (fprec)
 		*fprec = 0;
 	if (flags)
@@ -4762,11 +4973,14 @@ do_to_timestamp(text *date_txt, text *fmt, Oid collid, bool std,
 		goto fail;
 	}
 
-	/* Save parsed time-zone into tm->tm_zone if it was specified */
+	/*
+	 * If timezone info was present, reduce it to a GMT offset.  (We cannot do
+	 * this until we've filled all of the tm struct, since the zone's offset
+	 * might be time-varying.)
+	 */
 	if (tmfc.tzsign)
 	{
-		char	   *tz;
-
+		/* TZH and/or TZM fields */
 		if (tmfc.tzh < 0 || tmfc.tzh > MAX_TZDISP_HOUR ||
 			tmfc.tzm < 0 || tmfc.tzm >= MINS_PER_HOUR)
 		{
@@ -4775,10 +4989,27 @@ do_to_timestamp(text *date_txt, text *fmt, Oid collid, bool std,
 			goto fail;
 		}
 
-		tz = psprintf("%c%02d:%02d",
-					  tmfc.tzsign > 0 ? '+' : '-', tmfc.tzh, tmfc.tzm);
-
-		tm->tm_zone = tz;
+		tz->has_tz = true;
+		tz->gmtoffset = (tmfc.tzh * MINS_PER_HOUR + tmfc.tzm) * SECS_PER_MINUTE;
+		/* note we are flipping the sign convention here */
+		if (tmfc.tzsign > 0)
+			tz->gmtoffset = -tz->gmtoffset;
+	}
+	else if (tmfc.has_tz)
+	{
+		/* TZ field */
+		tz->has_tz = true;
+		if (tmfc.tzp == NULL)
+		{
+			/* fixed-offset abbreviation; flip the sign convention */
+			tz->gmtoffset = -tmfc.gmtoffset;
+		}
+		else
+		{
+			/* dynamic-offset abbreviation, resolve using specified time */
+			tz->gmtoffset = DetermineTimeZoneAbbrevOffset(tm, tmfc.abbrev,
+														  tmfc.tzp);
+		}
 	}
 
 	DEBUG_TM(tm);

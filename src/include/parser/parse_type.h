@@ -3,7 +3,7 @@
  * parse_type.h
  *		handle type operations for parser
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/parser/parse_type.h
@@ -36,7 +36,7 @@ extern char *TypeNameToString(const TypeName *typeName);
 extern char *TypeNameListToString(List *typenames);
 
 extern Oid	LookupCollation(ParseState *pstate, List *collnames, int location);
-extern Oid	GetColumnDefCollation(ParseState *pstate, ColumnDef *coldef, Oid typeOid);
+extern Oid	GetColumnDefCollation(ParseState *pstate, const ColumnDef *coldef, Oid typeOid);
 
 extern Type typeidType(Oid id);
 

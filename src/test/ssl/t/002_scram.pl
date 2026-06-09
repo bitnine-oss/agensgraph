@@ -1,10 +1,10 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Test SCRAM authentication and TLS channel binding types
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -20,7 +20,7 @@ if ($ENV{with_ssl} ne 'openssl')
 {
 	plan skip_all => 'OpenSSL not supported by this build';
 }
-elsif ($ENV{PG_TEST_EXTRA} !~ /\bssl\b/)
+elsif (!$ENV{PG_TEST_EXTRA} || $ENV{PG_TEST_EXTRA} !~ /\bssl\b/)
 {
 	plan skip_all =>
 	  'Potentially unsafe test SSL not enabled in PG_TEST_EXTRA';
@@ -44,9 +44,6 @@ my $SERVERHOSTADDR = '127.0.0.1';
 # This is the pattern to use in pg_hba.conf to match incoming connections.
 my $SERVERHOSTCIDR = '127.0.0.1/32';
 
-# Determine whether build supports tls-server-end-point.
-my $supports_tls_server_end_point =
-  check_pg_config("#define HAVE_X509_GET_SIGNATURE_NID 1");
 # Determine whether build supports detection of hash algorithms for
 # RSA-PSS certificates.
 my $supports_rsapss_certs =
@@ -66,6 +63,9 @@ $node->init;
 $ENV{PGHOST} = $node->host;
 $ENV{PGPORT} = $node->port;
 $node->start;
+
+# could fail in FIPS mode
+my $md5_works = ($node->psql('postgres', "select md5('')") == 0);
 
 # Configure server for SSL connections, with password handling.
 $ssl_server->configure_test_server_for_ssl(
@@ -90,29 +90,20 @@ $node->connect_fails(
 	expected_stderr => qr/invalid channel_binding value: "invalid_value"/);
 $node->connect_ok("$common_connstr user=ssltestuser channel_binding=disable",
 	"SCRAM with SSL and channel_binding=disable");
-if ($supports_tls_server_end_point)
-{
-	$node->connect_ok(
-		"$common_connstr user=ssltestuser channel_binding=require",
-		"SCRAM with SSL and channel_binding=require");
-}
-else
-{
-	$node->connect_fails(
-		"$common_connstr user=ssltestuser channel_binding=require",
-		"SCRAM with SSL and channel_binding=require",
-		expected_stderr =>
-		  qr/channel binding is required, but server did not offer an authentication method that supports channel binding/
-	);
-}
+$node->connect_ok("$common_connstr user=ssltestuser channel_binding=require",
+	"SCRAM with SSL and channel_binding=require");
 
 # Now test when the user has an MD5-encrypted password; should fail
-$node->connect_fails(
-	"$common_connstr user=md5testuser channel_binding=require",
-	"MD5 with SSL and channel_binding=require",
-	expected_stderr =>
-	  qr/channel binding required but not supported by server's authentication request/
-);
+SKIP:
+{
+	skip "MD5 not supported" unless $md5_works;
+	$node->connect_fails(
+		"$common_connstr user=md5testuser channel_binding=require",
+		"MD5 with SSL and channel_binding=require",
+		expected_stderr =>
+		  qr/channel binding required but not supported by server's authentication request/
+	);
+}
 
 # Now test with auth method 'cert' by connecting to 'certdb'. Should fail,
 # because channel binding is not performed.  Note that ssl/client.key may
@@ -146,28 +137,20 @@ $node->connect_ok(
 	"$common_connstr user=ssltestuser channel_binding=disable require_auth=scram-sha-256",
 	"SCRAM with SSL, channel_binding=disable, and require_auth=scram-sha-256"
 );
-$node->connect_fails(
-	"$common_connstr user=md5testuser require_auth=md5 channel_binding=require",
-	"channel_binding can fail even when require_auth succeeds",
-	expected_stderr =>
-	  qr/channel binding required but not supported by server's authentication request/
-);
-if ($supports_tls_server_end_point)
+SKIP:
 {
-	$node->connect_ok(
-		"$common_connstr user=ssltestuser channel_binding=require require_auth=scram-sha-256",
-		"SCRAM with SSL, channel_binding=require, and require_auth=scram-sha-256"
-	);
-}
-else
-{
+	skip "MD5 not supported" unless $md5_works;
 	$node->connect_fails(
-		"$common_connstr user=ssltestuser channel_binding=require require_auth=scram-sha-256",
-		"SCRAM with SSL, channel_binding=require, and require_auth=scram-sha-256",
+		"$common_connstr user=md5testuser require_auth=md5 channel_binding=require",
+		"channel_binding can fail even when require_auth succeeds",
 		expected_stderr =>
-		  qr/channel binding is required, but server did not offer an authentication method that supports channel binding/
+		  qr/channel binding required but not supported by server's authentication request/
 	);
 }
+$node->connect_ok(
+	"$common_connstr user=ssltestuser channel_binding=require require_auth=scram-sha-256",
+	"SCRAM with SSL, channel_binding=require, and require_auth=scram-sha-256"
+);
 
 # Now test with a server certificate that uses the RSA-PSS algorithm.
 # This checks that the certificate can be loaded and that channel binding

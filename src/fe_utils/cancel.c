@@ -6,7 +6,7 @@
  * handler for SIGINT.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/fe_utils/cancel.c
@@ -152,7 +152,6 @@ ResetCancelConn(void)
 static void
 handle_sigint(SIGNAL_ARGS)
 {
-	int			save_errno = errno;
 	char		errbuf[256];
 
 	CancelRequested = true;
@@ -173,8 +172,6 @@ handle_sigint(SIGNAL_ARGS)
 			write_stderr(errbuf);
 		}
 	}
-
-	errno = save_errno;			/* just in case the write changed it */
 }
 
 /*

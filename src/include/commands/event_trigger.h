@@ -3,7 +3,7 @@
  * event_trigger.h
  *	  Declarations for command trigger handling.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/event_trigger.h
@@ -29,6 +29,8 @@ typedef struct EventTriggerData
 	CommandTag	tag;
 } EventTriggerData;
 
+extern PGDLLIMPORT bool event_triggers;
+
 #define AT_REWRITE_ALTER_PERSISTENCE	0x01
 #define AT_REWRITE_DEFAULT_VAL			0x02
 #define AT_REWRITE_COLUMN_REWRITE		0x04
@@ -49,11 +51,12 @@ extern ObjectAddress AlterEventTriggerOwner(const char *name, Oid newOwnerId);
 extern void AlterEventTriggerOwner_oid(Oid, Oid newOwnerId);
 
 extern bool EventTriggerSupportsObjectType(ObjectType obtype);
-extern bool EventTriggerSupportsObjectClass(ObjectClass objclass);
+extern bool EventTriggerSupportsObject(const ObjectAddress *object);
 extern void EventTriggerDDLCommandStart(Node *parsetree);
 extern void EventTriggerDDLCommandEnd(Node *parsetree);
 extern void EventTriggerSQLDrop(Node *parsetree);
 extern void EventTriggerTableRewrite(Node *parsetree, Oid tableOid, int reason);
+extern void EventTriggerOnLogin(void);
 
 extern bool EventTriggerBeginCompleteQuery(void);
 extern void EventTriggerEndCompleteQuery(void);

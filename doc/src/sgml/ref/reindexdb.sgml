@@ -55,30 +55,22 @@ PostgreSQL documentation
     </arg>
    </arg>
 
-   <arg choice="opt"><replaceable>dbname</replaceable></arg>
-  </cmdsynopsis>
+   <arg choice="plain">
+    <arg choice="opt">
+     <group choice="plain">
+      <arg choice="plain"><option>-s</option></arg>
+      <arg choice="plain"><option>--system</option></arg>
+     </group>
+    </arg>
+   </arg>
 
-  <cmdsynopsis>
-   <command>reindexdb</command>
-   <arg rep="repeat"><replaceable>connection-option</replaceable></arg>
-   <arg rep="repeat"><replaceable>option</replaceable></arg>
-
-   <group choice="plain">
-    <arg choice="plain"><option>-a</option></arg>
-    <arg choice="plain"><option>--all</option></arg>
-   </group>
-  </cmdsynopsis>
-
-  <cmdsynopsis>
-   <command>reindexdb</command>
-   <arg rep="repeat"><replaceable>connection-option</replaceable></arg>
-   <arg rep="repeat"><replaceable>option</replaceable></arg>
-
-   <group choice="plain">
-    <arg choice="plain"><option>-s</option></arg>
-    <arg choice="plain"><option>--system</option></arg>
-   </group>
-   <arg choice="opt"><replaceable>dbname</replaceable></arg>
+   <arg choice="opt">
+    <group choice="plain">
+     <arg choice="plain"><replaceable>dbname</replaceable></arg>
+     <arg choice="plain"><option>-a</option></arg>
+     <arg choice="plain"><option>--all</option></arg>
+    </group>
+   </arg>
   </cmdsynopsis>
  </refsynopsisdiv>
 
@@ -187,8 +179,7 @@ PostgreSQL documentation
         setting is high enough to accommodate all connections.
        </para>
        <para>
-        Note that this option is incompatible with the <option>--index</option>
-        and <option>--system</option> options.
+        Note that this option is incompatible with the <option>--system</option> option.
        </para>
       </listitem>
      </varlistentry>
@@ -431,20 +422,6 @@ PostgreSQL documentation
   </para>
 
  </refsect1>
-
-
- <refsect1>
-  <title>Notes</title>
-
-  <para>
-   <application>reindexdb</application> might need to connect several
-   times to the <productname>PostgreSQL</productname> server, asking
-   for a password each time. It is convenient to have a
-   <filename>~/.pgpass</filename> file in such cases. See <xref
-   linkend="libpq-pgpass"/> for more information.
-  </para>
- </refsect1>
-
 
  <refsect1>
   <title>Examples</title>

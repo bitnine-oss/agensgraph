@@ -4,7 +4,7 @@
  *	  POSTGRES generalized index access method definitions.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/genam.h
@@ -117,7 +117,7 @@ typedef enum IndexUniqueCheck
 	UNIQUE_CHECK_NO,			/* Don't do any uniqueness checking */
 	UNIQUE_CHECK_YES,			/* Enforce uniqueness at insertion time */
 	UNIQUE_CHECK_PARTIAL,		/* Test uniqueness, but no error */
-	UNIQUE_CHECK_EXISTING		/* Check if existing tuple is unique */
+	UNIQUE_CHECK_EXISTING,		/* Check if existing tuple is unique */
 } IndexUniqueCheck;
 
 
@@ -139,6 +139,7 @@ typedef struct IndexOrderByDistance
 #define IndexScanIsValid(scan) PointerIsValid(scan)
 
 extern Relation index_open(Oid relationId, LOCKMODE lockmode);
+extern Relation try_index_open(Oid relationId, LOCKMODE lockmode);
 extern void index_close(Relation relation, LOCKMODE lockmode);
 
 extern bool index_insert(Relation indexRelation,
@@ -148,6 +149,8 @@ extern bool index_insert(Relation indexRelation,
 						 IndexUniqueCheck checkUnique,
 						 bool indexUnchanged,
 						 struct IndexInfo *indexInfo);
+extern void index_insert_cleanup(Relation indexRelation,
+								 struct IndexInfo *indexInfo);
 
 extern IndexScanDesc index_beginscan(Relation heapRelation,
 									 Relation indexRelation,
@@ -162,7 +165,8 @@ extern void index_rescan(IndexScanDesc scan,
 extern void index_endscan(IndexScanDesc scan);
 extern void index_markpos(IndexScanDesc scan);
 extern void index_restrpos(IndexScanDesc scan);
-extern Size index_parallelscan_estimate(Relation indexRelation, Snapshot snapshot);
+extern Size index_parallelscan_estimate(Relation indexRelation,
+										int nkeys, int norderbys, Snapshot snapshot);
 extern void index_parallelscan_initialize(Relation heapRelation,
 										  Relation indexRelation, Snapshot snapshot,
 										  ParallelIndexScanDesc target);
@@ -204,7 +208,7 @@ extern IndexScanDesc RelationGetIndexScan(Relation indexRelation,
 										  int nkeys, int norderbys);
 extern void IndexScanEnd(IndexScanDesc scan);
 extern char *BuildIndexValueDescription(Relation indexRelation,
-										Datum *values, bool *isnull);
+										const Datum *values, const bool *isnull);
 extern TransactionId index_compute_xid_horizon_for_tuples(Relation irel,
 														  Relation hrel,
 														  Buffer ibuf,

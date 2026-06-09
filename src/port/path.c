@@ -3,7 +3,7 @@
  * path.c
  *	  portable path handling routines
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -248,7 +248,7 @@ typedef enum
 	RELATIVE_PATH_INIT,			/* At start of a relative path */
 	RELATIVE_WITH_N_DEPTH,		/* We collected 'pathdepth' directories in a
 								 * relative path */
-	RELATIVE_WITH_PARENT_REF	/* Relative path containing only double-dots */
+	RELATIVE_WITH_PARENT_REF,	/* Relative path containing only double-dots */
 } canonicalize_state;
 
 /*
@@ -772,8 +772,7 @@ make_absolute_path(const char *path)
 #ifndef FRONTEND
 				elog(ERROR, "could not get current working directory: %m");
 #else
-				fprintf(stderr, _("could not get current working directory: %s\n"),
-						strerror(errno));
+				fprintf(stderr, _("could not get current working directory: %m\n"));
 				return NULL;
 #endif
 			}

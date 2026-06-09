@@ -3,7 +3,7 @@
  * lockcmds.c
  *	  LOCK command support code
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -21,7 +21,6 @@
 #include "commands/lockcmds.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
-#include "parser/parse_clause.h"
 #include "rewrite/rewriteHandler.h"
 #include "storage/lmgr.h"
 #include "utils/acl.h"

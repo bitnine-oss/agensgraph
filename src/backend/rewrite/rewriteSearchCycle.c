@@ -3,7 +3,7 @@
  * rewriteSearchCycle.c
  *		Support for rewriting SEARCH and CYCLE clauses.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -16,8 +16,8 @@
 #include "catalog/pg_operator_d.h"
 #include "catalog/pg_type_d.h"
 #include "nodes/makefuncs.h"
-#include "nodes/pg_list.h"
 #include "nodes/parsenodes.h"
+#include "nodes/pg_list.h"
 #include "nodes/primnodes.h"
 #include "parser/analyze.h"
 #include "parser/parsetree.h"
@@ -523,7 +523,7 @@ rewriteSearchAndCycle(CommonTableExpr *cte)
 
 			fexpr = makeFuncExpr(F_INT8INC, INT8OID, list_make1(fs), InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
 
-			lfirst(list_head(search_col_rowexpr->args)) = fexpr;
+			linitial(search_col_rowexpr->args) = fexpr;
 
 			texpr = (Expr *) search_col_rowexpr;
 		}

@@ -3,7 +3,7 @@
  * rls.c
  *		  RLS-related utility functions.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -21,7 +21,7 @@
 #include "catalog/pg_class.h"
 #include "miscadmin.h"
 #include "utils/acl.h"
-#include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
 #include "utils/lsyscache.h"
 #include "utils/rls.h"
 #include "utils/syscache.h"

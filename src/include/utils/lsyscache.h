@@ -3,7 +3,7 @@
  * lsyscache.h
  *	  Convenience routines for common queries in the system catalog cache.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/lsyscache.h
@@ -35,7 +35,7 @@ typedef enum IOFuncSelector
 	IOFunc_input,
 	IOFunc_output,
 	IOFunc_receive,
-	IOFunc_send
+	IOFunc_send,
 } IOFuncSelector;
 
 /* Flag bits for get_attstatsslot */
@@ -90,7 +90,6 @@ extern Oid	get_opfamily_proc(Oid opfamily, Oid lefttype, Oid righttype,
 							  int16 procnum);
 extern char *get_attname(Oid relid, AttrNumber attnum, bool missing_ok);
 extern AttrNumber get_attnum(Oid relid, const char *attname);
-extern int	get_attstattarget(Oid relid, AttrNumber attnum);
 extern char get_attgenerated(Oid relid, AttrNumber attnum);
 extern Oid	get_atttype(Oid relid, AttrNumber attnum);
 extern void get_atttypetypmodcoll(Oid relid, AttrNumber attnum,
@@ -101,11 +100,14 @@ extern char *get_collation_name(Oid colloid);
 extern bool get_collation_isdeterministic(Oid colloid);
 extern char *get_constraint_name(Oid conoid);
 extern Oid	get_constraint_index(Oid conoid);
+extern char get_constraint_type(Oid conoid);
+
 extern char *get_language_name(Oid langoid, bool missing_ok);
 extern Oid	get_opclass_family(Oid opclass);
 extern Oid	get_opclass_input_type(Oid opclass);
 extern bool get_opclass_opfamily_and_input_type(Oid opclass,
 												Oid *opfamily, Oid *opcintype);
+extern Oid	get_opclass_method(Oid opclass);
 extern RegProcedure get_opcode(Oid opno);
 extern char *get_opname(Oid opno);
 extern Oid	get_op_rettype(Oid opno);
@@ -139,6 +141,7 @@ extern char get_rel_relkind(Oid relid);
 extern bool get_rel_relispartition(Oid relid);
 extern Oid	get_rel_tablespace(Oid relid);
 extern char get_rel_persistence(Oid relid);
+extern Oid	get_rel_relam(Oid relid);
 extern Oid	get_transform_fromsql(Oid typid, Oid langid, List *trftypes);
 extern Oid	get_transform_tosql(Oid typid, Oid langid, List *trftypes);
 extern bool get_typisdefined(Oid typid);

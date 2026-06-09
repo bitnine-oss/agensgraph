@@ -1,8 +1,8 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use locale;
 
 use PostgreSQL::Test::Cluster;
@@ -161,7 +161,7 @@ psql_like(
 	'\errverbose with no previous error');
 
 # There are three main ways to run a query that might affect
-# \errverbose: The normal way, using a cursor by setting FETCH_COUNT,
+# \errverbose: The normal way, piecemeal retrieval using FETCH_COUNT,
 # and using \gdesc.  Test them all.
 
 like(
@@ -184,10 +184,10 @@ like(
 			"\\set FETCH_COUNT 1\nSELECT error;\n\\errverbose",
 			on_error_stop => 0))[2],
 	qr/\A^psql:<stdin>:2: ERROR:  .*$
-^LINE 2: SELECT error;$
+^LINE 1: SELECT error;$
 ^ *^.*$
 ^psql:<stdin>:3: error: ERROR:  [0-9A-Z]{5}: .*$
-^LINE 2: SELECT error;$
+^LINE 1: SELECT error;$
 ^ *^.*$
 ^LOCATION: .*$/m,
 	'\errverbose after FETCH_COUNT query with error');
@@ -355,6 +355,30 @@ psql_like(
 psql_like($node, sprintf('SELECT 1 \watch c=3 i=%g', 0.01),
 	qr/1\n1\n1/, '\watch with 3 iterations');
 
+# Check \watch minimum row count
+psql_fails_like(
+	$node,
+	'SELECT 3 \watch m=x',
+	qr/incorrect minimum row count/,
+	'\watch, invalid minimum row setting');
+
+psql_fails_like(
+	$node,
+	'SELECT 3 \watch m=1 min_rows=2',
+	qr/minimum row count specified more than once/,
+	'\watch, minimum rows is specified more than once');
+
+psql_like(
+	$node,
+	sprintf(
+		q{with x as (
+		select now()-backend_start AS howlong
+		from pg_stat_activity
+		where pid = pg_backend_pid()
+	  ) select 123 from x where howlong < '2 seconds' \watch i=%g m=2}, 0.5),
+	qr/^123$/,
+	'\watch, 2 minimum rows');
+
 # Check \watch errors
 psql_fails_like(
 	$node,
@@ -381,5 +405,36 @@ psql_fails_like(
 	'SELECT 1 \watch c=1 c=1',
 	qr/iteration count is specified more than once/,
 	'\watch, iteration count is specified more than once');
+
+# Test \g output piped into a program.
+# The program is perl -pe '' to simply copy the input to the output.
+my $g_file = "$tempdir/g_file_1.out";
+my $perlbin = $^X;
+$perlbin =~ s!\\!/!g if $PostgreSQL::Test::Utils::windows_os;
+my $pipe_cmd = "$perlbin -pe '' >$g_file";
+
+psql_like($node, "SELECT 'one' \\g | $pipe_cmd", qr//, "one command \\g");
+my $c1 = slurp_file($g_file);
+like($c1, qr/one/);
+
+psql_like($node, "SELECT 'two' \\; SELECT 'three' \\g | $pipe_cmd",
+	qr//, "two commands \\g");
+my $c2 = slurp_file($g_file);
+like($c2, qr/two.*three/s);
+
+
+psql_like(
+	$node,
+	"\\set SHOW_ALL_RESULTS 0\nSELECT 'four' \\; SELECT 'five' \\g | $pipe_cmd",
+	qr//,
+	"two commands \\g with only last result");
+my $c3 = slurp_file($g_file);
+like($c3, qr/five/);
+unlike($c3, qr/four/);
+
+psql_like($node, "copy (values ('foo'),('bar')) to stdout \\g | $pipe_cmd",
+	qr//, "copy output passed to \\g pipe");
+my $c4 = slurp_file($g_file);
+like($c4, qr/foo.*bar/s);
 
 done_testing();

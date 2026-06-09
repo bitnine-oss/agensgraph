@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 =pod
 
@@ -42,7 +42,7 @@ aimed at controlling command execution, logging and test functions.
 package PostgreSQL::Test::Utils;
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use Carp;
 use Config;
@@ -71,6 +71,7 @@ our @EXPORT = qw(
   chmod_recursive
   check_pg_config
   dir_symlink
+  scan_server_header
   system_or_bail
   system_log
   run_log
@@ -188,6 +189,11 @@ Set to true when running under MSYS2.
 
 INIT
 {
+	# See https://github.com/cpan-authors/IPC-Run/commit/fc9288c for how this
+	# reduces idle time.  Remove this when IPC::Run 20231003.0 is too old to
+	# matter (when all versions that matter provide the optimization).
+	$SIG{CHLD} = sub { }
+	  unless defined $SIG{CHLD};
 
 	# Return EPIPE instead of killing the process with SIGPIPE.  An affected
 	# test may still fail, but it's more likely to report useful facts.
@@ -210,10 +216,10 @@ INIT
 	  or die "could not open STDOUT to logfile \"$test_logfile\": $!";
 
 	# Hijack STDOUT and STDERR to the log file
-	open(my $orig_stdout, '>&', \*STDOUT);
-	open(my $orig_stderr, '>&', \*STDERR);
-	open(STDOUT, '>&', $testlog);
-	open(STDERR, '>&', $testlog);
+	open(my $orig_stdout, '>&', \*STDOUT) or die $!;
+	open(my $orig_stderr, '>&', \*STDERR) or die $!;
+	open(STDOUT, '>&', $testlog) or die $!;
+	open(STDERR, '>&', $testlog) or die $!;
 
 	# The test output (ok ...) needs to be printed to the original STDOUT so
 	# that the 'prove' program can parse it, and display it to the user in
@@ -272,7 +278,7 @@ sub all_tests_passing
 
 Securely create a temporary directory inside C<$tmp_check>, like C<mkdtemp>,
 and return its name.  The directory will be removed automatically at the
-end of the tests.
+end of the tests, unless the environment variable PG_TEST_NOCLEAN is provided.
 
 If C<prefix> is given, the new directory is templated as C<${prefix}_XXXX>.
 Otherwise the template is C<tmp_test_XXXX>.
@@ -286,7 +292,7 @@ sub tempdir
 	return File::Temp::tempdir(
 		$prefix . '_XXXX',
 		DIR => $tmp_check,
-		CLEANUP => 1);
+		CLEANUP => not defined $ENV{'PG_TEST_NOCLEAN'});
 }
 
 =pod
@@ -301,7 +307,8 @@ name, to avoid path length issues.
 sub tempdir_short
 {
 
-	return File::Temp::tempdir(CLEANUP => 1);
+	return File::Temp::tempdir(
+		CLEANUP => not defined $ENV{'PG_TEST_NOCLEAN'});
 }
 
 =pod
@@ -562,15 +569,15 @@ Find and replace string of a given file.
 sub string_replace_file
 {
 	my ($filename, $find, $replace) = @_;
-	open(my $in, '<', $filename);
-	my $content;
+	open(my $in, '<', $filename) or croak $!;
+	my $content = '';
 	while (<$in>)
 	{
 		$_ =~ s/$find/$replace/;
 		$content = $content . $_;
 	}
 	close $in;
-	open(my $out, '>', $filename);
+	open(my $out, '>', $filename) or croak $!;
 	print $out $content;
 	close($out);
 
@@ -701,6 +708,46 @@ sub chmod_recursive
 
 =pod
 
+=item scan_server_header(header_path, regexp)
+
+Returns an array that stores all the matches of the given regular expression
+within the PostgreSQL installation's C<header_path>.  This can be used to
+retrieve specific value patterns from the installation's header files.
+
+=cut
+
+sub scan_server_header
+{
+	my ($header_path, $regexp) = @_;
+
+	my ($stdout, $stderr);
+	my $result = IPC::Run::run [ 'pg_config', '--includedir-server' ], '>',
+	  \$stdout, '2>', \$stderr
+	  or die "could not execute pg_config";
+	chomp($stdout);
+	$stdout =~ s/\r$//;
+
+	open my $header_h, '<', "$stdout/$header_path" or die "$!";
+
+	my @match = undef;
+	while (<$header_h>)
+	{
+		my $line = $_;
+
+		if (@match = $line =~ /^$regexp/)
+		{
+			last;
+		}
+	}
+
+	close $header_h;
+	die "could not find match in header $header_path\n"
+	  unless @match;
+	return @match;
+}
+
+=pod
+
 =item check_pg_config(regexp)
 
 Return the number of matches of the given regular expression
@@ -747,11 +794,11 @@ sub dir_symlink
 			# need some indirection on msys
 			$cmd = qq{echo '$cmd' | \$COMSPEC /Q};
 		}
-		system($cmd);
+		system($cmd) == 0 or die;
 	}
 	else
 	{
-		symlink $oldname, $newname;
+		symlink $oldname, $newname or die $!;
 	}
 	die "No $newname" unless -e $newname;
 }
@@ -842,6 +889,15 @@ sub program_help_ok
 	ok($result, "$cmd --help exit code 0");
 	isnt($stdout, '', "$cmd --help goes to stdout");
 	is($stderr, '', "$cmd --help nothing to stderr");
+
+	# This value isn't set in stone, it reflects the current
+	# convention in use.  Most output actually tries to aim for 80.
+	my $max_line_length = 95;
+	my @long_lines = grep { length > $max_line_length } split /\n/, $stdout;
+	is(scalar @long_lines, 0, "$cmd --help maximum line length")
+	  or diag("These lines are too long (>$max_line_length):\n",
+		join("\n", @long_lines));
+
 	return;
 }
 

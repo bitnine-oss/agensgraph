@@ -3,7 +3,7 @@
  * archive_module.h
  *		Exports for archive modules.
  *
- * Copyright (c) 2022-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2022-2024, PostgreSQL Global Development Group
  *
  * src/include/archive/archive_module.h
  *
@@ -55,5 +55,13 @@ typedef struct ArchiveModuleCallbacks
 typedef const ArchiveModuleCallbacks *(*ArchiveModuleInit) (void);
 
 extern PGDLLEXPORT const ArchiveModuleCallbacks *_PG_archive_module_init(void);
+
+/* Support for messages reported from archive module callbacks. */
+
+extern PGDLLIMPORT char *arch_module_check_errdetail_string;
+
+#define arch_module_check_errdetail \
+	pre_format_elog_string(errno, TEXTDOMAIN), \
+	arch_module_check_errdetail_string = format_elog_string
 
 #endif							/* _ARCHIVE_MODULE_H */

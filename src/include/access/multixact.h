@@ -3,7 +3,7 @@
  *
  * PostgreSQL multi-transaction-log manager
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/multixact.h
@@ -29,10 +29,6 @@
 
 #define MaxMultiXactOffset	((MultiXactOffset) 0xFFFFFFFF)
 
-/* Number of SLRU buffers to use for multixact */
-#define NUM_MULTIXACTOFFSET_BUFFERS		8
-#define NUM_MULTIXACTMEMBER_BUFFERS		16
-
 /*
  * Possible multixact lock modes ("status").  The first four modes are for
  * tuple locks (FOR KEY SHARE, FOR SHARE, FOR NO KEY UPDATE, FOR UPDATE); the
@@ -47,7 +43,7 @@ typedef enum
 	/* an update that doesn't touch "key" columns */
 	MultiXactStatusNoKeyUpdate = 0x04,
 	/* other updates, and delete */
-	MultiXactStatusUpdate = 0x05
+	MultiXactStatusUpdate = 0x05,
 } MultiXactStatus;
 
 #define MaxMultiXactStatus MultiXactStatusUpdate

@@ -4,7 +4,7 @@
  *	  insert routines for the postgres inverted index access method.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -15,15 +15,12 @@
 #include "postgres.h"
 
 #include "access/gin_private.h"
-#include "access/ginxlog.h"
 #include "access/tableam.h"
 #include "access/xloginsert.h"
-#include "catalog/index.h"
 #include "miscadmin.h"
+#include "nodes/execnodes.h"
 #include "storage/bufmgr.h"
-#include "storage/indexfsm.h"
 #include "storage/predicate.h"
-#include "storage/smgr.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
@@ -192,7 +189,7 @@ ginEntryInsert(GinState *ginstate,
 	ginPrepareEntryScan(&btree, attnum, key, category, ginstate);
 	btree.isBuild = (buildStats != NULL);
 
-	stack = ginFindLeafPage(&btree, false, false, NULL);
+	stack = ginFindLeafPage(&btree, false, false);
 	page = BufferGetPage(stack->buffer);
 
 	if (btree.findItem(&btree, stack))
@@ -440,9 +437,9 @@ ginbuildempty(Relation index)
 				MetaBuffer;
 
 	/* An empty GIN index has two pages. */
-	MetaBuffer = ExtendBufferedRel(EB_REL(index), INIT_FORKNUM, NULL,
+	MetaBuffer = ExtendBufferedRel(BMR_REL(index), INIT_FORKNUM, NULL,
 								   EB_LOCK_FIRST | EB_SKIP_EXTENSION_LOCK);
-	RootBuffer = ExtendBufferedRel(EB_REL(index), INIT_FORKNUM, NULL,
+	RootBuffer = ExtendBufferedRel(BMR_REL(index), INIT_FORKNUM, NULL,
 								   EB_LOCK_FIRST | EB_SKIP_EXTENSION_LOCK);
 
 	/* Initialize and xlog metabuffer and root buffer. */

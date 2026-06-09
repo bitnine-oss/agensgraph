@@ -3,7 +3,7 @@
  * tsvector_op.c
  *	  operations over tsvector
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -19,6 +19,7 @@
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
 #include "commands/trigger.h"
+#include "common/int.h"
 #include "executor/spi.h"
 #include "funcapi.h"
 #include "lib/qunique.h"
@@ -28,7 +29,6 @@
 #include "tsearch/ts_utils.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
-#include "utils/lsyscache.h"
 #include "utils/regproc.h"
 #include "utils/rel.h"
 
@@ -435,9 +435,7 @@ compare_int(const void *va, const void *vb)
 	int			a = *((const int *) va);
 	int			b = *((const int *) vb);
 
-	if (a == b)
-		return 0;
-	return (a > b) ? 1 : -1;
+	return pg_cmp_s32(a, b);
 }
 
 static int

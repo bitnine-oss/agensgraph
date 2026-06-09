@@ -3,7 +3,7 @@
  * pg_lsn.c
  *	  Operations for the pg_lsn datatype.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -13,9 +13,8 @@
  */
 #include "postgres.h"
 
-#include "funcapi.h"
 #include "libpq/pqformat.h"
-#include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
 #include "utils/numeric.h"
 #include "utils/pg_lsn.h"
 

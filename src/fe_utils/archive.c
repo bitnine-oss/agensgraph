@@ -3,7 +3,7 @@
  * archive.c
  *	  Routines to access WAL archives from frontend
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -95,7 +95,7 @@ RestoreArchivedFile(const char *path, const char *xlogfname,
 	 * fatal too.
 	 */
 	if (wait_result_is_any_signal(rc, true))
-		pg_fatal("restore_command failed: %s",
+		pg_fatal("\"restore_command\" failed: %s",
 				 wait_result_to_str(rc));
 
 	/*

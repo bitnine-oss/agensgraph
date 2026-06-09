@@ -3,7 +3,7 @@
  * shmem.c
  *	  create shared memory and initialize shared memory data structures.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -65,7 +65,6 @@
 
 #include "postgres.h"
 
-#include "access/transam.h"
 #include "fmgr.h"
 #include "funcapi.h"
 #include "miscadmin.h"
@@ -140,14 +139,6 @@ InitShmemAllocation(void)
 	/* ShmemIndex can't be set up yet (need LWLocks first) */
 	shmhdr->index = NULL;
 	ShmemIndex = (HTAB *) NULL;
-
-	/*
-	 * Initialize ShmemVariableCache for transaction manager. (This doesn't
-	 * really belong here, but not worth moving.)
-	 */
-	ShmemVariableCache = (VariableCache)
-		ShmemAlloc(sizeof(*ShmemVariableCache));
-	memset(ShmemVariableCache, 0, sizeof(*ShmemVariableCache));
 }
 
 /*

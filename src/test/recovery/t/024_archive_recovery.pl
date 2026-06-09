@@ -1,9 +1,9 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Test for archive recovery of WAL generated with wal_level=minimal
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -91,8 +91,8 @@ sub test_recovery_wal_level_minimal
 	# Confirm that the archive recovery fails with an expected error
 	my $logfile = slurp_file($recovery_node->logfile());
 	ok( $logfile =~
-		  qr/FATAL: .* WAL was generated with wal_level=minimal, cannot continue recovering/,
-		"$node_text ends with an error because it finds WAL generated with wal_level=minimal"
+		  qr/FATAL: .* WAL was generated with "wal_level=minimal", cannot continue recovering/,
+		"$node_text ends with an error because it finds WAL generated with \"wal_level=minimal\""
 	);
 }
 

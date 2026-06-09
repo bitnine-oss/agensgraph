@@ -4,7 +4,7 @@
 #
 # Module encapsulating Postgres Version numbers
 #
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 #
 ############################################################################
 
@@ -45,7 +45,7 @@ of common version formats and comparison operations.
 package PostgreSQL::Version;
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use Scalar::Util qw(blessed);
 

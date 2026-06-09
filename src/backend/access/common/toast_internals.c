@@ -3,7 +3,7 @@
  * toast_internals.c
  *	  Functions for internal use by the TOAST system.
  *
- * Copyright (c) 2000-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/access/common/toast_internals.c
@@ -21,7 +21,6 @@
 #include "access/toast_internals.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
-#include "common/pg_lzcompress.h"
 #include "miscadmin.h"
 #include "utils/fmgroids.h"
 #include "utils/rel.h"
@@ -636,8 +635,7 @@ toast_close_indexes(Relation *toastidxs, int num_indexes, LOCKMODE lock)
  *
  *	Initialize an appropriate TOAST snapshot.  We must use an MVCC snapshot
  *	to initialize the TOAST snapshot; since we don't know which one to use,
- *	just use the oldest one.  This is safe: at worst, we will get a "snapshot
- *	too old" error that might have been avoided otherwise.
+ *	just use the oldest one.
  */
 void
 init_toast_snapshot(Snapshot toast_snapshot)

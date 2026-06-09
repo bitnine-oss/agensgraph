@@ -3,7 +3,7 @@
  * rangetypes_gist.c
  *	  GiST support for range types.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -62,7 +62,7 @@ typedef struct
 typedef enum
 {
 	SPLIT_LEFT = 0,				/* makes initialization to SPLIT_LEFT easier */
-	SPLIT_RIGHT
+	SPLIT_RIGHT,
 } SplitLR;
 
 /*

@@ -4,10 +4,10 @@
 # Usage: check_keywords.pl gram.y kwlist.h
 
 # src/backend/parser/check_keywords.pl
-# Copyright (c) 2009-2023, PostgreSQL Global Development Group
+# Copyright (c) 2009-2024, PostgreSQL Global Development Group
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 my $gram_filename = $ARGV[0];
 my $kwlist_filename = $ARGV[1];

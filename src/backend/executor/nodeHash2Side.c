@@ -259,11 +259,6 @@ ExecEndHash2Side(Hash2SideState *node)
 	}
 
 	/*
-	 * free exprcontext
-	 */
-	ExecFreeExprContext(&node->ps);
-
-	/*
 	 * shut down the subplan
 	 */
 	outerPlan = outerPlanState(node);

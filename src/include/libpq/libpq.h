@@ -4,7 +4,7 @@
  *	  POSTGRES LIBPQ buffer structure definitions.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/libpq/libpq.h
@@ -64,14 +64,13 @@ extern PGDLLIMPORT WaitEventSet *FeBeWaitSet;
 #define FeBeWaitSetLatchPos 1
 #define FeBeWaitSetNEvents 3
 
-extern int	StreamServerPort(int family, const char *hostName,
+extern int	ListenServerPort(int family, const char *hostName,
 							 unsigned short portNumber, const char *unixSocketDir,
-							 pgsocket ListenSocket[], int MaxListen);
-extern int	StreamConnection(pgsocket server_fd, Port *port);
-extern void StreamClose(pgsocket sock);
+							 pgsocket ListenSockets[], int *NumListenSockets, int MaxListen);
+extern int	AcceptConnection(pgsocket server_fd, ClientSocket *client_sock);
 extern void TouchSocketFiles(void);
 extern void RemoveSocketFiles(void);
-extern void pq_init(void);
+extern Port *pq_init(ClientSocket *client_sock);
 extern int	pq_getbytes(char *s, size_t len);
 extern void pq_startmsgread(void);
 extern void pq_endmsgread(void);
@@ -80,7 +79,7 @@ extern int	pq_getmessage(StringInfo s, int maxlen);
 extern int	pq_getbyte(void);
 extern int	pq_peekbyte(void);
 extern int	pq_getbyte_if_available(unsigned char *c);
-extern bool pq_buffer_has_data(void);
+extern ssize_t pq_buffer_remaining_data(void);
 extern int	pq_putmessage_v2(char msgtype, const char *s, size_t len);
 extern bool pq_check_connection(void);
 

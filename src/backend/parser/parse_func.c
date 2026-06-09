@@ -3,7 +3,7 @@
  * parse_func.c
  *		handle function calls in parser
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -39,7 +39,7 @@
 typedef enum
 {
 	FUNCLOOKUP_NOSUCHFUNC,
-	FUNCLOOKUP_AMBIGUOUS
+	FUNCLOOKUP_AMBIGUOUS,
 } FuncLookupError;
 
 static void unify_hypothetical_args(ParseState *pstate,
@@ -834,6 +834,7 @@ ParseFuncOrColumn(ParseState *pstate, List *funcname, List *fargs,
 		wfunc->winstar = agg_star;
 		wfunc->winagg = (fdresult == FUNCDETAIL_AGGREGATE);
 		wfunc->aggfilter = agg_filter;
+		wfunc->runCondition = NIL;
 		wfunc->location = location;
 
 		/*
@@ -2599,6 +2600,7 @@ check_srf_call_placement(ParseState *pstate, Node *last_srf, int location)
 			errkind = true;
 			break;
 		case EXPR_KIND_RETURNING:
+		case EXPR_KIND_MERGE_RETURNING:
 			errkind = true;
 			break;
 		case EXPR_KIND_VALUES:

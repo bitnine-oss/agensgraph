@@ -4,7 +4,7 @@
  *	   routines for accessing the system catalogs
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -36,11 +36,9 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/supportnodes.h"
-#include "optimizer/clauses.h"
 #include "optimizer/cost.h"
 #include "optimizer/optimizer.h"
 #include "optimizer/plancat.h"
-#include "optimizer/prep.h"
 #include "parser/parse_relation.h"
 #include "parser/parsetree.h"
 #include "partitioning/partdesc.h"
@@ -162,6 +160,36 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 		palloc0((rel->max_attr - rel->min_attr + 1) * sizeof(Relids));
 	rel->attr_widths = (int32 *)
 		palloc0((rel->max_attr - rel->min_attr + 1) * sizeof(int32));
+
+	/*
+	 * Record which columns are defined as NOT NULL.  We leave this
+	 * unpopulated for non-partitioned inheritance parent relations as it's
+	 * ambiguous as to what it means.  Some child tables may have a NOT NULL
+	 * constraint for a column while others may not.  We could work harder and
+	 * build a unioned set of all child relations notnullattnums, but there's
+	 * currently no need.  The RelOptInfo corresponding to the !inh
+	 * RangeTblEntry does get populated.
+	 */
+	if (!inhparent || relation->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+	{
+		for (int i = 0; i < relation->rd_att->natts; i++)
+		{
+			FormData_pg_attribute *attr = &relation->rd_att->attrs[i];
+
+			if (attr->attnotnull)
+			{
+				rel->notnullattnums = bms_add_member(rel->notnullattnums,
+													 attr->attnum);
+
+				/*
+				 * Per RemoveAttributeById(), dropped columns will have their
+				 * attnotnull unset, so we needn't check for dropped columns
+				 * in the above condition.
+				 */
+				Assert(!attr->attisdropped);
+			}
+		}
+	}
 
 	/*
 	 * Estimate relation size --- unless it's an inheritance parent, in which
@@ -667,6 +695,7 @@ infer_arbiter_indexes(PlannerInfo *root)
 	OnConflictExpr *onconflict = root->parse->onConflict;
 
 	/* Iteration state */
+	Index		varno;
 	RangeTblEntry *rte;
 	Relation	relation;
 	Oid			indexOidFromConstraint = InvalidOid;
@@ -695,7 +724,8 @@ infer_arbiter_indexes(PlannerInfo *root)
 	 * the rewriter or when expand_inherited_rtentry() added it to the query's
 	 * rangetable.
 	 */
-	rte = rt_fetch(root->parse->resultRelation, root->parse->rtable);
+	varno = root->parse->resultRelation;
+	rte = rt_fetch(varno, root->parse->rtable);
 
 	relation = table_open(rte->relid, NoLock);
 
@@ -829,6 +859,9 @@ infer_arbiter_indexes(PlannerInfo *root)
 
 		/* Expression attributes (if any) must match */
 		idxExprs = RelationGetIndexExpressions(idxRel);
+		if (idxExprs && varno != 1)
+			ChangeVarNodes((Node *) idxExprs, 1, varno, 0);
+
 		foreach(el, onconflict->arbiterElems)
 		{
 			InferenceElem *elem = (InferenceElem *) lfirst(el);
@@ -880,6 +913,8 @@ infer_arbiter_indexes(PlannerInfo *root)
 		 * CONFLICT's WHERE clause.
 		 */
 		predExprs = RelationGetIndexPredicate(idxRel);
+		if (predExprs && varno != 1)
+			ChangeVarNodes((Node *) predExprs, 1, varno, 0);
 
 		if (!predicate_implied_by(predExprs, (List *) onconflict->arbiterWhere, false))
 			goto next;
@@ -1137,7 +1172,7 @@ estimate_rel_size(Relation rel, int32 *attr_widths,
 int32
 get_rel_data_width(Relation rel, int32 *attr_widths)
 {
-	int32		tuple_width = 0;
+	int64		tuple_width = 0;
 	int			i;
 
 	for (i = 1; i <= RelationGetNumberOfAttributes(rel); i++)
@@ -1167,7 +1202,7 @@ get_rel_data_width(Relation rel, int32 *attr_widths)
 		tuple_width += item_width;
 	}
 
-	return tuple_width;
+	return clamp_width_est(tuple_width);
 }
 
 /*
@@ -1549,16 +1584,17 @@ relation_excluded_by_constraints(PlannerInfo *root,
 
 	/*
 	 * Regardless of the setting of constraint_exclusion, detect
-	 * constant-FALSE-or-NULL restriction clauses.  Because const-folding will
-	 * reduce "anything AND FALSE" to just "FALSE", any such case should
-	 * result in exactly one baserestrictinfo entry.  This doesn't fire very
-	 * often, but it seems cheap enough to be worth doing anyway.  (Without
-	 * this, we'd miss some optimizations that 9.5 and earlier found via much
-	 * more roundabout methods.)
+	 * constant-FALSE-or-NULL restriction clauses.  Although const-folding
+	 * will reduce "anything AND FALSE" to just "FALSE", the baserestrictinfo
+	 * list can still have other members besides the FALSE constant, due to
+	 * qual pushdown and other mechanisms; so check them all.  This doesn't
+	 * fire very often, but it seems cheap enough to be worth doing anyway.
+	 * (Without this, we'd miss some optimizations that 9.5 and earlier found
+	 * via much more roundabout methods.)
 	 */
-	if (list_length(rel->baserestrictinfo) == 1)
+	foreach(lc, rel->baserestrictinfo)
 	{
-		RestrictInfo *rinfo = (RestrictInfo *) linitial(rel->baserestrictinfo);
+		RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
 		Expr	   *clause = rinfo->clause;
 
 		if (clause && IsA(clause, Const) &&

@@ -1,11 +1,11 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 #
 # Tests of pg_shmem.h functions
 #
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use File::stat qw(stat);
 use IPC::Run 'run';
 use PostgreSQL::Test::Cluster;

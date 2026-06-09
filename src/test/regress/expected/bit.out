@@ -40,6 +40,23 @@ SELECT * FROM VARBIT_TABLE;
  01010101010
 (4 rows)
 
+-- Literals with syntax errors
+SELECT b' 0';
+ERROR:  " " is not a valid binary digit
+LINE 1: SELECT b' 0';
+               ^
+SELECT b'0 ';
+ERROR:  " " is not a valid binary digit
+LINE 1: SELECT b'0 ';
+               ^
+SELECT x' 0';
+ERROR:  " " is not a valid hexadecimal digit
+LINE 1: SELECT x' 0';
+               ^
+SELECT x'0 ';
+ERROR:  " " is not a valid hexadecimal digit
+LINE 1: SELECT x'0 ';
+               ^
 -- Concatenation
 SELECT v, b, (v || b) AS concat
        FROM BIT_TABLE, VARBIT_TABLE
@@ -721,6 +738,30 @@ SELECT bit_count(B'1111111111'::bit(10));
  bit_count 
 -----------
         10
+(1 row)
+
+SELECT bit_count(repeat('0', 100)::bit(100));
+ bit_count 
+-----------
+         0
+(1 row)
+
+SELECT bit_count(repeat('1', 100)::bit(100));
+ bit_count 
+-----------
+       100
+(1 row)
+
+SELECT bit_count(repeat('01', 500)::bit(1000));
+ bit_count 
+-----------
+       500
+(1 row)
+
+SELECT bit_count(repeat('10101', 200)::bit(1000));
+ bit_count 
+-----------
+       600
 (1 row)
 
 -- This table is intentionally left around to exercise pg_dump/pg_upgrade

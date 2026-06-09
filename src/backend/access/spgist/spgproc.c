@@ -4,7 +4,7 @@
  *	  Common supporting procedures for SP-GiST opclasses.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -18,8 +18,8 @@
 #include <math.h>
 
 #include "access/spgist_private.h"
-#include "utils/builtins.h"
 #include "utils/float.h"
+#include "utils/fmgrprotos.h"
 #include "utils/geo_decls.h"
 
 #define point_point_distance(p1,p2) \

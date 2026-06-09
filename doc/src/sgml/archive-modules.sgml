@@ -114,6 +114,18 @@ WARNING:  archive_mode enabled, yet archiving is not configured
     In the latter case, the server will periodically call this function, and
     archiving will proceed only when it returns <literal>true</literal>.
    </para>
+
+   <note>
+    <para>
+     When returning <literal>false</literal>, it may be useful to append some
+     additional information to the generic warning message.  To do that, provide
+     a message to the <function>arch_module_check_errdetail</function> macro
+     before returning <literal>false</literal>.  Like
+     <function>errdetail()</function>, this macro accepts a format string
+     followed by an optional list of arguments.  The resulting string will be
+     emitted as the <literal>DETAIL</literal> line of the warning message.
+    </para>
+   </note>
   </sect2>
 
   <sect2 id="archive-module-archive">
@@ -128,12 +140,21 @@ typedef bool (*ArchiveFileCB) (ArchiveModuleState *state, const char *file, cons
 
     If <literal>true</literal> is returned, the server proceeds as if the file
     was successfully archived, which may include recycling or removing the
-    original WAL file.  If <literal>false</literal> is returned, the server will
+    original WAL file.  If <literal>false</literal> is returned or an error is thrown, the server will
     keep the original WAL file and retry archiving later.
     <replaceable>file</replaceable> will contain just the file name of the WAL
     file to archive, while <replaceable>path</replaceable> contains the full
     path of the WAL file (including the file name).
    </para>
+
+   <note>
+    <para>
+     The <function>archive_file_cb</function> callback is called in a
+     short-lived memory context that will be reset between invocations.  If you
+     need longer-lived storage, create a memory context in the module's
+     <function>startup_cb</function> callback.
+    </para>
+   </note>
   </sect2>
 
   <sect2 id="archive-module-shutdown">

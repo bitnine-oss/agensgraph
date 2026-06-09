@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 ltree_sources = files(
   '_ltree_gist.c',
@@ -30,8 +30,9 @@ contrib_targets += ltree
 install_data(
   'ltree.control',
   'ltree--1.0--1.1.sql',
-  'ltree--1.1--1.2.sql',
   'ltree--1.1.sql',
+  'ltree--1.1--1.2.sql',
+  'ltree--1.2--1.3.sql',
   kwargs: contrib_data_args,
 )
 

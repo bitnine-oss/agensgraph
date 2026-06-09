@@ -10,7 +10,7 @@
  * scan where each backend reads an arbitrary subset of the tuples that were
  * written.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -23,7 +23,6 @@
 
 #include "access/htup.h"
 #include "access/htup_details.h"
-#include "miscadmin.h"
 #include "storage/buffile.h"
 #include "storage/lwlock.h"
 #include "storage/sharedfileset.h"

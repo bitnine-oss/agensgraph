@@ -3,7 +3,7 @@
  * nodeIndexscan.c
  *	  Routines to support indexed scans of relations
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -33,7 +33,7 @@
 #include "access/relscan.h"
 #include "access/tableam.h"
 #include "catalog/pg_am.h"
-#include "executor/execdebug.h"
+#include "executor/executor.h"
 #include "executor/nodeIndexscan.h"
 #include "lib/pairingheap.h"
 #include "miscadmin.h"
@@ -41,7 +41,6 @@
 #include "utils/array.h"
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
-#include "utils/memutils.h"
 #include "utils/rel.h"
 
 /*
@@ -793,22 +792,6 @@ ExecEndIndexScan(IndexScanState *node)
 	 */
 	indexRelationDesc = node->iss_RelationDesc;
 	indexScanDesc = node->iss_ScanDesc;
-
-	/*
-	 * Free the exprcontext(s) ... now dead code, see ExecFreeExprContext
-	 */
-#ifdef NOT_USED
-	ExecFreeExprContext(&node->ss.ps);
-	if (node->iss_RuntimeContext)
-		FreeExprContext(node->iss_RuntimeContext, true);
-#endif
-
-	/*
-	 * clear out tuple table slots
-	 */
-	if (node->ss.ps.ps_ResultTupleSlot)
-		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
-	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 
 	/*
 	 * close the index relation (no-op if we didn't open it)
@@ -1661,6 +1644,8 @@ ExecIndexScanEstimate(IndexScanState *node,
 	EState	   *estate = node->ss.ps.state;
 
 	node->iss_PscanLen = index_parallelscan_estimate(node->iss_RelationDesc,
+													 node->iss_NumScanKeys,
+													 node->iss_NumOrderByKeys,
 													 estate->es_snapshot);
 	shm_toc_estimate_chunk(&pcxt->estimator, node->iss_PscanLen);
 	shm_toc_estimate_keys(&pcxt->estimator, 1);

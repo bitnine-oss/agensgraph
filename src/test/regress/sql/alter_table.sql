@@ -850,9 +850,12 @@ alter table non_existent alter column bar drop not null;
 -- test checking for null values and primary key
 create table atacc1 (test int not null);
 alter table atacc1 add constraint "atacc1_pkey" primary key (test);
+\d atacc1
 alter table atacc1 alter column test drop not null;
+\d atacc1
 alter table atacc1 drop constraint "atacc1_pkey";
 alter table atacc1 alter column test drop not null;
+\d atacc1
 insert into atacc1 values (null);
 alter table atacc1 alter test set not null;
 delete from atacc1;
@@ -2342,14 +2345,20 @@ ALTER TABLE ataddindex
 \d ataddindex
 DROP TABLE ataddindex;
 
--- unsupported constraint types for partitioned tables
+CREATE TABLE atnotnull1 ();
+ALTER TABLE atnotnull1
+  ADD COLUMN a INT,
+  ALTER a SET NOT NULL;
+ALTER TABLE atnotnull1
+  ADD COLUMN c INT,
+  ADD PRIMARY KEY (c);
+\d+ atnotnull1
+
+-- cannot drop column that is part of the partition key
 CREATE TABLE partitioned (
 	a int,
 	b int
 ) PARTITION BY RANGE (a, (a+b+1));
-ALTER TABLE partitioned ADD EXCLUDE USING gist (a WITH &&);
-
--- cannot drop column that is part of the partition key
 ALTER TABLE partitioned DROP COLUMN a;
 ALTER TABLE partitioned ALTER COLUMN a TYPE char(5);
 ALTER TABLE partitioned DROP COLUMN b;
@@ -2673,7 +2682,7 @@ DROP TABLE quuux;
 -- check validation when attaching hash partitions
 
 -- Use hand-rolled hash functions and operator class to get predictable result
--- on different machines. part_test_int4_ops is defined in insert.sql.
+-- on different machines. part_test_int4_ops is defined in test_setup.sql.
 
 -- check that the new partition won't overlap with an existing partition
 CREATE TABLE hash_parted (

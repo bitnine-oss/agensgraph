@@ -3,7 +3,7 @@
  * subscriptioncmds.c
  *		subscription catalog manipulation functions
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -69,8 +69,9 @@
 #define SUBOPT_DISABLE_ON_ERR		0x00000400
 #define SUBOPT_PASSWORD_REQUIRED	0x00000800
 #define SUBOPT_RUN_AS_OWNER			0x00001000
-#define SUBOPT_LSN					0x00002000
-#define SUBOPT_ORIGIN				0x00004000
+#define SUBOPT_FAILOVER				0x00002000
+#define SUBOPT_LSN					0x00004000
+#define SUBOPT_ORIGIN				0x00008000
 
 /* check if the 'val' has 'bits' set */
 #define IsSet(val, bits)  (((val) & (bits)) == (bits))
@@ -95,6 +96,7 @@ typedef struct SubOpts
 	bool		disableonerr;
 	bool		passwordrequired;
 	bool		runasowner;
+	bool		failover;
 	char	   *origin;
 	XLogRecPtr	lsn;
 } SubOpts;
@@ -155,6 +157,8 @@ parse_subscription_options(ParseState *pstate, List *stmt_options,
 		opts->passwordrequired = true;
 	if (IsSet(supported_opts, SUBOPT_RUN_AS_OWNER))
 		opts->runasowner = false;
+	if (IsSet(supported_opts, SUBOPT_FAILOVER))
+		opts->failover = false;
 	if (IsSet(supported_opts, SUBOPT_ORIGIN))
 		opts->origin = pstrdup(LOGICALREP_ORIGIN_ANY);
 
@@ -302,6 +306,15 @@ parse_subscription_options(ParseState *pstate, List *stmt_options,
 
 			opts->specified_opts |= SUBOPT_RUN_AS_OWNER;
 			opts->runasowner = defGetBoolean(defel);
+		}
+		else if (IsSet(supported_opts, SUBOPT_FAILOVER) &&
+				 strcmp(defel->defname, "failover") == 0)
+		{
+			if (IsSet(opts->specified_opts, SUBOPT_FAILOVER))
+				errorConflictingDefElem(defel, pstate);
+
+			opts->specified_opts |= SUBOPT_FAILOVER;
+			opts->failover = defGetBoolean(defel);
 		}
 		else if (IsSet(supported_opts, SUBOPT_ORIGIN) &&
 				 strcmp(defel->defname, "origin") == 0)
@@ -486,8 +499,7 @@ check_publications(WalReceiverConn *wrconn, List *publications)
 	appendStringInfoChar(cmd, ')');
 
 	res = walrcv_exec(wrconn, cmd->data, 1, tableRow);
-	pfree(cmd->data);
-	pfree(cmd);
+	destroyStringInfo(cmd);
 
 	if (res->status != WALRCV_OK_TUPLES)
 		ereport(ERROR,
@@ -591,7 +603,7 @@ CreateSubscription(ParseState *pstate, CreateSubscriptionStmt *stmt,
 					  SUBOPT_SYNCHRONOUS_COMMIT | SUBOPT_BINARY |
 					  SUBOPT_STREAMING | SUBOPT_TWOPHASE_COMMIT |
 					  SUBOPT_DISABLE_ON_ERR | SUBOPT_PASSWORD_REQUIRED |
-					  SUBOPT_RUN_AS_OWNER | SUBOPT_ORIGIN);
+					  SUBOPT_RUN_AS_OWNER | SUBOPT_FAILOVER | SUBOPT_ORIGIN);
 	parse_subscription_options(pstate, stmt->options, supported_opts, &opts);
 
 	/*
@@ -697,6 +709,7 @@ CreateSubscription(ParseState *pstate, CreateSubscriptionStmt *stmt,
 	values[Anum_pg_subscription_subdisableonerr - 1] = BoolGetDatum(opts.disableonerr);
 	values[Anum_pg_subscription_subpasswordrequired - 1] = BoolGetDatum(opts.passwordrequired);
 	values[Anum_pg_subscription_subrunasowner - 1] = BoolGetDatum(opts.runasowner);
+	values[Anum_pg_subscription_subfailover - 1] = BoolGetDatum(opts.failover);
 	values[Anum_pg_subscription_subconninfo - 1] =
 		CStringGetTextDatum(conninfo);
 	if (opts.slot_name)
@@ -737,7 +750,7 @@ CreateSubscription(ParseState *pstate, CreateSubscriptionStmt *stmt,
 
 		/* Try to connect to the publisher. */
 		must_use_password = !superuser_arg(owner) && opts.passwordrequired;
-		wrconn = walrcv_connect(conninfo, true, must_use_password,
+		wrconn = walrcv_connect(conninfo, true, true, must_use_password,
 								stmt->subname, &err);
 		if (!wrconn)
 			ereport(ERROR,
@@ -773,7 +786,7 @@ CreateSubscription(ParseState *pstate, CreateSubscriptionStmt *stmt,
 										 rv->schemaname, rv->relname);
 
 				AddSubscriptionRelState(subid, relid, table_state,
-										InvalidXLogRecPtr);
+										InvalidXLogRecPtr, true);
 			}
 
 			/*
@@ -807,7 +820,7 @@ CreateSubscription(ParseState *pstate, CreateSubscriptionStmt *stmt,
 					twophase_enabled = true;
 
 				walrcv_create_slot(wrconn, opts.slot_name, false, twophase_enabled,
-								   CRS_NOEXPORT_SNAPSHOT, NULL);
+								   opts.failover, CRS_NOEXPORT_SNAPSHOT, NULL);
 
 				if (twophase_enabled)
 					UpdateTwoPhaseState(subid, LOGICALREP_TWOPHASE_STATE_ENABLED);
@@ -869,8 +882,8 @@ AlterSubscription_refresh(Subscription *sub, bool copy_data,
 	load_file("libpqwalreceiver", false);
 
 	/* Try to connect to the publisher. */
-	must_use_password = !superuser_arg(sub->owner) && sub->passwordrequired;
-	wrconn = walrcv_connect(sub->conninfo, true, must_use_password,
+	must_use_password = sub->passwordrequired && !sub->ownersuperuser;
+	wrconn = walrcv_connect(sub->conninfo, true, true, must_use_password,
 							sub->name, &err);
 	if (!wrconn)
 		ereport(ERROR,
@@ -943,7 +956,7 @@ AlterSubscription_refresh(Subscription *sub, bool copy_data,
 			{
 				AddSubscriptionRelState(sub->oid, relid,
 										copy_data ? SUBREL_STATE_INIT : SUBREL_STATE_READY,
-										InvalidXLogRecPtr);
+										InvalidXLogRecPtr, true);
 				ereport(DEBUG1,
 						(errmsg_internal("table \"%s.%s\" added to subscription \"%s\"",
 										 rv->schemaname, rv->relname, sub->name)));
@@ -1132,7 +1145,8 @@ AlterSubscription(ParseState *pstate, AlterSubscriptionStmt *stmt,
 								  SUBOPT_SYNCHRONOUS_COMMIT | SUBOPT_BINARY |
 								  SUBOPT_STREAMING | SUBOPT_DISABLE_ON_ERR |
 								  SUBOPT_PASSWORD_REQUIRED |
-								  SUBOPT_RUN_AS_OWNER | SUBOPT_ORIGIN);
+								  SUBOPT_RUN_AS_OWNER | SUBOPT_FAILOVER |
+								  SUBOPT_ORIGIN);
 
 				parse_subscription_options(pstate, stmt->options,
 										   supported_opts, &opts);
@@ -1204,6 +1218,44 @@ AlterSubscription(ParseState *pstate, AlterSubscriptionStmt *stmt,
 						= true;
 				}
 
+				if (IsSet(opts.specified_opts, SUBOPT_RUN_AS_OWNER))
+				{
+					values[Anum_pg_subscription_subrunasowner - 1] =
+						BoolGetDatum(opts.runasowner);
+					replaces[Anum_pg_subscription_subrunasowner - 1] = true;
+				}
+
+				if (IsSet(opts.specified_opts, SUBOPT_FAILOVER))
+				{
+					if (!sub->slotname)
+						ereport(ERROR,
+								(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+								 errmsg("cannot set %s for a subscription that does not have a slot name",
+										"failover")));
+
+					/*
+					 * Do not allow changing the failover state if the
+					 * subscription is enabled. This is because the failover
+					 * state of the slot on the publisher cannot be modified
+					 * if the slot is currently acquired by the apply worker.
+					 */
+					if (sub->enabled)
+						ereport(ERROR,
+								(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+								 errmsg("cannot set %s for enabled subscription",
+										"failover")));
+
+					/*
+					 * The changed failover option of the slot can't be rolled
+					 * back.
+					 */
+					PreventInTransactionBlock(isTopLevel, "ALTER SUBSCRIPTION ... SET (failover)");
+
+					values[Anum_pg_subscription_subfailover - 1] =
+						BoolGetDatum(opts.failover);
+					replaces[Anum_pg_subscription_subfailover - 1] = true;
+				}
+
 				if (IsSet(opts.specified_opts, SUBOPT_ORIGIN))
 				{
 					values[Anum_pg_subscription_suborigin - 1] =
@@ -1242,7 +1294,7 @@ AlterSubscription(ParseState *pstate, AlterSubscriptionStmt *stmt,
 			load_file("libpqwalreceiver", false);
 			/* Check the connection info string. */
 			walrcv_check_conninfo(stmt->conninfo,
-								  sub->passwordrequired && !superuser_arg(sub->owner));
+								  sub->passwordrequired && !sub->ownersuperuser);
 
 			values[Anum_pg_subscription_subconninfo - 1] =
 				CStringGetTextDatum(stmt->conninfo);
@@ -1446,6 +1498,42 @@ AlterSubscription(ParseState *pstate, AlterSubscriptionStmt *stmt,
 		heap_freetuple(tup);
 	}
 
+	/*
+	 * Try to acquire the connection necessary for altering slot.
+	 *
+	 * This has to be at the end because otherwise if there is an error while
+	 * doing the database operations we won't be able to rollback altered
+	 * slot.
+	 */
+	if (replaces[Anum_pg_subscription_subfailover - 1])
+	{
+		bool		must_use_password;
+		char	   *err;
+		WalReceiverConn *wrconn;
+
+		/* Load the library providing us libpq calls. */
+		load_file("libpqwalreceiver", false);
+
+		/* Try to connect to the publisher. */
+		must_use_password = sub->passwordrequired && !sub->ownersuperuser;
+		wrconn = walrcv_connect(sub->conninfo, true, true, must_use_password,
+								sub->name, &err);
+		if (!wrconn)
+			ereport(ERROR,
+					(errcode(ERRCODE_CONNECTION_FAILURE),
+					 errmsg("could not connect to the publisher: %s", err)));
+
+		PG_TRY();
+		{
+			walrcv_alter_slot(wrconn, sub->slotname, opts.failover);
+		}
+		PG_FINALLY();
+		{
+			walrcv_disconnect(wrconn);
+		}
+		PG_END_TRY();
+	}
+
 	table_close(rel, RowExclusiveLock);
 
 	ObjectAddressSet(myself, SubscriptionRelationId, subid);
@@ -1647,6 +1735,12 @@ DropSubscription(DropSubscriptionStmt *stmt, bool isTopLevel)
 	replorigin_drop_by_name(originname, true, false);
 
 	/*
+	 * Tell the cumulative stats system that the subscription is getting
+	 * dropped.
+	 */
+	pgstat_drop_subscription(subid);
+
+	/*
 	 * If there is no slot associated with the subscription, we can finish
 	 * here.
 	 */
@@ -1669,7 +1763,7 @@ DropSubscription(DropSubscriptionStmt *stmt, bool isTopLevel)
 	 */
 	load_file("libpqwalreceiver", false);
 
-	wrconn = walrcv_connect(conninfo, true, must_use_password,
+	wrconn = walrcv_connect(conninfo, true, true, must_use_password,
 							subname, &err);
 	if (wrconn == NULL)
 	{
@@ -1733,12 +1827,6 @@ DropSubscription(DropSubscriptionStmt *stmt, bool isTopLevel)
 		walrcv_disconnect(wrconn);
 	}
 	PG_END_TRY();
-
-	/*
-	 * Tell the cumulative stats system that the subscription is getting
-	 * dropped.
-	 */
-	pgstat_drop_subscription(subid);
 
 	table_close(rel, NoLock);
 }
@@ -2023,8 +2111,8 @@ check_publications_origin(WalReceiverConn *wrconn, List *publications,
 				errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				errmsg("subscription \"%s\" requested copy_data with origin = NONE but might copy data that had a different origin",
 					   subname),
-				errdetail_plural("Subscribed publication %s is subscribing to other publications.",
-								 "Subscribed publications %s are subscribing to other publications.",
+				errdetail_plural("The subscription being created subscribes to a publication (%s) that contains tables that are written to by other subscriptions.",
+								 "The subscription being created subscribes to publications (%s) that contain tables that are written to by other subscriptions.",
 								 list_length(publist), pubnames->data),
 				errhint("Verify that initial data copied from the publisher tables did not come from other origins."));
 	}

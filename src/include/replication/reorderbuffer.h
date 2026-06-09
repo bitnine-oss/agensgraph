@@ -2,7 +2,7 @@
  * reorderbuffer.h
  *	  PostgreSQL logical replay/reorder buffer management.
  *
- * Copyright (c) 2012-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2024, PostgreSQL Global Development Group
  *
  * src/include/replication/reorderbuffer.h
  */
@@ -11,6 +11,7 @@
 
 #include "access/htup_details.h"
 #include "lib/ilist.h"
+#include "lib/pairingheap.h"
 #include "storage/sinval.h"
 #include "utils/hsearch.h"
 #include "utils/relcache.h"
@@ -19,33 +20,14 @@
 
 /* GUC variables */
 extern PGDLLIMPORT int logical_decoding_work_mem;
-extern PGDLLIMPORT int logical_replication_mode;
+extern PGDLLIMPORT int debug_logical_replication_streaming;
 
-/* possible values for logical_replication_mode */
+/* possible values for debug_logical_replication_streaming */
 typedef enum
 {
-	LOGICAL_REP_MODE_BUFFERED,
-	LOGICAL_REP_MODE_IMMEDIATE
-}			LogicalRepMode;
-
-/* an individual tuple, stored in one chunk of memory */
-typedef struct ReorderBufferTupleBuf
-{
-	/* position in preallocated list */
-	slist_node	node;
-
-	/* tuple header, the interesting bit for users of logical decoding */
-	HeapTupleData tuple;
-
-	/* pre-allocated size of tuple buffer, different from tuple size */
-	Size		alloc_tuple_size;
-
-	/* actual tuple data follows */
-} ReorderBufferTupleBuf;
-
-/* pointer to the data stored in a TupleBuf */
-#define ReorderBufferTupleBufData(p) \
-	((HeapTupleHeader) MAXALIGN(((char *) p) + sizeof(ReorderBufferTupleBuf)))
+	DEBUG_LOGICAL_REP_STREAMING_BUFFERED,
+	DEBUG_LOGICAL_REP_STREAMING_IMMEDIATE,
+}			DebugLogicalRepStreamingMode;
 
 /*
  * Types of the change passed to a 'change' callback.
@@ -73,7 +55,7 @@ typedef enum ReorderBufferChangeType
 	REORDER_BUFFER_CHANGE_INTERNAL_SPEC_INSERT,
 	REORDER_BUFFER_CHANGE_INTERNAL_SPEC_CONFIRM,
 	REORDER_BUFFER_CHANGE_INTERNAL_SPEC_ABORT,
-	REORDER_BUFFER_CHANGE_TRUNCATE
+	REORDER_BUFFER_CHANGE_TRUNCATE,
 } ReorderBufferChangeType;
 
 /* forward declaration */
@@ -114,9 +96,9 @@ typedef struct ReorderBufferChange
 			bool		clear_toast_afterwards;
 
 			/* valid for DELETE || UPDATE */
-			ReorderBufferTupleBuf *oldtuple;
+			HeapTuple	oldtuple;
 			/* valid for INSERT || UPDATE */
-			ReorderBufferTupleBuf *newtuple;
+			HeapTuple	newtuple;
 		}			tp;
 
 		/*
@@ -421,6 +403,11 @@ typedef struct ReorderBufferTXN
 	dlist_node	catchange_node;
 
 	/*
+	 * A node in txn_heap
+	 */
+	pairingheap_node txn_node;
+
+	/*
 	 * Size of this transaction (changes currently in memory, in bytes).
 	 */
 	Size		size;
@@ -650,6 +637,9 @@ struct ReorderBuffer
 	/* memory accounting */
 	Size		size;
 
+	/* Max-heap for sizes of all top-level and sub transactions */
+	pairingheap *txn_heap;
+
 	/*
 	 * Statistics about transactions spilled to disk.
 	 *
@@ -678,10 +668,10 @@ struct ReorderBuffer
 extern ReorderBuffer *ReorderBufferAllocate(void);
 extern void ReorderBufferFree(ReorderBuffer *rb);
 
-extern ReorderBufferTupleBuf *ReorderBufferGetTupleBuf(ReorderBuffer *rb,
-													   Size tuple_len);
-extern void ReorderBufferReturnTupleBuf(ReorderBuffer *rb,
-										ReorderBufferTupleBuf *tuple);
+extern HeapTuple ReorderBufferGetTupleBuf(ReorderBuffer *rb,
+										  Size tuple_len);
+extern void ReorderBufferReturnTupleBuf(HeapTuple tuple);
+
 extern ReorderBufferChange *ReorderBufferGetChange(ReorderBuffer *rb);
 extern void ReorderBufferReturnChange(ReorderBuffer *rb,
 									  ReorderBufferChange *change, bool upd_mem);

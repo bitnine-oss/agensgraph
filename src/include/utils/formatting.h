@@ -4,7 +4,7 @@
  * src/include/utils/formatting.h
  *
  *
- *	 Portions Copyright (c) 1999-2023, PostgreSQL Global Development Group
+ *	 Portions Copyright (c) 1999-2024, PostgreSQL Global Development Group
  *
  *	 The PostgreSQL routines for a DateTime/int/float/numeric formatting,
  *	 inspired by the Oracle TO_CHAR() / TO_DATE() / TO_NUMBER() routines.
@@ -29,5 +29,6 @@ extern char *asc_initcap(const char *buff, size_t nbytes);
 extern Datum parse_datetime(text *date_txt, text *fmt, Oid collid, bool strict,
 							Oid *typid, int32 *typmod, int *tz,
 							struct Node *escontext);
+extern bool datetime_format_has_tz(const char *fmt_str);
 
 #endif

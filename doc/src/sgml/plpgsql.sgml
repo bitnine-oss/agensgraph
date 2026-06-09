@@ -675,12 +675,14 @@ DECLARE
    <title>Copying Types</title>
 
 <synopsis>
-<replaceable>variable</replaceable>%TYPE
+<replaceable>name</replaceable> <replaceable>table</replaceable>.<replaceable>column</replaceable>%TYPE
+<replaceable>name</replaceable> <replaceable>variable</replaceable>%TYPE
 </synopsis>
 
    <para>
-    <literal>%TYPE</literal> provides the data type of a variable or
-    table column. You can use this to declare variables that will hold
+    <literal>%TYPE</literal> provides the data type of a table column
+    or a previously-declared <application>PL/pgSQL</application>
+    variable. You can use this to declare variables that will hold
     database values. For example, let's say you have a column named
     <literal>user_id</literal> in your <literal>users</literal>
     table. To declare a variable with the same data type as
@@ -688,6 +690,21 @@ DECLARE
 <programlisting>
 user_id users.user_id%TYPE;
 </programlisting>
+   </para>
+
+   <para>
+    It is also possible to write array decoration
+    after <literal>%TYPE</literal>, thereby creating a variable that holds
+    an array of the referenced type:
+<programlisting>
+user_ids users.user_id%TYPE[];
+user_ids users.user_id%TYPE ARRAY[4];  -- equivalent to the above
+</programlisting>
+    Just as when declaring table columns that are arrays, it doesn't
+    matter whether you write multiple bracket pairs or specific array
+    dimensions: <productname>PostgreSQL</productname> treats all arrays of
+    a given element type as the same type, regardless of dimensionality.
+    (See <xref linkend="arrays-declaration"/>.)
    </para>
 
    <para>
@@ -737,6 +754,12 @@ user_id users.user_id%TYPE;
     it actually does not matter in <productname>PostgreSQL</productname> whether you
     write <literal>%ROWTYPE</literal> or not.  But the form with
     <literal>%ROWTYPE</literal> is more portable.)
+   </para>
+
+   <para>
+    As with <literal>%TYPE</literal>, <literal>%ROWTYPE</literal> can be
+    followed by array decoration to declare a variable that holds an array
+    of the referenced composite type.
    </para>
 
    <para>
@@ -1020,8 +1043,8 @@ INSERT INTO mytable VALUES (1,'one'), (2,'two');
     </para>
 
     <para>
-     If the command does return rows (for example <command>SELECT</command>,
-     or <command>INSERT</command>/<command>UPDATE</command>/<command>DELETE</command>
+     If the command does return rows (for example <command>SELECT</command>, or
+     <command>INSERT</command>/<command>UPDATE</command>/<command>DELETE</command>/<command>MERGE</command>
      with <literal>RETURNING</literal>), there are two ways to proceed.
      When the command will return at most one row, or you only care about
      the first row of output, write the command as usual but add
@@ -1149,6 +1172,7 @@ SELECT <replaceable>select_expressions</replaceable> INTO <optional>STRICT</opti
 INSERT ... RETURNING <replaceable>expressions</replaceable> INTO <optional>STRICT</optional> <replaceable>target</replaceable>;
 UPDATE ... RETURNING <replaceable>expressions</replaceable> INTO <optional>STRICT</optional> <replaceable>target</replaceable>;
 DELETE ... RETURNING <replaceable>expressions</replaceable> INTO <optional>STRICT</optional> <replaceable>target</replaceable>;
+MERGE ... RETURNING <replaceable>expressions</replaceable> INTO <optional>STRICT</optional> <replaceable>target</replaceable>;
 </synopsis>
 
      where <replaceable>target</replaceable> can be a record variable, a row
@@ -1159,8 +1183,8 @@ DELETE ... RETURNING <replaceable>expressions</replaceable> INTO <optional>STRIC
      <literal>INTO</literal> clause) just as described above,
      and the plan is cached in the same way.
      This works for <command>SELECT</command>,
-     <command>INSERT</command>/<command>UPDATE</command>/<command>DELETE</command> with
-     <literal>RETURNING</literal>, and certain utility commands
+     <command>INSERT</command>/<command>UPDATE</command>/<command>DELETE</command>/<command>MERGE</command>
+     with <literal>RETURNING</literal>, and certain utility commands
      that return row sets, such as <command>EXPLAIN</command>.
      Except for the <literal>INTO</literal> clause, the SQL command is the same
      as it would be written outside <application>PL/pgSQL</application>.
@@ -1236,7 +1260,7 @@ END;
     </para>
 
     <para>
-     For <command>INSERT</command>/<command>UPDATE</command>/<command>DELETE</command> with
+     For <command>INSERT</command>/<command>UPDATE</command>/<command>DELETE</command>/<command>MERGE</command> with
      <literal>RETURNING</literal>, <application>PL/pgSQL</application> reports
      an error for more than one returned row, even when
      <literal>STRICT</literal> is not specified.  This is because there
@@ -2634,8 +2658,9 @@ $$ LANGUAGE plpgsql;
      The <replaceable>query</replaceable> used in this type of <literal>FOR</literal>
      statement can be any SQL command that returns rows to the caller:
      <command>SELECT</command> is the most common case,
-     but you can also use <command>INSERT</command>, <command>UPDATE</command>, or
-     <command>DELETE</command> with a <literal>RETURNING</literal> clause.  Some utility
+     but you can also use <command>INSERT</command>, <command>UPDATE</command>,
+     <command>DELETE</command>, or <command>MERGE</command> with a
+     <literal>RETURNING</literal> clause.  Some utility
      commands such as <command>EXPLAIN</command> will work too.
     </para>
 
@@ -3942,7 +3967,7 @@ RAISE unique_violation USING MESSAGE = 'Duplicate user ID: ' || user_id;
    <para>
     If no condition name nor SQLSTATE is specified in a
     <command>RAISE EXCEPTION</command> command, the default is to use
-    <literal>ERRCODE_RAISE_EXCEPTION</literal> (<literal>P0001</literal>).
+    <literal>raise_exception</literal> (<literal>P0001</literal>).
     If no message text is specified, the default is to use the condition
     name or SQLSTATE as message text.
    </para>
@@ -4330,11 +4355,11 @@ CREATE OR REPLACE FUNCTION process_emp_audit() RETURNS TRIGGER AS $emp_audit$
         -- making use of the special variable TG_OP to work out the operation.
         --
         IF (TG_OP = 'DELETE') THEN
-            INSERT INTO emp_audit SELECT 'D', now(), user, OLD.*;
+            INSERT INTO emp_audit SELECT 'D', now(), current_user, OLD.*;
         ELSIF (TG_OP = 'UPDATE') THEN
-            INSERT INTO emp_audit SELECT 'U', now(), user, NEW.*;
+            INSERT INTO emp_audit SELECT 'U', now(), current_user, NEW.*;
         ELSIF (TG_OP = 'INSERT') THEN
-            INSERT INTO emp_audit SELECT 'I', now(), user, NEW.*;
+            INSERT INTO emp_audit SELECT 'I', now(), current_user, NEW.*;
         END IF;
         RETURN NULL; -- result is ignored since this is an AFTER trigger
     END;
@@ -4400,20 +4425,20 @@ CREATE OR REPLACE FUNCTION update_emp_view() RETURNS TRIGGER AS $$
             IF NOT FOUND THEN RETURN NULL; END IF;
 
             OLD.last_updated = now();
-            INSERT INTO emp_audit VALUES('D', user, OLD.*);
+            INSERT INTO emp_audit VALUES('D', current_user, OLD.*);
             RETURN OLD;
         ELSIF (TG_OP = 'UPDATE') THEN
             UPDATE emp SET salary = NEW.salary WHERE empname = OLD.empname;
             IF NOT FOUND THEN RETURN NULL; END IF;
 
             NEW.last_updated = now();
-            INSERT INTO emp_audit VALUES('U', user, NEW.*);
+            INSERT INTO emp_audit VALUES('U', current_user, NEW.*);
             RETURN NEW;
         ELSIF (TG_OP = 'INSERT') THEN
             INSERT INTO emp VALUES(NEW.empname, NEW.salary);
 
             NEW.last_updated = now();
-            INSERT INTO emp_audit VALUES('I', user, NEW.*);
+            INSERT INTO emp_audit VALUES('I', current_user, NEW.*);
             RETURN NEW;
         END IF;
     END;
@@ -4628,13 +4653,13 @@ CREATE OR REPLACE FUNCTION process_emp_audit() RETURNS TRIGGER AS $emp_audit$
         --
         IF (TG_OP = 'DELETE') THEN
             INSERT INTO emp_audit
-                SELECT 'D', now(), user, o.* FROM old_table o;
+                SELECT 'D', now(), current_user, o.* FROM old_table o;
         ELSIF (TG_OP = 'UPDATE') THEN
             INSERT INTO emp_audit
-                SELECT 'U', now(), user, n.* FROM new_table n;
+                SELECT 'U', now(), current_user, n.* FROM new_table n;
         ELSIF (TG_OP = 'INSERT') THEN
             INSERT INTO emp_audit
-                SELECT 'I', now(), user, n.* FROM new_table n;
+                SELECT 'I', now(), current_user, n.* FROM new_table n;
         END IF;
         RETURN NULL; -- result is ignored since this is an AFTER trigger
     END;

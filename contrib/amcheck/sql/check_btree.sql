@@ -3,7 +3,7 @@ CREATE TABLE bttest_b(id int8);
 CREATE TABLE bttest_multi(id int8, data int8);
 CREATE TABLE delete_test_table (a bigint, b bigint, c bigint, d bigint);
 
--- Stabalize tests
+-- Stabilize tests
 ALTER TABLE bttest_a SET (autovacuum_enabled = false);
 ALTER TABLE bttest_b SET (autovacuum_enabled = false);
 ALTER TABLE bttest_multi SET (autovacuum_enabled = false);
@@ -135,6 +135,35 @@ CREATE INDEX bttest_a_expr_idx ON bttest_a ((ifun(id) + ifun(0)))
 
 SELECT bt_index_check('bttest_a_expr_idx', true);
 
+-- UNIQUE constraint check
+SELECT bt_index_check('bttest_a_idx', heapallindexed => true, checkunique => true);
+SELECT bt_index_check('bttest_b_idx', heapallindexed => false, checkunique => true);
+SELECT bt_index_parent_check('bttest_a_idx', heapallindexed => true, rootdescend => true, checkunique => true);
+SELECT bt_index_parent_check('bttest_b_idx', heapallindexed => true, rootdescend => false, checkunique => true);
+
+-- Check that null values in an unique index are not treated as equal
+CREATE TABLE bttest_unique_nulls (a serial, b int, c int UNIQUE);
+INSERT INTO bttest_unique_nulls VALUES (generate_series(1, 10000), 2, default);
+SELECT bt_index_check('bttest_unique_nulls_c_key', heapallindexed => true, checkunique => true);
+CREATE INDEX on bttest_unique_nulls (b,c);
+SELECT bt_index_check('bttest_unique_nulls_b_c_idx', heapallindexed => true, checkunique => true);
+
+-- Check support of both 1B and 4B header sizes of short varlena datum
+CREATE TABLE varlena_bug (v text);
+ALTER TABLE varlena_bug ALTER column v SET storage plain;
+INSERT INTO varlena_bug VALUES ('x');
+COPY varlena_bug from stdin;
+x
+\.
+CREATE INDEX varlena_bug_idx on varlena_bug(v);
+SELECT bt_index_check('varlena_bug_idx', true);
+
+-- Also check that we compress varlena values, which were previously stored
+-- uncompressed in index.
+INSERT INTO varlena_bug VALUES (repeat('Test', 250));
+ALTER TABLE varlena_bug ALTER COLUMN v SET STORAGE extended;
+SELECT bt_index_check('varlena_bug_idx', true);
+
 -- cleanup
 DROP TABLE bttest_a;
 DROP TABLE bttest_b;
@@ -142,5 +171,7 @@ DROP TABLE bttest_multi;
 DROP TABLE delete_test_table;
 DROP TABLE toast_bug;
 DROP FUNCTION ifun(int8);
+DROP TABLE bttest_unique_nulls;
 DROP OWNED BY regress_bttest_role; -- permissions
 DROP ROLE regress_bttest_role;
+DROP TABLE varlena_bug;

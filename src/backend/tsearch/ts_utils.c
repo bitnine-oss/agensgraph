@@ -3,7 +3,7 @@
  * ts_utils.c
  *		various support functions
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -18,7 +18,7 @@
 
 #include "miscadmin.h"
 #include "tsearch/ts_locale.h"
-#include "tsearch/ts_utils.h"
+#include "tsearch/ts_public.h"
 
 
 /*

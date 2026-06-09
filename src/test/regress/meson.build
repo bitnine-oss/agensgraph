@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 # also used by isolationtester and ecpg tests
 pg_regress_c = files('pg_regress.c')
@@ -30,7 +30,7 @@ endif
 pg_regress = executable('pg_regress',
   regress_sources,
   c_args: pg_regress_cflags,
-  dependencies: [frontend_code],
+  dependencies: [frontend_code, libpq],
   kwargs: default_bin_args + {
     'install_dir': dir_pgxs / 'src/test/regress',
   },

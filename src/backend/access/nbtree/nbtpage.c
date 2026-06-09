@@ -4,7 +4,7 @@
  *	  BTree-specific page management code for the Postgres btree access
  *	  method.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -28,9 +28,9 @@
 #include "access/transam.h"
 #include "access/xlog.h"
 #include "access/xloginsert.h"
+#include "common/int.h"
 #include "miscadmin.h"
 #include "storage/indexfsm.h"
-#include "storage/lmgr.h"
 #include "storage/predicate.h"
 #include "storage/procarray.h"
 #include "utils/memdebug.h"
@@ -975,7 +975,7 @@ _bt_allocbuf(Relation rel, Relation heaprel)
 	 * otherwise would make, as we can't use _bt_lockbuf() without introducing
 	 * a race.
 	 */
-	buf = ExtendBufferedRel(EB_REL(rel), MAIN_FORKNUM, NULL, EB_LOCK_FIRST);
+	buf = ExtendBufferedRel(BMR_REL(rel), MAIN_FORKNUM, NULL, EB_LOCK_FIRST);
 	if (!RelationUsesLocalBuffers(rel))
 		VALGRIND_MAKE_MEM_DEFINED(BufferGetPage(buf), BLCKSZ);
 
@@ -1466,14 +1466,9 @@ _bt_delitems_cmp(const void *a, const void *b)
 	TM_IndexDelete *indexdelete1 = (TM_IndexDelete *) a;
 	TM_IndexDelete *indexdelete2 = (TM_IndexDelete *) b;
 
-	if (indexdelete1->id > indexdelete2->id)
-		return 1;
-	if (indexdelete1->id < indexdelete2->id)
-		return -1;
+	Assert(indexdelete1->id != indexdelete2->id);
 
-	Assert(false);
-
-	return 0;
+	return pg_cmp_s16(indexdelete1->id, indexdelete2->id);
 }
 
 /*
@@ -1958,12 +1953,21 @@ _bt_pagedel(Relation rel, Buffer leafbuf, BTVacState *vstate)
 					return;
 				}
 
-				/* we need an insertion scan key for the search, so build one */
+				/*
+				 * We need an insertion scan key, so build one.
+				 *
+				 * _bt_search searches for the leaf page that contains any
+				 * matching non-pivot tuples, but we need it to "search" for
+				 * the high key pivot from the page that we're set to delete.
+				 * Compensate for the mismatch by having _bt_search locate the
+				 * last position < equal-to-untruncated-prefix non-pivots.
+				 */
 				itup_key = _bt_mkscankey(rel, targetkey);
-				/* find the leftmost leaf page with matching pivot/high key */
-				itup_key->pivotsearch = true;
-				stack = _bt_search(rel, NULL, itup_key, &sleafbuf, BT_READ,
-								   NULL);
+
+				/* Set up a BTLessStrategyNumber-like insertion scan key */
+				itup_key->nextkey = false;
+				itup_key->backward = true;
+				stack = _bt_search(rel, NULL, itup_key, &sleafbuf, BT_READ);
 				/* won't need a second lock or pin on leafbuf */
 				_bt_relbuf(rel, sleafbuf);
 

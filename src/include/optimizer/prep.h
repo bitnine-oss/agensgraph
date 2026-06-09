@@ -4,7 +4,7 @@
  *	  prototypes for files in optimizer/prep/
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/prep.h
@@ -53,6 +53,6 @@ extern void preprocess_aggrefs(PlannerInfo *root, Node *clause);
  * prototypes for prepunion.c
  */
 extern RelOptInfo *plan_set_operations(PlannerInfo *root);
-
+extern bool set_operation_ordered_results_useful(SetOperationStmt *setop);
 
 #endif							/* PREP_H */

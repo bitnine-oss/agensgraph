@@ -4,7 +4,7 @@
  *	  routines for fast build of inverted index
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -42,7 +42,7 @@ ginCombineData(RBTNode *existing, const RBTNode *newdata, void *arg)
 			ereport(ERROR,
 					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 					 errmsg("posting list is too long"),
-					 errhint("Reduce maintenance_work_mem.")));
+					 errhint("Reduce \"maintenance_work_mem\".")));
 
 		accum->allocatedMemory -= GetMemoryChunkSpace(eo->list);
 		eo->maxcount *= 2;

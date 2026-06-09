@@ -3,7 +3,7 @@
  * nodeLimit.c
  *	  Routines to handle limiting of query results where appropriate
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -24,7 +24,6 @@
 #include "executor/executor.h"
 #include "executor/nodeLimit.h"
 #include "miscadmin.h"
-#include "nodes/nodeFuncs.h"
 
 static void recompute_limits(LimitState *node);
 static int64 compute_tuples_needed(LimitState *node);
@@ -534,7 +533,6 @@ ExecInitLimit(Limit *node, EState *estate, int eflags)
 void
 ExecEndLimit(LimitState *node)
 {
-	ExecFreeExprContext(&node->ps);
 	ExecEndNode(outerPlanState(node));
 }
 

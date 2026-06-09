@@ -14,7 +14,7 @@
  *	plan --- consider improving this someday.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  * src/backend/utils/adt/ri_triggers.c
  *
@@ -30,8 +30,6 @@
 #include "access/xact.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
-#include "catalog/pg_operator.h"
-#include "catalog/pg_type.h"
 #include "commands/trigger.h"
 #include "executor/executor.h"
 #include "executor/spi.h"
@@ -39,7 +37,6 @@
 #include "miscadmin.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_relation.h"
-#include "storage/bufmgr.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
@@ -1263,9 +1260,6 @@ RI_FKey_fk_upd_check_required(Trigger *trigger, Relation fk_rel,
 {
 	const RI_ConstraintInfo *riinfo;
 	int			ri_nullcheck;
-	Datum		xminDatum;
-	TransactionId xmin;
-	bool		isnull;
 
 	/*
 	 * AfterTriggerSaveEvent() handles things such that this function is never
@@ -1333,10 +1327,7 @@ RI_FKey_fk_upd_check_required(Trigger *trigger, Relation fk_rel,
 	 * this if we knew the INSERT trigger already fired, but there is no easy
 	 * way to know that.)
 	 */
-	xminDatum = slot_getsysattr(oldslot, MinTransactionIdAttributeNumber, &isnull);
-	Assert(!isnull);
-	xmin = DatumGetTransactionId(xminDatum);
-	if (TransactionIdIsCurrentTransactionId(xmin))
+	if (slot_is_current_xact_tuple(oldslot))
 		return true;
 
 	/* If all old and new key values are equal, no check is needed */

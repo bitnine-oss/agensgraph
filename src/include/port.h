@@ -3,7 +3,7 @@
  * port.h
  *	  Header for src/port/ compatibility functions.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/port.h
@@ -137,7 +137,7 @@ extern int	validate_exec(const char *path);
 extern int	find_my_exec(const char *argv0, char *retpath);
 extern int	find_other_exec(const char *argv0, const char *target,
 							const char *versionstr, char *retpath);
-extern char *pipe_read_line(char *cmd, char *line, int maxsize);
+extern char *pipe_read_line(char *cmd);
 
 /* Doesn't belong here, but this is used with find_other_exec(), so... */
 #define PG_BACKEND_VERSIONSTR "postgres (PostgreSQL) " PG_VERSION "\n"
@@ -432,12 +432,16 @@ extern size_t strlcpy(char *dst, const char *src, size_t siz);
 extern size_t strnlen(const char *str, size_t maxlen);
 #endif
 
-/* thread.c */
+/* port/user.c */
 #ifndef WIN32
 extern bool pg_get_user_name(uid_t user_id, char *buffer, size_t buflen);
 extern bool pg_get_user_home_dir(uid_t user_id, char *buffer, size_t buflen);
 #endif
 
+/*
+ * Callers should use the qsort() macro defined below instead of calling
+ * pg_qsort() directly.
+ */
 extern void pg_qsort(void *base, size_t nel, size_t elsize,
 					 int (*cmp) (const void *, const void *));
 extern int	pg_qsort_strcmp(const void *a, const void *b);

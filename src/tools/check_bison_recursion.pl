@@ -16,13 +16,13 @@
 # To use: run bison with the -v switch, then feed the produced y.output
 # file to this script.
 #
-# Copyright (c) 2011-2023, PostgreSQL Global Development Group
+# Copyright (c) 2011-2024, PostgreSQL Global Development Group
 #
 # src/tools/check_bison_recursion.pl
 #################################################################
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 my $debug = 0;
 

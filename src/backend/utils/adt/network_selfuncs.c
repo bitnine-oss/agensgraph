@@ -7,7 +7,7 @@
  * operators.  Estimates are based on null fraction, most common values,
  * and histogram of inet/cidr columns.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -23,7 +23,7 @@
 #include "access/htup_details.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_statistic.h"
-#include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
 #include "utils/inet.h"
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"

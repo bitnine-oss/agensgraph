@@ -1,9 +1,9 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Test logical replication of 2PC with streaming.
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -45,8 +45,8 @@ sub test_streaming
 	$node_publisher->safe_psql(
 		'postgres', q{
 		BEGIN;
-		INSERT INTO test_tab SELECT i, md5(i::text) FROM generate_series(3, 5) s(i);
-		UPDATE test_tab SET b = md5(b) WHERE mod(a,2) = 0;
+		INSERT INTO test_tab SELECT i, sha256(i::text::bytea) FROM generate_series(3, 5) s(i);
+		UPDATE test_tab SET b = sha256(b) WHERE mod(a,2) = 0;
 		DELETE FROM test_tab WHERE mod(a,3) = 0;
 		PREPARE TRANSACTION 'test_prepared_tab';});
 
@@ -95,8 +95,8 @@ sub test_streaming
 	$node_publisher->safe_psql(
 		'postgres', q{
 		BEGIN;
-		INSERT INTO test_tab SELECT i, md5(i::text) FROM generate_series(3, 5) s(i);
-		UPDATE test_tab SET b = md5(b) WHERE mod(a,2) = 0;
+		INSERT INTO test_tab SELECT i, sha256(i::text::bytea) FROM generate_series(3, 5) s(i);
+		UPDATE test_tab SET b = sha256(b) WHERE mod(a,2) = 0;
 		DELETE FROM test_tab WHERE mod(a,3) = 0;
 		PREPARE TRANSACTION 'test_prepared_tab';});
 
@@ -142,8 +142,8 @@ sub test_streaming
 	$node_publisher->safe_psql(
 		'postgres', q{
 		BEGIN;
-		INSERT INTO test_tab SELECT i, md5(i::text) FROM generate_series(3, 5) s(i);
-		UPDATE test_tab SET b = md5(b) WHERE mod(a,2) = 0;
+		INSERT INTO test_tab SELECT i, sha256(i::text::bytea) FROM generate_series(3, 5) s(i);
+		UPDATE test_tab SET b = sha256(b) WHERE mod(a,2) = 0;
 		DELETE FROM test_tab WHERE mod(a,3) = 0;
 		PREPARE TRANSACTION 'test_prepared_tab';});
 
@@ -191,8 +191,8 @@ sub test_streaming
 	$node_publisher->safe_psql(
 		'postgres', q{
 		BEGIN;
-		INSERT INTO test_tab SELECT i, md5(i::text) FROM generate_series(3, 5) s(i);
-		UPDATE test_tab SET b = md5(b) WHERE mod(a,2) = 0;
+		INSERT INTO test_tab SELECT i, sha256(i::text::bytea) FROM generate_series(3, 5) s(i);
+		UPDATE test_tab SET b = sha256(b) WHERE mod(a,2) = 0;
 		DELETE FROM test_tab WHERE mod(a,3) = 0;
 		PREPARE TRANSACTION 'test_prepared_tab';});
 
@@ -249,8 +249,8 @@ sub test_streaming
 	$node_publisher->safe_psql(
 		'postgres', q{
 		BEGIN;
-		INSERT INTO test_tab SELECT i, md5(i::text) FROM generate_series(3, 5) s(i);
-		UPDATE test_tab SET b = md5(b) WHERE mod(a,2) = 0;
+		INSERT INTO test_tab SELECT i, sha256(i::text::bytea) FROM generate_series(3, 5) s(i);
+		UPDATE test_tab SET b = sha256(b) WHERE mod(a,2) = 0;
 		DELETE FROM test_tab WHERE mod(a,3) = 0;
 		PREPARE TRANSACTION 'test_prepared_tab';});
 
@@ -301,13 +301,13 @@ $node_publisher->init(allows_streaming => 'logical');
 $node_publisher->append_conf(
 	'postgresql.conf', qq(
 max_prepared_transactions = 10
-logical_replication_mode = immediate
+debug_logical_replication_streaming = immediate
 ));
 $node_publisher->start;
 
 # Create subscriber node
 my $node_subscriber = PostgreSQL::Test::Cluster->new('subscriber');
-$node_subscriber->init(allows_streaming => 'logical');
+$node_subscriber->init;
 $node_subscriber->append_conf(
 	'postgresql.conf', qq(
 max_prepared_transactions = 10
@@ -316,14 +316,14 @@ $node_subscriber->start;
 
 # Create some pre-existing content on publisher
 $node_publisher->safe_psql('postgres',
-	"CREATE TABLE test_tab (a int primary key, b varchar)");
+	"CREATE TABLE test_tab (a int primary key, b bytea)");
 $node_publisher->safe_psql('postgres',
 	"INSERT INTO test_tab VALUES (1, 'foo'), (2, 'bar')");
 $node_publisher->safe_psql('postgres', "CREATE TABLE test_tab_2 (a int)");
 
 # Setup structure on subscriber (columns a and b are compatible with same table name on publisher)
 $node_subscriber->safe_psql('postgres',
-	"CREATE TABLE test_tab (a int primary key, b text, c timestamptz DEFAULT now(), d bigint DEFAULT 999)"
+	"CREATE TABLE test_tab (a int primary key, b bytea, c timestamptz DEFAULT now(), d bigint DEFAULT 999)"
 );
 $node_subscriber->safe_psql('postgres', "CREATE TABLE test_tab_2 (a int)");
 
@@ -389,7 +389,7 @@ test_streaming($node_publisher, $node_subscriber, $appname, 1);
 # Test serializing changes to files and notify the parallel apply worker to
 # apply them at the end of the transaction.
 $node_subscriber->append_conf('postgresql.conf',
-	'logical_replication_mode = immediate');
+	'debug_logical_replication_streaming = immediate');
 # Reset the log_min_messages to default.
 $node_subscriber->append_conf('postgresql.conf',
 	"log_min_messages = warning");

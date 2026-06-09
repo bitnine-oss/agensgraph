@@ -2,7 +2,7 @@
  *
  * bbstreamer_file.c
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/bbstreamer_file.c
@@ -14,8 +14,8 @@
 #include <unistd.h>
 
 #include "bbstreamer.h"
-#include "common/logging.h"
 #include "common/file_perm.h"
+#include "common/logging.h"
 #include "common/string.h"
 
 typedef struct bbstreamer_plain_writer
@@ -296,6 +296,7 @@ should_allow_existing_directory(const char *pathname)
 	if (strcmp(filename, "pg_wal") == 0 ||
 		strcmp(filename, "pg_xlog") == 0 ||
 		strcmp(filename, "archive_status") == 0 ||
+		strcmp(filename, "summaries") == 0 ||
 		strcmp(filename, "pg_tblspc") == 0)
 		return true;
 

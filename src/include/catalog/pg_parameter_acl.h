@@ -5,7 +5,7 @@
  *	  (pg_parameter_acl).
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_parameter_acl.h
@@ -50,9 +50,11 @@ typedef FormData_pg_parameter_acl * Form_pg_parameter_acl;
 
 DECLARE_TOAST_WITH_MACRO(pg_parameter_acl, 6244, 6245, PgParameterAclToastTable, PgParameterAclToastIndex);
 
-DECLARE_UNIQUE_INDEX(pg_parameter_acl_parname_index, 6246, ParameterAclParnameIndexId, on pg_parameter_acl using btree(parname text_ops));
-DECLARE_UNIQUE_INDEX_PKEY(pg_parameter_acl_oid_index, 6247, ParameterAclOidIndexId, on pg_parameter_acl using btree(oid oid_ops));
+DECLARE_UNIQUE_INDEX(pg_parameter_acl_parname_index, 6246, ParameterAclParnameIndexId, pg_parameter_acl, btree(parname text_ops));
+DECLARE_UNIQUE_INDEX_PKEY(pg_parameter_acl_oid_index, 6247, ParameterAclOidIndexId, pg_parameter_acl, btree(oid oid_ops));
 
+MAKE_SYSCACHE(PARAMETERACLNAME, pg_parameter_acl_parname_index, 4);
+MAKE_SYSCACHE(PARAMETERACLOID, pg_parameter_acl_oid_index, 4);
 
 extern Oid	ParameterAclLookup(const char *parameter, bool missing_ok);
 extern Oid	ParameterAclCreate(const char *parameter);

@@ -4,7 +4,7 @@
  *
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/parser/parse_func.h
@@ -27,7 +27,7 @@ typedef enum
 	FUNCDETAIL_PROCEDURE,		/* found a matching procedure */
 	FUNCDETAIL_AGGREGATE,		/* found a matching aggregate function */
 	FUNCDETAIL_WINDOWFUNC,		/* found a matching window function */
-	FUNCDETAIL_COERCION			/* it's a type coercion request */
+	FUNCDETAIL_COERCION,		/* it's a type coercion request */
 } FuncDetailCode;
 
 

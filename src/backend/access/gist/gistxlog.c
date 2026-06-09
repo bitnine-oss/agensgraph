@@ -4,7 +4,7 @@
  *	  WAL replay logic for GiST.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -16,12 +16,10 @@
 #include "access/bufmask.h"
 #include "access/gist_private.h"
 #include "access/gistxlog.h"
-#include "access/heapam_xlog.h"
 #include "access/transam.h"
 #include "access/xloginsert.h"
 #include "access/xlogutils.h"
-#include "miscadmin.h"
-#include "storage/procarray.h"
+#include "storage/standby.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
@@ -185,10 +183,10 @@ gistRedoDeleteRecord(XLogReaderState *record)
 	 *
 	 * GiST delete records can conflict with standby queries.  You might think
 	 * that vacuum records would conflict as well, but we've handled that
-	 * already.  XLOG_HEAP2_PRUNE records provide the highest xid cleaned by
-	 * the vacuum of the heap and so we can resolve any conflicts just once
-	 * when that arrives.  After that we know that no conflicts exist from
-	 * individual gist vacuum records on that index.
+	 * already.  XLOG_HEAP2_PRUNE_VACUUM_SCAN records provide the highest xid
+	 * cleaned by the vacuum of the heap and so we can resolve any conflicts
+	 * just once when that arrives.  After that we know that no conflicts
+	 * exist from individual gist vacuum records on that index.
 	 */
 	if (InHotStandby)
 	{
@@ -495,12 +493,12 @@ gist_mask(char *pagedata, BlockNumber blkno)
  */
 XLogRecPtr
 gistXLogSplit(bool page_is_leaf,
-			  SplitedPageLayout *dist,
+			  SplitPageLayout *dist,
 			  BlockNumber origrlink, GistNSN orignsn,
 			  Buffer leftchildbuf, bool markfollowright)
 {
 	gistxlogPageSplit xlrec;
-	SplitedPageLayout *ptr;
+	SplitPageLayout *ptr;
 	int			npage = 0;
 	XLogRecPtr	recptr;
 	int			i;

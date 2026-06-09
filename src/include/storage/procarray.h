@@ -4,7 +4,7 @@
  *	  POSTGRES process array definitions.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/procarray.h
@@ -64,6 +64,10 @@ extern VirtualTransactionId *GetVirtualXIDsDelayingChkpt(int *nvxids, int type);
 extern bool HaveVirtualXIDsDelayingChkpt(VirtualTransactionId *vxids,
 										 int nvxids, int type);
 
+extern PGPROC *ProcNumberGetProc(int procNumber);
+extern void ProcNumberGetTransactionIds(int procNumber, TransactionId *xid,
+										TransactionId *xmin, int *nsubxid,
+										bool *overflowed);
 extern PGPROC *BackendPidGetProc(int pid);
 extern PGPROC *BackendPidGetProcWithLock(int pid);
 extern int	BackendXidGetPid(TransactionId xid);

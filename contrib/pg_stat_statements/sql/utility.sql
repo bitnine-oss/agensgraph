@@ -4,7 +4,7 @@
 
 -- These tests require track_utility to be enabled.
 SET pg_stat_statements.track_utility = TRUE;
-SELECT pg_stat_statements_reset();
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
 
 -- Tables, indexes, triggers
 CREATE TEMP TABLE tab_stats (a int, b char(20));
@@ -18,7 +18,7 @@ DROP TABLE IF EXISTS tab_stats \;
 DROP TABLE IF EXISTS tab_stats \;
 Drop Table If Exists tab_stats \;
 SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
-SELECT pg_stat_statements_reset();
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
 
 -- Partitions
 CREATE TABLE pt_stats (a int, b int) PARTITION BY range (a);
@@ -83,7 +83,7 @@ CREATE STATISTICS tab_expr_stats_1 (mcv) ON a, (2*a), (3*b) FROM tab_expr_stats;
 DROP TABLE tab_expr_stats;
 
 SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
-SELECT pg_stat_statements_reset();
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
 
 -- Transaction statements
 BEGIN;
@@ -113,7 +113,34 @@ COMMIT;
 BEGIN TRANSACTION NOT DEFERRABLE, READ ONLY, READ WRITE, DEFERRABLE;
 COMMIT;
 SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
-SELECT pg_stat_statements_reset();
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+
+-- Two-phase transactions
+BEGIN;
+PREPARE TRANSACTION 'stat_trans1';
+COMMIT PREPARED 'stat_trans1';
+BEGIN;
+PREPARE TRANSACTION 'stat_trans2';
+ROLLBACK PREPARED 'stat_trans2';
+SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+
+-- Savepoints
+BEGIN;
+SAVEPOINT sp1;
+SAVEPOINT sp2;
+SAVEPOINT sp3;
+SAVEPOINT sp4;
+ROLLBACK TO sp4;
+ROLLBACK TO SAVEPOINT sp4;
+ROLLBACK TRANSACTION TO SAVEPOINT sp3;
+RELEASE sp3;
+RELEASE SAVEPOINT sp2;
+ROLLBACK TO sp1;
+RELEASE SAVEPOINT sp1;
+COMMIT;
+SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
 
 -- EXPLAIN statements
 -- A Query is used, normalized by the query jumbling.
@@ -137,16 +164,41 @@ DECLARE
 BEGIN
   SELECT (i + j)::int INTO r;
 END; $$ LANGUAGE plpgsql;
-SELECT pg_stat_statements_reset();
+-- Overloaded functions.
+CREATE OR REPLACE PROCEDURE overload(i int) AS $$
+DECLARE
+  r int;
+BEGIN
+  SELECT (i + i)::int INTO r;
+END; $$ LANGUAGE plpgsql;
+CREATE OR REPLACE PROCEDURE overload(i text) AS $$
+DECLARE
+  r text;
+BEGIN
+  SELECT i::text INTO r;
+END; $$ LANGUAGE plpgsql;
+-- Mix of IN/OUT parameters.
+CREATE OR REPLACE PROCEDURE in_out(i int, i2 OUT int, i3 INOUT int) AS $$
+DECLARE
+  r int;
+BEGIN
+  i2 := i;
+  i3 := i3 + i;
+END; $$ LANGUAGE plpgsql;
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
 CALL sum_one(3);
 CALL sum_one(199);
 CALL sum_two(1,1);
 CALL sum_two(1,2);
+CALL overload(1);
+CALL overload('A');
+CALL in_out(1, NULL, 1);
+CALL in_out(2, 1, 2);
 SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
 
 -- COPY
 CREATE TABLE copy_stats (a int, b int);
-SELECT pg_stat_statements_reset();
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
 -- Some queries with A_Const nodes.
 COPY (SELECT 1) TO STDOUT;
 COPY (SELECT 2) TO STDOUT;
@@ -158,7 +210,7 @@ COPY (DELETE FROM copy_stats WHERE a = 1 RETURNING *) TO STDOUT;
 
 SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
 DROP TABLE copy_stats;
-SELECT pg_stat_statements_reset();
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
 
 -- CREATE TABLE AS
 -- SELECT queries are normalized, creating matching query IDs.
@@ -175,7 +227,7 @@ CREATE TABLE ctas_stats_2 AS
     FROM generate_series(1, 5) AS tab(a) WHERE a < 4 AND a > 1;
 DROP TABLE ctas_stats_2;
 SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
-SELECT pg_stat_statements_reset();
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
 
 -- CREATE MATERIALIZED VIEW
 -- SELECT queries are normalized, creating matching query IDs.
@@ -188,7 +240,7 @@ CREATE MATERIALIZED VIEW matview_stats_1 AS
     FROM generate_series(1, 5) AS tab(a) WHERE a < 4 AND a > 3;
 DROP MATERIALIZED VIEW matview_stats_1;
 SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
-SELECT pg_stat_statements_reset();
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
 
 -- CREATE VIEW
 CREATE VIEW view_stats_1 AS
@@ -200,7 +252,7 @@ CREATE VIEW view_stats_1 AS
     FROM generate_series(1, 5) AS tab(a) WHERE a < 4 AND a > 3;
 DROP VIEW view_stats_1;
 SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
-SELECT pg_stat_statements_reset();
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
 
 -- Domains
 CREATE DOMAIN domain_stats AS int CHECK (VALUE > 0);
@@ -208,7 +260,20 @@ ALTER DOMAIN domain_stats SET DEFAULT '3';
 ALTER DOMAIN domain_stats ADD CONSTRAINT higher_than_one CHECK (VALUE > 1);
 DROP DOMAIN domain_stats;
 SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
-SELECT pg_stat_statements_reset();
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
+
+-- Execution statements
+SELECT 1 as a;
+PREPARE stat_select AS SELECT $1 AS a;
+EXECUTE stat_select (1);
+DEALLOCATE stat_select;
+PREPARE stat_select AS SELECT $1 AS a;
+EXECUTE stat_select (2);
+DEALLOCATE PREPARE stat_select;
+DEALLOCATE ALL;
+DEALLOCATE PREPARE ALL;
+SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
 
 -- SET statements.
 -- These use two different strings, still they count as one entry.
@@ -234,7 +299,7 @@ RESET SESSION AUTHORIZATION;
 COMMIT;
 
 SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
-SELECT pg_stat_statements_reset();
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;
 
 --
 -- Track the total number of rows retrieved or affected by the utility
@@ -263,17 +328,4 @@ DROP MATERIALIZED VIEW pgss_matv;
 DROP TABLE pgss_ctas;
 DROP TABLE pgss_select_into;
 
-SELECT pg_stat_statements_reset();
-
--- SET statements.
--- These use two different strings, still they count as one entry.
-SET work_mem = '1MB';
-Set work_mem = '1MB';
-SET work_mem = '2MB';
-RESET work_mem;
-SET enable_seqscan = off;
-SET enable_seqscan = on;
-RESET enable_seqscan;
-
-SELECT calls, rows, query FROM pg_stat_statements ORDER BY query COLLATE "C";
-SELECT pg_stat_statements_reset();
+SELECT pg_stat_statements_reset() IS NOT NULL AS t;

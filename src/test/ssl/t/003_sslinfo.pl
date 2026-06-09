@@ -1,8 +1,8 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -18,7 +18,7 @@ if ($ENV{with_ssl} ne 'openssl')
 {
 	plan skip_all => 'OpenSSL not supported by this build';
 }
-elsif ($ENV{PG_TEST_EXTRA} !~ /\bssl\b/)
+elsif (!$ENV{PG_TEST_EXTRA} || $ENV{PG_TEST_EXTRA} !~ /\bssl\b/)
 {
 	plan skip_all =>
 	  'Potentially unsafe test SSL not enabled in PG_TEST_EXTRA';

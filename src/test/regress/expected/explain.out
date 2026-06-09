@@ -135,7 +135,7 @@ select explain_filter('explain (analyze, buffers, format xml) select * from int8
  </explain>
 (1 row)
 
-select explain_filter('explain (analyze, buffers, format yaml) select * from int8_tbl i8');
+select explain_filter('explain (analyze, serialize, buffers, format yaml) select * from int8_tbl i8');
         explain_filter         
 -------------------------------
  - Plan:                      +
@@ -175,6 +175,20 @@ select explain_filter('explain (analyze, buffers, format yaml) select * from int
      Temp Written Blocks: N   +
    Planning Time: N.N         +
    Triggers:                  +
+   Serialization:             +
+     Time: N.N                +
+     Output Volume: N         +
+     Format: "text"           +
+     Shared Hit Blocks: N     +
+     Shared Read Blocks: N    +
+     Shared Dirtied Blocks: N +
+     Shared Written Blocks: N +
+     Local Hit Blocks: N      +
+     Local Read Blocks: N     +
+     Local Dirtied Blocks: N  +
+     Local Written Blocks: N  +
+     Temp Read Blocks: N      +
+     Temp Written Blocks: N   +
    Execution Time: N.N
 (1 row)
 
@@ -230,60 +244,64 @@ select explain_filter('explain (buffers, format json) select * from int8_tbl i8'
 -- but always set in JSON format, so check them only in this case.
 set track_io_timing = on;
 select explain_filter('explain (analyze, buffers, format json) select * from int8_tbl i8');
-           explain_filter           
-------------------------------------
- [                                 +
-   {                               +
-     "Plan": {                     +
-       "Node Type": "Seq Scan",    +
-       "Parallel Aware": false,    +
-       "Async Capable": false,     +
-       "Relation Name": "int8_tbl",+
-       "Alias": "i8",              +
-       "Startup Cost": N.N,        +
-       "Total Cost": N.N,          +
-       "Plan Rows": N,             +
-       "Plan Width": N,            +
-       "Actual Startup Time": N.N, +
-       "Actual Total Time": N.N,   +
-       "Actual Rows": N,           +
-       "Actual Loops": N,          +
-       "Shared Hit Blocks": N,     +
-       "Shared Read Blocks": N,    +
-       "Shared Dirtied Blocks": N, +
-       "Shared Written Blocks": N, +
-       "Local Hit Blocks": N,      +
-       "Local Read Blocks": N,     +
-       "Local Dirtied Blocks": N,  +
-       "Local Written Blocks": N,  +
-       "Temp Read Blocks": N,      +
-       "Temp Written Blocks": N,   +
-       "I/O Read Time": N.N,       +
-       "I/O Write Time": N.N,      +
-       "Temp I/O Read Time": N.N,  +
-       "Temp I/O Write Time": N.N  +
-     },                            +
-     "Planning": {                 +
-       "Shared Hit Blocks": N,     +
-       "Shared Read Blocks": N,    +
-       "Shared Dirtied Blocks": N, +
-       "Shared Written Blocks": N, +
-       "Local Hit Blocks": N,      +
-       "Local Read Blocks": N,     +
-       "Local Dirtied Blocks": N,  +
-       "Local Written Blocks": N,  +
-       "Temp Read Blocks": N,      +
-       "Temp Written Blocks": N,   +
-       "I/O Read Time": N.N,       +
-       "I/O Write Time": N.N,      +
-       "Temp I/O Read Time": N.N,  +
-       "Temp I/O Write Time": N.N  +
-     },                            +
-     "Planning Time": N.N,         +
-     "Triggers": [                 +
-     ],                            +
-     "Execution Time": N.N         +
-   }                               +
+           explain_filter            
+-------------------------------------
+ [                                  +
+   {                                +
+     "Plan": {                      +
+       "Node Type": "Seq Scan",     +
+       "Parallel Aware": false,     +
+       "Async Capable": false,      +
+       "Relation Name": "int8_tbl", +
+       "Alias": "i8",               +
+       "Startup Cost": N.N,         +
+       "Total Cost": N.N,           +
+       "Plan Rows": N,              +
+       "Plan Width": N,             +
+       "Actual Startup Time": N.N,  +
+       "Actual Total Time": N.N,    +
+       "Actual Rows": N,            +
+       "Actual Loops": N,           +
+       "Shared Hit Blocks": N,      +
+       "Shared Read Blocks": N,     +
+       "Shared Dirtied Blocks": N,  +
+       "Shared Written Blocks": N,  +
+       "Local Hit Blocks": N,       +
+       "Local Read Blocks": N,      +
+       "Local Dirtied Blocks": N,   +
+       "Local Written Blocks": N,   +
+       "Temp Read Blocks": N,       +
+       "Temp Written Blocks": N,    +
+       "Shared I/O Read Time": N.N, +
+       "Shared I/O Write Time": N.N,+
+       "Local I/O Read Time": N.N,  +
+       "Local I/O Write Time": N.N, +
+       "Temp I/O Read Time": N.N,   +
+       "Temp I/O Write Time": N.N   +
+     },                             +
+     "Planning": {                  +
+       "Shared Hit Blocks": N,      +
+       "Shared Read Blocks": N,     +
+       "Shared Dirtied Blocks": N,  +
+       "Shared Written Blocks": N,  +
+       "Local Hit Blocks": N,       +
+       "Local Read Blocks": N,      +
+       "Local Dirtied Blocks": N,   +
+       "Local Written Blocks": N,   +
+       "Temp Read Blocks": N,       +
+       "Temp Written Blocks": N,    +
+       "Shared I/O Read Time": N.N, +
+       "Shared I/O Write Time": N.N,+
+       "Local I/O Read Time": N.N,  +
+       "Local I/O Write Time": N.N, +
+       "Temp I/O Read Time": N.N,   +
+       "Temp I/O Write Time": N.N   +
+     },                             +
+     "Planning Time": N.N,          +
+     "Triggers": [                  +
+     ],                             +
+     "Execution Time": N.N          +
+   }                                +
  ]
 (1 row)
 
@@ -322,6 +340,82 @@ select explain_filter('explain (generic_plan) select unique1 from tenk1 where th
 select explain_filter('explain (analyze, generic_plan) select unique1 from tenk1 where thousand = $1');
 ERROR:  EXPLAIN options ANALYZE and GENERIC_PLAN cannot be used together
 CONTEXT:  PL/pgSQL function explain_filter(text) line 5 at FOR over EXECUTE statement
+-- MEMORY option
+select explain_filter('explain (memory) select * from int8_tbl i8');
+                     explain_filter                      
+---------------------------------------------------------
+ Seq Scan on int8_tbl i8  (cost=N.N..N.N rows=N width=N)
+   Memory: used=NkB  allocated=NkB
+(2 rows)
+
+select explain_filter('explain (memory, analyze) select * from int8_tbl i8');
+                                        explain_filter                                         
+-----------------------------------------------------------------------------------------------
+ Seq Scan on int8_tbl i8  (cost=N.N..N.N rows=N width=N) (actual time=N.N..N.N rows=N loops=N)
+   Memory: used=NkB  allocated=NkB
+ Planning Time: N.N ms
+ Execution Time: N.N ms
+(4 rows)
+
+select explain_filter('explain (memory, summary, format yaml) select * from int8_tbl i8');
+        explain_filter         
+-------------------------------
+ - Plan:                      +
+     Node Type: "Seq Scan"    +
+     Parallel Aware: false    +
+     Async Capable: false     +
+     Relation Name: "int8_tbl"+
+     Alias: "i8"              +
+     Startup Cost: N.N        +
+     Total Cost: N.N          +
+     Plan Rows: N             +
+     Plan Width: N            +
+   Planning:                  +
+     Memory Used: N           +
+     Memory Allocated: N      +
+   Planning Time: N.N
+(1 row)
+
+select explain_filter('explain (memory, analyze, format json) select * from int8_tbl i8');
+           explain_filter           
+------------------------------------
+ [                                 +
+   {                               +
+     "Plan": {                     +
+       "Node Type": "Seq Scan",    +
+       "Parallel Aware": false,    +
+       "Async Capable": false,     +
+       "Relation Name": "int8_tbl",+
+       "Alias": "i8",              +
+       "Startup Cost": N.N,        +
+       "Total Cost": N.N,          +
+       "Plan Rows": N,             +
+       "Plan Width": N,            +
+       "Actual Startup Time": N.N, +
+       "Actual Total Time": N.N,   +
+       "Actual Rows": N,           +
+       "Actual Loops": N           +
+     },                            +
+     "Planning": {                 +
+       "Memory Used": N,           +
+       "Memory Allocated": N       +
+     },                            +
+     "Planning Time": N.N,         +
+     "Triggers": [                 +
+     ],                            +
+     "Execution Time": N.N         +
+   }                               +
+ ]
+(1 row)
+
+prepare int8_query as select * from int8_tbl i8;
+select explain_filter('explain (memory) execute int8_query');
+                     explain_filter                      
+---------------------------------------------------------
+ Seq Scan on int8_tbl i8  (cost=N.N..N.N rows=N width=N)
+   Memory: used=NkB  allocated=NkB
+(2 rows)
+
 -- Test EXPLAIN (GENERIC_PLAN) with partition pruning
 -- partitions should be pruned at plan time, based on constants,
 -- but there should be no pruning based on parameter placeholders
@@ -558,4 +652,42 @@ select explain_filter('explain (verbose) select * from int8_tbl i8');
    Output: q1, q2
  Query Identifier: N
 (3 rows)
+
+-- Test SERIALIZE option
+select explain_filter('explain (analyze,serialize) select * from int8_tbl i8');
+                                        explain_filter                                         
+-----------------------------------------------------------------------------------------------
+ Seq Scan on int8_tbl i8  (cost=N.N..N.N rows=N width=N) (actual time=N.N..N.N rows=N loops=N)
+ Planning Time: N.N ms
+ Serialization: time=N.N ms  output=NkB  format=text
+ Execution Time: N.N ms
+(4 rows)
+
+select explain_filter('explain (analyze,serialize text,buffers,timing off) select * from int8_tbl i8');
+                                 explain_filter                                  
+---------------------------------------------------------------------------------
+ Seq Scan on int8_tbl i8  (cost=N.N..N.N rows=N width=N) (actual rows=N loops=N)
+ Planning Time: N.N ms
+ Serialization: output=NkB  format=text
+ Execution Time: N.N ms
+(4 rows)
+
+select explain_filter('explain (analyze,serialize binary,buffers,timing) select * from int8_tbl i8');
+                                        explain_filter                                         
+-----------------------------------------------------------------------------------------------
+ Seq Scan on int8_tbl i8  (cost=N.N..N.N rows=N width=N) (actual time=N.N..N.N rows=N loops=N)
+ Planning Time: N.N ms
+ Serialization: time=N.N ms  output=NkB  format=binary
+ Execution Time: N.N ms
+(4 rows)
+
+-- this tests an edge case where we have no data to return
+select explain_filter('explain (analyze,serialize) create temp table explain_temp as select * from int8_tbl i8');
+                                        explain_filter                                         
+-----------------------------------------------------------------------------------------------
+ Seq Scan on int8_tbl i8  (cost=N.N..N.N rows=N width=N) (actual time=N.N..N.N rows=N loops=N)
+ Planning Time: N.N ms
+ Serialization: time=N.N ms  output=NkB  format=text
+ Execution Time: N.N ms
+(4 rows)
 

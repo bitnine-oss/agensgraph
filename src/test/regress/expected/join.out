@@ -3028,10 +3028,10 @@ where unique1 in (select unique2 from tenk1 b);
 explain (costs off)
 select a.* from tenk1 a
 where unique1 not in (select unique2 from tenk1 b);
-                       QUERY PLAN                       
---------------------------------------------------------
+                        QUERY PLAN                         
+-----------------------------------------------------------
  Seq Scan on tenk1 a
-   Filter: (NOT (hashed SubPlan 1))
+   Filter: (NOT (ANY (unique1 = (hashed SubPlan 1).col1)))
    SubPlan 1
      ->  Index Only Scan using tenk1_unique2 on tenk1 b
 (4 rows)
@@ -4133,6 +4133,32 @@ select * from mki4(42);
 
 drop function mki8(bigint, bigint);
 drop function mki4(int);
+-- test const-folding of a whole-row Var into a per-field Var
+-- (need to inline a function to reach this case, else parser does it)
+create function f_field_select(t onek) returns int4 as
+$$ select t.unique2; $$ language sql immutable;
+explain (verbose, costs off)
+select (t2.*).unique1, f_field_select(t2) from tenk1 t1
+    left join onek t2 on t1.unique1 = t2.unique1
+    left join int8_tbl t3 on true;
+                             QUERY PLAN                             
+--------------------------------------------------------------------
+ Nested Loop Left Join
+   Output: t2.unique1, t2.unique2
+   ->  Hash Left Join
+         Output: t2.unique1, t2.unique2
+         Hash Cond: (t1.unique1 = t2.unique1)
+         ->  Index Only Scan using tenk1_unique1 on public.tenk1 t1
+               Output: t1.unique1
+         ->  Hash
+               Output: t2.unique1, t2.unique2
+               ->  Seq Scan on public.onek t2
+                     Output: t2.unique1, t2.unique2
+   ->  Materialize
+         ->  Seq Scan on public.int8_tbl t3
+(13 rows)
+
+drop function f_field_select(t onek);
 --
 -- test extraction of restriction OR clauses from join OR clause
 -- (we used to only do this for indexable clauses)
@@ -5251,13 +5277,13 @@ reset enable_nestloop;
 explain (costs off)
 select a.unique1, b.unique2
   from onek a left join onek b on a.unique1 = b.unique2
-  where b.unique2 = any (select q1 from int8_tbl c where c.q1 < b.unique1);
-                        QUERY PLAN                        
-----------------------------------------------------------
+  where (b.unique2, random() > 0) = any (select q1, random() > 0 from int8_tbl c where c.q1 < b.unique1);
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
  Hash Join
    Hash Cond: (b.unique2 = a.unique1)
    ->  Seq Scan on onek b
-         Filter: (SubPlan 1)
+         Filter: (ANY ((unique2 = (SubPlan 1).col1) AND ((random() > '0'::double precision) = (SubPlan 1).col2)))
          SubPlan 1
            ->  Seq Scan on int8_tbl c
                  Filter: (q1 < b.unique1)
@@ -5267,7 +5293,7 @@ select a.unique1, b.unique2
 
 select a.unique1, b.unique2
   from onek a left join onek b on a.unique1 = b.unique2
-  where b.unique2 = any (select q1 from int8_tbl c where c.q1 < b.unique1);
+  where (b.unique2, random() > 0) = any (select q1, random() > 0 from int8_tbl c where c.q1 < b.unique1);
  unique1 | unique2 
 ---------+---------
      123 |     123
@@ -5788,13 +5814,11 @@ explain (costs off)
 select p.* from
   parent p left join child c on (p.k = c.k)
   where p.k = 1 and p.k = 2;
-                   QUERY PLAN                   
-------------------------------------------------
+        QUERY PLAN        
+--------------------------
  Result
    One-Time Filter: false
-   ->  Index Scan using parent_pkey on parent p
-         Index Cond: (k = 1)
-(4 rows)
+(2 rows)
 
 select p.* from
   (parent p left join child c on (p.k = c.k)) join parent x on p.k = x.k
@@ -6987,6 +7011,33 @@ select * from
          Output: (COALESCE((COALESCE(b.q2, '42'::bigint)), d.q2))
 (24 rows)
 
+-- another case requiring nested PlaceHolderVars
+explain (verbose, costs off)
+select * from
+  (select 0 as val0) as ss0
+  left join (select 1 as val) as ss1 on true
+  left join lateral (select ss1.val as val_filtered where false) as ss2 on true;
+           QUERY PLAN           
+--------------------------------
+ Nested Loop Left Join
+   Output: 0, (1), ((1))
+   Join Filter: false
+   ->  Result
+         Output: 1
+   ->  Result
+         Output: (1)
+         One-Time Filter: false
+(8 rows)
+
+select * from
+  (select 0 as val0) as ss0
+  left join (select 1 as val) as ss1 on true
+  left join lateral (select ss1.val as val_filtered where false) as ss2 on true;
+ val0 | val | val_filtered 
+------+-----+--------------
+    0 |   1 |             
+(1 row)
+
 -- case that breaks the old ph_may_need optimization
 explain (verbose, costs off)
 select c.*,a.*,ss1.q1,ss2.q1,ss3.* from
@@ -7175,12 +7226,12 @@ select * from (values (0), (1)) v(id),
 lateral (select * from int8_tbl t1,
          lateral (select * from
                     (select * from int8_tbl t2
-                     where q1 = any (select q2 from int8_tbl t3
+                     where (q1, random() > 0) = any (select q2, random() > 0 from int8_tbl t3
                                      where q2 = (select greatest(t1.q1,t2.q2))
                                        and (select v.id=0)) offset 0) ss2) ss
          where t1.q1 = ss.q2) ss0;
-                              QUERY PLAN                              
-----------------------------------------------------------------------
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
  Nested Loop
    Output: "*VALUES*".column1, t1.q1, t1.q2, ss2.q1, ss2.q2
    ->  Seq Scan on public.int8_tbl t1
@@ -7194,27 +7245,27 @@ lateral (select * from int8_tbl t1,
                Filter: (t1.q1 = ss2.q2)
                ->  Seq Scan on public.int8_tbl t2
                      Output: t2.q1, t2.q2
-                     Filter: (SubPlan 3)
+                     Filter: (ANY ((t2.q1 = (SubPlan 3).col1) AND ((random() > '0'::double precision) = (SubPlan 3).col2)))
                      SubPlan 3
                        ->  Result
-                             Output: t3.q2
-                             One-Time Filter: $4
-                             InitPlan 1 (returns $2)
+                             Output: t3.q2, (random() > '0'::double precision)
+                             One-Time Filter: (InitPlan 2).col1
+                             InitPlan 1
                                ->  Result
                                      Output: GREATEST(t1.q1, t2.q2)
-                             InitPlan 2 (returns $4)
+                             InitPlan 2
                                ->  Result
                                      Output: ("*VALUES*".column1 = 0)
                              ->  Seq Scan on public.int8_tbl t3
                                    Output: t3.q1, t3.q2
-                                   Filter: (t3.q2 = $2)
+                                   Filter: (t3.q2 = (InitPlan 1).col1)
 (27 rows)
 
 select * from (values (0), (1)) v(id),
 lateral (select * from int8_tbl t1,
          lateral (select * from
                     (select * from int8_tbl t2
-                     where q1 = any (select q2 from int8_tbl t3
+                     where (q1, random() > 0) = any (select q2, random() > 0 from int8_tbl t3
                                      where q2 = (select greatest(t1.q1,t2.q2))
                                        and (select v.id=0)) offset 0) ss2) ss
          where t1.q1 = ss.q2) ss0;
@@ -7797,10 +7848,9 @@ where j1.id1 % 1000 = 1 and j2.id1 % 1000 = 1 and j2.id1 >= any (array[1,5]);
    Merge Cond: (j1.id1 = j2.id1)
    Join Filter: (j2.id2 = j1.id2)
    ->  Index Scan using j1_id1_idx on j1
-   ->  Index Only Scan using j2_pkey on j2
+   ->  Index Scan using j2_id1_idx on j2
          Index Cond: (id1 >= ANY ('{1,5}'::integer[]))
-         Filter: ((id1 % 1000) = 1)
-(7 rows)
+(6 rows)
 
 select * from j1
 inner join j2 on j1.id1 = j2.id1 and j1.id2 = j2.id2
@@ -7874,3 +7924,39 @@ where exists (select 1 from j3
 (13 rows)
 
 drop table j3;
+-- Exercise the "skip fetch" Bitmap Heap Scan optimization when candidate
+-- tuples are discarded. This may occur when:
+--   1. A join doesn't require all inner tuples to be scanned for each outer
+--      tuple, and
+--   2. The inner side is scanned using a bitmap heap scan, and
+--   3. The bitmap heap scan is eligible for the "skip fetch" optimization.
+--      This optimization is usable when no data from the underlying table is
+--      needed. Use a temp table so it is only visible to this backend and
+--      vacuum may reliably mark all blocks in the table all visible in the
+--      visibility map.
+CREATE TEMP TABLE skip_fetch (a INT, b INT) WITH (fillfactor=10);
+INSERT INTO skip_fetch SELECT i % 3, i FROM generate_series(0,30) i;
+CREATE INDEX ON skip_fetch(a);
+VACUUM (ANALYZE) skip_fetch;
+SET enable_indexonlyscan = off;
+SET enable_seqscan = off;
+EXPLAIN (COSTS OFF)
+SELECT t1.a FROM skip_fetch t1 LEFT JOIN skip_fetch t2 ON t2.a = 1 WHERE t2.a IS NULL;
+                       QUERY PLAN                        
+---------------------------------------------------------
+ Nested Loop Anti Join
+   ->  Seq Scan on skip_fetch t1
+   ->  Materialize
+         ->  Bitmap Heap Scan on skip_fetch t2
+               Recheck Cond: (a = 1)
+               ->  Bitmap Index Scan on skip_fetch_a_idx
+                     Index Cond: (a = 1)
+(7 rows)
+
+SELECT t1.a FROM skip_fetch t1 LEFT JOIN skip_fetch t2 ON t2.a = 1 WHERE t2.a IS NULL;
+ a 
+---
+(0 rows)
+
+RESET enable_indexonlyscan;
+RESET enable_seqscan;

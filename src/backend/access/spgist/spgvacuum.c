@@ -4,7 +4,7 @@
  *	  vacuum for SP-GiST
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -20,7 +20,6 @@
 #include "access/spgxlog.h"
 #include "access/transam.h"
 #include "access/xloginsert.h"
-#include "catalog/storage_xlog.h"
 #include "commands/vacuum.h"
 #include "miscadmin.h"
 #include "storage/bufmgr.h"
@@ -189,7 +188,9 @@ vacuumLeafPage(spgBulkDeleteState *bds, Relation index, Buffer buffer,
 
 			/*
 			 * Add target TID to pending list if the redirection could have
-			 * happened since VACUUM started.
+			 * happened since VACUUM started.  (If xid is invalid, assume it
+			 * must have happened before VACUUM started, since REINDEX
+			 * CONCURRENTLY locks out VACUUM.)
 			 *
 			 * Note: we could make a tighter test by seeing if the xid is
 			 * "running" according to the active snapshot; but snapmgr.c
@@ -524,8 +525,17 @@ vacuumRedirectAndPlaceholder(Relation index, Relation heaprel, Buffer buffer)
 
 		dt = (SpGistDeadTuple) PageGetItem(page, PageGetItemId(page, i));
 
+		/*
+		 * We can convert a REDIRECT to a PLACEHOLDER if there could no longer
+		 * be any index scans "in flight" to it.  Such an index scan would
+		 * have to be in a transaction whose snapshot sees the REDIRECT's XID
+		 * as still running, so comparing the XID against global xmin is a
+		 * conservatively safe test.  If the XID is invalid, it must have been
+		 * inserted by REINDEX CONCURRENTLY, so we can zap it immediately.
+		 */
 		if (dt->tupstate == SPGIST_REDIRECT &&
-			GlobalVisTestIsRemovableXid(vistest, dt->xid))
+			(!TransactionIdIsValid(dt->xid) ||
+			 GlobalVisTestIsRemovableXid(vistest, dt->xid)))
 		{
 			dt->tupstate = SPGIST_PLACEHOLDER;
 			Assert(opaque->nRedirection > 0);

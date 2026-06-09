@@ -3,7 +3,7 @@
  *
  *	server-side function support
  *
- *	Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/function.c
  */
 
@@ -11,6 +11,7 @@
 
 #include "access/transam.h"
 #include "catalog/pg_language_d.h"
+#include "common/int.h"
 #include "pg_upgrade.h"
 
 /*
@@ -29,24 +30,25 @@ library_name_compare(const void *p1, const void *p2)
 {
 	const char *str1 = ((const LibraryInfo *) p1)->name;
 	const char *str2 = ((const LibraryInfo *) p2)->name;
-	int			slen1 = strlen(str1);
-	int			slen2 = strlen(str2);
+	size_t		slen1 = strlen(str1);
+	size_t		slen2 = strlen(str2);
 	int			cmp = strcmp(str1, str2);
 
 	if (slen1 != slen2)
-		return slen1 - slen2;
+		return pg_cmp_size(slen1, slen2);
 	if (cmp != 0)
 		return cmp;
-	else
-		return ((const LibraryInfo *) p1)->dbnum -
-			((const LibraryInfo *) p2)->dbnum;
+	return pg_cmp_s32(((const LibraryInfo *) p1)->dbnum,
+					  ((const LibraryInfo *) p2)->dbnum);
 }
 
 
 /*
  * get_loadable_libraries()
  *
- *	Fetch the names of all old libraries containing C-language functions.
+ *	Fetch the names of all old libraries containing either C-language functions
+ *	or are corresponding to logical replication output plugins.
+ *
  *	We will later check that they all exist in the new installation.
  */
 void
@@ -55,6 +57,7 @@ get_loadable_libraries(void)
 	PGresult  **ress;
 	int			totaltups;
 	int			dbnum;
+	int			n_libinfos;
 
 	ress = (PGresult **) pg_malloc(old_cluster.dbarr.ndbs * sizeof(PGresult *));
 	totaltups = 0;
@@ -81,7 +84,12 @@ get_loadable_libraries(void)
 		PQfinish(conn);
 	}
 
-	os_info.libraries = (LibraryInfo *) pg_malloc(totaltups * sizeof(LibraryInfo));
+	/*
+	 * Allocate memory for required libraries and logical replication output
+	 * plugins.
+	 */
+	n_libinfos = totaltups + count_old_cluster_logical_slots();
+	os_info.libraries = (LibraryInfo *) pg_malloc(sizeof(LibraryInfo) * n_libinfos);
 	totaltups = 0;
 
 	for (dbnum = 0; dbnum < old_cluster.dbarr.ndbs; dbnum++)
@@ -89,6 +97,7 @@ get_loadable_libraries(void)
 		PGresult   *res = ress[dbnum];
 		int			ntups;
 		int			rowno;
+		LogicalSlotInfoArr *slot_arr = &old_cluster.dbarr.dbs[dbnum].slot_arr;
 
 		ntups = PQntuples(res);
 		for (rowno = 0; rowno < ntups; rowno++)
@@ -101,6 +110,23 @@ get_loadable_libraries(void)
 			totaltups++;
 		}
 		PQclear(res);
+
+		/*
+		 * Store the names of output plugins as well. There is a possibility
+		 * that duplicated plugins are set, but the consumer function
+		 * check_loadable_libraries() will avoid checking the same library, so
+		 * we do not have to consider their uniqueness here.
+		 */
+		for (int slotno = 0; slotno < slot_arr->nslots; slotno++)
+		{
+			if (slot_arr->slots[slotno].invalid)
+				continue;
+
+			os_info.libraries[totaltups].name = pg_strdup(slot_arr->slots[slotno].plugin);
+			os_info.libraries[totaltups].dbnum = dbnum;
+
+			totaltups++;
+		}
 	}
 
 	pg_free(ress);
@@ -160,8 +186,7 @@ check_loadable_libraries(void)
 				was_load_failure = true;
 
 				if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
-					pg_fatal("could not open file \"%s\": %s",
-							 output_path, strerror(errno));
+					pg_fatal("could not open file \"%s\": %m", output_path);
 				fprintf(script, _("could not load library \"%s\": %s"),
 						lib,
 						PQerrorMessage(conn));

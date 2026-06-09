@@ -8,7 +8,7 @@
  * or call FUNCAPI-callable functions or macros.
  *
  *
- * Copyright (c) 2002-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2024, PostgreSQL Global Development Group
  *
  * src/include/funcapi.h
  *
@@ -149,7 +149,7 @@ typedef enum TypeFuncClass
 	TYPEFUNC_COMPOSITE,			/* determinable rowtype result */
 	TYPEFUNC_COMPOSITE_DOMAIN,	/* domain over determinable rowtype result */
 	TYPEFUNC_RECORD,			/* indeterminate rowtype result */
-	TYPEFUNC_OTHER				/* bogus type, eg pseudotype */
+	TYPEFUNC_OTHER,				/* bogus type, eg pseudotype */
 } TypeFuncClass;
 
 extern TypeFuncClass get_call_result_type(FunctionCallInfo fcinfo,

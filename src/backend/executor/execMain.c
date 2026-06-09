@@ -26,7 +26,7 @@
  *	before ExecutorEnd.  This can be omitted only in case of EXPLAIN,
  *	which should also omit ExecutorRun.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -37,35 +37,27 @@
  */
 #include "postgres.h"
 
-#include "access/heapam.h"
-#include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "access/table.h"
 #include "access/tableam.h"
-#include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "catalog/partition.h"
-#include "catalog/pg_publication.h"
 #include "commands/matview.h"
 #include "commands/trigger.h"
-#include "executor/execdebug.h"
+#include "executor/executor.h"
 #include "executor/nodeSubplan.h"
 #include "foreign/fdwapi.h"
-#include "jit/jit.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "parser/parse_relation.h"
-#include "parser/parsetree.h"
-#include "storage/bufmgr.h"
-#include "storage/lmgr.h"
+#include "rewrite/rewriteHandler.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/backend_status.h"
 #include "utils/lsyscache.h"
-#include "utils/memutils.h"
 #include "utils/partcache.h"
 #include "utils/rls.h"
-#include "utils/ruleutils.h"
 #include "utils/snapmgr.h"
 
 
@@ -154,6 +146,9 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 	/* sanity checks: queryDesc must not be started already */
 	Assert(queryDesc != NULL);
 	Assert(queryDesc->estate == NULL);
+
+	/* caller must ensure the query's snapshot is active */
+	Assert(GetActiveSnapshot() == queryDesc->snapshot);
 
 	/*
 	 * If the transaction is read-only, we need to check if any writes are
@@ -342,6 +337,9 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 
 	Assert(estate != NULL);
 	Assert(!(estate->es_top_eflags & EXEC_FLAG_EXPLAIN_ONLY));
+
+	/* caller must ensure the query's snapshot is active */
+	Assert(GetActiveSnapshot() == estate->es_snapshot);
 
 	/*
 	 * Switch into per-query memory context
@@ -1033,14 +1031,18 @@ InitPlan(QueryDesc *queryDesc, int eflags)
  * Generally the parser and/or planner should have noticed any such mistake
  * already, but let's make sure.
  *
+ * For MERGE, mergeActions is the list of actions that may be performed.  The
+ * result relation is required to support every action, regardless of whether
+ * or not they are all executed.
+ *
  * Note: when changing this function, you probably also need to look at
  * CheckValidRowMarkRel.
  */
 void
-CheckValidResultRel(ResultRelInfo *resultRelInfo, CmdType operation)
+CheckValidResultRel(ResultRelInfo *resultRelInfo, CmdType operation,
+					List *mergeActions)
 {
 	Relation	resultRel = resultRelInfo->ri_RelationDesc;
-	TriggerDesc *trigDesc = resultRel->trigdesc;
 	FdwRoutine *fdwroutine;
 
 	switch (resultRel->rd_rel->relkind)
@@ -1064,42 +1066,14 @@ CheckValidResultRel(ResultRelInfo *resultRelInfo, CmdType operation)
 		case RELKIND_VIEW:
 
 			/*
-			 * Okay only if there's a suitable INSTEAD OF trigger.  Messages
-			 * here should match rewriteHandler.c's rewriteTargetView and
-			 * RewriteQuery, except that we omit errdetail because we haven't
-			 * got the information handy (and given that we really shouldn't
-			 * get here anyway, it's not worth great exertion to get).
+			 * Okay only if there's a suitable INSTEAD OF trigger.  Otherwise,
+			 * complain, but omit errdetail because we haven't got the
+			 * information handy (and given that it really shouldn't happen,
+			 * it's not worth great exertion to get).
 			 */
-			switch (operation)
-			{
-				case CMD_INSERT:
-					if (!trigDesc || !trigDesc->trig_insert_instead_row)
-						ereport(ERROR,
-								(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-								 errmsg("cannot insert into view \"%s\"",
-										RelationGetRelationName(resultRel)),
-								 errhint("To enable inserting into the view, provide an INSTEAD OF INSERT trigger or an unconditional ON INSERT DO INSTEAD rule.")));
-					break;
-				case CMD_UPDATE:
-					if (!trigDesc || !trigDesc->trig_update_instead_row)
-						ereport(ERROR,
-								(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-								 errmsg("cannot update view \"%s\"",
-										RelationGetRelationName(resultRel)),
-								 errhint("To enable updating the view, provide an INSTEAD OF UPDATE trigger or an unconditional ON UPDATE DO INSTEAD rule.")));
-					break;
-				case CMD_DELETE:
-					if (!trigDesc || !trigDesc->trig_delete_instead_row)
-						ereport(ERROR,
-								(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-								 errmsg("cannot delete from view \"%s\"",
-										RelationGetRelationName(resultRel)),
-								 errhint("To enable deleting from the view, provide an INSTEAD OF DELETE trigger or an unconditional ON DELETE DO INSTEAD rule.")));
-					break;
-				default:
-					elog(ERROR, "unrecognized CmdType: %d", (int) operation);
-					break;
-			}
+			if (!view_has_instead_trigger(resultRel, operation, mergeActions))
+				error_view_not_updatable(resultRel, operation, mergeActions,
+										 NULL);
 			break;
 		case RELKIND_MATVIEW:
 			if (!MatViewIncrementalMaintenanceIsEnabled())
@@ -1293,8 +1267,10 @@ InitResultRelInfo(ResultRelInfo *resultRelInfo,
 	resultRelInfo->ri_ReturningSlot = NULL;
 	resultRelInfo->ri_TrigOldSlot = NULL;
 	resultRelInfo->ri_TrigNewSlot = NULL;
-	resultRelInfo->ri_matchedMergeAction = NIL;
-	resultRelInfo->ri_notMatchedMergeAction = NIL;
+	resultRelInfo->ri_MergeActions[MERGE_WHEN_MATCHED] = NIL;
+	resultRelInfo->ri_MergeActions[MERGE_WHEN_NOT_MATCHED_BY_SOURCE] = NIL;
+	resultRelInfo->ri_MergeActions[MERGE_WHEN_NOT_MATCHED_BY_TARGET] = NIL;
+	resultRelInfo->ri_MergeJoinCondition = NULL;
 
 	/*
 	 * Only ExecInitPartitionInfo() and ExecInitPartitionDispatchInfo() pass
@@ -1865,7 +1841,7 @@ ExecPartitionCheck(ResultRelInfo *resultRelInfo, TupleTableSlot *slot,
 	econtext->ecxt_scantuple = slot;
 
 	/*
-	 * As in case of the catalogued constraints, we treat a NULL result as
+	 * As in case of the cataloged constraints, we treat a NULL result as
 	 * success here, not a failure.
 	 */
 	success = ExecCheck(resultRelInfo->ri_PartitionCheckExpr, econtext);

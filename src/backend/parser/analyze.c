@@ -14,7 +14,7 @@
  * contain optimizable statements, which we should transform.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/parser/analyze.c
@@ -48,10 +48,8 @@
 #include "parser/parse_target.h"
 #include "parser/parse_type.h"
 #include "parser/parsetree.h"
-#include "rewrite/rewriteManip.h"
 #include "utils/backend_status.h"
 #include "utils/builtins.h"
-#include "utils/guc.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
@@ -80,7 +78,6 @@ static void determineRecursiveColTypes(ParseState *pstate,
 									   Node *larg, List *nrtargetlist);
 static Query *transformReturnStmt(ParseState *pstate, ReturnStmt *stmt);
 static Query *transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt);
-static List *transformReturningList(ParseState *pstate, List *returningList);
 static Query *transformPLAssignStmt(ParseState *pstate,
 									PLAssignStmt *stmt);
 static Query *transformDeclareCursorStmt(ParseState *pstate,
@@ -344,6 +341,11 @@ transformStmt(ParseState *pstate, Node *parseTree)
 	}
 #endif							/* RAW_EXPRESSION_COVERAGE_TEST */
 
+	/*
+	 * Caution: when changing the set of statement types that have non-default
+	 * processing here, see also stmt_requires_parse_analysis() and
+	 * analyze_requires_snapshot().
+	 */
 	switch (nodeTag(parseTree))
 	{
 			/*
@@ -442,14 +444,22 @@ transformStmt(ParseState *pstate, Node *parseTree)
 }
 
 /*
- * analyze_requires_snapshot
- *		Returns true if a snapshot must be set before doing parse analysis
- *		on the given raw parse tree.
+ * stmt_requires_parse_analysis
+ *		Returns true if parse analysis will do anything non-trivial
+ *		with the given raw parse tree.
  *
- * Classification here should match transformStmt().
+ * Generally, this should return true for any statement type for which
+ * transformStmt() does more than wrap a CMD_UTILITY Query around it.
+ * When it returns false, the caller can assume that there is no situation
+ * in which parse analysis of the raw statement could need to be re-done.
+ *
+ * Currently, since the rewriter and planner do nothing for CMD_UTILITY
+ * Queries, a false result means that the entire parse analysis/rewrite/plan
+ * pipeline will never need to be re-done.  If that ever changes, callers
+ * will likely need adjustment.
  */
 bool
-analyze_requires_snapshot(RawStmt *parseTree)
+stmt_requires_parse_analysis(RawStmt *parseTree)
 {
 	bool		result;
 
@@ -463,6 +473,7 @@ analyze_requires_snapshot(RawStmt *parseTree)
 		case T_UpdateStmt:
 		case T_MergeStmt:
 		case T_SelectStmt:
+		case T_ReturnStmt:
 		case T_PLAssignStmt:
 			result = true;
 			break;
@@ -477,17 +488,41 @@ analyze_requires_snapshot(RawStmt *parseTree)
 		case T_DeclareCursorStmt:
 		case T_ExplainStmt:
 		case T_CreateTableAsStmt:
-			/* yes, because we must analyze the contained statement */
+		case T_CallStmt:
 			result = true;
 			break;
 
 		default:
-			/* other utility statements don't have any real parse analysis */
+			/* all other statements just get wrapped in a CMD_UTILITY Query */
 			result = false;
 			break;
 	}
 
 	return result;
+}
+
+/*
+ * analyze_requires_snapshot
+ *		Returns true if a snapshot must be set before doing parse analysis
+ *		on the given raw parse tree.
+ */
+bool
+analyze_requires_snapshot(RawStmt *parseTree)
+{
+	/*
+	 * Currently, this should return true in exactly the same cases that
+	 * stmt_requires_parse_analysis() does, so we just invoke that function
+	 * rather than duplicating it.  We keep the two entry points separate for
+	 * clarity of callers, since from the callers' standpoint these are
+	 * different conditions.
+	 *
+	 * While there may someday be a statement type for which transformStmt()
+	 * does something nontrivial and yet no snapshot is needed for that
+	 * processing, it seems likely that making such a choice would be fragile.
+	 * If you want to install an exception, document the reasoning for it in a
+	 * comment.
+	 */
+	return stmt_requires_parse_analysis(parseTree);
 }
 
 /*
@@ -543,7 +578,8 @@ transformDeleteStmt(ParseState *pstate, DeleteStmt *stmt)
 	qual = transformWhereClause(pstate, stmt->whereClause,
 								EXPR_KIND_WHERE, "WHERE");
 
-	qry->returningList = transformReturningList(pstate, stmt->returningList);
+	qry->returningList = transformReturningList(pstate, stmt->returningList,
+												EXPR_KIND_RETURNING);
 
 	/* done building the range table and jointree */
 	qry->rtable = pstate->p_rtable;
@@ -973,7 +1009,8 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 	/* Process RETURNING, if any. */
 	if (stmt->returningList)
 		qry->returningList = transformReturningList(pstate,
-													stmt->returningList);
+													stmt->returningList,
+													EXPR_KIND_RETURNING);
 
 	/* done building the range table and jointree */
 	qry->rtable = pstate->p_rtable;
@@ -1065,17 +1102,28 @@ transformInsertRow(ParseState *pstate, List *exprlist,
 
 		if (strip_indirection)
 		{
+			/*
+			 * We need to remove top-level FieldStores and SubscriptingRefs,
+			 * as well as any CoerceToDomain appearing above one of those ---
+			 * but not a CoerceToDomain that isn't above one of those.
+			 */
 			while (expr)
 			{
-				if (IsA(expr, FieldStore))
+				Expr	   *subexpr = expr;
+
+				while (IsA(subexpr, CoerceToDomain))
 				{
-					FieldStore *fstore = (FieldStore *) expr;
+					subexpr = ((CoerceToDomain *) subexpr)->arg;
+				}
+				if (IsA(subexpr, FieldStore))
+				{
+					FieldStore *fstore = (FieldStore *) subexpr;
 
 					expr = (Expr *) linitial(fstore->newvals);
 				}
-				else if (IsA(expr, SubscriptingRef))
+				else if (IsA(subexpr, SubscriptingRef))
 				{
-					SubscriptingRef *sbsref = (SubscriptingRef *) expr;
+					SubscriptingRef *sbsref = (SubscriptingRef *) subexpr;
 
 					if (sbsref->refassgnexpr == NULL)
 						break;
@@ -1873,7 +1921,8 @@ transformSetOperationStmt(ParseState *pstate, SelectStmt *stmt)
 	 * For now, we don't support resjunk sort clauses on the output of a
 	 * setOperation tree --- you can only use the SQL92-spec options of
 	 * selecting an output column by name or number.  Enforce by checking that
-	 * transformSortClause doesn't add any items to tlist.
+	 * transformSortClause doesn't add any items to tlist.  Note, if changing
+	 * this, add_setop_child_rel_equivalences() will need to be updated.
 	 */
 	tllen = list_length(qry->targetList);
 
@@ -2441,7 +2490,8 @@ transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt)
 	qual = transformWhereClause(pstate, stmt->whereClause,
 								EXPR_KIND_WHERE, "WHERE");
 
-	qry->returningList = transformReturningList(pstate, stmt->returningList);
+	qry->returningList = transformReturningList(pstate, stmt->returningList,
+												EXPR_KIND_RETURNING);
 
 	/*
 	 * Now we are done with SELECT-like processing, and can get on with
@@ -2514,6 +2564,9 @@ transformUpdateTargetList(ParseState *pstate, List *origTlist)
 					 errmsg("column \"%s\" of relation \"%s\" does not exist",
 							origTarget->name,
 							RelationGetRelationName(pstate->p_target_relation)),
+					 (origTarget->indirection != NIL &&
+					  strcmp(origTarget->name, pstate->p_target_nsitem->p_names->aliasname) == 0) ?
+					 errhint("SET target columns cannot be qualified with the relation name.") : 0,
 					 parser_errposition(pstate, origTarget->location)));
 
 		updateTargetListEntry(pstate, tle, origTarget->name,
@@ -2535,10 +2588,11 @@ transformUpdateTargetList(ParseState *pstate, List *origTlist)
 
 /*
  * transformReturningList -
- *	handle a RETURNING clause in INSERT/UPDATE/DELETE
+ *	handle a RETURNING clause in INSERT/UPDATE/DELETE/MERGE
  */
-static List *
-transformReturningList(ParseState *pstate, List *returningList)
+List *
+transformReturningList(ParseState *pstate, List *returningList,
+					   ParseExprKind exprKind)
 {
 	List	   *rlist;
 	int			save_next_resno;
@@ -2555,7 +2609,7 @@ transformReturningList(ParseState *pstate, List *returningList)
 	pstate->p_next_resno = 1;
 
 	/* transform RETURNING identically to a SELECT targetlist */
-	rlist = transformTargetList(pstate, returningList, EXPR_KIND_RETURNING);
+	rlist = transformTargetList(pstate, returningList, exprKind);
 
 	/*
 	 * Complain if the nonempty tlist expanded to nothing (which is possible

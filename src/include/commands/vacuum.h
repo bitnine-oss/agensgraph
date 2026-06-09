@@ -4,7 +4,7 @@
  *	  header file for postgres vacuum cleaner and statistics analyzer
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/vacuum.h
@@ -17,6 +17,7 @@
 #include "access/htup.h"
 #include "access/genam.h"
 #include "access/parallel.h"
+#include "access/tidstore.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_statistic.h"
 #include "catalog/pg_type.h"
@@ -116,16 +117,12 @@ typedef struct VacAttrStats
 {
 	/*
 	 * These fields are set up by the main ANALYZE code before invoking the
-	 * type-specific typanalyze function.
-	 *
-	 * Note: do not assume that the data being analyzed has the same datatype
-	 * shown in attr, ie do not trust attr->atttypid, attlen, etc.  This is
-	 * because some index opclasses store a different type than the underlying
-	 * column/expression.  Instead use attrtypid, attrtypmod, and attrtype for
+	 * type-specific typanalyze function.  They don't necessarily match what
+	 * is in pg_attribute, because some index opclasses store a different type
+	 * than the underlying column/expression.  Therefore, use these fields for
 	 * information about the datatype being fed to the typanalyze function.
-	 * Likewise, use attrcollid not attr->attcollation.
 	 */
-	Form_pg_attribute attr;		/* copy of pg_attribute row for column */
+	int			attstattarget;	/* -1 to use default */
 	Oid			attrtypid;		/* type of data being analyzed */
 	int32		attrtypmod;		/* typmod of data being analyzed */
 	Form_pg_type attrtype;		/* copy of pg_type row for attrtypid */
@@ -191,7 +188,6 @@ typedef struct VacAttrStats
 #define VACOPT_DISABLE_PAGE_SKIPPING 0x100	/* don't skip any pages */
 #define VACOPT_SKIP_DATABASE_STATS 0x200	/* skip vac_update_datfrozenxid() */
 #define VACOPT_ONLY_DATABASE_STATS 0x400	/* only vac_update_datfrozenxid() */
-#define VACOPT_SKIP_PRIVS 0x800 /* skip privilege checks */
 
 /*
  * Values used by index_cleanup and truncate params.
@@ -233,6 +229,7 @@ typedef struct VacuumParams
 									 * default */
 	VacOptValue index_cleanup;	/* Do index vacuum and cleanup */
 	VacOptValue truncate;		/* Truncate empty pages at the end */
+	Oid			toast_parent;	/* for privilege checks when recursing */
 
 	/*
 	 * The number of parallel vacuum workers.  0 by default which means choose
@@ -282,19 +279,14 @@ struct VacuumCutoffs
 };
 
 /*
- * VacDeadItems stores TIDs whose index tuples are deleted by index vacuuming.
+ * VacDeadItemsInfo stores supplemental information for dead tuple TID
+ * storage (i.e. TidStore).
  */
-typedef struct VacDeadItems
+typedef struct VacDeadItemsInfo
 {
-	int			max_items;		/* # slots allocated in array */
-	int			num_items;		/* current # of entries */
-
-	/* Sorted array of TIDs to delete from indexes */
-	ItemPointerData items[FLEXIBLE_ARRAY_MEMBER];
-} VacDeadItems;
-
-#define MAXDEADITEMS(avail_mem) \
-	(((avail_mem) - offsetof(VacDeadItems, items)) / sizeof(ItemPointerData))
+	size_t		max_bytes;		/* the maximum bytes TidStore can use */
+	int64		num_items;		/* current # of entries */
+} VacDeadItemsInfo;
 
 /* GUC parameters */
 extern PGDLLIMPORT int default_statistics_target;	/* PGDLLIMPORT for PostGIS */
@@ -304,6 +296,13 @@ extern PGDLLIMPORT int vacuum_multixact_freeze_min_age;
 extern PGDLLIMPORT int vacuum_multixact_freeze_table_age;
 extern PGDLLIMPORT int vacuum_failsafe_age;
 extern PGDLLIMPORT int vacuum_multixact_failsafe_age;
+
+/*
+ * Maximum value for default_statistics_target and per-column statistics
+ * targets.  This is fairly arbitrary, mainly to prevent users from creating
+ * unreasonably large statistics that the system cannot handle well.
+ */
+#define MAX_STATISTICS_TARGET 10000
 
 /* Variables for cost-based parallel vacuum */
 extern PGDLLIMPORT pg_atomic_uint32 *VacuumSharedCostBalance;
@@ -348,10 +347,10 @@ extern Relation vacuum_open_relation(Oid relid, RangeVar *relation,
 									 LOCKMODE lmode);
 extern IndexBulkDeleteResult *vac_bulkdel_one_index(IndexVacuumInfo *ivinfo,
 													IndexBulkDeleteResult *istat,
-													VacDeadItems *dead_items);
+													TidStore *dead_items,
+													VacDeadItemsInfo *dead_items_info);
 extern IndexBulkDeleteResult *vac_cleanup_one_index(IndexVacuumInfo *ivinfo,
 													IndexBulkDeleteResult *istat);
-extern Size vac_max_items_to_alloc_size(int max_items);
 
 /* In postmaster/autovacuum.c */
 extern void AutoVacuumUpdateCostLimit(void);
@@ -360,10 +359,12 @@ extern void VacuumUpdateCosts(void);
 /* in commands/vacuumparallel.c */
 extern ParallelVacuumState *parallel_vacuum_init(Relation rel, Relation *indrels,
 												 int nindexes, int nrequested_workers,
-												 int max_items, int elevel,
+												 int vac_work_mem, int elevel,
 												 BufferAccessStrategy bstrategy);
 extern void parallel_vacuum_end(ParallelVacuumState *pvs, IndexBulkDeleteResult **istats);
-extern VacDeadItems *parallel_vacuum_get_dead_items(ParallelVacuumState *pvs);
+extern TidStore *parallel_vacuum_get_dead_items(ParallelVacuumState *pvs,
+												VacDeadItemsInfo **dead_items_info_p);
+extern void parallel_vacuum_reset_dead_items(ParallelVacuumState *pvs);
 extern void parallel_vacuum_bulkdel_all_indexes(ParallelVacuumState *pvs,
 												long num_table_tuples,
 												int num_index_scans);

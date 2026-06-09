@@ -4,7 +4,7 @@
  *	  Low level infrastructure related to expression evaluation
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/executor/execExpr.h
@@ -16,8 +16,9 @@
 
 #include "executor/nodeAgg.h"
 #include "nodes/execnodes.h"
-#include "utils/jsonb.h"
+#include "nodes/miscnodes.h"
 #include "utils/arrayaccess.h"
+#include "utils/jsonb.h"
 
 /* forward references to avoid circularity */
 struct ExprEvalStep;
@@ -174,6 +175,7 @@ typedef enum ExprEvalOp
 
 	/* evaluate assorted special-purpose expression types */
 	EEOP_IOCOERCE,
+	EEOP_IOCOERCE_SAFE,
 	EEOP_DISTINCT,
 	EEOP_NOT_DISTINCT,
 	EEOP_NULLIF,
@@ -244,9 +246,13 @@ typedef enum ExprEvalOp
 	EEOP_XMLEXPR,
 	EEOP_JSON_CONSTRUCTOR,
 	EEOP_IS_JSON,
+	EEOP_JSONEXPR_PATH,
+	EEOP_JSONEXPR_COERCION,
+	EEOP_JSONEXPR_COERCION_FINISH,
 	EEOP_AGGREF,
 	EEOP_GROUPING_FUNC,
 	EEOP_WINDOW_FUNC,
+	EEOP_MERGE_SUPPORT_FUNC,
 	EEOP_SUBPLAN,
 
 	/* aggregation related nodes */
@@ -564,6 +570,7 @@ typedef struct ExprEvalStep
 			bool	   *checknull;
 			/* OID of domain type */
 			Oid			resulttype;
+			ErrorSaveContext *escontext;
 		}			domaincheck;
 
 		/* for EEOP_CONVERT_ROWTYPE */
@@ -706,6 +713,22 @@ typedef struct ExprEvalStep
 			JsonIsPredicate *pred;	/* original expression node */
 		}			is_json;
 
+		/* for EEOP_JSONEXPR_PATH */
+		struct
+		{
+			struct JsonExprState *jsestate;
+		}			jsonexpr;
+
+		/* for EEOP_JSONEXPR_COERCION */
+		struct
+		{
+			Oid			targettype;
+			int32		targettypmod;
+			bool		omit_quotes;
+			void	   *json_populate_type_cache;
+			ErrorSaveContext *escontext;
+		}			jsonexpr_coercion;
+
 		/* Agensgraph structs below */
 		struct
 		{
@@ -756,7 +779,6 @@ typedef struct ExprEvalStep
 			struct CypherAccessPathElem *path;
 			int			pathlen;
 		}			cypheraccessexpr;
-
 	}			d;
 } ExprEvalStep;
 
@@ -878,6 +900,7 @@ extern void ExecEvalParamExec(ExprState *state, ExprEvalStep *op,
 							  ExprContext *econtext);
 extern void ExecEvalParamExtern(ExprState *state, ExprEvalStep *op,
 								ExprContext *econtext);
+extern void ExecEvalCoerceViaIOSafe(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalSQLValueFunction(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCurrentOfExpr(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalNextValueExpr(ExprState *state, ExprEvalStep *op);
@@ -907,7 +930,14 @@ extern void ExecEvalXmlExpr(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalJsonConstructor(ExprState *state, ExprEvalStep *op,
 									ExprContext *econtext);
 extern void ExecEvalJsonIsPredicate(ExprState *state, ExprEvalStep *op);
+extern int	ExecEvalJsonExprPath(ExprState *state, ExprEvalStep *op,
+								 ExprContext *econtext);
+extern void ExecEvalJsonCoercion(ExprState *state, ExprEvalStep *op,
+								 ExprContext *econtext);
+extern void ExecEvalJsonCoercionFinish(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalGroupingFunc(ExprState *state, ExprEvalStep *op);
+extern void ExecEvalMergeSupportFunc(ExprState *state, ExprEvalStep *op,
+									 ExprContext *econtext);
 extern void ExecEvalSubPlan(ExprState *state, ExprEvalStep *op,
 							ExprContext *econtext);
 extern void ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op,

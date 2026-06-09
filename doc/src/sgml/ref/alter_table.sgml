@@ -37,6 +37,13 @@ ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
     ATTACH PARTITION <replaceable class="parameter">partition_name</replaceable> { FOR VALUES <replaceable class="parameter">partition_bound_spec</replaceable> | DEFAULT }
 ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
     DETACH PARTITION <replaceable class="parameter">partition_name</replaceable> [ CONCURRENTLY | FINALIZE ]
+ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
+    SPLIT PARTITION <replaceable class="parameter">partition_name</replaceable> INTO
+        (PARTITION <replaceable class="parameter">partition_name1</replaceable> { FOR VALUES <replaceable class="parameter">partition_bound_spec</replaceable> | DEFAULT },
+         PARTITION <replaceable class="parameter">partition_name2</replaceable> { FOR VALUES <replaceable class="parameter">partition_bound_spec</replaceable> | DEFAULT } [, ...])
+ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
+    MERGE PARTITIONS (<replaceable class="parameter">partition_name1</replaceable>, <replaceable class="parameter">partition_name2</replaceable> [, ...])
+        INTO <replaceable class="parameter">partition_name</replaceable>
 
 <phrase>where <replaceable class="parameter">action</replaceable> is one of:</phrase>
 
@@ -46,11 +53,12 @@ ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> SET DEFAULT <replaceable class="parameter">expression</replaceable>
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> DROP DEFAULT
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> { SET | DROP } NOT NULL
+    ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> SET EXPRESSION AS ( <replaceable class="parameter">expression</replaceable> )
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> DROP EXPRESSION [ IF EXISTS ]
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> ADD GENERATED { ALWAYS | BY DEFAULT } AS IDENTITY [ ( <replaceable>sequence_options</replaceable> ) ]
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> { SET GENERATED { ALWAYS | BY DEFAULT } | SET <replaceable>sequence_option</replaceable> | RESTART [ [ WITH ] <replaceable class="parameter">restart</replaceable> ] } [...]
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> DROP IDENTITY [ IF EXISTS ]
-    ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> SET STATISTICS <replaceable class="parameter">integer</replaceable>
+    ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> SET STATISTICS { <replaceable class="parameter">integer</replaceable> | DEFAULT }
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> SET ( <replaceable class="parameter">attribute_option</replaceable> = <replaceable class="parameter">value</replaceable> [, ... ] )
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> RESET ( <replaceable class="parameter">attribute_option</replaceable> [, ... ] )
     ALTER [ COLUMN ] <replaceable class="parameter">column_name</replaceable> SET STORAGE { PLAIN | EXTERNAL | EXTENDED | MAIN | DEFAULT }
@@ -75,7 +83,7 @@ ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
     CLUSTER ON <replaceable class="parameter">index_name</replaceable>
     SET WITHOUT CLUSTER
     SET WITHOUT OIDS
-    SET ACCESS METHOD <replaceable class="parameter">new_access_method</replaceable>
+    SET ACCESS METHOD { <replaceable class="parameter">new_access_method</replaceable> | DEFAULT }
     SET TABLESPACE <replaceable class="parameter">new_tablespace</replaceable>
     SET { LOGGED | UNLOGGED }
     SET ( <replaceable class="parameter">storage_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] )
@@ -134,7 +142,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
 
 <phrase><replaceable class="parameter">exclude_element</replaceable> in an <literal>EXCLUDE</literal> constraint is:</phrase>
 
-{ <replaceable class="parameter">column_name</replaceable> | ( <replaceable class="parameter">expression</replaceable> ) } [ <replaceable class="parameter">opclass</replaceable> ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ]
+{ <replaceable class="parameter">column_name</replaceable> | ( <replaceable class="parameter">expression</replaceable> ) } [ COLLATE <replaceable class="parameter">collation</replaceable> ] [ <replaceable class="parameter">opclass</replaceable> [ ( <replaceable class="parameter">opclass_parameter</replaceable> = <replaceable class="parameter">value</replaceable> [, ... ] ) ] ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ]
 
 <phrase><replaceable class="parameter">referential_action</replaceable> in a <literal>FOREIGN KEY</literal>/<literal>REFERENCES</literal> constraint is:</phrase>
 
@@ -255,6 +263,17 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
+   <varlistentry id="sql-altertable-desc-set-expression">
+    <term><literal>SET EXPRESSION AS</literal></term>
+    <listitem>
+     <para>
+      This form replaces the expression of a generated column.  Existing data
+      in the column is rewritten and all the future changes will apply the new
+      generation expression.
+     </para>
+    </listitem>
+   </varlistentry>
+
    <varlistentry id="sql-altertable-desc-drop-expression">
     <term><literal>DROP EXPRESSION [ IF EXISTS ]</literal></term>
     <listitem>
@@ -315,9 +334,11 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       This form
       sets the per-column statistics-gathering target for subsequent
       <link linkend="sql-analyze"><command>ANALYZE</command></link> operations.
-      The target can be set in the range 0 to 10000; alternatively, set it
-      to -1 to revert to using the system default statistics
-      target (<xref linkend="guc-default-statistics-target"/>).
+      The target can be set in the range 0 to 10000.  Set it
+      to <literal>DEFAULT</literal> to revert to using the system default
+      statistics target (<xref linkend="guc-default-statistics-target"/>).
+      (Setting to a value of -1 is an obsolete way spelling to get the same
+      outcome.)
       For more information on the use of statistics by the
       <productname>PostgreSQL</productname> query planner, refer to
       <xref linkend="planner-stats"/>.
@@ -524,8 +545,8 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
        Adding a constraint using an existing index can be helpful in
        situations where a new constraint needs to be added without blocking
        table updates for a long time.  To do that, create the index using
-       <command>CREATE INDEX CONCURRENTLY</command>, and then install it as an
-       official constraint using this syntax.  See the example below.
+       <command>CREATE UNIQUE INDEX CONCURRENTLY</command>, and then convert it to a
+       constraint using this syntax.  See the example below.
       </para>
      </note>
     </listitem>
@@ -717,8 +738,20 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     <term><literal>SET ACCESS METHOD</literal></term>
     <listitem>
      <para>
-      This form changes the access method of the table by rewriting it. See
-      <xref linkend="tableam"/> for more information.
+      This form changes the access method of the table by rewriting it
+      using the indicated access method; specifying
+      <literal>DEFAULT</literal> selects the access method set as the
+      <xref linkend="guc-default-table-access-method"/> configuration
+      parameter.
+      See <xref linkend="tableam"/> for more information.
+     </para>
+     <para>
+      When applied to a partitioned table, there is no data to rewrite,
+      but partitions created afterwards will default to the given access
+      method unless overridden by a <literal>USING</literal> clause.
+      Specifying <varname>DEFAULT</varname> removes a previous value,
+      causing future partitions to default to
+      <varname>default_table_access_method</varname>.
      </para>
     </listitem>
    </varlistentry>
@@ -1091,14 +1124,138 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
+   <varlistentry id="sql-altertable-split-partition">
+    <term><literal>SPLIT PARTITION <replaceable class="parameter">partition_name</replaceable> INTO (PARTITION <replaceable class="parameter">partition_name1</replaceable> { FOR VALUES <replaceable class="parameter">partition_bound_spec</replaceable> | DEFAULT }, PARTITION <replaceable class="parameter">partition_name2</replaceable> { FOR VALUES <replaceable class="parameter">partition_bound_spec</replaceable> | DEFAULT } [, ...])</literal></term>
+
+    <listitem>
+     <para>
+      This form splits a single partition of the target table. Hash-partitioning
+      is not supported. Bounds of new partitions should not overlap with new and
+      existing partitions (except <replaceable class="parameter">partition_name</replaceable>).
+      If the split partition is a DEFAULT partition, one of the new partitions must be DEFAULT.
+      In case one of the new partitions or one of existing partitions is DEFAULT,
+      new partitions <replaceable class="parameter">partition_name1</replaceable>,
+      <replaceable class="parameter">partition_name2</replaceable>, ... can have spaces
+      between partitions bounds.  If the partitioned table does not have a DEFAULT
+      partition, the DEFAULT partition can be defined as one of the new partitions.
+     </para>
+     <para>
+      In case new partitions do not contain a DEFAULT partition and the partitioned table
+      does not have a DEFAULT partition, the following must be true: sum bounds of
+      new partitions <replaceable class="parameter">partition_name1</replaceable>,
+      <replaceable class="parameter">partition_name2</replaceable>, ... should be
+      equal to bound of split partition <replaceable class="parameter">partition_name</replaceable>.
+      One of the new partitions <replaceable class="parameter">partition_name1</replaceable>,
+      <replaceable class="parameter">partition_name2</replaceable>, ... can have
+      the same name as split partition <replaceable class="parameter">partition_name</replaceable>
+      (this is suitable in case of splitting a DEFAULT partition: we split it, but after
+      splitting we have a partition with the same name).
+      Only simple, non-partitioned partition can be split.
+     </para>
+     <para>
+      The new partitions will be created the same as tables created with the
+      SQL command <literal>CREATE TABLE <replaceable class="parameter">partition_nameN</replaceable> (LIKE <replaceable class="parameter">name</replaceable> INCLUDING ALL EXCLUDING INDEXES EXCLUDING IDENTITY EXCLUDING STATISTICS)</literal>.
+      The indexes and identity are created later, after moving the data
+      into the new partitions.
+      Extended statistics aren't copied from the parent table, for consistency with
+      <command>CREATE TABLE PARTITION OF</command>.
+
+      New partitions will have the same table access method as the parent.
+      If the parent table is persistent then new partitions are created
+      persistent.  If the parent table is temporary then new partitions
+      are also created temporary.
+     </para>
+     <note>
+      <para>
+       This command acquires an <literal>ACCESS EXCLUSIVE</literal> lock.
+       This is a significant limitation, which limits the usage of this
+       command with large partitioned tables under a high load.
+      </para>
+     </note>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="sql-altertable-merge-partitions">
+    <term><literal>MERGE PARTITIONS (<replaceable class="parameter">partition_name1</replaceable>, <replaceable class="parameter">partition_name2</replaceable> [, ...]) INTO <replaceable class="parameter">partition_name</replaceable></literal></term>
+
+    <listitem>
+     <para>
+      This form merges several partitions into the one partition of the target table.
+      Hash-partitioning is not supported.  If DEFAULT partition is not in the
+      list of partitions <replaceable class="parameter">partition_name1</replaceable>,
+      <replaceable class="parameter">partition_name2</replaceable> [, ...]:
+      <itemizedlist>
+       <listitem>
+        <para>
+         For range-partitioned tables it is necessary that the ranges
+         of the partitions <replaceable class="parameter">partition_name1</replaceable>,
+         <replaceable class="parameter">partition_name2</replaceable> [, ...] can
+         be merged into one range without spaces and overlaps (otherwise an error
+         will be generated).  The combined range will be the range for the partition
+         <replaceable class="parameter">partition_name</replaceable>.
+        </para>
+       </listitem>
+       <listitem>
+        <para>
+         For list-partitioned tables the value lists of all partitions
+         <replaceable class="parameter">partition_name1</replaceable>,
+         <replaceable class="parameter">partition_name2</replaceable> [, ...] are
+         combined and form the list of values of partition
+         <replaceable class="parameter">partition_name</replaceable>.
+        </para>
+       </listitem>
+      </itemizedlist>
+      If DEFAULT partition is in the list of partitions <replaceable class="parameter">partition_name1</replaceable>,
+      <replaceable class="parameter">partition_name2</replaceable> [, ...]:
+      <itemizedlist>
+       <listitem>
+        <para>
+         The partition <replaceable class="parameter">partition_name</replaceable>
+         will be the DEFAULT partition.
+        </para>
+       </listitem>
+       <listitem>
+        <para>
+         For range- and list-partitioned tables the ranges and lists of values
+         of the merged partitions can be any.
+        </para>
+       </listitem>
+      </itemizedlist>
+      The new partition <replaceable class="parameter">partition_name</replaceable>
+      can have the same name as one of the merged partitions.  Only simple,
+      non-partitioned partitions can be merged.
+     </para>
+     <para>
+      The new partition will be created the same as a table created with the
+      SQL command <literal>CREATE TABLE <replaceable class="parameter">partition_name</replaceable> (LIKE <replaceable class="parameter">name</replaceable> INCLUDING ALL EXCLUDING INDEXES EXCLUDING IDENTITY EXCLUDING STATISTICS)</literal>.
+      The indexes and identity are created later, after moving the data
+      into the new partition.
+      Extended statistics aren't copied from the parent table, for consistency with
+      <command>CREATE TABLE PARTITION OF</command>.
+      The new partition will have the same table access method as the parent.
+      If the parent table is persistent then the new partition is created
+      persistent.  If the parent table is temporary then the new partition
+      is also created temporary.
+     </para>
+     <note>
+      <para>
+       This command acquires an <literal>ACCESS EXCLUSIVE</literal> lock.
+       This is a significant limitation, which limits the usage of this
+       command with large partitioned tables under a high load.
+      </para>
+     </note>
+    </listitem>
+   </varlistentry>
+
   </variablelist>
   </para>
 
   <para>
    All the forms of ALTER TABLE that act on a single table, except
    <literal>RENAME</literal>, <literal>SET SCHEMA</literal>,
-   <literal>ATTACH PARTITION</literal>, and
-   <literal>DETACH PARTITION</literal> can be combined into
+   <literal>ATTACH PARTITION</literal>, <literal>DETACH PARTITION</literal>,
+   <literal>SPLIT PARTITION</literal>, and <literal>MERGE PARTITIONS</literal>
+   can be combined into
    a list of multiple alterations to be applied together.  For example, it
    is possible to add several columns and/or alter the type of several
    columns in a single command.  This is particularly useful with large
@@ -1341,7 +1498,8 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       <term><replaceable class="parameter">partition_name</replaceable></term>
       <listitem>
        <para>
-        The name of the table to attach as a new partition or to detach from this table.
+        The name of the table to attach as a new partition or to detach from this table,
+        or the name of split partition, or the name of the new merged partition.
        </para>
       </listitem>
      </varlistentry>
@@ -1755,6 +1913,31 @@ ALTER TABLE cities
 <programlisting>
 ALTER TABLE measurement
     DETACH PARTITION measurement_y2015m12;
+</programlisting></para>
+
+  <para>
+   To split a single partition of the range-partitioned table:
+<programlisting>
+ALTER TABLE sales_range SPLIT PARTITION sales_feb_mar_apr2023 INTO
+   (PARTITION sales_feb2023 FOR VALUES FROM ('2023-02-01') TO ('2023-03-01'),
+    PARTITION sales_mar2023 FOR VALUES FROM ('2023-03-01') TO ('2023-04-01'),
+    PARTITION sales_apr2023 FOR VALUES FROM ('2023-04-01') TO ('2023-05-01'));
+</programlisting></para>
+
+  <para>
+   To split a single partition of the list-partitioned table:
+<programlisting>
+ALTER TABLE sales_list SPLIT PARTITION sales_all INTO
+   (PARTITION sales_west FOR VALUES IN ('Lisbon', 'New York', 'Madrid'),
+    PARTITION sales_east FOR VALUES IN ('Bejing', 'Delhi', 'Vladivostok'),
+    PARTITION sales_central FOR VALUES IN ('Warsaw', 'Berlin', 'Kyiv'));
+</programlisting></para>
+
+  <para>
+   To merge several partitions into one partition of the target table:
+<programlisting>
+ALTER TABLE sales_list MERGE PARTITIONS (sales_west, sales_east, sales_central)
+    INTO sales_all;
 </programlisting></para>
 
  </refsect1>

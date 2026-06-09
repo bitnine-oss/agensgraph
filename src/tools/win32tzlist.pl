@@ -2,7 +2,7 @@
 #
 # win32tzlist.pl -- compare Windows timezone information
 #
-# Copyright (c) 2008-2023, PostgreSQL Global Development Group
+# Copyright (c) 2008-2024, PostgreSQL Global Development Group
 #
 # src/tools/win32tzlist.pl
 #################################################################
@@ -16,9 +16,20 @@
 #
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
-use Win32::Registry;
+use Config;
+
+our $HKEY_LOCAL_MACHINE;
+
+BEGIN
+{
+	if ($Config{osname} eq 'MSWin32' || $Config{osname} eq 'msys')
+	{
+		require Win32::Registry;
+		Win32::Registry->import;
+	}
+}
 
 my $tzfile = 'src/bin/initdb/findtimezone.c';
 

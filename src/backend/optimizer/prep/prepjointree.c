@@ -14,7 +14,7 @@
  *		remove_useless_result_rtes
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -154,9 +154,11 @@ transform_MERGE_to_join(Query *parse)
 {
 	RangeTblEntry *joinrte;
 	JoinExpr   *joinexpr;
+	bool		have_action[NUM_MERGE_MATCH_KINDS];
 	JoinType	jointype;
 	int			joinrti;
 	List	   *vars;
+	RangeTblRef *rtr;
 
 	if (parse->commandType != CMD_MERGE)
 		return;
@@ -165,11 +167,27 @@ transform_MERGE_to_join(Query *parse)
 	vars = NIL;
 
 	/*
-	 * When any WHEN NOT MATCHED THEN INSERT clauses exist, we need to use an
-	 * outer join so that we process all unmatched tuples from the source
-	 * relation.  If none exist, we can use an inner join.
+	 * Work out what kind of join is required.  If there any WHEN NOT MATCHED
+	 * BY SOURCE/TARGET actions, an outer join is required so that we process
+	 * all unmatched tuples from the source and/or target relations.
+	 * Otherwise, we can use an inner join.
 	 */
-	if (parse->mergeUseOuterJoin)
+	have_action[MERGE_WHEN_MATCHED] = false;
+	have_action[MERGE_WHEN_NOT_MATCHED_BY_SOURCE] = false;
+	have_action[MERGE_WHEN_NOT_MATCHED_BY_TARGET] = false;
+
+	foreach_node(MergeAction, action, parse->mergeActionList)
+	{
+		if (action->commandType != CMD_NOTHING)
+			have_action[action->matchKind] = true;
+	}
+
+	if (have_action[MERGE_WHEN_NOT_MATCHED_BY_SOURCE] &&
+		have_action[MERGE_WHEN_NOT_MATCHED_BY_TARGET])
+		jointype = JOIN_FULL;
+	else if (have_action[MERGE_WHEN_NOT_MATCHED_BY_SOURCE])
+		jointype = JOIN_LEFT;
+	else if (have_action[MERGE_WHEN_NOT_MATCHED_BY_TARGET])
 		jointype = JOIN_RIGHT;
 	else
 		jointype = JOIN_INNER;
@@ -199,23 +217,54 @@ transform_MERGE_to_join(Query *parse)
 
 	/*
 	 * Create a JOIN between the target and the source relation.
+	 *
+	 * Here the target is identified by parse->mergeTargetRelation.  For a
+	 * regular table, this will equal parse->resultRelation, but for a
+	 * trigger-updatable view, it will be the expanded view subquery that we
+	 * need to pull data from.
+	 *
+	 * The source relation is in parse->jointree->fromlist, but any quals in
+	 * parse->jointree->quals are restrictions on the target relation (if the
+	 * target relation is an auto-updatable view).
 	 */
+	rtr = makeNode(RangeTblRef);
+	rtr->rtindex = parse->mergeTargetRelation;
 	joinexpr = makeNode(JoinExpr);
 	joinexpr->jointype = jointype;
 	joinexpr->isNatural = false;
-	joinexpr->larg = (Node *) makeNode(RangeTblRef);
-	((RangeTblRef *) joinexpr->larg)->rtindex = parse->resultRelation;
-	joinexpr->rarg = linitial(parse->jointree->fromlist);	/* original join */
+	joinexpr->larg = (Node *) makeFromExpr(list_make1(rtr), parse->jointree->quals);
+	joinexpr->rarg = linitial(parse->jointree->fromlist);	/* source rel */
 	joinexpr->usingClause = NIL;
 	joinexpr->join_using_alias = NULL;
-	/* The quals are removed from the jointree and into this specific join */
-	joinexpr->quals = parse->jointree->quals;
+	joinexpr->quals = parse->mergeJoinCondition;
 	joinexpr->alias = NULL;
 	joinexpr->rtindex = joinrti;
 
 	/* Make the new join be the sole entry in the query's jointree */
 	parse->jointree->fromlist = list_make1(joinexpr);
 	parse->jointree->quals = NULL;
+
+	/*
+	 * If necessary, mark parse->targetlist entries that refer to the target
+	 * as nullable by the join.  Normally the targetlist will be empty for a
+	 * MERGE, but if the target is a trigger-updatable view, it will contain a
+	 * whole-row Var referring to the expanded view query.
+	 */
+	if (parse->targetList != NIL &&
+		(jointype == JOIN_RIGHT || jointype == JOIN_FULL))
+		parse->targetList = (List *)
+			add_nulling_relids((Node *) parse->targetList,
+							   bms_make_singleton(parse->mergeTargetRelation),
+							   bms_make_singleton(joinrti));
+
+	/*
+	 * If there are any WHEN NOT MATCHED BY SOURCE actions, the executor will
+	 * use the join condition to distinguish between MATCHED and NOT MATCHED
+	 * BY SOURCE cases.  Otherwise, it's no longer needed, and we set it to
+	 * NULL, saving cycles during planning and execution.
+	 */
+	if (!have_action[MERGE_WHEN_NOT_MATCHED_BY_SOURCE])
+		parse->mergeJoinCondition = NULL;
 }
 
 /*
@@ -1847,6 +1896,10 @@ pull_up_constant_function(PlannerInfo *root, Node *jtnode,
 	if (rtf->funccolcount != 1)
 		return jtnode;			/* definitely composite */
 
+	/* If it has a coldeflist, it certainly returns RECORD */
+	if (rtf->funccolnames != NIL)
+		return jtnode;			/* must be a one-column RECORD type */
+
 	functypclass = get_expr_result_type(rtf->funcexpr,
 										&funcrettype,
 										&tupdesc);
@@ -2165,14 +2218,6 @@ perform_pullup_replace_vars(PlannerInfo *root,
 	parse->returningList = (List *)
 		pullup_replace_vars((Node *) parse->returningList, rvcontext);
 
-	foreach(lc, parse->windowClause)
-	{
-		WindowClause *wc = lfirst_node(WindowClause, lc);
-
-		if (wc->runCondition != NIL)
-			wc->runCondition = (List *)
-				pullup_replace_vars((Node *) wc->runCondition, rvcontext);
-	}
 	if (parse->onConflict)
 	{
 		parse->onConflict->onConflictSet = (List *)
@@ -2198,6 +2243,8 @@ perform_pullup_replace_vars(PlannerInfo *root,
 				pullup_replace_vars((Node *) action->targetList, rvcontext);
 		}
 	}
+	parse->mergeJoinCondition = pullup_replace_vars(parse->mergeJoinCondition,
+													rvcontext);
 	replace_vars_in_jointree((Node *) parse->jointree, rvcontext);
 	Assert(parse->setOperations == NULL);
 	parse->havingQual = pullup_replace_vars(parse->havingQual, rvcontext);
@@ -2478,8 +2525,13 @@ pullup_replace_vars_callback(Var *var,
 			else if (newnode && IsA(newnode, PlaceHolderVar) &&
 					 ((PlaceHolderVar *) newnode)->phlevelsup == 0)
 			{
-				/* No need to wrap a PlaceHolderVar with another one, either */
-				wrap = false;
+				/* The same rules apply for a PlaceHolderVar */
+				if (rcon->target_rte->lateral &&
+					!bms_is_subset(((PlaceHolderVar *) newnode)->phrels,
+								   rcon->relids))
+					wrap = true;
+				else
+					wrap = false;
 			}
 			else
 			{

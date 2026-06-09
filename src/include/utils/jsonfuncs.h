@@ -3,7 +3,7 @@
  * jsonfuncs.h
  *	  Functions to process JSON data types.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/jsonfuncs.h
@@ -15,6 +15,7 @@
 #define JSONFUNCS_H
 
 #include "common/jsonapi.h"
+#include "nodes/nodes.h"
 #include "utils/jsonb.h"
 
 /*
@@ -36,8 +37,8 @@ typedef void (*JsonIterateStringValuesAction) (void *state, char *elem_value, in
 /* an action that will be applied to each value in transform_json(b)_values functions */
 typedef text *(*JsonTransformStringValuesAction) (void *state, char *elem_value, int elem_len);
 
-/* build a JsonLexContext from a text datum */
-extern JsonLexContext *makeJsonLexContext(text *json, bool need_escapes);
+/* build a JsonLexContext from a text datum; see also freeJsonLexContext */
+extern JsonLexContext *makeJsonLexContext(JsonLexContext *lex, text *json, bool need_escapes);
 
 /* try to parse json, and errsave(escontext) on failure */
 extern bool pg_parse_json_or_errsave(JsonLexContext *lex, JsonSemAction *sem,
@@ -62,5 +63,37 @@ extern Jsonb *transform_jsonb_string_values(Jsonb *jsonb, void *action_state,
 											JsonTransformStringValuesAction transform_action);
 extern text *transform_json_string_values(text *json, void *action_state,
 										  JsonTransformStringValuesAction transform_action);
+
+/* Type categories returned by json_categorize_type */
+typedef enum
+{
+	JSONTYPE_NULL,				/* null, so we didn't bother to identify */
+	JSONTYPE_BOOL,				/* boolean (built-in types only) */
+	JSONTYPE_NUMERIC,			/* numeric (ditto) */
+	JSONTYPE_DATE,				/* we use special formatting for datetimes */
+	JSONTYPE_TIMESTAMP,
+	JSONTYPE_TIMESTAMPTZ,
+	JSONTYPE_JSON,				/* JSON (and JSONB, if not is_jsonb) */
+	JSONTYPE_JSONB,				/* JSONB (if is_jsonb) */
+	JSONTYPE_ARRAY,				/* array */
+	JSONTYPE_COMPOSITE,			/* composite */
+	JSONTYPE_CAST,				/* something with an explicit cast to JSON */
+	JSONTYPE_OTHER,				/* all else */
+} JsonTypeCategory;
+
+extern void json_categorize_type(Oid typoid, bool is_jsonb,
+								 JsonTypeCategory *tcategory, Oid *outfuncoid);
+extern Datum datum_to_json(Datum val, JsonTypeCategory tcategory,
+						   Oid outfuncoid);
+extern Datum datum_to_jsonb(Datum val, JsonTypeCategory tcategory,
+							Oid outfuncoid);
+extern Datum jsonb_from_text(text *js, bool unique_keys);
+
+extern Datum json_populate_type(Datum json_val, Oid json_type,
+								Oid typid, int32 typmod,
+								void **cache, MemoryContext mcxt,
+								bool *isnull,
+								bool omit_quotes,
+								Node *escontext);
 
 #endif

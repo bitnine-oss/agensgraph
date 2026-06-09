@@ -37,16 +37,46 @@ step merge2a:
   WHEN NOT MATCHED THEN
 	INSERT VALUES (s.key, s.val)
   WHEN MATCHED THEN
-	UPDATE set key = t.key + 1, val = t.val || ' updated by ' || s.val;
+	UPDATE set key = t.key + 1, val = t.val || ' updated by ' || s.val
+  WHEN NOT MATCHED BY SOURCE THEN
+	UPDATE set key = t.key + 1, val = t.val || ' source not matched by merge2a'
+  RETURNING merge_action(), t.*;
+
+merge_action|key|val                                                   
+------------+---+------------------------------------------------------
+UPDATE      |  3|setup1 updated by merge1 source not matched by merge2a
+INSERT      |  1|merge2a                                               
+(2 rows)
 
 step select2: SELECT * FROM target;
-key|val                     
----+------------------------
-  2|setup1 updated by merge1
-  1|merge2a                 
+key|val                                                   
+---+------------------------------------------------------
+  3|setup1 updated by merge1 source not matched by merge2a
+  1|merge2a                                               
 (2 rows)
 
 step c2: COMMIT;
+
+starting permutation: pa_merge1 c1 pa_merge2c_dup a2
+step pa_merge1: 
+  MERGE INTO pa_target t
+  USING (SELECT 1 as key, 'pa_merge1' as val) s
+  ON s.key = t.key
+  WHEN NOT MATCHED THEN
+	INSERT VALUES (s.key, s.val)
+  WHEN MATCHED THEN
+    UPDATE set val = t.val || ' updated by ' || s.val;
+
+step c1: COMMIT;
+step pa_merge2c_dup: 
+  MERGE INTO pa_target t
+  USING (VALUES (1), (1)) v(a)
+  ON t.key = v.a
+  WHEN MATCHED THEN
+	UPDATE set val = t.val || ' updated by pa_merge2c_dup';  -- should fail
+
+ERROR:  MERGE command cannot affect row a second time
+step a2: ABORT;
 
 starting permutation: merge1 merge2a c1 select2 c2
 step merge1: 
@@ -65,15 +95,24 @@ step merge2a:
   WHEN NOT MATCHED THEN
 	INSERT VALUES (s.key, s.val)
   WHEN MATCHED THEN
-	UPDATE set key = t.key + 1, val = t.val || ' updated by ' || s.val;
+	UPDATE set key = t.key + 1, val = t.val || ' updated by ' || s.val
+  WHEN NOT MATCHED BY SOURCE THEN
+	UPDATE set key = t.key + 1, val = t.val || ' source not matched by merge2a'
+  RETURNING merge_action(), t.*;
  <waiting ...>
 step c1: COMMIT;
 step merge2a: <... completed>
+merge_action|key|val                                                   
+------------+---+------------------------------------------------------
+UPDATE      |  3|setup1 updated by merge1 source not matched by merge2a
+INSERT      |  1|merge2a                                               
+(2 rows)
+
 step select2: SELECT * FROM target;
-key|val                     
----+------------------------
-  2|setup1 updated by merge1
-  1|merge2a                 
+key|val                                                   
+---+------------------------------------------------------
+  3|setup1 updated by merge1 source not matched by merge2a
+  1|merge2a                                               
 (2 rows)
 
 step c2: COMMIT;
@@ -95,10 +134,18 @@ step merge2a:
   WHEN NOT MATCHED THEN
 	INSERT VALUES (s.key, s.val)
   WHEN MATCHED THEN
-	UPDATE set key = t.key + 1, val = t.val || ' updated by ' || s.val;
+	UPDATE set key = t.key + 1, val = t.val || ' updated by ' || s.val
+  WHEN NOT MATCHED BY SOURCE THEN
+	UPDATE set key = t.key + 1, val = t.val || ' source not matched by merge2a'
+  RETURNING merge_action(), t.*;
  <waiting ...>
 step a1: ABORT;
 step merge2a: <... completed>
+merge_action|key|val                      
+------------+---+-------------------------
+UPDATE      |  2|setup1 updated by merge2a
+(1 row)
+
 step select2: SELECT * FROM target;
 key|val                      
 ---+-------------------------
@@ -184,15 +231,24 @@ step pa_merge2a:
   WHEN NOT MATCHED THEN
 	INSERT VALUES (s.key, s.val)
   WHEN MATCHED THEN
-	UPDATE set key = t.key + 1, val = t.val || ' updated by ' || s.val;
+	UPDATE set key = t.key + 1, val = t.val || ' updated by ' || s.val
+  WHEN NOT MATCHED BY SOURCE THEN
+	UPDATE set key = t.key + 1, val = t.val || ' source not matched by pa_merge2a'
+  RETURNING merge_action(), t.*;
  <waiting ...>
 step c1: COMMIT;
 step pa_merge2a: <... completed>
+merge_action|key|val                                               
+------------+---+--------------------------------------------------
+UPDATE      |  2|initial updated by pa_merge1 updated by pa_merge2a
+UPDATE      |  3|initial source not matched by pa_merge2a          
+(2 rows)
+
 step pa_select2: SELECT * FROM pa_target;
 key|val                                               
 ---+--------------------------------------------------
-  2|initial                                           
   2|initial updated by pa_merge1 updated by pa_merge2a
+  3|initial source not matched by pa_merge2a          
 (2 rows)
 
 step c2: COMMIT;
@@ -214,7 +270,10 @@ step pa_merge2a:
   WHEN NOT MATCHED THEN
 	INSERT VALUES (s.key, s.val)
   WHEN MATCHED THEN
-	UPDATE set key = t.key + 1, val = t.val || ' updated by ' || s.val;
+	UPDATE set key = t.key + 1, val = t.val || ' updated by ' || s.val
+  WHEN NOT MATCHED BY SOURCE THEN
+	UPDATE set key = t.key + 1, val = t.val || ' source not matched by pa_merge2a'
+  RETURNING merge_action(), t.*;
  <waiting ...>
 step c1: COMMIT;
 step pa_merge2a: <... completed>
@@ -241,14 +300,24 @@ step pa_merge2a:
   WHEN NOT MATCHED THEN
 	INSERT VALUES (s.key, s.val)
   WHEN MATCHED THEN
-	UPDATE set key = t.key + 1, val = t.val || ' updated by ' || s.val;
+	UPDATE set key = t.key + 1, val = t.val || ' updated by ' || s.val
+  WHEN NOT MATCHED BY SOURCE THEN
+	UPDATE set key = t.key + 1, val = t.val || ' source not matched by pa_merge2a'
+  RETURNING merge_action(), t.*;
+
+merge_action|key|val                                                          
+------------+---+-------------------------------------------------------------
+UPDATE      |  3|initial source not matched by pa_merge2a                     
+UPDATE      |  3|initial updated by pa_merge2 source not matched by pa_merge2a
+INSERT      |  1|pa_merge2a                                                   
+(3 rows)
 
 step pa_select2: SELECT * FROM pa_target;
-key|val                         
----+----------------------------
-  1|pa_merge2a                  
-  2|initial                     
-  2|initial updated by pa_merge2
+key|val                                                          
+---+-------------------------------------------------------------
+  1|pa_merge2a                                                   
+  3|initial source not matched by pa_merge2a                     
+  3|initial updated by pa_merge2 source not matched by pa_merge2a
 (3 rows)
 
 step c2: COMMIT;
@@ -312,3 +381,25 @@ key|val
 (2 rows)
 
 step c2: COMMIT;
+
+starting permutation: pa_merge1 pa_merge2c_dup c1 a2
+step pa_merge1: 
+  MERGE INTO pa_target t
+  USING (SELECT 1 as key, 'pa_merge1' as val) s
+  ON s.key = t.key
+  WHEN NOT MATCHED THEN
+	INSERT VALUES (s.key, s.val)
+  WHEN MATCHED THEN
+    UPDATE set val = t.val || ' updated by ' || s.val;
+
+step pa_merge2c_dup: 
+  MERGE INTO pa_target t
+  USING (VALUES (1), (1)) v(a)
+  ON t.key = v.a
+  WHEN MATCHED THEN
+	UPDATE set val = t.val || ' updated by pa_merge2c_dup';  -- should fail
+ <waiting ...>
+step c1: COMMIT;
+step pa_merge2c_dup: <... completed>
+ERROR:  MERGE command cannot affect row a second time
+step a2: ABORT;

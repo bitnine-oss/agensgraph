@@ -4,7 +4,7 @@
  *
  * Declarations for ISpell dictionary
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  * src/include/tsearch/dicts/spell.h
  *
@@ -158,7 +158,7 @@ typedef enum
 {
 	FM_CHAR,					/* one character (like ispell) */
 	FM_LONG,					/* two characters */
-	FM_NUM						/* number, >= 0 and < 65536 */
+	FM_NUM,						/* number, >= 0 and < 65536 */
 } FlagMode;
 
 /*

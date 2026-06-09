@@ -202,16 +202,16 @@ SELECT attname, attstattarget FROM pg_attribute
 WHERE attrelid = 'ddl.e1'::regclass;
   attname   | attstattarget 
 ------------+---------------
- tableoid   |             0
- cmax       |             0
- xmax       |             0
- cmin       |             0
- xmin       |             0
- ctid       |             0
- id         |            -1
+ tableoid   |              
+ cmax       |              
+ xmax       |              
+ cmin       |              
+ xmin       |              
+ ctid       |              
+ id         |              
  start      |         10000
  end        |         10000
- properties |            -1
+ properties |              
 (10 rows)
 
 --

@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 backend_sources += files(
   'attmap.c',
@@ -13,6 +13,7 @@ backend_sources += files(
   'scankey.c',
   'session.c',
   'syncscan.c',
+  'tidstore.c',
   'toast_compression.c',
   'toast_internals.c',
   'tupconvert.c',

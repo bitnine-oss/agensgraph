@@ -4,7 +4,7 @@
  *	  routines for handling GIN posting tree pages.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -721,9 +721,12 @@ dataExecPlaceToPageLeaf(GinBtree btree, Buffer buf, GinBtreeStack *stack,
 	/* Apply changes to page */
 	dataPlaceToPageLeafRecompress(buf, leaf);
 
+	MarkBufferDirty(buf);
+
 	/* If needed, register WAL data built by computeLeafRecompressWALData */
 	if (RelationNeedsWAL(btree->index) && !btree->isBuild)
 	{
+		XLogRegisterBuffer(0, buf, REGBUF_STANDARD);
 		XLogRegisterBufData(0, leaf->walinfo, leaf->walinfolen);
 	}
 }
@@ -1155,6 +1158,8 @@ dataExecPlaceToPageInternal(GinBtree btree, Buffer buf, GinBtreeStack *stack,
 	pitem = (PostingItem *) insertdata;
 	GinDataPageAddPostingItem(page, pitem, off);
 
+	MarkBufferDirty(buf);
+
 	if (RelationNeedsWAL(btree->index) && !btree->isBuild)
 	{
 		/*
@@ -1167,6 +1172,7 @@ dataExecPlaceToPageInternal(GinBtree btree, Buffer buf, GinBtreeStack *stack,
 		data.offset = off;
 		data.newitem = *pitem;
 
+		XLogRegisterBuffer(0, buf, REGBUF_STANDARD);
 		XLogRegisterBufData(0, (char *) &data,
 							sizeof(ginxlogInsertDataInternal));
 	}
@@ -1917,7 +1923,7 @@ ginInsertItemPointers(Relation index, BlockNumber rootBlkno,
 	{
 		/* search for the leaf page where the first item should go to */
 		btree.itemptr = insertdata.items[insertdata.curitem];
-		stack = ginFindLeafPage(&btree, false, true, NULL);
+		stack = ginFindLeafPage(&btree, false, true);
 
 		ginInsertValue(&btree, stack, &insertdata, buildStats);
 	}
@@ -1927,8 +1933,7 @@ ginInsertItemPointers(Relation index, BlockNumber rootBlkno,
  * Starts a new scan on a posting tree.
  */
 GinBtreeStack *
-ginScanBeginPostingTree(GinBtree btree, Relation index, BlockNumber rootBlkno,
-						Snapshot snapshot)
+ginScanBeginPostingTree(GinBtree btree, Relation index, BlockNumber rootBlkno)
 {
 	GinBtreeStack *stack;
 
@@ -1936,7 +1941,7 @@ ginScanBeginPostingTree(GinBtree btree, Relation index, BlockNumber rootBlkno,
 
 	btree->fullScan = true;
 
-	stack = ginFindLeafPage(btree, true, false, snapshot);
+	stack = ginFindLeafPage(btree, true, false);
 
 	return stack;
 }

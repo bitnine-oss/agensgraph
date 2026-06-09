@@ -4,7 +4,7 @@
  *	  POSTGRES multivariate MCV lists
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -17,19 +17,15 @@
 #include <math.h>
 
 #include "access/htup_details.h"
-#include "catalog/pg_collation.h"
 #include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_statistic_ext_data.h"
 #include "fmgr.h"
 #include "funcapi.h"
 #include "nodes/nodeFuncs.h"
-#include "optimizer/clauses.h"
 #include "statistics/extended_stats_internal.h"
 #include "statistics/statistics.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
-#include "utils/bytea.h"
-#include "utils/fmgroids.h"
 #include "utils/fmgrprotos.h"
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
@@ -576,7 +572,7 @@ statext_mcv_load(Oid mvoid, bool inh)
 	if (isnull)
 		elog(ERROR,
 			 "requested statistics kind \"%c\" is not yet built for statistics object %u",
-			 STATS_EXT_DEPENDENCIES, mvoid);
+			 STATS_EXT_MCV, mvoid);
 
 	result = statext_mcv_deserialize(DatumGetByteaP(mcvlist));
 

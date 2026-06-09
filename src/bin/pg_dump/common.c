@@ -4,7 +4,7 @@
  *	Catalog routines used by pg_dump; long ago these were shared
  *	by another dump tool, but not anymore.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -24,6 +24,7 @@
 #include "catalog/pg_operator_d.h"
 #include "catalog/pg_proc_d.h"
 #include "catalog/pg_publication_d.h"
+#include "catalog/pg_subscription_d.h"
 #include "catalog/pg_type_d.h"
 #include "common/hashfn.h"
 #include "fe_utils/string_utils.h"
@@ -46,6 +47,8 @@ static DumpId lastDumpId = 0;	/* Note: 0 is InvalidDumpId */
  * expects that it can move them around when resizing the table.  So we
  * cannot make the DumpableObjects be elements of the hash table directly;
  * instead, the hash table elements contain pointers to DumpableObjects.
+ * This does have the advantage of letting us map multiple CatalogIds
+ * to one DumpableObject, which is useful for blobs.
  *
  * It turns out to be convenient to also use this data structure to map
  * CatalogIds to owning extensions, if any.  Since extension membership
@@ -82,7 +85,7 @@ static catalogid_hash *catalogIdHash = NULL;
 static void flagInhTables(Archive *fout, TableInfo *tblinfo, int numTables,
 						  InhInfo *inhinfo, int numInherits);
 static void flagInhIndexes(Archive *fout, TableInfo *tblinfo, int numTables);
-static void flagInhAttrs(DumpOptions *dopt, TableInfo *tblinfo, int numTables);
+static void flagInhAttrs(Archive *fout, TableInfo *tblinfo, int numTables);
 static int	strInArray(const char *pattern, char **arr, int arr_size);
 static IndxInfo *findIndexByOid(Oid oid);
 
@@ -226,7 +229,7 @@ getSchemaData(Archive *fout, int *numTablesPtr)
 	getTableAttrs(fout, tblinfo, numTables);
 
 	pg_log_info("flagging inherited columns in subtables");
-	flagInhAttrs(fout->dopt, tblinfo, numTables);
+	flagInhAttrs(fout, tblinfo, numTables);
 
 	pg_log_info("reading partitioning data");
 	getPartitioningInfo(fout);
@@ -263,6 +266,9 @@ getSchemaData(Archive *fout, int *numTablesPtr)
 
 	pg_log_info("reading subscriptions");
 	getSubscriptions(fout);
+
+	pg_log_info("reading subscription membership of tables");
+	getSubscriptionTables(fout);
 
 	free(inhinfo);				/* not needed any longer */
 
@@ -491,8 +497,9 @@ flagInhIndexes(Archive *fout, TableInfo tblinfo[], int numTables)
  * modifies tblinfo
  */
 static void
-flagInhAttrs(DumpOptions *dopt, TableInfo *tblinfo, int numTables)
+flagInhAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 {
+	DumpOptions *dopt = fout->dopt;
 	int			i,
 				j,
 				k;
@@ -690,6 +697,30 @@ AssignDumpId(DumpableObject *dobj)
 		Assert(entry->dobj == NULL);
 		entry->dobj = dobj;
 	}
+}
+
+/*
+ * recordAdditionalCatalogID
+ *	  Record an additional catalog ID for the given DumpableObject
+ */
+void
+recordAdditionalCatalogID(CatalogId catId, DumpableObject *dobj)
+{
+	CatalogIdMapEntry *entry;
+	bool		found;
+
+	/* CatalogId hash table must exist, if we have a DumpableObject */
+	Assert(catalogIdHash != NULL);
+
+	/* Add reference to CatalogId hash */
+	entry = catalogid_insert(catalogIdHash, catId, &found);
+	if (!found)
+	{
+		entry->dobj = NULL;
+		entry->ext = NULL;
+	}
+	Assert(entry->dobj == NULL);
+	entry->dobj = dobj;
 }
 
 /*
@@ -972,6 +1003,24 @@ findPublicationByOid(Oid oid)
 	dobj = findObjectByCatalogId(catId);
 	Assert(dobj == NULL || dobj->objType == DO_PUBLICATION);
 	return (PublicationInfo *) dobj;
+}
+
+/*
+ * findSubscriptionByOid
+ *	  finds the DumpableObject for the subscription with the given oid
+ *	  returns NULL if not found
+ */
+SubscriptionInfo *
+findSubscriptionByOid(Oid oid)
+{
+	CatalogId	catId;
+	DumpableObject *dobj;
+
+	catId.tableoid = SubscriptionRelationId;
+	catId.oid = oid;
+	dobj = findObjectByCatalogId(catId);
+	Assert(dobj == NULL || dobj->objType == DO_SUBSCRIPTION);
+	return (SubscriptionInfo *) dobj;
 }
 
 

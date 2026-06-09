@@ -60,10 +60,6 @@
 /* Define to 1 if you want National Language Support. (--enable-nls) */
 #undef ENABLE_NLS
 
-/* Define to 1 to build client libraries as thread-safe code.
-   (--enable-thread-safety) */
-#undef ENABLE_THREAD_SAFETY
-
 /* Define to 1 if you have the `append_history' function. */
 #undef HAVE_APPEND_HISTORY
 
@@ -79,9 +75,6 @@
 /* Define to 1 if you have the `backtrace_symbols' function. */
 #undef HAVE_BACKTRACE_SYMBOLS
 
-/* Define to 1 if you have the `BIO_get_data' function. */
-#undef HAVE_BIO_GET_DATA
-
 /* Define to 1 if you have the `BIO_meth_new' function. */
 #undef HAVE_BIO_METH_NEW
 
@@ -93,6 +86,9 @@
 
 /* Define to 1 if you have the <copyfile.h> header file. */
 #undef HAVE_COPYFILE_H
+
+/* Define to 1 if you have the `copy_file_range' function. */
+#undef HAVE_COPY_FILE_RANGE
 
 /* Define to 1 if you have the <crtdefs.h> header file. */
 #undef HAVE_CRTDEFS_H
@@ -115,18 +111,6 @@
 /* Define to 1 if you have the declaration of
    `LLVMCreatePerfJITEventListener', and to 0 if you don't. */
 #undef HAVE_DECL_LLVMCREATEPERFJITEVENTLISTENER
-
-/* Define to 1 if you have the declaration of `LLVMGetHostCPUFeatures', and to
-   0 if you don't. */
-#undef HAVE_DECL_LLVMGETHOSTCPUFEATURES
-
-/* Define to 1 if you have the declaration of `LLVMGetHostCPUName', and to 0
-   if you don't. */
-#undef HAVE_DECL_LLVMGETHOSTCPUNAME
-
-/* Define to 1 if you have the declaration of `LLVMOrcGetSymbolAddressIn', and
-   to 0 if you don't. */
-#undef HAVE_DECL_LLVMORCGETSYMBOLADDRESSIN
 
 /* Define to 1 if you have the declaration of `posix_fadvise', and to 0 if you
    don't. */
@@ -306,9 +290,6 @@
 
 /* Define to 1 if you have the `zstd' library (-lzstd). */
 #undef HAVE_LIBZSTD
-
-/* Define to 1 if the system has the type `locale_t'. */
-#undef HAVE_LOCALE_T
 
 /* Define to 1 if `long int' works and is 64 bits. */
 #undef HAVE_LONG_INT_64
@@ -538,11 +519,11 @@
 /* Define to 1 if you have the `X509_get_signature_info' function. */
 #undef HAVE_X509_GET_SIGNATURE_INFO
 
-/* Define to 1 if you have the `X509_get_signature_nid' function. */
-#undef HAVE_X509_GET_SIGNATURE_NID
-
 /* Define to 1 if the assembler supports X86_64's POPCNTQ instruction. */
 #undef HAVE_X86_64_POPCNTQ
+
+/* Define to 1 if you have XSAVE intrinsics. */
+#undef HAVE_XSAVE_INTRINSICS
 
 /* Define to 1 if the system has the type `_Bool'. */
 #undef HAVE__BOOL
@@ -586,8 +567,14 @@
 /* Define to 1 if you have __cpuid. */
 #undef HAVE__CPUID
 
+/* Define to 1 if you have __cpuidex. */
+#undef HAVE__CPUIDEX
+
 /* Define to 1 if you have __get_cpuid. */
 #undef HAVE__GET_CPUID
+
+/* Define to 1 if you have __get_cpuid_count. */
+#undef HAVE__GET_CPUID_COUNT
 
 /* Define to 1 if your compiler understands _Static_assert. */
 #undef HAVE__STATIC_ASSERT
@@ -711,6 +698,9 @@
 /* Define to 1 to build with assertion checks. (--enable-cassert) */
 #undef USE_ASSERT_CHECKING
 
+/* Define to 1 to use AVX-512 popcount instructions with a runtime check. */
+#undef USE_AVX512_POPCNT_WITH_RUNTIME_CHECK
+
 /* Define to 1 to build with Bonjour support. (--with-bonjour) */
 #undef USE_BONJOUR
 
@@ -719,6 +709,9 @@
 
 /* Define to build with ICU support. (--with-icu) */
 #undef USE_ICU
+
+/* Define to 1 to build with injection points. (--enable-injection-points) */
+#undef USE_INJECTION_POINTS
 
 /* Define to 1 to build with LDAP support. (--with-ldap) */
 #undef USE_LDAP
@@ -732,6 +725,9 @@
 
 /* Define to 1 to build with LLVM based JIT support. (--with-llvm) */
 #undef USE_LLVM
+
+/* Define to 1 to use LoongArch CRCC instructions. */
+#undef USE_LOONGARCH_CRC32C
 
 /* Define to 1 to build with LZ4 support. (--with-lz4) */
 #undef USE_LZ4

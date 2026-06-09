@@ -8,7 +8,7 @@
  * determined by the PG_CMDTAG macro, which is not defined in this file;
  * it can be defined by the caller for special purposes.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/tcop/cmdtaglist.h
@@ -199,6 +199,7 @@ PG_CMDTAG(CMDTAG_INSERT, "INSERT", false, false, true)
 PG_CMDTAG(CMDTAG_LISTEN, "LISTEN", false, false, false)
 PG_CMDTAG(CMDTAG_LOAD, "LOAD", false, false, false)
 PG_CMDTAG(CMDTAG_LOCK_TABLE, "LOCK TABLE", false, false, false)
+PG_CMDTAG(CMDTAG_LOGIN, "LOGIN", true, false, false)
 PG_CMDTAG(CMDTAG_MERGE, "MERGE", false, false, true)
 PG_CMDTAG(CMDTAG_MOVE, "MOVE", false, false, true)
 PG_CMDTAG(CMDTAG_NOTIFY, "NOTIFY", false, false, false)
@@ -206,7 +207,7 @@ PG_CMDTAG(CMDTAG_PREPARE, "PREPARE", false, false, false)
 PG_CMDTAG(CMDTAG_PREPARE_TRANSACTION, "PREPARE TRANSACTION", false, false, false)
 PG_CMDTAG(CMDTAG_REASSIGN_OWNED, "REASSIGN OWNED", false, false, false)
 PG_CMDTAG(CMDTAG_REFRESH_MATERIALIZED_VIEW, "REFRESH MATERIALIZED VIEW", true, false, false)
-PG_CMDTAG(CMDTAG_REINDEX, "REINDEX", false, false, false)
+PG_CMDTAG(CMDTAG_REINDEX, "REINDEX", true, false, false)
 PG_CMDTAG(CMDTAG_RELEASE, "RELEASE", false, false, false)
 PG_CMDTAG(CMDTAG_RESET, "RESET", false, false, false)
 PG_CMDTAG(CMDTAG_REVOKE, "REVOKE", true, false, false)

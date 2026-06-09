@@ -3,7 +3,7 @@
  * inherit.c
  *	  Routines to process child relations in inheritance trees
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -457,7 +457,8 @@ expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
 								Index *childRTindex_p)
 {
 	Query	   *parse = root->parse;
-	Oid			parentOID = RelationGetRelid(parentrel);
+	Oid			parentOID PG_USED_FOR_ASSERTS_ONLY =
+		RelationGetRelid(parentrel);
 	Oid			childOID = RelationGetRelid(childrel);
 	RangeTblEntry *childrte;
 	Index		childRTindex;
@@ -494,13 +495,8 @@ expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
 		childrte->inh = false;
 	childrte->securityQuals = NIL;
 
-	/*
-	 * No permission checking for the child RTE unless it's the parent
-	 * relation in its child role, which only applies to traditional
-	 * inheritance.
-	 */
-	if (childOID != parentOID)
-		childrte->perminfoindex = 0;
+	/* No permission checking for child RTEs. */
+	childrte->perminfoindex = 0;
 
 	/* Link not-yet-fully-filled child RTE into data structures */
 	parse->rtable = lappend(parse->rtable, childrte);
@@ -826,11 +822,13 @@ expand_appendrel_subquery(PlannerInfo *root, RelOptInfo *rel,
 /*
  * apply_child_basequals
  *		Populate childrel's base restriction quals from parent rel's quals,
- *		translating them using appinfo.
+ *		translating Vars using appinfo and re-checking for quals which are
+ *		constant-TRUE or constant-FALSE when applied to this child relation.
  *
  * If any of the resulting clauses evaluate to constant false or NULL, we
  * return false and don't apply any quals.  Caller should mark the relation as
- * a dummy rel in this case, since it doesn't need to be scanned.
+ * a dummy rel in this case, since it doesn't need to be scanned.  Constant
+ * true quals are ignored.
  */
 bool
 apply_child_basequals(PlannerInfo *root, RelOptInfo *parentrel,
@@ -879,6 +877,7 @@ apply_child_basequals(PlannerInfo *root, RelOptInfo *parentrel,
 		{
 			Node	   *onecq = (Node *) lfirst(lc2);
 			bool		pseudoconstant;
+			RestrictInfo *childrinfo;
 
 			/* check for pseudoconstant (no Vars or volatile functions) */
 			pseudoconstant =
@@ -890,15 +889,23 @@ apply_child_basequals(PlannerInfo *root, RelOptInfo *parentrel,
 				root->hasPseudoConstantQuals = true;
 			}
 			/* reconstitute RestrictInfo with appropriate properties */
-			childquals = lappend(childquals,
-								 make_restrictinfo(root,
-												   (Expr *) onecq,
-												   rinfo->is_pushed_down,
-												   rinfo->has_clone,
-												   rinfo->is_clone,
-												   pseudoconstant,
-												   rinfo->security_level,
-												   NULL, NULL, NULL));
+			childrinfo = make_restrictinfo(root,
+										   (Expr *) onecq,
+										   rinfo->is_pushed_down,
+										   rinfo->has_clone,
+										   rinfo->is_clone,
+										   pseudoconstant,
+										   rinfo->security_level,
+										   NULL, NULL, NULL);
+
+			/* Restriction is proven always false */
+			if (restriction_is_always_false(root, childrinfo))
+				return false;
+			/* Restriction is proven always true, so drop it */
+			if (restriction_is_always_true(root, childrinfo))
+				continue;
+
+			childquals = lappend(childquals, childrinfo);
 			/* track minimum security level among child quals */
 			cq_min_security = Min(cq_min_security, rinfo->security_level);
 		}

@@ -40,9 +40,9 @@ PostgreSQL documentation
   <application>pg_upgrade</application> (formerly called <application>pg_migrator</application>) allows data
   stored in <productname>PostgreSQL</productname> data files to be upgraded to a later <productname>PostgreSQL</productname>
   major version without the data dump/restore typically required for
-  major version upgrades, e.g., from 9.5.8 to 9.6.4 or from 10.7 to 11.2.
-  It is not required for minor version upgrades, e.g., from 9.6.2 to 9.6.3
-  or from 10.1 to 10.2.
+  major version upgrades, e.g., from 12.14 to 13.10 or from 14.9 to 15.5.
+  It is not required for minor version upgrades, e.g., from 12.7 to 12.8
+  or from 14.1 to 14.5.
  </para>
 
  <para>
@@ -241,6 +241,42 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>--copy-file-range</option></term>
+      <listitem>
+       <para>
+        Use the <function>copy_file_range</function> system call for efficient
+        copying.  On some file systems this gives results similar to
+        <option>--clone</option>, sharing physical disk blocks, while on others
+        it may still copy blocks, but do so via an optimized path.  At present,
+        it is supported on Linux and FreeBSD.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--sync-method=</option><replaceable>method</replaceable></term>
+      <listitem>
+       <para>
+        When set to <literal>fsync</literal>, which is the default,
+        <command>pg_upgrade</command> will recursively open and synchronize all
+        files in the upgraded cluster's data directory.  The search for files
+        will follow symbolic links for the WAL directory and each configured
+        tablespace.
+       </para>
+       <para>
+        On Linux, <literal>syncfs</literal> may be used instead to ask the
+        operating system to synchronize the whole file systems that contain the
+        upgraded cluster's data directory, its WAL files, and each tablespace.
+        See <xref linkend="guc-recovery-init-sync-method"/> for information
+        about the caveats to be aware of when using <literal>syncfs</literal>.
+       </para>
+       <para>
+        This option has no effect when <option>--no-sync</option> is used.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>-?</option></term>
       <term><option>--help</option></term>
       <listitem><para>show help, then exit</para></listitem>
@@ -361,27 +397,150 @@ make prefix=/usr/local/pgsql.new install
    </step>
 
    <step>
+    <title>Prepare for publisher upgrades</title>
+
+    <para>
+     <application>pg_upgrade</application> attempts to migrate logical
+     slots. This helps avoid the need for manually defining the same
+     logical slots on the new publisher. Migration of logical slots is
+     only supported when the old cluster is version 17.0 or later.
+     Logical slots on clusters before version 17.0 will silently be
+     ignored.
+    </para>
+
+    <para>
+     Before you start upgrading the publisher cluster, ensure that the
+     subscription is temporarily disabled, by executing
+     <link linkend="sql-altersubscription"><command>ALTER SUBSCRIPTION ... DISABLE</command></link>.
+     Re-enable the subscription after the upgrade.
+    </para>
+
+    <para>
+     There are some prerequisites for <application>pg_upgrade</application> to
+     be able to upgrade the logical slots. If these are not met an error
+     will be reported.
+    </para>
+
+    <itemizedlist>
+     <listitem>
+      <para>
+       The new cluster must have
+       <link linkend="guc-wal-level"><varname>wal_level</varname></link> as
+       <literal>logical</literal>.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       The new cluster must have
+       <link linkend="guc-max-replication-slots"><varname>max_replication_slots</varname></link>
+       configured to a value greater than or equal to the number of slots
+       present in the old cluster.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       The output plugins referenced by the slots on the old cluster must be
+       installed in the new PostgreSQL executable directory.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       The old cluster has replicated all the transactions and logical decoding
+       messages to subscribers.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       All slots on the old cluster must be usable, i.e., there are no slots
+       whose
+       <link linkend="view-pg-replication-slots">pg_replication_slots</link>.<structfield>conflicting</structfield>
+       is not <literal>true</literal>.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       The new cluster must not have permanent logical slots, i.e.,
+       there must be no slots where
+       <link linkend="view-pg-replication-slots">pg_replication_slots</link>.<structfield>temporary</structfield>
+       is <literal>false</literal>.
+      </para>
+     </listitem>
+    </itemizedlist>
+
+   </step>
+
+   <step>
+    <title>Prepare for subscriber upgrades</title>
+
+    <para>
+     Setup the <link linkend="logical-replication-config-subscriber">
+     subscriber configurations</link> in the new subscriber.
+     <application>pg_upgrade</application> attempts to migrate subscription
+     dependencies which includes the subscription's table information present in
+     <link linkend="catalog-pg-subscription-rel">pg_subscription_rel</link>
+     system catalog and also the subscription's replication origin. This allows
+     logical replication on the new subscriber to continue from where the
+     old subscriber was up to. Migration of subscription dependencies is only
+     supported when the old cluster is version 17.0 or later. Subscription
+     dependencies on clusters before version 17.0 will silently be ignored.
+    </para>
+
+    <para>
+     There are some prerequisites for <application>pg_upgrade</application> to
+     be able to upgrade the subscriptions. If these are not met an error
+     will be reported.
+    </para>
+
+    <itemizedlist>
+     <listitem>
+      <para>
+       All the subscription tables in the old subscriber should be in state
+       <literal>i</literal> (initialize) or <literal>r</literal> (ready). This
+       can be verified by checking <link linkend="catalog-pg-subscription-rel">pg_subscription_rel</link>.<structfield>srsubstate</structfield>.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       The replication origin entry corresponding to each of the subscriptions
+       should exist in the old cluster. This can be found by checking
+       <link linkend="catalog-pg-subscription">pg_subscription</link> and
+       <link linkend="catalog-pg-replication-origin">pg_replication_origin</link>
+       system tables.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       The new cluster must have
+       <link linkend="guc-max-replication-slots"><varname>max_replication_slots</varname></link>
+       configured to a value greater than or equal to the number of
+       subscriptions present in the old cluster.
+      </para>
+     </listitem>
+    </itemizedlist>
+   </step>
+
+   <step>
     <title>Stop both servers</title>
 
     <para>
      Make sure both database servers are stopped using, on Unix, e.g.:
 
 <programlisting>
-pg_ctl -D /opt/PostgreSQL/9.6 stop
+pg_ctl -D /opt/PostgreSQL/12 stop
 pg_ctl -D /opt/PostgreSQL/&majorversion; stop
 </programlisting>
 
      or on Windows, using the proper service names:
 
 <programlisting>
-NET STOP postgresql-9.6
+NET STOP postgresql-12
 NET STOP postgresql-&majorversion;
 </programlisting>
     </para>
 
     <para>
-     Streaming replication and log-shipping standby servers can
-     remain running until a later step.
+     Streaming replication and log-shipping standby servers must be
+     running during this shutdown so they receive all changes.
     </para>
    </step>
 
@@ -394,8 +553,6 @@ NET STOP postgresql-&majorversion;
      servers are caught up by running <application>pg_controldata</application>
      against the old primary and standby clusters.  Verify that the
      <quote>Latest checkpoint location</quote> values match in all clusters.
-     (There will be a mismatch if old standby servers were shut down
-     before the old primary or if the old standby servers are still running.)
      Also, make sure <varname>wal_level</varname> is not set to
      <literal>minimal</literal> in the <filename>postgresql.conf</filename> file on the
      new primary cluster.
@@ -438,21 +595,15 @@ NET STOP postgresql-&majorversion;
     </para>
 
     <para>
-     For Windows users, you must be logged into an administrative account, and
-     then start a shell as the <literal>postgres</literal> user and set the proper path:
-
-<programlisting>
-RUNAS /USER:postgres "CMD.EXE"
-SET PATH=%PATH%;C:\Program Files\PostgreSQL\&majorversion;\bin;
-</programlisting>
-
-     and then run <application>pg_upgrade</application> with quoted directories, e.g.:
+     For Windows users, you must be logged into an administrative account,
+     and then run <application>pg_upgrade</application> with quoted
+     directories, e.g.:
 
 <programlisting>
 pg_upgrade.exe
-        --old-datadir "C:/Program Files/PostgreSQL/9.6/data"
+        --old-datadir "C:/Program Files/PostgreSQL/12/data"
         --new-datadir "C:/Program Files/PostgreSQL/&majorversion;/data"
-        --old-bindir "C:/Program Files/PostgreSQL/9.6/bin"
+        --old-bindir "C:/Program Files/PostgreSQL/12/bin"
         --new-bindir "C:/Program Files/PostgreSQL/&majorversion;/bin"
 </programlisting>
 
@@ -582,8 +733,8 @@ rsync --archive --delete --hard-links --size-only --no-inc-recursive old_cluster
        remote directory, e.g.,
 
 <programlisting>
-rsync --archive --delete --hard-links --size-only --no-inc-recursive /opt/PostgreSQL/9.5 \
-      /opt/PostgreSQL/9.6 standby.example.com:/opt/PostgreSQL
+rsync --archive --delete --hard-links --size-only --no-inc-recursive /opt/PostgreSQL/12 \
+      /opt/PostgreSQL/&majorversion; standby.example.com:/opt/PostgreSQL
 </programlisting>
 
        You can verify what the command will do using
@@ -612,8 +763,8 @@ rsync --archive --delete --hard-links --size-only --no-inc-recursive /opt/Postgr
        <application>rsync</application> command for each tablespace directory, e.g.:
 
 <programlisting>
-rsync --archive --delete --hard-links --size-only --no-inc-recursive /vol1/pg_tblsp/PG_9.5_201510051 \
-      /vol1/pg_tblsp/PG_9.6_201608131 standby.example.com:/vol1/pg_tblsp
+rsync --archive --delete --hard-links --size-only --no-inc-recursive /vol1/pg_tblsp/PG_12_201909212 \
+      /vol1/pg_tblsp/PG_&majorversion;_202307071 standby.example.com:/vol1/pg_tblsp
 </programlisting>
 
        If you have relocated <filename>pg_wal</filename> outside the data
@@ -629,8 +780,12 @@ rsync --archive --delete --hard-links --size-only --no-inc-recursive /vol1/pg_tb
        Configure the servers for log shipping.  (You do not need to run
        <function>pg_backup_start()</function> and <function>pg_backup_stop()</function>
        or take a file system backup as the standbys are still synchronized
-       with the primary.)  Replication slots are not copied and must
-       be recreated.
+       with the primary.) If the old primary is prior to version 17.0, then no
+       slots on the primary are copied to the new standby, so all the slots on
+       the old standby must be recreated manually. If the old primary is
+       version 17.0 or later, then only logical slots on the primary are copied
+       to the new standby, but other slots on the old standby are not copied,
+       so must be recreated manually.
       </para>
      </step>
 
@@ -694,6 +849,17 @@ psql --username=postgres --file=script.sql postgres
      be instructed to run a command to regenerate that information at the end
      of the upgrade.  You might need to set connection parameters to
      match your new cluster.
+    </para>
+
+    <para>
+     Using <command>vacuumdb --all --analyze-only</command> can efficiently
+     generate such statistics, and the use of <option>--jobs</option>
+     can speed it up.  Option <option>--analyze-in-stages</option>
+     can be used to generate minimal statistics quickly.
+     If <varname>vacuum_cost_delay</varname> is set to a non-zero
+     value, this can be overridden to speed up statistics generation
+     using <envar>PGOPTIONS</envar>, e.g., <literal>PGOPTIONS='-c
+     vacuum_cost_delay=0' vacuumdb ...</literal>.
     </para>
    </step>
 
@@ -771,6 +937,104 @@ psql --username=postgres --file=script.sql postgres
    </step>
   </procedure>
 
+ </refsect1>
+
+ <refsect1>
+  <title>Environment</title>
+
+  <para>
+   Some environment variables can be used to provide defaults for command-line options:
+
+   <variablelist>
+    <varlistentry>
+     <term><envar>PGBINOLD</envar></term>
+
+     <listitem>
+      <para>
+       The old PostgreSQL executable directory; option
+       <option>-b</option>/<option>--old-bindir</option>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><envar>PGBINNEW</envar></term>
+
+     <listitem>
+      <para>
+       The new PostgreSQL executable directory; option
+       <option>-B</option>/<option>--new-bindir</option>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><envar>PGDATAOLD</envar></term>
+
+     <listitem>
+      <para>
+       The old database cluster configuration directory; option
+       <option>-d</option>/<option>--old-datadir</option>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><envar>PGDATANEW</envar></term>
+
+     <listitem>
+      <para>
+       The new database cluster configuration directory; option
+       <option>-D</option>/<option>--new-datadir</option>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><envar>PGPORTOLD</envar></term>
+
+     <listitem>
+      <para>
+       The old cluster port number; option
+       <option>-p</option>/<option>--old-port</option>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><envar>PGPORTNEW</envar></term>
+
+     <listitem>
+      <para>
+       The new cluster port number; option
+       <option>-P</option>/<option>--new-port</option>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><envar>PGSOCKETDIR</envar></term>
+
+     <listitem>
+      <para>
+       Directory to use for postmaster sockets during upgrade; option
+       <option>-s</option>/<option>--socketdir</option>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><envar>PGUSER</envar></term>
+
+     <listitem>
+      <para>
+       Cluster's install user name; option
+       <option>-U</option>/<option>--username</option>.
+      </para>
+     </listitem>
+    </varlistentry>
+   </variablelist>
+  </para>
  </refsect1>
 
  <refsect1>

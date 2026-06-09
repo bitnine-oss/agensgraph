@@ -666,7 +666,6 @@ ExecEndGraphVLE(GraphVLEState *vle_state)
 	 */
 	ExecClearTuple(vle_state->ps.ps_ResultTupleSlot);
 	ExecEndNode(vle_state->subplan);
-	ExecFreeExprContext(&vle_state->ps);
 }
 
 static void

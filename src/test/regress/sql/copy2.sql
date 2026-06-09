@@ -66,16 +66,22 @@ COPY x from stdin (force_not_null (a), force_not_null (b));
 COPY x from stdin (force_null (a), force_null (b));
 COPY x from stdin (convert_selectively (a), convert_selectively (b));
 COPY x from stdin (encoding 'sql_ascii', encoding 'sql_ascii');
+COPY x from stdin (on_error ignore, on_error ignore);
+COPY x from stdin (log_verbosity default, log_verbosity verbose);
 
 -- incorrect options
 COPY x to stdin (format BINARY, delimiter ',');
 COPY x to stdin (format BINARY, null 'x');
+COPY x from stdin (format BINARY, on_error ignore);
+COPY x from stdin (on_error unsupported);
 COPY x to stdin (format TEXT, force_quote(a));
 COPY x from stdin (format CSV, force_quote(a));
 COPY x to stdout (format TEXT, force_not_null(a));
 COPY x to stdin (format CSV, force_not_null(a));
 COPY x to stdout (format TEXT, force_null(a));
 COPY x to stdin (format CSV, force_null(a));
+COPY x to stdin (format BINARY, on_error unsupported);
+COPY x to stdout (log_verbosity unsupported);
 
 -- too many columns in column list: should fail
 COPY x (a, b, c, d, e, d, c) from stdin;
@@ -344,6 +350,36 @@ ROLLBACK;
 BEGIN;
 COPY forcetest (d, e) FROM STDIN WITH (FORMAT csv, FORCE_NULL(b));
 ROLLBACK;
+-- should succeed with no effect ("b" remains an empty string, "c" remains NULL)
+BEGIN;
+COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL *, FORCE_NULL *);
+4,,""
+\.
+COMMIT;
+SELECT b, c FROM forcetest WHERE a = 4;
+-- should succeed with effect ("b" remains an empty string)
+BEGIN;
+COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL *);
+5,,""
+\.
+COMMIT;
+SELECT b, c FROM forcetest WHERE a = 5;
+-- should succeed with effect ("c" remains NULL)
+BEGIN;
+COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NULL *);
+6,"b",""
+\.
+COMMIT;
+SELECT b, c FROM forcetest WHERE a = 6;
+-- should fail with "conflicting or redundant options" error
+BEGIN;
+COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL *, FORCE_NOT_NULL(b));
+ROLLBACK;
+-- should fail with "conflicting or redundant options" error
+BEGIN;
+COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NULL *, FORCE_NULL(b));
+ROLLBACK;
+
 \pset null ''
 
 -- test case with whole-row Var in a check constraint
@@ -464,6 +500,63 @@ test1
 SELECT * FROM instead_of_insert_tbl;
 COMMIT;
 
+-- tests for on_error option
+CREATE TABLE check_ign_err (n int, m int[], k int);
+COPY check_ign_err FROM STDIN WITH (on_error stop);
+1	{1}	1
+a	{2}	2
+3	{3}	3333333333
+4	{a, 4}	4
+
+5	{5}	5
+\.
+
+-- want context for notices
+\set SHOW_CONTEXT always
+
+COPY check_ign_err FROM STDIN WITH (on_error ignore, log_verbosity verbose);
+1	{1}	1
+a	{2}	2
+3	{3}	3333333333
+4	{a, 4}	4
+
+5	{5}	5
+6	a
+7	{7}	a
+8	{8}	8
+\.
+
+-- tests for on_error option with log_verbosity and null constraint via domain
+CREATE DOMAIN dcheck_ign_err2 varchar(15) NOT NULL;
+CREATE TABLE check_ign_err2 (n int, m int[], k int, l dcheck_ign_err2);
+COPY check_ign_err2 FROM STDIN WITH (on_error ignore, log_verbosity verbose);
+1	{1}	1	'foo'
+2	{2}	2	\N
+\.
+
+-- reset context choice
+\set SHOW_CONTEXT errors
+
+SELECT * FROM check_ign_err;
+
+SELECT * FROM check_ign_err2;
+
+-- test datatype error that can't be handled as soft: should fail
+CREATE TABLE hard_err(foo widget);
+COPY hard_err FROM STDIN WITH (on_error ignore);
+1
+\.
+
+-- test missing data: should fail
+COPY check_ign_err FROM STDIN WITH (on_error ignore);
+1	{1}
+\.
+
+-- test extra data: should fail
+COPY check_ign_err FROM STDIN WITH (on_error ignore);
+1	{1}	3	abc
+\.
+
 -- clean up
 DROP TABLE forcetest;
 DROP TABLE vistest;
@@ -478,6 +571,10 @@ DROP TABLE instead_of_insert_tbl;
 DROP VIEW instead_of_insert_tbl_view;
 DROP VIEW instead_of_insert_tbl_view_2;
 DROP FUNCTION fun_instead_of_insert_tbl();
+DROP TABLE check_ign_err;
+DROP TABLE check_ign_err2;
+DROP DOMAIN dcheck_ign_err2;
+DROP TABLE hard_err;
 
 --
 -- COPY FROM ... DEFAULT

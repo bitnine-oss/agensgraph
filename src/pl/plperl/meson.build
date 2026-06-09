@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 if not perl_dep.found()
   subdir_done()
@@ -71,6 +71,7 @@ install_data(
 
 install_headers(
   'plperl.h',
+  'plperl_system.h',
   'ppport.h',
   install_dir: dir_include_server,
 )

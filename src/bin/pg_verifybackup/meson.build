@@ -1,7 +1,6 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 pg_verifybackup_sources = files(
-  'parse_manifest.c',
   'pg_verifybackup.c'
 )
 
@@ -23,8 +22,8 @@ tests += {
   'sd': meson.current_source_dir(),
   'bd': meson.current_build_dir(),
   'tap': {
-    'env': {'GZIP_PROGRAM': gzip.path(),
-            'TAR': tar.path(),
+    'env': {'GZIP_PROGRAM': gzip.found() ? gzip.path() : '',
+            'TAR': tar.found() ? tar.path() : '',
             'LZ4': program_lz4.found() ? program_lz4.path() : '',
             'ZSTD': program_zstd.found() ? program_zstd.path() : ''},
     'tests': [

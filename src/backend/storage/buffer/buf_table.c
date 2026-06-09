@@ -10,7 +10,7 @@
  * before the lock is released (see notes in README).
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,7 +22,6 @@
 #include "postgres.h"
 
 #include "storage/buf_internals.h"
-#include "storage/bufmgr.h"
 
 /* entry for buffer lookup hashtable */
 typedef struct

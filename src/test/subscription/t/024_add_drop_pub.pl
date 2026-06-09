@@ -1,9 +1,9 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # This test checks behaviour of ALTER SUBSCRIPTION ... ADD/DROP PUBLICATION
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -15,7 +15,7 @@ $node_publisher->start;
 
 # Create subscriber node
 my $node_subscriber = PostgreSQL::Test::Cluster->new('subscriber');
-$node_subscriber->init(allows_streaming => 'logical');
+$node_subscriber->init;
 $node_subscriber->start;
 
 # Create table on publisher
@@ -63,7 +63,7 @@ $node_subscriber->safe_psql('postgres',
 # Wait for initial table sync to finish
 $node_subscriber->wait_for_subscription_sync($node_publisher, 'tap_sub');
 
-# Check the initial data of tab_drop_refresh was copied to subscriber
+# Check the initial data of tab_2 was copied to subscriber
 $result = $node_subscriber->safe_psql('postgres',
 	"SELECT count(*), min(a), max(a) FROM tab_2");
 is($result, qq(10|1|10), 'check initial data is copied to subscriber');

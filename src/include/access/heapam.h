@@ -4,7 +4,7 @@
  *	  POSTGRES heap access method definitions.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/heapam.h
@@ -25,6 +25,7 @@
 #include "storage/bufpage.h"
 #include "storage/dsm.h"
 #include "storage/lockdefs.h"
+#include "storage/read_stream.h"
 #include "storage/shm_toc.h"
 #include "utils/relcache.h"
 #include "utils/snapshot.h"
@@ -35,6 +36,10 @@
 #define HEAP_INSERT_FROZEN		TABLE_INSERT_FROZEN
 #define HEAP_INSERT_NO_LOGICAL	TABLE_INSERT_NO_LOGICAL
 #define HEAP_INSERT_SPECULATIVE 0x0010
+
+/* "options" flag bits for heap_page_prune_and_freeze */
+#define HEAP_PAGE_PRUNE_MARK_UNUSED_NOW		(1 << 0)
+#define HEAP_PAGE_PRUNE_FREEZE				(1 << 1)
 
 typedef struct BulkInsertStateData *BulkInsertState;
 struct TupleTableSlot;
@@ -66,11 +71,35 @@ typedef struct HeapScanDescData
 
 	HeapTupleData rs_ctup;		/* current tuple in scan, if any */
 
+	/* For scans that stream reads */
+	ReadStream *rs_read_stream;
+
+	/*
+	 * For sequential scans and TID range scans to stream reads. The read
+	 * stream is allocated at the beginning of the scan and reset on rescan or
+	 * when the scan direction changes. The scan direction is saved each time
+	 * a new page is requested. If the scan direction changes from one page to
+	 * the next, the read stream releases all previously pinned buffers and
+	 * resets the prefetch block.
+	 */
+	ScanDirection rs_dir;
+	BlockNumber rs_prefetch_block;
+
 	/*
 	 * For parallel scans to store page allocation data.  NULL when not
 	 * performing a parallel scan.
 	 */
 	ParallelBlockTableScanWorkerData *rs_parallelworkerdata;
+
+	/*
+	 * These fields are only used for bitmap scans for the "skip fetch"
+	 * optimization. Bitmap scans needing no fields from the heap may skip
+	 * fetching an all visible block, instead using the number of tuples per
+	 * block reported by the bitmap to determine how many NULL-filled tuples
+	 * to return.
+	 */
+	Buffer		rs_vmbuffer;
+	int			rs_empty_tuples_pending;
 
 	/* these fields only used in page-at-a-time mode and for bitmap scans */
 	int			rs_cindex;		/* current tuple's index in vistuples */
@@ -97,7 +126,7 @@ typedef enum
 	HEAPTUPLE_LIVE,				/* tuple is live (committed, no deleter) */
 	HEAPTUPLE_RECENTLY_DEAD,	/* tuple is dead, but not deletable yet */
 	HEAPTUPLE_INSERT_IN_PROGRESS,	/* inserting xact is still in progress */
-	HEAPTUPLE_DELETE_IN_PROGRESS	/* deleting xact is still in progress */
+	HEAPTUPLE_DELETE_IN_PROGRESS,	/* deleting xact is still in progress */
 } HTSV_Result;
 
 /*
@@ -191,6 +220,57 @@ typedef struct HeapPageFreeze
 
 } HeapPageFreeze;
 
+/*
+ * Per-page state returned by heap_page_prune_and_freeze()
+ */
+typedef struct PruneFreezeResult
+{
+	int			ndeleted;		/* Number of tuples deleted from the page */
+	int			nnewlpdead;		/* Number of newly LP_DEAD items */
+	int			nfrozen;		/* Number of tuples we froze */
+
+	/* Number of live and recently dead tuples on the page, after pruning */
+	int			live_tuples;
+	int			recently_dead_tuples;
+
+	/*
+	 * all_visible and all_frozen indicate if the all-visible and all-frozen
+	 * bits in the visibility map can be set for this page, after pruning.
+	 *
+	 * vm_conflict_horizon is the newest xmin of live tuples on the page.  The
+	 * caller can use it as the conflict horizon when setting the VM bits.  It
+	 * is only valid if we froze some tuples (nfrozen > 0), and all_frozen is
+	 * true.
+	 *
+	 * These are only set if the HEAP_PRUNE_FREEZE option is set.
+	 */
+	bool		all_visible;
+	bool		all_frozen;
+	TransactionId vm_conflict_horizon;
+
+	/*
+	 * Whether or not the page makes rel truncation unsafe.  This is set to
+	 * 'true', even if the page contains LP_DEAD items.  VACUUM will remove
+	 * them before attempting to truncate.
+	 */
+	bool		hastup;
+
+	/*
+	 * LP_DEAD items on the page after pruning.  Includes existing LP_DEAD
+	 * items.
+	 */
+	int			lpdead_items;
+	OffsetNumber deadoffsets[MaxHeapTuplesPerPage];
+} PruneFreezeResult;
+
+/* 'reason' codes for heap_page_prune_and_freeze() */
+typedef enum
+{
+	PRUNE_ON_ACCESS,			/* on-access pruning */
+	PRUNE_VACUUM_SCAN,			/* VACUUM 1st heap pass */
+	PRUNE_VACUUM_CLEANUP,		/* VACUUM 2nd heap pass */
+} PruneReason;
+
 /* ----------------
  *		function prototypes for heap access method
  *
@@ -212,7 +292,7 @@ extern TableScanDesc heap_beginscan(Relation relation, Snapshot snapshot,
 									uint32 flags);
 extern void heap_setscanlimits(TableScanDesc sscan, BlockNumber startBlk,
 							   BlockNumber numBlks);
-extern void heapgetpage(TableScanDesc sscan, BlockNumber block);
+extern void heap_prepare_pagescan(TableScanDesc sscan);
 extern void heap_rescan(TableScanDesc sscan, ScanKey key, bool set_params,
 						bool allow_strat, bool allow_sync, bool allow_pagemode);
 extern void heap_endscan(TableScanDesc sscan);
@@ -261,9 +341,11 @@ extern bool heap_prepare_freeze_tuple(HeapTupleHeader tuple,
 									  const struct VacuumCutoffs *cutoffs,
 									  HeapPageFreeze *pagefrz,
 									  HeapTupleFreeze *frz, bool *totally_frozen);
-extern void heap_freeze_execute_prepared(Relation rel, Buffer buffer,
-										 TransactionId snapshotConflictHorizon,
-										 HeapTupleFreeze *tuples, int ntuples);
+
+extern void heap_pre_freeze_checks(Buffer buffer,
+								   HeapTupleFreeze *tuples, int ntuples);
+extern void heap_freeze_prepared_tuples(Buffer buffer,
+										HeapTupleFreeze *tuples, int ntuples);
 extern bool heap_freeze_tuple(HeapTupleHeader tuple,
 							  TransactionId relfrozenxid, TransactionId relminmxid,
 							  TransactionId FreezeLimit, TransactionId MultiXactCutoff);
@@ -284,17 +366,28 @@ extern TransactionId heap_index_delete_tuples(Relation rel,
 /* in heap/pruneheap.c */
 struct GlobalVisState;
 extern void heap_page_prune_opt(Relation relation, Buffer buffer);
-extern int	heap_page_prune(Relation relation, Buffer buffer,
-							struct GlobalVisState *vistest,
-							TransactionId old_snap_xmin,
-							TimestampTz old_snap_ts,
-							int *nnewlpdead,
-							OffsetNumber *off_loc);
-extern void heap_page_prune_execute(Buffer buffer,
+extern void heap_page_prune_and_freeze(Relation relation, Buffer buffer,
+									   struct GlobalVisState *vistest,
+									   int options,
+									   struct VacuumCutoffs *cutoffs,
+									   PruneFreezeResult *presult,
+									   PruneReason reason,
+									   OffsetNumber *off_loc,
+									   TransactionId *new_relfrozen_xid,
+									   MultiXactId *new_relmin_mxid);
+extern void heap_page_prune_execute(Buffer buffer, bool lp_truncate_only,
 									OffsetNumber *redirected, int nredirected,
 									OffsetNumber *nowdead, int ndead,
 									OffsetNumber *nowunused, int nunused);
 extern void heap_get_root_tuples(Page page, OffsetNumber *root_offsets);
+extern void log_heap_prune_and_freeze(Relation relation, Buffer buffer,
+									  TransactionId conflict_xid,
+									  bool cleanup_lock,
+									  PruneReason reason,
+									  HeapTupleFreeze *frozen, int nfrozen,
+									  OffsetNumber *redirected, int nredirected,
+									  OffsetNumber *dead, int ndead,
+									  OffsetNumber *unused, int nunused);
 
 /* in heap/vacuumlazy.c */
 struct VacuumParams;

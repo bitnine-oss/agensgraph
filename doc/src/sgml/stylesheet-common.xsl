@@ -4,7 +4,7 @@
 
 <!--
   This file contains XSLT stylesheet customizations that are common to
-  all output formats (HTML, HTML Help, XSL-FO, etc.).
+  all output formats (HTML, XSL-FO, man, etc.).
   -->
 
 <xsl:include href="stylesheet-speedup-common.xsl" />
@@ -42,6 +42,13 @@
 <xsl:param name="variablelist.term.break.after">1</xsl:param>
 <xsl:param name="variablelist.term.separator"></xsl:param>
 <xsl:param name="xref.with.number.and.title" select="0"></xsl:param>
+
+<!--
+  This is the default setting, but putting it here makes sure the variable
+  exists even with older (<1.79) stylesheet versions, because it is used in
+  our customization layer.
+-->
+<xsl:param name="autolink.index.see" select="1"/>
 
 
 <!-- Change display of some elements -->

@@ -291,14 +291,14 @@ alter table tenk2 set (parallel_workers = 0);
 explain (costs off)
 	select count(*) from tenk1 where (two, four) not in
 	(select hundred, thousand from tenk2 where thousand > 100);
-                      QUERY PLAN                      
-------------------------------------------------------
+                                                   QUERY PLAN                                                   
+----------------------------------------------------------------------------------------------------------------
  Finalize Aggregate
    ->  Gather
          Workers Planned: 4
          ->  Partial Aggregate
                ->  Parallel Seq Scan on tenk1
-                     Filter: (NOT (hashed SubPlan 1))
+                     Filter: (NOT (ANY ((two = (hashed SubPlan 1).col1) AND (four = (hashed SubPlan 1).col2))))
                      SubPlan 1
                        ->  Seq Scan on tenk2
                              Filter: (thousand > 100)
@@ -315,10 +315,10 @@ select count(*) from tenk1 where (two, four) not in
 explain (costs off)
 	select * from tenk1 where (unique1 + random())::integer not in
 	(select ten from tenk2);
-             QUERY PLAN             
-------------------------------------
+                                              QUERY PLAN                                               
+-------------------------------------------------------------------------------------------------------
  Seq Scan on tenk1
-   Filter: (NOT (hashed SubPlan 1))
+   Filter: (NOT (ANY ((((unique1)::double precision + random()))::integer = (hashed SubPlan 1).col1)))
    SubPlan 1
      ->  Seq Scan on tenk2
 (4 rows)
@@ -335,7 +335,7 @@ explain (costs off)
                       QUERY PLAN                      
 ------------------------------------------------------
  Aggregate
-   InitPlan 1 (returns $2)
+   InitPlan 1
      ->  Finalize Aggregate
            ->  Gather
                  Workers Planned: 2
@@ -343,10 +343,9 @@ explain (costs off)
                        ->  Parallel Seq Scan on tenk2
    ->  Gather
          Workers Planned: 4
-         Params Evaluated: $2
          ->  Parallel Seq Scan on tenk1
-               Filter: (unique1 = $2)
-(12 rows)
+               Filter: (unique1 = (InitPlan 1).col1)
+(11 rows)
 
 select count(*) from tenk1
     where tenk1.unique1 = (Select max(tenk2.unique1) from tenk2);
@@ -362,6 +361,7 @@ alter table tenk2 reset (parallel_workers);
 -- test parallel index scans.
 set enable_seqscan to off;
 set enable_bitmapscan to off;
+set random_page_cost = 2;
 explain (costs off)
 	select  count((unique1)) from tenk1 where hundred > 1;
                              QUERY PLAN                             
@@ -378,6 +378,30 @@ select  count((unique1)) from tenk1 where hundred > 1;
  count 
 -------
   9800
+(1 row)
+
+-- Parallel ScalarArrayOp index scan
+explain (costs off)
+  select count((unique1)) from tenk1
+  where hundred = any ((select array_agg(i) from generate_series(1, 100, 15) i)::int[]);
+                             QUERY PLAN                              
+---------------------------------------------------------------------
+ Finalize Aggregate
+   InitPlan 1
+     ->  Aggregate
+           ->  Function Scan on generate_series i
+   ->  Gather
+         Workers Planned: 4
+         ->  Partial Aggregate
+               ->  Parallel Index Scan using tenk1_hundred on tenk1
+                     Index Cond: (hundred = ANY ((InitPlan 1).col1))
+(9 rows)
+
+select count((unique1)) from tenk1
+where hundred = any ((select array_agg(i) from generate_series(1, 100, 15) i)::int[]);
+ count 
+-------
+   700
 (1 row)
 
 -- test parallel index-only scans.
@@ -937,6 +961,59 @@ select string4 from tenk1 order by string4 limit 5;
 
 reset parallel_leader_participation;
 reset max_parallel_workers;
+create function parallel_safe_volatile(a int) returns int as
+  $$ begin return a; end; $$ parallel safe volatile language plpgsql;
+-- Test gather merge atop of a sort of a partial path
+explain (costs off)
+select * from tenk1 where four = 2
+order by four, hundred, parallel_safe_volatile(thousand);
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Gather Merge
+   Workers Planned: 4
+   ->  Sort
+         Sort Key: hundred, (parallel_safe_volatile(thousand))
+         ->  Parallel Seq Scan on tenk1
+               Filter: (four = 2)
+(6 rows)
+
+-- Test gather merge atop of an incremental sort a of partial path
+set min_parallel_index_scan_size = 0;
+set enable_seqscan = off;
+explain (costs off)
+select * from tenk1 where four = 2
+order by four, hundred, parallel_safe_volatile(thousand);
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Gather Merge
+   Workers Planned: 4
+   ->  Incremental Sort
+         Sort Key: hundred, (parallel_safe_volatile(thousand))
+         Presorted Key: hundred
+         ->  Parallel Index Scan using tenk1_hundred on tenk1
+               Filter: (four = 2)
+(7 rows)
+
+reset min_parallel_index_scan_size;
+reset enable_seqscan;
+-- Test GROUP BY with a gather merge path atop of a sort of a partial path
+explain (costs off)
+select count(*) from tenk1
+group by twenty, parallel_safe_volatile(two);
+                             QUERY PLAN                             
+--------------------------------------------------------------------
+ Finalize GroupAggregate
+   Group Key: twenty, (parallel_safe_volatile(two))
+   ->  Gather Merge
+         Workers Planned: 4
+         ->  Sort
+               Sort Key: twenty, (parallel_safe_volatile(two))
+               ->  Partial HashAggregate
+                     Group Key: twenty, parallel_safe_volatile(two)
+                     ->  Parallel Seq Scan on tenk1
+(9 rows)
+
+drop function parallel_safe_volatile(int);
 SAVEPOINT settings;
 SET LOCAL debug_parallel_query = 1;
 explain (costs off)
@@ -1097,27 +1174,25 @@ ORDER BY 1;
    ->  Append
          ->  Gather
                Workers Planned: 4
-               Params Evaluated: $1
-               InitPlan 1 (returns $1)
+               InitPlan 1
                  ->  Limit
                        ->  Gather
                              Workers Planned: 4
                              ->  Parallel Seq Scan on tenk1 tenk1_2
                                    Filter: (fivethous = 1)
                ->  Parallel Seq Scan on tenk1
-                     Filter: (fivethous = $1)
+                     Filter: (fivethous = (InitPlan 1).col1)
          ->  Gather
                Workers Planned: 4
-               Params Evaluated: $3
-               InitPlan 2 (returns $3)
+               InitPlan 2
                  ->  Limit
                        ->  Gather
                              Workers Planned: 4
                              ->  Parallel Seq Scan on tenk1 tenk1_3
                                    Filter: (fivethous = 1)
                ->  Parallel Seq Scan on tenk1 tenk1_1
-                     Filter: (fivethous = $3)
-(25 rows)
+                     Filter: (fivethous = (InitPlan 2).col1)
+(23 rows)
 
 -- test interaction with SRFs
 SELECT * FROM information_schema.foreign_data_wrapper_options
@@ -1129,10 +1204,10 @@ ORDER BY 1, 2, 3;
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT generate_series(1, two), array(select generate_series(1, two))
   FROM tenk1 ORDER BY tenthous;
-                              QUERY PLAN                              
-----------------------------------------------------------------------
+                                QUERY PLAN                                 
+---------------------------------------------------------------------------
  ProjectSet
-   Output: generate_series(1, tenk1.two), (SubPlan 1), tenk1.tenthous
+   Output: generate_series(1, tenk1.two), ARRAY(SubPlan 1), tenk1.tenthous
    ->  Gather Merge
          Output: tenk1.two, tenk1.tenthous
          Workers Planned: 4

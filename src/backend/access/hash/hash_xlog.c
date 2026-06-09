@@ -4,7 +4,7 @@
  *	  WAL replay logic for hash index.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -17,11 +17,8 @@
 #include "access/bufmask.h"
 #include "access/hash.h"
 #include "access/hash_xlog.h"
-#include "access/transam.h"
-#include "access/xlog.h"
 #include "access/xlogutils.h"
-#include "miscadmin.h"
-#include "storage/procarray.h"
+#include "storage/standby.h"
 
 /*
  * replay a hash index meta page
@@ -632,7 +629,7 @@ hash_xlog_squeeze_page(XLogReaderState *record)
 	XLogRecPtr	lsn = record->EndRecPtr;
 	xl_hash_squeeze_page *xldata = (xl_hash_squeeze_page *) XLogRecGetData(record);
 	Buffer		bucketbuf = InvalidBuffer;
-	Buffer		writebuf;
+	Buffer		writebuf = InvalidBuffer;
 	Buffer		ovflbuf;
 	Buffer		prevbuf = InvalidBuffer;
 	Buffer		mapbuf;
@@ -655,7 +652,10 @@ hash_xlog_squeeze_page(XLogReaderState *record)
 		 */
 		(void) XLogReadBufferForRedoExtended(record, 0, RBM_NORMAL, true, &bucketbuf);
 
-		action = XLogReadBufferForRedo(record, 1, &writebuf);
+		if (xldata->ntups > 0 || xldata->is_prev_bucket_same_wrt)
+			action = XLogReadBufferForRedo(record, 1, &writebuf);
+		else
+			action = BLK_NOTFOUND;
 	}
 
 	/* replay the record for adding entries in overflow buffer */
@@ -666,6 +666,7 @@ hash_xlog_squeeze_page(XLogReaderState *record)
 		char	   *data;
 		Size		datalen;
 		uint16		ninserted = 0;
+		bool		mod_wbuf = false;
 
 		data = begin = XLogRecGetBlockData(record, 1, &datalen);
 
@@ -695,6 +696,17 @@ hash_xlog_squeeze_page(XLogReaderState *record)
 
 				ninserted++;
 			}
+
+			mod_wbuf = true;
+		}
+		else
+		{
+			/*
+			 * Ensure that the required flags are set when there are no
+			 * tuples.  See _hash_freeovflpage().
+			 */
+			Assert(xldata->is_prim_bucket_same_wrt ||
+				   xldata->is_prev_bucket_same_wrt);
 		}
 
 		/*
@@ -711,10 +723,15 @@ hash_xlog_squeeze_page(XLogReaderState *record)
 			HashPageOpaque writeopaque = HashPageGetOpaque(writepage);
 
 			writeopaque->hasho_nextblkno = xldata->nextblkno;
+			mod_wbuf = true;
 		}
 
-		PageSetLSN(writepage, lsn);
-		MarkBufferDirty(writebuf);
+		/* Set LSN and mark writebuf dirty iff it is modified */
+		if (mod_wbuf)
+		{
+			PageSetLSN(writepage, lsn);
+			MarkBufferDirty(writebuf);
+		}
 	}
 
 	/* replay the record for initializing overflow buffer */
@@ -992,10 +1009,11 @@ hash_xlog_vacuum_one_page(XLogReaderState *record)
 	 * Hash index records that are marked as LP_DEAD and being removed during
 	 * hash index tuple insertion can conflict with standby queries. You might
 	 * think that vacuum records would conflict as well, but we've handled
-	 * that already.  XLOG_HEAP2_PRUNE records provide the highest xid cleaned
-	 * by the vacuum of the heap and so we can resolve any conflicts just once
-	 * when that arrives.  After that we know that no conflicts exist from
-	 * individual hash index vacuum records on that index.
+	 * that already.  XLOG_HEAP2_PRUNE_VACUUM_SCAN records provide the highest
+	 * xid cleaned by the vacuum of the heap and so we can resolve any
+	 * conflicts just once when that arrives.  After that we know that no
+	 * conflicts exist from individual hash index vacuum records on that
+	 * index.
 	 */
 	if (InHotStandby)
 	{

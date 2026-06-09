@@ -3,7 +3,7 @@
  * buffile.c
  *	  Management of large buffered temporary files.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -49,8 +49,8 @@
 #include "executor/instrument.h"
 #include "miscadmin.h"
 #include "pgstat.h"
-#include "storage/buf_internals.h"
 #include "storage/buffile.h"
+#include "storage/bufmgr.h"
 #include "storage/fd.h"
 #include "utils/resowner.h"
 
@@ -841,38 +841,20 @@ BufFileTell(BufFile *file, int *fileno, off_t *offset)
  *
  * Performs absolute seek to the start of the n'th BLCKSZ-sized block of
  * the file.  Note that users of this interface will fail if their files
- * exceed BLCKSZ * LONG_MAX bytes, but that is quite a lot; we don't work
- * with tables bigger than that, either...
+ * exceed BLCKSZ * PG_INT64_MAX bytes, but that is quite a lot; we don't
+ * work with tables bigger than that, either...
  *
  * Result is 0 if OK, EOF if not.  Logical position is not moved if an
  * impossible seek is attempted.
  */
 int
-BufFileSeekBlock(BufFile *file, long blknum)
+BufFileSeekBlock(BufFile *file, int64 blknum)
 {
 	return BufFileSeek(file,
 					   (int) (blknum / BUFFILE_SEG_SIZE),
 					   (off_t) (blknum % BUFFILE_SEG_SIZE) * BLCKSZ,
 					   SEEK_SET);
 }
-
-#ifdef NOT_USED
-/*
- * BufFileTellBlock --- block-oriented tell
- *
- * Any fractional part of a block in the current seek position is ignored.
- */
-long
-BufFileTellBlock(BufFile *file)
-{
-	long		blknum;
-
-	blknum = (file->curOffset + file->pos) / BLCKSZ;
-	blknum += file->curFile * BUFFILE_SEG_SIZE;
-	return blknum;
-}
-
-#endif
 
 /*
  * Return the current fileset based BufFile size.
@@ -919,10 +901,10 @@ BufFileSize(BufFile *file)
  * begins.  Caller should apply this as an offset when working off block
  * positions that are in terms of the original BufFile space.
  */
-long
+int64
 BufFileAppend(BufFile *target, BufFile *source)
 {
-	long		startBlock = target->numFiles * BUFFILE_SEG_SIZE;
+	int64		startBlock = (int64) target->numFiles * BUFFILE_SEG_SIZE;
 	int			newNumFiles = target->numFiles + source->numFiles;
 	int			i;
 

@@ -37,12 +37,17 @@ RESET ROLE
    written as either an identifier or a string literal.
    After <command>SET ROLE</command>, permissions checking for SQL commands
    is carried out as though the named role were the one that had logged
-   in originally.
+   in originally.  Note that <command>SET ROLE</command> and
+   <command>SET SESSION AUTHORIZATION</command> are exceptions; permissions
+   checks for those continue to use the current session user and the initial
+   session user (the <firstterm>authenticated user</firstterm>), respectively.
   </para>
 
   <para>
-   The specified <replaceable class="parameter">role_name</replaceable>
-   must be a role that the current session user is a member of.
+   The current session user must have the <literal>SET</literal> option for the
+   specified <replaceable class="parameter">role_name</replaceable>, either
+   directly or indirectly via a chain of memberships with the
+   <literal>SET</literal> option.
    (If the session user is a superuser, any role can be selected.)
   </para>
 
@@ -84,11 +89,6 @@ RESET ROLE
    available to the named role. If the role was granted <literal>WITH INHERIT
    FALSE, SET FALSE</literal> then the privileges of that role cannot be
    exercised either with or without <literal>SET ROLE</literal>.
-  </para>
-
-  <para>
-   Note that when a superuser chooses to <command>SET ROLE</command> to a
-   non-superuser role, they lose their superuser privileges.
   </para>
 
   <para>

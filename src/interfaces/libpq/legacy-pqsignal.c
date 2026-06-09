@@ -4,7 +4,7 @@
  *	  reliable BSD-style signal(2) routine stolen from RWW who stole it
  *	  from Stevens...
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -28,9 +28,7 @@
  * with the semantics it had in 9.2; in particular, this has different
  * behavior for SIGALRM than the version in src/port/pqsignal.c.
  *
- * libpq itself uses this only for SIGPIPE (and even then, only in
- * non-ENABLE_THREAD_SAFETY builds), so the incompatibility isn't
- * troublesome for internal references.
+ * libpq itself does not use this.
  */
 pqsigfunc
 pqsignal(int signo, pqsigfunc func)

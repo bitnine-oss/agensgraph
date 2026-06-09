@@ -469,7 +469,6 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 	EvalPlanQualEnd(&mgstate->mt_epqstate);
 
 	ExecEndNode(mgstate->subplan);
-	ExecFreeExprContext(&mgstate->ps);
 
 	/*
 	 * ModifyGraph plan uses multi-level CommandId for supporting visibitliy

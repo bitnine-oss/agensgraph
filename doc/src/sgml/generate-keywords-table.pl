@@ -2,10 +2,10 @@
 #
 # Generate the keywords table for the documentation's SQL Key Words appendix
 #
-# Copyright (c) 2019-2023, PostgreSQL Global Development Group
+# Copyright (c) 2019-2024, PostgreSQL Global Development Group
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 my @sql_versions = reverse sort ('1992', '2016', '2023');
 

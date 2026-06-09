@@ -2,7 +2,7 @@
  *
  * walmethods.h
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/walmethods.h
@@ -32,7 +32,7 @@ typedef enum
 {
 	CLOSE_NORMAL,
 	CLOSE_UNLINK,
-	CLOSE_NO_RENAME
+	CLOSE_NO_RENAME,
 } WalCloseMethod;
 
 /*

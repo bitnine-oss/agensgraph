@@ -3,7 +3,7 @@
  * nodeHash.c
  *	  Routines to hash relations for hashjoin
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -30,19 +30,18 @@
 #include "access/parallel.h"
 #include "catalog/pg_statistic.h"
 #include "commands/tablespace.h"
-#include "executor/execdebug.h"
+#include "executor/executor.h"
 #include "executor/hashjoin.h"
 #include "executor/nodeHash.h"
 #include "executor/nodeHashjoin.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "port/atomics.h"
 #include "port/pg_bitutils.h"
 #include "utils/dynahash.h"
-#include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
+#include "utils/wait_event.h"
 
 static void ExecHashIncreaseNumBatches(HashJoinTable hashtable);
 static void ExecHashIncreaseNumBuckets(HashJoinTable hashtable);
@@ -414,11 +413,6 @@ void
 ExecEndHash(HashState *node)
 {
 	PlanState  *outerPlan;
-
-	/*
-	 * free exprcontext
-	 */
-	ExecFreeExprContext(&node->ps);
 
 	/*
 	 * shut down the subplan
@@ -1160,6 +1154,7 @@ ExecParallelHashIncreaseNumBatches(HashJoinTable hashtable)
 					double		dtuples;
 					double		dbuckets;
 					int			new_nbuckets;
+					uint32		max_buckets;
 
 					/*
 					 * We probably also need a smaller bucket array.  How many
@@ -1172,9 +1167,17 @@ ExecParallelHashIncreaseNumBatches(HashJoinTable hashtable)
 					 * array.
 					 */
 					dtuples = (old_batch0->ntuples * 2.0) / new_nbatch;
+
+					/*
+					 * We need to calculate the maximum number of buckets to
+					 * stay within the MaxAllocSize boundary.  Round the
+					 * maximum number to the previous power of 2 given that
+					 * later we round the number to the next power of 2.
+					 */
+					max_buckets = pg_prevpower2_32((uint32)
+												   (MaxAllocSize / sizeof(dsa_pointer_atomic)));
 					dbuckets = ceil(dtuples / NTUP_PER_BUCKET);
-					dbuckets = Min(dbuckets,
-								   MaxAllocSize / sizeof(dsa_pointer_atomic));
+					dbuckets = Min(dbuckets, max_buckets);
 					new_nbuckets = (int) dbuckets;
 					new_nbuckets = Max(new_nbuckets, 1024);
 					new_nbuckets = pg_nextpower2_32(new_nbuckets);

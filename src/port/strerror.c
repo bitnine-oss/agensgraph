@@ -3,7 +3,7 @@
  * strerror.c
  *	  Replacements for standard strerror() and strerror_r() functions
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -214,10 +214,8 @@ get_errno_symbol(int errnum)
 			return "ENOTCONN";
 		case ENOTDIR:
 			return "ENOTDIR";
-#if defined(ENOTEMPTY) && (ENOTEMPTY != EEXIST) /* same code on AIX */
 		case ENOTEMPTY:
 			return "ENOTEMPTY";
-#endif
 		case ENOTSOCK:
 			return "ENOTSOCK";
 #ifdef ENOTSUP

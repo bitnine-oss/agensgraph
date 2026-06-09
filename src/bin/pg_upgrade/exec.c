@@ -3,7 +3,7 @@
  *
  *	execution functions
  *
- *	Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/exec.c
  */
 
@@ -44,8 +44,7 @@ get_bin_version(ClusterInfo *cluster)
 
 	if ((output = popen(cmd, "r")) == NULL ||
 		fgets(cmd_output, sizeof(cmd_output), output) == NULL)
-		pg_fatal("could not get pg_ctl version data using %s: %s",
-				 cmd, strerror(errno));
+		pg_fatal("could not get pg_ctl version data using %s: %m", cmd);
 
 	rc = pclose(output);
 	if (rc != 0)
@@ -242,8 +241,7 @@ pid_lock_file_exists(const char *datadir)
 	{
 		/* ENOTDIR means we will throw a more useful error later */
 		if (errno != ENOENT && errno != ENOTDIR)
-			pg_fatal("could not open file \"%s\" for reading: %s",
-					 path, strerror(errno));
+			pg_fatal("could not open file \"%s\" for reading: %m", path);
 
 		return false;
 	}
@@ -322,8 +320,8 @@ check_single_dir(const char *pg_data, const char *subdir)
 			 subdir);
 
 	if (stat(subDirName, &statBuf) != 0)
-		report_status(PG_FATAL, "check for \"%s\" failed: %s",
-					  subDirName, strerror(errno));
+		report_status(PG_FATAL, "check for \"%s\" failed: %m",
+					  subDirName);
 	else if (!S_ISDIR(statBuf.st_mode))
 		report_status(PG_FATAL, "\"%s\" is not a directory",
 					  subDirName);
@@ -388,8 +386,8 @@ check_bin_dir(ClusterInfo *cluster, bool check_versions)
 
 	/* check bindir */
 	if (stat(cluster->bindir, &statBuf) != 0)
-		report_status(PG_FATAL, "check for \"%s\" failed: %s",
-					  cluster->bindir, strerror(errno));
+		report_status(PG_FATAL, "check for \"%s\" failed: %m",
+					  cluster->bindir);
 	else if (!S_ISDIR(statBuf.st_mode))
 		report_status(PG_FATAL, "\"%s\" is not a directory",
 					  cluster->bindir);
@@ -431,7 +429,7 @@ static void
 check_exec(const char *dir, const char *program, bool check_version)
 {
 	char		path[MAXPGPATH];
-	char		line[MAXPGPATH];
+	char	   *line;
 	char		cmd[MAXPGPATH];
 	char		versionstr[128];
 
@@ -442,7 +440,7 @@ check_exec(const char *dir, const char *program, bool check_version)
 
 	snprintf(cmd, sizeof(cmd), "\"%s\" -V", path);
 
-	if (!pipe_read_line(cmd, line, sizeof(line)))
+	if ((line = pipe_read_line(cmd)) == NULL)
 		pg_fatal("check for \"%s\" failed: cannot execute",
 				 path);
 
@@ -456,4 +454,6 @@ check_exec(const char *dir, const char *program, bool check_version)
 			pg_fatal("check for \"%s\" failed: incorrect version: found \"%s\", expected \"%s\"",
 					 path, line, versionstr);
 	}
+
+	pg_free(line);
 }

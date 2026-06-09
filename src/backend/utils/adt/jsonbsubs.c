@@ -3,7 +3,7 @@
  * jsonbsubs.c
  *	  Subscripting support functions for jsonb.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -15,15 +15,12 @@
 #include "postgres.h"
 
 #include "executor/execExpr.h"
-#include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/subscripting.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_expr.h"
-#include "utils/jsonb.h"
-#include "utils/jsonfuncs.h"
 #include "utils/builtins.h"
-#include "utils/lsyscache.h"
+#include "utils/jsonb.h"
 
 
 /* SubscriptingRefState.workspace for jsonb subscripting execution */

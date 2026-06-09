@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 backend_sources += files(
   'condition_variable.c',
@@ -11,5 +11,3 @@ backend_sources += files(
   's_lock.c',
   'spin.c',
 )
-
-generated_backend_sources += lwlocknames[1]

@@ -36,7 +36,7 @@
  *
  * As ever, Windows requires its own implementation.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -137,7 +137,7 @@ int			min_dynamic_shared_memory;
  * Arguments:
  *	 op: The operation to be performed.
  *	 handle: The handle of an existing object, or for DSM_OP_CREATE, the
- *	   a new handle the caller wants created.
+ *	   identifier for the new handle the caller wants created.
  *	 request_size: For DSM_OP_CREATE, the requested size.  Otherwise, 0.
  *	 impl_private: Private, implementation-specific data.  Will be a pointer
  *	   to NULL for the first operation on a shared memory segment within this
@@ -873,7 +873,7 @@ dsm_impl_mmap(dsm_op op, dsm_handle handle, Size request_size,
 		 * transferring data to the kernel.
 		 */
 		char	   *zbuffer = (char *) palloc0(ZBUFFER_SIZE);
-		uint32		remaining = request_size;
+		Size		remaining = request_size;
 		bool		success = true;
 
 		/*

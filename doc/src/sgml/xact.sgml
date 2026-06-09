@@ -26,10 +26,10 @@
    Every transaction is identified by a unique
    <literal>VirtualTransactionId</literal> (also called
    <literal>virtualXID</literal> or <literal>vxid</literal>), which
-   is comprised of a backend ID (or <literal>backendID</literal>)
+   is comprised of a backend's process number (or <literal>procNumber</literal>)
    and a sequentially-assigned number local to each backend, known as
    <literal>localXID</literal>.  For example, the virtual transaction
-   ID <literal>4/12532</literal> has a <literal>backendID</literal>
+   ID <literal>4/12532</literal> has a <literal>procNumber</literal>
    of <literal>4</literal> and a <literal>localXID</literal> of
    <literal>12532</literal>.
   </para>
@@ -70,7 +70,7 @@
   </para>
 
   <para>
-   In addition to <literal>vxid</literal> and <type>xid</type>,
+   In addition to <literal>vxid</literal> and <literal>xid</literal>,
    prepared transactions are also assigned Global Transaction
    Identifiers (<acronym>GID</acronym>). GIDs are string literals up
    to 200 bytes long, which must be unique amongst other currently
@@ -121,8 +121,8 @@
   <para>
    Subtransactions can be started explicitly using the
    <command>SAVEPOINT</command> command, but can also be started in
-   other ways, such as PL/pgSQL's <command>EXCEPTION</command> clause.
-   PL/Python and PL/TCL also support explicit subtransactions.
+   other ways, such as PL/pgSQL's <literal>EXCEPTION</literal> clause.
+   PL/Python and PL/Tcl also support explicit subtransactions.
    Subtransactions can also be started from other subtransactions.
    The top-level transaction and its child subtransactions form a
    hierarchy or tree, which is why we refer to the main transaction as
@@ -156,7 +156,7 @@
   <para>
    When a top-level transaction with an xid commits, all of its
    subcommitted child subtransactions are also persistently recorded
-   as committed in the <filename>pg_xact</filename> directory.  If the
+   as committed in the <filename>pg_xact</filename> subdirectory.  If the
    top-level transaction aborts, all its subtransactions are also aborted,
    even if they were subcommitted.
   </para>

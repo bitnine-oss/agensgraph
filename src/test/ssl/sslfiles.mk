@@ -9,7 +9,7 @@
 #   The main Makefile in this directory defers to this helper file when
 #   building the sslfiles-related targets.
 #
-# Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/test/ssl/sslfiles.mk
@@ -109,7 +109,7 @@ ssl/server-rsapss.crt: ssl/server-rsapss.key conf/server-rsapss.config
 
 # Password-protected version of server-cn-only.key
 ssl/server-password.key: ssl/server-cn-only.key
-	$(OPENSSL) rsa -aes256 -in $< -out $@ -passout 'pass:secret1'
+	$(OPENSSL) pkey -aes256 -in $< -out $@ -passout 'pass:secret1'
 
 # Key that uses the RSA-PSS algorithm
 ssl/server-rsapss.key:
@@ -122,7 +122,7 @@ ssl/client-der.key: ssl/client.key
 # Convert client.key to encrypted PEM (X.509 text) and DER (X.509 ASN.1)
 # formats to test libpq's support for the sslpassword= option.
 ssl/client-encrypted-pem.key: ssl/client.key
-	$(OPENSSL) rsa -in $< -outform PEM -aes128 -passout 'pass:dUmmyP^#+' -out $@
+	$(OPENSSL) pkey -in $< -outform PEM -aes128 -passout 'pass:dUmmyP^#+' -out $@
 # TODO Explicitly choosing -aes128 generates a key unusable to PostgreSQL with
 # OpenSSL 3.0.0, so fall back on the default for now.
 ssl/client-encrypted-der.key: ssl/client.key
@@ -269,6 +269,6 @@ sslfiles-clean:
 # clean targets will be run during a "standard" recursive clean run from the
 # main build tree. The sslfiles-clean target must be run explicitly from this
 # directory.
-.PHONY: clean distclean maintainer-clean
-clean distclean maintainer-clean:
+.PHONY: clean distclean
+clean distclean:
 	rm -rf ssl/*.old ssl/new_certs_dir ssl/client*_tmp.key

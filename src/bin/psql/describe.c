@@ -7,7 +7,7 @@
  * information for an old server, but not to fail outright.  (But failing
  * against a pre-9.2 server is allowed.)
  *
- * Copyright (c) 2000-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2024, PostgreSQL Global Development Group
  *
  * src/bin/psql/describe.c
  */
@@ -126,7 +126,6 @@ describeAggregates(const char *pattern, bool verbose, bool showSystem)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of aggregate functions");
 	myopt.translate_header = true;
 
@@ -199,7 +198,6 @@ describeAccessMethods(const char *pattern, bool verbose)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of access methods");
 	myopt.translate_header = true;
 	myopt.translate_columns = translate_columns;
@@ -264,7 +262,6 @@ describeTablespaces(const char *pattern, bool verbose)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of tablespaces");
 	myopt.translate_header = true;
 
@@ -587,7 +584,6 @@ describeFunctions(const char *functypes, const char *func_pattern,
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of functions");
 	myopt.translate_header = true;
 	if (pset.sversion >= 90600)
@@ -704,7 +700,6 @@ describeTypes(const char *pattern, bool verbose, bool showSystem)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of data types");
 	myopt.translate_header = true;
 
@@ -895,7 +890,6 @@ describeOperators(const char *oper_pattern,
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of operators");
 	myopt.translate_header = true;
 
@@ -934,7 +928,7 @@ listAllDbs(const char *pattern, bool verbose)
 					  gettext_noop("Encoding"));
 	if (pset.sversion >= 150000)
 		appendPQExpBuffer(&buf,
-						  "  CASE d.datlocprovider WHEN 'c' THEN 'libc' WHEN 'i' THEN 'icu' END AS \"%s\",\n",
+						  "  CASE d.datlocprovider WHEN 'b' THEN 'builtin' WHEN 'c' THEN 'libc' WHEN 'i' THEN 'icu' END AS \"%s\",\n",
 						  gettext_noop("Locale Provider"));
 	else
 		appendPQExpBuffer(&buf,
@@ -945,14 +939,18 @@ listAllDbs(const char *pattern, bool verbose)
 					  "  d.datctype as \"%s\",\n",
 					  gettext_noop("Collate"),
 					  gettext_noop("Ctype"));
-	if (pset.sversion >= 150000)
+	if (pset.sversion >= 170000)
+		appendPQExpBuffer(&buf,
+						  "  d.datlocale as \"%s\",\n",
+						  gettext_noop("Locale"));
+	else if (pset.sversion >= 150000)
 		appendPQExpBuffer(&buf,
 						  "  d.daticulocale as \"%s\",\n",
-						  gettext_noop("ICU Locale"));
+						  gettext_noop("Locale"));
 	else
 		appendPQExpBuffer(&buf,
 						  "  NULL as \"%s\",\n",
-						  gettext_noop("ICU Locale"));
+						  gettext_noop("Locale"));
 	if (pset.sversion >= 160000)
 		appendPQExpBuffer(&buf,
 						  "  d.daticurules as \"%s\",\n",
@@ -997,7 +995,6 @@ listAllDbs(const char *pattern, bool verbose)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of databases");
 	myopt.translate_header = true;
 
@@ -1049,6 +1046,11 @@ permissionsList(const char *pattern, bool showSystem)
 
 	printACLColumn(&buf, "c.relacl");
 
+	/*
+	 * The formatting of attacl should match printACLColumn().  However, we
+	 * need no special case for an empty attacl, because the backend always
+	 * optimizes that back to NULL.
+	 */
 	appendPQExpBuffer(&buf,
 					  ",\n  pg_catalog.array_to_string(ARRAY(\n"
 					  "    SELECT attname || E':\\n  ' || pg_catalog.array_to_string(attacl, E'\\n  ')\n"
@@ -1148,7 +1150,6 @@ permissionsList(const char *pattern, bool showSystem)
 	if (!res)
 		goto error_return;
 
-	myopt.nullPrint = NULL;
 	printfPQExpBuffer(&buf, _("Access privileges"));
 	myopt.title = buf.data;
 	myopt.translate_header = true;
@@ -1220,7 +1221,6 @@ listDefaultACLs(const char *pattern)
 	if (!res)
 		goto error_return;
 
-	myopt.nullPrint = NULL;
 	printfPQExpBuffer(&buf, _("Default access privileges"));
 	myopt.title = buf.data;
 	myopt.translate_header = true;
@@ -1419,7 +1419,6 @@ objectDescription(const char *pattern, bool showSystem)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("Object descriptions");
 	myopt.translate_header = true;
 	myopt.translate_columns = translate_columns;
@@ -2799,7 +2798,8 @@ describeOneTableDetails(const char *schemaname,
 									  PQgetvalue(result, i, 1));
 
 					/* Show the stats target if it's not default */
-					if (strcmp(PQgetvalue(result, i, 8), "-1") != 0)
+					if (!PQgetisnull(result, i, 8) &&
+						strcmp(PQgetvalue(result, i, 8), "-1") != 0)
 						appendPQExpBuffer(&buf, "; STATISTICS %s",
 										  PQgetvalue(result, i, 8));
 
@@ -3619,7 +3619,7 @@ describeRoles(const char *pattern, bool verbose, bool showSystem)
 	PGresult   *res;
 	printTableContent cont;
 	printTableOpt myopt = pset.popt.topt;
-	int			ncols = 3;
+	int			ncols = 2;
 	int			nrows = 0;
 	int			i;
 	int			conns;
@@ -3633,11 +3633,7 @@ describeRoles(const char *pattern, bool verbose, bool showSystem)
 	printfPQExpBuffer(&buf,
 					  "SELECT r.rolname, r.rolsuper, r.rolinherit,\n"
 					  "  r.rolcreaterole, r.rolcreatedb, r.rolcanlogin,\n"
-					  "  r.rolconnlimit, r.rolvaliduntil,\n"
-					  "  ARRAY(SELECT b.rolname\n"
-					  "        FROM pg_catalog.pg_auth_members m\n"
-					  "        JOIN pg_catalog.pg_roles b ON (m.roleid = b.oid)\n"
-					  "        WHERE m.member = r.oid) as memberof");
+					  "  r.rolconnlimit, r.rolvaliduntil");
 
 	if (verbose)
 	{
@@ -3677,8 +3673,6 @@ describeRoles(const char *pattern, bool verbose, bool showSystem)
 
 	printTableAddHeader(&cont, gettext_noop("Role name"), true, align);
 	printTableAddHeader(&cont, gettext_noop("Attributes"), true, align);
-	/* ignores implicit memberships from superuser & pg_database_owner */
-	printTableAddHeader(&cont, gettext_noop("Member of"), true, align);
 
 	if (verbose)
 		printTableAddHeader(&cont, gettext_noop("Description"), true, align);
@@ -3703,11 +3697,11 @@ describeRoles(const char *pattern, bool verbose, bool showSystem)
 		if (strcmp(PQgetvalue(res, i, 5), "t") != 0)
 			add_role_attribute(&buf, _("Cannot login"));
 
-		if (strcmp(PQgetvalue(res, i, (verbose ? 10 : 9)), "t") == 0)
+		if (strcmp(PQgetvalue(res, i, (verbose ? 9 : 8)), "t") == 0)
 			add_role_attribute(&buf, _("Replication"));
 
 		if (pset.sversion >= 90500)
-			if (strcmp(PQgetvalue(res, i, (verbose ? 11 : 10)), "t") == 0)
+			if (strcmp(PQgetvalue(res, i, (verbose ? 10 : 9)), "t") == 0)
 				add_role_attribute(&buf, _("Bypass RLS"));
 
 		conns = atoi(PQgetvalue(res, i, 6));
@@ -3737,10 +3731,8 @@ describeRoles(const char *pattern, bool verbose, bool showSystem)
 
 		printTableAddCell(&cont, attr[i], false, false);
 
-		printTableAddCell(&cont, PQgetvalue(res, i, 8), false, false);
-
 		if (verbose)
-			printTableAddCell(&cont, PQgetvalue(res, i, 9), false, false);
+			printTableAddCell(&cont, PQgetvalue(res, i, 8), false, false);
 	}
 	termPQExpBuffer(&buf);
 
@@ -3818,7 +3810,6 @@ listDbRoleSettings(const char *pattern, const char *pattern2)
 	}
 	else
 	{
-		myopt.nullPrint = NULL;
 		myopt.title = _("List of settings");
 		myopt.translate_header = true;
 
@@ -3831,6 +3822,74 @@ listDbRoleSettings(const char *pattern, const char *pattern2)
 error_return:
 	termPQExpBuffer(&buf);
 	return false;
+}
+
+/*
+ * \drg
+ * Describes role grants.
+ */
+bool
+describeRoleGrants(const char *pattern, bool showSystem)
+{
+	PQExpBufferData buf;
+	PGresult   *res;
+	printQueryOpt myopt = pset.popt;
+
+	initPQExpBuffer(&buf);
+	printfPQExpBuffer(&buf,
+					  "SELECT m.rolname AS \"%s\", r.rolname AS \"%s\",\n"
+					  "  pg_catalog.concat_ws(', ',\n",
+					  gettext_noop("Role name"),
+					  gettext_noop("Member of"));
+
+	if (pset.sversion >= 160000)
+		appendPQExpBufferStr(&buf,
+							 "    CASE WHEN pam.admin_option THEN 'ADMIN' END,\n"
+							 "    CASE WHEN pam.inherit_option THEN 'INHERIT' END,\n"
+							 "    CASE WHEN pam.set_option THEN 'SET' END\n");
+	else
+		appendPQExpBufferStr(&buf,
+							 "    CASE WHEN pam.admin_option THEN 'ADMIN' END,\n"
+							 "    CASE WHEN m.rolinherit THEN 'INHERIT' END,\n"
+							 "    'SET'\n");
+
+	appendPQExpBuffer(&buf,
+					  "  ) AS \"%s\",\n"
+					  "  g.rolname AS \"%s\"\n",
+					  gettext_noop("Options"),
+					  gettext_noop("Grantor"));
+
+	appendPQExpBufferStr(&buf,
+						 "FROM pg_catalog.pg_roles m\n"
+						 "     JOIN pg_catalog.pg_auth_members pam ON (pam.member = m.oid)\n"
+						 "     LEFT JOIN pg_catalog.pg_roles r ON (pam.roleid = r.oid)\n"
+						 "     LEFT JOIN pg_catalog.pg_roles g ON (pam.grantor = g.oid)\n");
+
+	if (!showSystem && !pattern)
+		appendPQExpBufferStr(&buf, "WHERE m.rolname !~ '^pg_'\n");
+
+	if (!validateSQLNamePattern(&buf, pattern, false, false,
+								NULL, "m.rolname", NULL, NULL,
+								NULL, 1))
+	{
+		termPQExpBuffer(&buf);
+		return false;
+	}
+
+	appendPQExpBufferStr(&buf, "ORDER BY 1, 2, 4;\n");
+
+	res = PSQLexec(buf.data);
+	termPQExpBuffer(&buf);
+	if (!res)
+		return false;
+
+	myopt.title = _("List of role grants");
+	myopt.translate_header = true;
+
+	printQuery(res, &myopt, pset.queryFout, false, pset.logfile);
+
+	PQclear(res);
+	return true;
 }
 
 
@@ -4019,7 +4078,6 @@ listTables(const char *tabtypes, const char *pattern, bool verbose, bool showSys
 	}
 	else
 	{
-		myopt.nullPrint = NULL;
 		myopt.title = _("List of relations");
 		myopt.translate_header = true;
 		myopt.translate_columns = translate_columns;
@@ -4229,7 +4287,6 @@ listPartitionedTables(const char *reltypes, const char *pattern, bool verbose)
 	initPQExpBuffer(&title);
 	appendPQExpBufferStr(&title, tabletitle);
 
-	myopt.nullPrint = NULL;
 	myopt.title = title.data;
 	myopt.translate_header = true;
 	myopt.translate_columns = translate_columns;
@@ -4309,7 +4366,6 @@ listLanguages(const char *pattern, bool verbose, bool showSystem)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of languages");
 	myopt.translate_header = true;
 
@@ -4343,7 +4399,7 @@ listDomains(const char *pattern, bool verbose, bool showSystem)
 					  "       CASE WHEN t.typnotnull THEN 'not null' END as \"%s\",\n"
 					  "       t.typdefault as \"%s\",\n"
 					  "       pg_catalog.array_to_string(ARRAY(\n"
-					  "         SELECT pg_catalog.pg_get_constraintdef(r.oid, true) FROM pg_catalog.pg_constraint r WHERE t.oid = r.contypid\n"
+					  "         SELECT pg_catalog.pg_get_constraintdef(r.oid, true) FROM pg_catalog.pg_constraint r WHERE t.oid = r.contypid AND r.contype = 'c' ORDER BY r.conname\n"
 					  "       ), ' ') as \"%s\"",
 					  gettext_noop("Schema"),
 					  gettext_noop("Name"),
@@ -4394,7 +4450,6 @@ listDomains(const char *pattern, bool verbose, bool showSystem)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of domains");
 	myopt.translate_header = true;
 
@@ -4473,7 +4528,6 @@ listConversions(const char *pattern, bool verbose, bool showSystem)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of conversions");
 	myopt.translate_header = true;
 	myopt.translate_columns = translate_columns;
@@ -4541,7 +4595,6 @@ describeConfigurationParameters(const char *pattern, bool verbose,
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	if (pattern)
 		myopt.title = _("List of configuration parameters");
 	else
@@ -4623,7 +4676,6 @@ listEventTriggers(const char *pattern, bool verbose)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of event triggers");
 	myopt.translate_header = true;
 	myopt.translate_columns = translate_columns;
@@ -4722,7 +4774,6 @@ listExtendedStats(const char *pattern)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of extended statistics");
 	myopt.translate_header = true;
 
@@ -4835,7 +4886,6 @@ listCasts(const char *pattern, bool verbose)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of casts");
 	myopt.translate_header = true;
 	myopt.translate_columns = translate_columns;
@@ -4875,7 +4925,7 @@ listCollations(const char *pattern, bool verbose, bool showSystem)
 
 	if (pset.sversion >= 100000)
 		appendPQExpBuffer(&buf,
-						  "  CASE c.collprovider WHEN 'd' THEN 'default' WHEN 'c' THEN 'libc' WHEN 'i' THEN 'icu' END AS \"%s\",\n",
+						  "  CASE c.collprovider WHEN 'd' THEN 'default' WHEN 'b' THEN 'builtin' WHEN 'c' THEN 'libc' WHEN 'i' THEN 'icu' END AS \"%s\",\n",
 						  gettext_noop("Provider"));
 	else
 		appendPQExpBuffer(&buf,
@@ -4888,14 +4938,18 @@ listCollations(const char *pattern, bool verbose, bool showSystem)
 					  gettext_noop("Collate"),
 					  gettext_noop("Ctype"));
 
-	if (pset.sversion >= 150000)
+	if (pset.sversion >= 170000)
+		appendPQExpBuffer(&buf,
+						  "  c.colllocale AS \"%s\",\n",
+						  gettext_noop("Locale"));
+	else if (pset.sversion >= 150000)
 		appendPQExpBuffer(&buf,
 						  "  c.colliculocale AS \"%s\",\n",
-						  gettext_noop("ICU Locale"));
+						  gettext_noop("Locale"));
 	else
 		appendPQExpBuffer(&buf,
 						  "  c.collcollate AS \"%s\",\n",
-						  gettext_noop("ICU Locale"));
+						  gettext_noop("Locale"));
 
 	if (pset.sversion >= 160000)
 		appendPQExpBuffer(&buf,
@@ -4954,7 +5008,6 @@ listCollations(const char *pattern, bool verbose, bool showSystem)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of collations");
 	myopt.translate_header = true;
 	myopt.translate_columns = translate_columns;
@@ -5016,7 +5069,6 @@ listSchemas(const char *pattern, bool verbose, bool showSystem)
 	if (!res)
 		goto error_return;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of schemas");
 	myopt.translate_header = true;
 
@@ -5133,7 +5185,6 @@ listTSParsers(const char *pattern, bool verbose)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of text search parsers");
 	myopt.translate_header = true;
 
@@ -5281,7 +5332,6 @@ describeOneTSParser(const char *oid, const char *nspname, const char *prsname)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	initPQExpBuffer(&title);
 	if (nspname)
 		printfPQExpBuffer(&title, _("Text search parser \"%s.%s\""),
@@ -5318,7 +5368,6 @@ describeOneTSParser(const char *oid, const char *nspname, const char *prsname)
 		return false;
 	}
 
-	myopt.nullPrint = NULL;
 	if (nspname)
 		printfPQExpBuffer(&title, _("Token types for parser \"%s.%s\""),
 						  nspname, prsname);
@@ -5394,7 +5443,6 @@ listTSDictionaries(const char *pattern, bool verbose)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of text search dictionaries");
 	myopt.translate_header = true;
 
@@ -5460,7 +5508,6 @@ listTSTemplates(const char *pattern, bool verbose)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of text search templates");
 	myopt.translate_header = true;
 
@@ -5515,7 +5562,6 @@ listTSConfigs(const char *pattern, bool verbose)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of text search configurations");
 	myopt.translate_header = true;
 
@@ -5661,7 +5707,6 @@ describeOneTSConfig(const char *oid, const char *nspname, const char *cfgname,
 		appendPQExpBuffer(&title, _("\nParser: \"%s\""),
 						  prsname);
 
-	myopt.nullPrint = NULL;
 	myopt.title = title.data;
 	myopt.footers = NULL;
 	myopt.topt.default_footer = false;
@@ -5738,7 +5783,6 @@ listForeignDataWrappers(const char *pattern, bool verbose)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of foreign-data wrappers");
 	myopt.translate_header = true;
 
@@ -5815,7 +5859,6 @@ listForeignServers(const char *pattern, bool verbose)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of foreign servers");
 	myopt.translate_header = true;
 
@@ -5871,7 +5914,6 @@ listUserMappings(const char *pattern, bool verbose)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of user mappings");
 	myopt.translate_header = true;
 
@@ -5944,7 +5986,6 @@ listForeignTables(const char *pattern, bool verbose)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of foreign tables");
 	myopt.translate_header = true;
 
@@ -5996,7 +6037,6 @@ listExtensions(const char *pattern)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of installed extensions");
 	myopt.translate_header = true;
 
@@ -6100,7 +6140,6 @@ listOneExtensionContents(const char *extname, const char *oid)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	initPQExpBuffer(&title);
 	printfPQExpBuffer(&title, _("Objects in extension \"%s\""), extname);
 	myopt.title = title.data;
@@ -6237,7 +6276,6 @@ listPublications(const char *pattern)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of publications");
 	myopt.translate_header = true;
 	myopt.translate_columns = translate_columns;
@@ -6492,7 +6530,8 @@ describeSubscriptions(const char *pattern, bool verbose)
 	PGresult   *res;
 	printQueryOpt myopt = pset.popt;
 	static const bool translate_columns[] = {false, false, false, false,
-	false, false, false, false, false, false, false, false, false, false};
+		false, false, false, false, false, false, false, false, false, false,
+	false};
 
 	if (pset.sversion < 100000)
 	{
@@ -6556,6 +6595,11 @@ describeSubscriptions(const char *pattern, bool verbose)
 							  gettext_noop("Password required"),
 							  gettext_noop("Run as owner?"));
 
+		if (pset.sversion >= 170000)
+			appendPQExpBuffer(&buf,
+							  ", subfailover AS \"%s\"\n",
+							  gettext_noop("Failover"));
+
 		appendPQExpBuffer(&buf,
 						  ",  subsynccommit AS \"%s\"\n"
 						  ",  subconninfo AS \"%s\"\n",
@@ -6592,7 +6636,6 @@ describeSubscriptions(const char *pattern, bool verbose)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of subscriptions");
 	myopt.translate_header = true;
 	myopt.translate_columns = translate_columns;
@@ -6610,12 +6653,19 @@ describeSubscriptions(const char *pattern, bool verbose)
  * Helper function for consistently formatting ACL (privilege) columns.
  * The proper targetlist entry is appended to buf.  Note lack of any
  * whitespace or comma decoration.
+ *
+ * If you change this, see also the handling of attacl in permissionsList(),
+ * which can't conveniently use this code.
  */
 static void
 printACLColumn(PQExpBuffer buf, const char *colname)
 {
 	appendPQExpBuffer(buf,
-					  "pg_catalog.array_to_string(%s, E'\\n') AS \"%s\"",
+					  "CASE"
+					  " WHEN pg_catalog.cardinality(%s) = 0 THEN '%s'"
+					  " ELSE pg_catalog.array_to_string(%s, E'\\n')"
+					  " END AS \"%s\"",
+					  colname, gettext_noop("(none)"),
 					  colname, gettext_noop("Access privileges"));
 }
 
@@ -6705,7 +6755,6 @@ listOperatorClasses(const char *access_method_pattern,
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of operator classes");
 	myopt.translate_header = true;
 	myopt.translate_columns = translate_columns;
@@ -6794,7 +6843,6 @@ listOperatorFamilies(const char *access_method_pattern,
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of operator families");
 	myopt.translate_header = true;
 	myopt.translate_columns = translate_columns;
@@ -6893,7 +6941,6 @@ listOpFamilyOperators(const char *access_method_pattern,
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of operators of operator families");
 	myopt.translate_header = true;
 	myopt.translate_columns = translate_columns;
@@ -6986,7 +7033,6 @@ listOpFamilyFunctions(const char *access_method_pattern,
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("List of support functions of operator families");
 	myopt.translate_header = true;
 	myopt.translate_columns = translate_columns;
@@ -7038,7 +7084,6 @@ listLargeObjects(bool verbose)
 	if (!res)
 		return false;
 
-	myopt.nullPrint = NULL;
 	myopt.title = _("Large objects");
 	myopt.translate_header = true;
 

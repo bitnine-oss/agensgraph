@@ -785,6 +785,13 @@ alter domain con add constraint t check (VALUE < 1); -- fails
 ERROR:  column "col1" of table "domcontest" contains values that violate the new constraint
 alter domain con add constraint t check (VALUE < 34);
 alter domain con add check (VALUE > 0);
+\dD con
+                                         List of domains
+ Schema | Name |  Type   | Collation | Nullable | Default |                Check                 
+--------+------+---------+-----------+----------+---------+--------------------------------------
+ public | con  | integer |           |          |         | CHECK (VALUE > 0) CHECK (VALUE < 34)
+(1 row)
+
 insert into domcontest values (-5); -- fails
 ERROR:  value for domain con violates check constraint "con_check"
 insert into domcontest values (42); -- fails
@@ -798,6 +805,49 @@ alter domain con drop constraint nonexistent;
 ERROR:  constraint "nonexistent" of domain "con" does not exist
 alter domain con drop constraint if exists nonexistent;
 NOTICE:  constraint "nonexistent" of domain "con" does not exist, skipping
+-- not-null constraints
+create domain connotnull integer;
+create table domconnotnulltest
+( col1 connotnull
+, col2 connotnull
+);
+insert into domconnotnulltest default values;
+alter domain connotnull add not null; -- fails
+ERROR:  column "col1" of table "domconnotnulltest" contains null values
+update domconnotnulltest set col1 = 5;
+alter domain connotnull add not null; -- fails
+ERROR:  column "col2" of table "domconnotnulltest" contains null values
+update domconnotnulltest set col2 = 6;
+alter domain connotnull add constraint constr1 not null;
+select count(*) from pg_constraint where contypid = 'connotnull'::regtype and contype = 'n';
+ count 
+-------
+     1
+(1 row)
+
+alter domain connotnull add constraint constr1bis not null;  -- redundant
+select count(*) from pg_constraint where contypid = 'connotnull'::regtype and contype = 'n';
+ count 
+-------
+     1
+(1 row)
+
+\dD connotnull
+                            List of domains
+ Schema |    Name    |  Type   | Collation | Nullable | Default | Check 
+--------+------------+---------+-----------+----------+---------+-------
+ public | connotnull | integer |           | not null |         | 
+(1 row)
+
+update domconnotnulltest set col1 = null; -- fails
+ERROR:  domain connotnull does not allow null values
+alter domain connotnull drop constraint constr1;
+update domconnotnulltest set col1 = null;
+drop domain connotnull cascade;
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to column col2 of table domconnotnulltest
+drop cascades to column col1 of table domconnotnulltest
+drop table domconnotnulltest;
 -- Test ALTER DOMAIN .. CONSTRAINT .. NOT VALID
 create domain things AS INT;
 CREATE TABLE thethings (stuff things);
@@ -1207,3 +1257,77 @@ create domain testdomain1 as int constraint unsigned check (value > 0);
 alter domain testdomain1 rename constraint unsigned to unsigned_foo;
 alter domain testdomain1 drop constraint unsigned_foo;
 drop domain testdomain1;
+--
+-- Get the base type of a domain
+--
+create domain mytext as text;
+create domain mytext_child_1 as mytext;
+select pg_basetype('mytext'::regtype);
+ pg_basetype 
+-------------
+ text
+(1 row)
+
+select pg_basetype('mytext_child_1'::regtype);
+ pg_basetype 
+-------------
+ text
+(1 row)
+
+select pg_basetype(1);  -- expect NULL not error
+ pg_basetype 
+-------------
+ 
+(1 row)
+
+drop domain mytext cascade;
+NOTICE:  drop cascades to type mytext_child_1
+--
+-- Information schema
+--
+SELECT * FROM information_schema.column_domain_usage
+  WHERE domain_name IN ('con', 'dom', 'pos_int', 'things')
+  ORDER BY domain_name;
+ domain_catalog | domain_schema | domain_name | table_catalog | table_schema | table_name | column_name 
+----------------+---------------+-------------+---------------+--------------+------------+-------------
+ regression     | public        | con         | regression    | public       | domcontest | col1
+ regression     | public        | dom         | regression    | public       | domview    | col1
+ regression     | public        | things      | regression    | public       | thethings  | stuff
+(3 rows)
+
+SELECT * FROM information_schema.domain_constraints
+  WHERE domain_name IN ('con', 'dom', 'pos_int', 'things')
+  ORDER BY constraint_name;
+ constraint_catalog | constraint_schema | constraint_name  | domain_catalog | domain_schema | domain_name | is_deferrable | initially_deferred 
+--------------------+-------------------+------------------+----------------+---------------+-------------+---------------+--------------------
+ regression         | public            | con_check        | regression     | public        | con         | NO            | NO
+ regression         | public            | meow             | regression     | public        | things      | NO            | NO
+ regression         | public            | pos_int_check    | regression     | public        | pos_int     | NO            | NO
+ regression         | public            | pos_int_not_null | regression     | public        | pos_int     | NO            | NO
+(4 rows)
+
+SELECT * FROM information_schema.domains
+  WHERE domain_name IN ('con', 'dom', 'pos_int', 'things')
+  ORDER BY domain_name;
+ domain_catalog | domain_schema | domain_name | data_type | character_maximum_length | character_octet_length | character_set_catalog | character_set_schema | character_set_name | collation_catalog | collation_schema | collation_name | numeric_precision | numeric_precision_radix | numeric_scale | datetime_precision | interval_type | interval_precision | domain_default | udt_catalog | udt_schema | udt_name | scope_catalog | scope_schema | scope_name | maximum_cardinality | dtd_identifier 
+----------------+---------------+-------------+-----------+--------------------------+------------------------+-----------------------+----------------------+--------------------+-------------------+------------------+----------------+-------------------+-------------------------+---------------+--------------------+---------------+--------------------+----------------+-------------+------------+----------+---------------+--------------+------------+---------------------+----------------
+ regression     | public        | con         | integer   |                          |                        |                       |                      |                    |                   |                  |                |                32 |                       2 |             0 |                    |               |                    |                | regression  | pg_catalog | int4     |               |              |            |                     | 1
+ regression     | public        | dom         | integer   |                          |                        |                       |                      |                    |                   |                  |                |                32 |                       2 |             0 |                    |               |                    |                | regression  | pg_catalog | int4     |               |              |            |                     | 1
+ regression     | public        | pos_int     | integer   |                          |                        |                       |                      |                    |                   |                  |                |                32 |                       2 |             0 |                    |               |                    |                | regression  | pg_catalog | int4     |               |              |            |                     | 1
+ regression     | public        | things      | integer   |                          |                        |                       |                      |                    |                   |                  |                |                32 |                       2 |             0 |                    |               |                    |                | regression  | pg_catalog | int4     |               |              |            |                     | 1
+(4 rows)
+
+SELECT * FROM information_schema.check_constraints
+  WHERE (constraint_schema, constraint_name)
+        IN (SELECT constraint_schema, constraint_name
+            FROM information_schema.domain_constraints
+            WHERE domain_name IN ('con', 'dom', 'pos_int', 'things'))
+  ORDER BY constraint_name;
+ constraint_catalog | constraint_schema | constraint_name  |   check_clause    
+--------------------+-------------------+------------------+-------------------
+ regression         | public            | con_check        | (VALUE > 0)
+ regression         | public            | meow             | (VALUE < 11)
+ regression         | public            | pos_int_check    | (VALUE > 0)
+ regression         | public            | pos_int_not_null | VALUE IS NOT NULL
+(4 rows)
+

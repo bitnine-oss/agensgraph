@@ -11,7 +11,7 @@
  * so for all external functions, all the referenced functions (and
  * prerequisites) will be imported.
  *
- * Copyright (c) 2016-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/lib/llvmjit/llvmjit_inline.cpp
@@ -49,12 +49,7 @@ extern "C"
 #include <llvm/ADT/StringSet.h>
 #include <llvm/ADT/StringMap.h>
 #include <llvm/Analysis/ModuleSummaryAnalysis.h>
-#if LLVM_VERSION_MAJOR > 3
 #include <llvm/Bitcode/BitcodeReader.h>
-#else
-#include <llvm/Bitcode/ReaderWriter.h>
-#include <llvm/Support/Error.h>
-#endif
 #include <llvm/IR/Attributes.h>
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/IntrinsicInst.h>
@@ -114,12 +109,12 @@ typedef llvm::StringMap<std::unique_ptr<llvm::ModuleSummaryIndex> > SummaryCache
 llvm::ManagedStatic<SummaryCache> summary_cache;
 
 
-static std::unique_ptr<ImportMapTy> llvm_build_inline_plan(llvm::Module *mod);
+static std::unique_ptr<ImportMapTy> llvm_build_inline_plan(LLVMContextRef lc, llvm::Module *mod);
 static void llvm_execute_inline_plan(llvm::Module *mod,
 									 ImportMapTy *globalsToInline);
 
-static llvm::Module* load_module_cached(llvm::StringRef modPath);
-static std::unique_ptr<llvm::Module> load_module(llvm::StringRef Identifier);
+static llvm::Module* load_module_cached(LLVMContextRef c, llvm::StringRef modPath);
+static std::unique_ptr<llvm::Module> load_module(LLVMContextRef c, llvm::StringRef Identifier);
 static std::unique_ptr<llvm::ModuleSummaryIndex> llvm_load_summary(llvm::StringRef path);
 
 
@@ -153,15 +148,28 @@ summaries_for_guid(const InlineSearchPath& path, llvm::GlobalValue::GUID guid);
 #endif
 
 /*
+ * Reset inlining related state. This needs to be called before the currently
+ * used LLVMContextRef is disposed (and a new one create), otherwise we would
+ * have dangling references to deleted modules.
+ */
+void
+llvm_inline_reset_caches(void)
+{
+	module_cache->clear();
+	summary_cache->clear();
+}
+
+/*
  * Perform inlining of external function references in M based on a simple
  * cost based analysis.
  */
 void
 llvm_inline(LLVMModuleRef M)
 {
+	LLVMContextRef lc = LLVMGetModuleContext(M);
 	llvm::Module *mod = llvm::unwrap(M);
 
-	std::unique_ptr<ImportMapTy> globalsToInline = llvm_build_inline_plan(mod);
+	std::unique_ptr<ImportMapTy> globalsToInline = llvm_build_inline_plan(lc, mod);
 	if (!globalsToInline)
 		return;
 	llvm_execute_inline_plan(mod, globalsToInline.get());
@@ -172,7 +180,7 @@ llvm_inline(LLVMModuleRef M)
  * mod.
  */
 static std::unique_ptr<ImportMapTy>
-llvm_build_inline_plan(llvm::Module *mod)
+llvm_build_inline_plan(LLVMContextRef lc, llvm::Module *mod)
 {
 	std::unique_ptr<ImportMapTy> globalsToInline(new ImportMapTy());
 	FunctionInlineStates functionStates;
@@ -254,14 +262,12 @@ llvm_build_inline_plan(llvm::Module *mod)
 
 			fs = llvm::cast<llvm::FunctionSummary>(gvs);
 
-#if LLVM_VERSION_MAJOR > 3
 			if (gvs->notEligibleToImport())
 			{
 				ilog(DEBUG1, "ineligibile to import %s due to summary",
 					 symbolName.data());
 				continue;
 			}
-#endif
 
 			if ((int) fs->instCount() > inlineState.costLimit)
 			{
@@ -271,7 +277,7 @@ llvm_build_inline_plan(llvm::Module *mod)
 				continue;
 			}
 
-			defMod = load_module_cached(modPath);
+			defMod = load_module_cached(lc, modPath);
 			if (defMod->materializeMetadata())
 				elog(FATAL, "failed to materialize metadata");
 
@@ -445,16 +451,9 @@ llvm_execute_inline_plan(llvm::Module *mod, ImportMapTy *globalsToInline)
 
 		}
 
-#if LLVM_VERSION_MAJOR > 4
-#define IRMOVE_PARAMS , /*IsPerformingImport=*/false
-#elif LLVM_VERSION_MAJOR > 3
-#define IRMOVE_PARAMS , /*LinkModuleInlineAsm=*/false, /*IsPerformingImport=*/false
-#else
-#define IRMOVE_PARAMS
-#endif
 		if (Mover.move(std::move(importMod), GlobalsToImport.getArrayRef(),
-					   [](llvm::GlobalValue &, llvm::IRMover::ValueAdder) {}
-					   IRMOVE_PARAMS))
+					   [](llvm::GlobalValue &, llvm::IRMover::ValueAdder) {},
+					   /*IsPerformingImport=*/false))
 			elog(FATAL, "function import failed with linker error");
 	}
 }
@@ -466,20 +465,20 @@ llvm_execute_inline_plan(llvm::Module *mod, ImportMapTy *globalsToInline)
  * the cache state would get corrupted.
  */
 static llvm::Module*
-load_module_cached(llvm::StringRef modPath)
+load_module_cached(LLVMContextRef lc, llvm::StringRef modPath)
 {
 	auto it = module_cache->find(modPath);
 	if (it == module_cache->end())
 	{
 		it = module_cache->insert(
-			std::make_pair(modPath, load_module(modPath))).first;
+			std::make_pair(modPath, load_module(lc, modPath))).first;
 	}
 
 	return it->second.get();
 }
 
 static std::unique_ptr<llvm::Module>
-load_module(llvm::StringRef Identifier)
+load_module(LLVMContextRef lc, llvm::StringRef Identifier)
 {
 	LLVMMemoryBufferRef buf;
 	LLVMModuleRef mod;
@@ -491,7 +490,7 @@ load_module(llvm::StringRef Identifier)
 	if (LLVMCreateMemoryBufferWithContentsOfFile(path, &buf, &msg))
 		elog(FATAL, "failed to open bitcode file \"%s\": %s",
 			 path, msg);
-	if (LLVMGetBitcodeModuleInContext2(LLVMGetGlobalContext(), buf, &mod))
+	if (LLVMGetBitcodeModuleInContext2(lc, buf, &mod))
 		elog(FATAL, "failed to parse bitcode in file \"%s\"", path);
 
 	/*
@@ -780,7 +779,6 @@ llvm_load_summary(llvm::StringRef path)
 	{
 		llvm::MemoryBufferRef ref(*MBOrErr.get().get());
 
-#if LLVM_VERSION_MAJOR > 3
 		llvm::Expected<std::unique_ptr<llvm::ModuleSummaryIndex> > IndexOrErr =
 			llvm::getModuleSummaryIndex(ref);
 		if (IndexOrErr)
@@ -788,15 +786,6 @@ llvm_load_summary(llvm::StringRef path)
 		elog(FATAL, "failed to load summary \"%s\": %s",
 			 path.data(),
 			 toString(IndexOrErr.takeError()).c_str());
-#else
-		llvm::ErrorOr<std::unique_ptr<llvm::ModuleSummaryIndex> > IndexOrErr =
-			llvm::getModuleSummaryIndex(ref, [](const llvm::DiagnosticInfo &) {});
-		if (IndexOrErr)
-			return std::move(IndexOrErr.get());
-		elog(FATAL, "failed to load summary \"%s\": %s",
-			 path.data(),
-			 IndexOrErr.getError().message().c_str());
-#endif
 	}
 	return nullptr;
 }
@@ -808,7 +797,10 @@ static void
 add_module_to_inline_search_path(InlineSearchPath& searchpath, llvm::StringRef modpath)
 {
 	/* only extension in libdir are candidates for inlining for now */
-	if (!modpath.startswith("$libdir/"))
+#if LLVM_VERSION_MAJOR < 16
+#define starts_with startswith
+#endif
+	if (!modpath.starts_with("$libdir/"))
 		return;
 
 	/* if there's no match, attempt to load */
@@ -840,22 +832,12 @@ summaries_for_guid(const InlineSearchPath& path, llvm::GlobalValue::GUID guid)
 
 	for (auto index : path)
 	{
-#if LLVM_VERSION_MAJOR > 4
 		llvm::ValueInfo funcVI = index->getValueInfo(guid);
 
 		/* if index doesn't know function, we don't have a body, continue */
 		if (funcVI)
 			for (auto &gv : funcVI.getSummaryList())
 				matches.push_back(gv.get());
-#else
-		const llvm::const_gvsummary_iterator &I =
-			index->findGlobalValueSummaryList(guid);
-		if (I != index->end())
-		{
-			for (auto &gv : I->second)
-				matches.push_back(gv.get());
-		}
-#endif
 	}
 
 	return matches;

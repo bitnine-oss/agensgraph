@@ -5,7 +5,7 @@
  *	  (pg_auth_members).
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_auth_members.h
@@ -45,9 +45,12 @@ CATALOG(pg_auth_members,1261,AuthMemRelationId) BKI_SHARED_RELATION BKI_ROWTYPE_
  */
 typedef FormData_pg_auth_members *Form_pg_auth_members;
 
-DECLARE_UNIQUE_INDEX_PKEY(pg_auth_members_oid_index, 6303, AuthMemOidIndexId, on pg_auth_members using btree(oid oid_ops));
-DECLARE_UNIQUE_INDEX(pg_auth_members_role_member_index, 2694, AuthMemRoleMemIndexId, on pg_auth_members using btree(roleid oid_ops, member oid_ops, grantor oid_ops));
-DECLARE_UNIQUE_INDEX(pg_auth_members_member_role_index, 2695, AuthMemMemRoleIndexId, on pg_auth_members using btree(member oid_ops, roleid oid_ops, grantor oid_ops));
-DECLARE_INDEX(pg_auth_members_grantor_index, 6302, AuthMemGrantorIndexId, on pg_auth_members using btree(grantor oid_ops));
+DECLARE_UNIQUE_INDEX_PKEY(pg_auth_members_oid_index, 6303, AuthMemOidIndexId, pg_auth_members, btree(oid oid_ops));
+DECLARE_UNIQUE_INDEX(pg_auth_members_role_member_index, 2694, AuthMemRoleMemIndexId, pg_auth_members, btree(roleid oid_ops, member oid_ops, grantor oid_ops));
+DECLARE_UNIQUE_INDEX(pg_auth_members_member_role_index, 2695, AuthMemMemRoleIndexId, pg_auth_members, btree(member oid_ops, roleid oid_ops, grantor oid_ops));
+DECLARE_INDEX(pg_auth_members_grantor_index, 6302, AuthMemGrantorIndexId, pg_auth_members, btree(grantor oid_ops));
+
+MAKE_SYSCACHE(AUTHMEMROLEMEM, pg_auth_members_role_member_index, 8);
+MAKE_SYSCACHE(AUTHMEMMEMROLE, pg_auth_members_member_role_index, 8);
 
 #endif							/* PG_AUTH_MEMBERS_H */

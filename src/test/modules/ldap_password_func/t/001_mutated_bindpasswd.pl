@@ -1,8 +1,8 @@
 
-# Copyright (c) 2022, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use File::Copy;
 use FindBin;
 use PostgreSQL::Test::Utils;
@@ -20,7 +20,7 @@ if ($ENV{with_ldap} ne 'yes')
 {
 	plan skip_all => 'LDAP not supported by this build';
 }
-elsif ($ENV{PG_TEST_EXTRA} !~ /\bldap\b/)
+elsif (!$ENV{PG_TEST_EXTRA} || $ENV{PG_TEST_EXTRA} !~ /\bldap\b/)
 {
 	plan skip_all =>
 	  'Potentially unsafe test LDAP not enabled in PG_TEST_EXTRA';

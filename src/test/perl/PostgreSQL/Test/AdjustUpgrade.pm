@@ -1,5 +1,5 @@
 
-# Copyright (c) 2023, PostgreSQL Global Development Group
+# Copyright (c) 2023-2024, PostgreSQL Global Development Group
 
 =pod
 
@@ -30,7 +30,7 @@ compare the results of cross-version upgrade tests.
 package PostgreSQL::Test::AdjustUpgrade;
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use Exporter 'import';
 use PostgreSQL::Version;
@@ -76,15 +76,29 @@ sub adjust_database_contents
 	my ($old_version, %dbnames) = @_;
 	my $result = {};
 
+	die "wrong type for \$old_version\n"
+	  unless $old_version->isa("PostgreSQL::Version");
+
+	# The version tests can be sensitive if fixups have been applied in a
+	# recent version and pg_upgrade is run with a beta version, or such.
+	# Therefore, use a modified version object that only contains the major.
+	$old_version = PostgreSQL::Version->new($old_version->major);
+
 	# remove dbs of modules known to cause pg_upgrade to fail
 	# anything not builtin and incompatible should clean up its own db
-	foreach my $bad_module ('test_ddl_deparse', 'tsearch2')
+	foreach my $bad_module ('adminpack', 'test_ddl_deparse', 'tsearch2')
 	{
 		if ($dbnames{"contrib_regression_$bad_module"})
 		{
 			_add_st($result, 'postgres',
 				"drop database contrib_regression_$bad_module");
 			delete($dbnames{"contrib_regression_$bad_module"});
+		}
+		if ($dbnames{"regression_$bad_module"})
+		{
+			_add_st($result, 'postgres',
+				"drop database regression_$bad_module");
+			delete($dbnames{"regression_$bad_module"});
 		}
 	}
 
@@ -96,6 +110,13 @@ sub adjust_database_contents
 			'contrib_regression_test_extensions',
 			'drop extension if exists test_ext_cine',
 			'drop extension if exists test_ext7');
+	}
+
+	# we removed this test-support function in v17
+	if ($old_version >= 15 && $old_version < 17)
+	{
+		_add_st($result, 'regression',
+			'drop function get_columns_length(oid[])');
 	}
 
 	# stuff not supported from release 16
@@ -262,6 +283,11 @@ sub adjust_old_dumpfile
 {
 	my ($old_version, $dump) = @_;
 
+	die "wrong type for \$old_version\n"
+	  unless $old_version->isa("PostgreSQL::Version");
+	# See adjust_database_contents about this
+	$old_version = PostgreSQL::Version->new($old_version->major);
+
 	# use Unix newlines
 	$dump =~ s/\r\n/\n/g;
 
@@ -274,7 +300,7 @@ sub adjust_old_dumpfile
 		$dump = _mash_view_qualifiers($dump);
 	}
 
-	if ($old_version >= 14 && $old_version < 16)
+	if ($old_version >= 14 && $old_version < 17)
 	{
 		# Fix up some privilege-set discrepancies.
 		$dump =~
@@ -589,6 +615,11 @@ Returns the modified dump text.
 sub adjust_new_dumpfile
 {
 	my ($old_version, $dump) = @_;
+
+	die "wrong type for \$old_version\n"
+	  unless $old_version->isa("PostgreSQL::Version");
+	# See adjust_database_contents about this
+	$old_version = PostgreSQL::Version->new($old_version->major);
 
 	# use Unix newlines
 	$dump =~ s/\r\n/\n/g;

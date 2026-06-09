@@ -3,7 +3,7 @@
  * spi.h
  *				Server Programming Interface public declarations
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/executor/spi.h
@@ -97,16 +97,10 @@ typedef struct _SPI_plan *SPIPlanPtr;
 #define SPI_OK_REL_UNREGISTER	16
 #define SPI_OK_TD_REGISTER		17
 #define SPI_OK_MERGE			18
-#define SPI_OK_GRAPHWRITE		19
+#define SPI_OK_MERGE_RETURNING	19
+#define SPI_OK_GRAPHWRITE		20
 
 #define SPI_OPT_NONATOMIC		(1 << 0)
-
-/* These used to be functions, now just no-ops for backwards compatibility */
-#define SPI_push()	((void) 0)
-#define SPI_pop()	((void) 0)
-#define SPI_push_conditional()	false
-#define SPI_pop_conditional(pushed) ((void) 0)
-#define SPI_restore_connection()	((void) 0)
 
 extern PGDLLIMPORT uint64 SPI_processed;
 extern PGDLLIMPORT SPITupleTable *SPI_tuptable;

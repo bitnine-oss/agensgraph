@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 if host_system != 'windows'
   subdir_done()
@@ -14,7 +14,8 @@ pgevent_sources += rc_bin_gen.process(win32ver_rc, extra_args: [
 
 pgevent_sources += windows.compile_resources('pgmsgevent.rc')
 
-# FIXME: copied from Mkvcbuild.pm, but I don't think that's the right approach
+# XXX: We may want to revisit the addition of this flag and improve the
+# way symbols are exported.
 pgevent_link_args = []
 if cc.get_id() == 'msvc'
   pgevent_link_args += '/ignore:4104'

@@ -3,7 +3,7 @@
  * hbafuncs.c
  *	  Support functions for SQL views of authentication files.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,7 +18,6 @@
 #include "common/ip.h"
 #include "funcapi.h"
 #include "libpq/hba.h"
-#include "miscadmin.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"

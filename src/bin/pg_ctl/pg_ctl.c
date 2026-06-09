@@ -2,7 +2,7 @@
  *
  * pg_ctl --- start/stops/restarts the PostgreSQL server
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  * src/bin/pg_ctl/pg_ctl.c
  *
@@ -41,14 +41,14 @@ typedef enum
 {
 	SMART_MODE,
 	FAST_MODE,
-	IMMEDIATE_MODE
+	IMMEDIATE_MODE,
 } ShutdownMode;
 
 typedef enum
 {
 	POSTMASTER_READY,
 	POSTMASTER_STILL_STARTING,
-	POSTMASTER_FAILED
+	POSTMASTER_FAILED,
 } WaitPMResult;
 
 typedef enum
@@ -65,7 +65,7 @@ typedef enum
 	KILL_COMMAND,
 	REGISTER_COMMAND,
 	UNREGISTER_COMMAND,
-	RUN_AS_SERVICE_COMMAND
+	RUN_AS_SERVICE_COMMAND,
 } CtlCommand;
 
 #define DEFAULT_WAIT	60
@@ -99,7 +99,6 @@ static time_t start_time;
 static char postopts_file[MAXPGPATH];
 static char version_file[MAXPGPATH];
 static char pid_file[MAXPGPATH];
-static char backup_file[MAXPGPATH];
 static char promote_file[MAXPGPATH];
 static char logrotate_file[MAXPGPATH];
 
@@ -258,8 +257,8 @@ get_pgpid(bool is_status_request)
 			write_stderr(_("%s: directory \"%s\" does not exist\n"), progname,
 						 pg_data);
 		else
-			write_stderr(_("%s: could not access directory \"%s\": %s\n"), progname,
-						 pg_data, strerror(errno));
+			write_stderr(_("%s: could not access directory \"%s\": %m\n"), progname,
+						 pg_data);
 
 		/*
 		 * The Linux Standard Base Core Specification 3.1 says this should
@@ -284,8 +283,8 @@ get_pgpid(bool is_status_request)
 			return 0;
 		else
 		{
-			write_stderr(_("%s: could not open PID file \"%s\": %s\n"),
-						 progname, pid_file, strerror(errno));
+			write_stderr(_("%s: could not open PID file \"%s\": %m\n"),
+						 progname, pid_file);
 			exit(1);
 		}
 	}
@@ -458,8 +457,8 @@ start_postmaster(void)
 	if (pm_pid < 0)
 	{
 		/* fork failed */
-		write_stderr(_("%s: could not start server: %s\n"),
-					 progname, strerror(errno));
+		write_stderr(_("%s: could not start server: %m\n"),
+					 progname);
 		exit(1);
 	}
 	if (pm_pid > 0)
@@ -478,8 +477,8 @@ start_postmaster(void)
 #ifdef HAVE_SETSID
 	if (setsid() < 0)
 	{
-		write_stderr(_("%s: could not start server due to setsid() failure: %s\n"),
-					 progname, strerror(errno));
+		write_stderr(_("%s: could not start server due to setsid() failure: %m\n"),
+					 progname);
 		exit(1);
 	}
 #endif
@@ -500,8 +499,8 @@ start_postmaster(void)
 	(void) execl("/bin/sh", "/bin/sh", "-c", cmd, (char *) NULL);
 
 	/* exec failed */
-	write_stderr(_("%s: could not start server: %s\n"),
-				 progname, strerror(errno));
+	write_stderr(_("%s: could not start server: %m\n"),
+				 progname);
 	exit(1);
 
 	return 0;					/* keep dumb compilers quiet */
@@ -548,19 +547,19 @@ start_postmaster(void)
 			 */
 			if (errno != ENOENT)
 			{
-				write_stderr(_("%s: could not open log file \"%s\": %s\n"),
-							 progname, log_file, strerror(errno));
+				write_stderr(_("%s: could not open log file \"%s\": %m\n"),
+							 progname, log_file);
 				exit(1);
 			}
 		}
 		else
 			close(fd);
 
-		cmd = psprintf("\"%s\" /C \"\"%s\" %s%s < \"%s\" >> \"%s\" 2>&1\"",
+		cmd = psprintf("\"%s\" /D /C \"\"%s\" %s%s < \"%s\" >> \"%s\" 2>&1\"",
 					   comspec, exec_path, pgdata_opt, post_opts, DEVNULL, log_file);
 	}
 	else
-		cmd = psprintf("\"%s\" /C \"\"%s\" %s%s < \"%s\" 2>&1\"",
+		cmd = psprintf("\"%s\" /D /C \"\"%s\" %s%s < \"%s\" 2>&1\"",
 					   comspec, exec_path, pgdata_opt, post_opts, DEVNULL);
 
 	if (!CreateRestrictedProcess(cmd, &pi, false))
@@ -855,8 +854,8 @@ trap_sigint_during_startup(SIGNAL_ARGS)
 	if (postmasterPID != -1)
 	{
 		if (kill(postmasterPID, SIGINT) != 0)
-			write_stderr(_("%s: could not send stop signal (PID: %d): %s\n"),
-						 progname, (int) postmasterPID, strerror(errno));
+			write_stderr(_("%s: could not send stop signal (PID: %d): %m\n"),
+						 progname, (int) postmasterPID);
 	}
 
 	/*
@@ -1039,8 +1038,7 @@ do_stop(void)
 
 	if (kill(pid, sig) != 0)
 	{
-		write_stderr(_("%s: could not send stop signal (PID: %d): %s\n"), progname, (int) pid,
-					 strerror(errno));
+		write_stderr(_("%s: could not send stop signal (PID: %d): %m\n"), progname, (int) pid);
 		exit(1);
 	}
 
@@ -1107,8 +1105,7 @@ do_restart(void)
 	{
 		if (kill(pid, sig) != 0)
 		{
-			write_stderr(_("%s: could not send stop signal (PID: %d): %s\n"), progname, (int) pid,
-						 strerror(errno));
+			write_stderr(_("%s: could not send stop signal (PID: %d): %m\n"), progname, (int) pid);
 			exit(1);
 		}
 
@@ -1163,8 +1160,8 @@ do_reload(void)
 
 	if (kill(pid, sig) != 0)
 	{
-		write_stderr(_("%s: could not send reload signal (PID: %d): %s\n"),
-					 progname, (int) pid, strerror(errno));
+		write_stderr(_("%s: could not send reload signal (PID: %d): %m\n"),
+					 progname, (int) pid);
 		exit(1);
 	}
 
@@ -1211,25 +1208,25 @@ do_promote(void)
 
 	if ((prmfile = fopen(promote_file, "w")) == NULL)
 	{
-		write_stderr(_("%s: could not create promote signal file \"%s\": %s\n"),
-					 progname, promote_file, strerror(errno));
+		write_stderr(_("%s: could not create promote signal file \"%s\": %m\n"),
+					 progname, promote_file);
 		exit(1);
 	}
 	if (fclose(prmfile))
 	{
-		write_stderr(_("%s: could not write promote signal file \"%s\": %s\n"),
-					 progname, promote_file, strerror(errno));
+		write_stderr(_("%s: could not write promote signal file \"%s\": %m\n"),
+					 progname, promote_file);
 		exit(1);
 	}
 
 	sig = SIGUSR1;
 	if (kill(pid, sig) != 0)
 	{
-		write_stderr(_("%s: could not send promote signal (PID: %d): %s\n"),
-					 progname, (int) pid, strerror(errno));
+		write_stderr(_("%s: could not send promote signal (PID: %d): %m\n"),
+					 progname, (int) pid);
 		if (unlink(promote_file) != 0)
-			write_stderr(_("%s: could not remove promote signal file \"%s\": %s\n"),
-						 progname, promote_file, strerror(errno));
+			write_stderr(_("%s: could not remove promote signal file \"%s\": %m\n"),
+						 progname, promote_file);
 		exit(1);
 	}
 
@@ -1284,25 +1281,25 @@ do_logrotate(void)
 
 	if ((logrotatefile = fopen(logrotate_file, "w")) == NULL)
 	{
-		write_stderr(_("%s: could not create log rotation signal file \"%s\": %s\n"),
-					 progname, logrotate_file, strerror(errno));
+		write_stderr(_("%s: could not create log rotation signal file \"%s\": %m\n"),
+					 progname, logrotate_file);
 		exit(1);
 	}
 	if (fclose(logrotatefile))
 	{
-		write_stderr(_("%s: could not write log rotation signal file \"%s\": %s\n"),
-					 progname, logrotate_file, strerror(errno));
+		write_stderr(_("%s: could not write log rotation signal file \"%s\": %m\n"),
+					 progname, logrotate_file);
 		exit(1);
 	}
 
 	sig = SIGUSR1;
 	if (kill(pid, sig) != 0)
 	{
-		write_stderr(_("%s: could not send log rotation signal (PID: %d): %s\n"),
-					 progname, (int) pid, strerror(errno));
+		write_stderr(_("%s: could not send log rotation signal (PID: %d): %m\n"),
+					 progname, (int) pid);
 		if (unlink(logrotate_file) != 0)
-			write_stderr(_("%s: could not remove log rotation signal file \"%s\": %s\n"),
-						 progname, logrotate_file, strerror(errno));
+			write_stderr(_("%s: could not remove log rotation signal file \"%s\": %m\n"),
+						 progname, logrotate_file);
 		exit(1);
 	}
 
@@ -1400,8 +1397,8 @@ do_kill(pid_t pid)
 {
 	if (kill(pid, sig) != 0)
 	{
-		write_stderr(_("%s: could not send signal %d (PID: %d): %s\n"),
-					 progname, sig, (int) pid, strerror(errno));
+		write_stderr(_("%s: could not send signal %d (PID: %d): %m\n"),
+					 progname, sig, (int) pid);
 		exit(1);
 	}
 }
@@ -2276,163 +2273,151 @@ main(int argc, char **argv)
 	if (env_wait != NULL)
 		wait_seconds = atoi(env_wait);
 
-	/*
-	 * 'Action' can be before or after args so loop over both. Some
-	 * getopt_long() implementations will reorder argv[] to place all flags
-	 * first (GNU?), but we don't rely on it. Our /port version doesn't do
-	 * that.
-	 */
-	optind = 1;
-
 	/* process command-line options */
-	while (optind < argc)
+	while ((c = getopt_long(argc, argv, "cD:e:l:m:N:o:p:P:sS:t:U:wW",
+							long_options, &option_index)) != -1)
 	{
-		while ((c = getopt_long(argc, argv, "cD:e:l:m:N:o:p:P:sS:t:U:wW",
-								long_options, &option_index)) != -1)
+		switch (c)
 		{
-			switch (c)
-			{
-				case 'D':
-					{
-						char	   *pgdata_D;
-
-						pgdata_D = pg_strdup(optarg);
-						canonicalize_path(pgdata_D);
-						setenv("PGDATA", pgdata_D, 1);
-
-						/*
-						 * We could pass PGDATA just in an environment
-						 * variable but we do -D too for clearer postmaster
-						 * 'ps' display
-						 */
-						pgdata_opt = psprintf("-D \"%s\" ", pgdata_D);
-						free(pgdata_D);
-						break;
-					}
-				case 'e':
-					event_source = pg_strdup(optarg);
-					break;
-				case 'l':
-					log_file = pg_strdup(optarg);
-					break;
-				case 'm':
-					set_mode(optarg);
-					break;
-				case 'N':
-					register_servicename = pg_strdup(optarg);
-					break;
-				case 'o':
-					/* append option? */
-					if (!post_opts)
-						post_opts = pg_strdup(optarg);
-					else
-					{
-						char	   *old_post_opts = post_opts;
-
-						post_opts = psprintf("%s %s", old_post_opts, optarg);
-						free(old_post_opts);
-					}
-					break;
-				case 'p':
-					exec_path = pg_strdup(optarg);
-					break;
-				case 'P':
-					register_password = pg_strdup(optarg);
-					break;
-				case 's':
-					silent_mode = true;
-					break;
-				case 'S':
-#ifdef WIN32
-					set_starttype(optarg);
-#else
-					write_stderr(_("%s: -S option not supported on this platform\n"),
-								 progname);
-					exit(1);
-#endif
-					break;
-				case 't':
-					wait_seconds = atoi(optarg);
-					wait_seconds_arg = true;
-					break;
-				case 'U':
-					if (strchr(optarg, '\\'))
-						register_username = pg_strdup(optarg);
-					else
-						/* Prepend .\ for local accounts */
-						register_username = psprintf(".\\%s", optarg);
-					break;
-				case 'w':
-					do_wait = true;
-					break;
-				case 'W':
-					do_wait = false;
-					break;
-				case 'c':
-					allow_core_files = true;
-					break;
-				default:
-					/* getopt_long already issued a suitable error message */
-					do_advice();
-					exit(1);
-			}
-		}
-
-		/* Process an action */
-		if (optind < argc)
-		{
-			if (ctl_command != NO_COMMAND)
-			{
-				write_stderr(_("%s: too many command-line arguments (first is \"%s\")\n"), progname, argv[optind]);
-				do_advice();
-				exit(1);
-			}
-
-			if (strcmp(argv[optind], "init") == 0
-				|| strcmp(argv[optind], "initdb") == 0)
-				ctl_command = INIT_COMMAND;
-			else if (strcmp(argv[optind], "start") == 0)
-				ctl_command = START_COMMAND;
-			else if (strcmp(argv[optind], "stop") == 0)
-				ctl_command = STOP_COMMAND;
-			else if (strcmp(argv[optind], "restart") == 0)
-				ctl_command = RESTART_COMMAND;
-			else if (strcmp(argv[optind], "reload") == 0)
-				ctl_command = RELOAD_COMMAND;
-			else if (strcmp(argv[optind], "status") == 0)
-				ctl_command = STATUS_COMMAND;
-			else if (strcmp(argv[optind], "promote") == 0)
-				ctl_command = PROMOTE_COMMAND;
-			else if (strcmp(argv[optind], "logrotate") == 0)
-				ctl_command = LOGROTATE_COMMAND;
-			else if (strcmp(argv[optind], "kill") == 0)
-			{
-				if (argc - optind < 3)
+			case 'D':
 				{
-					write_stderr(_("%s: missing arguments for kill mode\n"), progname);
-					do_advice();
-					exit(1);
+					char	   *pgdata_D;
+
+					pgdata_D = pg_strdup(optarg);
+					canonicalize_path(pgdata_D);
+					setenv("PGDATA", pgdata_D, 1);
+
+					/*
+					 * We could pass PGDATA just in an environment variable
+					 * but we do -D too for clearer postmaster 'ps' display
+					 */
+					pgdata_opt = psprintf("-D \"%s\" ", pgdata_D);
+					free(pgdata_D);
+					break;
 				}
-				ctl_command = KILL_COMMAND;
-				set_sig(argv[++optind]);
-				killproc = atol(argv[++optind]);
-			}
+			case 'e':
+				event_source = pg_strdup(optarg);
+				break;
+			case 'l':
+				log_file = pg_strdup(optarg);
+				break;
+			case 'm':
+				set_mode(optarg);
+				break;
+			case 'N':
+				register_servicename = pg_strdup(optarg);
+				break;
+			case 'o':
+				/* append option? */
+				if (!post_opts)
+					post_opts = pg_strdup(optarg);
+				else
+				{
+					char	   *old_post_opts = post_opts;
+
+					post_opts = psprintf("%s %s", old_post_opts, optarg);
+					free(old_post_opts);
+				}
+				break;
+			case 'p':
+				exec_path = pg_strdup(optarg);
+				break;
+			case 'P':
+				register_password = pg_strdup(optarg);
+				break;
+			case 's':
+				silent_mode = true;
+				break;
+			case 'S':
 #ifdef WIN32
-			else if (strcmp(argv[optind], "register") == 0)
-				ctl_command = REGISTER_COMMAND;
-			else if (strcmp(argv[optind], "unregister") == 0)
-				ctl_command = UNREGISTER_COMMAND;
-			else if (strcmp(argv[optind], "runservice") == 0)
-				ctl_command = RUN_AS_SERVICE_COMMAND;
+				set_starttype(optarg);
+#else
+				write_stderr(_("%s: -S option not supported on this platform\n"),
+							 progname);
+				exit(1);
 #endif
-			else
+				break;
+			case 't':
+				wait_seconds = atoi(optarg);
+				wait_seconds_arg = true;
+				break;
+			case 'U':
+				if (strchr(optarg, '\\'))
+					register_username = pg_strdup(optarg);
+				else
+					/* Prepend .\ for local accounts */
+					register_username = psprintf(".\\%s", optarg);
+				break;
+			case 'w':
+				do_wait = true;
+				break;
+			case 'W':
+				do_wait = false;
+				break;
+			case 'c':
+				allow_core_files = true;
+				break;
+			default:
+				/* getopt_long already issued a suitable error message */
+				do_advice();
+				exit(1);
+		}
+	}
+
+	/* Process an action */
+	if (optind < argc)
+	{
+		if (strcmp(argv[optind], "init") == 0
+			|| strcmp(argv[optind], "initdb") == 0)
+			ctl_command = INIT_COMMAND;
+		else if (strcmp(argv[optind], "start") == 0)
+			ctl_command = START_COMMAND;
+		else if (strcmp(argv[optind], "stop") == 0)
+			ctl_command = STOP_COMMAND;
+		else if (strcmp(argv[optind], "restart") == 0)
+			ctl_command = RESTART_COMMAND;
+		else if (strcmp(argv[optind], "reload") == 0)
+			ctl_command = RELOAD_COMMAND;
+		else if (strcmp(argv[optind], "status") == 0)
+			ctl_command = STATUS_COMMAND;
+		else if (strcmp(argv[optind], "promote") == 0)
+			ctl_command = PROMOTE_COMMAND;
+		else if (strcmp(argv[optind], "logrotate") == 0)
+			ctl_command = LOGROTATE_COMMAND;
+		else if (strcmp(argv[optind], "kill") == 0)
+		{
+			if (argc - optind < 3)
 			{
-				write_stderr(_("%s: unrecognized operation mode \"%s\"\n"), progname, argv[optind]);
+				write_stderr(_("%s: missing arguments for kill mode\n"), progname);
 				do_advice();
 				exit(1);
 			}
-			optind++;
+			ctl_command = KILL_COMMAND;
+			set_sig(argv[++optind]);
+			killproc = atol(argv[++optind]);
 		}
+#ifdef WIN32
+		else if (strcmp(argv[optind], "register") == 0)
+			ctl_command = REGISTER_COMMAND;
+		else if (strcmp(argv[optind], "unregister") == 0)
+			ctl_command = UNREGISTER_COMMAND;
+		else if (strcmp(argv[optind], "runservice") == 0)
+			ctl_command = RUN_AS_SERVICE_COMMAND;
+#endif
+		else
+		{
+			write_stderr(_("%s: unrecognized operation mode \"%s\"\n"), progname, argv[optind]);
+			do_advice();
+			exit(1);
+		}
+		optind++;
+	}
+
+	if (optind < argc)
+	{
+		write_stderr(_("%s: too many command-line arguments (first is \"%s\")\n"), progname, argv[optind]);
+		do_advice();
+		exit(1);
 	}
 
 	if (ctl_command == NO_COMMAND)
@@ -2497,7 +2482,6 @@ main(int argc, char **argv)
 		snprintf(postopts_file, MAXPGPATH, "%s/postmaster.opts", pg_data);
 		snprintf(version_file, MAXPGPATH, "%s/PG_VERSION", pg_data);
 		snprintf(pid_file, MAXPGPATH, "%s/postmaster.pid", pg_data);
-		snprintf(backup_file, MAXPGPATH, "%s/backup_label", pg_data);
 
 		/*
 		 * Set mask based on PGDATA permissions,

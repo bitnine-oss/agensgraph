@@ -3,7 +3,7 @@
  * pg_sequence.h
  *	  definition of the "sequence" system catalog (pg_sequence)
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_sequence.h
@@ -39,6 +39,8 @@ CATALOG(pg_sequence,2224,SequenceRelationId)
  */
 typedef FormData_pg_sequence *Form_pg_sequence;
 
-DECLARE_UNIQUE_INDEX_PKEY(pg_sequence_seqrelid_index, 5002, SequenceRelidIndexId, on pg_sequence using btree(seqrelid oid_ops));
+DECLARE_UNIQUE_INDEX_PKEY(pg_sequence_seqrelid_index, 5002, SequenceRelidIndexId, pg_sequence, btree(seqrelid oid_ops));
+
+MAKE_SYSCACHE(SEQRELID, pg_sequence_seqrelid_index, 32);
 
 #endif							/* PG_SEQUENCE_H */

@@ -1,6 +1,6 @@
 <!-- doc/src/sgml/gist.sgml -->
 
-<chapter id="gist">
+<sect1 id="gist">
 <title>GiST Indexes</title>
 
    <indexterm>
@@ -8,7 +8,7 @@
     <secondary>GiST</secondary>
    </indexterm>
 
-<sect1 id="gist-intro">
+<sect2 id="gist-intro">
  <title>Introduction</title>
 
  <para>
@@ -38,9 +38,9 @@
     <ulink url="http://www.sai.msu.su/~megera/postgres/gist/">web site</ulink>.
   </para>
 
-</sect1>
+</sect2>
 
-<sect1 id="gist-builtin-opclasses">
+<sect2 id="gist-builtin-opclasses">
  <title>Built-in Operator Classes</title>
 
  <para>
@@ -66,9 +66,9 @@
     </thead>
     <tbody>
      <row>
-      <entry valign="middle" morerows="13"><literal>box_ops</literal></entry>
+      <entry valign="middle" morerows="11"><literal>box_ops</literal></entry>
       <entry><literal>&lt;&lt; (box, box)</literal></entry>
-      <entry valign="middle" morerows="13"><literal>&lt;-&gt; (box, point)</literal></entry>
+      <entry valign="middle" morerows="11"><literal>&lt;-&gt; (box, point)</literal></entry>
      </row>
      <row><entry><literal>&amp;&lt; (box, box)</literal></entry></row>
      <row><entry><literal>&amp;&amp; (box, box)</literal></entry></row>
@@ -81,13 +81,11 @@
      <row><entry><literal>&lt;&lt;| (box, box)</literal></entry></row>
      <row><entry><literal>|&gt;&gt; (box, box)</literal></entry></row>
      <row><entry><literal>|&amp;&gt; (box, box)</literal></entry></row>
-     <row><entry><literal>~ (box, box)</literal></entry></row>
-     <row><entry><literal>@ (box, box)</literal></entry></row>
 
      <row>
-      <entry valign="middle" morerows="13"><literal>circle_ops</literal></entry>
+      <entry valign="middle" morerows="11"><literal>circle_ops</literal></entry>
       <entry><literal>&lt;&lt; (circle, circle)</literal></entry>
-      <entry valign="middle" morerows="13"><literal>&lt;-&gt; (circle, point)</literal></entry>
+      <entry valign="middle" morerows="11"><literal>&lt;-&gt; (circle, point)</literal></entry>
      </row>
      <row><entry><literal>&amp;&lt; (circle, circle)</literal></entry></row>
      <row><entry><literal>&amp;&gt; (circle, circle)</literal></entry></row>
@@ -100,8 +98,6 @@
      <row><entry><literal>&lt;&lt;| (circle, circle)</literal></entry></row>
      <row><entry><literal>&amp;&lt;| (circle, circle)</literal></entry></row>
      <row><entry><literal>|&amp;&gt; (circle, circle)</literal></entry></row>
-     <row><entry><literal>@ (circle, circle)</literal></entry></row>
-     <row><entry><literal>~ (circle, circle)</literal></entry></row>
 
      <row>
       <entry valign="middle" morerows="10"><literal>inet_ops</literal></entry>
@@ -156,9 +152,9 @@
      <row><entry><literal>&lt;@ (point, circle)</literal></entry></row>
 
      <row>
-      <entry valign="middle" morerows="13"><literal>poly_ops</literal></entry>
+      <entry valign="middle" morerows="11"><literal>poly_ops</literal></entry>
       <entry><literal>&lt;&lt; (polygon, polygon)</literal></entry>
-      <entry valign="middle" morerows="13"><literal>&lt;-&gt; (polygon, point)</literal></entry>
+      <entry valign="middle" morerows="11"><literal>&lt;-&gt; (polygon, point)</literal></entry>
      </row>
      <row><entry><literal>&amp;&lt; (polygon, polygon)</literal></entry></row>
      <row><entry><literal>&amp;&gt; (polygon, polygon)</literal></entry></row>
@@ -171,8 +167,6 @@
      <row><entry><literal>&amp;&lt;| (polygon, polygon)</literal></entry></row>
      <row><entry><literal>|&amp;&gt; (polygon, polygon)</literal></entry></row>
      <row><entry><literal>|&gt;&gt; (polygon, polygon)</literal></entry></row>
-     <row><entry><literal>@ (polygon, polygon)</literal></entry></row>
-     <row><entry><literal>~ (polygon, polygon)</literal></entry></row>
 
      <row>
       <entry valign="middle" morerows="17"><literal>range_ops</literal></entry>
@@ -222,9 +216,9 @@ CREATE INDEX ON my_table USING GIST (my_inet_column inet_ops);
 </programlisting>
  </para>
 
-</sect1>
+</sect2>
 
-<sect1 id="gist-extensibility">
+<sect2 id="gist-extensibility">
  <title>Extensibility</title>
 
  <para>
@@ -1185,12 +1179,12 @@ my_sortsupport(PG_FUNCTION_ARGS)
    will accumulate for the duration of the operation.
   </para>
 
-</sect1>
+</sect2>
 
-<sect1 id="gist-implementation">
+<sect2 id="gist-implementation">
  <title>Implementation</title>
 
- <sect2 id="gist-buffering-build">
+ <sect3 id="gist-buffering-build">
   <title>GiST Index Build Methods</title>
 
   <para>
@@ -1239,10 +1233,10 @@ my_sortsupport(PG_FUNCTION_ARGS)
    is ordered.
   </para>
 
- </sect2>
-</sect1>
+ </sect3>
+</sect2>
 
-<sect1 id="gist-examples">
+<sect2 id="gist-examples">
  <title>Examples</title>
 
  <para>
@@ -1307,6 +1301,6 @@ my_sortsupport(PG_FUNCTION_ARGS)
  </variablelist>
  </para>
 
-</sect1>
+</sect2>
 
-</chapter>
+</sect1>

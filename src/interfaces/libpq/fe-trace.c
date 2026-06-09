@@ -3,7 +3,7 @@
  *	fe-trace.c
  *	  functions for libpq protocol tracing
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -215,9 +215,8 @@ pqTraceOutputNchar(FILE *pfdebug, int len, const char *data, int *cursor)
  * Output functions by protocol message type
  */
 
-/* NotificationResponse */
 static void
-pqTraceOutputA(FILE *f, const char *message, int *cursor, bool regress)
+pqTraceOutput_NotificationResponse(FILE *f, const char *message, int *cursor, bool regress)
 {
 	fprintf(f, "NotificationResponse\t");
 	pqTraceOutputInt32(f, message, cursor, regress);
@@ -225,9 +224,8 @@ pqTraceOutputA(FILE *f, const char *message, int *cursor, bool regress)
 	pqTraceOutputString(f, message, cursor, false);
 }
 
-/* Bind */
 static void
-pqTraceOutputB(FILE *f, const char *message, int *cursor)
+pqTraceOutput_Bind(FILE *f, const char *message, int *cursor)
 {
 	int			nparams;
 
@@ -256,52 +254,48 @@ pqTraceOutputB(FILE *f, const char *message, int *cursor)
 		pqTraceOutputInt16(f, message, cursor);
 }
 
-/* Close(F) or CommandComplete(B) */
 static void
-pqTraceOutputC(FILE *f, bool toServer, const char *message, int *cursor)
+pqTraceOutput_Close(FILE *f, const char *message, int *cursor)
 {
-	if (toServer)
+	fprintf(f, "Close\t");
+	pqTraceOutputByte1(f, message, cursor);
+	pqTraceOutputString(f, message, cursor, false);
+}
+
+static void
+pqTraceOutput_CommandComplete(FILE *f, const char *message, int *cursor)
+{
+	fprintf(f, "CommandComplete\t");
+	pqTraceOutputString(f, message, cursor, false);
+}
+
+static void
+pqTraceOutput_DataRow(FILE *f, const char *message, int *cursor)
+{
+	int			nfields;
+	int			len;
+	int			i;
+
+	fprintf(f, "DataRow\t");
+	nfields = pqTraceOutputInt16(f, message, cursor);
+	for (i = 0; i < nfields; i++)
 	{
-		fprintf(f, "Close\t");
-		pqTraceOutputByte1(f, message, cursor);
-		pqTraceOutputString(f, message, cursor, false);
-	}
-	else
-	{
-		fprintf(f, "CommandComplete\t");
-		pqTraceOutputString(f, message, cursor, false);
+		len = pqTraceOutputInt32(f, message, cursor, false);
+		if (len == -1)
+			continue;
+		pqTraceOutputNchar(f, len, message, cursor);
 	}
 }
 
-/* Describe(F) or DataRow(B) */
 static void
-pqTraceOutputD(FILE *f, bool toServer, const char *message, int *cursor)
+pqTraceOutput_Describe(FILE *f, const char *message, int *cursor)
 {
-	if (toServer)
-	{
-		fprintf(f, "Describe\t");
-		pqTraceOutputByte1(f, message, cursor);
-		pqTraceOutputString(f, message, cursor, false);
-	}
-	else
-	{
-		int			nfields;
-		int			len;
-		int			i;
-
-		fprintf(f, "DataRow\t");
-		nfields = pqTraceOutputInt16(f, message, cursor);
-		for (i = 0; i < nfields; i++)
-		{
-			len = pqTraceOutputInt32(f, message, cursor, false);
-			if (len == -1)
-				continue;
-			pqTraceOutputNchar(f, len, message, cursor);
-		}
-	}
+	fprintf(f, "Describe\t");
+	pqTraceOutputByte1(f, message, cursor);
+	pqTraceOutputString(f, message, cursor, false);
 }
 
-/* NoticeResponse / ErrorResponse */
+/* shared code NoticeResponse / ErrorResponse */
 static void
 pqTraceOutputNR(FILE *f, const char *type, const char *message, int *cursor,
 				bool regress)
@@ -322,31 +316,35 @@ pqTraceOutputNR(FILE *f, const char *type, const char *message, int *cursor,
 	}
 }
 
-/* Execute(F) or ErrorResponse(B) */
 static void
-pqTraceOutputE(FILE *f, bool toServer, const char *message, int *cursor, bool regress)
+pqTraceOutput_ErrorResponse(FILE *f, const char *message, int *cursor, bool regress)
 {
-	if (toServer)
-	{
-		fprintf(f, "Execute\t");
-		pqTraceOutputString(f, message, cursor, false);
-		pqTraceOutputInt32(f, message, cursor, false);
-	}
-	else
-		pqTraceOutputNR(f, "ErrorResponse", message, cursor, regress);
+	pqTraceOutputNR(f, "ErrorResponse", message, cursor, regress);
 }
 
-/* CopyFail */
 static void
-pqTraceOutputf(FILE *f, const char *message, int *cursor)
+pqTraceOutput_NoticeResponse(FILE *f, const char *message, int *cursor, bool regress)
+{
+	pqTraceOutputNR(f, "NoticeResponse", message, cursor, regress);
+}
+
+static void
+pqTraceOutput_Execute(FILE *f, const char *message, int *cursor, bool regress)
+{
+	fprintf(f, "Execute\t");
+	pqTraceOutputString(f, message, cursor, false);
+	pqTraceOutputInt32(f, message, cursor, false);
+}
+
+static void
+pqTraceOutput_CopyFail(FILE *f, const char *message, int *cursor)
 {
 	fprintf(f, "CopyFail\t");
 	pqTraceOutputString(f, message, cursor, false);
 }
 
-/* FunctionCall */
 static void
-pqTraceOutputF(FILE *f, const char *message, int *cursor, bool regress)
+pqTraceOutput_FunctionCall(FILE *f, const char *message, int *cursor, bool regress)
 {
 	int			nfields;
 	int			nbytes;
@@ -371,9 +369,8 @@ pqTraceOutputF(FILE *f, const char *message, int *cursor, bool regress)
 	pqTraceOutputInt16(f, message, cursor);
 }
 
-/* CopyInResponse */
 static void
-pqTraceOutputG(FILE *f, const char *message, int *cursor)
+pqTraceOutput_CopyInResponse(FILE *f, const char *message, int *cursor)
 {
 	int			nfields;
 
@@ -385,9 +382,8 @@ pqTraceOutputG(FILE *f, const char *message, int *cursor)
 		pqTraceOutputInt16(f, message, cursor);
 }
 
-/* CopyOutResponse */
 static void
-pqTraceOutputH(FILE *f, const char *message, int *cursor)
+pqTraceOutput_CopyOutResponse(FILE *f, const char *message, int *cursor)
 {
 	int			nfields;
 
@@ -399,18 +395,16 @@ pqTraceOutputH(FILE *f, const char *message, int *cursor)
 		pqTraceOutputInt16(f, message, cursor);
 }
 
-/* BackendKeyData */
 static void
-pqTraceOutputK(FILE *f, const char *message, int *cursor, bool regress)
+pqTraceOutput_BackendKeyData(FILE *f, const char *message, int *cursor, bool regress)
 {
 	fprintf(f, "BackendKeyData\t");
 	pqTraceOutputInt32(f, message, cursor, regress);
 	pqTraceOutputInt32(f, message, cursor, regress);
 }
 
-/* Parse */
 static void
-pqTraceOutputP(FILE *f, const char *message, int *cursor, bool regress)
+pqTraceOutput_Parse(FILE *f, const char *message, int *cursor, bool regress)
 {
 	int			nparams;
 
@@ -423,34 +417,30 @@ pqTraceOutputP(FILE *f, const char *message, int *cursor, bool regress)
 		pqTraceOutputInt32(f, message, cursor, regress);
 }
 
-/* Query */
 static void
-pqTraceOutputQ(FILE *f, const char *message, int *cursor)
+pqTraceOutput_Query(FILE *f, const char *message, int *cursor)
 {
 	fprintf(f, "Query\t");
 	pqTraceOutputString(f, message, cursor, false);
 }
 
-/* Authentication */
 static void
-pqTraceOutputR(FILE *f, const char *message, int *cursor)
+pqTraceOutput_Authentication(FILE *f, const char *message, int *cursor)
 {
 	fprintf(f, "Authentication\t");
 	pqTraceOutputInt32(f, message, cursor, false);
 }
 
-/* ParameterStatus */
 static void
-pqTraceOutputS(FILE *f, const char *message, int *cursor)
+pqTraceOutput_ParameterStatus(FILE *f, const char *message, int *cursor)
 {
 	fprintf(f, "ParameterStatus\t");
 	pqTraceOutputString(f, message, cursor, false);
 	pqTraceOutputString(f, message, cursor, false);
 }
 
-/* ParameterDescription */
 static void
-pqTraceOutputt(FILE *f, const char *message, int *cursor, bool regress)
+pqTraceOutput_ParameterDescription(FILE *f, const char *message, int *cursor, bool regress)
 {
 	int			nfields;
 
@@ -461,9 +451,8 @@ pqTraceOutputt(FILE *f, const char *message, int *cursor, bool regress)
 		pqTraceOutputInt32(f, message, cursor, regress);
 }
 
-/* RowDescription */
 static void
-pqTraceOutputT(FILE *f, const char *message, int *cursor, bool regress)
+pqTraceOutput_RowDescription(FILE *f, const char *message, int *cursor, bool regress)
 {
 	int			nfields;
 
@@ -482,18 +471,16 @@ pqTraceOutputT(FILE *f, const char *message, int *cursor, bool regress)
 	}
 }
 
-/* NegotiateProtocolVersion */
 static void
-pqTraceOutputv(FILE *f, const char *message, int *cursor)
+pqTraceOutput_NegotiateProtocolVersion(FILE *f, const char *message, int *cursor)
 {
 	fprintf(f, "NegotiateProtocolVersion\t");
 	pqTraceOutputInt32(f, message, cursor, false);
 	pqTraceOutputInt32(f, message, cursor, false);
 }
 
-/* FunctionCallResponse */
 static void
-pqTraceOutputV(FILE *f, const char *message, int *cursor)
+pqTraceOutput_FunctionCallResponse(FILE *f, const char *message, int *cursor)
 {
 	int			len;
 
@@ -503,9 +490,8 @@ pqTraceOutputV(FILE *f, const char *message, int *cursor)
 		pqTraceOutputNchar(f, len, message, cursor);
 }
 
-/* CopyBothResponse */
 static void
-pqTraceOutputW(FILE *f, const char *message, int *cursor, int length)
+pqTraceOutput_CopyBothResponse(FILE *f, const char *message, int *cursor, int length)
 {
 	fprintf(f, "CopyBothResponse\t");
 	pqTraceOutputByte1(f, message, cursor);
@@ -514,9 +500,8 @@ pqTraceOutputW(FILE *f, const char *message, int *cursor, int length)
 		pqTraceOutputInt16(f, message, cursor);
 }
 
-/* ReadyForQuery */
 static void
-pqTraceOutputZ(FILE *f, const char *message, int *cursor)
+pqTraceOutput_ReadyForQuery(FILE *f, const char *message, int *cursor)
 {
 	fprintf(f, "ReadyForQuery\t");
 	pqTraceOutputByte1(f, message, cursor);
@@ -555,118 +540,135 @@ pqTraceOutputMessage(PGconn *conn, const char *message, bool toServer)
 	 * name) fields can change as server code is modified, and if their
 	 * lengths differ from the originals, that would break tests.
 	 */
-	if (regress && !toServer && (id == 'E' || id == 'N'))
+	if (regress && !toServer && (id == PqMsg_ErrorResponse || id == PqMsg_NoticeResponse))
 		fprintf(conn->Pfdebug, "%s\tNN\t", prefix);
 	else
 		fprintf(conn->Pfdebug, "%s\t%d\t", prefix, length);
 
 	switch (id)
 	{
-		case '1':
+		case PqMsg_ParseComplete:
 			fprintf(conn->Pfdebug, "ParseComplete");
 			/* No message content */
 			break;
-		case '2':
+		case PqMsg_BindComplete:
 			fprintf(conn->Pfdebug, "BindComplete");
 			/* No message content */
 			break;
-		case '3':
+		case PqMsg_CloseComplete:
 			fprintf(conn->Pfdebug, "CloseComplete");
 			/* No message content */
 			break;
-		case 'A':				/* Notification Response */
-			pqTraceOutputA(conn->Pfdebug, message, &logCursor, regress);
+		case PqMsg_NotificationResponse:
+			pqTraceOutput_NotificationResponse(conn->Pfdebug, message, &logCursor, regress);
 			break;
-		case 'B':				/* Bind */
-			pqTraceOutputB(conn->Pfdebug, message, &logCursor);
+		case PqMsg_Bind:
+			pqTraceOutput_Bind(conn->Pfdebug, message, &logCursor);
 			break;
-		case 'c':
+		case PqMsg_CopyDone:
 			fprintf(conn->Pfdebug, "CopyDone");
 			/* No message content */
 			break;
-		case 'C':				/* Close(F) or Command Complete(B) */
-			pqTraceOutputC(conn->Pfdebug, toServer, message, &logCursor);
+		case PqMsg_CommandComplete:
+			/* Close(F) and CommandComplete(B) use the same identifier. */
+			Assert(PqMsg_Close == PqMsg_CommandComplete);
+			if (toServer)
+				pqTraceOutput_Close(conn->Pfdebug, message, &logCursor);
+			else
+				pqTraceOutput_CommandComplete(conn->Pfdebug, message, &logCursor);
 			break;
-		case 'd':				/* Copy Data */
+		case PqMsg_CopyData:
 			/* Drop COPY data to reduce the overhead of logging. */
 			break;
-		case 'D':				/* Describe(F) or Data Row(B) */
-			pqTraceOutputD(conn->Pfdebug, toServer, message, &logCursor);
-			break;
-		case 'E':				/* Execute(F) or Error Response(B) */
-			pqTraceOutputE(conn->Pfdebug, toServer, message, &logCursor,
-						   regress);
-			break;
-		case 'f':				/* Copy Fail */
-			pqTraceOutputf(conn->Pfdebug, message, &logCursor);
-			break;
-		case 'F':				/* Function Call */
-			pqTraceOutputF(conn->Pfdebug, message, &logCursor, regress);
-			break;
-		case 'G':				/* Start Copy In */
-			pqTraceOutputG(conn->Pfdebug, message, &logCursor);
-			break;
-		case 'H':				/* Flush(F) or Start Copy Out(B) */
-			if (!toServer)
-				pqTraceOutputH(conn->Pfdebug, message, &logCursor);
+		case PqMsg_Describe:
+			/* Describe(F) and DataRow(B) use the same identifier. */
+			Assert(PqMsg_Describe == PqMsg_DataRow);
+			if (toServer)
+				pqTraceOutput_Describe(conn->Pfdebug, message, &logCursor);
 			else
-				fprintf(conn->Pfdebug, "Flush");	/* no message content */
+				pqTraceOutput_DataRow(conn->Pfdebug, message, &logCursor);
 			break;
-		case 'I':
+		case PqMsg_Execute:
+			/* Execute(F) and ErrorResponse(B) use the same identifier. */
+			Assert(PqMsg_Execute == PqMsg_ErrorResponse);
+			if (toServer)
+				pqTraceOutput_Execute(conn->Pfdebug, message, &logCursor, regress);
+			else
+				pqTraceOutput_ErrorResponse(conn->Pfdebug, message, &logCursor, regress);
+			break;
+		case PqMsg_CopyFail:
+			pqTraceOutput_CopyFail(conn->Pfdebug, message, &logCursor);
+			break;
+		case PqMsg_FunctionCall:
+			pqTraceOutput_FunctionCall(conn->Pfdebug, message, &logCursor, regress);
+			break;
+		case PqMsg_CopyInResponse:
+			pqTraceOutput_CopyInResponse(conn->Pfdebug, message, &logCursor);
+			break;
+		case PqMsg_Flush:
+			/* Flush(F) and CopyOutResponse(B) use the same identifier */
+			Assert(PqMsg_CopyOutResponse == PqMsg_Flush);
+			if (toServer)
+				fprintf(conn->Pfdebug, "Flush");	/* no message content */
+			else
+				pqTraceOutput_CopyOutResponse(conn->Pfdebug, message, &logCursor);
+			break;
+		case PqMsg_EmptyQueryResponse:
 			fprintf(conn->Pfdebug, "EmptyQueryResponse");
 			/* No message content */
 			break;
-		case 'K':				/* secret key data from the backend */
-			pqTraceOutputK(conn->Pfdebug, message, &logCursor, regress);
+		case PqMsg_BackendKeyData:
+			pqTraceOutput_BackendKeyData(conn->Pfdebug, message, &logCursor, regress);
 			break;
-		case 'n':
+		case PqMsg_NoData:
 			fprintf(conn->Pfdebug, "NoData");
 			/* No message content */
 			break;
-		case 'N':
-			pqTraceOutputNR(conn->Pfdebug, "NoticeResponse", message,
-							&logCursor, regress);
+		case PqMsg_NoticeResponse:
+			pqTraceOutput_NoticeResponse(conn->Pfdebug, message, &logCursor, regress);
 			break;
-		case 'P':				/* Parse */
-			pqTraceOutputP(conn->Pfdebug, message, &logCursor, regress);
+		case PqMsg_Parse:
+			pqTraceOutput_Parse(conn->Pfdebug, message, &logCursor, regress);
 			break;
-		case 'Q':				/* Query */
-			pqTraceOutputQ(conn->Pfdebug, message, &logCursor);
+		case PqMsg_Query:
+			pqTraceOutput_Query(conn->Pfdebug, message, &logCursor);
 			break;
-		case 'R':				/* Authentication */
-			pqTraceOutputR(conn->Pfdebug, message, &logCursor);
+		case PqMsg_AuthenticationRequest:
+			pqTraceOutput_Authentication(conn->Pfdebug, message, &logCursor);
 			break;
-		case 's':
+		case PqMsg_PortalSuspended:
 			fprintf(conn->Pfdebug, "PortalSuspended");
 			/* No message content */
 			break;
-		case 'S':				/* Parameter Status(B) or Sync(F) */
-			if (!toServer)
-				pqTraceOutputS(conn->Pfdebug, message, &logCursor);
-			else
+		case PqMsg_Sync:
+			/* ParameterStatus(B) and Sync(F) use the same identifier */
+			Assert(PqMsg_ParameterStatus == PqMsg_Sync);
+			if (toServer)
 				fprintf(conn->Pfdebug, "Sync"); /* no message content */
+			else
+				pqTraceOutput_ParameterStatus(conn->Pfdebug, message, &logCursor);
 			break;
-		case 't':				/* Parameter Description */
-			pqTraceOutputt(conn->Pfdebug, message, &logCursor, regress);
+		case PqMsg_ParameterDescription:
+			pqTraceOutput_ParameterDescription(conn->Pfdebug, message, &logCursor, regress);
 			break;
-		case 'T':				/* Row Description */
-			pqTraceOutputT(conn->Pfdebug, message, &logCursor, regress);
+		case PqMsg_RowDescription:
+			pqTraceOutput_RowDescription(conn->Pfdebug, message, &logCursor, regress);
 			break;
-		case 'v':				/* Negotiate Protocol Version */
-			pqTraceOutputv(conn->Pfdebug, message, &logCursor);
+		case PqMsg_NegotiateProtocolVersion:
+			pqTraceOutput_NegotiateProtocolVersion(conn->Pfdebug, message, &logCursor);
 			break;
-		case 'V':				/* Function Call response */
-			pqTraceOutputV(conn->Pfdebug, message, &logCursor);
+		case PqMsg_FunctionCallResponse:
+			pqTraceOutput_FunctionCallResponse(conn->Pfdebug, message, &logCursor);
 			break;
-		case 'W':				/* Start Copy Both */
-			pqTraceOutputW(conn->Pfdebug, message, &logCursor, length);
+		case PqMsg_CopyBothResponse:
+			pqTraceOutput_CopyBothResponse(conn->Pfdebug, message, &logCursor, length);
 			break;
-		case 'X':
+		case PqMsg_Terminate:
 			fprintf(conn->Pfdebug, "Terminate");
 			/* No message content */
 			break;
-		case 'Z':				/* Ready For Query */
-			pqTraceOutputZ(conn->Pfdebug, message, &logCursor);
+		case PqMsg_ReadyForQuery:
+			pqTraceOutput_ReadyForQuery(conn->Pfdebug, message, &logCursor);
 			break;
 		default:
 			fprintf(conn->Pfdebug, "Unknown message: %02x", id);

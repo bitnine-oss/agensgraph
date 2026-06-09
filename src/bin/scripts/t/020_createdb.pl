@@ -1,8 +1,8 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
@@ -105,6 +105,86 @@ else
 		'create database with ICU fails since no ICU support');
 }
 
+$node->command_fails(
+	[
+		'createdb', '-T',
+		'template0', '--locale-provider=builtin',
+		'tbuiltin1'
+	],
+	'create database with provider "builtin" fails without --locale');
+
+$node->command_ok(
+	[
+		'createdb', '-T',
+		'template0', '--locale-provider=builtin',
+		'--locale=C', 'tbuiltin2'
+	],
+	'create database with provider "builtin" and locale "C"');
+
+$node->command_ok(
+	[
+		'createdb', '-T',
+		'template0', '--locale-provider=builtin',
+		'--locale=C', '--lc-collate=C',
+		'tbuiltin3'
+	],
+	'create database with provider "builtin" and LC_COLLATE=C');
+
+$node->command_ok(
+	[
+		'createdb', '-T',
+		'template0', '--locale-provider=builtin',
+		'--locale=C', '--lc-ctype=C',
+		'tbuiltin4'
+	],
+	'create database with provider "builtin" and LC_CTYPE=C');
+
+$node->command_ok(
+	[
+		'createdb', '-T',
+		'template0', '--locale-provider=builtin',
+		'--lc-collate=C', '--lc-ctype=C',
+		'-E UTF-8', '--builtin-locale=C.UTF8',
+		'tbuiltin5'
+	],
+	'create database with --builtin-locale C.UTF-8 and -E UTF-8');
+
+$node->command_fails(
+	[
+		'createdb', '-T',
+		'template0', '--locale-provider=builtin',
+		'--lc-collate=C', '--lc-ctype=C',
+		'-E LATIN1', '--builtin-locale=C.UTF-8',
+		'tbuiltin6'
+	],
+	'create database with --builtin-locale C.UTF-8 and -E LATIN1');
+
+$node->command_fails(
+	[
+		'createdb', '-T',
+		'template0', '--locale-provider=builtin',
+		'--locale=C', '--icu-locale=en',
+		'tbuiltin7'
+	],
+	'create database with provider "builtin" and ICU_LOCALE="en"');
+
+$node->command_fails(
+	[
+		'createdb', '-T',
+		'template0', '--locale-provider=builtin',
+		'--locale=C', '--icu-rules=""',
+		'tbuiltin8'
+	],
+	'create database with provider "builtin" and ICU_RULES=""');
+
+$node->command_fails(
+	[
+		'createdb', '-T',
+		'template1', '--locale-provider=builtin',
+		'--locale=C', 'tbuiltin9'
+	],
+	'create database with provider "builtin" not matching template');
+
 $node->command_fails([ 'createdb', 'foobar1' ],
 	'fails if database already exists');
 
@@ -176,8 +256,18 @@ $node->issues_sql_like(
 	'create database with WAL_LOG strategy');
 
 $node->issues_sql_like(
+	[ 'createdb', '-T', 'foobar2', '-S', 'WAL_LOG', 'foobar6s' ],
+	qr/statement: CREATE DATABASE foobar6s STRATEGY "WAL_LOG" TEMPLATE foobar2/,
+	'create database with WAL_LOG strategy');
+
+$node->issues_sql_like(
 	[ 'createdb', '-T', 'foobar2', '-S', 'file_copy', 'foobar7' ],
 	qr/statement: CREATE DATABASE foobar7 STRATEGY file_copy TEMPLATE foobar2/,
+	'create database with FILE_COPY strategy');
+
+$node->issues_sql_like(
+	[ 'createdb', '-T', 'foobar2', '-S', 'FILE_COPY', 'foobar7s' ],
+	qr/statement: CREATE DATABASE foobar7s STRATEGY "FILE_COPY" TEMPLATE foobar2/,
 	'create database with FILE_COPY strategy');
 
 # Create database owned by role_foobar.

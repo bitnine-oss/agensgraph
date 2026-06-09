@@ -12,7 +12,7 @@
  * just adds two blocks of NUL bytes to the end of the file, since older
  * server versions produce files with this terminator omitted.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/bbstreamer_tar.c
@@ -286,22 +286,20 @@ bbstreamer_tar_header(bbstreamer_tar_parser *mystreamer)
 
 	/*
 	 * Parse key fields out of the header.
-	 *
-	 * FIXME: It's terrible that we use hard-coded values here instead of some
-	 * more principled approach. It's been like this for a long time, but we
-	 * ought to do better.
 	 */
-	strlcpy(member->pathname, &buffer[0], MAXPGPATH);
+	strlcpy(member->pathname, &buffer[TAR_OFFSET_NAME], MAXPGPATH);
 	if (member->pathname[0] == '\0')
 		pg_fatal("tar member has empty name");
-	member->size = read_tar_number(&buffer[124], 12);
-	member->mode = read_tar_number(&buffer[100], 8);
-	member->uid = read_tar_number(&buffer[108], 8);
-	member->gid = read_tar_number(&buffer[116], 8);
-	member->is_directory = (buffer[156] == '5');
-	member->is_link = (buffer[156] == '2');
+	member->size = read_tar_number(&buffer[TAR_OFFSET_SIZE], 12);
+	member->mode = read_tar_number(&buffer[TAR_OFFSET_MODE], 8);
+	member->uid = read_tar_number(&buffer[TAR_OFFSET_UID], 8);
+	member->gid = read_tar_number(&buffer[TAR_OFFSET_GID], 8);
+	member->is_directory =
+		(buffer[TAR_OFFSET_TYPEFLAG] == TAR_FILETYPE_DIRECTORY);
+	member->is_link =
+		(buffer[TAR_OFFSET_TYPEFLAG] == TAR_FILETYPE_SYMLINK);
 	if (member->is_link)
-		strlcpy(member->linktarget, &buffer[157], 100);
+		strlcpy(member->linktarget, &buffer[TAR_OFFSET_LINKNAME], 100);
 
 	/* Compute number of padding bytes. */
 	mystreamer->pad_bytes_expected = tarPaddingBytesRequired(member->size);
@@ -347,7 +345,7 @@ bbstreamer_tar_parser_free(bbstreamer *streamer)
 }
 
 /*
- * Create an bbstreamer that can generate a tar archive.
+ * Create a bbstreamer that can generate a tar archive.
  *
  * This is intended to be usable either for generating a brand-new tar archive
  * or for modifying one on the fly. The input should be a series of typed

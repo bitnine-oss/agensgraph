@@ -7,7 +7,7 @@
  * accessed via the extended FE/BE query protocol.
  *
  *
- * Copyright (c) 2002-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/commands/prepare.c
@@ -23,14 +23,11 @@
 #include "commands/createas.h"
 #include "commands/prepare.h"
 #include "funcapi.h"
-#include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
-#include "parser/analyze.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_type.h"
-#include "rewrite/rewriteHandler.h"
 #include "tcop/pquery.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
@@ -583,6 +580,19 @@ ExplainExecuteQuery(ExecuteStmt *execstmt, IntoClause *into, ExplainState *es,
 	instr_time	planduration;
 	BufferUsage bufusage_start,
 				bufusage;
+	MemoryContextCounters mem_counters;
+	MemoryContext planner_ctx = NULL;
+	MemoryContext saved_ctx = NULL;
+
+	if (es->memory)
+	{
+		/* See ExplainOneQuery about this */
+		Assert(IsA(CurrentMemoryContext, AllocSetContext));
+		planner_ctx = AllocSetContextCreate(CurrentMemoryContext,
+											"explain analyze planner context",
+											ALLOCSET_DEFAULT_SIZES);
+		saved_ctx = MemoryContextSwitchTo(planner_ctx);
+	}
 
 	if (es->buffers)
 		bufusage_start = pgBufferUsage;
@@ -624,6 +634,12 @@ ExplainExecuteQuery(ExecuteStmt *execstmt, IntoClause *into, ExplainState *es,
 	INSTR_TIME_SET_CURRENT(planduration);
 	INSTR_TIME_SUBTRACT(planduration, planstart);
 
+	if (es->memory)
+	{
+		MemoryContextSwitchTo(saved_ctx);
+		MemoryContextMemConsumed(planner_ctx, &mem_counters);
+	}
+
 	/* calc differences of buffer counters. */
 	if (es->buffers)
 	{
@@ -640,7 +656,8 @@ ExplainExecuteQuery(ExecuteStmt *execstmt, IntoClause *into, ExplainState *es,
 
 		if (pstmt->commandType != CMD_UTILITY)
 			ExplainOnePlan(pstmt, into, es, query_string, paramLI, queryEnv,
-						   &planduration, (es->buffers ? &bufusage : NULL));
+						   &planduration, (es->buffers ? &bufusage : NULL),
+						   es->memory ? &mem_counters : NULL);
 		else
 			ExplainOneUtility(pstmt->utilityStmt, into, es, query_string,
 							  paramLI, queryEnv);

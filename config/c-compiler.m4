@@ -137,7 +137,7 @@ if test x"$pgac_cv__128bit_int" = xyes ; then
   AC_CACHE_CHECK([for __int128 alignment bug], [pgac_cv__128bit_int_bug],
   [AC_RUN_IFELSE([AC_LANG_PROGRAM([
 /* This must match the corresponding code in c.h: */
-#if defined(__GNUC__) || defined(__SUNPRO_C) || defined(__IBMC__)
+#if defined(__GNUC__) || defined(__SUNPRO_C)
 #define pg_attribute_aligned(a) __attribute__((aligned(a)))
 #elif defined(_MSC_VER)
 #define pg_attribute_aligned(a) __declspec(align(a))
@@ -661,3 +661,94 @@ if test x"$Ac_cachevar" = x"yes"; then
 fi
 undefine([Ac_cachevar])dnl
 ])# PGAC_ARMV8_CRC32C_INTRINSICS
+
+# PGAC_LOONGARCH_CRC32C_INTRINSICS
+# ---------------------------
+# Check if the compiler supports the LoongArch CRCC instructions, using
+# __builtin_loongarch_crcc_w_b_w, __builtin_loongarch_crcc_w_h_w,
+# __builtin_loongarch_crcc_w_w_w and __builtin_loongarch_crcc_w_d_w
+# intrinsic functions.
+#
+# We test for the 8-byte variant since platforms capable of running
+# Postgres are 64-bit only (as of PG17), and we know CRC instructions
+# are available there without a runtime check.
+#
+# If the intrinsics are supported, sets pgac_loongarch_crc32c_intrinsics.
+AC_DEFUN([PGAC_LOONGARCH_CRC32C_INTRINSICS],
+[define([Ac_cachevar], [AS_TR_SH([pgac_cv_loongarch_crc32c_intrinsics])])dnl
+AC_CACHE_CHECK(
+  [for __builtin_loongarch_crcc_w_b_w, __builtin_loongarch_crcc_w_h_w, __builtin_loongarch_crcc_w_w_w and __builtin_loongarch_crcc_w_d_w],
+  [Ac_cachevar],
+[AC_LINK_IFELSE([AC_LANG_PROGRAM([],
+  [unsigned int crc = 0;
+   crc = __builtin_loongarch_crcc_w_b_w(0, crc);
+   crc = __builtin_loongarch_crcc_w_h_w(0, crc);
+   crc = __builtin_loongarch_crcc_w_w_w(0, crc);
+   crc = __builtin_loongarch_crcc_w_d_w(0, crc);
+   /* return computed value, to prevent the above being optimized away */
+   return crc == 0;])],
+  [Ac_cachevar=yes],
+  [Ac_cachevar=no])])
+if test x"$Ac_cachevar" = x"yes"; then
+  pgac_loongarch_crc32c_intrinsics=yes
+fi
+undefine([Ac_cachevar])dnl
+])# PGAC_LOONGARCH_CRC32C_INTRINSICS
+
+# PGAC_XSAVE_INTRINSICS
+# ---------------------
+# Check if the compiler supports the XSAVE instructions using the _xgetbv
+# intrinsic function.
+#
+# An optional compiler flag can be passed as argument (e.g., -mxsave).  If the
+# intrinsic is supported, sets pgac_xsave_intrinsics and CFLAGS_XSAVE.
+AC_DEFUN([PGAC_XSAVE_INTRINSICS],
+[define([Ac_cachevar], [AS_TR_SH([pgac_cv_xsave_intrinsics_$1])])dnl
+AC_CACHE_CHECK([for _xgetbv with CFLAGS=$1], [Ac_cachevar],
+[pgac_save_CFLAGS=$CFLAGS
+CFLAGS="$pgac_save_CFLAGS $1"
+AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <immintrin.h>],
+  [return _xgetbv(0) & 0xe0;])],
+  [Ac_cachevar=yes],
+  [Ac_cachevar=no])
+CFLAGS="$pgac_save_CFLAGS"])
+if test x"$Ac_cachevar" = x"yes"; then
+  CFLAGS_XSAVE="$1"
+  pgac_xsave_intrinsics=yes
+fi
+undefine([Ac_cachevar])dnl
+])# PGAC_XSAVE_INTRINSICS
+
+# PGAC_AVX512_POPCNT_INTRINSICS
+# -----------------------------
+# Check if the compiler supports the AVX-512 popcount instructions using the
+# _mm512_setzero_si512, _mm512_maskz_loadu_epi8, _mm512_popcnt_epi64,
+# _mm512_add_epi64, and _mm512_reduce_add_epi64 intrinsic functions.
+#
+# Optional compiler flags can be passed as argument (e.g., -mavx512vpopcntdq
+# -mavx512bw).  If the intrinsics are supported, sets
+# pgac_avx512_popcnt_intrinsics and CFLAGS_POPCNT.
+AC_DEFUN([PGAC_AVX512_POPCNT_INTRINSICS],
+[define([Ac_cachevar], [AS_TR_SH([pgac_cv_avx512_popcnt_intrinsics_$1])])dnl
+AC_CACHE_CHECK([for _mm512_popcnt_epi64 with CFLAGS=$1], [Ac_cachevar],
+[pgac_save_CFLAGS=$CFLAGS
+CFLAGS="$pgac_save_CFLAGS $1"
+AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <immintrin.h>],
+  [const char buf@<:@sizeof(__m512i)@:>@;
+   PG_INT64_TYPE popcnt = 0;
+   __m512i accum = _mm512_setzero_si512();
+   const __m512i val = _mm512_maskz_loadu_epi8((__mmask64) 0xf0f0f0f0f0f0f0f0, (const __m512i *) buf);
+   const __m512i cnt = _mm512_popcnt_epi64(val);
+   accum = _mm512_add_epi64(accum, cnt);
+   popcnt = _mm512_reduce_add_epi64(accum);
+   /* return computed value, to prevent the above being optimized away */
+   return popcnt == 0;])],
+  [Ac_cachevar=yes],
+  [Ac_cachevar=no])
+CFLAGS="$pgac_save_CFLAGS"])
+if test x"$Ac_cachevar" = x"yes"; then
+  CFLAGS_POPCNT="$1"
+  pgac_avx512_popcnt_intrinsics=yes
+fi
+undefine([Ac_cachevar])dnl
+])# PGAC_AVX512_POPCNT_INTRINSICS

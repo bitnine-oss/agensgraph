@@ -3,7 +3,7 @@
  * file_fdw.c
  *		  foreign-data wrapper for server-side flat files (or programs).
  *
- * Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/file_fdw/file_fdw.c
@@ -581,6 +581,7 @@ fileGetForeignPaths(PlannerInfo *root,
 									 NIL,	/* no pathkeys */
 									 baserel->lateral_relids,
 									 NULL,	/* no extra plan */
+									 NIL,	/* no fdw_restrictinfo list */
 									 coptions));
 
 	/*

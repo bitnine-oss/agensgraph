@@ -648,7 +648,7 @@ protocol to make nodes agree on a serializable transactional order.
     later disconnected, the standby goes back to step 1 and tries to
     restore the file from the archive again. This loop of retries from the
     archive, <filename>pg_wal</filename>, and via streaming replication goes on until the server
-    is stopped or failover is triggered by a trigger file.
+    is stopped or is promoted.
    </para>
 
    <para>
@@ -924,7 +924,8 @@ primary_conninfo = 'host=192.168.1.50 port=5432 user=foo password=foopass'
     <secondary>streaming replication</secondary>
    </indexterm>
    <para>
-    Replication slots provide an automated way to ensure that the primary does
+    Replication slots provide an automated way to ensure that the
+    primary server does
     not remove WAL segments until they have been received by all standbys,
     and that the primary does not remove rows which could cause a
     <link linkend="hot-standby-conflict">recovery conflict</link> even when the
@@ -935,21 +936,28 @@ primary_conninfo = 'host=192.168.1.50 port=5432 user=foo password=foopass'
     of old WAL segments using <xref linkend="guc-wal-keep-size"/>, or by
     storing the segments in an archive using
     <xref linkend="guc-archive-command"/> or <xref linkend="guc-archive-library"/>.
-    However, these methods often result in retaining more WAL segments than
+    A disadvantage of these methods is that they
+    often result in retaining more WAL segments than
     required, whereas replication slots retain only the number of segments
-    known to be needed.  On the other hand, replication slots can retain so
-    many WAL segments that they fill up the space allocated
-    for <literal>pg_wal</literal>;
-    <xref linkend="guc-max-slot-wal-keep-size"/> limits the size of WAL files
-    retained by replication slots.
+    known to be needed.
    </para>
    <para>
     Similarly, <xref linkend="guc-hot-standby-feedback"/> on its own, without
     also using a replication slot, provides protection against relevant rows
     being removed by vacuum, but provides no protection during any time period
-    when the standby is not connected.  Replication slots overcome these
-    disadvantages.
+    when the standby is not connected.
    </para>
+
+   <caution>
+    <para>
+     Beware that replication slots can cause the server to retain so
+     many WAL segments that they fill up the space allocated for
+     <literal>pg_wal</literal>.
+     <xref linkend="guc-max-slot-wal-keep-size"/> can be used to limit the size
+     of WAL files retained by replication slots.
+    </para>
+   </caution>
+
    <sect3 id="streaming-replication-slots-manipulation">
     <title>Querying and Manipulating Replication Slots</title>
     <para>
@@ -1294,7 +1302,7 @@ synchronous_standby_names = 'ANY 2 (s1, s2, s3)'
     <varname>synchronous_commit</varname> is set to <literal>on</literal>,
     <literal>remote_apply</literal> or <literal>remote_write</literal> will wait for
     responses from. Such transaction commits may never be completed
-    if any one of synchronous standbys should crash.
+    if any one of the synchronous standbys should crash.
    </para>
 
    <para>
@@ -1359,8 +1367,8 @@ synchronous_standby_names = 'ANY 2 (s1, s2, s3)'
 
    <para>
     If you need to re-create a standby server while transactions are
-    waiting, make sure that the commands pg_backup_start() and
-    pg_backup_stop() are run in a session with
+    waiting, make sure that the functions <function>pg_backup_start()</function>
+    and <function>pg_backup_stop()</function> are run in a session with
     <varname>synchronous_commit</varname> = <literal>off</literal>, otherwise those
     requests will wait forever for the standby to appear.
    </para>
@@ -1477,6 +1485,15 @@ synchronous_standby_names = 'ANY 2 (s1, s2, s3)'
     each system for maintenance. This also serves as a test of the
     failover mechanism to ensure that it will really work when you need it.
     Written administration procedures are advised.
+   </para>
+
+   <para>
+    If you have opted for logical replication slot synchronization (see
+    <xref linkend="logicaldecoding-replication-slots-synchronization"/>),
+    then before switching to the standby server, it is recommended to check
+    if the logical slots synchronized on the standby server are ready
+    for failover. This can be done by following the steps described in
+    <xref linkend="logical-replication-failover"/>.
    </para>
 
    <para>
@@ -2219,10 +2236,11 @@ HINT:  You can then restart the server after making the necessary configuration 
     The cumulative statistics system is active during recovery. All scans,
     reads, blocks, index usage, etc., will be recorded normally on the
     standby. However, WAL replay will not increment relation and database
-    specific counters. I.e. replay will not increment pg_stat_all_tables
-    columns (like n_tup_ins), nor will reads or writes performed by the
-    startup process be tracked in the pg_statio views, nor will associated
-    pg_stat_database columns be incremented.
+    specific counters. I.e. replay will not increment
+    <structname>pg_stat_all_tables</structname> columns (like <structfield>n_tup_ins</structfield>),
+    nor will reads or writes performed by the startup process be tracked in the
+    <structname>pg_statio_</structname> views, nor will associated
+    <structname>pg_stat_database</structname> columns be incremented.
    </para>
 
    <para>

@@ -1,8 +1,8 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
@@ -109,15 +109,13 @@ $node->safe_psql(
   CREATE FUNCTION f1(int) RETURNS int LANGUAGE SQL AS 'SELECT f0($1)';
   CREATE TABLE funcidx (x int);
   INSERT INTO funcidx VALUES (0),(1),(2),(3);
-  CREATE INDEX i0 ON funcidx ((f1(x)));
   CREATE SCHEMA "Foo";
   CREATE TABLE "Foo".bar(id int);
+  CREATE SCHEMA "Bar";
+  CREATE TABLE "Bar".baz(id int);
 |);
 $node->command_ok([qw|vacuumdb -Z --table="need""q(uot"(")x") postgres|],
 	'column list');
-$node->command_fails(
-	[qw|vacuumdb -Zt funcidx postgres|],
-	'unqualified name via functional index');
 
 $node->command_fails(
 	[ 'vacuumdb', '--analyze', '--table', 'vactable(c)', 'postgres' ],
@@ -160,9 +158,23 @@ $node->issues_sql_like(
 	qr/VACUUM \(SKIP_DATABASE_STATS\) "Foo".bar/,
 	'vacuumdb --schema');
 $node->issues_sql_like(
+	[ 'vacuumdb', '--schema', '"Foo"', '--schema', '"Bar"', 'postgres' ],
+	qr/VACUUM\ \(SKIP_DATABASE_STATS\)\ "Foo".bar
+		.*VACUUM\ \(SKIP_DATABASE_STATS\)\ "Bar".baz
+	/sx,
+	'vacuumdb multiple --schema switches');
+$node->issues_sql_like(
 	[ 'vacuumdb', '--exclude-schema', '"Foo"', 'postgres' ],
-	qr/(?:(?!VACUUM "Foo".bar).)*/,
+	qr/^(?!.*VACUUM \(SKIP_DATABASE_STATS\) "Foo".bar).*$/s,
 	'vacuumdb --exclude-schema');
+$node->issues_sql_like(
+	[
+		'vacuumdb', '--exclude-schema', '"Foo"', '--exclude-schema',
+		'"Bar"', 'postgres'
+	],
+	qr/^(?!.*VACUUM\ \(SKIP_DATABASE_STATS\)\ "Foo".bar
+	| VACUUM\ \(SKIP_DATABASE_STATS\)\ "Bar".baz).*$/sx,
+	'vacuumdb multiple --exclude-schema switches');
 $node->command_fails_like(
 	[ 'vacuumdb', '-N', 'pg_catalog', '-t', 'pg_class', 'postgres', ],
 	qr/cannot vacuum specific table\(s\) and exclude schema\(s\) at the same time/,
@@ -175,18 +187,18 @@ $node->command_fails_like(
 	[ 'vacuumdb', '-n', 'pg_catalog', '-N', '"Foo"', 'postgres' ],
 	qr/cannot vacuum all tables in schema\(s\) and exclude schema\(s\) at the same time/,
 	'cannot use options -n and -N at the same time');
-$node->command_fails_like(
-	[ 'vacuumdb', '-a', '-N', '"Foo"' ],
-	qr/cannot exclude specific schema\(s\) in all databases/,
-	'cannot use options -a and -N at the same time');
-$node->command_fails_like(
-	[ 'vacuumdb', '-a', '-n', '"Foo"' ],
-	qr/cannot vacuum specific schema\(s\) in all databases/,
-	'cannot use options -a and -n at the same time');
-$node->command_fails_like(
-	[ 'vacuumdb', '-a', '-t', '"Foo".bar' ],
-	qr/cannot vacuum specific table\(s\) in all databases/,
-	'cannot use options -a and -t at the same time');
+$node->issues_sql_like(
+	[ 'vacuumdb', '-a', '-N', 'pg_catalog' ],
+	qr/(?:(?!VACUUM \(SKIP_DATABASE_STATS\) pg_catalog.pg_class).)*/,
+	'vacuumdb -a -N');
+$node->issues_sql_like(
+	[ 'vacuumdb', '-a', '-n', 'pg_catalog' ],
+	qr/VACUUM \(SKIP_DATABASE_STATS\) pg_catalog.pg_class/,
+	'vacuumdb -a -n');
+$node->issues_sql_like(
+	[ 'vacuumdb', '-a', '-t', 'pg_class' ],
+	qr/VACUUM \(SKIP_DATABASE_STATS\) pg_catalog.pg_class/,
+	'vacuumdb -a -t');
 $node->command_fails_like(
 	[ 'vacuumdb', '-a', '-d', 'postgres' ],
 	qr/cannot vacuum all databases and a specific one at the same time/,

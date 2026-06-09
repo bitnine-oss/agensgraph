@@ -8,7 +8,7 @@
  * storage implementation and the details about individual types of
  * statistics.
  *
- * Copyright (c) 2001-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/activity/pgstat_wal.c
@@ -17,8 +17,8 @@
 
 #include "postgres.h"
 
-#include "utils/pgstat_internal.h"
 #include "executor/instrument.h"
+#include "utils/pgstat_internal.h"
 
 
 PgStat_PendingWalStats PendingWalStats = {0};
@@ -38,13 +38,25 @@ static WalUsage prevWalUsage;
  *
  * Must be called by processes that generate WAL, that do not call
  * pgstat_report_stat(), like walwriter.
+ *
+ * "force" set to true ensures that the statistics are flushed; note that
+ * this needs to acquire the pgstat shmem LWLock, waiting on it.  When
+ * set to false, the statistics may not be flushed if the lock could not
+ * be acquired.
  */
 void
 pgstat_report_wal(bool force)
 {
-	pgstat_flush_wal(force);
+	bool		nowait;
 
-	pgstat_flush_io(force);
+	/* like in pgstat.c, don't wait for lock acquisition when !force */
+	nowait = !force;
+
+	/* flush wal stats */
+	pgstat_flush_wal(nowait);
+
+	/* flush IO stats */
+	pgstat_flush_io(nowait);
 }
 
 /*

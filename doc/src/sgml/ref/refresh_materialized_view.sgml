@@ -68,7 +68,7 @@ REFRESH MATERIALIZED VIEW [ CONCURRENTLY ] <replaceable class="parameter">name</
       expression index or include a <literal>WHERE</literal> clause.
      </para>
      <para>
-      This option may not be used when the materialized view is not already
+      This option can only be used when the materialized view is already
       populated.
      </para>
      <para>
@@ -98,6 +98,12 @@ REFRESH MATERIALIZED VIEW [ CONCURRENTLY ] <replaceable class="parameter">name</
    view's defining query, the original contents of the materialized view
    will be ordered that way; but <command>REFRESH MATERIALIZED
    VIEW</command> does not guarantee to preserve that ordering.
+  </para>
+
+  <para>
+   While <command>REFRESH MATERIALIZED VIEW</command> is running, the <xref
+   linkend="guc-search-path"/> is temporarily changed to <literal>pg_catalog,
+   pg_temp</literal>.
   </para>
  </refsect1>
 

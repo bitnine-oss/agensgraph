@@ -3,7 +3,7 @@
  * misc.c
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -23,7 +23,6 @@
 
 #include "access/sysattr.h"
 #include "access/table.h"
-#include "catalog/catalog.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_type.h"
 #include "catalog/system_fk_info.h"
@@ -45,6 +44,7 @@
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/ruleutils.h"
+#include "utils/syscache.h"
 #include "utils/timestamp.h"
 
 
@@ -564,6 +564,50 @@ Datum
 pg_typeof(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_OID(get_fn_expr_argtype(fcinfo->flinfo, 0));
+}
+
+
+/*
+ * Return the base type of the argument.
+ *		If the given type is a domain, return its base type;
+ *		otherwise return the type's own OID.
+ *		Return NULL if the type OID doesn't exist or points to a
+ *		non-existent base type.
+ *
+ * This is a SQL-callable version of getBaseType().  Unlike that function,
+ * we don't want to fail for a bogus type OID; this is helpful to keep race
+ * conditions from turning into query failures when scanning the catalogs.
+ * Hence we need our own implementation.
+ */
+Datum
+pg_basetype(PG_FUNCTION_ARGS)
+{
+	Oid			typid = PG_GETARG_OID(0);
+
+	/*
+	 * We loop to find the bottom base type in a stack of domains.
+	 */
+	for (;;)
+	{
+		HeapTuple	tup;
+		Form_pg_type typTup;
+
+		tup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
+		if (!HeapTupleIsValid(tup))
+			PG_RETURN_NULL();	/* return NULL for bogus OID */
+		typTup = (Form_pg_type) GETSTRUCT(tup);
+		if (typTup->typtype != TYPTYPE_DOMAIN)
+		{
+			/* Not a domain, so done */
+			ReleaseSysCache(tup);
+			break;
+		}
+
+		typid = typTup->typbasetype;
+		ReleaseSysCache(tup);
+	}
+
+	PG_RETURN_OID(typid);
 }
 
 

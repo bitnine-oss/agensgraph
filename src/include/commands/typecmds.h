@@ -4,7 +4,7 @@
  *	  prototypes for typecmds.c.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/typecmds.h
@@ -50,9 +50,11 @@ extern void AlterTypeOwnerInternal(Oid typeOid, Oid newOwnerId);
 
 extern ObjectAddress AlterTypeNamespace(List *names, const char *newschema,
 										ObjectType objecttype, Oid *oldschema);
-extern Oid	AlterTypeNamespace_oid(Oid typeOid, Oid nspOid, ObjectAddresses *objsMoved);
+extern Oid	AlterTypeNamespace_oid(Oid typeOid, Oid nspOid, bool ignoreDependent,
+								   ObjectAddresses *objsMoved);
 extern Oid	AlterTypeNamespaceInternal(Oid typeOid, Oid nspOid,
 									   bool isImplicitArray,
+									   bool ignoreDependent,
 									   bool errorOnTableType,
 									   ObjectAddresses *objsMoved);
 

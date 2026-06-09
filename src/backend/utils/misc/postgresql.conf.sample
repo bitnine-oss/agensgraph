@@ -96,7 +96,6 @@
 #authentication_timeout = 1min		# 1s-600s
 #password_encryption = scram-sha-256	# scram-sha-256 or md5
 #scram_iterations = 4096
-#db_user_namespace = off
 
 # GSSAPI using Kerberos
 #krb_server_keyfile = 'FILE:${sysconfdir}/krb5.keytab'
@@ -111,7 +110,7 @@
 #ssl_crl_file = ''
 #ssl_crl_dir = ''
 #ssl_key_file = 'server.key'
-#ssl_ciphers = 'HIGH:MEDIUM:+3DES:!aNULL' # allowed SSL ciphers
+#ssl_ciphers = 'HIGH:MEDIUM:+3DES:!aNULL'	# allowed SSL ciphers
 #ssl_prefer_server_ciphers = on
 #ssl_ecdh_curve = 'prime256v1'
 #ssl_min_protocol_version = 'TLSv1.2'
@@ -158,14 +157,26 @@
 					#   mmap
 					# (change requires restart)
 #min_dynamic_shared_memory = 0MB	# (change requires restart)
-#vacuum_buffer_usage_limit = 256kB	# size of vacuum and analyze buffer access strategy ring;
+#vacuum_buffer_usage_limit = 2MB	# size of vacuum and analyze buffer access strategy ring;
 					# 0 to disable vacuum buffer access strategy;
 					# range 128kB to 16GB
+
+# SLRU buffers (change requires restart)
+#commit_timestamp_buffers = 0		# memory for pg_commit_ts (0 = auto)
+#multixact_offset_buffers = 16		# memory for pg_multixact/offsets
+#multixact_member_buffers = 32		# memory for pg_multixact/members
+#notify_buffers = 16			# memory for pg_notify
+#serializable_buffers = 32		# memory for pg_serial
+#subtransaction_buffers = 0		# memory for pg_subtrans (0 = auto)
+#transaction_buffers = 0		# memory for pg_xact (0 = auto)
 
 # - Disk -
 
 #temp_file_limit = -1			# limits per-process temp file space
 					# in kilobytes, or -1 for no limit
+
+#max_notify_queue_pages = 1048576	# limits the number of SLRU pages allocated
+					# for NOTIFY / LISTEN queue
 
 # - Kernel Resources -
 
@@ -192,14 +203,13 @@
 #backend_flush_after = 0		# measured in pages, 0 disables
 #effective_io_concurrency = 1		# 1-1000; 0 disables prefetching
 #maintenance_io_concurrency = 10	# 1-1000; 0 disables prefetching
+#io_combine_limit = 128kB		# usually 1-32 blocks (depends on OS)
 #max_worker_processes = 8		# (change requires restart)
-#max_parallel_workers_per_gather = 2	# taken from max_parallel_workers
-#max_parallel_maintenance_workers = 2	# taken from max_parallel_workers
-#max_parallel_workers = 8		# maximum number of max_worker_processes that
+#max_parallel_workers_per_gather = 2	# limited by max_parallel_workers
+#max_parallel_maintenance_workers = 2	# limited by max_parallel_workers
+#max_parallel_workers = 8		# number of max_worker_processes that
 					# can be used in parallel operations
 #parallel_leader_participation = on
-#old_snapshot_threshold = -1		# 1min-60d; -1 disables; 0 is immediate
-					# (change requires restart)
 
 
 #------------------------------------------------------------------------------
@@ -249,9 +259,9 @@
 
 # - Prefetching during recovery -
 
-#recovery_prefetch = try		# prefetch pages referenced in the WAL?
-#wal_decode_buffer_size = 512kB		# lookahead window used for prefetching
-					# (change requires restart)
+#recovery_prefetch = try	# prefetch pages referenced in the WAL?
+#wal_decode_buffer_size = 512kB	# lookahead window used for prefetching
+				# (change requires restart)
 
 # - Archiving -
 
@@ -283,7 +293,7 @@
 # Set these only when performing a targeted recovery.
 
 #recovery_target = ''		# 'immediate' to end recovery as soon as a
-                                # consistent state is reached
+				# consistent state is reached
 				# (change requires restart)
 #recovery_target_name = ''	# the named restore point to which recovery will proceed
 				# (change requires restart)
@@ -293,14 +303,19 @@
 				# (change requires restart)
 #recovery_target_lsn = ''	# the WAL LSN up to which recovery will proceed
 				# (change requires restart)
-#recovery_target_inclusive = on # Specifies whether to stop:
+#recovery_target_inclusive = on	# Specifies whether to stop:
 				# just after the specified recovery target (on)
 				# just before the recovery target (off)
 				# (change requires restart)
 #recovery_target_timeline = 'latest'	# 'current', 'latest', or timeline ID
-				# (change requires restart)
+					# (change requires restart)
 #recovery_target_action = 'pause'	# 'pause', 'promote', 'shutdown'
-				# (change requires restart)
+					# (change requires restart)
+
+# - WAL Summarization -
+
+#summarize_wal = off		# run WAL summarizer process?
+#wal_summary_keep_time = '10d'	# when to remove old summary files, 0 = never
 
 
 #------------------------------------------------------------------------------
@@ -329,6 +344,8 @@
 				# method to choose sync standbys, number of sync standbys,
 				# and comma-separated list of application_name
 				# from standby(s); '*' = all
+#standby_slot_names = ''	# streaming replication standby server slot names that
+				# logical walsender processes will wait for
 
 # - Standby Servers -
 
@@ -356,6 +373,7 @@
 #wal_retrieve_retry_interval = 5s	# time to wait before retrying to
 					# retrieve WAL after a failed attempt
 #recovery_min_apply_delay = 0		# minimum delay for applying changes during recovery
+#sync_replication_slots = off		# enables slot synchronization on the physical standby from the primary
 
 # - Subscribers -
 
@@ -394,6 +412,7 @@
 #enable_seqscan = on
 #enable_sort = on
 #enable_tidscan = on
+#enable_group_by_reordering = on
 
 # - Planner Cost Constants -
 
@@ -402,7 +421,7 @@
 #cpu_tuple_cost = 0.01			# same scale as above
 #cpu_index_tuple_cost = 0.005		# same scale as above
 #cpu_operator_cost = 0.0025		# same scale as above
-#parallel_setup_cost = 1000.0	# same scale as above
+#parallel_setup_cost = 1000.0		# same scale as above
 #parallel_tuple_cost = 0.1		# same scale as above
 #min_parallel_table_scan_size = 8MB
 #min_parallel_index_scan_size = 512kB
@@ -463,7 +482,7 @@
 #log_directory = 'log'			# directory where log files are written,
 					# can be absolute or relative to PGDATA
 #log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'	# log file name pattern,
-					# can include strftime() escapes
+							# can include strftime() escapes
 #log_file_mode = 0600			# creation mode for log files,
 					# begin with 0 to use octal notation
 #log_rotation_age = 1d			# Automatic rotation of logfiles will
@@ -645,19 +664,19 @@
 #autovacuum_vacuum_threshold = 50	# min number of row updates before
 					# vacuum
 #autovacuum_vacuum_insert_threshold = 1000	# min number of row inserts
-					# before vacuum; -1 disables insert
-					# vacuums
+						# before vacuum; -1 disables insert
+						# vacuums
 #autovacuum_analyze_threshold = 50	# min number of row updates before
 					# analyze
 #autovacuum_vacuum_scale_factor = 0.2	# fraction of table size before vacuum
 #autovacuum_vacuum_insert_scale_factor = 0.2	# fraction of inserts over table
-					# size before insert vacuum
+						# size before insert vacuum
 #autovacuum_analyze_scale_factor = 0.1	# fraction of table size before analyze
 #autovacuum_freeze_max_age = 200000000	# maximum XID age before forced vacuum
 					# (change requires restart)
 #autovacuum_multixact_freeze_max_age = 400000000	# maximum multixact age
-					# before forced vacuum
-					# (change requires restart)
+							# before forced vacuum
+							# (change requires restart)
 #autovacuum_vacuum_cost_delay = 2ms	# default vacuum cost delay for
 					# autovacuum, in milliseconds;
 					# -1 means use vacuum_cost_delay
@@ -694,10 +713,11 @@
 #default_transaction_read_only = off
 #default_transaction_deferrable = off
 #session_replication_role = 'origin'
-#statement_timeout = 0			# in milliseconds, 0 is disabled
-#lock_timeout = 0			# in milliseconds, 0 is disabled
+#statement_timeout = 0				# in milliseconds, 0 is disabled
+#transaction_timeout = 0			# in milliseconds, 0 is disabled
+#lock_timeout = 0				# in milliseconds, 0 is disabled
 #idle_in_transaction_session_timeout = 0	# in milliseconds, 0 is disabled
-#idle_session_timeout = 0		# in milliseconds, 0 is disabled
+#idle_session_timeout = 0			# in milliseconds, 0 is disabled
 #vacuum_freeze_table_age = 150000000
 #vacuum_freeze_min_age = 50000000
 #vacuum_failsafe_age = 1600000000
@@ -709,13 +729,14 @@
 #xmloption = 'content'
 #gin_pending_list_limit = 4MB
 #createrole_self_grant = ''		# set and/or inherit
+#event_triggers = on
 
 # - Locale and Formatting -
 
 #datestyle = 'iso, mdy'
 #intervalstyle = 'postgres'
 #timezone = 'GMT'
-#timezone_abbreviations = 'Default'     # Select the set of available time zone
+#timezone_abbreviations = 'Default'	# Select the set of available time zone
 					# abbreviations.  Currently, there are
 					#   Default
 					#   Australia (historical usage)
@@ -728,7 +749,7 @@
 					# encoding
 
 # These settings are initialized by initdb, but they can be changed.
-#lc_messages = 'C'			# locale for system error message
+#lc_messages = ''			# locale for system error message
 					# strings
 #lc_monetary = 'C'			# locale for monetary formatting
 #lc_numeric = 'C'			# locale for number formatting
@@ -744,7 +765,7 @@
 
 #local_preload_libraries = ''
 #session_preload_libraries = ''
-#shared_preload_libraries = ''	# (change requires restart)
+#shared_preload_libraries = ''		# (change requires restart)
 #jit_provider = 'llvmjit'		# JIT library to use
 
 # - Other Defaults -
@@ -765,7 +786,7 @@
 #max_pred_locks_per_relation = -2	# negative values mean
 					# (max_pred_locks_per_transaction
 					#  / -max_pred_locks_per_relation) - 1
-#max_pred_locks_per_page = 2            # min 0
+#max_pred_locks_per_page = 2		# min 0
 
 
 #------------------------------------------------------------------------------
@@ -785,6 +806,7 @@
 # - Other Platforms and Clients -
 
 #transform_null_equals = off
+#allow_alter_system = on
 
 
 #------------------------------------------------------------------------------

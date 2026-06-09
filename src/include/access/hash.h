@@ -4,7 +4,7 @@
  *	  header file for postgres hash access method implementation
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/hash.h
@@ -451,7 +451,7 @@ typedef struct HSpool HSpool;	/* opaque struct in hashsort.c */
 extern HSpool *_h_spoolinit(Relation heap, Relation index, uint32 num_buckets);
 extern void _h_spooldestroy(HSpool *hspool);
 extern void _h_spool(HSpool *hspool, ItemPointer self,
-					 Datum *values, bool *isnull);
+					 const Datum *values, const bool *isnull);
 extern void _h_indexbuild(HSpool *hspool, Relation heapRel);
 
 /* hashutil.c */

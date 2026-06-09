@@ -1769,7 +1769,7 @@ SET SESSION AUTHORIZATION regress_sro_user;
 CREATE FUNCTION unwanted_grant() RETURNS void LANGUAGE sql AS
 	'GRANT regress_priv_group2 TO regress_sro_user';
 CREATE FUNCTION mv_action() RETURNS bool LANGUAGE sql AS
-	'DECLARE c CURSOR WITH HOLD FOR SELECT unwanted_grant(); SELECT true';
+	'DECLARE c CURSOR WITH HOLD FOR SELECT public.unwanted_grant(); SELECT true';
 -- REFRESH of this MV will queue a GRANT at end of transaction
 CREATE MATERIALIZED VIEW sro_mv AS SELECT mv_action() WITH NO DATA;
 REFRESH MATERIALIZED VIEW sro_mv;
@@ -1783,12 +1783,12 @@ SET SESSION AUTHORIZATION regress_sro_user;
 -- INSERT to this table will queue a GRANT at end of transaction
 CREATE TABLE sro_trojan_table ();
 CREATE FUNCTION sro_trojan() RETURNS trigger LANGUAGE plpgsql AS
-	'BEGIN PERFORM unwanted_grant(); RETURN NULL; END';
+	'BEGIN PERFORM public.unwanted_grant(); RETURN NULL; END';
 CREATE CONSTRAINT TRIGGER t AFTER INSERT ON sro_trojan_table
     INITIALLY DEFERRED FOR EACH ROW EXECUTE PROCEDURE sro_trojan();
 -- Now, REFRESH will issue such an INSERT, queueing the GRANT
 CREATE OR REPLACE FUNCTION mv_action() RETURNS bool LANGUAGE sql AS
-	'INSERT INTO sro_trojan_table DEFAULT VALUES; SELECT true';
+	'INSERT INTO public.sro_trojan_table DEFAULT VALUES; SELECT true';
 REFRESH MATERIALIZED VIEW sro_mv;
 ERROR:  cannot fire deferred trigger within security-restricted operation
 CONTEXT:  SQL function "mv_action" statement 1
@@ -1800,15 +1800,15 @@ BEGIN; SET CONSTRAINTS ALL IMMEDIATE; REFRESH MATERIALIZED VIEW sro_mv; COMMIT;
 ERROR:  permission denied to grant role "regress_priv_group2"
 DETAIL:  Only roles with the ADMIN option on role "regress_priv_group2" may grant this role.
 CONTEXT:  SQL function "unwanted_grant" statement 1
-SQL statement "SELECT unwanted_grant()"
-PL/pgSQL function sro_trojan() line 1 at PERFORM
+SQL statement "SELECT public.unwanted_grant()"
+PL/pgSQL function public.sro_trojan() line 1 at PERFORM
 SQL function "mv_action" statement 1
 -- REFRESH MATERIALIZED VIEW CONCURRENTLY use of eval_const_expressions()
 SET SESSION AUTHORIZATION regress_sro_user;
 CREATE FUNCTION unwanted_grant_nofail(int) RETURNS int
 	IMMUTABLE LANGUAGE plpgsql AS $$
 BEGIN
-	PERFORM unwanted_grant();
+	PERFORM public.unwanted_grant();
 	RAISE WARNING 'owned';
 	RETURN 1;
 EXCEPTION WHEN OTHERS THEN
@@ -2083,6 +2083,24 @@ SELECT * FROM pg_largeobject LIMIT 0;
 SET SESSION AUTHORIZATION regress_priv_user1;
 SELECT * FROM pg_largeobject LIMIT 0;			-- to be denied
 ERROR:  permission denied for table pg_largeobject
+-- pg_signal_backend can't signal superusers
+RESET SESSION AUTHORIZATION;
+BEGIN;
+CREATE OR REPLACE FUNCTION terminate_nothrow(pid int) RETURNS bool
+	LANGUAGE plpgsql SECURITY DEFINER SET client_min_messages = error AS $$
+BEGIN
+	RETURN pg_terminate_backend($1);
+EXCEPTION WHEN OTHERS THEN
+	RETURN false;
+END$$;
+ALTER FUNCTION terminate_nothrow OWNER TO pg_signal_backend;
+SELECT backend_type FROM pg_stat_activity
+WHERE CASE WHEN COALESCE(usesysid, 10) = 10 THEN terminate_nothrow(pid) END;
+ backend_type 
+--------------
+(0 rows)
+
+ROLLBACK;
 -- test pg_database_owner
 RESET SESSION AUTHORIZATION;
 GRANT pg_database_owner TO regress_priv_user1;
@@ -2930,7 +2948,7 @@ WARNING:  permission denied to vacuum "maintain_test", skipping it
 CLUSTER maintain_test USING maintain_test_a_idx;
 ERROR:  permission denied for table maintain_test
 REFRESH MATERIALIZED VIEW refresh_test;
-ERROR:  permission denied for table refresh_test
+ERROR:  permission denied for materialized view refresh_test
 REINDEX TABLE maintain_test;
 ERROR:  permission denied for table maintain_test
 REINDEX INDEX maintain_test_a_idx;

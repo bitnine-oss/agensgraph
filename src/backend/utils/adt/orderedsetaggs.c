@@ -3,7 +3,7 @@
  * orderedsetaggs.c
  *		Ordered-set aggregate functions.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -24,10 +24,8 @@
 #include "nodes/nodeFuncs.h"
 #include "optimizer/optimizer.h"
 #include "utils/array.h"
-#include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
 #include "utils/lsyscache.h"
-#include "utils/memutils.h"
-#include "utils/timestamp.h"
 #include "utils/tuplesort.h"
 
 

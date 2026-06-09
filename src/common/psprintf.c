@@ -4,7 +4,7 @@
  *		sprintf into an allocated-on-demand buffer
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -115,8 +115,8 @@ pvsnprintf(char *buf, size_t len, const char *fmt, va_list args)
 #ifndef FRONTEND
 		elog(ERROR, "vsnprintf failed: %m with format string \"%s\"", fmt);
 #else
-		fprintf(stderr, "vsnprintf failed: %s with format string \"%s\"\n",
-				strerror(errno), fmt);
+		fprintf(stderr, "vsnprintf failed: %m with format string \"%s\"\n",
+				fmt);
 		exit(EXIT_FAILURE);
 #endif
 	}

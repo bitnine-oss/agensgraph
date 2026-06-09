@@ -3,7 +3,7 @@
  * dsm_impl.h
  *	  low-level dynamic shared memory primitives
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/dsm_impl.h
@@ -63,7 +63,7 @@ typedef enum
 	DSM_OP_CREATE,
 	DSM_OP_ATTACH,
 	DSM_OP_DETACH,
-	DSM_OP_DESTROY
+	DSM_OP_DESTROY,
 } dsm_op;
 
 /* Create, attach to, detach from, resize, or destroy a segment. */

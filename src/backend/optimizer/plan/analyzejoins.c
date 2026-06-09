@@ -11,7 +11,7 @@
  * is that we have to work harder to clean up after ourselves when we modify
  * the query, since the derived data structures have to be updated too.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -23,14 +23,12 @@
 #include "postgres.h"
 
 #include "nodes/nodeFuncs.h"
-#include "optimizer/clauses.h"
 #include "optimizer/joininfo.h"
 #include "optimizer/optimizer.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
 #include "optimizer/planmain.h"
 #include "optimizer/restrictinfo.h"
-#include "optimizer/tlist.h"
 #include "utils/lsyscache.h"
 
 /* local functions */
@@ -293,8 +291,8 @@ join_is_removable(PlannerInfo *root, SpecialJoinInfo *sjinfo)
 			continue;			/* not mergejoinable */
 
 		/*
-		 * Check if clause has the form "outer op inner" or "inner op outer",
-		 * and if so mark which side is inner.
+		 * Check if the clause has the form "outer op inner" or "inner op
+		 * outer", and if so mark which side is inner.
 		 */
 		if (!clause_sides_match_join(restrictinfo, sjinfo->min_lefthand,
 									 innerrel->relids))
@@ -392,6 +390,17 @@ remove_rel_from_query(PlannerInfo *root, int relid, SpecialJoinInfo *sjinfo)
 	{
 		SpecialJoinInfo *sjinf = (SpecialJoinInfo *) lfirst(l);
 
+		/*
+		 * initsplan.c is fairly cavalier about allowing SpecialJoinInfos'
+		 * lefthand/righthand relid sets to be shared with other data
+		 * structures.  Ensure that we don't modify the original relid sets.
+		 * (The commute_xxx sets are always per-SpecialJoinInfo though.)
+		 */
+		sjinf->min_lefthand = bms_copy(sjinf->min_lefthand);
+		sjinf->min_righthand = bms_copy(sjinf->min_righthand);
+		sjinf->syn_lefthand = bms_copy(sjinf->syn_lefthand);
+		sjinf->syn_righthand = bms_copy(sjinf->syn_righthand);
+		/* Now remove relid and ojrelid bits from the sets: */
 		sjinf->min_lefthand = bms_del_member(sjinf->min_lefthand, relid);
 		sjinf->min_righthand = bms_del_member(sjinf->min_righthand, relid);
 		sjinf->syn_lefthand = bms_del_member(sjinf->syn_lefthand, relid);
@@ -553,8 +562,11 @@ static void
 remove_rel_from_restrictinfo(RestrictInfo *rinfo, int relid, int ojrelid)
 {
 	/*
-	 * The clause_relids probably aren't shared with anything else, but let's
-	 * copy them just to be sure.
+	 * initsplan.c is fairly cavalier about allowing RestrictInfos to share
+	 * relid sets with other RestrictInfos, and SpecialJoinInfos too.  Make
+	 * sure this RestrictInfo has its own relid sets before we modify them.
+	 * (In present usage, clause_relids is probably not shared, but
+	 * required_relids could be; let's not assume anything.)
 	 */
 	rinfo->clause_relids = bms_copy(rinfo->clause_relids);
 	rinfo->clause_relids = bms_del_member(rinfo->clause_relids, relid);

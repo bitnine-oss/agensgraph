@@ -60,10 +60,12 @@ typedef struct AgStat_GraphMeta
 } AgStat_GraphMeta;
 
 #define GraphMetaFullIndexId 7056
-DECLARE_UNIQUE_INDEX_PKEY(ag_graphmeta_full_index, 7056, GraphMetaFullIndexId, on ag_graphmeta using btree(graph oid_ops, edge int2_ops, start int2_ops, end int2_ops));
+DECLARE_UNIQUE_INDEX_PKEY(ag_graphmeta_full_index, 7056, GraphMetaFullIndexId, ag_graphmeta, btree(graph oid_ops, edge int2_ops, start int2_ops, end int2_ops));
 #define GraphMetaStartIndexId 7057
-DECLARE_INDEX(ag_graphmeta_start_index, 7057, GraphMetaStartIndexId, on ag_graphmeta using btree(graph oid_ops, start int2_ops));
+DECLARE_INDEX(ag_graphmeta_start_index, 7057, GraphMetaStartIndexId, ag_graphmeta, btree(graph oid_ops, start int2_ops));
 #define GraphMetaEndIndexId 7058
-DECLARE_INDEX(ag_graphmeta_end_index, 7058, GraphMetaEndIndexId, on ag_graphmeta using btree(graph oid_ops, end int2_ops));
+DECLARE_INDEX(ag_graphmeta_end_index, 7058, GraphMetaEndIndexId, ag_graphmeta, btree(graph oid_ops, end int2_ops));
+
+MAKE_SYSCACHE(GRAPHMETAFULL, ag_graphmeta_full_index, 64);
 
 #endif							/* AG_GRAPHMETA_H */

@@ -21,7 +21,7 @@
  *	for a particular range index.  Offsets are counted starting from the end of
  *	flags aligned to the bound type.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -37,14 +37,13 @@
 #include "funcapi.h"
 #include "lib/stringinfo.h"
 #include "libpq/pqformat.h"
-#include "miscadmin.h"
+#include "nodes/nodes.h"
 #include "port/pg_bitutils.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
-#include "utils/rangetypes.h"
 #include "utils/multirangetypes.h"
-#include "utils/array.h"
-#include "utils/memutils.h"
+#include "utils/rangetypes.h"
 
 /* fn_extra cache entry for one of the range I/O functions */
 typedef struct MultirangeIOData
@@ -331,7 +330,7 @@ multirange_out(PG_FUNCTION_ARGS)
 }
 
 /*
- * Binary representation: First a int32-sized count of ranges, followed by
+ * Binary representation: First an int32-sized count of ranges, followed by
  * ranges in their native binary representation.
  */
 Datum

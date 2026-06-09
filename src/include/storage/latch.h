@@ -90,7 +90,7 @@
  * efficient than using WaitLatch or WaitLatchOrSocket.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/latch.h
@@ -101,6 +101,8 @@
 #define LATCH_H
 
 #include <signal.h>
+
+#include "utils/resowner.h"
 
 /*
  * Latch structure should be treated as opaque and only accessed through
@@ -173,7 +175,7 @@ extern void SetLatch(Latch *latch);
 extern void ResetLatch(Latch *latch);
 extern void ShutdownLatchSupport(void);
 
-extern WaitEventSet *CreateWaitEventSet(MemoryContext context, int nevents);
+extern WaitEventSet *CreateWaitEventSet(ResourceOwner resowner, int nevents);
 extern void FreeWaitEventSet(WaitEventSet *set);
 extern void FreeWaitEventSetAfterFork(WaitEventSet *set);
 extern int	AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd,

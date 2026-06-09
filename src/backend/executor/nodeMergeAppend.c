@@ -3,7 +3,7 @@
  * nodeMergeAppend.c
  *	  routines to handle MergeAppend nodes.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -38,7 +38,7 @@
 
 #include "postgres.h"
 
-#include "executor/execdebug.h"
+#include "executor/executor.h"
 #include "executor/execPartition.h"
 #include "executor/nodeMergeAppend.h"
 #include "lib/binaryheap.h"

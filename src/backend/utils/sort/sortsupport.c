@@ -4,7 +4,7 @@
  *	  Support routines for accelerated sorting.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -17,7 +17,6 @@
 
 #include "access/gist.h"
 #include "access/nbtree.h"
-#include "catalog/pg_am.h"
 #include "fmgr.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"

@@ -9,7 +9,7 @@
  * of XLogRecData structs by a call to XLogRecordAssemble(). See
  * access/transam/README for details.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/xloginsert.c
@@ -33,7 +33,6 @@
 #include "access/xloginsert.h"
 #include "catalog/pg_control.h"
 #include "common/pg_lzcompress.h"
-#include "executor/instrument.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
 #include "replication/origin.h"
@@ -247,6 +246,20 @@ XLogRegisterBuffer(uint8 block_id, Buffer buffer, uint8 flags)
 	/* NO_IMAGE doesn't make sense with FORCE_IMAGE */
 	Assert(!((flags & REGBUF_FORCE_IMAGE) && (flags & (REGBUF_NO_IMAGE))));
 	Assert(begininsert_called);
+
+	/*
+	 * Ordinarily, buffer should be exclusive-locked and marked dirty before
+	 * we get here, otherwise we could end up violating one of the rules in
+	 * access/transam/README.
+	 *
+	 * Some callers intentionally register a clean page and never update that
+	 * page's LSN; in that case they can pass the flag REGBUF_NO_CHANGE to
+	 * bypass these checks.
+	 */
+#ifdef USE_ASSERT_CHECKING
+	if (!(flags & REGBUF_NO_CHANGE))
+		Assert(BufferIsExclusiveLocked(buffer) && BufferIsDirty(buffer));
+#endif
 
 	if (block_id >= max_registered_block_id)
 	{
@@ -897,10 +910,9 @@ XLogRecordAssemble(RmgrId rmid, uint8 info,
 	 *
 	 * XLogReader machinery is only able to handle records up to a certain
 	 * size (ignoring machine resource limitations), so make sure that we will
-	 * not emit records larger than the sizes advertised to be supported. This
-	 * cap is based on DecodeXLogRecordRequiredSpace().
+	 * not emit records larger than the sizes advertised to be supported.
 	 */
-	if (total_len >= XLogRecordMaxSize)
+	if (total_len > XLogRecordMaxSize)
 		ereport(ERROR,
 				(errmsg_internal("oversized WAL record"),
 				 errdetail_internal("WAL record would be %llu bytes (of maximum %u bytes); rmid %u flags %u.",
@@ -1314,8 +1326,8 @@ log_newpage_range(Relation rel, ForkNumber forknum,
 		START_CRIT_SECTION();
 		for (i = 0; i < nbufs; i++)
 		{
-			XLogRegisterBuffer(i, bufpack[i], flags);
 			MarkBufferDirty(bufpack[i]);
+			XLogRegisterBuffer(i, bufpack[i], flags);
 		}
 
 		recptr = XLogInsert(RM_XLOG_ID, XLOG_FPI);
@@ -1339,10 +1351,12 @@ InitXLogInsert(void)
 
 	/*
 	 * Check that any records assembled can be decoded.  This is capped based
-	 * on what XLogReader would require at its maximum bound.  This code path
+	 * on what XLogReader would require at its maximum bound.  The XLOG_BLCKSZ
+	 * addend covers the larger allocate_recordbuf() demand.  This code path
 	 * is called once per backend, more than enough for this check.
 	 */
-	size_t		max_required = DecodeXLogRecordRequiredSpace(XLogRecordMaxSize);
+	size_t		max_required =
+		DecodeXLogRecordRequiredSpace(XLogRecordMaxSize + XLOG_BLCKSZ);
 
 	Assert(AllocSizeIsValid(max_required));
 #endif

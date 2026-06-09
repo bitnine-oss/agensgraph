@@ -4,7 +4,7 @@
  *	  POSTGRES public predicate locking definitions.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/predicate.h
@@ -25,10 +25,6 @@
 extern PGDLLIMPORT int max_predicate_locks_per_xact;
 extern PGDLLIMPORT int max_predicate_locks_per_relation;
 extern PGDLLIMPORT int max_predicate_locks_per_page;
-
-
-/* Number of SLRU buffers to use for Serial SLRU */
-#define NUM_SERIAL_BUFFERS		16
 
 /*
  * A handle used for sharing SERIALIZABLEXACT objects between the participants

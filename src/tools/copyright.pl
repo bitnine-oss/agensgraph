@@ -2,7 +2,7 @@
 #################################################################
 # copyright.pl -- update copyright notices throughout the source tree, idempotently.
 #
-# Copyright (c) 2011-2023, PostgreSQL Global Development Group
+# Copyright (c) 2011-2024, PostgreSQL Global Development Group
 #
 # src/tools/copyright.pl
 #
@@ -10,7 +10,7 @@
 #################################################################
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use File::Find;
 use File::Basename;

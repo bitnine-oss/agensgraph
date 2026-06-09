@@ -4,7 +4,7 @@
  *	  header file for postgres btree access method implementation.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/nbtree.h
@@ -267,7 +267,7 @@ BTPageGetDeleteXid(Page page)
 	opaque = BTPageGetOpaque(page);
 	Assert(P_ISDELETED(opaque));
 
-	/* pg_upgrade'd deleted page -- must be safe to delete now */
+	/* pg_upgrade'd deleted page -- must be safe to recycle now */
 	if (!P_HAS_FULLXID(opaque))
 		return FirstNormalFullTransactionId;
 
@@ -656,7 +656,7 @@ BTreeTupleGetHeapTID(IndexTuple itup)
 
 /*
  * Get maximum heap TID attribute, which could be the only TID in the case of
- * a non-pivot tuple that does not have a posting list tuple.
+ * a non-pivot tuple that does not have a posting list.
  *
  * Works with non-pivot tuples only.
  */
@@ -763,13 +763,8 @@ typedef BTStackData *BTStack;
  * bit, but may not when inserting into an INCLUDE index (tuple header value
  * is affected by the NULL-ness of both key and non-key attributes).
  *
- * When nextkey is false (the usual case), _bt_search and _bt_binsrch will
- * locate the first item >= scankey.  When nextkey is true, they will locate
- * the first item > scan key.
- *
- * pivotsearch is set to true by callers that want to re-find a leaf page
- * using a scankey built from a leaf page's high key.  Most callers set this
- * to false.
+ * See comments in _bt_first for an explanation of the nextkey and backward
+ * fields.
  *
  * scantid is the heap TID that is used as a final tiebreaker attribute.  It
  * is set to NULL when index scan doesn't need to find a position for a
@@ -792,7 +787,7 @@ typedef struct BTScanInsertData
 	bool		allequalimage;
 	bool		anynullkeys;
 	bool		nextkey;
-	bool		pivotsearch;
+	bool		backward;		/* backward index scan? */
 	ItemPointer scantid;		/* tiebreaker for scankeys */
 	int			keysz;			/* Size of scankeys array */
 	ScanKeyData scankeys[INDEX_MAX_KEYS];	/* Must appear last */
@@ -965,10 +960,19 @@ typedef struct BTScanPosData
 	 * moreLeft and moreRight track whether we think there may be matching
 	 * index entries to the left and right of the current page, respectively.
 	 * We can clear the appropriate one of these flags when _bt_checkkeys()
-	 * returns continuescan = false.
+	 * sets BTReadPageState.continuescan = false.
 	 */
 	bool		moreLeft;
 	bool		moreRight;
+
+	/*
+	 * Direction of the scan at the time that _bt_readpage was called.
+	 *
+	 * Used by btrestrpos to "restore" the scan's array keys by resetting each
+	 * array to its first element's value (first in this scan direction). This
+	 * avoids the need to directly track the array keys in btmarkpos.
+	 */
+	ScanDirection dir;
 
 	/*
 	 * If we are doing an index-only scan, nextTupleOffset is the first free
@@ -1027,9 +1031,8 @@ typedef BTScanPosData *BTScanPos;
 /* We need one of these for each equality-type SK_SEARCHARRAY scan key */
 typedef struct BTArrayKeyInfo
 {
-	int			scan_key;		/* index of associated key in arrayKeyData */
+	int			scan_key;		/* index of associated key in keyData */
 	int			cur_elem;		/* index of current element in elem_values */
-	int			mark_elem;		/* index of marked element in elem_values */
 	int			num_elems;		/* number of elems in current array value */
 	Datum	   *elem_values;	/* array of num_elems Datums */
 } BTArrayKeyInfo;
@@ -1042,12 +1045,11 @@ typedef struct BTScanOpaqueData
 	ScanKey		keyData;		/* array of preprocessed scan keys */
 
 	/* workspace for SK_SEARCHARRAY support */
-	ScanKey		arrayKeyData;	/* modified copy of scan->keyData */
-	int			numArrayKeys;	/* number of equality-type array keys (-1 if
-								 * there are any unsatisfiable array keys) */
-	int			arrayKeyCount;	/* count indicating number of array scan keys
-								 * processed */
+	int			numArrayKeys;	/* number of equality-type array keys */
+	bool		needPrimScan;	/* New prim scan to continue in current dir? */
+	bool		scanBehind;		/* Last array advancement matched -inf attr? */
 	BTArrayKeyInfo *arrayKeys;	/* info about each equality-type array key */
+	FmgrInfo   *orderProcs;		/* ORDER procs for required equality keys */
 	MemoryContext arrayContext; /* scan-lifespan context for array data */
 
 	/* info about killed items if any (killedItems is NULL if never used) */
@@ -1077,6 +1079,42 @@ typedef struct BTScanOpaqueData
 } BTScanOpaqueData;
 
 typedef BTScanOpaqueData *BTScanOpaque;
+
+/*
+ * _bt_readpage state used across _bt_checkkeys calls for a page
+ */
+typedef struct BTReadPageState
+{
+	/* Input parameters, set by _bt_readpage for _bt_checkkeys */
+	ScanDirection dir;			/* current scan direction */
+	OffsetNumber minoff;		/* Lowest non-pivot tuple's offset */
+	OffsetNumber maxoff;		/* Highest non-pivot tuple's offset */
+	IndexTuple	finaltup;		/* Needed by scans with array keys */
+	BlockNumber prev_scan_page; /* previous _bt_parallel_release block */
+	Page		page;			/* Page being read */
+
+	/* Per-tuple input parameters, set by _bt_readpage for _bt_checkkeys */
+	OffsetNumber offnum;		/* current tuple's page offset number */
+
+	/* Output parameter, set by _bt_checkkeys for _bt_readpage */
+	OffsetNumber skip;			/* Array keys "look ahead" skip offnum */
+	bool		continuescan;	/* Terminate ongoing (primitive) index scan? */
+
+	/*
+	 * Input and output parameters, set and unset by both _bt_readpage and
+	 * _bt_checkkeys to manage precheck optimizations
+	 */
+	bool		prechecked;		/* precheck set continuescan to 'true'? */
+	bool		firstmatch;		/* at least one match so far?  */
+
+	/*
+	 * Private _bt_checkkeys state used to manage "look ahead" optimization
+	 * (only used during scans with array keys)
+	 */
+	int16		rechecks;
+	int16		targetdistance;
+
+} BTReadPageState;
 
 /*
  * We use some private sk_flags bits in preprocessed scan keys.  We're allowed
@@ -1131,7 +1169,7 @@ extern bool btinsert(Relation rel, Datum *values, bool *isnull,
 					 bool indexUnchanged,
 					 struct IndexInfo *indexInfo);
 extern IndexScanDesc btbeginscan(Relation rel, int nkeys, int norderbys);
-extern Size btestimateparallelscan(void);
+extern Size btestimateparallelscan(int nkeys, int norderbys);
 extern void btinitparallelscan(void *target);
 extern bool btgettuple(IndexScanDesc scan, ScanDirection dir);
 extern int64 btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm);
@@ -1152,10 +1190,12 @@ extern bool btcanreturn(Relation index, int attno);
 /*
  * prototypes for internal functions in nbtree.c
  */
-extern bool _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno);
+extern bool _bt_parallel_seize(IndexScanDesc scan, BlockNumber *pageno,
+							   bool first);
 extern void _bt_parallel_release(IndexScanDesc scan, BlockNumber scan_page);
 extern void _bt_parallel_done(IndexScanDesc scan);
-extern void _bt_parallel_advance_array_keys(IndexScanDesc scan);
+extern void _bt_parallel_primscan_schedule(IndexScanDesc scan,
+										   BlockNumber prev_scan_page);
 
 /*
  * prototypes for functions in nbtdedup.c
@@ -1231,30 +1271,26 @@ extern void _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate);
  * prototypes for functions in nbtsearch.c
  */
 extern BTStack _bt_search(Relation rel, Relation heaprel, BTScanInsert key,
-						  Buffer *bufP, int access, Snapshot snapshot);
+						  Buffer *bufP, int access);
 extern Buffer _bt_moveright(Relation rel, Relation heaprel, BTScanInsert key,
 							Buffer buf, bool forupdate, BTStack stack,
-							int access, Snapshot snapshot);
+							int access);
 extern OffsetNumber _bt_binsrch_insert(Relation rel, BTInsertState insertstate);
 extern int32 _bt_compare(Relation rel, BTScanInsert key, Page page, OffsetNumber offnum);
 extern bool _bt_first(IndexScanDesc scan, ScanDirection dir);
 extern bool _bt_next(IndexScanDesc scan, ScanDirection dir);
-extern Buffer _bt_get_endpoint(Relation rel, uint32 level, bool rightmost,
-							   Snapshot snapshot);
+extern Buffer _bt_get_endpoint(Relation rel, uint32 level, bool rightmost);
 
 /*
  * prototypes for functions in nbtutils.c
  */
 extern BTScanInsert _bt_mkscankey(Relation rel, IndexTuple itup);
 extern void _bt_freestack(BTStack stack);
-extern void _bt_preprocess_array_keys(IndexScanDesc scan);
+extern bool _bt_start_prim_scan(IndexScanDesc scan, ScanDirection dir);
 extern void _bt_start_array_keys(IndexScanDesc scan, ScanDirection dir);
-extern bool _bt_advance_array_keys(IndexScanDesc scan, ScanDirection dir);
-extern void _bt_mark_array_keys(IndexScanDesc scan);
-extern void _bt_restore_array_keys(IndexScanDesc scan);
 extern void _bt_preprocess_keys(IndexScanDesc scan);
-extern bool _bt_checkkeys(IndexScanDesc scan, IndexTuple tuple,
-						  int tupnatts, ScanDirection dir, bool *continuescan);
+extern bool _bt_checkkeys(IndexScanDesc scan, BTReadPageState *pstate, bool arrayKeys,
+						  IndexTuple tuple, int tupnatts);
 extern void _bt_killitems(IndexScanDesc scan);
 extern BTCycleId _bt_vacuum_cycleid(Relation rel);
 extern BTCycleId _bt_start_vacuum(Relation rel);

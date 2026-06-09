@@ -3,7 +3,7 @@
  * socket.c
  *	  Microsoft Windows Win32 Socket Functions
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/port/win32/socket.c
@@ -303,6 +303,7 @@ pgwin32_socket(int af, int type, int protocol)
 	if (ioctlsocket(s, FIONBIO, &on))
 	{
 		TranslateSocketError();
+		closesocket(s);
 		return INVALID_SOCKET;
 	}
 	errno = 0;

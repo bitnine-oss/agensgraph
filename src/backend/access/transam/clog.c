@@ -3,12 +3,13 @@
  * clog.c
  *		PostgreSQL transaction-commit-log manager
  *
- * This module replaces the old "pg_log" access code, which treated pg_log
- * essentially like a relation, in that it went through the regular buffer
- * manager.  The problem with that was that there wasn't any good way to
- * recycle storage space for transactions so old that they'll never be
- * looked up again.  Now we use specialized access code so that the commit
- * log can be broken into relatively small, independent segments.
+ * This module stores two bits per transaction regarding its commit/abort
+ * status; the status for four transactions fit in a byte.
+ *
+ * This would be a pretty simple abstraction on top of slru.c, except that
+ * for performance reasons we allow multiple transactions that are
+ * committing concurrently to form a queue, so that a single process can
+ * update the status for all of them within a single lock acquisition run.
  *
  * XLOG interactions: this module generates an XLOG record whenever a new
  * CLOG page is initialized to zeroes.  Other writes of CLOG come from
@@ -23,7 +24,7 @@
  * for aborts (whether sync or async), since the post-crash assumption would
  * be that such transactions failed anyway.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/clog.c
@@ -43,6 +44,7 @@
 #include "pgstat.h"
 #include "storage/proc.h"
 #include "storage/sync.h"
+#include "utils/guc_hooks.h"
 
 /*
  * Defines for CLOG page sizes.  A page is the same BLCKSZ as is used
@@ -62,7 +64,26 @@
 #define CLOG_XACTS_PER_PAGE (BLCKSZ * CLOG_XACTS_PER_BYTE)
 #define CLOG_XACT_BITMASK	((1 << CLOG_BITS_PER_XACT) - 1)
 
-#define TransactionIdToPage(xid)	((xid) / (TransactionId) CLOG_XACTS_PER_PAGE)
+/*
+ * Because space used in CLOG by each transaction is so small, we place a
+ * smaller limit on the number of CLOG buffers than SLRU allows.  No other
+ * SLRU needs this.
+ */
+#define CLOG_MAX_ALLOWED_BUFFERS \
+	Min(SLRU_MAX_ALLOWED_BUFFERS, \
+		(((MaxTransactionId / 2) + (CLOG_XACTS_PER_PAGE - 1)) / CLOG_XACTS_PER_PAGE))
+
+
+/*
+ * Although we return an int64 the actual value can't currently exceed
+ * 0xFFFFFFFF/CLOG_XACTS_PER_PAGE.
+ */
+static inline int64
+TransactionIdToPage(TransactionId xid)
+{
+	return xid / (int64) CLOG_XACTS_PER_PAGE;
+}
+
 #define TransactionIdToPgIndex(xid) ((xid) % (TransactionId) CLOG_XACTS_PER_PAGE)
 #define TransactionIdToByte(xid)	(TransactionIdToPgIndex(xid) / CLOG_XACTS_PER_BYTE)
 #define TransactionIdToBIndex(xid)	((xid) % (TransactionId) CLOG_XACTS_PER_BYTE)
@@ -89,24 +110,24 @@ static SlruCtlData XactCtlData;
 #define XactCtl (&XactCtlData)
 
 
-static int	ZeroCLOGPage(int pageno, bool writeXlog);
-static bool CLOGPagePrecedes(int page1, int page2);
-static void WriteZeroPageXlogRec(int pageno);
-static void WriteTruncateXlogRec(int pageno, TransactionId oldestXact,
+static int	ZeroCLOGPage(int64 pageno, bool writeXlog);
+static bool CLOGPagePrecedes(int64 page1, int64 page2);
+static void WriteZeroPageXlogRec(int64 pageno);
+static void WriteTruncateXlogRec(int64 pageno, TransactionId oldestXact,
 								 Oid oldestXactDb);
 static void TransactionIdSetPageStatus(TransactionId xid, int nsubxids,
 									   TransactionId *subxids, XidStatus status,
-									   XLogRecPtr lsn, int pageno,
+									   XLogRecPtr lsn, int64 pageno,
 									   bool all_xact_same_page);
 static void TransactionIdSetStatusBit(TransactionId xid, XidStatus status,
 									  XLogRecPtr lsn, int slotno);
 static void set_status_by_pages(int nsubxids, TransactionId *subxids,
 								XidStatus status, XLogRecPtr lsn);
 static bool TransactionGroupUpdateXidStatus(TransactionId xid,
-											XidStatus status, XLogRecPtr lsn, int pageno);
+											XidStatus status, XLogRecPtr lsn, int64 pageno);
 static void TransactionIdSetPageStatusInternal(TransactionId xid, int nsubxids,
 											   TransactionId *subxids, XidStatus status,
-											   XLogRecPtr lsn, int pageno);
+											   XLogRecPtr lsn, int64 pageno);
 
 
 /*
@@ -162,7 +183,7 @@ void
 TransactionIdSetTreeStatus(TransactionId xid, int nsubxids,
 						   TransactionId *subxids, XidStatus status, XLogRecPtr lsn)
 {
-	int			pageno = TransactionIdToPage(xid);	/* get page of parent */
+	int64		pageno = TransactionIdToPage(xid);	/* get page of parent */
 	int			i;
 
 	Assert(status == TRANSACTION_STATUS_COMMITTED ||
@@ -236,7 +257,7 @@ static void
 set_status_by_pages(int nsubxids, TransactionId *subxids,
 					XidStatus status, XLogRecPtr lsn)
 {
-	int			pageno = TransactionIdToPage(subxids[0]);
+	int64		pageno = TransactionIdToPage(subxids[0]);
 	int			offset = 0;
 	int			i = 0;
 
@@ -245,7 +266,7 @@ set_status_by_pages(int nsubxids, TransactionId *subxids,
 	while (i < nsubxids)
 	{
 		int			num_on_page = 0;
-		int			nextpageno;
+		int64		nextpageno;
 
 		do
 		{
@@ -271,18 +292,23 @@ set_status_by_pages(int nsubxids, TransactionId *subxids,
 static void
 TransactionIdSetPageStatus(TransactionId xid, int nsubxids,
 						   TransactionId *subxids, XidStatus status,
-						   XLogRecPtr lsn, int pageno,
+						   XLogRecPtr lsn, int64 pageno,
 						   bool all_xact_same_page)
 {
+	LWLock	   *lock;
+
 	/* Can't use group update when PGPROC overflows. */
 	StaticAssertDecl(THRESHOLD_SUBTRANS_CLOG_OPT <= PGPROC_MAX_CACHED_SUBXIDS,
 					 "group clog threshold less than PGPROC cached subxids");
 
+	/* Get the SLRU bank lock for the page we are going to access. */
+	lock = SimpleLruGetBankLock(XactCtl, pageno);
+
 	/*
-	 * When there is contention on XactSLRULock, we try to group multiple
-	 * updates; a single leader process will perform transaction status
-	 * updates for multiple backends so that the number of times XactSLRULock
-	 * needs to be acquired is reduced.
+	 * When there is contention on the SLRU bank lock we need, we try to group
+	 * multiple updates; a single leader process will perform transaction
+	 * status updates for multiple backends so that the number of times the
+	 * bank lock needs to be acquired is reduced.
 	 *
 	 * For this optimization to be safe, the XID and subxids in MyProc must be
 	 * the same as the ones for which we're setting the status.  Check that
@@ -300,17 +326,17 @@ TransactionIdSetPageStatus(TransactionId xid, int nsubxids,
 				nsubxids * sizeof(TransactionId)) == 0))
 	{
 		/*
-		 * If we can immediately acquire XactSLRULock, we update the status of
-		 * our own XID and release the lock.  If not, try use group XID
-		 * update.  If that doesn't work out, fall back to waiting for the
-		 * lock to perform an update for this transaction only.
+		 * If we can immediately acquire the lock, we update the status of our
+		 * own XID and release the lock.  If not, try use group XID update. If
+		 * that doesn't work out, fall back to waiting for the lock to perform
+		 * an update for this transaction only.
 		 */
-		if (LWLockConditionalAcquire(XactSLRULock, LW_EXCLUSIVE))
+		if (LWLockConditionalAcquire(lock, LW_EXCLUSIVE))
 		{
 			/* Got the lock without waiting!  Do the update. */
 			TransactionIdSetPageStatusInternal(xid, nsubxids, subxids, status,
 											   lsn, pageno);
-			LWLockRelease(XactSLRULock);
+			LWLockRelease(lock);
 			return;
 		}
 		else if (TransactionGroupUpdateXidStatus(xid, status, lsn, pageno))
@@ -323,10 +349,10 @@ TransactionIdSetPageStatus(TransactionId xid, int nsubxids,
 	}
 
 	/* Group update not applicable, or couldn't accept this page number. */
-	LWLockAcquire(XactSLRULock, LW_EXCLUSIVE);
+	LWLockAcquire(lock, LW_EXCLUSIVE);
 	TransactionIdSetPageStatusInternal(xid, nsubxids, subxids, status,
 									   lsn, pageno);
-	LWLockRelease(XactSLRULock);
+	LWLockRelease(lock);
 }
 
 /*
@@ -337,7 +363,7 @@ TransactionIdSetPageStatus(TransactionId xid, int nsubxids,
 static void
 TransactionIdSetPageStatusInternal(TransactionId xid, int nsubxids,
 								   TransactionId *subxids, XidStatus status,
-								   XLogRecPtr lsn, int pageno)
+								   XLogRecPtr lsn, int64 pageno)
 {
 	int			slotno;
 	int			i;
@@ -345,7 +371,8 @@ TransactionIdSetPageStatusInternal(TransactionId xid, int nsubxids,
 	Assert(status == TRANSACTION_STATUS_COMMITTED ||
 		   status == TRANSACTION_STATUS_ABORTED ||
 		   (status == TRANSACTION_STATUS_SUB_COMMITTED && !TransactionIdIsValid(xid)));
-	Assert(LWLockHeldByMeInMode(XactSLRULock, LW_EXCLUSIVE));
+	Assert(LWLockHeldByMeInMode(SimpleLruGetBankLock(XactCtl, pageno),
+								LW_EXCLUSIVE));
 
 	/*
 	 * If we're doing an async commit (ie, lsn is valid), then we must wait
@@ -396,14 +423,15 @@ TransactionIdSetPageStatusInternal(TransactionId xid, int nsubxids,
 }
 
 /*
- * When we cannot immediately acquire XactSLRULock in exclusive mode at
+ * Subroutine for TransactionIdSetPageStatus, q.v.
+ *
+ * When we cannot immediately acquire the SLRU bank lock in exclusive mode at
  * commit time, add ourselves to a list of processes that need their XIDs
  * status update.  The first process to add itself to the list will acquire
- * XactSLRULock in exclusive mode and set transaction status as required
- * on behalf of all group members.  This avoids a great deal of contention
- * around XactSLRULock when many processes are trying to commit at once,
- * since the lock need not be repeatedly handed off from one committing
- * process to the next.
+ * the lock in exclusive mode and set transaction status as required on behalf
+ * of all group members.  This avoids a great deal of contention when many
+ * processes are trying to commit at once, since the lock need not be
+ * repeatedly handed off from one committing process to the next.
  *
  * Returns true when transaction status has been updated in clog; returns
  * false if we decided against applying the optimization because the page
@@ -411,19 +439,21 @@ TransactionIdSetPageStatusInternal(TransactionId xid, int nsubxids,
  */
 static bool
 TransactionGroupUpdateXidStatus(TransactionId xid, XidStatus status,
-								XLogRecPtr lsn, int pageno)
+								XLogRecPtr lsn, int64 pageno)
 {
 	volatile PROC_HDR *procglobal = ProcGlobal;
 	PGPROC	   *proc = MyProc;
 	uint32		nextidx;
 	uint32		wakeidx;
+	int			prevpageno;
+	LWLock	   *prevlock = NULL;
 
 	/* We should definitely have an XID whose status needs to be updated. */
 	Assert(TransactionIdIsValid(xid));
 
 	/*
-	 * Add ourselves to the list of processes needing a group XID status
-	 * update.
+	 * Prepare to add ourselves to the list of processes needing a group XID
+	 * status update.
 	 */
 	proc->clogGroupMember = true;
 	proc->clogGroupMemberXid = xid;
@@ -431,6 +461,29 @@ TransactionGroupUpdateXidStatus(TransactionId xid, XidStatus status,
 	proc->clogGroupMemberPage = pageno;
 	proc->clogGroupMemberLsn = lsn;
 
+	/*
+	 * We put ourselves in the queue by writing MyProcNumber to
+	 * ProcGlobal->clogGroupFirst.  However, if there's already a process
+	 * listed there, we compare our pageno with that of that process; if it
+	 * differs, we cannot participate in the group, so we return for caller to
+	 * update pg_xact in the normal way.
+	 *
+	 * If we're not the first process in the list, we must follow the leader.
+	 * We do this by storing the data we want updated in our PGPROC entry
+	 * where the leader can find it, then going to sleep.
+	 *
+	 * If no process is already in the list, we're the leader; our first step
+	 * is to lock the SLRU bank to which our page belongs, then we close out
+	 * the group by resetting the list pointer from ProcGlobal->clogGroupFirst
+	 * (this lets other processes set up other groups later); finally we do
+	 * the SLRU updates, release the SLRU bank lock, and wake up the sleeping
+	 * processes.
+	 *
+	 * If another group starts to update a page in a different SLRU bank, they
+	 * can proceed concurrently, since the bank lock they're going to use is
+	 * different from ours.  If another group starts to update a page in the
+	 * same bank as ours, they wait until we release the lock.
+	 */
 	nextidx = pg_atomic_read_u32(&procglobal->clogGroupFirst);
 
 	while (true)
@@ -442,20 +495,21 @@ TransactionGroupUpdateXidStatus(TransactionId xid, XidStatus status,
 		 * There is a race condition here, which is that after doing the below
 		 * check and before adding this proc's clog update to a group, the
 		 * group leader might have already finished the group update for this
-		 * page and becomes group leader of another group. This will lead to a
-		 * situation where a single group can have different clog page
-		 * updates.  This isn't likely and will still work, just maybe a bit
-		 * less efficiently.
+		 * page and becomes group leader of another group, updating a
+		 * different page.  This will lead to a situation where a single group
+		 * can have different clog page updates.  This isn't likely and will
+		 * still work, just less efficiently -- we handle this case by
+		 * switching to a different bank lock in the loop below.
 		 */
-		if (nextidx != INVALID_PGPROCNO &&
-			ProcGlobal->allProcs[nextidx].clogGroupMemberPage != proc->clogGroupMemberPage)
+		if (nextidx != INVALID_PROC_NUMBER &&
+			GetPGProcByNumber(nextidx)->clogGroupMemberPage != proc->clogGroupMemberPage)
 		{
 			/*
 			 * Ensure that this proc is not a member of any clog group that
 			 * needs an XID status update.
 			 */
 			proc->clogGroupMember = false;
-			pg_atomic_write_u32(&proc->clogGroupNext, INVALID_PGPROCNO);
+			pg_atomic_write_u32(&proc->clogGroupNext, INVALID_PROC_NUMBER);
 			return false;
 		}
 
@@ -463,7 +517,7 @@ TransactionGroupUpdateXidStatus(TransactionId xid, XidStatus status,
 
 		if (pg_atomic_compare_exchange_u32(&procglobal->clogGroupFirst,
 										   &nextidx,
-										   (uint32) proc->pgprocno))
+										   (uint32) MyProcNumber))
 			break;
 	}
 
@@ -471,9 +525,9 @@ TransactionGroupUpdateXidStatus(TransactionId xid, XidStatus status,
 	 * If the list was not empty, the leader will update the status of our
 	 * XID. It is impossible to have followers without a leader because the
 	 * first process that has added itself to the list will always have
-	 * nextidx as INVALID_PGPROCNO.
+	 * nextidx as INVALID_PROC_NUMBER.
 	 */
-	if (nextidx != INVALID_PGPROCNO)
+	if (nextidx != INVALID_PROC_NUMBER)
 	{
 		int			extraWaits = 0;
 
@@ -489,7 +543,7 @@ TransactionGroupUpdateXidStatus(TransactionId xid, XidStatus status,
 		}
 		pgstat_report_wait_end();
 
-		Assert(pg_atomic_read_u32(&proc->clogGroupNext) == INVALID_PGPROCNO);
+		Assert(pg_atomic_read_u32(&proc->clogGroupNext) == INVALID_PROC_NUMBER);
 
 		/* Fix semaphore count for any absorbed wakeups */
 		while (extraWaits-- > 0)
@@ -497,24 +551,57 @@ TransactionGroupUpdateXidStatus(TransactionId xid, XidStatus status,
 		return true;
 	}
 
-	/* We are the leader.  Acquire the lock on behalf of everyone. */
-	LWLockAcquire(XactSLRULock, LW_EXCLUSIVE);
+	/*
+	 * By here, we know we're the leader process.  Acquire the SLRU bank lock
+	 * that corresponds to the page we originally wanted to modify.
+	 */
+	prevpageno = proc->clogGroupMemberPage;
+	prevlock = SimpleLruGetBankLock(XactCtl, prevpageno);
+	LWLockAcquire(prevlock, LW_EXCLUSIVE);
 
 	/*
 	 * Now that we've got the lock, clear the list of processes waiting for
 	 * group XID status update, saving a pointer to the head of the list.
-	 * Trying to pop elements one at a time could lead to an ABA problem.
+	 * (Trying to pop elements one at a time could lead to an ABA problem.)
+	 *
+	 * At this point, any processes trying to do this would create a separate
+	 * group.
 	 */
 	nextidx = pg_atomic_exchange_u32(&procglobal->clogGroupFirst,
-									 INVALID_PGPROCNO);
+									 INVALID_PROC_NUMBER);
 
 	/* Remember head of list so we can perform wakeups after dropping lock. */
 	wakeidx = nextidx;
 
 	/* Walk the list and update the status of all XIDs. */
-	while (nextidx != INVALID_PGPROCNO)
+	while (nextidx != INVALID_PROC_NUMBER)
 	{
 		PGPROC	   *nextproc = &ProcGlobal->allProcs[nextidx];
+		int			thispageno = nextproc->clogGroupMemberPage;
+
+		/*
+		 * If the page to update belongs to a different bank than the previous
+		 * one, exchange bank lock to the new one.  This should be quite rare,
+		 * as described above.
+		 *
+		 * (We could try to optimize this by waking up the processes for which
+		 * we have already updated the status while we exchange the lock, but
+		 * the code doesn't do that at present.  I think it'd require
+		 * additional bookkeeping, making the common path slower in order to
+		 * improve an infrequent case.)
+		 */
+		if (thispageno != prevpageno)
+		{
+			LWLock	   *lock = SimpleLruGetBankLock(XactCtl, thispageno);
+
+			if (prevlock != lock)
+			{
+				LWLockRelease(prevlock);
+				LWLockAcquire(lock, LW_EXCLUSIVE);
+			}
+			prevlock = lock;
+			prevpageno = thispageno;
+		}
 
 		/*
 		 * Transactions with more than THRESHOLD_SUBTRANS_CLOG_OPT sub-XIDs
@@ -534,19 +621,24 @@ TransactionGroupUpdateXidStatus(TransactionId xid, XidStatus status,
 	}
 
 	/* We're done with the lock now. */
-	LWLockRelease(XactSLRULock);
+	if (prevlock != NULL)
+		LWLockRelease(prevlock);
 
 	/*
 	 * Now that we've released the lock, go back and wake everybody up.  We
 	 * don't do this under the lock so as to keep lock hold times to a
 	 * minimum.
+	 *
+	 * (Perhaps we could do this in two passes, the first setting
+	 * clogGroupNext to invalid while saving the semaphores to an array, then
+	 * a single write barrier, then another pass unlocking the semaphores.)
 	 */
-	while (wakeidx != INVALID_PGPROCNO)
+	while (wakeidx != INVALID_PROC_NUMBER)
 	{
 		PGPROC	   *wakeproc = &ProcGlobal->allProcs[wakeidx];
 
 		wakeidx = pg_atomic_read_u32(&wakeproc->clogGroupNext);
-		pg_atomic_write_u32(&wakeproc->clogGroupNext, INVALID_PGPROCNO);
+		pg_atomic_write_u32(&wakeproc->clogGroupNext, INVALID_PROC_NUMBER);
 
 		/* ensure all previous writes are visible before follower continues. */
 		pg_write_barrier();
@@ -563,7 +655,7 @@ TransactionGroupUpdateXidStatus(TransactionId xid, XidStatus status,
 /*
  * Sets the commit status of a single transaction.
  *
- * Must be called with XactSLRULock held
+ * Caller must hold the corresponding SLRU bank lock, will be held at exit.
  */
 static void
 TransactionIdSetStatusBit(TransactionId xid, XidStatus status, XLogRecPtr lsn, int slotno)
@@ -573,6 +665,11 @@ TransactionIdSetStatusBit(TransactionId xid, XidStatus status, XLogRecPtr lsn, i
 	char	   *byteptr;
 	char		byteval;
 	char		curval;
+
+	Assert(XactCtl->shared->page_number[slotno] == TransactionIdToPage(xid));
+	Assert(LWLockHeldByMeInMode(SimpleLruGetBankLock(XactCtl,
+													 XactCtl->shared->page_number[slotno]),
+								LW_EXCLUSIVE));
 
 	byteptr = XactCtl->shared->page_buffer[slotno] + byteno;
 	curval = (*byteptr >> bshift) & CLOG_XACT_BITMASK;
@@ -637,7 +734,7 @@ TransactionIdSetStatusBit(TransactionId xid, XidStatus status, XLogRecPtr lsn, i
 XidStatus
 TransactionIdGetStatus(TransactionId xid, XLogRecPtr *lsn)
 {
-	int			pageno = TransactionIdToPage(xid);
+	int64		pageno = TransactionIdToPage(xid);
 	int			byteno = TransactionIdToByte(xid);
 	int			bshift = TransactionIdToBIndex(xid) * CLOG_BITS_PER_XACT;
 	int			slotno;
@@ -655,7 +752,7 @@ TransactionIdGetStatus(TransactionId xid, XLogRecPtr *lsn)
 	lsnindex = GetLSNIndex(slotno, xid);
 	*lsn = XactCtl->shared->group_lsn[lsnindex];
 
-	LWLockRelease(XactSLRULock);
+	LWLockRelease(SimpleLruGetBankLock(XactCtl, pageno));
 
 	return status;
 }
@@ -663,23 +760,18 @@ TransactionIdGetStatus(TransactionId xid, XLogRecPtr *lsn)
 /*
  * Number of shared CLOG buffers.
  *
- * On larger multi-processor systems, it is possible to have many CLOG page
- * requests in flight at one time which could lead to disk access for CLOG
- * page if the required page is not found in memory.  Testing revealed that we
- * can get the best performance by having 128 CLOG buffers, more than that it
- * doesn't improve performance.
- *
- * Unconditionally keeping the number of CLOG buffers to 128 did not seem like
- * a good idea, because it would increase the minimum amount of shared memory
- * required to start, which could be a problem for people running very small
- * configurations.  The following formula seems to represent a reasonable
- * compromise: people with very low values for shared_buffers will get fewer
- * CLOG buffers as well, and everyone else will get 128.
+ * If asked to autotune, use 2MB for every 1GB of shared buffers, up to 8MB.
+ * Otherwise just cap the configured amount to be between 16 and the maximum
+ * allowed.
  */
-Size
+static int
 CLOGShmemBuffers(void)
 {
-	return Min(128, Max(4, NBuffers / 512));
+	/* auto-tune based on shared buffers */
+	if (transaction_buffers == 0)
+		return SimpleLruAutotuneBuffers(512, 1024);
+
+	return Min(Max(16, transaction_buffers), CLOG_MAX_ALLOWED_BUFFERS);
 }
 
 /*
@@ -694,11 +786,41 @@ CLOGShmemSize(void)
 void
 CLOGShmemInit(void)
 {
+	/* If auto-tuning is requested, now is the time to do it */
+	if (transaction_buffers == 0)
+	{
+		char		buf[32];
+
+		snprintf(buf, sizeof(buf), "%d", CLOGShmemBuffers());
+		SetConfigOption("transaction_buffers", buf, PGC_POSTMASTER,
+						PGC_S_DYNAMIC_DEFAULT);
+
+		/*
+		 * We prefer to report this value's source as PGC_S_DYNAMIC_DEFAULT.
+		 * However, if the DBA explicitly set transaction_buffers = 0 in the
+		 * config file, then PGC_S_DYNAMIC_DEFAULT will fail to override that
+		 * and we must force the matter with PGC_S_OVERRIDE.
+		 */
+		if (transaction_buffers == 0)	/* failed to apply it? */
+			SetConfigOption("transaction_buffers", buf, PGC_POSTMASTER,
+							PGC_S_OVERRIDE);
+	}
+	Assert(transaction_buffers != 0);
+
 	XactCtl->PagePrecedes = CLOGPagePrecedes;
-	SimpleLruInit(XactCtl, "Xact", CLOGShmemBuffers(), CLOG_LSNS_PER_PAGE,
-				  XactSLRULock, "pg_xact", LWTRANCHE_XACT_BUFFER,
-				  SYNC_HANDLER_CLOG);
+	SimpleLruInit(XactCtl, "transaction", CLOGShmemBuffers(), CLOG_LSNS_PER_PAGE,
+				  "pg_xact", LWTRANCHE_XACT_BUFFER,
+				  LWTRANCHE_XACT_SLRU, SYNC_HANDLER_CLOG, false);
 	SlruPagePrecedesUnitTests(XactCtl, CLOG_XACTS_PER_PAGE);
+}
+
+/*
+ * GUC check_hook for transaction_buffers
+ */
+bool
+check_transaction_buffers(int *newval, void **extra, GucSource source)
+{
+	return check_slru_buffers("transaction_buffers", newval);
 }
 
 /*
@@ -711,8 +833,9 @@ void
 BootStrapCLOG(void)
 {
 	int			slotno;
+	LWLock	   *lock = SimpleLruGetBankLock(XactCtl, 0);
 
-	LWLockAcquire(XactSLRULock, LW_EXCLUSIVE);
+	LWLockAcquire(lock, LW_EXCLUSIVE);
 
 	/* Create and zero the first page of the commit log */
 	slotno = ZeroCLOGPage(0, false);
@@ -721,7 +844,7 @@ BootStrapCLOG(void)
 	SimpleLruWritePage(XactCtl, slotno);
 	Assert(!XactCtl->shared->page_dirty[slotno]);
 
-	LWLockRelease(XactSLRULock);
+	LWLockRelease(lock);
 }
 
 /*
@@ -734,7 +857,7 @@ BootStrapCLOG(void)
  * Control lock must be held at entry, and will be held at exit.
  */
 static int
-ZeroCLOGPage(int pageno, bool writeXlog)
+ZeroCLOGPage(int64 pageno, bool writeXlog)
 {
 	int			slotno;
 
@@ -748,22 +871,18 @@ ZeroCLOGPage(int pageno, bool writeXlog)
 
 /*
  * This must be called ONCE during postmaster or standalone-backend startup,
- * after StartupXLOG has initialized ShmemVariableCache->nextXid.
+ * after StartupXLOG has initialized TransamVariables->nextXid.
  */
 void
 StartupCLOG(void)
 {
-	TransactionId xid = XidFromFullTransactionId(ShmemVariableCache->nextXid);
-	int			pageno = TransactionIdToPage(xid);
-
-	LWLockAcquire(XactSLRULock, LW_EXCLUSIVE);
+	TransactionId xid = XidFromFullTransactionId(TransamVariables->nextXid);
+	int64		pageno = TransactionIdToPage(xid);
 
 	/*
 	 * Initialize our idea of the latest page number.
 	 */
-	XactCtl->shared->latest_page_number = pageno;
-
-	LWLockRelease(XactSLRULock);
+	pg_atomic_write_u64(&XactCtl->shared->latest_page_number, pageno);
 }
 
 /*
@@ -772,10 +891,11 @@ StartupCLOG(void)
 void
 TrimCLOG(void)
 {
-	TransactionId xid = XidFromFullTransactionId(ShmemVariableCache->nextXid);
-	int			pageno = TransactionIdToPage(xid);
+	TransactionId xid = XidFromFullTransactionId(TransamVariables->nextXid);
+	int64		pageno = TransactionIdToPage(xid);
+	LWLock	   *lock = SimpleLruGetBankLock(XactCtl, pageno);
 
-	LWLockAcquire(XactSLRULock, LW_EXCLUSIVE);
+	LWLockAcquire(lock, LW_EXCLUSIVE);
 
 	/*
 	 * Zero out the remainder of the current clog page.  Under normal
@@ -807,7 +927,7 @@ TrimCLOG(void)
 		XactCtl->shared->page_dirty[slotno] = true;
 	}
 
-	LWLockRelease(XactSLRULock);
+	LWLockRelease(lock);
 }
 
 /*
@@ -838,7 +958,8 @@ CheckPointCLOG(void)
 void
 ExtendCLOG(TransactionId newestXact)
 {
-	int			pageno;
+	int64		pageno;
+	LWLock	   *lock;
 
 	/*
 	 * No work except at first XID of a page.  But beware: just after
@@ -849,13 +970,14 @@ ExtendCLOG(TransactionId newestXact)
 		return;
 
 	pageno = TransactionIdToPage(newestXact);
+	lock = SimpleLruGetBankLock(XactCtl, pageno);
 
-	LWLockAcquire(XactSLRULock, LW_EXCLUSIVE);
+	LWLockAcquire(lock, LW_EXCLUSIVE);
 
 	/* Zero the page and make an XLOG entry about it */
 	ZeroCLOGPage(pageno, true);
 
-	LWLockRelease(XactSLRULock);
+	LWLockRelease(lock);
 }
 
 
@@ -877,7 +999,7 @@ ExtendCLOG(TransactionId newestXact)
 void
 TruncateCLOG(TransactionId oldestXact, Oid oldestxid_datoid)
 {
-	int			cutoffPage;
+	int64		cutoffPage;
 
 	/*
 	 * The cutoff point is the start of the segment containing oldestXact. We
@@ -930,7 +1052,7 @@ TruncateCLOG(TransactionId oldestXact, Oid oldestxid_datoid)
  * don't optimize that edge case.
  */
 static bool
-CLOGPagePrecedes(int page1, int page2)
+CLOGPagePrecedes(int64 page1, int64 page2)
 {
 	TransactionId xid1;
 	TransactionId xid2;
@@ -949,10 +1071,10 @@ CLOGPagePrecedes(int page1, int page2)
  * Write a ZEROPAGE xlog record
  */
 static void
-WriteZeroPageXlogRec(int pageno)
+WriteZeroPageXlogRec(int64 pageno)
 {
 	XLogBeginInsert();
-	XLogRegisterData((char *) (&pageno), sizeof(int));
+	XLogRegisterData((char *) (&pageno), sizeof(pageno));
 	(void) XLogInsert(RM_CLOG_ID, CLOG_ZEROPAGE);
 }
 
@@ -963,7 +1085,7 @@ WriteZeroPageXlogRec(int pageno)
  * in TruncateCLOG().
  */
 static void
-WriteTruncateXlogRec(int pageno, TransactionId oldestXact, Oid oldestXactDb)
+WriteTruncateXlogRec(int64 pageno, TransactionId oldestXact, Oid oldestXactDb)
 {
 	XLogRecPtr	recptr;
 	xl_clog_truncate xlrec;
@@ -991,18 +1113,20 @@ clog_redo(XLogReaderState *record)
 
 	if (info == CLOG_ZEROPAGE)
 	{
-		int			pageno;
+		int64		pageno;
 		int			slotno;
+		LWLock	   *lock;
 
-		memcpy(&pageno, XLogRecGetData(record), sizeof(int));
+		memcpy(&pageno, XLogRecGetData(record), sizeof(pageno));
 
-		LWLockAcquire(XactSLRULock, LW_EXCLUSIVE);
+		lock = SimpleLruGetBankLock(XactCtl, pageno);
+		LWLockAcquire(lock, LW_EXCLUSIVE);
 
 		slotno = ZeroCLOGPage(pageno, false);
 		SimpleLruWritePage(XactCtl, slotno);
 		Assert(!XactCtl->shared->page_dirty[slotno]);
 
-		LWLockRelease(XactSLRULock);
+		LWLockRelease(lock);
 	}
 	else if (info == CLOG_TRUNCATE)
 	{

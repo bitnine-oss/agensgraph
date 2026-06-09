@@ -4,7 +4,7 @@
  *	  solution to the query optimization problem
  *	  by means of a Genetic Algorithm (GA)
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/optimizer/geqo/geqo_main.c
@@ -26,10 +26,15 @@
 
 #include <math.h>
 
+#include "optimizer/geqo.h"
+
 #include "optimizer/geqo_misc.h"
+#if defined(CX)
 #include "optimizer/geqo_mutation.h"
+#endif
 #include "optimizer/geqo_pool.h"
 #include "optimizer/geqo_random.h"
+#include "optimizer/geqo_recombination.h"
 #include "optimizer/geqo_selection.h"
 
 

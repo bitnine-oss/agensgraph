@@ -3,7 +3,7 @@
  * snapshot.h
  *	  POSTGRES snapshot definition
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/snapshot.h
@@ -115,7 +115,7 @@ typedef enum SnapshotType
 	 * For visibility checks snapshot->min must have been set up with the xmin
 	 * horizon to use.
 	 */
-	SNAPSHOT_NON_VACUUMABLE
+	SNAPSHOT_NON_VACUUMABLE,
 } SnapshotType;
 
 typedef struct SnapshotData *Snapshot;

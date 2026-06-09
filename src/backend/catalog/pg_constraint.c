@@ -3,7 +3,7 @@
  * pg_constraint.c
  *	  routines to support manipulation of the pg_constraint relation
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,7 +18,6 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "access/table.h"
-#include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
@@ -27,7 +26,6 @@
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
-#include "commands/tablecmds.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
@@ -563,6 +561,50 @@ ChooseConstraintName(const char *name1, const char *name2,
 }
 
 /*
+ * Find and return the pg_constraint tuple that implements a validated
+ * not-null constraint for the given domain.
+ */
+HeapTuple
+findDomainNotNullConstraint(Oid typid)
+{
+	Relation	pg_constraint;
+	HeapTuple	conTup,
+				retval = NULL;
+	SysScanDesc scan;
+	ScanKeyData key;
+
+	pg_constraint = table_open(ConstraintRelationId, AccessShareLock);
+	ScanKeyInit(&key,
+				Anum_pg_constraint_contypid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(typid));
+	scan = systable_beginscan(pg_constraint, ConstraintRelidTypidNameIndexId,
+							  true, NULL, 1, &key);
+
+	while (HeapTupleIsValid(conTup = systable_getnext(scan)))
+	{
+		Form_pg_constraint con = (Form_pg_constraint) GETSTRUCT(conTup);
+
+		/*
+		 * We're looking for a NOTNULL constraint that's marked validated.
+		 */
+		if (con->contype != CONSTRAINT_NOTNULL)
+			continue;
+		if (!con->convalidated)
+			continue;
+
+		/* Found it */
+		retval = heap_copytuple(conTup);
+		break;
+	}
+
+	systable_endscan(scan);
+	table_close(pg_constraint, AccessShareLock);
+
+	return retval;
+}
+
+/*
  * Delete a single constraint record.
  */
 void
@@ -990,7 +1032,7 @@ get_relation_constraint_attnos(Oid relid, const char *conname,
 
 /*
  * Return the OID of the constraint enforced by the given index in the
- * given relation; or InvalidOid if no such index is catalogued.
+ * given relation; or InvalidOid if no such index is cataloged.
  *
  * Much like get_constraint_index, this function is concerned only with the
  * one constraint that "owns" the given index.  Therefore, constraints of

@@ -3,7 +3,7 @@
  *
  *	information support functions
  *
- *	Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/info.c
  */
 
@@ -26,6 +26,9 @@ static void get_rel_infos(ClusterInfo *cluster, DbInfo *dbinfo);
 static void free_rel_infos(RelInfoArr *rel_arr);
 static void print_db_infos(DbInfoArr *db_arr);
 static void print_rel_infos(RelInfoArr *rel_arr);
+static void print_slot_infos(LogicalSlotInfoArr *slot_arr);
+static void get_old_cluster_logical_slot_infos(DbInfo *dbinfo, bool live_check);
+static void get_db_subscription_count(DbInfo *dbinfo);
 
 
 /*
@@ -266,13 +269,15 @@ report_unmatched_relation(const RelInfo *rel, const DbInfo *db, bool is_new_db)
 }
 
 /*
- * get_db_and_rel_infos()
+ * get_db_rel_and_slot_infos()
  *
  * higher level routine to generate dbinfos for the database running
  * on the given "port". Assumes that server is already running.
+ *
+ * live_check would be used only when the target is the old cluster.
  */
 void
-get_db_and_rel_infos(ClusterInfo *cluster)
+get_db_rel_and_slot_infos(ClusterInfo *cluster, bool live_check)
 {
 	int			dbnum;
 
@@ -283,7 +288,21 @@ get_db_and_rel_infos(ClusterInfo *cluster)
 	get_db_infos(cluster);
 
 	for (dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
-		get_rel_infos(cluster, &cluster->dbarr.dbs[dbnum]);
+	{
+		DbInfo	   *pDbInfo = &cluster->dbarr.dbs[dbnum];
+
+		get_rel_infos(cluster, pDbInfo);
+
+		/*
+		 * Retrieve the logical replication slots infos and the subscriptions
+		 * count for the old cluster.
+		 */
+		if (cluster == &old_cluster)
+		{
+			get_old_cluster_logical_slot_infos(pDbInfo, live_check);
+			get_db_subscription_count(pDbInfo);
+		}
+	}
 
 	if (cluster == &old_cluster)
 		pg_log(PG_VERBOSE, "\nsource databases:");
@@ -309,18 +328,24 @@ get_template0_info(ClusterInfo *cluster)
 	int			i_datlocprovider;
 	int			i_datcollate;
 	int			i_datctype;
-	int			i_daticulocale;
+	int			i_datlocale;
 
-	if (GET_MAJOR_VERSION(cluster->major_version) >= 1500)
+	if (GET_MAJOR_VERSION(cluster->major_version) >= 1700)
 		dbres = executeQueryOrDie(conn,
 								  "SELECT encoding, datlocprovider, "
-								  "       datcollate, datctype, daticulocale "
+								  "       datcollate, datctype, datlocale "
+								  "FROM	pg_catalog.pg_database "
+								  "WHERE datname='template0'");
+	else if (GET_MAJOR_VERSION(cluster->major_version) >= 1500)
+		dbres = executeQueryOrDie(conn,
+								  "SELECT encoding, datlocprovider, "
+								  "       datcollate, datctype, daticulocale AS datlocale "
 								  "FROM	pg_catalog.pg_database "
 								  "WHERE datname='template0'");
 	else
 		dbres = executeQueryOrDie(conn,
 								  "SELECT encoding, 'c' AS datlocprovider, "
-								  "       datcollate, datctype, NULL AS daticulocale "
+								  "       datcollate, datctype, NULL AS datlocale "
 								  "FROM	pg_catalog.pg_database "
 								  "WHERE datname='template0'");
 
@@ -334,16 +359,16 @@ get_template0_info(ClusterInfo *cluster)
 	i_datlocprovider = PQfnumber(dbres, "datlocprovider");
 	i_datcollate = PQfnumber(dbres, "datcollate");
 	i_datctype = PQfnumber(dbres, "datctype");
-	i_daticulocale = PQfnumber(dbres, "daticulocale");
+	i_datlocale = PQfnumber(dbres, "datlocale");
 
 	locale->db_encoding = atoi(PQgetvalue(dbres, 0, i_datencoding));
 	locale->db_collprovider = PQgetvalue(dbres, 0, i_datlocprovider)[0];
 	locale->db_collate = pg_strdup(PQgetvalue(dbres, 0, i_datcollate));
 	locale->db_ctype = pg_strdup(PQgetvalue(dbres, 0, i_datctype));
-	if (PQgetisnull(dbres, 0, i_daticulocale))
-		locale->db_iculocale = NULL;
+	if (PQgetisnull(dbres, 0, i_datlocale))
+		locale->db_locale = NULL;
 	else
-		locale->db_iculocale = pg_strdup(PQgetvalue(dbres, 0, i_daticulocale));
+		locale->db_locale = pg_strdup(PQgetvalue(dbres, 0, i_datlocale));
 
 	cluster->template0 = locale;
 
@@ -373,12 +398,15 @@ get_db_infos(ClusterInfo *cluster)
 
 	snprintf(query, sizeof(query),
 			 "SELECT d.oid, d.datname, d.encoding, d.datcollate, d.datctype, ");
-	if (GET_MAJOR_VERSION(cluster->major_version) < 1500)
+	if (GET_MAJOR_VERSION(cluster->major_version) >= 1700)
 		snprintf(query + strlen(query), sizeof(query) - strlen(query),
-				 "'c' AS datlocprovider, NULL AS daticulocale, ");
+				 "datlocprovider, datlocale, ");
+	else if (GET_MAJOR_VERSION(cluster->major_version) >= 1500)
+		snprintf(query + strlen(query), sizeof(query) - strlen(query),
+				 "datlocprovider, daticulocale AS datlocale, ");
 	else
 		snprintf(query + strlen(query), sizeof(query) - strlen(query),
-				 "datlocprovider, daticulocale, ");
+				 "'c' AS datlocprovider, NULL AS datlocale, ");
 	snprintf(query + strlen(query), sizeof(query) - strlen(query),
 			 "pg_catalog.pg_tablespace_location(t.oid) AS spclocation "
 			 "FROM pg_catalog.pg_database d "
@@ -394,7 +422,7 @@ get_db_infos(ClusterInfo *cluster)
 	i_spclocation = PQfnumber(res, "spclocation");
 
 	ntups = PQntuples(res);
-	dbinfos = (DbInfo *) pg_malloc(sizeof(DbInfo) * ntups);
+	dbinfos = (DbInfo *) pg_malloc0(sizeof(DbInfo) * ntups);
 
 	for (tupnum = 0; tupnum < ntups; tupnum++)
 	{
@@ -600,6 +628,173 @@ get_rel_infos(ClusterInfo *cluster, DbInfo *dbinfo)
 	dbinfo->rel_arr.nrels = num_rels;
 }
 
+/*
+ * get_old_cluster_logical_slot_infos()
+ *
+ * Gets the LogicalSlotInfos for all the logical replication slots of the
+ * database referred to by "dbinfo". The status of each logical slot is gotten
+ * here, but they are used at the checking phase. See
+ * check_old_cluster_for_valid_slots().
+ *
+ * Note: This function will not do anything if the old cluster is pre-PG17.
+ * This is because before that the logical slots are not saved at shutdown, so
+ * there is no guarantee that the latest confirmed_flush_lsn is saved to disk
+ * which can lead to data loss. It is still not guaranteed for manually created
+ * slots in PG17, so subsequent checks done in
+ * check_old_cluster_for_valid_slots() would raise a FATAL error if such slots
+ * are included.
+ */
+static void
+get_old_cluster_logical_slot_infos(DbInfo *dbinfo, bool live_check)
+{
+	PGconn	   *conn;
+	PGresult   *res;
+	LogicalSlotInfo *slotinfos = NULL;
+	int			num_slots;
+
+	/* Logical slots can be migrated since PG17. */
+	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 1600)
+		return;
+
+	conn = connectToServer(&old_cluster, dbinfo->db_name);
+
+	/*
+	 * Fetch the logical replication slot information. The check whether the
+	 * slot is considered caught up is done by an upgrade function. This
+	 * regards the slot as caught up if we don't find any decodable changes.
+	 * See binary_upgrade_logical_slot_has_caught_up().
+	 *
+	 * Note that we can't ensure whether the slot is caught up during
+	 * live_check as the new WAL records could be generated.
+	 *
+	 * We intentionally skip checking the WALs for invalidated slots as the
+	 * corresponding WALs could have been removed for such slots.
+	 *
+	 * The temporary slots are explicitly ignored while checking because such
+	 * slots cannot exist after the upgrade. During the upgrade, clusters are
+	 * started and stopped several times causing any temporary slots to be
+	 * removed.
+	 */
+	res = executeQueryOrDie(conn, "SELECT slot_name, plugin, two_phase, failover, "
+							"%s as caught_up, invalidation_reason IS NOT NULL as invalid "
+							"FROM pg_catalog.pg_replication_slots "
+							"WHERE slot_type = 'logical' AND "
+							"database = current_database() AND "
+							"temporary IS FALSE;",
+							live_check ? "FALSE" :
+							"(CASE WHEN invalidation_reason IS NOT NULL THEN FALSE "
+							"ELSE (SELECT pg_catalog.binary_upgrade_logical_slot_has_caught_up(slot_name)) "
+							"END)");
+
+	num_slots = PQntuples(res);
+
+	if (num_slots)
+	{
+		int			i_slotname;
+		int			i_plugin;
+		int			i_twophase;
+		int			i_failover;
+		int			i_caught_up;
+		int			i_invalid;
+
+		slotinfos = (LogicalSlotInfo *) pg_malloc(sizeof(LogicalSlotInfo) * num_slots);
+
+		i_slotname = PQfnumber(res, "slot_name");
+		i_plugin = PQfnumber(res, "plugin");
+		i_twophase = PQfnumber(res, "two_phase");
+		i_failover = PQfnumber(res, "failover");
+		i_caught_up = PQfnumber(res, "caught_up");
+		i_invalid = PQfnumber(res, "invalid");
+
+		for (int slotnum = 0; slotnum < num_slots; slotnum++)
+		{
+			LogicalSlotInfo *curr = &slotinfos[slotnum];
+
+			curr->slotname = pg_strdup(PQgetvalue(res, slotnum, i_slotname));
+			curr->plugin = pg_strdup(PQgetvalue(res, slotnum, i_plugin));
+			curr->two_phase = (strcmp(PQgetvalue(res, slotnum, i_twophase), "t") == 0);
+			curr->failover = (strcmp(PQgetvalue(res, slotnum, i_failover), "t") == 0);
+			curr->caught_up = (strcmp(PQgetvalue(res, slotnum, i_caught_up), "t") == 0);
+			curr->invalid = (strcmp(PQgetvalue(res, slotnum, i_invalid), "t") == 0);
+		}
+	}
+
+	PQclear(res);
+	PQfinish(conn);
+
+	dbinfo->slot_arr.slots = slotinfos;
+	dbinfo->slot_arr.nslots = num_slots;
+}
+
+
+/*
+ * count_old_cluster_logical_slots()
+ *
+ * Returns the number of logical replication slots for all databases.
+ *
+ * Note: this function always returns 0 if the old_cluster is PG16 and prior
+ * because we gather slot information only for cluster versions greater than or
+ * equal to PG17. See get_old_cluster_logical_slot_infos().
+ */
+int
+count_old_cluster_logical_slots(void)
+{
+	int			slot_count = 0;
+
+	for (int dbnum = 0; dbnum < old_cluster.dbarr.ndbs; dbnum++)
+		slot_count += old_cluster.dbarr.dbs[dbnum].slot_arr.nslots;
+
+	return slot_count;
+}
+
+/*
+ * get_db_subscription_count()
+ *
+ * Gets the number of subscriptions in the database referred to by "dbinfo".
+ *
+ * Note: This function will not do anything if the old cluster is pre-PG17.
+ * This is because before that the logical slots are not upgraded, so we will
+ * not be able to upgrade the logical replication clusters completely.
+ */
+static void
+get_db_subscription_count(DbInfo *dbinfo)
+{
+	PGconn	   *conn;
+	PGresult   *res;
+
+	/* Subscriptions can be migrated since PG17. */
+	if (GET_MAJOR_VERSION(old_cluster.major_version) < 1700)
+		return;
+
+	conn = connectToServer(&old_cluster, dbinfo->db_name);
+	res = executeQueryOrDie(conn, "SELECT count(*) "
+							"FROM pg_catalog.pg_subscription WHERE subdbid = %u",
+							dbinfo->db_oid);
+	dbinfo->nsubs = atoi(PQgetvalue(res, 0, 0));
+
+	PQclear(res);
+	PQfinish(conn);
+}
+
+/*
+ * count_old_cluster_subscriptions()
+ *
+ * Returns the number of subscriptions for all databases.
+ *
+ * Note: this function always returns 0 if the old_cluster is PG16 and prior
+ * because we gather subscriptions only for cluster versions greater than or
+ * equal to PG17. See get_db_subscription_count().
+ */
+int
+count_old_cluster_subscriptions(void)
+{
+	int			nsubs = 0;
+
+	for (int dbnum = 0; dbnum < old_cluster.dbarr.ndbs; dbnum++)
+		nsubs += old_cluster.dbarr.dbs[dbnum].nsubs;
+
+	return nsubs;
+}
 
 static void
 free_db_and_rel_infos(DbInfoArr *db_arr)
@@ -642,8 +837,11 @@ print_db_infos(DbInfoArr *db_arr)
 
 	for (dbnum = 0; dbnum < db_arr->ndbs; dbnum++)
 	{
-		pg_log(PG_VERBOSE, "Database: %s", db_arr->dbs[dbnum].db_name);
-		print_rel_infos(&db_arr->dbs[dbnum].rel_arr);
+		DbInfo	   *pDbInfo = &db_arr->dbs[dbnum];
+
+		pg_log(PG_VERBOSE, "Database: \"%s\"", pDbInfo->db_name);
+		print_rel_infos(&pDbInfo->rel_arr);
+		print_slot_infos(&pDbInfo->slot_arr);
 	}
 }
 
@@ -654,9 +852,29 @@ print_rel_infos(RelInfoArr *rel_arr)
 	int			relnum;
 
 	for (relnum = 0; relnum < rel_arr->nrels; relnum++)
-		pg_log(PG_VERBOSE, "relname: %s.%s: reloid: %u reltblspace: %s",
+		pg_log(PG_VERBOSE, "relname: \"%s.%s\", reloid: %u, reltblspace: \"%s\"",
 			   rel_arr->rels[relnum].nspname,
 			   rel_arr->rels[relnum].relname,
 			   rel_arr->rels[relnum].reloid,
 			   rel_arr->rels[relnum].tablespace);
+}
+
+static void
+print_slot_infos(LogicalSlotInfoArr *slot_arr)
+{
+	/* Quick return if there are no logical slots. */
+	if (slot_arr->nslots == 0)
+		return;
+
+	pg_log(PG_VERBOSE, "Logical replication slots within the database:");
+
+	for (int slotnum = 0; slotnum < slot_arr->nslots; slotnum++)
+	{
+		LogicalSlotInfo *slot_info = &slot_arr->slots[slotnum];
+
+		pg_log(PG_VERBOSE, "slot_name: \"%s\", plugin: \"%s\", two_phase: %s",
+			   slot_info->slotname,
+			   slot_info->plugin,
+			   slot_info->two_phase ? "true" : "false");
+	}
 }

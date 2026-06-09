@@ -1,9 +1,9 @@
 #!/usr/bin/perl
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 my $integer = '[+-]?[0-9]+';
 my $real = '[+-]?[0-9]+\.[0-9]+';

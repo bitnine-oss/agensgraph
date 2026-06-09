@@ -274,6 +274,161 @@ SELECT time with time zone 'J2452271 T040506.789 America/Los_Angeles';
  04:05:06.789-08
 (1 row)
 
+-- Check time formats required by ISO 8601
+SELECT time without time zone '040506.07';
+    time     
+-------------
+ 04:05:06.07
+(1 row)
+
+SELECT time without time zone '04:05:06.07';
+    time     
+-------------
+ 04:05:06.07
+(1 row)
+
+SELECT time without time zone '040506';
+   time   
+----------
+ 04:05:06
+(1 row)
+
+SELECT time without time zone '04:05:06';
+   time   
+----------
+ 04:05:06
+(1 row)
+
+SELECT time without time zone '0405';
+   time   
+----------
+ 04:05:00
+(1 row)
+
+SELECT time without time zone '04:05';
+   time   
+----------
+ 04:05:00
+(1 row)
+
+SELECT time without time zone 'T040506.07';
+    time     
+-------------
+ 04:05:06.07
+(1 row)
+
+SELECT time without time zone 'T04:05:06.07';
+    time     
+-------------
+ 04:05:06.07
+(1 row)
+
+SELECT time without time zone 'T040506';
+   time   
+----------
+ 04:05:06
+(1 row)
+
+SELECT time without time zone 'T04:05:06';
+   time   
+----------
+ 04:05:06
+(1 row)
+
+SELECT time without time zone 'T0405';
+   time   
+----------
+ 04:05:00
+(1 row)
+
+SELECT time without time zone 'T04:05';
+   time   
+----------
+ 04:05:00
+(1 row)
+
+-- 8601 says "Thh" is allowed, but we intentionally reject it as too vague
+SELECT time without time zone 'T04';
+ERROR:  invalid input syntax for type time: "T04"
+LINE 1: SELECT time without time zone 'T04';
+                                      ^
+SELECT time with time zone '040506.07+08';
+     timetz     
+----------------
+ 04:05:06.07+08
+(1 row)
+
+SELECT time with time zone '04:05:06.07+08';
+     timetz     
+----------------
+ 04:05:06.07+08
+(1 row)
+
+SELECT time with time zone '040506+08';
+   timetz    
+-------------
+ 04:05:06+08
+(1 row)
+
+SELECT time with time zone '04:05:06+08';
+   timetz    
+-------------
+ 04:05:06+08
+(1 row)
+
+SELECT time with time zone '0405+08';
+   timetz    
+-------------
+ 04:05:00+08
+(1 row)
+
+SELECT time with time zone '04:05+08';
+   timetz    
+-------------
+ 04:05:00+08
+(1 row)
+
+SELECT time with time zone 'T040506.07+08';
+     timetz     
+----------------
+ 04:05:06.07+08
+(1 row)
+
+SELECT time with time zone 'T04:05:06.07+08';
+     timetz     
+----------------
+ 04:05:06.07+08
+(1 row)
+
+SELECT time with time zone 'T040506+08';
+   timetz    
+-------------
+ 04:05:06+08
+(1 row)
+
+SELECT time with time zone 'T04:05:06+08';
+   timetz    
+-------------
+ 04:05:06+08
+(1 row)
+
+SELECT time with time zone 'T0405+08';
+   timetz    
+-------------
+ 04:05:00+08
+(1 row)
+
+SELECT time with time zone 'T04:05+08';
+   timetz    
+-------------
+ 04:05:00+08
+(1 row)
+
+-- 8601 says "Thh" is allowed, but we intentionally reject it as too vague
+SELECT time with time zone 'T04+08';
+ERROR:  invalid input syntax for type time with time zone: "T04+08"
+LINE 1: SELECT time with time zone 'T04+08';
+                                   ^
 SET DateStyle = 'Postgres, MDY';
 -- Check Julian dates BC
 SELECT date 'J1520447' AS "Confucius' Birthday";
@@ -482,6 +637,10 @@ SELECT timestamp without time zone 'Jan 1, 4713 BC' + interval '109203489 days' 
  Sun Dec 31 00:00:00 294276
 (1 row)
 
+SELECT timestamp without time zone '2000-01-01' - interval '2483590 days' AS "out of range";
+ERROR:  timestamp out of range
+SELECT timestamp without time zone '294276-12-31 23:59:59' + interval '9223372036854775807 microseconds' AS "out of range";
+ERROR:  timestamp out of range
 SELECT timestamp without time zone '12/31/294276' - timestamp without time zone '12/23/1999' AS "106751991 Days";
   106751991 Days  
 ------------------
@@ -742,6 +901,10 @@ SELECT timestamp with time zone '1999-12-01' + interval '1 month - 1 second' AS 
  Fri Dec 31 23:59:59 1999 PST
 (1 row)
 
+SELECT timestamp with time zone '2000-01-01' - interval '2483590 days' AS "out of range";
+ERROR:  timestamp out of range
+SELECT timestamp with time zone '294276-12-31 23:59:59 UTC' + interval '9223372036854775807 microseconds' AS "out of range";
+ERROR:  timestamp out of range
 SELECT (timestamp with time zone 'today' = (timestamp with time zone 'yesterday' + interval '1 day')) as "True";
  True 
 ------
@@ -981,6 +1144,18 @@ SELECT CAST(interval '02:03' AS time) AS "02:03:00";
  02:03:00
 (1 row)
 
+SELECT CAST(interval '-02:03' AS time) AS "21:57:00";
+ 21:57:00 
+----------
+ 21:57:00
+(1 row)
+
+SELECT CAST(interval '-9223372022400000000 us' AS time) AS "00:00:00";
+ 00:00:00 
+----------
+ 00:00:00
+(1 row)
+
 SELECT time '01:30' + interval '02:01' AS "03:31:00";
  03:31:00 
 ----------
@@ -1159,6 +1334,7 @@ SELECT t.d1 AS t, i.f1 AS i, t.d1 + i.f1 AS "add", t.d1 - i.f1 AS "subtract"
 
 SELECT t.f1 AS t, i.f1 AS i, t.f1 + i.f1 AS "add", t.f1 - i.f1 AS "subtract"
   FROM TIME_TBL t, INTERVAL_TBL i
+  WHERE isfinite(i.f1)
   ORDER BY 1,2;
       t      |               i               |     add     |  subtract   
 -------------+-------------------------------+-------------+-------------
@@ -1266,6 +1442,7 @@ SELECT t.f1 AS t, i.f1 AS i, t.f1 + i.f1 AS "add", t.f1 - i.f1 AS "subtract"
 
 SELECT t.f1 AS t, i.f1 AS i, t.f1 + i.f1 AS "add", t.f1 - i.f1 AS "subtract"
   FROM TIMETZ_TBL t, INTERVAL_TBL i
+  WHERE isfinite(i.f1)
   ORDER BY 1,2;
        t        |               i               |      add       |    subtract    
 ----------------+-------------------------------+----------------+----------------
@@ -1544,6 +1721,22 @@ SELECT d.f1 AS "timestamp", t.f1 AS "interval", d.f1 + t.f1 AS plus
   ORDER BY plus, "timestamp", "interval";
           timestamp           |           interval            |             plus             
 ------------------------------+-------------------------------+------------------------------
+ Thu Jan 01 00:00:00 1970 PST | -infinity                     | -infinity
+ Wed Feb 28 17:32:01 1996 PST | -infinity                     | -infinity
+ Thu Feb 29 17:32:01 1996 PST | -infinity                     | -infinity
+ Fri Mar 01 17:32:01 1996 PST | -infinity                     | -infinity
+ Mon Dec 30 17:32:01 1996 PST | -infinity                     | -infinity
+ Tue Dec 31 17:32:01 1996 PST | -infinity                     | -infinity
+ Fri Dec 31 17:32:01 1999 PST | -infinity                     | -infinity
+ Sat Jan 01 17:32:01 2000 PST | -infinity                     | -infinity
+ Wed Mar 15 02:14:05 2000 PST | -infinity                     | -infinity
+ Wed Mar 15 03:14:04 2000 PST | -infinity                     | -infinity
+ Wed Mar 15 08:14:01 2000 PST | -infinity                     | -infinity
+ Wed Mar 15 12:14:03 2000 PST | -infinity                     | -infinity
+ Wed Mar 15 13:14:02 2000 PST | -infinity                     | -infinity
+ Sun Dec 31 17:32:01 2000 PST | -infinity                     | -infinity
+ Mon Jan 01 17:32:01 2001 PST | -infinity                     | -infinity
+ Sat Sep 22 18:19:20 2001 PDT | -infinity                     | -infinity
  Thu Jan 01 00:00:00 1970 PST | @ 14 secs ago                 | Wed Dec 31 23:59:46 1969 PST
  Thu Jan 01 00:00:00 1970 PST | @ 1 min                       | Thu Jan 01 00:01:00 1970 PST
  Thu Jan 01 00:00:00 1970 PST | @ 5 hours                     | Thu Jan 01 05:00:00 1970 PST
@@ -1704,14 +1897,45 @@ SELECT d.f1 AS "timestamp", t.f1 AS "interval", d.f1 + t.f1 AS plus
  Sun Dec 31 17:32:01 2000 PST | @ 34 years                    | Sun Dec 31 17:32:01 2034 PST
  Mon Jan 01 17:32:01 2001 PST | @ 34 years                    | Mon Jan 01 17:32:01 2035 PST
  Sat Sep 22 18:19:20 2001 PDT | @ 34 years                    | Sat Sep 22 18:19:20 2035 PDT
-(160 rows)
+ Thu Jan 01 00:00:00 1970 PST | infinity                      | infinity
+ Wed Feb 28 17:32:01 1996 PST | infinity                      | infinity
+ Thu Feb 29 17:32:01 1996 PST | infinity                      | infinity
+ Fri Mar 01 17:32:01 1996 PST | infinity                      | infinity
+ Mon Dec 30 17:32:01 1996 PST | infinity                      | infinity
+ Tue Dec 31 17:32:01 1996 PST | infinity                      | infinity
+ Fri Dec 31 17:32:01 1999 PST | infinity                      | infinity
+ Sat Jan 01 17:32:01 2000 PST | infinity                      | infinity
+ Wed Mar 15 02:14:05 2000 PST | infinity                      | infinity
+ Wed Mar 15 03:14:04 2000 PST | infinity                      | infinity
+ Wed Mar 15 08:14:01 2000 PST | infinity                      | infinity
+ Wed Mar 15 12:14:03 2000 PST | infinity                      | infinity
+ Wed Mar 15 13:14:02 2000 PST | infinity                      | infinity
+ Sun Dec 31 17:32:01 2000 PST | infinity                      | infinity
+ Mon Jan 01 17:32:01 2001 PST | infinity                      | infinity
+ Sat Sep 22 18:19:20 2001 PDT | infinity                      | infinity
+(192 rows)
 
 SELECT d.f1 AS "timestamp", t.f1 AS "interval", d.f1 - t.f1 AS minus
   FROM TEMP_TIMESTAMP d, INTERVAL_TBL t
-  WHERE isfinite(d.f1)
   ORDER BY minus, "timestamp", "interval";
           timestamp           |           interval            |            minus             
 ------------------------------+-------------------------------+------------------------------
+ Thu Jan 01 00:00:00 1970 PST | infinity                      | -infinity
+ Wed Feb 28 17:32:01 1996 PST | infinity                      | -infinity
+ Thu Feb 29 17:32:01 1996 PST | infinity                      | -infinity
+ Fri Mar 01 17:32:01 1996 PST | infinity                      | -infinity
+ Mon Dec 30 17:32:01 1996 PST | infinity                      | -infinity
+ Tue Dec 31 17:32:01 1996 PST | infinity                      | -infinity
+ Fri Dec 31 17:32:01 1999 PST | infinity                      | -infinity
+ Sat Jan 01 17:32:01 2000 PST | infinity                      | -infinity
+ Wed Mar 15 02:14:05 2000 PST | infinity                      | -infinity
+ Wed Mar 15 03:14:04 2000 PST | infinity                      | -infinity
+ Wed Mar 15 08:14:01 2000 PST | infinity                      | -infinity
+ Wed Mar 15 12:14:03 2000 PST | infinity                      | -infinity
+ Wed Mar 15 13:14:02 2000 PST | infinity                      | -infinity
+ Sun Dec 31 17:32:01 2000 PST | infinity                      | -infinity
+ Mon Jan 01 17:32:01 2001 PST | infinity                      | -infinity
+ Sat Sep 22 18:19:20 2001 PDT | infinity                      | -infinity
  Thu Jan 01 00:00:00 1970 PST | @ 34 years                    | Wed Jan 01 00:00:00 1936 PST
  Wed Feb 28 17:32:01 1996 PST | @ 34 years                    | Wed Feb 28 17:32:01 1962 PST
  Thu Feb 29 17:32:01 1996 PST | @ 34 years                    | Wed Feb 28 17:32:01 1962 PST
@@ -1872,7 +2096,23 @@ SELECT d.f1 AS "timestamp", t.f1 AS "interval", d.f1 - t.f1 AS minus
  Sat Sep 22 18:19:20 2001 PDT | @ 5 hours                     | Sat Sep 22 13:19:20 2001 PDT
  Sat Sep 22 18:19:20 2001 PDT | @ 1 min                       | Sat Sep 22 18:18:20 2001 PDT
  Sat Sep 22 18:19:20 2001 PDT | @ 14 secs ago                 | Sat Sep 22 18:19:34 2001 PDT
-(160 rows)
+ Thu Jan 01 00:00:00 1970 PST | -infinity                     | infinity
+ Wed Feb 28 17:32:01 1996 PST | -infinity                     | infinity
+ Thu Feb 29 17:32:01 1996 PST | -infinity                     | infinity
+ Fri Mar 01 17:32:01 1996 PST | -infinity                     | infinity
+ Mon Dec 30 17:32:01 1996 PST | -infinity                     | infinity
+ Tue Dec 31 17:32:01 1996 PST | -infinity                     | infinity
+ Fri Dec 31 17:32:01 1999 PST | -infinity                     | infinity
+ Sat Jan 01 17:32:01 2000 PST | -infinity                     | infinity
+ Wed Mar 15 02:14:05 2000 PST | -infinity                     | infinity
+ Wed Mar 15 03:14:04 2000 PST | -infinity                     | infinity
+ Wed Mar 15 08:14:01 2000 PST | -infinity                     | infinity
+ Wed Mar 15 12:14:03 2000 PST | -infinity                     | infinity
+ Wed Mar 15 13:14:02 2000 PST | -infinity                     | infinity
+ Sun Dec 31 17:32:01 2000 PST | -infinity                     | infinity
+ Mon Jan 01 17:32:01 2001 PST | -infinity                     | infinity
+ Sat Sep 22 18:19:20 2001 PDT | -infinity                     | infinity
+(192 rows)
 
 SELECT d.f1 AS "timestamp",
    timestamp with time zone '1980-01-06 00:00 GMT' AS gpstime_zero,
@@ -3063,8 +3303,66 @@ SELECT to_timestamp('2011-12-18 11:38 20',     'YYYY-MM-DD HH12:MI TZM');
  Sun Dec 18 03:18:00 2011 PST
 (1 row)
 
-SELECT to_timestamp('2011-12-18 11:38 PST', 'YYYY-MM-DD HH12:MI TZ');  -- NYI
-ERROR:  formatting field "TZ" is only supported in to_char
+SELECT to_timestamp('2011-12-18 11:38 EST', 'YYYY-MM-DD HH12:MI TZ');
+         to_timestamp         
+------------------------------
+ Sun Dec 18 08:38:00 2011 PST
+(1 row)
+
+SELECT to_timestamp('2011-12-18 11:38 -05', 'YYYY-MM-DD HH12:MI TZ');
+         to_timestamp         
+------------------------------
+ Sun Dec 18 08:38:00 2011 PST
+(1 row)
+
+SELECT to_timestamp('2011-12-18 11:38 +01:30', 'YYYY-MM-DD HH12:MI TZ');
+         to_timestamp         
+------------------------------
+ Sun Dec 18 02:08:00 2011 PST
+(1 row)
+
+SELECT to_timestamp('2011-12-18 11:38 MSK', 'YYYY-MM-DD HH12:MI TZ');  -- dyntz
+         to_timestamp         
+------------------------------
+ Sat Dec 17 23:38:00 2011 PST
+(1 row)
+
+SELECT to_timestamp('2011-12-18 11:38ESTFOO24', 'YYYY-MM-DD HH12:MITZFOOSS');
+         to_timestamp         
+------------------------------
+ Sun Dec 18 08:38:24 2011 PST
+(1 row)
+
+SELECT to_timestamp('2011-12-18 11:38-05FOO24', 'YYYY-MM-DD HH12:MITZFOOSS');
+         to_timestamp         
+------------------------------
+ Sun Dec 18 08:38:24 2011 PST
+(1 row)
+
+SELECT to_timestamp('2011-12-18 11:38 JUNK', 'YYYY-MM-DD HH12:MI TZ');  -- error
+ERROR:  invalid value "JUNK" for "TZ"
+DETAIL:  Time zone abbreviation is not recognized.
+SELECT to_timestamp('2011-12-18 11:38 ...', 'YYYY-MM-DD HH12:MI TZ');  -- error
+ERROR:  invalid value ".." for "TZ"
+DETAIL:  Value must be an integer.
+SELECT to_timestamp('2011-12-18 11:38 -05', 'YYYY-MM-DD HH12:MI OF');
+         to_timestamp         
+------------------------------
+ Sun Dec 18 08:38:00 2011 PST
+(1 row)
+
+SELECT to_timestamp('2011-12-18 11:38 +01:30', 'YYYY-MM-DD HH12:MI OF');
+         to_timestamp         
+------------------------------
+ Sun Dec 18 02:08:00 2011 PST
+(1 row)
+
+SELECT to_timestamp('2011-12-18 11:38 +xyz', 'YYYY-MM-DD HH12:MI OF');  -- error
+ERROR:  invalid value "xy" for "OF"
+DETAIL:  Value must be an integer.
+SELECT to_timestamp('2011-12-18 11:38 +01:xyz', 'YYYY-MM-DD HH12:MI OF');  -- error
+ERROR:  invalid value "xy" for "OF"
+DETAIL:  Value must be an integer.
 SELECT to_timestamp('2018-11-02 12:34:56.025', 'YYYY-MM-DD HH24:MI:SS.MS');
            to_timestamp           
 ----------------------------------
@@ -3480,6 +3778,19 @@ SELECT to_date('0000-02-01','YYYY-MM-DD');  -- allowed, though it shouldn't be
  02-01-0001 BC
 (1 row)
 
+-- to_char's TZ format code produces zone abbrev if known
+SELECT to_char('2012-12-12 12:00'::timestamptz, 'YYYY-MM-DD HH:MI:SS TZ');
+         to_char         
+-------------------------
+ 2012-12-12 12:00:00 PST
+(1 row)
+
+SELECT to_char('2012-12-12 12:00'::timestamptz, 'YYYY-MM-DD HH:MI:SS tz');
+         to_char         
+-------------------------
+ 2012-12-12 12:00:00 pst
+(1 row)
+
 --
 -- Check behavior with SQL-style fixed-GMT-offset time zone (cf bug #8572)
 --
@@ -3519,6 +3830,13 @@ SELECT to_char('2012-12-12 12:00'::timestamptz, 'YYYY-MM-DD SSSSS');
      to_char      
 ------------------
  2012-12-12 43200
+(1 row)
+
+SET TIME ZONE '+2';
+SELECT to_char('2012-12-12 12:00'::timestamptz, 'YYYY-MM-DD HH:MI:SS TZ');
+         to_char         
+-------------------------
+ 2012-12-12 12:00:00 +02
 (1 row)
 
 RESET TIME ZONE;

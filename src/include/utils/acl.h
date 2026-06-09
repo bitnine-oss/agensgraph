@@ -4,7 +4,7 @@
  *	  Definition of (and support for) access control list data structures.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/acl.h
@@ -174,7 +174,7 @@ typedef struct ArrayType Acl;
 typedef enum
 {
 	ACLMASK_ALL,				/* normal case: compute all bits */
-	ACLMASK_ANY					/* return when result is known nonzero */
+	ACLMASK_ANY,				/* return when result is known nonzero */
 } AclMaskHow;
 
 /* result codes for pg_*_aclcheck */
@@ -182,7 +182,7 @@ typedef enum
 {
 	ACLCHECK_OK = 0,
 	ACLCHECK_NO_PRIV,
-	ACLCHECK_NOT_OWNER
+	ACLCHECK_NOT_OWNER,
 } AclResult;
 
 
@@ -240,8 +240,12 @@ extern void RemoveRoleFromObjectACL(Oid roleid, Oid classid, Oid objid);
 extern AclMode pg_class_aclmask(Oid table_oid, Oid roleid,
 								AclMode mask, AclMaskHow how);
 
-/* generic function */
-extern AclResult object_aclcheck(Oid classid, Oid objectid, Oid roleid, AclMode mode);
+/* generic functions */
+extern AclResult object_aclcheck(Oid classid, Oid objectid,
+								 Oid roleid, AclMode mode);
+extern AclResult object_aclcheck_ext(Oid classid, Oid objectid,
+									 Oid roleid, AclMode mode,
+									 bool *is_missing);
 
 /* special cases */
 extern AclResult pg_attribute_aclcheck(Oid table_oid, AttrNumber attnum,
@@ -251,6 +255,9 @@ extern AclResult pg_attribute_aclcheck_ext(Oid table_oid, AttrNumber attnum,
 										   bool *is_missing);
 extern AclResult pg_attribute_aclcheck_all(Oid table_oid, Oid roleid,
 										   AclMode mode, AclMaskHow how);
+extern AclResult pg_attribute_aclcheck_all_ext(Oid table_oid, Oid roleid,
+											   AclMode mode, AclMaskHow how,
+											   bool *is_missing);
 extern AclResult pg_class_aclcheck(Oid table_oid, Oid roleid, AclMode mode);
 extern AclResult pg_class_aclcheck_ext(Oid table_oid, Oid roleid,
 									   AclMode mode, bool *is_missing);
@@ -269,6 +276,10 @@ extern void aclcheck_error_type(AclResult aclerr, Oid typeOid);
 
 extern void recordExtObjInitPriv(Oid objoid, Oid classoid);
 extern void removeExtObjInitPriv(Oid objoid, Oid classoid);
+extern void ReplaceRoleInInitPriv(Oid oldroleid, Oid newroleid,
+								  Oid classid, Oid objid, int32 objsubid);
+extern void RemoveRoleFromInitPriv(Oid roleid,
+								   Oid classid, Oid objid, int32 objsubid);
 
 
 /* ownercheck routines just return true (owner) or false (not) */

@@ -91,9 +91,12 @@ PostgreSQL documentation
       <term><option>--clean</option></term>
       <listitem>
        <para>
-        Include SQL commands to clean (drop) databases before
-        recreating them.  <command>DROP</command> commands for roles and
-        tablespaces are added as well.
+        Emit SQL commands to <command>DROP</command> all the dumped
+        databases, roles, and tablespaces before recreating them.
+        This option is useful when the restore is to overwrite an existing
+        cluster.  If any of the objects do not exist in the destination
+        cluster, ignorable error messages will be reported during
+        restore, unless <option>--if-exists</option> is also specified.
        </para>
       </listitem>
      </varlistentry>
@@ -119,6 +122,37 @@ PostgreSQL documentation
         Send output to the specified file.  If this is omitted, the
         standard output is used.
        </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--filter=<replaceable class="parameter">filename</replaceable></option></term>
+      <listitem>
+       <para>
+        Specify a filename from which to read patterns for databases excluded
+        from the dump. The patterns are interpreted according to the same rules
+        as <option>--exclude-database</option>.
+        To read from <literal>STDIN</literal>, use <filename>-</filename> as the
+        filename.  The <option>--filter</option> option can be specified in
+        conjunction with <option>--exclude-database</option> for excluding
+        databases, and can also be specified more than once for multiple filter
+        files.
+       </para>
+
+       <para>
+        The file lists one database pattern per row, with the following format:
+<synopsis>
+exclude database <replaceable class="parameter">PATTERN</replaceable>
+</synopsis>
+       </para>
+
+       <para>
+        Lines starting with <literal>#</literal> are considered comments and
+        ignored. Comments can be placed after an object pattern row as well.
+        Blank lines are also ignored. See <xref linkend="app-psql-patterns"/>
+        for how to perform quoting in patterns.
+       </para>
+
       </listitem>
      </varlistentry>
 
@@ -324,9 +358,11 @@ PostgreSQL documentation
       <term><option>--if-exists</option></term>
       <listitem>
        <para>
-        Use conditional commands (i.e., add an <literal>IF EXISTS</literal>
-        clause) to drop databases and other objects.  This option is not valid
-        unless <option>--clean</option> is also specified.
+        Use <literal>DROP ... IF EXISTS</literal> commands to drop objects
+        in <option>--clean</option> mode.  This suppresses <quote>does not
+        exist</quote> errors that might otherwise be reported.  This
+        option is not valid unless <option>--clean</option> is also
+        specified.
        </para>
       </listitem>
      </varlistentry>

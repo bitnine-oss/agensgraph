@@ -4,7 +4,7 @@
  *	  exported definitions for utils/hash/dynahash.c; see notes therein
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/hsearch.h
@@ -113,7 +113,7 @@ typedef enum
 	HASH_FIND,
 	HASH_ENTER,
 	HASH_REMOVE,
-	HASH_ENTER_NULL
+	HASH_ENTER_NULL,
 } HASHACTION;
 
 /* hash_seq status (should be considered an opaque type by callers) */

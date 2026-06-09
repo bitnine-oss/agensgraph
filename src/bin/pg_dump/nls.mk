@@ -20,15 +20,19 @@ GETTEXT_FILES    = $(FRONTEND_COMMON_GETTEXT_FILES) \
                    pg_dumpall.c \
                    parallel.c \
                    parallel.h \
+                   filter.c \
                    pg_backup_utils.c \
                    pg_backup_utils.h \
                    ../../common/compression.c \
                    ../../common/exec.c \
                    ../../common/fe_memutils.c \
+                   ../../common/file_utils.c \
                    ../../common/wait_error.c \
-                   ../../fe_utils/option_utils.c
+                   ../../fe_utils/option_utils.c \
+                   ../../fe_utils/string_utils.c
 GETTEXT_TRIGGERS = $(FRONTEND_COMMON_GETTEXT_TRIGGERS) \
                    simple_prompt \
-                   ExecuteSqlCommand:3 warn_or_exit_horribly:2
+                   ExecuteSqlCommand:3 \
+                   warn_or_exit_horribly:2
 GETTEXT_FLAGS    = $(FRONTEND_COMMON_GETTEXT_FLAGS) \
-    warn_or_exit_horribly:2:c-format
+                   warn_or_exit_horribly:2:c-format

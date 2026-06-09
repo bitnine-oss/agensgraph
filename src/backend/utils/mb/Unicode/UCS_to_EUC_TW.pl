@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 #
-# Copyright (c) 2001-2023, PostgreSQL Global Development Group
+# Copyright (c) 2001-2024, PostgreSQL Global Development Group
 #
 # src/backend/utils/mb/Unicode/UCS_to_EUC_TW.pl
 #
@@ -18,7 +18,7 @@
 #		 # and Unicode name (not used in this script)
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use convutils;
 

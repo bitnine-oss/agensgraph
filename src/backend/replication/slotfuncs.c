@@ -3,7 +3,7 @@
  * slotfuncs.c
  *	   Support functions for replication slots
  *
- * Copyright (c) 2012-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/slotfuncs.c
@@ -21,7 +21,9 @@
 #include "replication/decode.h"
 #include "replication/logical.h"
 #include "replication/slot.h"
+#include "replication/slotsync.h"
 #include "utils/builtins.h"
+#include "utils/guc.h"
 #include "utils/inval.h"
 #include "utils/pg_lsn.h"
 #include "utils/resowner.h"
@@ -42,7 +44,8 @@ create_physical_replication_slot(char *name, bool immediately_reserve,
 
 	/* acquire replication slot, this will check for conflicting names */
 	ReplicationSlotCreate(name, false,
-						  temporary ? RS_TEMPORARY : RS_PERSISTENT, false);
+						  temporary ? RS_TEMPORARY : RS_PERSISTENT, false,
+						  false, false);
 
 	if (immediately_reserve)
 	{
@@ -117,6 +120,7 @@ pg_create_physical_replication_slot(PG_FUNCTION_ARGS)
 static void
 create_logical_replication_slot(char *name, char *plugin,
 								bool temporary, bool two_phase,
+								bool failover,
 								XLogRecPtr restart_lsn,
 								bool find_startpoint)
 {
@@ -133,7 +137,8 @@ create_logical_replication_slot(char *name, char *plugin,
 	 * error as well.
 	 */
 	ReplicationSlotCreate(name, true,
-						  temporary ? RS_TEMPORARY : RS_EPHEMERAL, two_phase);
+						  temporary ? RS_TEMPORARY : RS_EPHEMERAL, two_phase,
+						  failover, false);
 
 	/*
 	 * Create logical decoding context to find start point or, if we don't
@@ -171,6 +176,7 @@ pg_create_logical_replication_slot(PG_FUNCTION_ARGS)
 	Name		plugin = PG_GETARG_NAME(1);
 	bool		temporary = PG_GETARG_BOOL(2);
 	bool		two_phase = PG_GETARG_BOOL(3);
+	bool		failover = PG_GETARG_BOOL(4);
 	Datum		result;
 	TupleDesc	tupdesc;
 	HeapTuple	tuple;
@@ -188,6 +194,7 @@ pg_create_logical_replication_slot(PG_FUNCTION_ARGS)
 									NameStr(*plugin),
 									temporary,
 									two_phase,
+									failover,
 									InvalidXLogRecPtr,
 									true);
 
@@ -232,7 +239,7 @@ pg_drop_replication_slot(PG_FUNCTION_ARGS)
 Datum
 pg_get_replication_slots(PG_FUNCTION_ARGS)
 {
-#define PG_GET_REPLICATION_SLOTS_COLS 15
+#define PG_GET_REPLICATION_SLOTS_COLS 19
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 	XLogRecPtr	currlsn;
 	int			slotno;
@@ -256,6 +263,7 @@ pg_get_replication_slots(PG_FUNCTION_ARGS)
 		bool		nulls[PG_GET_REPLICATION_SLOTS_COLS];
 		WALAvailability walstate;
 		int			i;
+		ReplicationSlotInvalidationCause cause;
 
 		if (!slot->in_use)
 			continue;
@@ -402,15 +410,36 @@ pg_get_replication_slots(PG_FUNCTION_ARGS)
 
 		values[i++] = BoolGetDatum(slot_contents.data.two_phase);
 
-		if (slot_contents.data.database == InvalidOid)
+		if (slot_contents.inactive_since > 0)
+			values[i++] = TimestampTzGetDatum(slot_contents.inactive_since);
+		else
+			nulls[i++] = true;
+
+		cause = slot_contents.data.invalidated;
+
+		if (SlotIsPhysical(&slot_contents))
 			nulls[i++] = true;
 		else
 		{
-			if (slot_contents.data.invalidated != RS_INVAL_NONE)
+			/*
+			 * rows_removed and wal_level_insufficient are the only two
+			 * reasons for the logical slot's conflict with recovery.
+			 */
+			if (cause == RS_INVAL_HORIZON ||
+				cause == RS_INVAL_WAL_LEVEL)
 				values[i++] = BoolGetDatum(true);
 			else
 				values[i++] = BoolGetDatum(false);
 		}
+
+		if (cause == RS_INVAL_NONE)
+			nulls[i++] = true;
+		else
+			values[i++] = CStringGetTextDatum(SlotInvalidationCauses[cause]);
+
+		values[i++] = BoolGetDatum(slot_contents.data.failover);
+
+		values[i++] = BoolGetDatum(slot_contents.data.synced);
 
 		Assert(i == PG_GET_REPLICATION_SLOTS_COLS);
 
@@ -451,129 +480,25 @@ pg_physical_replication_slot_advance(XLogRecPtr moveto)
 		 * crash, but this makes the data consistent after a clean shutdown.
 		 */
 		ReplicationSlotMarkDirty();
+
+		/*
+		 * Wake up logical walsenders holding logical failover slots after
+		 * updating the restart_lsn of the physical slot.
+		 */
+		PhysicalWakeupLogicalWalSnd();
 	}
 
 	return retlsn;
 }
 
 /*
- * Helper function for advancing our logical replication slot forward.
- *
- * The slot's restart_lsn is used as start point for reading records, while
- * confirmed_flush is used as base point for the decoding context.
- *
- * We cannot just do LogicalConfirmReceivedLocation to update confirmed_flush,
- * because we need to digest WAL to advance restart_lsn allowing to recycle
- * WAL and removal of old catalog tuples.  As decoding is done in fast_forward
- * mode, no changes are generated anyway.
+ * Advance our logical replication slot forward. See
+ * LogicalSlotAdvanceAndCheckSnapState for details.
  */
 static XLogRecPtr
 pg_logical_replication_slot_advance(XLogRecPtr moveto)
 {
-	LogicalDecodingContext *ctx;
-	ResourceOwner old_resowner = CurrentResourceOwner;
-	XLogRecPtr	retlsn;
-
-	Assert(moveto != InvalidXLogRecPtr);
-
-	PG_TRY();
-	{
-		/*
-		 * Create our decoding context in fast_forward mode, passing start_lsn
-		 * as InvalidXLogRecPtr, so that we start processing from my slot's
-		 * confirmed_flush.
-		 */
-		ctx = CreateDecodingContext(InvalidXLogRecPtr,
-									NIL,
-									true,	/* fast_forward */
-									XL_ROUTINE(.page_read = read_local_xlog_page,
-											   .segment_open = wal_segment_open,
-											   .segment_close = wal_segment_close),
-									NULL, NULL, NULL);
-
-		/*
-		 * Start reading at the slot's restart_lsn, which we know to point to
-		 * a valid record.
-		 */
-		XLogBeginRead(ctx->reader, MyReplicationSlot->data.restart_lsn);
-
-		/* invalidate non-timetravel entries */
-		InvalidateSystemCaches();
-
-		/* Decode at least one record, until we run out of records */
-		while (ctx->reader->EndRecPtr < moveto)
-		{
-			char	   *errm = NULL;
-			XLogRecord *record;
-
-			/*
-			 * Read records.  No changes are generated in fast_forward mode,
-			 * but snapbuilder/slot statuses are updated properly.
-			 */
-			record = XLogReadRecord(ctx->reader, &errm);
-			if (errm)
-				elog(ERROR, "could not find record while advancing replication slot: %s",
-					 errm);
-
-			/*
-			 * Process the record.  Storage-level changes are ignored in
-			 * fast_forward mode, but other modules (such as snapbuilder)
-			 * might still have critical updates to do.
-			 */
-			if (record)
-				LogicalDecodingProcessRecord(ctx, ctx->reader);
-
-			/* Stop once the requested target has been reached */
-			if (moveto <= ctx->reader->EndRecPtr)
-				break;
-
-			CHECK_FOR_INTERRUPTS();
-		}
-
-		/*
-		 * Logical decoding could have clobbered CurrentResourceOwner during
-		 * transaction management, so restore the executor's value.  (This is
-		 * a kluge, but it's not worth cleaning up right now.)
-		 */
-		CurrentResourceOwner = old_resowner;
-
-		if (ctx->reader->EndRecPtr != InvalidXLogRecPtr)
-		{
-			LogicalConfirmReceivedLocation(moveto);
-
-			/*
-			 * If only the confirmed_flush LSN has changed the slot won't get
-			 * marked as dirty by the above. Callers on the walsender
-			 * interface are expected to keep track of their own progress and
-			 * don't need it written out. But SQL-interface users cannot
-			 * specify their own start positions and it's harder for them to
-			 * keep track of their progress, so we should make more of an
-			 * effort to save it for them.
-			 *
-			 * Dirty the slot so it is written out at the next checkpoint. The
-			 * LSN position advanced to may still be lost on a crash but this
-			 * makes the data consistent after a clean shutdown.
-			 */
-			ReplicationSlotMarkDirty();
-		}
-
-		retlsn = MyReplicationSlot->data.confirmed_flush;
-
-		/* free context, call shutdown callback */
-		FreeDecodingContext(ctx);
-
-		InvalidateSystemCaches();
-	}
-	PG_CATCH();
-	{
-		/* clear all timetravel entries */
-		InvalidateSystemCaches();
-
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
-
-	return retlsn;
+	return LogicalSlotAdvanceAndCheckSnapState(moveto, NULL);
 }
 
 /*
@@ -772,10 +697,19 @@ copy_replication_slot(FunctionCallInfo fcinfo, bool logical_slot)
 		 * We must not try to read WAL, since we haven't reserved it yet --
 		 * hence pass find_startpoint false.  confirmed_flush will be set
 		 * below, by copying from the source slot.
+		 *
+		 * To avoid potential issues with the slot synchronization where the
+		 * restart_lsn of a replication slot can go backward, we set the
+		 * failover option to false here.  This situation occurs when a slot
+		 * on the primary server is dropped and immediately replaced with a
+		 * new slot of the same name, created by copying from another existing
+		 * slot.  However, the slot synchronization will only observe the
+		 * restart_lsn of the same slot going backward.
 		 */
 		create_logical_replication_slot(NameStr(*dst_name),
 										plugin,
 										temporary,
+										false,
 										false,
 										src_restart_lsn,
 										false);
@@ -922,4 +856,52 @@ Datum
 pg_copy_physical_replication_slot_b(PG_FUNCTION_ARGS)
 {
 	return copy_replication_slot(fcinfo, false);
+}
+
+/*
+ * Synchronize failover enabled replication slots to a standby server
+ * from the primary server.
+ */
+Datum
+pg_sync_replication_slots(PG_FUNCTION_ARGS)
+{
+	WalReceiverConn *wrconn;
+	char	   *err;
+	StringInfoData app_name;
+
+	CheckSlotPermissions();
+
+	if (!RecoveryInProgress())
+		ereport(ERROR,
+				errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				errmsg("replication slots can only be synchronized to a standby server"));
+
+	ValidateSlotSyncParams(ERROR);
+
+	/* Load the libpq-specific functions */
+	load_file("libpqwalreceiver", false);
+
+	(void) CheckAndGetDbnameFromConninfo();
+
+	initStringInfo(&app_name);
+	if (cluster_name[0])
+		appendStringInfo(&app_name, "%s_slotsync", cluster_name);
+	else
+		appendStringInfoString(&app_name, "slotsync");
+
+	/* Connect to the primary server. */
+	wrconn = walrcv_connect(PrimaryConnInfo, false, false, false,
+							app_name.data, &err);
+	pfree(app_name.data);
+
+	if (!wrconn)
+		ereport(ERROR,
+				errcode(ERRCODE_CONNECTION_FAILURE),
+				errmsg("could not connect to the primary server: %s", err));
+
+	SyncReplicationSlots(wrconn);
+
+	walrcv_disconnect(wrconn);
+
+	PG_RETURN_VOID();
 }

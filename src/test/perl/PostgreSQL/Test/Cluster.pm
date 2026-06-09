@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 =pod
 
@@ -62,9 +62,6 @@ PostgreSQL::Test::Cluster - class representing PostgreSQL server instance
   # Do an online pg_basebackup
   my $ret = $node->backup('testbackup1');
 
-  # Take a backup of a running server
-  my $ret = $node->backup_fs_hot('testbackup2');
-
   # Take a backup of a stopped server
   $node->stop;
   my $ret = $node->backup_fs_cold('testbackup3')
@@ -97,7 +94,7 @@ The IPC::Run module is required.
 package PostgreSQL::Test::Cluster;
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use Carp;
 use Config;
@@ -114,6 +111,7 @@ use Socket;
 use Test::More;
 use PostgreSQL::Test::Utils          ();
 use PostgreSQL::Test::BackgroundPsql ();
+use Text::ParseWords                 qw(shellwords);
 use Time::HiRes                      qw(usleep);
 use Scalar::Util                     qw(blessed);
 
@@ -469,7 +467,7 @@ sub set_replication_conf
 	$self->host eq $test_pghost
 	  or croak "set_replication_conf only works with the default host";
 
-	open my $hba, '>>', "$pgdata/pg_hba.conf";
+	open my $hba, '>>', "$pgdata/pg_hba.conf" or die $!;
 	print $hba
 	  "\n# Allow replication (set up by PostgreSQL::Test::Cluster.pm)\n";
 	if ($PostgreSQL::Test::Utils::windows_os
@@ -502,6 +500,9 @@ parameter allows_streaming => 'logical' or 'physical' (passing 1 will also
 suffice for physical replication) depending on type of replication that
 should be enabled. This is disabled by default.
 
+force_initdb => 1 will force the initialization of the cluster with a new
+initdb rather than copying the data folder from a template.
+
 The new node is set up in a fast but unsafe configuration where fsync is
 disabled.
 
@@ -517,17 +518,69 @@ sub init
 	local %ENV = $self->_get_env();
 
 	$params{allows_streaming} = 0 unless defined $params{allows_streaming};
+	$params{force_initdb} = 0 unless defined $params{force_initdb};
 	$params{has_archiving} = 0 unless defined $params{has_archiving};
+
+	my $initdb_extra_opts_env = $ENV{PG_TEST_INITDB_EXTRA_OPTS};
+	if (defined $initdb_extra_opts_env)
+	{
+		push @{ $params{extra} }, shellwords($initdb_extra_opts_env);
+	}
 
 	mkdir $self->backup_dir;
 	mkdir $self->archive_dir;
 
-	PostgreSQL::Test::Utils::system_or_bail('initdb', '-D', $pgdata, '-A',
-		'trust', '-N', @{ $params{extra} });
+	# If available, if there aren't any parameters and if force_initdb is
+	# disabled, use a previously initdb'd cluster as a template by copying it.
+	# For a lot of tests, that's substantially cheaper. It does not seem
+	# worth figuring out whether extra parameters affect compatibility, so
+	# initdb is forced if any are defined.
+	#
+	# There's very similar code in pg_regress.c, but we can't easily
+	# deduplicate it until we require perl at build time.
+	if (   $params{force_initdb}
+		or defined $params{extra}
+		or !defined $ENV{INITDB_TEMPLATE})
+	{
+		note("initializing database system by running initdb");
+		PostgreSQL::Test::Utils::system_or_bail('initdb', '-D', $pgdata, '-A',
+			'trust', '-N', @{ $params{extra} });
+	}
+	else
+	{
+		my @copycmd;
+		my $expected_exitcode;
+
+		note("initializing database system by copying initdb template");
+
+		if ($PostgreSQL::Test::Utils::windows_os)
+		{
+			@copycmd = qw(robocopy /E /NJS /NJH /NFL /NDL /NP);
+			$expected_exitcode = 1;    # 1 denotes files were copied
+		}
+		else
+		{
+			@copycmd = qw(cp -RPp);
+			$expected_exitcode = 0;
+		}
+
+		@copycmd = (@copycmd, $ENV{INITDB_TEMPLATE}, $pgdata);
+
+		my $ret = PostgreSQL::Test::Utils::system_log(@copycmd);
+
+		# See http://perldoc.perl.org/perlvar.html#%24CHILD_ERROR
+		if ($ret & 127 or $ret >> 8 != $expected_exitcode)
+		{
+			BAIL_OUT(
+				sprintf("failed to execute command \"%s\": $ret",
+					join(" ", @copycmd)));
+		}
+	}
+
 	PostgreSQL::Test::Utils::system_or_bail($ENV{PG_REGRESS},
 		'--config-auth', $pgdata, @{ $params{auth_extra} });
 
-	open my $conf, '>>', "$pgdata/postgresql.conf";
+	open my $conf, '>>', "$pgdata/postgresql.conf" or die $!;
 	print $conf "\n# Added by PostgreSQL::Test::Cluster.pm\n";
 	print $conf "fsync = off\n";
 	print $conf "restart_after_crash = off\n";
@@ -703,7 +756,7 @@ Create a backup with a filesystem level copy in subdirectory B<backup_name> of
 B<< $node->backup_dir >>, including WAL. The server must be
 stopped as no attempt to handle concurrent writes is made.
 
-Use B<backup> or B<backup_fs_hot> if you want to back up a running server.
+Use B<backup> if you want to back up a running server.
 
 =cut
 
@@ -724,7 +777,7 @@ sub backup_fs_cold
 
 =pod
 
-=item $node->init_from_backup(root_node, backup_name)
+=item $node->init_from_backup(root_node, backup_name, %params)
 
 Initialize a node from a backup, which may come from this node or a different
 node. root_node must be a PostgreSQL::Test::Cluster reference, backup_name the string name
@@ -734,8 +787,17 @@ Does not start the node after initializing it.
 
 By default, the backup is assumed to be plain format.  To restore from
 a tar-format backup, pass the name of the tar program to use in the
-keyword parameter tar_program.  Note that tablespace tar files aren't
-handled here.
+keyword parameter tar_program.
+
+If there are tablespace present in the backup, include tablespace_map as
+a keyword parameter whose values is a hash. When combine_with_prior is used,
+the hash keys are the tablespace pathnames used in the backup; otherwise,
+they are tablespace OIDs.  In either case, the values are the tablespace
+pathnames that should be used for the target cluster.
+
+To restore from an incremental backup, pass the parameter combine_with_prior
+as a reference to an array of prior backup names with which this backup
+is to be combined using pg_combinebackup.
 
 Streaming replication can be enabled on this node by passing the keyword
 parameter has_streaming => 1. This is disabled by default.
@@ -774,9 +836,37 @@ sub init_from_backup
 	mkdir $self->archive_dir;
 
 	my $data_path = $self->data_dir;
-	if (defined $params{tar_program})
+	if (defined $params{combine_with_prior})
 	{
-		mkdir($data_path);
+		my @prior_backups = @{ $params{combine_with_prior} };
+		my @prior_backup_path;
+
+		for my $prior_backup_name (@prior_backups)
+		{
+			push @prior_backup_path,
+			  $root_node->backup_dir . '/' . $prior_backup_name;
+		}
+
+		local %ENV = $self->_get_env();
+		my @combineargs = ('pg_combinebackup', '-d');
+		if (exists $params{tablespace_map})
+		{
+			while (my ($olddir, $newdir) = each %{ $params{tablespace_map} })
+			{
+				push @combineargs, "-T$olddir=$newdir";
+			}
+		}
+		# use the combine mode (clone/copy-file-range) if specified
+		if (defined $params{combine_mode})
+		{
+			push @combineargs, $params{combine_mode};
+		}
+		push @combineargs, @prior_backup_path, $backup_path, '-o', $data_path;
+		PostgreSQL::Test::Utils::system_or_bail(@combineargs);
+	}
+	elsif (defined $params{tar_program})
+	{
+		mkdir($data_path) || die "mkdir $data_path: $!";
 		PostgreSQL::Test::Utils::system_or_bail($params{tar_program}, 'xf',
 			$backup_path . '/base.tar',
 			'-C', $data_path);
@@ -784,13 +874,85 @@ sub init_from_backup
 			$params{tar_program}, 'xf',
 			$backup_path . '/pg_wal.tar', '-C',
 			$data_path . '/pg_wal');
+
+		# We need to generate a tablespace_map file.
+		open(my $tsmap, ">", "$data_path/tablespace_map")
+		  || die "$data_path/tablespace_map: $!";
+
+		# Extract tarfiles and add tablespace_map entries
+		my @tstars = grep { /^\d+.tar/ }
+		  PostgreSQL::Test::Utils::slurp_dir($backup_path);
+		for my $tstar (@tstars)
+		{
+			my $tsoid = $tstar;
+			$tsoid =~ s/\.tar$//;
+
+			die "no tablespace mapping for $tstar"
+			  if !exists $params{tablespace_map}
+			  || !exists $params{tablespace_map}{$tsoid};
+			my $newdir = $params{tablespace_map}{$tsoid};
+
+			mkdir($newdir) || die "mkdir $newdir: $!";
+			PostgreSQL::Test::Utils::system_or_bail($params{tar_program},
+				'xf', $backup_path . '/' . $tstar,
+				'-C', $newdir);
+
+			my $escaped_newdir = $newdir;
+			$escaped_newdir =~ s/\\/\\\\/g;
+			print $tsmap "$tsoid $escaped_newdir\n";
+		}
+
+		# Close tablespace_map.
+		close($tsmap);
 	}
 	else
 	{
+		my @tsoids;
 		rmdir($data_path);
-		PostgreSQL::Test::RecursiveCopy::copypath($backup_path, $data_path);
+
+		# Copy the main backup. If we see a tablespace directory for which we
+		# have a tablespace mapping, skip it, but remember that we saw it.
+		PostgreSQL::Test::RecursiveCopy::copypath(
+			$backup_path,
+			$data_path,
+			'filterfn' => sub {
+				my ($path) = @_;
+				if ($path =~ /^pg_tblspc\/(\d+)$/
+					&& exists $params{tablespace_map}{$1})
+				{
+					push @tsoids, $1;
+					return 0;
+				}
+				return 1;
+			});
+
+		if (@tsoids > 0)
+		{
+			# We need to generate a tablespace_map file.
+			open(my $tsmap, ">", "$data_path/tablespace_map")
+			  || die "$data_path/tablespace_map: $!";
+
+			# Now use the list of tablespace links to copy each tablespace.
+			for my $tsoid (@tsoids)
+			{
+				die "no tablespace mapping for $tsoid"
+				  if !exists $params{tablespace_map}
+				  || !exists $params{tablespace_map}{$tsoid};
+
+				my $olddir = $backup_path . '/pg_tblspc/' . $tsoid;
+				my $newdir = $params{tablespace_map}{$tsoid};
+				PostgreSQL::Test::RecursiveCopy::copypath($olddir, $newdir);
+
+				my $escaped_newdir = $newdir;
+				$escaped_newdir =~ s/\\/\\\\/g;
+				print $tsmap "$tsoid $escaped_newdir\n";
+			}
+
+			# Close tablespace_map.
+			close($tsmap);
+		}
 	}
-	chmod(0700, $data_path);
+	chmod(0700, $data_path) or die $!;
 
 	# Base configuration for this node
 	$self->append_conf(
@@ -879,8 +1041,8 @@ sub start
 
 	if ($ret != 0)
 	{
-		print "# pg_ctl start failed; logfile:\n";
-		print PostgreSQL::Test::Utils::slurp_file($self->logfile);
+		print "# pg_ctl start failed; see logfile for details: "
+		  . $self->logfile . "\n";
 
 		# pg_ctl could have timed out, so check to see if there's a pid file;
 		# otherwise our END block will fail to shut down the new postmaster.
@@ -993,17 +1155,18 @@ sub reload
 
 =item $node->restart()
 
-Wrapper for pg_ctl restart
+Wrapper for pg_ctl restart.
+
+With optional extra param fail_ok => 1, returns 0 for failure
+instead of bailing out.
 
 =cut
 
 sub restart
 {
-	my ($self) = @_;
-	my $port = $self->port;
-	my $pgdata = $self->data_dir;
-	my $logfile = $self->logfile;
+	my ($self, %params) = @_;
 	my $name = $self->name;
+	my $ret;
 
 	local %ENV = $self->_get_env(PGAPPNAME => undef);
 
@@ -1011,11 +1174,24 @@ sub restart
 
 	# -w is now the default but having it here does no harm and helps
 	# compatibility with older versions.
-	PostgreSQL::Test::Utils::system_or_bail('pg_ctl', '-w', '-D', $pgdata,
-		'-l', $logfile, 'restart');
+	$ret = PostgreSQL::Test::Utils::system_log('pg_ctl', '-w', '-D',
+		$self->data_dir, '-l', $self->logfile, 'restart');
+
+	if ($ret != 0)
+	{
+		print "# pg_ctl restart failed; see logfile for details: "
+		  . $self->logfile . "\n";
+
+		# pg_ctl could have timed out, so check to see if there's a pid file;
+		# otherwise our END block will fail to shut down the new postmaster.
+		$self->_update_pid(-1);
+
+		BAIL_OUT("pg_ctl restart failed") unless $params{fail_ok};
+		return 0;
+	}
 
 	$self->_update_pid(1);
-	return;
+	return 1;
 }
 
 =pod
@@ -1570,9 +1746,8 @@ sub can_bind
 	my ($host, $port) = @_;
 	my $iaddr = inet_aton($host);
 	my $paddr = sockaddr_in($port, $iaddr);
-	my $proto = getprotobyname("tcp");
 
-	socket(SOCK, PF_INET, SOCK_STREAM, $proto)
+	socket(SOCK, PF_INET, SOCK_STREAM, 0)
 	  or die "socket failed: $!";
 
 	# As in postmaster, don't use SO_REUSEADDR on Windows
@@ -1602,16 +1777,16 @@ sub _reserve_port
 		if (kill 0, $pid)
 		{
 			# process exists and is owned by us, so we can't reserve this port
-			flock($portfile, LOCK_UN);
+			flock($portfile, LOCK_UN) || die $!;
 			close($portfile);
 			return 0;
 		}
 	}
 	# All good, go ahead and reserve the port
-	seek($portfile, 0, SEEK_SET);
+	seek($portfile, 0, SEEK_SET) || die $!;
 	# print the pid with a fixed width so we don't leave any trailing junk
 	print $portfile sprintf("%10d\n", $$);
-	flock($portfile, LOCK_UN);
+	flock($portfile, LOCK_UN) || die $!;
 	close($portfile);
 	push(@port_reservation_files, $filename);
 	return 1;
@@ -1937,12 +2112,15 @@ sub psql
 	# We don't use IPC::Run::Simple to limit dependencies.
 	#
 	# We always die on signal.
-	my $core = $ret & 128 ? " (core dumped)" : "";
-	die "psql exited with signal "
-	  . ($ret & 127)
-	  . "$core: '$$stderr' while running '@psql_params'"
-	  if $ret & 127;
-	$ret = $ret >> 8;
+	if (defined $ret)
+	{
+		my $core = $ret & 128 ? " (core dumped)" : "";
+		die "psql exited with signal "
+		  . ($ret & 127)
+		  . "$core: '$$stderr' while running '@psql_params'"
+		  if $ret & 127;
+		$ret = $ret >> 8;
+	}
 
 	if ($ret && $params{on_error_die})
 	{
@@ -1972,9 +2150,6 @@ sub psql
 
 Invoke B<psql> on B<$dbname> and return a BackgroundPsql object.
 
-A default timeout of $PostgreSQL::Test::Utils::timeout_default is set up,
-which can be modified later.
-
 psql is invoked in tuples-only unaligned mode with reading of B<.psqlrc>
 disabled.  That may be overridden by passing extra psql parameters.
 
@@ -1991,6 +2166,11 @@ Be sure to "quit" the returned object when done with it.
 By default, the B<psql> method invokes the B<psql> program with ON_ERROR_STOP=1
 set, so SQL execution is stopped at the first error and exit code 3 is
 returned.  Set B<on_error_stop> to 0 to ignore errors instead.
+
+=item timeout => 'interval'
+
+Set a timeout for a background psql session. By default, timeout of
+$PostgreSQL::Test::Utils::timeout_default is set up.
 
 =item replication => B<value>
 
@@ -2013,6 +2193,7 @@ sub background_psql
 	local %ENV = $self->_get_env();
 
 	my $replication = $params{replication};
+	my $timeout = undef;
 
 	my @psql_params = (
 		$self->installed_command('psql'),
@@ -2024,12 +2205,13 @@ sub background_psql
 		'-');
 
 	$params{on_error_stop} = 1 unless defined $params{on_error_stop};
+	$timeout = $params{timeout} if defined $params{timeout};
 
 	push @psql_params, '-v', 'ON_ERROR_STOP=1' if $params{on_error_stop};
 	push @psql_params, @{ $params{extra_params} }
 	  if defined $params{extra_params};
 
-	return PostgreSQL::Test::BackgroundPsql->new(0, \@psql_params);
+	return PostgreSQL::Test::BackgroundPsql->new(0, \@psql_params, $timeout);
 }
 
 =pod
@@ -2039,8 +2221,7 @@ sub background_psql
 Invoke B<psql> on B<$dbname> and return a BackgroundPsql object, which the
 caller may use to send interactive input to B<psql>.
 
-A default timeout of $PostgreSQL::Test::Utils::timeout_default is set up,
-which can be modified later.
+A timeout of $PostgreSQL::Test::Utils::timeout_default is set up.
 
 psql is invoked in tuples-only unaligned mode with reading of B<.psqlrc>
 disabled.  That may be overridden by passing extra psql parameters.
@@ -2050,13 +2231,16 @@ Errors occurring later are the caller's problem.
 
 Be sure to "quit" the returned object when done with it.
 
-The only extra parameter currently accepted is
-
 =over
 
 =item extra_params => ['--single-transaction']
 
 If given, it must be an array reference containing additional parameters to B<psql>.
+
+=item history_file => B<path>
+
+Cause the interactive B<psql> session to write its command history to B<path>.
+If not given, the history is sent to B</dev/null>.
 
 =back
 
@@ -2069,6 +2253,27 @@ sub interactive_psql
 	my ($self, $dbname, %params) = @_;
 
 	local %ENV = $self->_get_env();
+
+	# Since the invoked psql will believe it's interactive, it will use
+	# readline/libedit if available.  We need to adjust some environment
+	# settings to prevent unwanted side-effects.
+
+	# Developers would not appreciate tests adding a bunch of junk to
+	# their ~/.psql_history, so redirect readline history somewhere else.
+	# If the calling script doesn't specify anything, just bit-bucket it.
+	$ENV{PSQL_HISTORY} = $params{history_file} || '/dev/null';
+
+	# Another pitfall for developers is that they might have a ~/.inputrc
+	# file that changes readline's behavior enough to affect the test.
+	# So ignore any such file.
+	$ENV{INPUTRC} = '/dev/null';
+
+	# Unset TERM so that readline/libedit won't use any terminal-dependent
+	# escape sequences; that leads to way too many cross-version variations
+	# in the output.
+	delete $ENV{TERM};
+	# Some versions of readline inspect LS_COLORS, so for luck unset that too.
+	delete $ENV{LS_COLORS};
 
 	my @psql_params = (
 		$self->installed_command('psql'),
@@ -2099,7 +2304,6 @@ sub _pgbench_make_files
 			# cleanup file weight
 			$filename =~ s/\@\d+$//;
 
-			#push @filenames, $filename;
 			# filenames are expected to be unique on a test
 			if (-e $filename)
 			{
@@ -2624,6 +2828,29 @@ sub lsn
 
 =pod
 
+=item $node->wait_for_event(wait_event_name, backend_type)
+
+Poll pg_stat_activity until backend_type reaches wait_event_name.
+
+=cut
+
+sub wait_for_event
+{
+	my ($self, $backend_type, $wait_event_name) = @_;
+
+	$self->poll_query_until(
+		'postgres', qq[
+		SELECT count(*) > 0 FROM pg_stat_activity
+		WHERE backend_type = '$backend_type' AND wait_event = '$wait_event_name'
+	])
+	  or die
+	  qq(timed out when waiting for $backend_type to reach wait event '$wait_event_name');
+
+	return;
+}
+
+=pod
+
 =item $node->wait_for_catchup(standby_name, mode, target_lsn)
 
 Wait for the replication connection with application_name standby_name until
@@ -3070,6 +3297,36 @@ $SIG{TERM} = $SIG{INT} = sub {
 
 =pod
 
+=item $node->log_standby_snapshot(self, standby, slot_name)
+
+Log a standby snapshot on primary once the slot restart_lsn is determined on
+the standby.
+
+=cut
+
+sub log_standby_snapshot
+{
+	my ($self, $standby, $slot_name) = @_;
+
+	# Once the slot's restart_lsn is determined, the standby looks for
+	# xl_running_xacts WAL record from the restart_lsn onwards. First wait
+	# until the slot restart_lsn is determined.
+
+	$standby->poll_query_until(
+		'postgres', qq[
+		SELECT restart_lsn IS NOT NULL
+		FROM pg_catalog.pg_replication_slots WHERE slot_name = '$slot_name'
+	])
+	  or die
+	  "timed out waiting for logical slot to calculate its restart_lsn";
+
+	# Then arrange for the xl_running_xacts record for which the standby is
+	# waiting.
+	$self->safe_psql('postgres', 'SELECT pg_log_standby_snapshot()');
+}
+
+=pod
+
 =item $node->create_logical_slot_on_standby(self, primary, slot_name, dbname)
 
 Create logical replication slot on given standby
@@ -3095,27 +3352,73 @@ sub create_logical_slot_on_standby
 		'2>',
 		\$stderr);
 
-	# Once the slot's restart_lsn is determined, the standby looks for
-	# xl_running_xacts WAL record from the restart_lsn onwards. First wait
-	# until the slot restart_lsn is determined.
-
-	$self->poll_query_until(
-		'postgres', qq[
-		SELECT restart_lsn IS NOT NULL
-		FROM pg_catalog.pg_replication_slots WHERE slot_name = '$slot_name'
-	])
-	  or die
-	  "timed out waiting for logical slot to calculate its restart_lsn";
-
-	# Then arrange for the xl_running_xacts record for which pg_recvlogical is
+	# Arrange for the xl_running_xacts record for which pg_recvlogical is
 	# waiting.
-	$primary->safe_psql('postgres', 'SELECT pg_log_standby_snapshot()');
+	$primary->log_standby_snapshot($self, $slot_name);
 
 	$handle->finish();
 
 	is($self->slot($slot_name)->{'slot_type'},
 		'logical', $slot_name . ' on standby created')
 	  or die "could not create slot" . $slot_name;
+}
+
+=pod
+
+=item $node->validate_slot_inactive_since(self, slot_name, reference_time)
+
+Validate inactive_since value of a given replication slot against the reference
+time and return it.
+
+=cut
+
+sub validate_slot_inactive_since
+{
+	my ($self, $slot_name, $reference_time) = @_;
+	my $name = $self->name;
+
+	my $inactive_since = $self->safe_psql(
+		'postgres',
+		qq(SELECT inactive_since FROM pg_replication_slots
+			WHERE slot_name = '$slot_name' AND inactive_since IS NOT NULL;)
+	);
+
+	# Check that the inactive_since is sane
+	is( $self->safe_psql(
+			'postgres',
+			qq[SELECT '$inactive_since'::timestamptz > to_timestamp(0) AND
+				'$inactive_since'::timestamptz > '$reference_time'::timestamptz;]
+		),
+		't',
+		"last inactive time for slot $slot_name is valid on node $name")
+	  or die "could not validate captured inactive_since for slot $slot_name";
+
+	return $inactive_since;
+}
+
+=pod
+
+=item $node->advance_wal(num)
+
+Advance WAL of node by given number of segments.
+
+=cut
+
+sub advance_wal
+{
+	my ($self, $num) = @_;
+
+	# Advance by $n segments (= (wal_segment_size * $num) bytes).
+	# pg_switch_wal() forces a WAL flush, making pg_logical_emit_message()
+	# safe to use in non-transactional mode.
+	for (my $i = 0; $i < $num; $i++)
+	{
+		$self->safe_psql(
+			'postgres', qq{
+			SELECT pg_logical_emit_message(false, '', 'foo');
+			SELECT pg_switch_wal();
+			});
+	}
 }
 
 =pod

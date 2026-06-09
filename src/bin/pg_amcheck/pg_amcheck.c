@@ -3,7 +3,7 @@
  * pg_amcheck.c
  *		Detects corruption within database relations.
  *
- * Copyright (c) 2017-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2017-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/bin/pg_amcheck/pg_amcheck.c
@@ -102,6 +102,7 @@ typedef struct AmcheckOptions
 	bool		parent_check;
 	bool		rootdescend;
 	bool		heapallindexed;
+	bool		checkunique;
 
 	/* heap and btree hybrid option */
 	bool		no_btree_expansion;
@@ -132,6 +133,7 @@ static AmcheckOptions opts = {
 	.parent_check = false,
 	.rootdescend = false,
 	.heapallindexed = false,
+	.checkunique = false,
 	.no_btree_expansion = false
 };
 
@@ -148,6 +150,7 @@ typedef struct DatabaseInfo
 {
 	char	   *datname;
 	char	   *amcheck_schema; /* escaped, quoted literal */
+	bool		is_checkunique;
 } DatabaseInfo;
 
 typedef struct RelationInfo
@@ -166,7 +169,7 @@ typedef struct RelationInfo
  * Query for determining if contrib's amcheck is installed.  If so, selects the
  * namespace name where amcheck's functions can be found.
  */
-static const char *amcheck_sql =
+static const char *const amcheck_sql =
 "SELECT n.nspname, x.extversion FROM pg_catalog.pg_extension x"
 "\nJOIN pg_catalog.pg_namespace n ON x.extnamespace = n.oid"
 "\nWHERE x.extname = 'amcheck'";
@@ -267,6 +270,7 @@ main(int argc, char *argv[])
 		{"heapallindexed", no_argument, NULL, 11},
 		{"parent-check", no_argument, NULL, 12},
 		{"install-missing", optional_argument, NULL, 13},
+		{"checkunique", no_argument, NULL, 14},
 
 		{NULL, 0, NULL, 0}
 	};
@@ -434,6 +438,9 @@ main(int argc, char *argv[])
 				if (optarg)
 					opts.install_schema = pg_strdup(optarg);
 				break;
+			case 14:
+				opts.checkunique = true;
+				break;
 			default:
 				/* getopt_long already emitted a complaint */
 				pg_log_error_hint("Try \"%s --help\" for more information.", progname);
@@ -589,6 +596,39 @@ main(int argc, char *argv[])
 						PQdb(conn), PQgetvalue(result, 0, 1), amcheck_schema);
 		dat->amcheck_schema = PQescapeIdentifier(conn, amcheck_schema,
 												 strlen(amcheck_schema));
+
+		/*
+		 * Check the version of amcheck extension. Skip requested unique
+		 * constraint check with warning if it is not yet supported by
+		 * amcheck.
+		 */
+		if (opts.checkunique == true)
+		{
+			/*
+			 * Now amcheck has only major and minor versions in the string but
+			 * we also support revision just in case. Now it is expected to be
+			 * zero.
+			 */
+			int			vmaj = 0,
+						vmin = 0,
+						vrev = 0;
+			const char *amcheck_version = PQgetvalue(result, 0, 1);
+
+			sscanf(amcheck_version, "%d.%d.%d", &vmaj, &vmin, &vrev);
+
+			/*
+			 * checkunique option is supported in amcheck since version 1.4
+			 */
+			if ((vmaj == 1 && vmin < 4) || vmaj == 0)
+			{
+				pg_log_warning("--checkunique option is not supported by amcheck "
+							   "version \"%s\"", amcheck_version);
+				dat->is_checkunique = false;
+			}
+			else
+				dat->is_checkunique = true;
+		}
+
 		PQclear(result);
 
 		compile_relation_list_one_db(conn, &relations, dat, &pagestotal);
@@ -845,7 +885,8 @@ prepare_btree_command(PQExpBuffer sql, RelationInfo *rel, PGconn *conn)
 	if (opts.parent_check)
 		appendPQExpBuffer(sql,
 						  "SELECT %s.bt_index_parent_check("
-						  "index := c.oid, heapallindexed := %s, rootdescend := %s)"
+						  "index := c.oid, heapallindexed := %s, rootdescend := %s "
+						  "%s)"
 						  "\nFROM pg_catalog.pg_class c, pg_catalog.pg_index i "
 						  "WHERE c.oid = %u "
 						  "AND c.oid = i.indexrelid "
@@ -854,11 +895,13 @@ prepare_btree_command(PQExpBuffer sql, RelationInfo *rel, PGconn *conn)
 						  rel->datinfo->amcheck_schema,
 						  (opts.heapallindexed ? "true" : "false"),
 						  (opts.rootdescend ? "true" : "false"),
+						  (rel->datinfo->is_checkunique ? ", checkunique := true" : ""),
 						  rel->reloid);
 	else
 		appendPQExpBuffer(sql,
 						  "SELECT %s.bt_index_check("
-						  "index := c.oid, heapallindexed := %s)"
+						  "index := c.oid, heapallindexed := %s "
+						  "%s)"
 						  "\nFROM pg_catalog.pg_class c, pg_catalog.pg_index i "
 						  "WHERE c.oid = %u "
 						  "AND c.oid = i.indexrelid "
@@ -866,6 +909,7 @@ prepare_btree_command(PQExpBuffer sql, RelationInfo *rel, PGconn *conn)
 						  "AND i.indisready AND i.indisvalid AND i.indislive",
 						  rel->datinfo->amcheck_schema,
 						  (opts.heapallindexed ? "true" : "false"),
+						  (rel->datinfo->is_checkunique ? ", checkunique := true" : ""),
 						  rel->reloid);
 }
 
@@ -947,6 +991,7 @@ should_processing_continue(PGresult *res)
 		case PGRES_SINGLE_TUPLE:
 		case PGRES_PIPELINE_SYNC:
 		case PGRES_PIPELINE_ABORTED:
+		case PGRES_TUPLES_CHUNK:
 			return false;
 	}
 	return true;
@@ -1160,6 +1205,7 @@ help(const char *progname)
 	printf(_("      --startblock=BLOCK          begin checking table(s) at the given block number\n"));
 	printf(_("      --endblock=BLOCK            check table(s) only up to the given block number\n"));
 	printf(_("\nB-tree index checking options:\n"));
+	printf(_("      --checkunique               check unique constraint if index is unique\n"));
 	printf(_("      --heapallindexed            check that all heap tuples are found within indexes\n"));
 	printf(_("      --parent-check              check index parent/child relationships\n"));
 	printf(_("      --rootdescend               search from root page to refind tuples\n"));
@@ -1590,7 +1636,7 @@ compile_database_list(PGconn *conn, SimplePtrList *databases,
 						 "FROM pg_catalog.pg_database d "
 						 "LEFT OUTER JOIN exclude_raw e "
 						 "ON d.datname ~ e.rgx "
-						 "\nWHERE d.datallowconn "
+						 "\nWHERE d.datallowconn AND datconnlimit != -2 "
 						 "AND e.pattern_id IS NULL"
 						 "),"
 

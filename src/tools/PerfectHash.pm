@@ -20,7 +20,7 @@
 # not in the set.
 #
 #
-# Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/tools/PerfectHash.pm
@@ -30,7 +30,7 @@
 package PerfectHash;
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 
 # At runtime, we'll compute two simple hash functions of the input key,

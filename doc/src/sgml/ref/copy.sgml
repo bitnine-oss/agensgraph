@@ -36,14 +36,16 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
     FREEZE [ <replaceable class="parameter">boolean</replaceable> ]
     DELIMITER '<replaceable class="parameter">delimiter_character</replaceable>'
     NULL '<replaceable class="parameter">null_string</replaceable>'
+    DEFAULT '<replaceable class="parameter">default_string</replaceable>'
     HEADER [ <replaceable class="parameter">boolean</replaceable> | MATCH ]
     QUOTE '<replaceable class="parameter">quote_character</replaceable>'
     ESCAPE '<replaceable class="parameter">escape_character</replaceable>'
     FORCE_QUOTE { ( <replaceable class="parameter">column_name</replaceable> [, ...] ) | * }
-    FORCE_NOT_NULL ( <replaceable class="parameter">column_name</replaceable> [, ...] )
-    FORCE_NULL ( <replaceable class="parameter">column_name</replaceable> [, ...] )
+    FORCE_NOT_NULL { ( <replaceable class="parameter">column_name</replaceable> [, ...] ) | * }
+    FORCE_NULL { ( <replaceable class="parameter">column_name</replaceable> [, ...] ) | * }
+    ON_ERROR <replaceable class="parameter">error_action</replaceable>
     ENCODING '<replaceable class="parameter">encoding_name</replaceable>'
-    DEFAULT '<replaceable class="parameter">default_string</replaceable>'
+    LOG_VERBOSITY <replaceable class="parameter">verbosity</replaceable>
 </synopsis>
  </refsynopsisdiv>
 
@@ -89,6 +91,13 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
     in the <structname>pg_stat_progress_copy</structname> view. See
     <xref linkend="copy-progress-reporting"/> for details.
   </para>
+
+  <para>
+    By default, <command>COPY</command> will fail if it encounters an error
+    during processing. For use cases where a best-effort attempt at loading
+    the entire file is desired, the <literal>ON_ERROR</literal> clause can
+    be used to specify some other behavior.
+  </para>
  </refsect1>
 
  <refsect1>
@@ -122,15 +131,18 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
       A <link linkend="sql-select"><command>SELECT</command></link>,
       <link linkend="sql-values"><command>VALUES</command></link>,
       <link linkend="sql-insert"><command>INSERT</command></link>,
-      <link linkend="sql-update"><command>UPDATE</command></link>, or
-      <link linkend="sql-delete"><command>DELETE</command></link> command whose results are to be
-      copied.  Note that parentheses are required around the query.
+      <link linkend="sql-update"><command>UPDATE</command></link>,
+      <link linkend="sql-delete"><command>DELETE</command></link>, or
+      <link linkend="sql-merge"><command>MERGE</command></link> command
+      whose results are to be copied.  Note that parentheses are required
+      around the query.
      </para>
      <para>
-      For <command>INSERT</command>, <command>UPDATE</command> and
-      <command>DELETE</command> queries a RETURNING clause must be provided,
-      and the target relation must not have a conditional rule, nor
-      an <literal>ALSO</literal> rule, nor an <literal>INSTEAD</literal> rule
+      For <command>INSERT</command>, <command>UPDATE</command>,
+      <command>DELETE</command>, and <command>MERGE</command> queries a
+      <literal>RETURNING</literal> clause must be provided, and the target
+      relation must not have a conditional rule, nor an
+      <literal>ALSO</literal> rule, nor an <literal>INSTEAD</literal> rule
       that expands to multiple statements.
      </para>
     </listitem>
@@ -224,6 +236,7 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
       open and there are no older snapshots held by this transaction.  It is
       currently not possible to perform a <command>COPY FREEZE</command> on
       a partitioned table.
+      This option is only allowed in <command>COPY FROM</command>.
      </para>
      <para>
       Note that all other sessions will immediately be able to see the data
@@ -268,6 +281,19 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
       </para>
      </note>
 
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>DEFAULT</literal></term>
+    <listitem>
+     <para>
+      Specifies the string that represents a default value. Each time the string
+      is found in the input file, the default value of the corresponding column
+      will be used.
+      This option is allowed only in <command>COPY FROM</command>, and only when
+      not using <literal>binary</literal> format.
+     </para>
     </listitem>
    </varlistentry>
 
@@ -337,6 +363,7 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
       In the default case where the null string is empty, this means that
       empty values will be read as zero-length strings rather than nulls,
       even when they are not quoted.
+      If <literal>*</literal> is specified, the option will be applied to all columns.
       This option is allowed only in <command>COPY FROM</command>, and only when
       using <literal>CSV</literal> format.
      </para>
@@ -351,8 +378,35 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
       if it has been quoted, and if a match is found set the value to
       <literal>NULL</literal>. In the default case where the null string is empty,
       this converts a quoted empty string into NULL.
+      If <literal>*</literal> is specified, the option will be applied to all columns.
       This option is allowed only in <command>COPY FROM</command>, and only when
       using <literal>CSV</literal> format.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>ON_ERROR</literal></term>
+    <listitem>
+     <para>
+      Specifies how to behave when encountering an error converting a column's
+      input value into its data type.
+      An <replaceable class="parameter">error_action</replaceable> value of
+      <literal>stop</literal> means fail the command, while
+      <literal>ignore</literal> means discard the input row and continue with the next one.
+      The default is <literal>stop</literal>.
+     </para>
+     <para>
+      The <literal>ignore</literal> option is applicable only for <command>COPY FROM</command>
+      when the <literal>FORMAT</literal> is <literal>text</literal> or <literal>csv</literal>.
+     </para>
+     <para>
+      A <literal>NOTICE</literal> message containing the ignored row count is
+      emitted at the end of the <command>COPY FROM</command> if at least one
+      row was discarded. When <literal>LOG_VERBOSITY</literal> option is set to
+      <literal>verbose</literal>, a <literal>NOTICE</literal> message
+      containing the line of the input file and the column name whose input
+      conversion has failed is emitted for each discarded row.
      </para>
     </listitem>
    </varlistentry>
@@ -370,15 +424,18 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
    </varlistentry>
 
    <varlistentry>
-    <term><literal>DEFAULT</literal></term>
+    <term><literal>LOG_VERBOSITY</literal></term>
     <listitem>
      <para>
-      Specifies the string that represents a default value. Each time the string
-      is found in the input file, the default value of the corresponding column
-      will be used.
-      This option is allowed only in <command>COPY FROM</command>, and only when
-      not using <literal>binary</literal> format.
+      Specify the amount of messages emitted by a <command>COPY</command>
+      command: <literal>default</literal> or <literal>verbose</literal>. If
+      <literal>verbose</literal> is specified, additional messages are emitted
+      during processing.
      </para>
+     <para>
+      This is currently used in <command>COPY FROM</command> command when
+      <literal>ON_ERROR</literal> option is set to <literal>ignore</literal>.
+      </para>
     </listitem>
    </varlistentry>
 
@@ -553,14 +610,13 @@ COPY <replaceable class="parameter">count</replaceable>
    </para>
 
    <para>
-    <command>COPY</command> stops operation at the first error. This
-    should not lead to problems in the event of a <command>COPY
-    TO</command>, but the target table will already have received
-    earlier rows in a <command>COPY FROM</command>. These rows will not
-    be visible or accessible, but they still occupy disk space. This might
-    amount to a considerable amount of wasted disk space if the failure
-    happened well into a large copy operation. You might wish to invoke
-    <command>VACUUM</command> to recover the wasted space.
+    The <command>COPY FROM</command> command physically inserts input rows
+    into the table as it progresses.  If the command fails, these rows are
+    left in a deleted state; these rows will not be visible, but still
+    occupy disk space. This might amount to considerable
+    wasted disk space if the failure happened well into a large copy
+    operation. <command>VACUUM</command> should be used to recover the
+    wasted space.
    </para>
 
    <para>

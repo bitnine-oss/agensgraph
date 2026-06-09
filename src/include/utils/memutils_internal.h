@@ -5,7 +5,7 @@
  *	  functions for internal use.
  *
  *
- * Portions Copyright (c) 2022-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2022-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/memutils_internal.h
@@ -19,9 +19,9 @@
 #include "utils/memutils.h"
 
 /* These functions implement the MemoryContext API for AllocSet context. */
-extern void *AllocSetAlloc(MemoryContext context, Size size);
+extern void *AllocSetAlloc(MemoryContext context, Size size, int flags);
 extern void AllocSetFree(void *pointer);
-extern void *AllocSetRealloc(void *pointer, Size size);
+extern void *AllocSetRealloc(void *pointer, Size size, int flags);
 extern void AllocSetReset(MemoryContext context);
 extern void AllocSetDelete(MemoryContext context);
 extern MemoryContext AllocSetGetChunkContext(void *pointer);
@@ -36,9 +36,9 @@ extern void AllocSetCheck(MemoryContext context);
 #endif
 
 /* These functions implement the MemoryContext API for Generation context. */
-extern void *GenerationAlloc(MemoryContext context, Size size);
+extern void *GenerationAlloc(MemoryContext context, Size size, int flags);
 extern void GenerationFree(void *pointer);
-extern void *GenerationRealloc(void *pointer, Size size);
+extern void *GenerationRealloc(void *pointer, Size size, int flags);
 extern void GenerationReset(MemoryContext context);
 extern void GenerationDelete(MemoryContext context);
 extern MemoryContext GenerationGetChunkContext(void *pointer);
@@ -54,9 +54,9 @@ extern void GenerationCheck(MemoryContext context);
 
 
 /* These functions implement the MemoryContext API for Slab context. */
-extern void *SlabAlloc(MemoryContext context, Size size);
+extern void *SlabAlloc(MemoryContext context, Size size, int flags);
 extern void SlabFree(void *pointer);
-extern void *SlabRealloc(void *pointer, Size size);
+extern void *SlabRealloc(void *pointer, Size size, int flags);
 extern void SlabReset(MemoryContext context);
 extern void SlabDelete(MemoryContext context);
 extern MemoryContext SlabGetChunkContext(void *pointer);
@@ -75,9 +75,25 @@ extern void SlabCheck(MemoryContext context);
  * part of a fully-fledged MemoryContext type.
  */
 extern void AlignedAllocFree(void *pointer);
-extern void *AlignedAllocRealloc(void *pointer, Size size);
+extern void *AlignedAllocRealloc(void *pointer, Size size, int flags);
 extern MemoryContext AlignedAllocGetChunkContext(void *pointer);
 extern Size AlignedAllocGetChunkSpace(void *pointer);
+
+ /* These functions implement the MemoryContext API for the Bump context. */
+extern void *BumpAlloc(MemoryContext context, Size size, int flags);
+extern void BumpFree(void *pointer);
+extern void *BumpRealloc(void *pointer, Size size, int flags);
+extern void BumpReset(MemoryContext context);
+extern void BumpDelete(MemoryContext context);
+extern MemoryContext BumpGetChunkContext(void *pointer);
+extern Size BumpGetChunkSpace(void *pointer);
+extern bool BumpIsEmpty(MemoryContext context);
+extern void BumpStats(MemoryContext context, MemoryStatsPrintFunc printfunc,
+					  void *passthru, MemoryContextCounters *totals,
+					  bool print_to_stderr);
+#ifdef MEMORY_CONTEXT_CHECKING
+extern void BumpCheck(MemoryContext context);
+#endif
 
 /*
  * How many extra bytes do we need to request in order to ensure that we can
@@ -104,21 +120,29 @@ extern Size AlignedAllocGetChunkSpace(void *pointer);
  */
 typedef enum MemoryContextMethodID
 {
-	MCTX_UNUSED1_ID,			/* 000 occurs in never-used memory */
-	MCTX_UNUSED2_ID,			/* glibc malloc'd chunks usually match 001 */
-	MCTX_UNUSED3_ID,			/* glibc malloc'd chunks > 128kB match 010 */
+	MCTX_0_RESERVED_UNUSEDMEM_ID,	/* 0000 occurs in never-used memory */
+	MCTX_1_RESERVED_GLIBC_ID,	/* glibc malloc'd chunks usually match 0001 */
+	MCTX_2_RESERVED_GLIBC_ID,	/* glibc malloc'd chunks > 128kB match 0010 */
 	MCTX_ASET_ID,
 	MCTX_GENERATION_ID,
 	MCTX_SLAB_ID,
 	MCTX_ALIGNED_REDIRECT_ID,
-	MCTX_UNUSED4_ID				/* 111 occurs in wipe_mem'd memory */
+	MCTX_BUMP_ID,
+	MCTX_8_UNUSED_ID,
+	MCTX_9_UNUSED_ID,
+	MCTX_10_UNUSED_ID,
+	MCTX_11_UNUSED_ID,
+	MCTX_12_UNUSED_ID,
+	MCTX_13_UNUSED_ID,
+	MCTX_14_UNUSED_ID,
+	MCTX_15_RESERVED_WIPEDMEM_ID	/* 1111 occurs in wipe_mem'd memory */
 } MemoryContextMethodID;
 
 /*
  * The number of bits that 8-byte memory chunk headers can use to encode the
  * MemoryContextMethodID.
  */
-#define MEMORY_CONTEXT_METHODID_BITS 3
+#define MEMORY_CONTEXT_METHODID_BITS 4
 #define MEMORY_CONTEXT_METHODID_MASK \
 	((((uint64) 1) << MEMORY_CONTEXT_METHODID_BITS) - 1)
 
@@ -132,5 +156,21 @@ extern void MemoryContextCreate(MemoryContext node,
 								MemoryContextMethodID method_id,
 								MemoryContext parent,
 								const char *name);
+
+extern void *MemoryContextAllocationFailure(MemoryContext context, Size size,
+											int flags);
+
+extern void MemoryContextSizeFailure(MemoryContext context, Size size,
+									 int flags) pg_attribute_noreturn();
+
+static inline void
+MemoryContextCheckSize(MemoryContext context, Size size, int flags)
+{
+	if (unlikely(!AllocSizeIsValid(size)))
+	{
+		if (!(flags & MCXT_ALLOC_HUGE) || !AllocHugeSizeIsValid(size))
+			MemoryContextSizeFailure(context, size, flags);
+	}
+}
 
 #endif							/* MEMUTILS_INTERNAL_H */

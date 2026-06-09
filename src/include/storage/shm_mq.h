@@ -3,7 +3,7 @@
  * shm_mq.h
  *	  single-reader, single-writer shared memory message queue
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/shm_mq.h
@@ -37,7 +37,7 @@ typedef enum
 {
 	SHM_MQ_SUCCESS,				/* Sent or received a message. */
 	SHM_MQ_WOULD_BLOCK,			/* Not completed; retry later. */
-	SHM_MQ_DETACHED				/* Other process has detached queue. */
+	SHM_MQ_DETACHED,			/* Other process has detached queue. */
 } shm_mq_result;
 
 /*

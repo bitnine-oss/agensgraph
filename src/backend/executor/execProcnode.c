@@ -7,7 +7,7 @@
  *	 ExecProcNode, or ExecEndNode on its subnodes and do the appropriate
  *	 processing.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -705,20 +705,8 @@ ExecEndNode(PlanState *node)
 			ExecEndTableFuncScan((TableFuncScanState *) node);
 			break;
 
-		case T_ValuesScanState:
-			ExecEndValuesScan((ValuesScanState *) node);
-			break;
-
 		case T_CteScanState:
 			ExecEndCteScan((CteScanState *) node);
-			break;
-
-		case T_NamedTuplestoreScanState:
-			ExecEndNamedTuplestoreScan((NamedTuplestoreScanState *) node);
-			break;
-
-		case T_WorkTableScanState:
-			ExecEndWorkTableScan((WorkTableScanState *) node);
 			break;
 
 		case T_ForeignScanState:
@@ -795,6 +783,13 @@ ExecEndNode(PlanState *node)
 			ExecEndLimit((LimitState *) node);
 			break;
 
+			/* No clean up actions for these nodes. */
+		case T_ValuesScanState:
+		case T_NamedTuplestoreScanState:
+		case T_WorkTableScanState:
+			break;
+
+		/* Agensgraph */
 		case T_ShortestpathState:
 			ExecEndShortestpath((ShortestpathState *) node);
 			break;

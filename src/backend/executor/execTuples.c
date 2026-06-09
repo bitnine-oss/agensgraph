@@ -46,7 +46,7 @@
  *		to avoid physically constructing projection tuples in many cases.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -60,6 +60,7 @@
 #include "access/heaptoast.h"
 #include "access/htup_details.h"
 #include "access/tupdesc_details.h"
+#include "access/xact.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "nodes/nodeFuncs.h"
@@ -146,6 +147,22 @@ tts_virtual_getsysattr(TupleTableSlot *slot, int attnum, bool *isnull)
 			 errmsg("cannot retrieve a system column in this context")));
 
 	return 0;					/* silence compiler warnings */
+}
+
+/*
+ * VirtualTupleTableSlots never have storage tuples.  We generally
+ * shouldn't get here, but provide a user-friendly message if we do.
+ */
+static bool
+tts_virtual_is_current_xact_tuple(TupleTableSlot *slot)
+{
+	Assert(!TTS_EMPTY(slot));
+
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("don't have transaction information for this type of tuple")));
+
+	return false;				/* silence compiler warnings */
 }
 
 /*
@@ -253,8 +270,6 @@ tts_virtual_copyslot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
 {
 	TupleDesc	srcdesc = srcslot->tts_tupleDescriptor;
 
-	Assert(srcdesc->natts <= dstslot->tts_tupleDescriptor->natts);
-
 	tts_virtual_clear(dstslot);
 
 	slot_getallattrs(srcslot);
@@ -354,6 +369,29 @@ tts_heap_getsysattr(TupleTableSlot *slot, int attnum, bool *isnull)
 
 	return heap_getsysattr(hslot->tuple, attnum,
 						   slot->tts_tupleDescriptor, isnull);
+}
+
+static bool
+tts_heap_is_current_xact_tuple(TupleTableSlot *slot)
+{
+	HeapTupleTableSlot *hslot = (HeapTupleTableSlot *) slot;
+	TransactionId xmin;
+
+	Assert(!TTS_EMPTY(slot));
+
+	/*
+	 * In some code paths it's possible to get here with a non-materialized
+	 * slot, in which case we can't check if tuple is created by the current
+	 * transaction.
+	 */
+	if (!hslot->tuple)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("don't have a storage tuple in this context")));
+
+	xmin = HeapTupleHeaderGetRawXmin(hslot->tuple->t_data);
+
+	return TransactionIdIsCurrentTransactionId(xmin);
 }
 
 static void
@@ -511,6 +549,10 @@ tts_minimal_getsomeattrs(TupleTableSlot *slot, int natts)
 	slot_deform_heap_tuple(slot, mslot->tuple, &mslot->off, natts);
 }
 
+/*
+ * MinimalTupleTableSlots never provide system attributes. We generally
+ * shouldn't get here, but provide a user-friendly message if we do.
+ */
 static Datum
 tts_minimal_getsysattr(TupleTableSlot *slot, int attnum, bool *isnull)
 {
@@ -521,6 +563,23 @@ tts_minimal_getsysattr(TupleTableSlot *slot, int attnum, bool *isnull)
 			 errmsg("cannot retrieve a system column in this context")));
 
 	return 0;					/* silence compiler warnings */
+}
+
+/*
+ * Within MinimalTuple abstraction transaction information is unavailable.
+ * We generally shouldn't get here, but provide a user-friendly message if
+ * we do.
+ */
+static bool
+tts_minimal_is_current_xact_tuple(TupleTableSlot *slot)
+{
+	Assert(!TTS_EMPTY(slot));
+
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("don't have transaction information for this type of tuple")));
+
+	return false;				/* silence compiler warnings */
 }
 
 static void
@@ -714,6 +773,29 @@ tts_buffer_heap_getsysattr(TupleTableSlot *slot, int attnum, bool *isnull)
 
 	return heap_getsysattr(bslot->base.tuple, attnum,
 						   slot->tts_tupleDescriptor, isnull);
+}
+
+static bool
+tts_buffer_is_current_xact_tuple(TupleTableSlot *slot)
+{
+	BufferHeapTupleTableSlot *bslot = (BufferHeapTupleTableSlot *) slot;
+	TransactionId xmin;
+
+	Assert(!TTS_EMPTY(slot));
+
+	/*
+	 * In some code paths it's possible to get here with a non-materialized
+	 * slot, in which case we can't check if tuple is created by the current
+	 * transaction.
+	 */
+	if (!bslot->base.tuple)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("don't have a storage tuple in this context")));
+
+	xmin = HeapTupleHeaderGetRawXmin(bslot->base.tuple->t_data);
+
+	return TransactionIdIsCurrentTransactionId(xmin);
 }
 
 static void
@@ -1031,6 +1113,7 @@ const TupleTableSlotOps TTSOpsVirtual = {
 	.getsomeattrs = tts_virtual_getsomeattrs,
 	.getsysattr = tts_virtual_getsysattr,
 	.materialize = tts_virtual_materialize,
+	.is_current_xact_tuple = tts_virtual_is_current_xact_tuple,
 	.copyslot = tts_virtual_copyslot,
 
 	/*
@@ -1050,6 +1133,7 @@ const TupleTableSlotOps TTSOpsHeapTuple = {
 	.clear = tts_heap_clear,
 	.getsomeattrs = tts_heap_getsomeattrs,
 	.getsysattr = tts_heap_getsysattr,
+	.is_current_xact_tuple = tts_heap_is_current_xact_tuple,
 	.materialize = tts_heap_materialize,
 	.copyslot = tts_heap_copyslot,
 	.get_heap_tuple = tts_heap_get_heap_tuple,
@@ -1067,6 +1151,7 @@ const TupleTableSlotOps TTSOpsMinimalTuple = {
 	.clear = tts_minimal_clear,
 	.getsomeattrs = tts_minimal_getsomeattrs,
 	.getsysattr = tts_minimal_getsysattr,
+	.is_current_xact_tuple = tts_minimal_is_current_xact_tuple,
 	.materialize = tts_minimal_materialize,
 	.copyslot = tts_minimal_copyslot,
 
@@ -1084,6 +1169,7 @@ const TupleTableSlotOps TTSOpsBufferHeapTuple = {
 	.clear = tts_buffer_heap_clear,
 	.getsomeattrs = tts_buffer_heap_getsomeattrs,
 	.getsysattr = tts_buffer_heap_getsysattr,
+	.is_current_xact_tuple = tts_buffer_is_current_xact_tuple,
 	.materialize = tts_buffer_heap_materialize,
 	.copyslot = tts_buffer_heap_copyslot,
 	.get_heap_tuple = tts_buffer_heap_get_heap_tuple,
@@ -2273,7 +2359,7 @@ begin_tup_output_tupdesc(DestReceiver *dest,
  * write a single tuple
  */
 void
-do_tup_output(TupOutputState *tstate, Datum *values, bool *isnull)
+do_tup_output(TupOutputState *tstate, const Datum *values, const bool *isnull)
 {
 	TupleTableSlot *slot = tstate->slot;
 	int			natts = slot->tts_tupleDescriptor->natts;

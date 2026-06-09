@@ -4,7 +4,7 @@
  *	  routines to support running postgres in 'bootstrap' mode
  *	bootstrap mode is used to create the initial template database
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -23,24 +23,20 @@
 #include "access/tableam.h"
 #include "access/toast_compression.h"
 #include "access/xact.h"
-#include "access/xlog_internal.h"
 #include "bootstrap/bootstrap.h"
 #include "catalog/index.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "common/link-canary.h"
-#include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "pg_getopt.h"
-#include "storage/bufmgr.h"
 #include "storage/bufpage.h"
-#include "storage/condition_variable.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
-#include "tcop/tcopprot.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
+#include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/relmapper.h"
@@ -280,16 +276,7 @@ BootstrapModeMain(int argc, char *argv[], bool check_only)
 				strlcpy(OutputFileName, optarg, MAXPGPATH);
 				break;
 			case 'X':
-				{
-					int			WalSegSz = strtoul(optarg, NULL, 0);
-
-					if (!IsValidWalSegSize(WalSegSz))
-						ereport(ERROR,
-								(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-								 errmsg("-X requires a power of two value between 1 MB and 1 GB")));
-					SetConfigOption("wal_segment_size", optarg, PGC_INTERNAL,
-									PGC_S_DYNAMIC_DEFAULT);
-				}
+				SetConfigOption("wal_segment_size", optarg, PGC_INTERNAL, PGC_S_DYNAMIC_DEFAULT);
 				break;
 			default:
 				write_stderr("Try \"%s --help\" for more information.\n",
@@ -354,7 +341,7 @@ BootstrapModeMain(int argc, char *argv[], bool check_only)
 	if (pg_link_canary_is_frontend())
 		elog(ERROR, "backend is incorrectly linked to frontend functions");
 
-	InitPostgres(NULL, InvalidOid, NULL, InvalidOid, false, false, NULL);
+	InitPostgres(NULL, InvalidOid, NULL, InvalidOid, 0, NULL);
 
 	/* Initialize stuff for bootstrap-file processing */
 	for (i = 0; i < MAXATTR; i++)
@@ -561,7 +548,6 @@ DefineAttr(char *name, char *type, int attnum, int nullness)
 	if (OidIsValid(attrtypes[attnum]->attcollation))
 		attrtypes[attnum]->attcollation = C_COLLATION_OID;
 
-	attrtypes[attnum]->attstattarget = -1;
 	attrtypes[attnum]->attcacheoff = -1;
 	attrtypes[attnum]->atttypmod = -1;
 	attrtypes[attnum]->attislocal = true;
@@ -914,7 +900,7 @@ AllocateAttribute(void)
 void
 index_register(Oid heap,
 			   Oid ind,
-			   IndexInfo *indexInfo)
+			   const IndexInfo *indexInfo)
 {
 	IndexList  *newind;
 	MemoryContext oldcxt;

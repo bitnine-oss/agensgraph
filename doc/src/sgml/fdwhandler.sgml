@@ -67,13 +67,16 @@
      foreign tables using the wrapper.
      The validator function must be registered as taking two arguments, a
      text array containing the options to be validated, and an OID
-     representing the type of object the options are associated with (in
-     the form of the OID of the system catalog the object would be stored
-     in, either
-     <literal>ForeignDataWrapperRelationId</literal>,
-     <literal>ForeignServerRelationId</literal>,
-     <literal>UserMappingRelationId</literal>,
-     or <literal>ForeignTableRelationId</literal>).
+     representing the type of object the options are associated with. The
+     latter corresponds to the OID of the system catalog the object
+     would be stored in, one of:
+     <itemizedlist spacing="compact">
+      <listitem><para><literal>AttributeRelationId</literal></para></listitem>
+      <listitem><para><literal>ForeignDataWrapperRelationId</literal></para></listitem>
+      <listitem><para><literal>ForeignServerRelationId</literal></para></listitem>
+      <listitem><para><literal>ForeignTableRelationId</literal></para></listitem>
+      <listitem><para><literal>UserMappingRelationId</literal></para></listitem>
+     </itemizedlist>
      If no validator function is supplied, options are not checked at object
      creation time or object alteration time.
     </para>
@@ -331,6 +334,17 @@ GetForeignJoinPaths(PlannerInfo *root,
      Note that this function will be invoked repeatedly for the same join
      relation, with different combinations of inner and outer relations; it is
      the responsibility of the FDW to minimize duplicated work.
+    </para>
+
+    <para>
+     Note also that the set of join clauses to apply to the join,
+     which is passed as <literal>extra-&gt;restrictlist</literal>, varies
+     depending on the combination of inner and outer relations.  A
+     <structname>ForeignPath</structname> path generated for the
+     <literal>joinrel</literal> must contain the set of join clauses it uses,
+     which will be used by the planner to convert the
+     <structname>ForeignPath</structname> path into a plan, if it is selected
+     by the planner as the best path for the <literal>joinrel</literal>.
     </para>
 
     <para>

@@ -1118,10 +1118,32 @@ ERROR:  relation "non_existent" does not exist
 -- test checking for null values and primary key
 create table atacc1 (test int not null);
 alter table atacc1 add constraint "atacc1_pkey" primary key (test);
+\d atacc1
+               Table "public.atacc1"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ test   | integer |           | not null | 
+Indexes:
+    "atacc1_pkey" PRIMARY KEY, btree (test)
+
 alter table atacc1 alter column test drop not null;
 ERROR:  column "test" is in a primary key
+\d atacc1
+               Table "public.atacc1"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ test   | integer |           | not null | 
+Indexes:
+    "atacc1_pkey" PRIMARY KEY, btree (test)
+
 alter table atacc1 drop constraint "atacc1_pkey";
 alter table atacc1 alter column test drop not null;
+\d atacc1
+               Table "public.atacc1"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ test   | integer |           |          | 
+
 insert into atacc1 values (null);
 alter table atacc1 alter test set not null;
 ERROR:  column "test" of relation "atacc1" contains null values
@@ -3834,16 +3856,27 @@ Referenced by:
     TABLE "ataddindex" CONSTRAINT "ataddindex_ref_id_fkey" FOREIGN KEY (ref_id) REFERENCES ataddindex(id)
 
 DROP TABLE ataddindex;
--- unsupported constraint types for partitioned tables
+CREATE TABLE atnotnull1 ();
+ALTER TABLE atnotnull1
+  ADD COLUMN a INT,
+  ALTER a SET NOT NULL;
+ALTER TABLE atnotnull1
+  ADD COLUMN c INT,
+  ADD PRIMARY KEY (c);
+\d+ atnotnull1
+                                Table "public.atnotnull1"
+ Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+--------------+-------------
+ a      | integer |           | not null |         | plain   |              | 
+ c      | integer |           | not null |         | plain   |              | 
+Indexes:
+    "atnotnull1_pkey" PRIMARY KEY, btree (c)
+
+-- cannot drop column that is part of the partition key
 CREATE TABLE partitioned (
 	a int,
 	b int
 ) PARTITION BY RANGE (a, (a+b+1));
-ALTER TABLE partitioned ADD EXCLUDE USING gist (a WITH &&);
-ERROR:  exclusion constraints are not supported on partitioned tables
-LINE 1: ALTER TABLE partitioned ADD EXCLUDE USING gist (a WITH &&);
-                                    ^
--- cannot drop column that is part of the partition key
 ALTER TABLE partitioned DROP COLUMN a;
 ERROR:  cannot drop column "a" because it is part of the partition key of relation "partitioned"
 ALTER TABLE partitioned ALTER COLUMN a TYPE char(5);
@@ -3855,7 +3888,7 @@ ERROR:  cannot alter column "b" because it is part of the partition key of relat
 -- specifying storage parameters for partitioned tables is not supported
 ALTER TABLE partitioned SET (fillfactor=100);
 ERROR:  cannot specify storage parameters for a partitioned table
-HINT:  Specify storage parameters for its leaf partitions, instead.
+HINT:  Specify storage parameters for its leaf partitions instead.
 -- partitioned table cannot participate in regular inheritance
 CREATE TABLE nonpartitioned (
 	a int,
@@ -4185,7 +4218,7 @@ CREATE TABLE quuux2 PARTITION OF quuux FOR VALUES IN (2);
 DROP TABLE quuux;
 -- check validation when attaching hash partitions
 -- Use hand-rolled hash functions and operator class to get predictable result
--- on different machines. part_test_int4_ops is defined in insert.sql.
+-- on different machines. part_test_int4_ops is defined in test_setup.sql.
 -- check that the new partition won't overlap with an existing partition
 CREATE TABLE hash_parted (
 	a int,

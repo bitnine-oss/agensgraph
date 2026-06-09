@@ -4,7 +4,7 @@
  *	  tuple table support stuff
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/executor/tuptable.h
@@ -167,6 +167,12 @@ struct TupleTableSlotOps
 	Datum		(*getsysattr) (TupleTableSlot *slot, int attnum, bool *isnull);
 
 	/*
+	 * Check if the tuple is created by the current transaction. Throws an
+	 * error if the slot doesn't contain the storage tuple.
+	 */
+	bool		(*is_current_xact_tuple) (TupleTableSlot *slot);
+
+	/*
 	 * Make the contents of the slot solely depend on the slot, and not on
 	 * underlying resources (like another memory context, buffers, etc).
 	 */
@@ -174,7 +180,8 @@ struct TupleTableSlotOps
 
 	/*
 	 * Copy the contents of the source slot into the destination slot's own
-	 * context. Invoked using callback of the destination slot.
+	 * context. Invoked using callback of the destination slot.  'dstslot' and
+	 * 'srcslot' can be assumed to have the same number of attributes.
 	 */
 	void		(*copyslot) (TupleTableSlot *dstslot, TupleTableSlot *srcslot);
 
@@ -426,6 +433,21 @@ slot_getsysattr(TupleTableSlot *slot, int attnum, bool *isnull)
 }
 
 /*
+ * slot_is_current_xact_tuple - check if the slot's current tuple is created
+ *								by the current transaction.
+ *
+ *  If the slot does not contain a storage tuple, this will throw an error.
+ *  Hence before calling this function, callers should make sure that the
+ *  slot type supports storage tuples and that there is currently one inside
+ *  the slot.
+ */
+static inline bool
+slot_is_current_xact_tuple(TupleTableSlot *slot)
+{
+	return slot->tts_ops->is_current_xact_tuple(slot);
+}
+
+/*
  * ExecClearTuple - clear the slot's contents
  */
 static inline TupleTableSlot *
@@ -477,12 +499,19 @@ ExecCopySlotMinimalTuple(TupleTableSlot *slot)
  *
  * If a source's system attributes are supposed to be accessed in the target
  * slot, the target slot and source slot types need to match.
+ *
+ * Currently, 'dstslot' and 'srcslot' must have the same number of attributes.
+ * Future work could see this relaxed to allow the source to contain
+ * additional attributes and have the code here only copy over the leading
+ * attributes.
  */
 static inline TupleTableSlot *
 ExecCopySlot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
 {
 	Assert(!TTS_EMPTY(srcslot));
 	Assert(srcslot != dstslot);
+	Assert(dstslot->tts_tupleDescriptor->natts ==
+		   srcslot->tts_tupleDescriptor->natts);
 
 	dstslot->tts_ops->copyslot(dstslot, srcslot);
 

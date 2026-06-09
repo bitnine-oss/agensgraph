@@ -265,7 +265,7 @@ PGconn *PQsetdb(char *pghost,
     <varlistentry id="libpq-PQconnectStartParams">
      <term><function>PQconnectStartParams</function><indexterm><primary>PQconnectStartParams</primary></indexterm></term>
      <term><function>PQconnectStart</function><indexterm><primary>PQconnectStart</primary></indexterm></term>
-     <term><function>PQconnectPoll</function><indexterm><primary>PQconnectPoll</primary></indexterm></term>
+     <term id="libpq-PQconnectPoll"><function>PQconnectPoll</function><indexterm><primary>PQconnectPoll</primary></indexterm></term>
      <listitem>
       <para>
        <indexterm><primary>nonblocking connection</primary></indexterm>
@@ -358,7 +358,10 @@ PostgresPollingStatusType PQconnectPoll(PGconn *conn);
        Loop thus: If <function>PQconnectPoll(conn)</function> last returned
        <symbol>PGRES_POLLING_READING</symbol>, wait until the socket is ready to
        read (as indicated by <function>select()</function>, <function>poll()</function>, or
-       similar system function).
+       similar system function).  Note that <function>PQsocketPoll</function>
+       can help reduce boilerplate by abstracting the setup of
+       <function>select(2)</function> or <function>poll(2)</function> if it is
+       available on your system.
        Then call <function>PQconnectPoll(conn)</function> again.
        Conversely, if <function>PQconnectPoll(conn)</function> last returned
        <symbol>PGRES_POLLING_WRITING</symbol>, wait until the socket is ready
@@ -428,11 +431,11 @@ PostgresPollingStatusType PQconnectPoll(PGconn *conn);
          </listitem>
         </varlistentry>
 
-        <varlistentry id="libpq-connection-setenv">
-         <term><symbol>CONNECTION_SETENV</symbol></term>
+        <varlistentry id="libpq-connection-gss-startup">
+         <term><symbol>CONNECTION_GSS_STARTUP</symbol></term>
          <listitem>
           <para>
-           Negotiating environment-driven parameter settings.
+           Negotiating GSS encryption.
           </para>
          </listitem>
         </varlistentry>
@@ -442,6 +445,15 @@ PostgresPollingStatusType PQconnectPoll(PGconn *conn);
          <listitem>
           <para>
            Checking if connection is able to handle write transactions.
+          </para>
+         </listitem>
+        </varlistentry>
+
+        <varlistentry id="libpq-connection-check-standby">
+         <term><symbol>CONNECTION_CHECK_STANDBY</symbol></term>
+         <listitem>
+          <para>
+           Checking if connection is to a server in standby mode.
           </para>
          </listitem>
         </varlistentry>
@@ -495,6 +507,70 @@ switch(PQstatus(conn))
        finished with it, in order to dispose of the structure and any
        associated memory blocks.  This must be done even if the connection
        attempt fails or is abandoned.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry id="libpq-PQsocketPoll">
+     <term><function>PQsocketPoll</function><indexterm><primary>PQsocketPoll</primary></indexterm></term>
+     <listitem>
+      <para>
+       <indexterm><primary>nonblocking connection</primary></indexterm>
+       Poll a connection's underlying socket descriptor retrieved with
+       <xref linkend="libpq-PQsocket"/>.
+       The primary use of this function is iterating through the connection
+       sequence described in the documentation of
+       <xref linkend="libpq-PQconnectStartParams"/>.
+<synopsis>
+typedef pg_int64 pg_usec_time_t;
+
+int PQsocketPoll(int sock, int forRead, int forWrite,
+                 pg_usec_time_t end_time);
+</synopsis>
+      </para>
+
+      <para>
+       This function performs polling of a file descriptor, optionally with
+       a timeout.
+       If <parameter>forRead</parameter> is nonzero, the
+       function will terminate when the socket is ready for
+       reading. If <parameter>forWrite</parameter> is nonzero,
+       the function will terminate when the
+       socket is ready for writing.
+      </para>
+
+      <para>
+       The timeout is specified by <parameter>end_time</parameter>, which
+       is the time to stop waiting expressed as a number of microseconds since
+       the Unix epoch (that is, <type>time_t</type> times 1 million).
+       Timeout is infinite if <parameter>end_time</parameter>
+       is <literal>-1</literal>.  Timeout is immediate (no blocking) if
+       end_time is <literal>0</literal> (or indeed, any time before now).
+       Timeout values can be calculated conveniently by adding the desired
+       number of microseconds to the result of
+       <xref linkend="libpq-PQgetCurrentTimeUSec"/>.
+       Note that the underlying system calls may have less than microsecond
+       precision, so that the actual delay may be imprecise.
+      </para>
+
+      <para>
+       The function returns a value greater than <literal>0</literal> if the
+       specified condition is met, <literal>0</literal> if a timeout occurred,
+       or <literal>-1</literal> if an error occurred. The error can be
+       retrieved by checking the <literal>errno(3)</literal> value. In the
+       event both <parameter>forRead</parameter>
+       and <parameter>forWrite</parameter> are zero, the function immediately
+       returns a timeout indication.
+      </para>
+
+      <para>
+       <function>PQsocketPoll</function> is implemented using either
+       <function>poll(2)</function> or <function>select(2)</function>,
+       depending on platform.  See <literal>POLLIN</literal>
+       and <literal>POLLOUT</literal> from <function>poll(2)</function>,
+       or <parameter>readfds</parameter> and
+       <parameter>writefds</parameter> from <function>select(2)</function>,
+       for more information.
       </para>
      </listitem>
     </varlistentry>
@@ -873,7 +949,7 @@ PQsslKeyPassHook_OpenSSL_type PQgetSSLKeyPassHook_OpenSSL(void);
     connection parameters.  There are two accepted formats for these strings:
     plain keyword/value strings
     and URIs.  URIs generally follow
-    <ulink url="https://tools.ietf.org/html/rfc3986">RFC
+    <ulink url="https://datatracker.ietf.org/doc/html/rfc3986">RFC
     3986</ulink>, except that multi-host connection strings are allowed
     as further described below.
    </para>
@@ -958,7 +1034,7 @@ postgresql:///mydb?host=localhost&amp;port=5433
 
    <para>
     The connection <acronym>URI</acronym> needs to be encoded with <ulink
-    url="https://tools.ietf.org/html/rfc3986#section-2.1">percent-encoding</ulink>
+    url="https://datatracker.ietf.org/doc/html/rfc3986#section-2.1">percent-encoding</ulink>
     if it includes symbols with special meaning in any of its parts.  Here is
     an example where the equal sign (<literal>=</literal>) is replaced with
     <literal>%3D</literal> and the space character with
@@ -1343,8 +1419,7 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       <para>
        Maximum time to wait while connecting, in seconds (write as a decimal integer,
        e.g., <literal>10</literal>).  Zero, negative, or not specified means
-       wait indefinitely.  The minimum allowed timeout is 2 seconds, therefore
-       a value of <literal>1</literal> is interpreted as <literal>2</literal>.
+       wait indefinitely.
        This timeout applies separately to each host name or IP address.
        For example, if you specify two hosts and <literal>connect_timeout</literal>
        is 5, each host will time out if no connection is made within 5
@@ -1374,9 +1449,10 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       <listitem>
        <para>
         Specifies command-line options to send to the server at connection
-        start.  For example, setting this to <literal>-c geqo=off</literal> sets the
-        session's value of the <varname>geqo</varname> parameter to
-        <literal>off</literal>.  Spaces within this string are considered to
+        start.  For example, setting this to <literal>-c geqo=off</literal>
+        or <literal>--geqo=off</literal> sets the session's value of the
+        <varname>geqo</varname> parameter to <literal>off</literal>.
+        Spaces within this string are considered to
         separate command-line arguments, unless escaped with a backslash
         (<literal>\</literal>); write <literal>\\</literal> to represent a literal
         backslash.  For a detailed discussion of the available
@@ -1693,8 +1769,8 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
         encryption, regardless of the value of <literal>sslmode</literal>.
         To force use of <acronym>SSL</acronym> encryption in an
         environment that has working <acronym>GSSAPI</acronym>
-        infrastructure (such as a Kerberos server), also
-        set <literal>gssencmode</literal> to <literal>disable</literal>.
+        infrastructure (such as a Kerberos server), also set
+        <literal>gssencmode</literal> to <literal>disable</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -1721,6 +1797,51 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       </listitem>
      </varlistentry>
 
+     <varlistentry id="libpq-connect-sslnegotiation" xreflabel="sslnegotiation">
+      <term><literal>sslnegotiation</literal></term>
+      <listitem>
+       <para>
+        This option controls how SSL encryption is negotiated with the server,
+        if SSL is used. In the default <literal>postgres</literal> mode, the
+        client first asks the server if SSL is supported. In
+        <literal>direct</literal> mode, the client starts the standard SSL
+        handshake directly after establishing the TCP/IP connection. Traditional
+        <productname>PostgreSQL</productname> protocol negotiation is the most
+        flexible with different server configurations. If the server is known
+        to support direct <acronym>SSL</acronym> connections then the latter
+        requires one fewer round trip reducing connection latency and also
+        allows the use of protocol agnostic SSL network tools. The direct SSL
+        option was introduced in <productname>PostgreSQL</productname> version
+        17.
+       </para>
+
+        <variablelist>
+         <varlistentry>
+          <term><literal>postgres</literal></term>
+          <listitem>
+           <para>
+             perform <productname>PostgreSQL</productname> protocol
+             negotiation. This is the default if the option is not provided.
+           </para>
+          </listitem>
+         </varlistentry>
+
+         <varlistentry>
+          <term><literal>direct</literal></term>
+          <listitem>
+           <para>
+             start SSL handshake directly after establishing the TCP/IP
+             connection.  This is only allowed with sslmode=require or higher,
+             because the weaker settings could lead to unintended fallback to
+             plaintext authentication when the server does not support direct
+             SSL handshake.
+           </para>
+          </listitem>
+         </varlistentry>
+        </variablelist>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="libpq-connect-sslcompression" xreflabel="sslcompression">
       <term><literal>sslcompression</literal></term>
       <listitem>
@@ -1732,11 +1853,11 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
 
        <para>
         SSL compression is nowadays considered insecure and its use is no
-        longer recommended.  <productname>OpenSSL</productname> 1.1.0 disables
+        longer recommended.  <productname>OpenSSL</productname> 1.1.0 disabled
         compression by default, and many operating system distributions
-        disable it in prior versions as well, so setting this parameter to on
+        disabled it in prior versions as well, so setting this parameter to on
         will not have any effect if the server does not accept compression.
-        <productname>PostgreSQL</productname> 14 disables compression
+        <productname>PostgreSQL</productname> 14 disabled compression
         completely in the backend.
        </para>
 
@@ -1954,11 +2075,13 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
 
        <para>
         The Server Name Indication can be used by SSL-aware proxies to route
-        connections without having to decrypt the SSL stream.  (Note that this
-        requires a proxy that is aware of the PostgreSQL protocol handshake,
-        not just any SSL proxy.)  However, <acronym>SNI</acronym> makes the
-        destination host name appear in cleartext in the network traffic, so
-        it might be undesirable in some cases.
+        connections without having to decrypt the SSL stream.  (Note that
+        unless the proxy is aware of the PostgreSQL protocol handshake this
+        would require setting <literal>sslnegotiation</literal>
+        to <literal>direct</literal>.)
+        However, <acronym>SNI</acronym> makes the destination host name appear
+        in cleartext in the network traffic, so it might be undesirable in
+        some cases.
        </para>
       </listitem>
      </varlistentry>
@@ -2509,30 +2632,27 @@ const char *PQparameterStatus(const PGconn *conn, const char *paramName);
       </para>
 
       <para>
-       Parameters reported as of the current release include
-       <varname>server_version</varname>,
-       <varname>server_encoding</varname>,
-       <varname>client_encoding</varname>,
-       <varname>application_name</varname>,
-       <varname>default_transaction_read_only</varname>,
-       <varname>in_hot_standby</varname>,
-       <varname>is_superuser</varname>,
-       <varname>session_authorization</varname>,
-       <varname>DateStyle</varname>,
-       <varname>IntervalStyle</varname>,
-       <varname>TimeZone</varname>,
-       <varname>integer_datetimes</varname>, and
-       <varname>standard_conforming_strings</varname>.
-       (<varname>server_encoding</varname>, <varname>TimeZone</varname>, and
-       <varname>integer_datetimes</varname> were not reported by releases before 8.0;
-       <varname>standard_conforming_strings</varname> was not reported by releases
-       before 8.1;
-       <varname>IntervalStyle</varname> was not reported by releases before 8.4;
-       <varname>application_name</varname> was not reported by releases before
-       9.0;
-       <varname>default_transaction_read_only</varname> and
+       Parameters reported as of the current release include:
+       <simplelist type="vert" columns="2">
+        <member><varname>application_name</varname></member>
+        <member><varname>client_encoding</varname></member>
+        <member><varname>DateStyle</varname></member>
+        <member><varname>default_transaction_read_only</varname></member>
+        <member><varname>in_hot_standby</varname></member>
+        <member><varname>integer_datetimes</varname></member>
+        <member><varname>IntervalStyle</varname></member>
+        <member><varname>is_superuser</varname></member>
+        <member><varname>scram_iterations</varname></member>
+        <member><varname>server_encoding</varname></member>
+        <member><varname>server_version</varname></member>
+        <member><varname>session_authorization</varname></member>
+        <member><varname>standard_conforming_strings</varname></member>
+        <member><varname>TimeZone</varname></member>
+       </simplelist>
+       (<varname>default_transaction_read_only</varname> and
        <varname>in_hot_standby</varname> were not reported by releases before
-       14.)
+       14; <varname>scram_iterations</varname> was not reported by releases
+       before 16.)
        Note that
        <varname>server_version</varname>,
        <varname>server_encoding</varname> and
@@ -2616,17 +2736,19 @@ int PQserverVersion(const PGconn *conn);
     </varlistentry>
 
     <varlistentry id="libpq-PQerrorMessage">
-     <term><function>PQerrorMessage</function><indexterm><primary>PQerrorMessage</primary></indexterm></term>
+     <term>
+      <function>PQerrorMessage</function><indexterm><primary>PQerrorMessage</primary></indexterm>
+      <indexterm><primary>error message</primary><secondary>in <structname>PGconn</structname></secondary></indexterm>
+     </term>
 
      <listitem>
       <para>
-       <indexterm><primary>error message</primary></indexterm> Returns the error message
-       most recently generated by an operation on the connection.
+       Returns the error message most recently generated by
+       an operation on the connection.
 
 <synopsis>
 char *PQerrorMessage(const PGconn *conn);
 </synopsis>
-
       </para>
 
       <para>
@@ -2832,6 +2954,18 @@ const char *PQsslAttribute(const PGconn *conn, const char *attribute_name);
           <listitem>
            <para>
             Returns "on" if SSL compression is in use, else it returns "off".
+           </para>
+          </listitem>
+         </varlistentry>
+        <varlistentry>
+         <term><literal>alpn</literal></term>
+          <listitem>
+           <para>
+            Application protocol selected by the TLS Application-Layer
+            Protocol Negotiation (ALPN) extension.  The only protocol
+            supported by libpq is <literal>postgresql</literal>, so this is
+            mainly useful for checking whether the server supported ALPN or
+            not. Empty string if ALPN was not used.
            </para>
           </listitem>
          </varlistentry>
@@ -3250,10 +3384,7 @@ PGresult *PQprepare(PGconn *conn,
 
     Prepared statements for use with <xref linkend="libpq-PQexecPrepared"/> can also
     be created by executing SQL <xref linkend="sql-prepare"/>
-    statements.  Also, although there is no <application>libpq</application>
-    function for deleting a prepared statement, the SQL <xref
-    linkend="sql-deallocate"/> statement
-    can be used for that purpose.
+    statements.
    </para>
 
    <para>
@@ -3357,6 +3488,66 @@ PGresult *PQdescribePortal(PGconn *conn, const char *portalName);
         <xref linkend="libpq-PQftype"/>, etc. can be applied to the
         <structname>PGresult</structname> to obtain information about the result
         columns (if any) of the portal.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="libpq-PQclosePrepared">
+      <term><function>PQclosePrepared</function><indexterm><primary>PQclosePrepared</primary></indexterm></term>
+
+      <listitem>
+       <para>
+        Submits a request to close the specified prepared statement, and waits
+        for completion.
+<synopsis>
+PGresult *PQclosePrepared(PGconn *conn, const char *stmtName);
+</synopsis>
+       </para>
+
+       <para>
+        <xref linkend="libpq-PQclosePrepared"/> allows an application to close
+        a previously prepared statement. Closing a statement releases all
+        of its associated resources on the server and allows its name to be
+        reused.
+       </para>
+
+       <para>
+        <parameter>stmtName</parameter> can be <literal>""</literal> or
+        <symbol>NULL</symbol> to reference the unnamed statement. It is fine
+        if no statement exists with this name, in that case the operation is a
+        no-op. On success, a <structname>PGresult</structname> with
+        status <literal>PGRES_COMMAND_OK</literal> is returned.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="libpq-PQclosePortal">
+      <term><function>PQclosePortal</function><indexterm><primary>PQclosePortal</primary></indexterm></term>
+
+      <listitem>
+       <para>
+        Submits a request to close the specified portal, and waits for
+        completion.
+<synopsis>
+PGresult *PQclosePortal(PGconn *conn, const char *portalName);
+</synopsis>
+       </para>
+
+       <para>
+        <xref linkend="libpq-PQclosePortal"/> allows an application to trigger
+        a close of a previously created portal. Closing a portal releases all
+        of its associated resources on the server and allows its name to be
+        reused. (<application>libpq</application> does not provide any
+        direct access to portals, but you can use this function to close a
+        cursor created with a <command>DECLARE CURSOR</command> SQL command.)
+       </para>
+
+       <para>
+        <parameter>portalName</parameter> can be <literal>""</literal> or
+        <symbol>NULL</symbol> to reference the unnamed portal. It is fine
+        if no portal exists with this name, in that case the operation is a
+        no-op. On success, a <structname>PGresult</structname> with status
+        <literal>PGRES_COMMAND_OK</literal> is returned.
        </para>
       </listitem>
      </varlistentry>
@@ -3485,13 +3676,28 @@ ExecStatusType PQresultStatus(const PGresult *res);
           </listitem>
          </varlistentry>
 
+         <varlistentry id="libpq-pgres-tuples-chunk">
+          <term><literal>PGRES_TUPLES_CHUNK</literal></term>
+          <listitem>
+           <para>
+            The <structname>PGresult</structname> contains several result tuples
+            from the current command.  This status occurs only when
+            chunked mode has been selected for the query
+            (see <xref linkend="libpq-single-row-mode"/>).
+            The number of tuples will not exceed the limit passed to
+            <xref linkend="libpq-PQsetChunkedRowsMode"/>.
+           </para>
+          </listitem>
+         </varlistentry>
+
          <varlistentry id="libpq-pgres-pipeline-sync">
           <term><literal>PGRES_PIPELINE_SYNC</literal></term>
           <listitem>
            <para>
             The <structname>PGresult</structname> represents a
-            synchronization point in pipeline mode, requested by
-            <xref linkend="libpq-PQpipelineSync"/>.
+            synchronization point in pipeline mode, requested by either
+            <xref linkend="libpq-PQpipelineSync"/> or
+            <xref linkend="libpq-PQsendPipelineSync"/>.
             This status occurs only when pipeline mode has been selected.
            </para>
           </listitem>
@@ -3513,8 +3719,9 @@ ExecStatusType PQresultStatus(const PGresult *res);
 
         </variablelist>
 
-        If the result status is <literal>PGRES_TUPLES_OK</literal> or
-        <literal>PGRES_SINGLE_TUPLE</literal>, then
+        If the result status is <literal>PGRES_TUPLES_OK</literal>,
+        <literal>PGRES_SINGLE_TUPLE</literal>, or
+        <literal>PGRES_TUPLES_CHUNK</literal>, then
         the functions described below can be used to retrieve the rows
         returned by the query.  Note that a <command>SELECT</command>
         command that happens to retrieve zero rows still shows
@@ -3926,7 +4133,9 @@ void PQclear(PGresult *res);
     These functions are used to extract information from a
     <structname>PGresult</structname> object that represents a successful
     query result (that is, one that has status
-    <literal>PGRES_TUPLES_OK</literal> or <literal>PGRES_SINGLE_TUPLE</literal>).
+    <literal>PGRES_TUPLES_OK</literal>,
+    <literal>PGRES_SINGLE_TUPLE</literal>, or
+    <literal>PGRES_TUPLES_CHUNK</literal>).
     They can also be used to extract
     information from a successful Describe operation: a Describe's result
     has all the same column information that actual execution of the query
@@ -4851,15 +5060,19 @@ unsigned char *PQunescapeBytea(const unsigned char *from, size_t *to_length);
    <xref linkend="libpq-PQsendQueryParams"/>,
    <xref linkend="libpq-PQsendPrepare"/>,
    <xref linkend="libpq-PQsendQueryPrepared"/>,
-   <xref linkend="libpq-PQsendDescribePrepared"/>, and
+   <xref linkend="libpq-PQsendDescribePrepared"/>,
    <xref linkend="libpq-PQsendDescribePortal"/>,
+   <xref linkend="libpq-PQsendClosePrepared"/>, and
+   <xref linkend="libpq-PQsendClosePortal"/>,
    which can be used with <xref linkend="libpq-PQgetResult"/> to duplicate
    the functionality of
    <xref linkend="libpq-PQexecParams"/>,
    <xref linkend="libpq-PQprepare"/>,
    <xref linkend="libpq-PQexecPrepared"/>,
-   <xref linkend="libpq-PQdescribePrepared"/>, and
+   <xref linkend="libpq-PQdescribePrepared"/>,
    <xref linkend="libpq-PQdescribePortal"/>
+   <xref linkend="libpq-PQclosePrepared"/>, and
+   <xref linkend="libpq-PQclosePortal"/>
    respectively.
 
    <variablelist>
@@ -5008,6 +5221,46 @@ int PQsendDescribePortal(PGconn *conn, const char *portalName);
      </listitem>
     </varlistentry>
 
+    <varlistentry id="libpq-PQsendClosePrepared">
+     <term><function>PQsendClosePrepared</function><indexterm><primary>PQsendClosePrepared</primary></indexterm></term>
+
+     <listitem>
+      <para>
+       Submits a request to close the specified prepared statement, without
+       waiting for completion.
+<synopsis>
+int PQsendClosePrepared(PGconn *conn, const char *stmtName);
+</synopsis>
+
+       This is an asynchronous version of <xref linkend="libpq-PQclosePrepared"/>:
+       it returns 1 if it was able to dispatch the request, and 0 if not.
+       After a successful call, call <xref linkend="libpq-PQgetResult"/> to
+       obtain the results.  The function's parameters are handled
+       identically to <xref linkend="libpq-PQclosePrepared"/>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry id="libpq-PQsendClosePortal">
+     <term><function>PQsendClosePortal</function><indexterm><primary>PQsendClosePortal</primary></indexterm></term>
+
+     <listitem>
+      <para>
+       Submits a request to close specified portal, without waiting for
+       completion.
+<synopsis>
+int PQsendClosePortal(PGconn *conn, const char *portalName);
+</synopsis>
+
+       This is an asynchronous version of <xref linkend="libpq-PQclosePortal"/>:
+       it returns 1 if it was able to dispatch the request, and 0 if not.
+       After a successful call, call <xref linkend="libpq-PQgetResult"/> to
+       obtain the results.  The function's parameters are handled
+       identically to <xref linkend="libpq-PQclosePortal"/>.
+      </para>
+     </listitem>
+    </varlistentry>
+
     <varlistentry id="libpq-PQgetResult">
      <term><function>PQgetResult</function><indexterm><primary>PQgetResult</primary></indexterm></term>
 
@@ -5019,7 +5272,10 @@ int PQsendDescribePortal(PGconn *conn, const char *portalName);
        <xref linkend="libpq-PQsendPrepare"/>,
        <xref linkend="libpq-PQsendQueryPrepared"/>,
        <xref linkend="libpq-PQsendDescribePrepared"/>,
-       <xref linkend="libpq-PQsendDescribePortal"/>, or
+       <xref linkend="libpq-PQsendDescribePortal"/>,
+       <xref linkend="libpq-PQsendClosePrepared"/>,
+       <xref linkend="libpq-PQsendClosePortal"/>,
+       <xref linkend="libpq-PQsendPipelineSync"/>, or
        <xref linkend="libpq-PQpipelineSync"/>
        call, and returns it.
        A null pointer is returned when the command is complete and there
@@ -5084,7 +5340,8 @@ PGresult *PQgetResult(PGconn *conn);
   <para>
    Another frequently-desired feature that can be obtained with
    <xref linkend="libpq-PQsendQuery"/> and <xref linkend="libpq-PQgetResult"/>
-   is retrieving large query results a row at a time.  This is discussed
+   is retrieving large query results a limited number of rows at a time.
+   This is discussed
    in <xref linkend="libpq-single-row-mode"/>.
   </para>
 
@@ -5176,7 +5433,7 @@ int PQisBusy(PGconn *conn);
    <xref linkend="libpq-PQsendQuery"/>/<xref linkend="libpq-PQgetResult"/>
    can also attempt to cancel a command that is still being processed
    by the server; see <xref linkend="libpq-cancel"/>.  But regardless of
-   the return value of <xref linkend="libpq-PQcancel"/>, the application
+   the return value of <xref linkend="libpq-PQcancelBlocking"/>, the application
    must continue with the normal result-reading sequence using
    <xref linkend="libpq-PQgetResult"/>.  A successful cancellation will
    simply cause the command to terminate sooner than it would have
@@ -5213,11 +5470,12 @@ int PQsetnonblocking(PGconn *conn, int arg);
       </para>
 
       <para>
-       In the nonblocking state, calls to
+       In the nonblocking state, successful calls to
        <xref linkend="libpq-PQsendQuery"/>, <xref linkend="libpq-PQputline"/>,
        <xref linkend="libpq-PQputnbytes"/>, <xref linkend="libpq-PQputCopyData"/>,
-       and <xref linkend="libpq-PQendcopy"/> will not block but instead return
-       an error if they need to be called again.
+       and <xref linkend="libpq-PQendcopy"/> will not block;  their changes
+       are stored in the local output buffer until they are flushed.
+       Unsuccessful calls will return an error and must be retried.
       </para>
 
       <para>
@@ -5350,6 +5608,8 @@ int PQflush(PGconn *conn);
     <function>PQexecPrepared</function>,
     <function>PQdescribePrepared</function>,
     <function>PQdescribePortal</function>,
+    <function>PQclosePrepared</function>,
+    <function>PQclosePortal</function>,
     is an error condition.
     <function>PQsendQuery</function> is
     also disallowed, because it uses the simple query protocol.
@@ -5389,8 +5649,10 @@ int PQflush(PGconn *conn);
      establish a synchronization point in the pipeline,
      or when <xref linkend="libpq-PQflush"/> is called.
      The functions <xref linkend="libpq-PQsendPrepare"/>,
-     <xref linkend="libpq-PQsendDescribePrepared"/>, and
-     <xref linkend="libpq-PQsendDescribePortal"/> also work in pipeline mode.
+     <xref linkend="libpq-PQsendDescribePrepared"/>,
+     <xref linkend="libpq-PQsendDescribePortal"/>,
+     <xref linkend="libpq-PQsendClosePrepared"/>, and
+     <xref linkend="libpq-PQsendClosePortal"/> also work in pipeline mode.
      Result processing is described below.
     </para>
 
@@ -5399,8 +5661,9 @@ int PQflush(PGconn *conn);
      client sends them.  The server will begin executing the commands in the
      pipeline immediately, not waiting for the end of the pipeline.
      Note that results are buffered on the server side; the server flushes
-     that buffer when a synchronization point is established with
-     <function>PQpipelineSync</function>, or when
+     that buffer when a synchronization point is established with either
+     <function>PQpipelineSync</function> or
+     <function>PQsendPipelineSync</function>, or when
      <function>PQsendFlushRequest</function> is called.
      If any statement encounters an error, the server aborts the current
      transaction and does not execute any subsequent command in the queue
@@ -5443,21 +5706,13 @@ int PQflush(PGconn *conn);
     </para>
 
     <para>
-     To enter single-row mode, call <function>PQsetSingleRowMode</function>
-     before retrieving results with <function>PQgetResult</function>.
-     This mode selection is effective only for the query currently
-     being processed. For more information on the use of
-     <function>PQsetSingleRowMode</function>,
-     refer to <xref linkend="libpq-single-row-mode"/>.
-    </para>
-
-    <para>
      <function>PQgetResult</function> behaves the same as for normal
      asynchronous processing except that it may contain the new
      <type>PGresult</type> types <literal>PGRES_PIPELINE_SYNC</literal>
      and <literal>PGRES_PIPELINE_ABORTED</literal>.
      <literal>PGRES_PIPELINE_SYNC</literal> is reported exactly once for each
-     <function>PQpipelineSync</function> at the corresponding point
+     <function>PQpipelineSync</function> or
+     <function>PQsendPipelineSync</function> at the corresponding point
      in the pipeline.
      <literal>PGRES_PIPELINE_ABORTED</literal> is emitted in place of a normal
      query result for the first error and all subsequent results
@@ -5495,7 +5750,8 @@ int PQflush(PGconn *conn);
      <function>PQresultStatus</function> will report a
      <literal>PGRES_PIPELINE_ABORTED</literal> result for each remaining queued
      operation in an aborted pipeline. The result for
-     <function>PQpipelineSync</function> is reported as
+     <function>PQpipelineSync</function> or
+     <function>PQsendPipelineSync</function> is reported as
      <literal>PGRES_PIPELINE_SYNC</literal> to signal the end of the aborted pipeline
      and resumption of normal result processing.
     </para>
@@ -5702,31 +5958,57 @@ int PQpipelineSync(PGconn *conn);
      </listitem>
     </varlistentry>
 
+    <varlistentry id="libpq-PQsendPipelineSync">
+     <term><function>PQsendPipelineSync</function><indexterm><primary>PQsendPipelineSync</primary></indexterm></term>
+
+     <listitem>
+      <para>
+       Marks a synchronization point in a pipeline by sending a
+       <link linkend="protocol-flow-ext-query">sync message</link>
+       without flushing the send buffer. This serves as
+       the delimiter of an implicit transaction and an error recovery
+       point; see <xref linkend="libpq-pipeline-errors"/>.
+
+<synopsis>
+int PQsendPipelineSync(PGconn *conn);
+</synopsis>
+      </para>
+      <para>
+       Returns 1 for success. Returns 0 if the connection is not in
+       pipeline mode or sending a
+       <link linkend="protocol-flow-ext-query">sync message</link>
+       failed.
+       Note that the message is not itself flushed to the server automatically;
+       use <function>PQflush</function> if necessary.
+      </para>
+     </listitem>
+    </varlistentry>
+
     <varlistentry id="libpq-PQsendFlushRequest">
      <term><function>PQsendFlushRequest</function><indexterm><primary>PQsendFlushRequest</primary></indexterm></term>
 
-      <listitem>
-       <para>
-        Sends a request for the server to flush its output buffer.
+     <listitem>
+      <para>
+       Sends a request for the server to flush its output buffer.
 <synopsis>
 int PQsendFlushRequest(PGconn *conn);
 </synopsis>
-       </para>
+      </para>
 
-       <para>
-        Returns 1 for success.  Returns 0 on any failure.
-       </para>
-       <para>
-        The server flushes its output buffer automatically as a result of
-        <function>PQpipelineSync</function> being called, or
-        on any request when not in pipeline mode; this function is useful
-        to cause the server to flush its output buffer in pipeline mode
-        without establishing a synchronization point.
-        Note that the request is not itself flushed to the server automatically;
-        use <function>PQflush</function> if necessary.
-       </para>
-      </listitem>
-     </varlistentry>
+      <para>
+       Returns 1 for success.  Returns 0 on any failure.
+      </para>
+      <para>
+       The server flushes its output buffer automatically as a result of
+       <function>PQpipelineSync</function> being called, or
+       on any request when not in pipeline mode; this function is useful
+       to cause the server to flush its output buffer in pipeline mode
+       without establishing a synchronization point.
+       Note that the request is not itself flushed to the server automatically;
+       use <function>PQflush</function> if necessary.
+      </para>
+     </listitem>
+    </varlistentry>
    </variablelist>
   </sect2>
 
@@ -5787,12 +6069,18 @@ UPDATE mytable SET x = x + 1 WHERE id = 42;
   </sect2>
  </sect1>
 
+ <!-- keep this not-too-apropos sect1 ID for stability of doc URLs -->
  <sect1 id="libpq-single-row-mode">
-  <title>Retrieving Query Results Row-by-Row</title>
+  <title>Retrieving Query Results in Chunks</title>
 
   <indexterm zone="libpq-single-row-mode">
    <primary>libpq</primary>
    <secondary>single-row mode</secondary>
+  </indexterm>
+
+  <indexterm zone="libpq-single-row-mode">
+   <primary>libpq</primary>
+   <secondary>chunked mode</secondary>
   </indexterm>
 
   <para>
@@ -5801,22 +6089,29 @@ UPDATE mytable SET x = x + 1 WHERE id = 42;
    <structname>PGresult</structname>.  This can be unworkable for commands
    that return a large number of rows.  For such cases, applications can use
    <xref linkend="libpq-PQsendQuery"/> and <xref linkend="libpq-PQgetResult"/> in
-   <firstterm>single-row mode</firstterm>.  In this mode, the result row(s) are
-   returned to the application one at a time, as they are received from the
-   server.
+   <firstterm>single-row mode</firstterm> or <firstterm>chunked
+   mode</firstterm>.  In these modes, result row(s) are returned to the
+   application as they are received from the server, one at a time for
+   single-row mode or in groups for chunked mode.
   </para>
 
   <para>
-   To enter single-row mode, call <xref linkend="libpq-PQsetSingleRowMode"/>
+   To enter one of these modes, call <xref linkend="libpq-PQsetSingleRowMode"/>
+    or <xref linkend="libpq-PQsetChunkedRowsMode"/>
    immediately after a successful call of <xref linkend="libpq-PQsendQuery"/>
    (or a sibling function).  This mode selection is effective only for the
    currently executing query.  Then call <xref linkend="libpq-PQgetResult"/>
    repeatedly, until it returns null, as documented in <xref
    linkend="libpq-async"/>.  If the query returns any rows, they are returned
-   as individual <structname>PGresult</structname> objects, which look like
+   as one or more <structname>PGresult</structname> objects, which look like
    normal query results except for having status code
-   <literal>PGRES_SINGLE_TUPLE</literal> instead of
-   <literal>PGRES_TUPLES_OK</literal>.  After the last row, or immediately if
+   <literal>PGRES_SINGLE_TUPLE</literal> for single-row mode or
+   <literal>PGRES_TUPLES_CHUNK</literal> for chunked mode, instead of
+   <literal>PGRES_TUPLES_OK</literal>.  There is exactly one result row in
+   each <literal>PGRES_SINGLE_TUPLE</literal> object, while
+   a <literal>PGRES_TUPLES_CHUNK</literal> object contains at least one
+   row but not more than the specified number of rows per chunk.
+   After the last row, or immediately if
    the query returns zero rows, a zero-row object with status
    <literal>PGRES_TUPLES_OK</literal> is returned; this is the signal that no
    more rows will arrive.  (But note that it is still necessary to continue
@@ -5828,9 +6123,9 @@ UPDATE mytable SET x = x + 1 WHERE id = 42;
   </para>
 
   <para>
-   When using pipeline mode, single-row mode needs to be activated for each
-   query in the pipeline before retrieving results for that query
-   with <function>PQgetResult</function>.
+   When using pipeline mode, single-row or chunked mode needs to be
+   activated for each query in the pipeline before retrieving results for
+   that query with <function>PQgetResult</function>.
    See <xref linkend="libpq-pipeline-mode"/> for more information.
   </para>
 
@@ -5861,6 +6156,36 @@ int PQsetSingleRowMode(PGconn *conn);
       </para>
      </listitem>
     </varlistentry>
+
+    <varlistentry id="libpq-PQsetChunkedRowsMode">
+     <term><function>PQsetChunkedRowsMode</function><indexterm><primary>PQsetChunkedRowsMode</primary></indexterm></term>
+
+     <listitem>
+      <para>
+       Select chunked mode for the currently-executing query.
+
+<synopsis>
+int PQsetChunkedRowsMode(PGconn *conn, int chunkSize);
+</synopsis>
+      </para>
+
+      <para>
+       This function is similar to
+       <xref linkend="libpq-PQsetSingleRowMode"/>, except that it
+       specifies retrieval of up to <replaceable>chunkSize</replaceable> rows
+       per <structname>PGresult</structname>, not necessarily just one row.
+       This function can only be called immediately after
+       <xref linkend="libpq-PQsendQuery"/> or one of its sibling functions,
+       before any other operation on the connection such as
+       <xref linkend="libpq-PQconsumeInput"/> or
+       <xref linkend="libpq-PQgetResult"/>.  If called at the correct time,
+       the function activates chunked mode for the current query and
+       returns 1.  Otherwise the mode stays unchanged and the function
+       returns 0.  In any case, the mode reverts to normal after
+       completion of the current query.
+      </para>
+     </listitem>
+    </varlistentry>
    </variablelist>
   </para>
 
@@ -5869,9 +6194,10 @@ int PQsetSingleRowMode(PGconn *conn);
     While processing a query, the server may return some rows and then
     encounter an error, causing the query to be aborted.  Ordinarily,
     <application>libpq</application> discards any such rows and reports only the
-    error.  But in single-row mode, those rows will have already been
-    returned to the application.  Hence, the application will see some
-    <literal>PGRES_SINGLE_TUPLE</literal> <structname>PGresult</structname>
+    error.  But in single-row or chunked mode, some rows may have already
+    been returned to the application. Hence, the application will see some
+    <literal>PGRES_SINGLE_TUPLE</literal> or <literal>PGRES_TUPLES_CHUNK</literal>
+    <structname>PGresult</structname>
     objects followed by a <literal>PGRES_FATAL_ERROR</literal> object.  For
     proper transactional behavior, the application must be designed to
     discard or undo whatever has been done with the previously-processed
@@ -5885,14 +6211,429 @@ int PQsetSingleRowMode(PGconn *conn);
   <title>Canceling Queries in Progress</title>
 
   <indexterm zone="libpq-cancel">
-   <primary>canceling</primary>
-   <secondary>SQL command</secondary>
+   <primary>canceling SQL queries</primary>
+  </indexterm>
+  <indexterm zone="libpq-cancel">
+   <primary>query cancellation</primary>
   </indexterm>
 
-  <para>
-   A client application can request cancellation of a command that is
-   still being processed by the server, using the functions described in
-   this section.
+  <sect2 id="libpq-cancel-functions">
+   <title>Functions for Sending Cancel Requests</title>
+   <variablelist>
+    <varlistentry id="libpq-PQcancelCreate">
+     <term><function>PQcancelCreate</function><indexterm><primary>PQcancelCreate</primary></indexterm></term>
+
+     <listitem>
+      <para>
+       Prepares a connection over which a cancel request can be sent.
+<synopsis>
+PGcancelConn *PQcancelCreate(PGconn *conn);
+</synopsis>
+      </para>
+
+      <para>
+       <xref linkend="libpq-PQcancelCreate"/> creates a
+       <structname>PGcancelConn</structname><indexterm><primary>PGcancelConn</primary></indexterm>
+       object, but it won't instantly start sending a cancel request over this
+       connection. A cancel request can be sent over this connection in a
+       blocking manner using <xref linkend="libpq-PQcancelBlocking"/> and in a
+       non-blocking manner using <xref linkend="libpq-PQcancelStart"/>.
+       The return value can be passed to <xref linkend="libpq-PQcancelStatus"/>
+       to check if the <structname>PGcancelConn</structname> object was
+       created successfully. The <structname>PGcancelConn</structname> object
+       is an opaque structure that is not meant to be accessed directly by the
+       application. This <structname>PGcancelConn</structname> object can be
+       used to cancel the query that's running on the original connection in a
+       thread-safe way.
+      </para>
+
+      <para>
+       Many connection parameters of the original client will be reused when
+       setting up the connection for the cancel request. Importantly, if the
+       original connection requires encryption of the connection and/or
+       verification of the target host (using <literal>sslmode</literal> or
+       <literal>gssencmode</literal>), then the connection for the cancel
+       request is made with these same requirements. Any connection options
+       that are only used during authentication or after authentication of the
+       client are ignored though, because cancellation requests do not require
+       authentication and the connection is closed right after the cancellation
+       request is submitted.
+      </para>
+
+      <para>
+       Note that when <function>PQcancelCreate</function> returns a non-null
+       pointer, you must call <xref linkend="libpq-PQcancelFinish"/> when you
+       are finished with it, in order to dispose of the structure and any
+       associated memory blocks. This must be done even if the cancel request
+       failed or was abandoned.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry id="libpq-PQcancelBlocking">
+     <term><function>PQcancelBlocking</function><indexterm><primary>PQcancelBlocking</primary></indexterm></term>
+
+     <listitem>
+      <para>
+       Requests that the server abandons processing of the current command
+       in a blocking manner.
+<synopsis>
+int PQcancelBlocking(PGcancelConn *cancelConn);
+</synopsis>
+      </para>
+
+      <para>
+       The request is made over the given <structname>PGcancelConn</structname>,
+       which needs to be created with <xref linkend="libpq-PQcancelCreate"/>.
+       The return value of <xref linkend="libpq-PQcancelBlocking"/>
+       is 1 if the cancel request was successfully
+       dispatched and 0 if not. If it was unsuccessful, the error message can be
+       retrieved using <xref linkend="libpq-PQcancelErrorMessage"/>.
+      </para>
+
+      <para>
+       Successful dispatch of the cancellation is no guarantee that the request
+       will have any effect, however. If the cancellation is effective, the
+       command being canceled will terminate early and return an error result.
+       If the cancellation fails (say, because the server was already done
+       processing the command), then there will be no visible result at all.
+      </para>
+
+     </listitem>
+    </varlistentry>
+
+    <varlistentry id="libpq-PQcancelStart">
+     <term><function>PQcancelStart</function><indexterm><primary>PQcancelStart</primary></indexterm></term>
+     <term><function>PQcancelPoll</function><indexterm><primary>PQcancelPoll</primary></indexterm></term>
+
+     <listitem>
+      <para>
+       Requests that the server abandons processing of the current command
+       in a non-blocking manner.
+<synopsis>
+int PQcancelStart(PGcancelConn *cancelConn);
+
+PostgresPollingStatusType PQcancelPoll(PGcancelConn *cancelConn);
+</synopsis>
+      </para>
+
+      <para>
+       The request is made over the given <structname>PGcancelConn</structname>,
+       which needs to be created with <xref linkend="libpq-PQcancelCreate"/>.
+       The return value of <xref linkend="libpq-PQcancelStart"/>
+       is 1 if the cancellation request could be started and 0 if not.
+       If it was unsuccessful, the error message can be
+       retrieved using <xref linkend="libpq-PQcancelErrorMessage"/>.
+      </para>
+
+      <para>
+       If <function>PQcancelStart</function> succeeds, the next stage
+       is to poll <application>libpq</application> so that it can proceed with
+       the cancel connection sequence.
+       Use <xref linkend="libpq-PQcancelSocket"/> to obtain the descriptor of the
+       socket underlying the database connection.
+       (Caution: do not assume that the socket remains the same
+       across <function>PQcancelPoll</function> calls.)
+       Loop thus: If <function>PQcancelPoll(cancelConn)</function> last returned
+       <symbol>PGRES_POLLING_READING</symbol>, wait until the socket is ready to
+       read (as indicated by <function>select()</function>,
+       <function>poll()</function>, or similar system function).
+       Then call <function>PQcancelPoll(cancelConn)</function> again.
+       Conversely, if <function>PQcancelPoll(cancelConn)</function> last returned
+       <symbol>PGRES_POLLING_WRITING</symbol>, wait until the socket is ready
+       to write, then call <function>PQcancelPoll(cancelConn)</function> again.
+       On the first iteration, i.e., if you have yet to call
+       <function>PQcancelPoll(cancelConn)</function>, behave as if it last returned
+       <symbol>PGRES_POLLING_WRITING</symbol>.  Continue this loop until
+       <function>PQcancelPoll(cancelConn)</function> returns
+       <symbol>PGRES_POLLING_FAILED</symbol>, indicating the connection procedure
+       has failed, or <symbol>PGRES_POLLING_OK</symbol>, indicating cancel
+       request was successfully dispatched.
+      </para>
+
+      <para>
+       Successful dispatch of the cancellation is no guarantee that the request
+       will have any effect, however. If the cancellation is effective, the
+       command being canceled will terminate early and return an error result.
+       If the cancellation fails (say, because the server was already done
+       processing the command), then there will be no visible result at all.
+      </para>
+
+      <para>
+       At any time during connection, the status of the connection can be
+       checked by calling <xref linkend="libpq-PQcancelStatus"/>.
+       If this call returns <symbol>CONNECTION_BAD</symbol>, then
+       the cancel procedure has failed; if the call returns
+       <function>CONNECTION_OK</function>, then cancel request was
+       successfully dispatched.
+       Both of these states are equally detectable from the return value of
+       <function>PQcancelPoll</function>, described above.
+       Other states might also occur during (and only during) an asynchronous
+       connection procedure.
+       These indicate the current stage of the connection procedure and might
+       be useful to provide feedback to the user for example.
+       These statuses are:
+
+       <variablelist>
+        <varlistentry id="libpq-cancel-connection-allocated">
+         <term><symbol>CONNECTION_ALLOCATED</symbol></term>
+         <listitem>
+          <para>
+           Waiting for a call to <xref linkend="libpq-PQcancelStart"/> or
+           <xref linkend="libpq-PQcancelBlocking"/>, to actually open the
+           socket. This is the connection state right after
+           calling <xref linkend="libpq-PQcancelCreate"/>
+           or <xref linkend="libpq-PQcancelReset"/>. No connection to the
+           server has been initiated yet at this point. To actually start
+           sending the cancel request use <xref linkend="libpq-PQcancelStart"/> or
+           <xref linkend="libpq-PQcancelBlocking"/>.
+          </para>
+         </listitem>
+        </varlistentry>
+
+        <varlistentry id="libpq-cancel-connection-started">
+         <term><symbol>CONNECTION_STARTED</symbol></term>
+         <listitem>
+          <para>
+           Waiting for connection to be made.
+          </para>
+         </listitem>
+        </varlistentry>
+
+        <varlistentry id="libpq-cancel-connection-made">
+         <term><symbol>CONNECTION_MADE</symbol></term>
+         <listitem>
+          <para>
+           Connection OK; waiting to send.
+          </para>
+         </listitem>
+        </varlistentry>
+
+        <varlistentry id="libpq-cancel-connection-awaiting-response">
+         <term><symbol>CONNECTION_AWAITING_RESPONSE</symbol></term>
+         <listitem>
+          <para>
+           Waiting for a response from the server.
+          </para>
+         </listitem>
+        </varlistentry>
+
+        <varlistentry id="libpq-cancel-connection-ssl-startup">
+         <term><symbol>CONNECTION_SSL_STARTUP</symbol></term>
+         <listitem>
+          <para>
+           Negotiating SSL encryption.
+          </para>
+         </listitem>
+        </varlistentry>
+
+        <varlistentry id="libpq-cancel-connection-gss-startup">
+         <term><symbol>CONNECTION_GSS_STARTUP</symbol></term>
+         <listitem>
+          <para>
+           Negotiating GSS encryption.
+          </para>
+         </listitem>
+        </varlistentry>
+       </variablelist>
+
+       Note that, although these constants will remain (in order to maintain
+       compatibility), an application should never rely upon these occurring in a
+       particular order, or at all, or on the status always being one of these
+       documented values. An application might do something like this:
+<programlisting>
+switch(PQcancelStatus(conn))
+{
+        case CONNECTION_STARTED:
+            feedback = "Connecting...";
+            break;
+
+        case CONNECTION_MADE:
+            feedback = "Connected to server...";
+            break;
+.
+.
+.
+        default:
+            feedback = "Connecting...";
+}
+</programlisting>
+      </para>
+
+      <para>
+       The <literal>connect_timeout</literal> connection parameter is ignored
+       when using <function>PQcancelPoll</function>; it is the application's
+       responsibility to decide whether an excessive amount of time has elapsed.
+       Otherwise, <function>PQcancelStart</function> followed by a
+       <function>PQcancelPoll</function> loop is equivalent to
+       <xref linkend="libpq-PQcancelBlocking"/>.
+      </para>
+
+     </listitem>
+    </varlistentry>
+
+    <varlistentry id="libpq-PQcancelStatus">
+     <term><function>PQcancelStatus</function><indexterm><primary>PQcancelStatus</primary></indexterm></term>
+
+     <listitem>
+      <para>
+       Returns the status of the cancel connection.
+<synopsis>
+ConnStatusType PQcancelStatus(const PGcancelConn *cancelConn);
+</synopsis>
+      </para>
+
+      <para>
+       The status can be one of a number of values.  However, only three of
+       these are seen outside of an asynchronous cancel procedure:
+       <literal>CONNECTION_ALLOCATED</literal>,
+       <literal>CONNECTION_OK</literal> and
+       <literal>CONNECTION_BAD</literal>. The initial state of a
+       <function>PGcancelConn</function> that's successfully created using
+       <xref linkend="libpq-PQcancelCreate"/> is <literal>CONNECTION_ALLOCATED</literal>.
+       A cancel request that was successfully dispatched
+       has the status <literal>CONNECTION_OK</literal>.  A failed
+       cancel attempt is signaled by status
+       <literal>CONNECTION_BAD</literal>.  An OK status will
+       remain so until <xref linkend="libpq-PQcancelFinish"/> or
+       <xref linkend="libpq-PQcancelReset"/> is called.
+      </para>
+
+      <para>
+       See the entry for <xref linkend="libpq-PQcancelStart"/> with regards
+       to other status codes that might be returned.
+      </para>
+
+      <para>
+       Successful dispatch of the cancellation is no guarantee that the request
+       will have any effect, however. If the cancellation is effective, the
+       command being canceled will terminate early and return an error result.
+       If the cancellation fails (say, because the server was already done
+       processing the command), then there will be no visible result at all.
+      </para>
+
+     </listitem>
+    </varlistentry>
+
+    <varlistentry id="libpq-PQcancelSocket">
+     <term><function>PQcancelSocket</function><indexterm><primary>PQcancelSocket</primary></indexterm></term>
+
+     <listitem>
+      <para>
+       Obtains the file descriptor number of the cancel connection socket to
+       the server.
+<synopsis>
+int PQcancelSocket(const PGcancelConn *cancelConn);
+</synopsis>
+      </para>
+
+      <para>
+       A valid descriptor will be greater than or equal to 0;
+       a result of -1 indicates that no server connection is currently open.
+       This might change as a result of calling any of the functions
+       in this section on the <structname>PGcancelConn</structname>
+       (except for <xref linkend="libpq-PQcancelErrorMessage"/> and
+       <function>PQcancelSocket</function> itself).
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry id="libpq-PQcancelErrorMessage">
+     <term>
+      <function>PQcancelErrorMessage</function><indexterm><primary>PQcancelErrorMessage</primary></indexterm>
+      <indexterm><primary>error message</primary><secondary>in <structname>PGcancelConn</structname></secondary></indexterm>
+     </term>
+
+     <listitem>
+      <para>
+       Returns the error message most recently generated by an
+       operation on the cancel connection.
+<synopsis>
+char *PQcancelErrorMessage(const PGcancelConn *cancelconn);
+</synopsis>
+      </para>
+
+      <para>
+       Nearly all <application>libpq</application> functions that take a
+       <structname>PGcancelConn</structname> will set a message for
+       <xref linkend="libpq-PQcancelErrorMessage"/> if they fail.
+       Note that by <application>libpq</application> convention,
+       a nonempty <xref linkend="libpq-PQcancelErrorMessage"/> result
+       can consist of multiple lines, and will include a trailing newline.
+       The caller should not free the result directly.
+       It will be freed when the associated
+       <structname>PGcancelConn</structname> handle is passed to
+       <xref linkend="libpq-PQcancelFinish"/>.  The result string should not be
+       expected to remain the same across operations on the
+       <literal>PGcancelConn</literal> structure.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry id="libpq-PQcancelFinish">
+     <term><function>PQcancelFinish</function><indexterm><primary>PQcancelFinish</primary></indexterm></term>
+     <listitem>
+      <para>
+       Closes the cancel connection (if it did not finish sending the
+       cancel request yet). Also frees memory used by the
+       <structname>PGcancelConn</structname> object.
+<synopsis>
+void PQcancelFinish(PGcancelConn *cancelConn);
+</synopsis>
+      </para>
+
+      <para>
+       Note that even if the cancel attempt fails (as
+       indicated by <xref linkend="libpq-PQcancelStatus"/>), the
+       application should call <xref linkend="libpq-PQcancelFinish"/>
+       to free the memory used by the <structname>PGcancelConn</structname>
+       object.
+       The <structname>PGcancelConn</structname> pointer must not be used
+       again after <xref linkend="libpq-PQcancelFinish"/> has been called.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry id="libpq-PQcancelReset">
+     <term><function>PQcancelReset</function><indexterm><primary>PQcancelReset</primary></indexterm></term>
+     <listitem>
+      <para>
+       Resets the <symbol>PGcancelConn</symbol> so it can be reused for a new
+       cancel connection.
+<synopsis>
+void PQcancelReset(PGcancelConn *cancelConn);
+</synopsis>
+      </para>
+
+      <para>
+       If the <symbol>PGcancelConn</symbol> is currently used to send a cancel
+       request, then this connection is closed. It will then prepare the
+       <symbol>PGcancelConn</symbol> object such that it can be used to send a
+       new cancel request.
+      </para>
+
+      <para>
+       This can be used to create one <structname>PGcancelConn</structname>
+       for a <structname>PGconn</structname> and reuse it multiple times
+       throughout the lifetime of the original <structname>PGconn</structname>.
+      </para>
+     </listitem>
+    </varlistentry>
+   </variablelist>
+  </sect2>
+
+  <sect2 id="libpq-cancel-deprecated">
+   <title>Obsolete Functions for Sending Cancel Requests</title>
+
+   <para>
+    These functions represent older methods of sending cancel requests.
+    Although they still work, they are deprecated due to not sending the cancel
+    requests in an encrypted manner, even when the original connection
+    specified <literal>sslmode</literal> or <literal>gssencmode</literal> to
+    require encryption. Thus these older methods are heavily discouraged from
+    being used in new code, and it is recommended to change existing code to
+    use the new functions instead.
+   </para>
 
    <variablelist>
     <varlistentry id="libpq-PQgetCancel">
@@ -5901,7 +6642,7 @@ int PQsetSingleRowMode(PGconn *conn);
      <listitem>
       <para>
        Creates a data structure containing the information needed to cancel
-       a command issued through a particular database connection.
+       a command using <xref linkend="libpq-PQcancel"/>.
 <synopsis>
 PGcancel *PQgetCancel(PGconn *conn);
 </synopsis>
@@ -5909,10 +6650,11 @@ PGcancel *PQgetCancel(PGconn *conn);
 
       <para>
        <xref linkend="libpq-PQgetCancel"/> creates a
-       <structname>PGcancel</structname><indexterm><primary>PGcancel</primary></indexterm> object
-       given a <structname>PGconn</structname> connection object.  It will return
-       <symbol>NULL</symbol> if the given <parameter>conn</parameter> is <symbol>NULL</symbol> or an invalid
-       connection.  The <structname>PGcancel</structname> object is an opaque
+       <structname>PGcancel</structname><indexterm><primary>PGcancel</primary></indexterm>
+       object given a <structname>PGconn</structname> connection object.
+       It will return <symbol>NULL</symbol> if the given <parameter>conn</parameter>
+       is <symbol>NULL</symbol> or an invalid connection.
+       The <structname>PGcancel</structname> object is an opaque
        structure that is not meant to be accessed directly by the
        application; it can only be passed to <xref linkend="libpq-PQcancel"/>
        or <xref linkend="libpq-PQfreeCancel"/>.
@@ -5943,36 +6685,38 @@ void PQfreeCancel(PGcancel *cancel);
 
      <listitem>
       <para>
-       Requests that the server abandon processing of the current command.
+       <xref linkend="libpq-PQcancel"/> is a deprecated and insecure
+       variant of <xref linkend="libpq-PQcancelBlocking"/>, but one that can be
+       used safely from within a signal handler.
 <synopsis>
 int PQcancel(PGcancel *cancel, char *errbuf, int errbufsize);
 </synopsis>
       </para>
 
       <para>
-       The return value is 1 if the cancel request was successfully
-       dispatched and 0 if not.  If not, <parameter>errbuf</parameter> is filled
-       with an explanatory error message.  <parameter>errbuf</parameter>
-       must be a char array of size <parameter>errbufsize</parameter> (the
-       recommended size is 256 bytes).
+       <xref linkend="libpq-PQcancel"/> only exists because of backwards
+       compatibility reasons. <xref linkend="libpq-PQcancelBlocking"/> should be
+       used instead. The only benefit that <xref linkend="libpq-PQcancel"/> has
+       is that it can be safely invoked from a signal handler, if the
+       <parameter>errbuf</parameter> is a local variable in the signal handler.
+       However, this is generally not considered a big enough benefit to be
+       worth the security issues that this function has.
       </para>
 
       <para>
-       Successful dispatch is no guarantee that the request will have
-       any effect, however.  If the cancellation is effective, the current
-       command will terminate early and return an error result.  If the
-       cancellation fails (say, because the server was already done
-       processing the command), then there will be no visible result at
-       all.
+       The <structname>PGcancel</structname> object is read-only as far as
+       <xref linkend="libpq-PQcancel"/> is concerned, so it can also be invoked
+       from a thread that is separate from the one manipulating the
+       <structname>PGconn</structname> object.
       </para>
 
       <para>
-       <xref linkend="libpq-PQcancel"/> can safely be invoked from a signal
-       handler, if the <parameter>errbuf</parameter> is a local variable in the
-       signal handler.  The <structname>PGcancel</structname> object is read-only
-       as far as <xref linkend="libpq-PQcancel"/> is concerned, so it can
-       also be invoked from a thread that is separate from the one
-       manipulating the <structname>PGconn</structname> object.
+       The return value of <xref linkend="libpq-PQcancel"/> is 1 if the
+       cancel request was successfully dispatched and 0 if not.
+       If not, <parameter>errbuf</parameter> is filled with an explanatory
+       error message.
+       <parameter>errbuf</parameter> must be a char array of size
+       <parameter>errbufsize</parameter> (the recommended size is 256 bytes).
       </para>
      </listitem>
     </varlistentry>
@@ -5984,11 +6728,19 @@ int PQcancel(PGcancel *cancel, char *errbuf, int errbufsize);
 
      <listitem>
       <para>
-       <xref linkend="libpq-PQrequestCancel"/> is a deprecated variant of
-       <xref linkend="libpq-PQcancel"/>.
+       <xref linkend="libpq-PQrequestCancel"/> is a deprecated and insecure
+       variant of <xref linkend="libpq-PQcancelBlocking"/>.
 <synopsis>
 int PQrequestCancel(PGconn *conn);
 </synopsis>
+      </para>
+
+      <para>
+       <xref linkend="libpq-PQrequestCancel"/> only exists because of backwards
+       compatibility reasons. <xref linkend="libpq-PQcancelBlocking"/> should be
+       used instead. There is no benefit to using
+       <xref linkend="libpq-PQrequestCancel"/> over
+       <xref linkend="libpq-PQcancelBlocking"/>.
       </para>
 
       <para>
@@ -6005,8 +6757,7 @@ int PQrequestCancel(PGconn *conn);
      </listitem>
     </varlistentry>
    </variablelist>
-  </para>
-
+  </sect2>
  </sect1>
 
  <sect1 id="libpq-fastpath">
@@ -7008,6 +7759,45 @@ char *PQencryptPasswordConn(PGconn *conn, const char *passwd, const char *user, 
     </listitem>
    </varlistentry>
 
+   <varlistentry id="libpq-PQchangePassword">
+    <term><function>PQchangePassword</function><indexterm><primary>PQchangePassword</primary></indexterm></term>
+
+    <listitem>
+     <para>
+      Changes a <productname>PostgreSQL</productname> password.
+<synopsis>
+PGresult *PQchangePassword(PGconn *conn, const char *user, const char *passwd);
+</synopsis>
+      This function uses <function>PQencryptPasswordConn</function>
+      to build and execute the command <literal>ALTER USER ... PASSWORD
+      '...'</literal>, thereby changing the user's password. It exists for
+      the same reason as <function>PQencryptPasswordConn</function>, but
+      is more convenient as it both builds and runs the command for you.
+      <xref linkend="libpq-PQencryptPasswordConn"/> is passed a
+      <symbol>NULL</symbol> for the algorithm argument, hence encryption is
+      done according to the server's <xref linkend="guc-password-encryption"/>
+      setting.
+     </para>
+
+     <para>
+      The <parameter>user</parameter> and <parameter>passwd</parameter> arguments
+      are the SQL name of the target user, and the new cleartext password.
+     </para>
+
+     <para>
+      Returns a <structname>PGresult</structname> pointer representing
+      the result of the <literal>ALTER USER</literal> command, or
+      a null pointer if the routine failed before issuing any command.
+      The <xref linkend="libpq-PQresultStatus"/> function should be called
+      to check the return value for any errors (including the value of a null
+      pointer, in which case it will return
+      <symbol>PGRES_FATAL_ERROR</symbol>). Use
+      <xref linkend="libpq-PQerrorMessage"/> to get more information about
+      such errors.
+     </para>
+    </listitem>
+   </varlistentry>
+
    <varlistentry id="libpq-PQencryptPassword">
     <term><function>PQencryptPassword</function><indexterm><primary>PQencryptPassword</primary></indexterm></term>
 
@@ -7216,7 +8006,7 @@ size_t PQresultMemorySize(const PGresult *res);
      <para>
       This value is the sum of all <function>malloc</function> requests
       associated with the <structname>PGresult</structname> object, that is,
-      all the space that will be freed by <xref linkend="libpq-PQclear"/>.
+      all the memory that will be freed by <xref linkend="libpq-PQclear"/>.
       This information can be useful for managing memory consumption.
      </para>
     </listitem>
@@ -7274,6 +8064,25 @@ int PQlibVersion(void);
        on version 9.1 or later.
       </para>
      </note>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="libpq-PQgetCurrentTimeUSec">
+    <term><function>PQgetCurrentTimeUSec</function><indexterm><primary>PQgetCurrentTimeUSec</primary></indexterm></term>
+
+    <listitem>
+     <para>
+      Retrieves the current time, expressed as the number of microseconds
+      since the Unix epoch (that is, <type>time_t</type> times 1 million).
+<synopsis>
+pg_usec_time_t PQgetCurrentTimeUSec(void);
+</synopsis>
+     </para>
+
+     <para>
+      This is primarily useful for calculating timeout values to use with
+      <xref linkend="libpq-PQsocketPoll"/>.
+     </para>
     </listitem>
    </varlistentry>
 
@@ -7447,7 +8256,7 @@ defaultNoticeProcessor(void *arg, const char *message)
        is called.  It is the ideal time to initialize any
        <literal>instanceData</literal> an event procedure may need.  Only one
        register event will be fired per event handler per connection.  If the
-       event procedure fails (returns zero), the registration is cancelled.
+       event procedure fails (returns zero), the registration is canceled.
 
 <synopsis>
 typedef struct
@@ -7971,6 +8780,16 @@ myEventProc(PGEventId evtId, void *evtInfo, void *passThrough)
       </indexterm>
       <envar>PGHOST</envar> behaves the same as the <xref
       linkend="libpq-connect-host"/> connection parameter.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      <indexterm>
+       <primary><envar>PGSSLNEGOTIATION</envar></primary>
+      </indexterm>
+      <envar>PGSSLNEGOTIATION</envar> behaves the same as the <xref
+      linkend="libpq-connect-sslnegotiation"/> connection parameter.
      </para>
     </listitem>
 
@@ -8556,7 +9375,7 @@ user=admin
    LDAP query will be performed. The result must be a list of
    <literal>keyword = value</literal> pairs which will be used to set
    connection options.  The URL must conform to
-   <ulink url="https://tools.ietf.org/html/rfc1959">RFC 1959</ulink>
+   <ulink url="https://datatracker.ietf.org/doc/html/rfc1959">RFC 1959</ulink>
    and be of the form
 <synopsis>
 ldap://[<replaceable>hostname</replaceable>[:<replaceable>port</replaceable>]]/<replaceable>search_base</replaceable>?<replaceable>attribute</replaceable>?<replaceable>search_scope</replaceable>?<replaceable>filter</replaceable>
@@ -8700,7 +9519,7 @@ ldap://ldap.acme.com/cn=dbserver,cn=hosts?pgconnectinfo?base?(objectclass=*)
    <para>
     For backward compatibility with earlier versions of PostgreSQL, the host
     IP address is verified in a manner different
-    from <ulink url="https://tools.ietf.org/html/rfc6125">RFC 6125</ulink>.
+    from <ulink url="https://datatracker.ietf.org/doc/html/rfc6125">RFC 6125</ulink>.
     The host IP address is always matched against <literal>dNSName</literal>
     SANs as well as <literal>iPAddress</literal> SANs, and can be matched
     against the Common Name attribute if no relevant SANs exist.
@@ -9129,14 +9948,28 @@ void PQinitSSL(int do_ssl);
   </indexterm>
 
   <para>
-   <application>libpq</application> is reentrant and thread-safe by default.
-   You might need to use special compiler command-line
-   options when you compile your application code.  Refer to your
-   system's documentation for information about how to build
-   thread-enabled applications, or look in
-   <filename>src/Makefile.global</filename> for <literal>PTHREAD_CFLAGS</literal>
-   and <literal>PTHREAD_LIBS</literal>.  This function allows the querying of
-   <application>libpq</application>'s thread-safe status:
+   As of version 17, <application>libpq</application> is always reentrant and thread-safe.
+   However, one restriction is that no two threads attempt to manipulate
+   the same <structname>PGconn</structname> object at the same time. In particular,
+   you cannot issue concurrent commands from different threads through
+   the same connection object. (If you need to run concurrent commands,
+   use multiple connections.)
+  </para>
+
+  <para>
+   <structname>PGresult</structname> objects are normally read-only after creation,
+   and so can be passed around freely between threads.  However, if you use
+   any of the <structname>PGresult</structname>-modifying functions described in
+   <xref linkend="libpq-misc"/> or <xref linkend="libpq-events"/>, it's up
+   to you to avoid concurrent operations on the same <structname>PGresult</structname>,
+   too.
+  </para>
+
+  <para>
+   In earlier versions, <application>libpq</application> could be compiled
+   with or without thread support, depending on compiler options. This
+   function allows the querying of <application>libpq</application>'s
+   thread-safe status:
   </para>
 
   <variablelist>
@@ -9154,34 +9987,17 @@ int PQisthreadsafe();
 
      <para>
       Returns 1 if the <application>libpq</application> is thread-safe
-      and 0 if it is not.
+      and 0 if it is not. Always returns 1 on version 17 and above.
      </para>
     </listitem>
    </varlistentry>
   </variablelist>
 
   <para>
-   One thread restriction is that no two threads attempt to manipulate
-   the same <structname>PGconn</structname> object at the same time. In particular,
-   you cannot issue concurrent commands from different threads through
-   the same connection object. (If you need to run concurrent commands,
-   use multiple connections.)
-  </para>
-
-  <para>
-   <structname>PGresult</structname> objects are normally read-only after creation,
-   and so can be passed around freely between threads.  However, if you use
-   any of the <structname>PGresult</structname>-modifying functions described in
-   <xref linkend="libpq-misc"/> or <xref linkend="libpq-events"/>, it's up
-   to you to avoid concurrent operations on the same <structname>PGresult</structname>,
-   too.
-  </para>
-
-  <para>
    The deprecated functions <xref linkend="libpq-PQrequestCancel"/> and
    <xref linkend="libpq-PQoidStatus"/> are not thread-safe and should not be
    used in multithread programs.  <xref linkend="libpq-PQrequestCancel"/>
-   can be replaced by <xref linkend="libpq-PQcancel"/>.
+   can be replaced by <xref linkend="libpq-PQcancelBlocking"/>.
    <xref linkend="libpq-PQoidStatus"/> can be replaced by
    <xref linkend="libpq-PQoidValue"/>.
   </para>

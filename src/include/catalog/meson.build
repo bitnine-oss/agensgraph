@@ -1,5 +1,9 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
+# Note: the order of this list determines the order in which the catalog
+# header files are assembled into postgres.bki.  BKI_BOOTSTRAP catalogs
+# must appear first, and pg_statistic before pg_statistic_ext_data, and
+# there are reputedly other, undocumented ordering dependencies.
 catalog_headers = [
   'pg_proc.h',
   'pg_type.h',
@@ -67,6 +71,7 @@ catalog_headers = [
   'pg_subscription_rel.h',
 ]
 
+# The .dat files we need can just be listed alphabetically.
 bki_data = [
   'pg_aggregate.dat',
   'pg_am.dat',
@@ -97,8 +102,22 @@ bki_data_f = files(bki_data)
 
 
 input = []
-output_files = ['postgres.bki', 'system_constraints.sql', 'schemapg.h', 'system_fk_info.h']
-output_install = [dir_data, dir_data, dir_include_server / 'catalog', dir_include_server / 'catalog']
+output_files = [
+  'postgres.bki',
+  'system_constraints.sql',
+  'schemapg.h',
+  'syscache_ids.h',
+  'syscache_info.h',
+  'system_fk_info.h',
+]
+output_install = [
+  dir_data,
+  dir_data,
+  dir_include_server / 'catalog',
+  dir_include_server / 'catalog',
+  false,
+  dir_include_server / 'catalog',
+]
 
 foreach h : catalog_headers
   fname = h.split('.h')[0] + '_d.h'
@@ -126,8 +145,7 @@ generated_catalog_headers = custom_target('generated_catalog_headers',
 generated_headers += generated_catalog_headers.to_list()
 
 # autoconf generates the file there, ensure we get a conflict
-generated_sources_ac += {'src/backend/catalog': output_files + ['bki-stamp']}
-generated_sources_ac += {'src/include/catalog': ['header-stamp']}
+generated_sources_ac += {'src/include/catalog': output_files + ['bki-stamp']}
 
 # 'reformat-dat-files' is a convenience target for rewriting the
 # catalog data files in our standard format.  This includes collapsing

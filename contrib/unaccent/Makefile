@@ -12,10 +12,6 @@ PGFILEDESC = "unaccent - text search dictionary that removes accents"
 
 REGRESS = unaccent
 
-# We need a UTF8 database
-ENCODING = UTF8
-NO_LOCALE = 1
-
 ifdef USE_PGXS
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
@@ -30,7 +26,9 @@ endif
 update-unicode: $(srcdir)/unaccent.rules
 
 # Allow running this even without --with-python
-PYTHON ?= python
+ifeq ($(PYTHON),)
+PYTHON = python
+endif
 
 $(srcdir)/unaccent.rules: generate_unaccent_rules.py ../../src/common/unicode/UnicodeData.txt Latin-ASCII.xml
 	$(PYTHON) $< --unicode-data-file $(word 2,$^) --latin-ascii-file $(word 3,$^) >$@

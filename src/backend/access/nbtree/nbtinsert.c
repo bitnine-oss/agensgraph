@@ -3,7 +3,7 @@
  * nbtinsert.c
  *	  Item insertion in Lehman and Yao btrees for Postgres.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -19,12 +19,12 @@
 #include "access/nbtxlog.h"
 #include "access/transam.h"
 #include "access/xloginsert.h"
+#include "common/int.h"
 #include "common/pg_prng.h"
 #include "lib/qunique.h"
 #include "miscadmin.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
-#include "storage/smgr.h"
 
 /* Minimum tree height for application of fastpath optimization */
 #define BTREE_FASTPATH_MIN_LEVEL	2
@@ -378,7 +378,7 @@ _bt_search_insert(Relation rel, Relation heaprel, BTInsertState insertstate)
 
 	/* Cannot use optimization -- descend tree, return proper descent stack */
 	return _bt_search(rel, heaprel, insertstate->itup_key, &insertstate->buf,
-					  BT_WRITE, NULL);
+					  BT_WRITE);
 }
 
 /*
@@ -2165,7 +2165,7 @@ _bt_insert_parent(Relation rel,
 					 BlockNumberIsValid(RelationGetTargetBlock(rel))));
 
 			/* Find the leftmost page at the next level up */
-			pbuf = _bt_get_endpoint(rel, opaque->btpo_level + 1, false, NULL);
+			pbuf = _bt_get_endpoint(rel, opaque->btpo_level + 1, false);
 			/* Set up a phony stack entry pointing there */
 			stack = &fakestack;
 			stack->bts_blkno = BufferGetBlockNumber(pbuf);
@@ -3013,10 +3013,5 @@ _bt_blk_cmp(const void *arg1, const void *arg2)
 	BlockNumber b1 = *((BlockNumber *) arg1);
 	BlockNumber b2 = *((BlockNumber *) arg2);
 
-	if (b1 < b2)
-		return -1;
-	else if (b1 > b2)
-		return 1;
-
-	return 0;
+	return pg_cmp_u32(b1, b2);
 }

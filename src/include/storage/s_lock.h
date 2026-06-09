@@ -86,7 +86,7 @@
  *	when using the SysV semaphore code.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	  src/include/storage/s_lock.h
@@ -414,12 +414,6 @@ typedef unsigned int slock_t;
  * an isync is a sufficient synchronization barrier after a lwarx/stwcx loop.
  * But if the spinlock is in ordinary memory, we can use lwsync instead for
  * better performance.
- *
- * Ordinarily, we'd code the branches here using GNU-style local symbols, that
- * is "1f" referencing "1:" and so on.  But some people run gcc on AIX with
- * IBM's assembler as backend, and IBM's assembler doesn't do local symbols.
- * So hand-code the branch offsets; fortunately, all PPC instructions are
- * exactly 4 bytes each, so it's not too hard to count.
  */
 static __inline__ int
 tas(volatile slock_t *lock)
@@ -430,15 +424,17 @@ tas(volatile slock_t *lock)
 	__asm__ __volatile__(
 "	lwarx   %0,0,%3,1	\n"
 "	cmpwi   %0,0		\n"
-"	bne     $+16		\n"		/* branch to li %1,1 */
+"	bne     1f			\n"
 "	addi    %0,%0,1		\n"
 "	stwcx.  %0,0,%3		\n"
-"	beq     $+12		\n"		/* branch to lwsync */
+"	beq     2f			\n"
+"1: \n"
 "	li      %1,1		\n"
-"	b       $+12		\n"		/* branch to end of asm sequence */
+"	b       3f			\n"
+"2: \n"
 "	lwsync				\n"
 "	li      %1,0		\n"
-
+"3: \n"
 :	"=&b"(_t), "=r"(_res), "+m"(*lock)
 :	"r"(lock)
 :	"memory", "cc");
@@ -666,21 +662,6 @@ tas(volatile slock_t *lock)
 
 #if !defined(HAS_TEST_AND_SET)	/* We didn't trigger above, let's try here */
 
-#if defined(_AIX)	/* AIX */
-/*
- * AIX (POWER)
- */
-#define HAS_TEST_AND_SET
-
-#include <sys/atomic_op.h>
-
-typedef int slock_t;
-
-#define TAS(lock)			_check_lock((slock_t *) (lock), 0, 1)
-#define S_UNLOCK(lock)		_clear_lock((slock_t *) (lock), 0)
-#endif	 /* _AIX */
-
-
 /* These are in sunstudio_(sparc|x86).s */
 
 #if defined(__SUNPRO_C) && (defined(__i386) || defined(__x86_64__) || defined(__sparc__) || defined(__sparc))
@@ -821,7 +802,6 @@ extern int	tas(volatile slock_t *lock);		/* in port/.../tas.s, or
 #define TAS_SPIN(lock)	TAS(lock)
 #endif	 /* TAS_SPIN */
 
-extern PGDLLIMPORT slock_t dummy_spinlock;
 
 /*
  * Platform-independent out-of-line support routines

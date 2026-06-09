@@ -5,7 +5,7 @@
  *
  * Author: Magnus Hagander <magnus@hagander.net>
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/streamutil.c
@@ -34,6 +34,7 @@
 int			WalSegSz;
 
 static bool RetrieveDataDirCreatePerm(PGconn *conn);
+static char *FindDbnameInConnParams(PQconninfoOption *conn_opts);
 
 /* SHOW command for replication connection was introduced in version 10 */
 #define MINIMUM_VERSION_FOR_SHOW_CMD 100000
@@ -79,9 +80,6 @@ GetConnection(void)
 	/*
 	 * Merge the connection info inputs given in form of connection string,
 	 * options and default values (dbname=replication, replication=true, etc.)
-	 * Explicitly discard any dbname value in the connection string;
-	 * otherwise, PQconnectdbParams() would interpret that value as being
-	 * itself a connection string.
 	 */
 	i = 0;
 	if (connection_string)
@@ -92,18 +90,24 @@ GetConnection(void)
 
 		for (conn_opt = conn_opts; conn_opt->keyword != NULL; conn_opt++)
 		{
-			if (conn_opt->val != NULL && conn_opt->val[0] != '\0' &&
-				strcmp(conn_opt->keyword, "dbname") != 0)
+			if (conn_opt->val != NULL && conn_opt->val[0] != '\0')
 				argcount++;
 		}
 
 		keywords = pg_malloc0((argcount + 1) * sizeof(*keywords));
 		values = pg_malloc0((argcount + 1) * sizeof(*values));
 
+		/*
+		 * Set dbname here already, so it can be overridden by a dbname in the
+		 * connection string.
+		 */
+		keywords[i] = "dbname";
+		values[i] = "replication";
+		i++;
+
 		for (conn_opt = conn_opts; conn_opt->keyword != NULL; conn_opt++)
 		{
-			if (conn_opt->val != NULL && conn_opt->val[0] != '\0' &&
-				strcmp(conn_opt->keyword, "dbname") != 0)
+			if (conn_opt->val != NULL && conn_opt->val[0] != '\0')
 			{
 				keywords[i] = conn_opt->keyword;
 				values[i] = conn_opt->val;
@@ -115,11 +119,11 @@ GetConnection(void)
 	{
 		keywords = pg_malloc0((argcount + 1) * sizeof(*keywords));
 		values = pg_malloc0((argcount + 1) * sizeof(*values));
+		keywords[i] = "dbname";
+		values[i] = dbname;
+		i++;
 	}
 
-	keywords[i] = "dbname";
-	values[i] = dbname == NULL ? "replication" : dbname;
-	i++;
 	keywords[i] = "replication";
 	values[i] = dbname == NULL ? "true" : "database";
 	i++;
@@ -171,7 +175,11 @@ GetConnection(void)
 			values[i] = NULL;
 		}
 
-		tmpconn = PQconnectdbParams(keywords, values, true);
+		/*
+		 * Only expand dbname when we did not already parse the argument as a
+		 * connection string ourselves.
+		 */
+		tmpconn = PQconnectdbParams(keywords, values, !connection_string);
 
 		/*
 		 * If there is too little memory even to allocate the PGconn object
@@ -219,7 +227,7 @@ GetConnection(void)
 		res = PQexec(tmpconn, ALWAYS_SECURE_SEARCH_PATH_SQL);
 		if (PQresultStatus(res) != PGRES_TUPLES_OK)
 		{
-			pg_log_error("could not clear search_path: %s",
+			pg_log_error("could not clear \"search_path\": %s",
 						 PQerrorMessage(tmpconn));
 			PQclear(res);
 			PQfinish(tmpconn);
@@ -235,14 +243,14 @@ GetConnection(void)
 	tmpparam = PQparameterStatus(tmpconn, "integer_datetimes");
 	if (!tmpparam)
 	{
-		pg_log_error("could not determine server setting for integer_datetimes");
+		pg_log_error("could not determine server setting for \"integer_datetimes\"");
 		PQfinish(tmpconn);
 		exit(1);
 	}
 
 	if (strcmp(tmpparam, "on") != 0)
 	{
-		pg_log_error("integer_datetimes compile flag does not match server");
+		pg_log_error("\"integer_datetimes\" compile flag does not match server");
 		PQfinish(tmpconn);
 		exit(1);
 	}
@@ -258,6 +266,74 @@ GetConnection(void)
 	}
 
 	return tmpconn;
+}
+
+/*
+ * FindDbnameInConnParams
+ *
+ * This is a helper function for GetDbnameFromConnectionOptions(). Extract
+ * the value of dbname from PQconninfoOption parameters, if it's present.
+ * Returns a strdup'd result or NULL.
+ */
+static char *
+FindDbnameInConnParams(PQconninfoOption *conn_opts)
+{
+	PQconninfoOption *conn_opt;
+
+	for (conn_opt = conn_opts; conn_opt->keyword != NULL; conn_opt++)
+	{
+		if (strcmp(conn_opt->keyword, "dbname") == 0 &&
+			conn_opt->val != NULL && conn_opt->val[0] != '\0')
+			return pg_strdup(conn_opt->val);
+	}
+	return NULL;
+}
+
+/*
+ * GetDbnameFromConnectionOptions
+ *
+ * This is a special purpose function to retrieve the dbname from either the
+ * connection_string specified by the user or from the environment variables.
+ *
+ * We follow GetConnection() to fetch the dbname from various connection
+ * options.
+ *
+ * Returns NULL, if dbname is not specified by the user in the above
+ * mentioned connection options.
+ */
+char *
+GetDbnameFromConnectionOptions(void)
+{
+	PQconninfoOption *conn_opts;
+	char	   *err_msg = NULL;
+	char	   *dbname;
+
+	/* First try to get the dbname from connection string. */
+	if (connection_string)
+	{
+		conn_opts = PQconninfoParse(connection_string, &err_msg);
+		if (conn_opts == NULL)
+			pg_fatal("%s", err_msg);
+
+		dbname = FindDbnameInConnParams(conn_opts);
+
+		PQconninfoFree(conn_opts);
+		if (dbname)
+			return dbname;
+	}
+
+	/*
+	 * Next try to get the dbname from default values that are available from
+	 * the environment.
+	 */
+	conn_opts = PQconndefaults();
+	if (conn_opts == NULL)
+		pg_fatal("out of memory");
+
+	dbname = FindDbnameInConnParams(conn_opts);
+
+	PQconninfoFree(conn_opts);
+	return dbname;
 }
 
 /*
@@ -321,10 +397,11 @@ RetrieveWalSegSize(PGconn *conn)
 
 	if (!IsValidWalSegSize(WalSegSz))
 	{
-		pg_log_error(ngettext("WAL segment size must be a power of two between 1 MB and 1 GB, but the remote server reported a value of %d byte",
-							  "WAL segment size must be a power of two between 1 MB and 1 GB, but the remote server reported a value of %d bytes",
+		pg_log_error(ngettext("remote server reported invalid WAL segment size (%d byte)",
+							  "remote server reported invalid WAL segment size (%d bytes)",
 							  WalSegSz),
 					 WalSegSz);
+		pg_log_error_detail("The WAL segment size must be a power of two between 1 MB and 1 GB.");
 		return false;
 	}
 

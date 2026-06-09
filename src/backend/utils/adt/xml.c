@@ -4,7 +4,7 @@
  *	  XML data type support.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/utils/adt/xml.c
@@ -47,6 +47,7 @@
 
 #ifdef USE_LIBXML
 #include <libxml/chvalid.h>
+#include <libxml/entities.h>
 #include <libxml/parser.h>
 #include <libxml/parserInternals.h>
 #include <libxml/tree.h>
@@ -66,6 +67,16 @@
 #if LIBXML_VERSION >= 20704
 #define HAVE_XMLSTRUCTUREDERRORCONTEXT 1
 #endif
+
+/*
+ * libxml2 2.12 decided to insert "const" into the error handler API.
+ */
+#if LIBXML_VERSION >= 21200
+#define PgXmlErrorPtr const xmlError *
+#else
+#define PgXmlErrorPtr xmlErrorPtr
+#endif
+
 #endif							/* USE_LIBXML */
 
 #include "access/htup_details.h"
@@ -89,7 +100,6 @@
 #include "utils/date.h"
 #include "utils/datetime.h"
 #include "utils/lsyscache.h"
-#include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/xml.h"
@@ -123,7 +133,7 @@ static xmlParserInputPtr xmlPgEntityLoader(const char *URL, const char *ID,
 										   xmlParserCtxtPtr ctxt);
 static void xml_errsave(Node *escontext, PgXmlErrorContext *errcxt,
 						int sqlcode, const char *msg);
-static void xml_errorHandler(void *data, xmlErrorPtr error);
+static void xml_errorHandler(void *data, PgXmlErrorPtr error);
 static int	errdetail_for_xml_code(int code);
 static void chopStringInfoNewlines(StringInfo str);
 static void appendStringInfoLineSeparator(StringInfo str);
@@ -212,14 +222,14 @@ static void XmlTableDestroyOpaque(struct TableFuncScanState *state);
 
 const TableFuncRoutine XmlTableRoutine =
 {
-	XmlTableInitOpaque,
-	XmlTableSetDocument,
-	XmlTableSetNamespace,
-	XmlTableSetRowFilter,
-	XmlTableSetColumnFilter,
-	XmlTableFetchRow,
-	XmlTableGetValue,
-	XmlTableDestroyOpaque
+	.InitOpaque = XmlTableInitOpaque,
+	.SetDocument = XmlTableSetDocument,
+	.SetNamespace = XmlTableSetNamespace,
+	.SetRowFilter = XmlTableSetRowFilter,
+	.SetColumnFilter = XmlTableSetColumnFilter,
+	.FetchRow = XmlTableFetchRow,
+	.GetValue = XmlTableGetValue,
+	.DestroyOpaque = XmlTableDestroyOpaque
 };
 
 #define NO_XML_SUPPORT() \
@@ -512,6 +522,27 @@ xmlcomment(PG_FUNCTION_ARGS)
 #endif
 }
 
+
+Datum
+xmltext(PG_FUNCTION_ARGS)
+{
+#ifdef USE_LIBXML
+	text	   *arg = PG_GETARG_TEXT_PP(0);
+	text	   *result;
+	xmlChar    *xmlbuf = NULL;
+
+	xmlbuf = xmlEncodeSpecialChars(NULL, xml_text2xmlChar(arg));
+
+	Assert(xmlbuf);
+
+	result = cstring_to_text_with_len((const char *) xmlbuf, xmlStrlen(xmlbuf));
+	xmlFree(xmlbuf);
+	PG_RETURN_XML_P(result);
+#else
+	NO_XML_SUPPORT();
+	return 0;
+#endif							/* not USE_LIBXML */
+}
 
 
 /*
@@ -2002,7 +2033,7 @@ xml_errsave(Node *escontext, PgXmlErrorContext *errcxt,
  * Error handler for libxml errors and warnings
  */
 static void
-xml_errorHandler(void *data, xmlErrorPtr error)
+xml_errorHandler(void *data, PgXmlErrorPtr error)
 {
 	PgXmlErrorContext *xmlerrcxt = (PgXmlErrorContext *) data;
 	xmlParserCtxtPtr ctxt = (xmlParserCtxtPtr) error->ctxt;
@@ -2132,8 +2163,7 @@ xml_errorHandler(void *data, xmlErrorPtr error)
 		appendBinaryStringInfo(&xmlerrcxt->err_buf, errorBuf->data,
 							   errorBuf->len);
 
-		pfree(errorBuf->data);
-		pfree(errorBuf);
+		destroyStringInfo(errorBuf);
 		return;
 	}
 
@@ -2164,8 +2194,7 @@ xml_errorHandler(void *data, xmlErrorPtr error)
 				(errmsg_internal("%s", errorBuf->data)));
 	}
 
-	pfree(errorBuf->data);
-	pfree(errorBuf);
+	destroyStringInfo(errorBuf);
 }
 
 
@@ -3012,6 +3041,10 @@ cursor_to_xmlschema(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_CURSOR),
 				 errmsg("cursor \"%s\" does not exist", name)));
+	if (portal->tupDesc == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_CURSOR_STATE),
+				 errmsg("portal \"%s\" does not return tuples", name)));
 
 	xmlschema = _SPI_strdup(map_sql_table_to_xmlschema(portal->tupDesc,
 													   InvalidOid, nulls,

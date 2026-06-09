@@ -7,7 +7,7 @@
  * --- ie, rule names are only unique among the rules of a given table.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_rewrite.h
@@ -53,7 +53,9 @@ typedef FormData_pg_rewrite *Form_pg_rewrite;
 
 DECLARE_TOAST(pg_rewrite, 2838, 2839);
 
-DECLARE_UNIQUE_INDEX_PKEY(pg_rewrite_oid_index, 2692, RewriteOidIndexId, on pg_rewrite using btree(oid oid_ops));
-DECLARE_UNIQUE_INDEX(pg_rewrite_rel_rulename_index, 2693, RewriteRelRulenameIndexId, on pg_rewrite using btree(ev_class oid_ops, rulename name_ops));
+DECLARE_UNIQUE_INDEX_PKEY(pg_rewrite_oid_index, 2692, RewriteOidIndexId, pg_rewrite, btree(oid oid_ops));
+DECLARE_UNIQUE_INDEX(pg_rewrite_rel_rulename_index, 2693, RewriteRelRulenameIndexId, pg_rewrite, btree(ev_class oid_ops, rulename name_ops));
+
+MAKE_SYSCACHE(RULERELNAME, pg_rewrite_rel_rulename_index, 8);
 
 #endif							/* PG_REWRITE_H */

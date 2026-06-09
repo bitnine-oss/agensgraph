@@ -1,11 +1,11 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # This test aims to verify that the client can decompress and extract
 # a backup which was compressed by the server.
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use File::Path qw(rmtree);
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;

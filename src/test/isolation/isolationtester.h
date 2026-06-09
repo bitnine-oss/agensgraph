@@ -3,7 +3,7 @@
  * isolationtester.h
  *	  include file for isolation tests
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -43,7 +43,7 @@ typedef enum
 {
 	PSB_ONCE,					/* force step to wait once */
 	PSB_OTHER_STEP,				/* wait for another step to complete first */
-	PSB_NUM_NOTICES				/* wait for N notices from another session */
+	PSB_NUM_NOTICES,			/* wait for N notices from another session */
 } PermutationStepBlockerType;
 
 typedef struct

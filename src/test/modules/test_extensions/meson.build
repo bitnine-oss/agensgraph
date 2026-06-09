@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 test_install_data += files(
   'test_ext1--1.0.sql',
@@ -18,6 +18,8 @@ test_install_data += files(
   'test_ext7.control',
   'test_ext8--1.0.sql',
   'test_ext8.control',
+  'test_ext9--1.0.sql',
+  'test_ext9.control',
   'test_ext_cine--1.0.sql',
   'test_ext_cine--1.0--1.1.sql',
   'test_ext_cine.control',
@@ -27,6 +29,8 @@ test_install_data += files(
   'test_ext_cyclic1.control',
   'test_ext_cyclic2--1.0.sql',
   'test_ext_cyclic2.control',
+  'test_ext_extschema--1.0.sql',
+  'test_ext_extschema.control',
   'test_ext_evttrig--1.0--2.0.sql',
   'test_ext_evttrig--1.0.sql',
   'test_ext_evttrig.control',
@@ -36,6 +40,8 @@ test_install_data += files(
   'test_ext_req_schema2.control',
   'test_ext_req_schema3--1.0.sql',
   'test_ext_req_schema3.control',
+  'test_ext_set_schema--1.0.sql',
+  'test_ext_set_schema.control',
 )
 
 tests += {
@@ -47,6 +53,6 @@ tests += {
       'test_extensions',
       'test_extdepend',
     ],
-    'regress_args': ['--no-locale', '--encoding=UTF8'],
+    'regress_args': ['--no-locale'],
   },
 }

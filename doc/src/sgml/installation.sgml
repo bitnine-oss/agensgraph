@@ -1,12 +1,4 @@
 <!-- doc/src/sgml/installation.sgml -->
-<!--
-
-The standalone version has some portions that are different from the version
-that is integrated into the full documentation set, in particular as regards
-links, so that INSTALL.html can be created without links to the main
-documentation.  See standalone-profile.xsl for details.
-
--->
 
 <chapter id="installation">
  <title>Installation from Source Code</title>
@@ -15,20 +7,12 @@ documentation.  See standalone-profile.xsl for details.
   <primary>installation</primary>
  </indexterm>
 
- <!-- See also the version of this text in standalone-install.xml -->
  <para>
   This chapter describes the installation of
   <productname>PostgreSQL</productname> using the source code
   distribution.  If you are installing a pre-packaged distribution,
   such as an RPM or Debian package, ignore this chapter
   and see <xref linkend="install-binaries" /> instead.
- </para>
-
- <para>
-  If you are building <productname>PostgreSQL</productname> for Microsoft
-  Windows, read this chapter if you intend to build with MinGW or Cygwin;
-  but if you intend to build with Microsoft's <productname>Visual
-  C++</productname>, see <xref linkend="install-windows"/> instead.
  </para>
 
  <sect1 id="install-requirements">
@@ -72,8 +56,7 @@ documentation.  See standalone-profile.xsl for details.
 
       Alternatively, <productname>PostgreSQL</productname> can be built using
       <ulink url="https://mesonbuild.com/">Meson</ulink>.  This is currently
-      experimental and only works when building from a Git checkout (not from
-      a distribution tarball).  If you choose to use
+      experimental.  If you choose to use
       <application>Meson</application>, then you don't need
       <acronym>GNU</acronym> <application>make</application>, but the other
       requirements below still apply.
@@ -99,6 +82,41 @@ documentation.  See standalone-profile.xsl for details.
       <application>tar</application> is required to unpack the source
       distribution, in addition to either
       <application>gzip</application> or <application>bzip2</application>.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      <indexterm>
+       <primary>flex</primary>
+      </indexterm>
+      <indexterm>
+       <primary>lex</primary>
+      </indexterm>
+      <indexterm>
+       <primary>bison</primary>
+      </indexterm>
+      <indexterm>
+       <primary>yacc</primary>
+      </indexterm>
+
+      <application>Flex</application> 2.5.35 or later and
+      <application>Bison</application> 2.3 or later are required.  Other
+      <application>lex</application> and <application>yacc</application>
+      programs cannot be used.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      <indexterm>
+       <primary>perl</primary>
+      </indexterm>
+
+      <application>Perl</application> 5.14 or later is needed during the build
+      process and to run some test suites.  (This requirement is separate from
+      the requirements for building <application>PL/Perl</application>; see
+      below.)
      </para>
     </listitem>
 
@@ -149,7 +167,7 @@ documentation.  See standalone-profile.xsl for details.
 
     <listitem>
      <para>
-      The ICU locale provider (see <xref linkend="locale-providers"/>) is used by default. If you don't want to use it then you must specify the <option>--without-icu</option> option to <filename>configure</filename>. Using this option disables support for ICU collation features (see <xref linkend="collation"/>).
+      The ICU library is used by default. If you don't want to use it then you must specify the <option>--without-icu</option> option to <filename>configure</filename>. Using this option disables support for ICU collation features (see <xref linkend="collation"/>).
      </para>
      <para>
       ICU support requires the <productname>ICU4C</productname> package to be
@@ -275,7 +293,7 @@ documentation.  See standalone-profile.xsl for details.
       encrypted client connections.  <productname>OpenSSL</productname> is
       also required for random number generation on platforms that do not
       have <filename>/dev/urandom</filename> (except Windows).  The minimum
-      required version is 1.0.1.
+      required version is 1.0.2.
      </para>
     </listitem>
 
@@ -310,51 +328,6 @@ documentation.  See standalone-profile.xsl for details.
       To build the <productname>PostgreSQL</productname> documentation,
       there is a separate set of requirements; see
       <xref linkend="docguide-toolsets"/>.
-     </para>
-    </listitem>
-   </itemizedlist>
-  </para>
-
-  <para>
-   If you are building from a <productname>Git</productname> tree instead of
-   using a released source package, or if you want to do server development,
-   you also need the following packages:
-
-   <itemizedlist>
-    <listitem>
-     <para>
-      <indexterm>
-       <primary>flex</primary>
-      </indexterm>
-      <indexterm>
-       <primary>lex</primary>
-      </indexterm>
-      <indexterm>
-       <primary>bison</primary>
-      </indexterm>
-      <indexterm>
-       <primary>yacc</primary>
-      </indexterm>
-
-      <application>Flex</application> and <application>Bison</application>
-      are needed to build from a Git checkout, or if you changed the actual
-      scanner and parser definition files. If you need them, be sure
-      to get <application>Flex</application> 2.5.35 or later and
-      <application>Bison</application> 2.3 or later. Other <application>lex</application>
-      and <application>yacc</application> programs cannot be used.
-     </para>
-    </listitem>
-    <listitem>
-     <para>
-      <indexterm>
-       <primary>perl</primary>
-      </indexterm>
-
-      <application>Perl</application> 5.14 or later is needed to build from a Git checkout,
-      or if you changed the input files for any of the build steps that
-      use Perl scripts.  If building on Windows you will need
-      <application>Perl</application> in any case.  <application>Perl</application> is
-      also required to run some test suites.
      </para>
     </listitem>
    </itemizedlist>
@@ -960,12 +933,10 @@ build-postgresql:
        <listitem>
         <para>
          Build with support for <productname>LLVM</productname> based
-         <acronym>JIT</acronym> compilation<phrase
-         condition="standalone-ignore"> (see <xref
-         linkend="jit"/>)</phrase>.  This
+         <acronym>JIT</acronym> compilation (see <xref linkend="jit"/>).  This
          requires the <productname>LLVM</productname> library to be installed.
          The minimum required version of <productname>LLVM</productname> is
-         currently 3.9.
+         currently 10.
         </para>
         <para>
          <command>llvm-config</command><indexterm><primary>llvm-config</primary></indexterm>
@@ -1103,8 +1074,8 @@ build-postgresql:
          for <application>systemd</application><indexterm><primary>systemd</primary></indexterm>
          service notifications.  This improves integration if the server
          is started under <application>systemd</application> but has no impact
-         otherwise<phrase condition="standalone-ignore">; see <xref linkend="server-start"/> for more
-         information</phrase>.  <application>libsystemd</application> and the
+         otherwise; see <xref linkend="server-start"/> for more
+         information.  <application>libsystemd</application> and the
          associated header files need to be installed to use this option.
         </para>
        </listitem>
@@ -1209,6 +1180,16 @@ build-postgresql:
        </listitem>
       </varlistentry>
 
+      <varlistentry id="configure-option-with-sepgsql">
+       <term><option>--with-selinux</option></term>
+       <listitem>
+        <para>
+         Build with SElinux support, enabling the <xref linkend="sepgsql"/>
+         extension.
+        </para>
+       </listitem>
+      </varlistentry>
+
      </variablelist>
 
    </sect3>
@@ -1232,9 +1213,8 @@ build-postgresql:
         <para>
          Build without support for the
          <productname>ICU</productname><indexterm><primary>ICU</primary></indexterm>
-         library, disabling the use of ICU collation features<phrase
-         condition="standalone-ignore"> (see <xref
-         linkend="collation"/>)</phrase>.
+         library, disabling the use of ICU collation features (see <xref
+         linkend="collation"/>).
         </para>
        </listitem>
       </varlistentry>
@@ -1302,19 +1282,6 @@ build-postgresql:
          platforms that lack such operations.  On platforms that do have
          them, this will result in poor performance.  This option is only
          useful for debugging or making performance comparisons.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry id="configure-option-disable-thread-safety">
-       <term><option>--disable-thread-safety</option></term>
-       <listitem>
-        <para>
-         Disable the thread-safety of client libraries.  This prevents
-         concurrent threads in <application>libpq</application> and
-         <application>ECPG</application> programs from safely controlling
-         their private connection handles.  Use this only on platforms
-         with deficient threading support.
         </para>
        </listitem>
       </varlistentry>
@@ -1604,7 +1571,7 @@ build-postgresql:
         <para>
          Enable tests using the Perl TAP tools.  This requires a Perl
          installation and the Perl module <literal>IPC::Run</literal>.
-         <phrase condition="standalone-ignore">See <xref linkend="regress-tap"/> for more information.</phrase>
+         See <xref linkend="regress-tap"/> for more information.
         </para>
        </listitem>
       </varlistentry>
@@ -1631,8 +1598,8 @@ build-postgresql:
          code coverage testing instrumentation.  When run, they
          generate files in the build directory with code coverage
          metrics.
-         <phrase condition="standalone-ignore">See <xref linkend="regress-coverage"/>
-         for more information.</phrase> This option is for use only with GCC
+         See <xref linkend="regress-coverage"/>
+         for more information. This option is for use only with GCC
          and when doing development work.
         </para>
        </listitem>
@@ -1660,8 +1627,7 @@ build-postgresql:
          </indexterm>
          Compiles <productname>PostgreSQL</productname> with support for the
          dynamic tracing tool DTrace.
-         <phrase condition="standalone-ignore">See <xref linkend="dynamic-trace"/>
-         for more information.</phrase>
+         See <xref linkend="dynamic-trace"/> for more information.
         </para>
 
         <para>
@@ -1690,11 +1656,26 @@ build-postgresql:
        </listitem>
       </varlistentry>
 
+      <varlistentry id="configure-option-enable-injection-points">
+       <term><option>--enable-injection-points</option></term>
+       <listitem>
+        <para>
+         Compiles <productname>PostgreSQL</productname> with support for
+         injection points in the server. Injection points allow to run
+         user-defined code from within the server in pre-defined code paths.
+         This helps in testing and in the investigation of concurrency scenarios
+         in a controlled fashion. This option is disabled by default.  See
+         <xref linkend="xfunc-addin-injection-points"/> for more details.  This
+         option is intended to be used only by developers for testing.
+        </para>
+       </listitem>
+      </varlistentry>
+
       <varlistentry id="configure-option-with-segsize-blocks">
        <term><option>--with-segsize-blocks=SEGSIZE_BLOCKS</option></term>
        <listitem>
         <para>
-         Specify the segment size in blocks. If both
+         Specify the relation segment size in blocks. If both
          <option>--with-segsize</option> and this option are specified, this
          option wins.
 
@@ -2103,9 +2084,9 @@ ninja
     configure with the <option>--backend</option> option to select the one you
     want to use and then build using <literal>meson compile</literal>. To
     learn more about these backends and other arguments you can provide to
-    ninja, you can refer to the meson <ulink
+    ninja, you can refer to the <ulink
     url="https://mesonbuild.com/Running-Meson.html#building-from-the-source">
-    documentation</ulink>.
+    Meson documentation</ulink>.
    </para>
   </step>
 
@@ -2427,9 +2408,8 @@ ninja install
        <para>
         Build with support for the
         <productname>ICU</productname><indexterm><primary>ICU</primary></indexterm>
-        library, enabling use of ICU collation features<phrase
-        condition="standalone-ignore"> (see <xref
-        linkend="collation"/>)</phrase>.  Defaults to auto and requires the
+        library, enabling use of ICU collation features (see <xref
+        linkend="collation"/>).  Defaults to auto and requires the
         <productname>ICU4C</productname> package to be installed.  The minimum
         required version of <productname>ICU4C</productname> is currently 4.2.
        </para>
@@ -2441,11 +2421,10 @@ ninja install
       <listitem>
        <para>
         Build with support for <productname>LLVM</productname> based
-        <acronym>JIT</acronym> compilation<phrase
-        condition="standalone-ignore"> (see <xref linkend="jit"/>)</phrase>.
+        <acronym>JIT</acronym> compilation (see <xref linkend="jit"/>).
         This requires the <productname>LLVM</productname> library to be
         installed.  The minimum required version of
-        <productname>LLVM</productname> is currently 3.9.  Disabled by
+        <productname>LLVM</productname> is currently 10.  Disabled by
         default.
        </para>
 
@@ -2567,8 +2546,8 @@ ninja install
         <application>systemd</application><indexterm><primary>systemd</primary></indexterm>
         service notifications.  This improves integration if the server is
         started under <application>systemd</application> but has no impact
-        otherwise<phrase condition="standalone-ignore">; see <xref
-        linkend="server-start"/> for more information</phrase>.  Defaults to
+        otherwise; see <xref
+        linkend="server-start"/> for more information.  Defaults to
         auto.  <application>libsystemd</application> and the associated header
         files need to be installed to use this option.
        </para>
@@ -2653,6 +2632,17 @@ ninja install
        </para>
       </listitem>
      </varlistentry>
+
+     <varlistentry id="configure-with-sepgsql-meson">
+      <term><option>-Dselinux={ auto | enabled | disabled }</option></term>
+      <listitem>
+       <para>
+        Build with SElinux support, enabling the <xref linkend="sepgsql"/>
+        extension.  Defaults to auto.
+       </para>
+      </listitem>
+     </varlistentry>
+
     </variablelist>
    </sect3>
 
@@ -2756,8 +2746,8 @@ ninja install
        <para>
         The default backend Meson uses is ninja and that should suffice for
         most use cases.  However, if you'd like to fully integrate with Visual
-        Studio, you can set the <option>BACKEND</option> to
-        <command>vs</command>.
+        Studio, you can set the <replaceable>BACKEND</replaceable> to
+        <literal>vs</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -3132,8 +3122,7 @@ ninja install
        <para>
         Enable tests using the Perl TAP tools.  Defaults to auto and requires
         a Perl installation and the Perl module <literal>IPC::Run</literal>.
-        <phrase condition="standalone-ignore">See <xref
-        linkend="regress-tap"/> for more information.</phrase>
+        See <xref linkend="regress-tap"/> for more information.
        </para>
       </listitem>
      </varlistentry>
@@ -3157,8 +3146,8 @@ ninja install
         code coverage testing instrumentation.  When run, they
         generate files in the build directory with code coverage
         metrics.
-        <phrase condition="standalone-ignore">See <xref linkend="regress-coverage"/>
-        for more information.</phrase> This option is for use only with GCC
+        See <xref linkend="regress-coverage"/>
+        for more information. This option is for use only with GCC
         and when doing development work.
        </para>
       </listitem>
@@ -3173,8 +3162,7 @@ ninja install
         </indexterm>
         Enabling this compiles <productname>PostgreSQL</productname> with support for the
         dynamic tracing tool DTrace.
-        <phrase condition="standalone-ignore">See <xref linkend="dynamic-trace"/>
-        for more information.</phrase>
+        See <xref linkend="dynamic-trace"/> for more information.
        </para>
 
        <para>
@@ -3187,11 +3175,26 @@ ninja install
       </listitem>
      </varlistentry>
 
+     <varlistentry id="configure-injection-points-meson">
+      <term><option>-Dinjection_points={ true | false }</option></term>
+      <listitem>
+       <para>
+        Compiles <productname>PostgreSQL</productname> with support for
+        injection points in the server. Injection points allow to run
+        user-defined code from within the server in pre-defined code paths.
+        This helps in testing and in the investigation of concurrency scenarios
+        in a controlled fashion. This option is disabled by default.  See
+        <xref linkend="xfunc-addin-injection-points"/> for more details.  This
+        option is intended to be used only by developers for testing.
+       </para>
+      </listitem>
+     </varlistentry>
+
       <varlistentry id="configure-segsize-blocks-meson">
        <term><option>-Dsegsize_blocks=SEGSIZE_BLOCKS</option></term>
        <listitem>
         <para>
-         Specify the segment size in blocks. If both
+         Specify the relation segment size in blocks. If both
          <option>-Dsegsize</option> and this option are specified, this option
          wins.
 
@@ -3203,6 +3206,21 @@ ninja install
     </variablelist>
    </sect3>
   </sect2>
+
+  <sect2 id="targets-meson">
+   <title><literal>meson</literal> Build Targets</title>
+
+   <para>
+    Individual build targets can be built using <command>ninja</command> <replaceable>target</replaceable>.
+
+    When no target is specified, everything except documentation is
+    built. Individual build products can be built using the path/filename as
+    <replaceable>target</replaceable>.
+   </para>
+
+   &targets-meson;
+  </sect2>
+
  </sect1>
 
  <sect1 id="install-post">
@@ -3383,7 +3401,7 @@ export MANPATH
   <para>
    <productname>PostgreSQL</productname> can be expected to work on current
    versions of these operating systems: Linux, Windows,
-   FreeBSD, OpenBSD, NetBSD, DragonFlyBSD, macOS, AIX, Solaris, and illumos.
+   FreeBSD, OpenBSD, NetBSD, DragonFlyBSD, macOS, Solaris, and illumos.
    Other Unix-like systems may also work but are not currently
    being tested.  In most cases, all CPU architectures supported by
    a given operating system will work.  Look in
@@ -3404,7 +3422,7 @@ export MANPATH
   <para>
    Historical versions of <productname>PostgreSQL</productname> or POSTGRES
    also ran on CPU architectures including Alpha, Itanium, M32R, M68K,
-   M88K, NS32K, SuperH, and VAX, and operating systems including 4.3BSD, BEOS,
+   M88K, NS32K, SuperH, and VAX, and operating systems including 4.3BSD, AIX, BEOS,
    BSD/OS, DG/UX, Dynix, HP-UX, IRIX, NeXTSTEP, QNX, SCO, SINIX, Sprite, SunOS,
    Tru64 UNIX, and ULTRIX.
   </para>
@@ -3427,123 +3445,6 @@ export MANPATH
    installation issues.
   </para>
 
-  <sect2 id="installation-notes-aix">
-   <title>AIX</title>
-
-   <indexterm zone="installation-notes-aix">
-    <primary>AIX</primary>
-    <secondary>installation on</secondary>
-   </indexterm>
-
-   <para>
-    You can use GCC or the native IBM compiler <command>xlc</command>
-    to build <productname>PostgreSQL</productname>
-    on <productname>AIX</productname>.
-   </para>
-
-   <para>
-    <productname>AIX</productname> versions before 7.1 are no longer
-    tested nor supported by the <productname>PostgreSQL</productname>
-    community.
-   </para>
-
-   <sect3 id="installation-notes-aix-mem-management">
-    <title>Memory Management</title>
-    <!-- https://archives.postgresql.org/message-id/603bgqmpl9.fsf@dba2.int.libertyrms.com -->
-
-    <para>
-     AIX can be somewhat peculiar with regards to the way it does
-     memory management.  You can have a server with many multiples of
-     gigabytes of RAM free, but still get out of memory or address
-     space errors when running applications.  One example
-     is loading of extensions failing with unusual errors.
-     For example, running as the owner of the PostgreSQL installation:
-<screen>
-=# CREATE EXTENSION plperl;
-ERROR:  could not load library "/opt/dbs/pgsql/lib/plperl.so": A memory address is not in the address space for the process.
-</screen>
-    Running as a non-owner in the group possessing the PostgreSQL
-    installation:
-<screen>
-=# CREATE EXTENSION plperl;
-ERROR:  could not load library "/opt/dbs/pgsql/lib/plperl.so": Bad address
-</screen>
-     Another example is out of memory errors in the PostgreSQL server
-     logs, with every memory allocation near or greater than 256 MB
-     failing.
-    </para>
-
-    <para>
-     The overall cause of all these problems is the default bittedness
-     and memory model used by the server process.  By default, all
-     binaries built on AIX are 32-bit.  This does not depend upon
-     hardware type or kernel in use.  These 32-bit processes are
-     limited to 4 GB of memory laid out in 256 MB segments using one
-     of a few models.  The default allows for less than 256 MB in the
-     heap as it shares a single segment with the stack.
-    </para>
-
-    <para>
-     In the case of the <literal>plperl</literal> example, above,
-     check your umask and the permissions of the binaries in your
-     PostgreSQL installation.  The binaries involved in that example
-     were 32-bit and installed as mode 750 instead of 755.  Due to the
-     permissions being set in this fashion, only the owner or a member
-     of the possessing group can load the library.  Since it isn't
-     world-readable, the loader places the object into the process'
-     heap instead of the shared library segments where it would
-     otherwise be placed.
-    </para>
-
-    <para>
-     The <quote>ideal</quote> solution for this is to use a 64-bit
-     build of PostgreSQL, but that is not always practical, because
-     systems with 32-bit processors can build, but not run, 64-bit
-     binaries.
-    </para>
-
-    <para>
-     If a 32-bit binary is desired, set <symbol>LDR_CNTRL</symbol> to
-     <literal>MAXDATA=0x<replaceable>n</replaceable>0000000</literal>,
-     where 1 &lt;= n &lt;= 8, before starting the PostgreSQL server,
-     and try different values and <filename>postgresql.conf</filename>
-     settings to find a configuration that works satisfactorily.  This
-     use of <symbol>LDR_CNTRL</symbol> tells AIX that you want the
-     server to have <symbol>MAXDATA</symbol> bytes set aside for the
-     heap, allocated in 256 MB segments.  When you find a workable
-     configuration,
-     <command>ldedit</command> can be used to modify the binaries so
-     that they default to using the desired heap size.  PostgreSQL can
-     also be rebuilt, passing <literal>configure
-     LDFLAGS="-Wl,-bmaxdata:0x<replaceable>n</replaceable>0000000"</literal>
-     to achieve the same effect.
-    </para>
-
-    <para>
-     For a 64-bit build, set <envar>OBJECT_MODE</envar> to 64 and
-     pass <literal>CC="gcc -maix64"</literal>
-     and <literal>LDFLAGS="-Wl,-bbigtoc"</literal>
-     to <command>configure</command>.  (Options for
-    <command>xlc</command> might differ.)  If you omit the export of
-    <envar>OBJECT_MODE</envar>, your build may fail with linker errors.  When
-    <envar>OBJECT_MODE</envar> is set, it tells AIX's build utilities
-    such as <command>ar</command>, <command>as</command>, and <command>ld</command> what
-    type of objects to default to handling.
-    </para>
-
-    <para>
-     By default, overcommit of paging space can happen.  While we have
-     not seen this occur, AIX will kill processes when it runs out of
-     memory and the overcommit is accessed.  The closest to this that
-     we have seen is fork failing because the system decided that
-     there was not enough memory for another process.  Like many other
-     parts of AIX, the paging space allocation method and
-     out-of-memory kill is configurable on a system- or process-wide
-     basis if this becomes a problem.
-    </para>
-   </sect3>
-  </sect2>
-
   <sect2 id="installation-notes-cygwin">
    <title>Cygwin</title>
 
@@ -3555,8 +3456,7 @@ ERROR:  could not load library "/opt/dbs/pgsql/lib/plperl.so": Bad address
    <para>
     PostgreSQL can be built using Cygwin, a Linux-like environment for
     Windows, but that method is inferior to the native Windows build
-    <phrase condition="standalone-ignore">(see <xref linkend="install-windows"/>)</phrase> and
-    running a server under Cygwin is no longer recommended.
+    and running a server under Cygwin is no longer recommended.
    </para>
 
    <para>
@@ -3722,7 +3622,7 @@ xcrun --show-sdk-path
   </sect2>
 
   <sect2 id="installation-notes-mingw">
-   <title>MinGW/Native Windows</title>
+   <title>MinGW</title>
 
    <indexterm zone="installation-notes-mingw">
     <primary>MinGW</primary>
@@ -3731,18 +3631,13 @@ xcrun --show-sdk-path
 
    <para>
     PostgreSQL for Windows can be built using MinGW, a Unix-like build
-    environment for Microsoft operating systems, or using
-    Microsoft's <productname>Visual C++</productname> compiler suite.
+    environment for Microsoft operating systems.
     The MinGW build procedure uses the normal build system described in
-    this chapter; the Visual C++ build works completely differently
-    and is described in <xref linkend="install-windows"/>.
+    this chapter.
    </para>
 
    <para>
-    The native Windows port requires a 32 or 64-bit version of Windows
-    2000 or later. Earlier operating systems do
-    not have sufficient infrastructure (but Cygwin may be used on
-    those).  MinGW, the Unix-like build tools, and MSYS, a collection
+    MinGW, the Unix-like build tools, and MSYS, a collection
     of Unix tools required to run shell scripts
     like <command>configure</command>, can be downloaded
     from <ulink url="http://www.mingw.org/"></ulink>.  Neither is
@@ -3765,8 +3660,8 @@ xcrun --show-sdk-path
     buffering issues.
    </para>
 
-   <sect3 id="windows-crash-dumps">
-    <title>Collecting Crash Dumps on Windows</title>
+   <sect3 id="mingw-crash-dumps">
+    <title>Collecting Crash Dumps</title>
 
     <para>
      If PostgreSQL on Windows crashes, it has the ability to generate
@@ -3882,6 +3777,293 @@ make: *** [postgres] Error 1
 </screen>
      your DTrace installation is too old to handle probes in static
      functions.  You need Solaris 10u4 or newer to use DTrace.
+    </para>
+   </sect3>
+  </sect2>
+
+  <sect2 id="installation-notes-visual">
+   <title>Visual</title>
+
+   <indexterm zone="installation-notes-visual">
+    <primary>Visual</primary>
+    <secondary>installation on</secondary>
+   </indexterm>
+
+   <para>
+    It is recommended that most users download the binary distribution for
+    Windows, available as a graphical installer package from the
+    <productname>PostgreSQL</productname> website at
+    <ulink url="https://www.postgresql.org/download/"></ulink>. Building from
+    source is only intended for people developing
+    <productname>PostgreSQL</productname> or extensions.
+   </para>
+
+   <para>
+    PostgreSQL for Windows with Visual can be built using meson, as described
+    in <xref linkend="install-meson"/>.
+    The native Windows port requires a 32 or 64-bit version of Windows
+    10 or later.
+   </para>
+
+   <para>
+    Native builds of <application>psql</application> don't support command
+    line editing. The <productname>Cygwin</productname> build does support
+    command line editing, so it should be used where psql is needed for
+    interactive use on <productname>Windows</productname>.
+   </para>
+
+   <para>
+    PostgreSQL can be built using the Visual C++ compiler suite from Microsoft.
+    These compilers can be either from <productname>Visual Studio</productname>,
+    <productname>Visual Studio Express</productname> or some versions of the
+    <productname>Microsoft Windows SDK</productname>. If you do not already have a
+    <productname>Visual Studio</productname> environment set up, the easiest
+    ways are to use the compilers from
+    <productname>Visual Studio 2022</productname> or those in the
+    <productname>Windows SDK 10</productname>, which are both free downloads
+    from Microsoft.
+   </para>
+
+   <para>
+    Both 32-bit and 64-bit builds are possible with the Microsoft Compiler suite.
+    32-bit PostgreSQL builds are possible with
+    <productname>Visual Studio 2015</productname> to
+    <productname>Visual Studio 2022</productname>,
+    as well as standalone Windows SDK releases 10 and above.
+    64-bit PostgreSQL builds are supported with
+    <productname>Microsoft Windows SDK</productname> version 10 and above or
+    <productname>Visual Studio 2015</productname> and above.
+    <!--
+        For 2015 requirements:
+        https://docs.microsoft.com/en-us/visualstudio/productinfo/vs2015-sysrequirements-vs
+        For 2017 requirements:
+        https://docs.microsoft.com/en-us/visualstudio/productinfo/vs2017-system-requirements-vs
+        For 2019 requirements:
+        https://docs.microsoft.com/en-us/visualstudio/releases/2019/system-requirements
+        For 2022 requirements:
+        https://docs.microsoft.com/en-us/visualstudio/releases/2022/system-requirements
+    -->
+   </para>
+
+   <para>
+    If your build environment doesn't ship with a supported version of the
+    <productname>Microsoft Windows SDK</productname> it is recommended
+    that you upgrade to the latest version (currently version 10), available
+    for download from <ulink url="https://www.microsoft.com/download"></ulink>.
+   </para>
+
+   <para>
+    You must always include the
+    <application>Windows Headers and Libraries</application> part of the SDK.
+    If you install a <productname>Windows SDK</productname>
+    including the <application>Visual C++ Compilers</application>,
+    you don't need <productname>Visual Studio</productname> to build.
+    Note that as of Version 8.0a the Windows SDK no longer ships with a
+    complete command-line build environment.
+   </para>
+
+   <sect3 id="windows-requirements">
+    <title>Requirements</title>
+    <para>
+     The following additional products are required to build
+     <productname>PostgreSQL</productname> on Windows.
+
+     <variablelist>
+      <varlistentry>
+       <term><productname>ActiveState Perl</productname></term>
+       <listitem><para>
+        ActiveState Perl is required to run the build generation scripts. MinGW
+        or Cygwin Perl will not work. It must also be present in the PATH.
+        Binaries can be downloaded from
+        <ulink url="https://www.activestate.com"></ulink>
+        (Note: version 5.14 or later is required,
+        the free Standard Distribution is sufficient).
+       </para></listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><productname>Bison</productname> and
+        <productname>Flex</productname></term>
+       <listitem>
+       <para>
+        <productname>Bison</productname> and <productname>Flex</productname> are
+        required.  Only <productname>Bison</productname> versions 2.3 and later
+        will work. <productname>Flex</productname> must be version 2.5.35 or later.
+       </para>
+
+       <para>
+        Both <productname>Bison</productname> and <productname>Flex</productname>
+        are included in the <productname>msys</productname> tool suite, available
+        from <ulink url="http://www.mingw.org/wiki/MSYS"></ulink> as part of the
+        <productname>MinGW</productname> compiler suite.
+       </para>
+
+       <para>
+        You will need to add the directory containing
+        <filename>flex.exe</filename> and <filename>bison.exe</filename> to the
+        PATH environment variable. In the case of MinGW, the directory is the
+        <filename>\msys\1.0\bin</filename> subdirectory of your MinGW
+        installation directory.
+       </para>
+
+       <note>
+        <para>
+          The Bison distribution from GnuWin32 appears to have a bug that
+          causes Bison to malfunction when installed in a directory with
+          spaces in the name, such as the default location on English
+          installations <filename>C:\Program Files\GnuWin32</filename>.
+          Consider installing into <filename>C:\GnuWin32</filename> or use the
+          NTFS short name path to GnuWin32 in your PATH environment setting
+          (e.g., <filename>C:\PROGRA~1\GnuWin32</filename>).
+         </para>
+       </note>
+
+       </listitem>
+      </varlistentry>
+     </variablelist>
+    </para>
+
+    <para>
+     The following additional products are not required to get started,
+     but are required to build the complete package.
+
+     <variablelist>
+      <varlistentry>
+       <term><productname>ActiveState Tcl</productname></term>
+       <listitem><para>
+        Required for building <application>PL/Tcl</application> (Note: version
+        8.4 is required, the free Standard Distribution is sufficient).
+       </para></listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><productname>Diff</productname></term>
+       <listitem><para>
+        Diff is required to run the regression tests, and can be downloaded
+        from <ulink url="http://gnuwin32.sourceforge.net"></ulink>.
+       </para></listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><productname>Gettext</productname></term>
+       <listitem><para>
+        Gettext is required to build with NLS support, and can be downloaded
+        from <ulink url="http://gnuwin32.sourceforge.net"></ulink>. Note that binaries,
+        dependencies and developer files are all needed.
+       </para></listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><productname>MIT Kerberos</productname></term>
+       <listitem><para>
+        Required for GSSAPI authentication support. MIT Kerberos can be
+        downloaded from
+        <ulink url="https://web.mit.edu/Kerberos/dist/index.html"></ulink>.
+       </para></listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><productname>libxml2</productname> and
+        <productname>libxslt</productname></term>
+       <listitem><para>
+        Required for XML support. Binaries can be downloaded from
+        <ulink url="https://zlatkovic.com/pub/libxml"></ulink> or source from
+        <ulink url="http://xmlsoft.org"></ulink>. Note that libxml2 requires iconv,
+        which is available from the same download location.
+       </para></listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><productname>LZ4</productname></term>
+       <listitem><para>
+        Required for supporting <productname>LZ4</productname> compression.
+        Binaries and source can be downloaded from
+        <ulink url="https://github.com/lz4/lz4/releases"></ulink>.
+       </para></listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><productname>Zstandard</productname></term>
+       <listitem><para>
+        Required for supporting <productname>Zstandard</productname> compression.
+        Binaries and source can be downloaded from
+        <ulink url="https://github.com/facebook/zstd/releases"></ulink>.
+       </para></listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><productname>OpenSSL</productname></term>
+       <listitem><para>
+        Required for SSL support. Binaries can be downloaded from
+        <ulink url="https://slproweb.com/products/Win32OpenSSL.html"></ulink>
+        or source from <ulink url="https://www.openssl.org"></ulink>.
+       </para></listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><productname>ossp-uuid</productname></term>
+       <listitem><para>
+        Required for UUID-OSSP support (contrib only). Source can be
+        downloaded from
+        <ulink url="http://www.ossp.org/pkg/lib/uuid/"></ulink>.
+       </para></listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><productname>Python</productname></term>
+       <listitem><para>
+        Required for building <application>PL/Python</application>. Binaries can
+        be downloaded from <ulink url="https://www.python.org"></ulink>.
+       </para></listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><productname>zlib</productname></term>
+       <listitem><para>
+        Required for compression support in <application>pg_dump</application>
+        and <application>pg_restore</application>. Binaries can be downloaded
+        from <ulink url="https://www.zlib.net"></ulink>.
+       </para></listitem>
+      </varlistentry>
+
+     </variablelist>
+    </para>
+   </sect3>
+
+   <sect3 id="install-windows-full-64-bit">
+    <title>Special Considerations for 64-Bit Windows</title>
+    <para>
+     PostgreSQL will only build for the x64 architecture on 64-bit Windows.
+    </para>
+    <para>
+     Mixing 32- and 64-bit versions in the same build tree is not supported.
+     The build system will automatically detect if it's running in a 32- or
+     64-bit environment, and build PostgreSQL accordingly. For this reason, it
+     is important to start the correct command prompt before building.
+    </para>
+    <para>
+     To use a server-side third party library such as <productname>Python</productname> or
+     <productname>OpenSSL</productname>, this library <emphasis>must</emphasis> also be
+     64-bit. There is no support for loading a 32-bit library in a 64-bit
+     server. Several of the third party libraries that PostgreSQL supports may
+     only be available in 32-bit versions, in which case they cannot be used with
+     64-bit PostgreSQL.
+    </para>
+   </sect3>
+
+   <sect3 id="windows-crash-dumps">
+    <title>Collecting Crash Dumps</title>
+
+    <para>
+     If PostgreSQL on Windows crashes, it has the ability to generate
+     <productname>minidumps</productname> that can be used to track down the cause
+     for the crash, similar to core dumps on Unix. These dumps can be
+     read using the <productname>Windows Debugger Tools</productname> or using
+     <productname>Visual Studio</productname>. To enable the generation of dumps
+     on Windows, create a subdirectory named <filename>crashdumps</filename>
+     inside the cluster data directory. The dumps will then be written
+     into this directory with a unique name based on the identifier of
+     the crashing process and the current time of the crash.
     </para>
    </sect3>
   </sect2>

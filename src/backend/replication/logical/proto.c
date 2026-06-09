@@ -3,7 +3,7 @@
  * proto.c
  *		logical replication protocol functions
  *
- * Copyright (c) 2015-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2015-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/backend/replication/logical/proto.c
@@ -851,7 +851,7 @@ logicalrep_write_tuple(StringInfo out, Relation rel, TupleTableSlot *slot,
 
 			pq_sendbyte(out, LOGICALREP_COLUMN_TEXT);
 			outputstr = OidOutputFunctionCall(typclass->typoutput, values[i]);
-			pq_sendcountedtext(out, outputstr, strlen(outputstr), false);
+			pq_sendcountedtext(out, outputstr, strlen(outputstr));
 			pfree(outputstr);
 		}
 
@@ -879,6 +879,7 @@ logicalrep_read_tuple(StringInfo in, LogicalRepTupleData *tuple)
 	/* Read the data */
 	for (i = 0; i < natts; i++)
 	{
+		char	   *buff;
 		char		kind;
 		int			len;
 		StringInfo	value = &tuple->colvalues[i];
@@ -899,19 +900,18 @@ logicalrep_read_tuple(StringInfo in, LogicalRepTupleData *tuple)
 				len = pq_getmsgint(in, 4);	/* read length */
 
 				/* and data */
-				value->data = palloc(len + 1);
-				pq_copymsgbytes(in, value->data, len);
+				buff = palloc(len + 1);
+				pq_copymsgbytes(in, buff, len);
 
 				/*
-				 * Not strictly necessary for LOGICALREP_COLUMN_BINARY, but
-				 * per StringInfo practice.
+				 * NUL termination is required for LOGICALREP_COLUMN_TEXT mode
+				 * as input functions require that.  For
+				 * LOGICALREP_COLUMN_BINARY it's not technically required, but
+				 * it's harmless.
 				 */
-				value->data[len] = '\0';
+				buff[len] = '\0';
 
-				/* make StringInfo fully valid */
-				value->len = len;
-				value->cursor = 0;
-				value->maxlen = len;
+				initStringInfoFromString(value, buff, len);
 				break;
 			default:
 				elog(ERROR, "unrecognized data representation type '%c'", kind);
@@ -1213,9 +1213,11 @@ logicalrep_read_stream_abort(StringInfo in,
 /*
  * Get string representing LogicalRepMsgType.
  */
-char *
+const char *
 logicalrep_message_type(LogicalRepMsgType action)
 {
+	static char err_unknown[20];
+
 	switch (action)
 	{
 		case LOGICAL_REP_MSG_BEGIN:
@@ -1258,7 +1260,12 @@ logicalrep_message_type(LogicalRepMsgType action)
 			return "STREAM PREPARE";
 	}
 
-	elog(ERROR, "invalid logical replication message type \"%c\"", action);
+	/*
+	 * This message provides context in the error raised when applying a
+	 * logical message. So we can't throw an error here. Return an unknown
+	 * indicator value so that the original error is still reported.
+	 */
+	snprintf(err_unknown, sizeof(err_unknown), "??? (%d)", action);
 
-	return NULL;				/* keep compiler quiet */
+	return err_unknown;
 }

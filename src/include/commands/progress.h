@@ -7,7 +7,7 @@
  *	  constants, you probably also need to update the views based on them
  *	  in system_views.sql.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/progress.h
@@ -23,8 +23,11 @@
 #define PROGRESS_VACUUM_HEAP_BLKS_SCANNED		2
 #define PROGRESS_VACUUM_HEAP_BLKS_VACUUMED		3
 #define PROGRESS_VACUUM_NUM_INDEX_VACUUMS		4
-#define PROGRESS_VACUUM_MAX_DEAD_TUPLES			5
-#define PROGRESS_VACUUM_NUM_DEAD_TUPLES			6
+#define PROGRESS_VACUUM_MAX_DEAD_TUPLE_BYTES	5
+#define PROGRESS_VACUUM_DEAD_TUPLE_BYTES		6
+#define PROGRESS_VACUUM_NUM_DEAD_ITEM_IDS		7
+#define PROGRESS_VACUUM_INDEXES_TOTAL			8
+#define PROGRESS_VACUUM_INDEXES_PROCESSED		9
 
 /* Phases of vacuum (as advertised via PROGRESS_VACUUM_PHASE) */
 #define PROGRESS_VACUUM_PHASE_SCAN_HEAP			1
@@ -140,6 +143,7 @@
 #define PROGRESS_COPY_TUPLES_EXCLUDED 3
 #define PROGRESS_COPY_COMMAND 4
 #define PROGRESS_COPY_TYPE 5
+#define PROGRESS_COPY_TUPLES_SKIPPED 6
 
 /* Commands of COPY (as advertised via PROGRESS_COPY_COMMAND) */
 #define PROGRESS_COPY_COMMAND_FROM 1

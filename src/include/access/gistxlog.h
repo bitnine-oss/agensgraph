@@ -3,7 +3,7 @@
  * gistxlog.h
  *	  gist xlog routines
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/gistxlog.h
@@ -69,7 +69,7 @@ typedef struct gistxlogPageSplit
 {
 	BlockNumber origrlink;		/* rightlink of the page before split */
 	GistNSN		orignsn;		/* NSN of the page before split */
-	bool		origleaf;		/* was splitted page a leaf page? */
+	bool		origleaf;		/* was split page a leaf page? */
 
 	uint16		npage;			/* # of pages in the split */
 	bool		markfollowright;	/* set F_FOLLOW_RIGHT flags */

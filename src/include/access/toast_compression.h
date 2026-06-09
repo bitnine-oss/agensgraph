@@ -3,7 +3,7 @@
  * toast_compression.h
  *	  Functions for toast compression.
  *
- * Copyright (c) 2021-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2021-2024, PostgreSQL Global Development Group
  *
  * src/include/access/toast_compression.h
  *
@@ -38,7 +38,7 @@ typedef enum ToastCompressionId
 {
 	TOAST_PGLZ_COMPRESSION_ID = 0,
 	TOAST_LZ4_COMPRESSION_ID = 1,
-	TOAST_INVALID_COMPRESSION_ID = 2
+	TOAST_INVALID_COMPRESSION_ID = 2,
 } ToastCompressionId;
 
 /*

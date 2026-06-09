@@ -124,7 +124,7 @@
      <listitem>
       <para>
        <literal>user</literal>, <literal>password</literal> and <literal>sslpassword</literal> (specify these
-       in a user mapping, instead, or use a service file)
+       in a user mapping instead, or use a service file)
       </para>
      </listitem>
      <listitem>
@@ -303,7 +303,7 @@ OPTIONS (ADD password_required 'false');
        scans on that server.  This represents the additional overhead of
        data transfer between servers.  You might increase or decrease this
        number to reflect higher or lower network delay to the remote server.
-       The default value is <literal>0.01</literal>.
+       The default value is <literal>0.2</literal>.
       </para>
      </listitem>
     </varlistentry>
@@ -337,7 +337,7 @@ OPTIONS (ADD password_required 'false');
    <variablelist>
 
     <varlistentry>
-     <term><literal>analyze_sampling</literal> (<type>text</type>)</term>
+     <term><literal>analyze_sampling</literal> (<type>string</type>)</term>
      <listitem>
       <para>
        This option, which can be specified for a foreign table or a foreign
@@ -1042,6 +1042,44 @@ postgres=# SELECT postgres_fdw_disconnect_all();
   </para>
  </sect2>
 
+ <sect2 id="postgres-fdw-wait-events">
+  <title>Wait Events</title>
+
+  <para>
+   <filename>postgres_fdw</filename> can report the following wait events
+   under the wait event type <literal>Extension</literal>:
+  </para>
+
+  <variablelist>
+   <varlistentry>
+    <term><literal>PostgresFdwCleanupResult</literal></term>
+    <listitem>
+     <para>
+      Waiting for transaction abort on remote server.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>PostgresFdwConnect</literal></term>
+    <listitem>
+     <para>
+      Waiting to establish a connection to a remote server.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>PostgresFdwGetResult</literal></term>
+    <listitem>
+     <para>
+      Waiting to receive the results of a query from a remote server.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </sect2>
+
  <sect2 id="postgres-fdw-configuration-parameters">
   <title>Configuration Parameters</title>
 
@@ -1067,9 +1105,9 @@ postgres=# SELECT postgres_fdw_disconnect_all();
       of any length and contain even non-ASCII characters.  However when
       it's passed to and used as <varname>application_name</varname>
       in a foreign server, note that it will be truncated to less than
-      <symbol>NAMEDATALEN</symbol> characters and anything other than
-      printable ASCII characters will be replaced with question
-      marks (<literal>?</literal>).
+      <symbol>NAMEDATALEN</symbol> characters.
+      Anything other than printable ASCII characters are replaced with <link
+      linkend="sql-syntax-strings-escape">C-style hexadecimal escapes</link>.
       See <xref linkend="guc-application-name"/> for details.
      </para>
 

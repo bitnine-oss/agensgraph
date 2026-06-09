@@ -3,13 +3,14 @@
  *
  *	server checks and output routines
  *
- *	Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/check.c
  */
 
 #include "postgres_fe.h"
 
 #include "catalog/pg_authid_d.h"
+#include "catalog/pg_class_d.h"
 #include "catalog/pg_collation.h"
 #include "fe_utils/string_utils.h"
 #include "mb/pg_wchar.h"
@@ -23,14 +24,507 @@ static void check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster);
 static void check_for_user_defined_postfix_ops(ClusterInfo *cluster);
 static void check_for_incompatible_polymorphics(ClusterInfo *cluster);
 static void check_for_tables_with_oids(ClusterInfo *cluster);
-static void check_for_composite_data_type_usage(ClusterInfo *cluster);
-static void check_for_reg_data_type_usage(ClusterInfo *cluster);
-static void check_for_aclitem_data_type_usage(ClusterInfo *cluster);
-static void check_for_jsonb_9_4_usage(ClusterInfo *cluster);
 static void check_for_pg_role_prefix(ClusterInfo *cluster);
-static void check_for_new_tablespace_dir(ClusterInfo *new_cluster);
+static void check_for_new_tablespace_dir(void);
 static void check_for_user_defined_encoding_conversions(ClusterInfo *cluster);
+static void check_new_cluster_logical_replication_slots(void);
+static void check_new_cluster_subscription_configuration(void);
+static void check_old_cluster_for_valid_slots(bool live_check);
+static void check_old_cluster_subscription_state(void);
 
+/*
+ * DataTypesUsageChecks - definitions of data type checks for the old cluster
+ * in order to determine if an upgrade can be performed.  See the comment on
+ * data_types_usage_checks below for a more detailed description.
+ */
+typedef struct
+{
+	/* Status line to print to the user */
+	const char *status;
+	/* Filename to store report to */
+	const char *report_filename;
+	/* Query to extract the oid of the datatype */
+	const char *base_query;
+	/* Text to store to report in case of error */
+	const char *report_text;
+	/* The latest version where the check applies */
+	int			threshold_version;
+	/* A function pointer for determining if the check applies */
+	DataTypesUsageVersionCheck version_hook;
+} DataTypesUsageChecks;
+
+/*
+ * Special values for threshold_version for indicating that a check applies to
+ * all versions, or that a custom function needs to be invoked to determine
+ * if the check applies.
+ */
+#define MANUAL_CHECK 1
+#define ALL_VERSIONS -1
+
+/*--
+ * Data type usage checks. Each check for problematic data type usage is
+ * defined in this array with metadata, SQL query for finding the data type
+ * and functionality for deciding if the check is applicable to the version
+ * of the old cluster. The struct members are described in detail below:
+ *
+ * status				A oneline string which can be printed to the user to
+ *						inform about progress. Should not end with newline.
+ * report_filename		The filename in which the list of problems detected by
+ *						the check will be printed.
+ * base_query			A query which extracts the Oid of the datatype checked
+ *						for.
+ * report_text			The text which will be printed to the user to explain
+ *						what the check did, and why it failed. The text should
+ *						end with a newline, and does not need to refer to the
+ *						report_filename as that is automatically appended to
+ *						the report with the path to the log folder.
+ * threshold_version	The major version of PostgreSQL for which to run the
+ *						check. Iff the old cluster is less than, or equal to,
+ *						the threshold version then the check will be executed.
+ *						If the old version is greater than the threshold then
+ *						the check is skipped. If the threshold_version is set
+ *						to ALL_VERSIONS then it will be run unconditionally,
+ *						if set to MANUAL_CHECK then the version_hook function
+ *						will be executed in order to determine whether or not
+ *						to run.
+ * version_hook			A function pointer to a version check function of type
+ *						DataTypesUsageVersionCheck which is used to determine
+ *						if the check is applicable to the old cluster. If the
+ *						version_hook returns true then the check will be run,
+ *						else it will be skipped. The function will only be
+ *						executed iff threshold_version is set to MANUAL_CHECK.
+ */
+static DataTypesUsageChecks data_types_usage_checks[] =
+{
+	/*
+	 * Look for composite types that were made during initdb *or* belong to
+	 * information_schema; that's important in case information_schema was
+	 * dropped and reloaded.
+	 *
+	 * The cutoff OID here should match the source cluster's value of
+	 * FirstNormalObjectId.  We hardcode it rather than using that C #define
+	 * because, if that #define is ever changed, our own version's value is
+	 * NOT what to use.  Eventually we may need a test on the source cluster's
+	 * version to select the correct value.
+	 */
+	{
+		.status = gettext_noop("Checking for system-defined composite types in user tables"),
+		.report_filename = "tables_using_composite.txt",
+		.base_query =
+		"SELECT t.oid FROM pg_catalog.pg_type t "
+		"LEFT JOIN pg_catalog.pg_namespace n ON t.typnamespace = n.oid "
+		" WHERE typtype = 'c' AND (t.oid < 16384 OR nspname = 'information_schema')",
+		.report_text =
+		gettext_noop("Your installation contains system-defined composite types in user tables.\n"
+					 "These type OIDs are not stable across PostgreSQL versions,\n"
+					 "so this cluster cannot currently be upgraded.  You can drop the\n"
+					 "problem columns and restart the upgrade.\n"),
+		.threshold_version = ALL_VERSIONS
+	},
+
+	/*
+	 * 9.3 -> 9.4 Fully implement the 'line' data type in 9.4, which
+	 * previously returned "not enabled" by default and was only functionally
+	 * enabled with a compile-time switch; as of 9.4 "line" has a different
+	 * on-disk representation format.
+	 */
+	{
+		.status = gettext_noop("Checking for incompatible \"line\" data type"),
+		.report_filename = "tables_using_line.txt",
+		.base_query =
+		"SELECT 'pg_catalog.line'::pg_catalog.regtype AS oid",
+		.report_text =
+		gettext_noop("Your installation contains the \"line\" data type in user tables.\n"
+					 "This data type changed its internal and input/output format\n"
+					 "between your old and new versions so this\n"
+					 "cluster cannot currently be upgraded.  You can\n"
+					 "drop the problem columns and restart the upgrade.\n"),
+		.threshold_version = 903
+	},
+
+	/*
+	 * pg_upgrade only preserves these system values: pg_class.oid pg_type.oid
+	 * pg_enum.oid
+	 *
+	 * Many of the reg* data types reference system catalog info that is not
+	 * preserved, and hence these data types cannot be used in user tables
+	 * upgraded by pg_upgrade.
+	 */
+	{
+		.status = gettext_noop("Checking for reg* data types in user tables"),
+		.report_filename = "tables_using_reg.txt",
+
+		/*
+		 * Note: older servers will not have all of these reg* types, so we
+		 * have to write the query like this rather than depending on casts to
+		 * regtype.
+		 */
+		.base_query =
+		"SELECT oid FROM pg_catalog.pg_type t "
+		"WHERE t.typnamespace = "
+		"        (SELECT oid FROM pg_catalog.pg_namespace "
+		"         WHERE nspname = 'pg_catalog') "
+		"  AND t.typname IN ( "
+		/* pg_class.oid is preserved, so 'regclass' is OK */
+		"           'regcollation', "
+		"           'regconfig', "
+		"           'regdictionary', "
+		"           'regnamespace', "
+		"           'regoper', "
+		"           'regoperator', "
+		"           'regproc', "
+		"           'regprocedure' "
+		/* pg_authid.oid is preserved, so 'regrole' is OK */
+		/* pg_type.oid is (mostly) preserved, so 'regtype' is OK */
+		"         )",
+		.report_text =
+		gettext_noop("Your installation contains one of the reg* data types in user tables.\n"
+					 "These data types reference system OIDs that are not preserved by\n"
+					 "pg_upgrade, so this cluster cannot currently be upgraded.  You can\n"
+					 "drop the problem columns and restart the upgrade.\n"),
+		.threshold_version = ALL_VERSIONS
+	},
+
+	/*
+	 * PG 16 increased the size of the 'aclitem' type, which breaks the
+	 * on-disk format for existing data.
+	 */
+	{
+		.status = gettext_noop("Checking for incompatible \"aclitem\" data type"),
+		.report_filename = "tables_using_aclitem.txt",
+		.base_query =
+		"SELECT 'pg_catalog.aclitem'::pg_catalog.regtype AS oid",
+		.report_text =
+		gettext_noop("Your installation contains the \"aclitem\" data type in user tables.\n"
+					 "The internal format of \"aclitem\" changed in PostgreSQL version 16\n"
+					 "so this cluster cannot currently be upgraded.  You can drop the\n"
+					 "problem columns and restart the upgrade.\n"),
+		.threshold_version = 1500
+	},
+
+	/*
+	 * It's no longer allowed to create tables or views with "unknown"-type
+	 * columns.  We do not complain about views with such columns, because
+	 * they should get silently converted to "text" columns during the DDL
+	 * dump and reload; it seems unlikely to be worth making users do that by
+	 * hand.  However, if there's a table with such a column, the DDL reload
+	 * will fail, so we should pre-detect that rather than failing
+	 * mid-upgrade.  Worse, if there's a matview with such a column, the DDL
+	 * reload will silently change it to "text" which won't match the on-disk
+	 * storage (which is like "cstring").  So we *must* reject that.
+	 */
+	{
+		.status = gettext_noop("Checking for invalid \"unknown\" user columns"),
+		.report_filename = "tables_using_unknown.txt",
+		.base_query =
+		"SELECT 'pg_catalog.unknown'::pg_catalog.regtype AS oid",
+		.report_text =
+		gettext_noop("Your installation contains the \"unknown\" data type in user tables.\n"
+					 "This data type is no longer allowed in tables, so this cluster\n"
+					 "cannot currently be upgraded.  You can drop the problem columns\n"
+					 "and restart the upgrade.\n"),
+		.threshold_version = 906
+	},
+
+	/*
+	 * PG 12 changed the 'sql_identifier' type storage to be based on name,
+	 * not varchar, which breaks on-disk format for existing data. So we need
+	 * to prevent upgrade when used in user objects (tables, indexes, ...). In
+	 * 12, the sql_identifier data type was switched from name to varchar,
+	 * which does affect the storage (name is by-ref, but not varlena). This
+	 * means user tables using sql_identifier for columns are broken because
+	 * the on-disk format is different.
+	 */
+	{
+		.status = gettext_noop("Checking for invalid \"sql_identifier\" user columns"),
+		.report_filename = "tables_using_sql_identifier.txt",
+		.base_query =
+		"SELECT 'information_schema.sql_identifier'::pg_catalog.regtype AS oid",
+		.report_text =
+		gettext_noop("Your installation contains the \"sql_identifier\" data type in user tables.\n"
+					 "The on-disk format for this data type has changed, so this\n"
+					 "cluster cannot currently be upgraded.  You can drop the problem\n"
+					 "columns and restart the upgrade.\n"),
+		.threshold_version = 1100
+	},
+
+	/*
+	 * JSONB changed its storage format during 9.4 beta, so check for it.
+	 */
+	{
+		.status = gettext_noop("Checking for incompatible \"jsonb\" data type in user tables"),
+		.report_filename = "tables_using_jsonb.txt",
+		.base_query =
+		"SELECT 'pg_catalog.jsonb'::pg_catalog.regtype AS oid",
+		.report_text =
+		gettext_noop("Your installation contains the \"jsonb\" data type in user tables.\n"
+					 "The internal format of \"jsonb\" changed during 9.4 beta so this\n"
+					 "cluster cannot currently be upgraded.  You can drop the problem \n"
+					 "columns and restart the upgrade.\n"),
+		.threshold_version = MANUAL_CHECK,
+		.version_hook = jsonb_9_4_check_applicable
+	},
+
+	/*
+	 * PG 12 removed types abstime, reltime, tinterval.
+	 */
+	{
+		.status = gettext_noop("Checking for removed \"abstime\" data type in user tables"),
+		.report_filename = "tables_using_abstime.txt",
+		.base_query =
+		"SELECT 'pg_catalog.abstime'::pg_catalog.regtype AS oid",
+		.report_text =
+		gettext_noop("Your installation contains the \"abstime\" data type in user tables.\n"
+					 "The \"abstime\" type has been removed in PostgreSQL version 12,\n"
+					 "so this cluster cannot currently be upgraded.  You can drop the\n"
+					 "problem columns, or change them to another data type, and restart\n"
+					 "the upgrade.\n"),
+		.threshold_version = 1100
+	},
+	{
+		.status = gettext_noop("Checking for removed \"reltime\" data type in user tables"),
+		.report_filename = "tables_using_reltime.txt",
+		.base_query =
+		"SELECT 'pg_catalog.reltime'::pg_catalog.regtype AS oid",
+		.report_text =
+		gettext_noop("Your installation contains the \"reltime\" data type in user tables.\n"
+					 "The \"reltime\" type has been removed in PostgreSQL version 12,\n"
+					 "so this cluster cannot currently be upgraded.  You can drop the\n"
+					 "problem columns, or change them to another data type, and restart\n"
+					 "the upgrade.\n"),
+		.threshold_version = 1100
+	},
+	{
+		.status = gettext_noop("Checking for removed \"tinterval\" data type in user tables"),
+		.report_filename = "tables_using_tinterval.txt",
+		.base_query =
+		"SELECT 'pg_catalog.tinterval'::pg_catalog.regtype AS oid",
+		.report_text =
+		gettext_noop("Your installation contains the \"tinterval\" data type in user tables.\n"
+					 "The \"tinterval\" type has been removed in PostgreSQL version 12,\n"
+					 "so this cluster cannot currently be upgraded.  You can drop the\n"
+					 "problem columns, or change them to another data type, and restart\n"
+					 "the upgrade.\n"),
+		.threshold_version = 1100
+	},
+
+	/* End of checks marker, must remain last */
+	{
+		NULL, NULL, NULL, NULL, 0, NULL
+	}
+};
+
+/*
+ * check_for_data_types_usage()
+ *	Detect whether there are any stored columns depending on given type(s)
+ *
+ * If so, write a report to the given file name and signal a failure to the
+ * user.
+ *
+ * The checks to run are defined in a DataTypesUsageChecks structure where
+ * each check has a metadata for explaining errors to the user, a base_query,
+ * a report filename and a function pointer hook for validating if the check
+ * should be executed given the cluster at hand.
+ *
+ * base_query should be a SELECT yielding a single column named "oid",
+ * containing the pg_type OIDs of one or more types that are known to have
+ * inconsistent on-disk representations across server versions.
+ *
+ * We check for the type(s) in tables, matviews, and indexes, but not views;
+ * there's no storage involved in a view.
+ */
+static void
+check_for_data_types_usage(ClusterInfo *cluster, DataTypesUsageChecks *checks)
+{
+	bool		found = false;
+	bool	   *results;
+	PQExpBufferData report;
+	DataTypesUsageChecks *tmp = checks;
+	int			n_data_types_usage_checks = 0;
+
+	prep_status("Checking for data type usage");
+
+	/* Gather number of checks to perform */
+	while (tmp->status != NULL)
+	{
+		n_data_types_usage_checks++;
+		tmp++;
+	}
+
+	/* Prepare an array to store the results of checks in */
+	results = pg_malloc0(sizeof(bool) * n_data_types_usage_checks);
+
+	/*
+	 * Connect to each database in the cluster and run all defined checks
+	 * against that database before trying the next one.
+	 */
+	for (int dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
+	{
+		DbInfo	   *active_db = &cluster->dbarr.dbs[dbnum];
+		PGconn	   *conn = connectToServer(cluster, active_db->db_name);
+
+		for (int checknum = 0; checknum < n_data_types_usage_checks; checknum++)
+		{
+			PGresult   *res;
+			int			ntups;
+			int			i_nspname;
+			int			i_relname;
+			int			i_attname;
+			FILE	   *script = NULL;
+			bool		db_used = false;
+			char		output_path[MAXPGPATH];
+			DataTypesUsageChecks *cur_check = &checks[checknum];
+
+			if (cur_check->threshold_version == MANUAL_CHECK)
+			{
+				Assert(cur_check->version_hook);
+
+				/*
+				 * Make sure that the check applies to the current cluster
+				 * version and skip if not. If no check hook has been defined
+				 * we run the check for all versions.
+				 */
+				if (!cur_check->version_hook(cluster))
+					continue;
+			}
+			else if (cur_check->threshold_version != ALL_VERSIONS)
+			{
+				if (GET_MAJOR_VERSION(cluster->major_version) > cur_check->threshold_version)
+					continue;
+			}
+			else
+				Assert(cur_check->threshold_version == ALL_VERSIONS);
+
+			snprintf(output_path, sizeof(output_path), "%s/%s",
+					 log_opts.basedir,
+					 cur_check->report_filename);
+
+			/*
+			 * The type(s) of interest might be wrapped in a domain, array,
+			 * composite, or range, and these container types can be nested
+			 * (to varying extents depending on server version, but that's not
+			 * of concern here).  To handle all these cases we need a
+			 * recursive CTE.
+			 */
+			res = executeQueryOrDie(conn,
+									"WITH RECURSIVE oids AS ( "
+			/* start with the type(s) returned by base_query */
+									"	%s "
+									"	UNION ALL "
+									"	SELECT * FROM ( "
+			/* inner WITH because we can only reference the CTE once */
+									"		WITH x AS (SELECT oid FROM oids) "
+			/* domains on any type selected so far */
+									"			SELECT t.oid FROM pg_catalog.pg_type t, x WHERE typbasetype = x.oid AND typtype = 'd' "
+									"			UNION ALL "
+			/* arrays over any type selected so far */
+									"			SELECT t.oid FROM pg_catalog.pg_type t, x WHERE typelem = x.oid AND typtype = 'b' "
+									"			UNION ALL "
+			/* composite types containing any type selected so far */
+									"			SELECT t.oid FROM pg_catalog.pg_type t, pg_catalog.pg_class c, pg_catalog.pg_attribute a, x "
+									"			WHERE t.typtype = 'c' AND "
+									"				  t.oid = c.reltype AND "
+									"				  c.oid = a.attrelid AND "
+									"				  NOT a.attisdropped AND "
+									"				  a.atttypid = x.oid "
+									"			UNION ALL "
+			/* ranges containing any type selected so far */
+									"			SELECT t.oid FROM pg_catalog.pg_type t, pg_catalog.pg_range r, x "
+									"			WHERE t.typtype = 'r' AND r.rngtypid = t.oid AND r.rngsubtype = x.oid"
+									"	) foo "
+									") "
+			/* now look for stored columns of any such type */
+									"SELECT n.nspname, c.relname, a.attname "
+									"FROM	pg_catalog.pg_class c, "
+									"		pg_catalog.pg_namespace n, "
+									"		pg_catalog.pg_attribute a "
+									"WHERE	c.oid = a.attrelid AND "
+									"		NOT a.attisdropped AND "
+									"		a.atttypid IN (SELECT oid FROM oids) AND "
+									"		c.relkind IN ("
+									CppAsString2(RELKIND_RELATION) ", "
+									CppAsString2(RELKIND_MATVIEW) ", "
+									CppAsString2(RELKIND_INDEX) ") AND "
+									"		c.relnamespace = n.oid AND "
+			/* exclude possible orphaned temp tables */
+									"		n.nspname !~ '^pg_temp_' AND "
+									"		n.nspname !~ '^pg_toast_temp_' AND "
+			/* exclude system catalogs, too */
+									"		n.nspname NOT IN ('pg_catalog', 'information_schema')",
+									cur_check->base_query);
+
+			ntups = PQntuples(res);
+
+			/*
+			 * The datatype was found, so extract the data and log to the
+			 * requested filename. We need to open the file for appending
+			 * since the check might have already found the type in another
+			 * database earlier in the loop.
+			 */
+			if (ntups)
+			{
+				/*
+				 * Make sure we have a buffer to save reports to now that we
+				 * found a first failing check.
+				 */
+				if (!found)
+					initPQExpBuffer(&report);
+				found = true;
+
+				/*
+				 * If this is the first time we see an error for the check in
+				 * question then print a status message of the failure.
+				 */
+				if (!results[checknum])
+				{
+					pg_log(PG_REPORT, "    failed check: %s", _(cur_check->status));
+					appendPQExpBuffer(&report, "\n%s\n%s    %s\n",
+									  _(cur_check->report_text),
+									  _("A list of the problem columns is in the file:"),
+									  output_path);
+				}
+				results[checknum] = true;
+
+				i_nspname = PQfnumber(res, "nspname");
+				i_relname = PQfnumber(res, "relname");
+				i_attname = PQfnumber(res, "attname");
+
+				for (int rowno = 0; rowno < ntups; rowno++)
+				{
+					if (script == NULL && (script = fopen_priv(output_path, "a")) == NULL)
+						pg_fatal("could not open file \"%s\": %m", output_path);
+
+					if (!db_used)
+					{
+						fprintf(script, "In database: %s\n", active_db->db_name);
+						db_used = true;
+					}
+					fprintf(script, "  %s.%s.%s\n",
+							PQgetvalue(res, rowno, i_nspname),
+							PQgetvalue(res, rowno, i_relname),
+							PQgetvalue(res, rowno, i_attname));
+				}
+
+				if (script)
+				{
+					fclose(script);
+					script = NULL;
+				}
+			}
+
+			PQclear(res);
+		}
+
+		PQfinish(conn);
+	}
+
+	if (found)
+		pg_fatal("Data type checks failed: %s", report.data);
+
+	pg_free(results);
+
+	check_ok();
+}
 
 /*
  * fix_path_separator
@@ -86,8 +580,11 @@ check_and_dump_old_cluster(bool live_check)
 	if (!live_check)
 		start_postmaster(&old_cluster, true);
 
-	/* Extract a list of databases and tables from the old cluster */
-	get_db_and_rel_infos(&old_cluster);
+	/*
+	 * Extract a list of databases, tables, and logical replication slots from
+	 * the old cluster.
+	 */
+	get_db_rel_and_slot_infos(&old_cluster, live_check);
 
 	init_tablespaces();
 
@@ -100,16 +597,24 @@ check_and_dump_old_cluster(bool live_check)
 	check_is_install_user(&old_cluster);
 	check_proper_datallowconn(&old_cluster);
 	check_for_prepared_transactions(&old_cluster);
-	check_for_composite_data_type_usage(&old_cluster);
-	check_for_reg_data_type_usage(&old_cluster);
 	check_for_isn_and_int8_passing_mismatch(&old_cluster);
 
-	/*
-	 * PG 16 increased the size of the 'aclitem' type, which breaks the
-	 * on-disk format for existing data.
-	 */
-	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 1500)
-		check_for_aclitem_data_type_usage(&old_cluster);
+	if (GET_MAJOR_VERSION(old_cluster.major_version) >= 1700)
+	{
+		/*
+		 * Logical replication slots can be migrated since PG17. See comments
+		 * atop get_old_cluster_logical_slot_infos().
+		 */
+		check_old_cluster_for_valid_slots(live_check);
+
+		/*
+		 * Subscriptions and their dependencies can be migrated since PG17.
+		 * See comments atop get_db_subscription_count().
+		 */
+		check_old_cluster_subscription_state();
+	}
+
+	check_for_data_types_usage(&old_cluster, data_types_usage_checks);
 
 	/*
 	 * PG 14 changed the function signature of encoding conversion functions.
@@ -142,20 +647,11 @@ check_and_dump_old_cluster(bool live_check)
 		check_for_tables_with_oids(&old_cluster);
 
 	/*
-	 * PG 12 changed the 'sql_identifier' type storage to be based on name,
-	 * not varchar, which breaks on-disk format for existing data. So we need
-	 * to prevent upgrade when used in user objects (tables, indexes, ...).
-	 */
-	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 1100)
-		old_11_check_for_sql_identifier_data_type_usage(&old_cluster);
-
-	/*
 	 * Pre-PG 10 allowed tables with 'unknown' type columns and non WAL logged
 	 * hash indexes
 	 */
 	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 906)
 	{
-		old_9_6_check_for_unknown_data_type_usage(&old_cluster);
 		if (user_opts.check)
 			old_9_6_invalidate_hash_indexes(&old_cluster, true);
 	}
@@ -163,14 +659,6 @@ check_and_dump_old_cluster(bool live_check)
 	/* 9.5 and below should not have roles starting with pg_ */
 	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 905)
 		check_for_pg_role_prefix(&old_cluster);
-
-	if (GET_MAJOR_VERSION(old_cluster.major_version) == 904 &&
-		old_cluster.controldata.cat_ver < JSONB_FORMAT_CHANGE_CAT_VER)
-		check_for_jsonb_9_4_usage(&old_cluster);
-
-	/* Pre-PG 9.4 had a different 'line' data type internal format */
-	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 903)
-		old_9_3_check_for_line_data_type_usage(&old_cluster);
 
 	/*
 	 * While not a check option, we do this now because this is the only time
@@ -187,7 +675,7 @@ check_and_dump_old_cluster(bool live_check)
 void
 check_new_cluster(void)
 {
-	get_db_and_rel_infos(&new_cluster);
+	get_db_rel_and_slot_infos(&new_cluster, false);
 
 	check_new_cluster_is_empty();
 
@@ -200,6 +688,9 @@ check_new_cluster(void)
 			break;
 		case TRANSFER_MODE_COPY:
 			break;
+		case TRANSFER_MODE_COPY_FILE_RANGE:
+			check_copy_file_range();
+			break;
 		case TRANSFER_MODE_LINK:
 			check_hard_link();
 			break;
@@ -209,7 +700,11 @@ check_new_cluster(void)
 
 	check_for_prepared_transactions(&new_cluster);
 
-	check_for_new_tablespace_dir(&new_cluster);
+	check_for_new_tablespace_dir();
+
+	check_new_cluster_logical_replication_slots();
+
+	check_new_cluster_subscription_configuration();
 }
 
 
@@ -377,7 +872,7 @@ check_new_cluster_is_empty(void)
  * during schema restore.
  */
 static void
-check_for_new_tablespace_dir(ClusterInfo *new_cluster)
+check_for_new_tablespace_dir(void)
 {
 	int			tblnum;
 	char		new_tablespace_dir[MAXPGPATH];
@@ -390,7 +885,7 @@ check_for_new_tablespace_dir(ClusterInfo *new_cluster)
 
 		snprintf(new_tablespace_dir, MAXPGPATH, "%s%s",
 				 os_info.old_tablespaces[tblnum],
-				 new_cluster->tablespace_suffix);
+				 new_cluster.tablespace_suffix);
 
 		if (stat(new_tablespace_dir, &statbuf) == 0 || errno != ENOENT)
 			pg_fatal("new cluster tablespace directory already exists: \"%s\"",
@@ -463,8 +958,8 @@ create_script_for_old_cluster_deletion(char **deletion_script_file_name)
 	prep_status("Creating script to delete old cluster");
 
 	if ((script = fopen_priv(*deletion_script_file_name, "w")) == NULL)
-		pg_fatal("could not open file \"%s\": %s",
-				 *deletion_script_file_name, strerror(errno));
+		pg_fatal("could not open file \"%s\": %m",
+				 *deletion_script_file_name);
 
 #ifndef WIN32
 	/* add shebang header */
@@ -514,8 +1009,8 @@ create_script_for_old_cluster_deletion(char **deletion_script_file_name)
 
 #ifndef WIN32
 	if (chmod(*deletion_script_file_name, S_IRWXU) != 0)
-		pg_fatal("could not add execute permission to file \"%s\": %s",
-				 *deletion_script_file_name, strerror(errno));
+		pg_fatal("could not add execute permission to file \"%s\": %m",
+				 *deletion_script_file_name);
 #endif
 
 	check_ok();
@@ -636,8 +1131,7 @@ check_proper_datallowconn(ClusterInfo *cluster)
 			if (strcmp(datallowconn, "f") == 0)
 			{
 				if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
-					pg_fatal("could not open file \"%s\": %s",
-							 output_path, strerror(errno));
+					pg_fatal("could not open file \"%s\": %m", output_path);
 
 				fprintf(script, "%s\n", datname);
 			}
@@ -752,8 +1246,7 @@ check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster)
 		for (rowno = 0; rowno < ntups; rowno++)
 		{
 			if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
-				pg_fatal("could not open file \"%s\": %s",
-						 output_path, strerror(errno));
+				pg_fatal("could not open file \"%s\": %m", output_path);
 			if (!db_used)
 			{
 				fprintf(script, "In database: %s\n", active_db->db_name);
@@ -847,8 +1340,7 @@ check_for_user_defined_postfix_ops(ClusterInfo *cluster)
 		{
 			if (script == NULL &&
 				(script = fopen_priv(output_path, "w")) == NULL)
-				pg_fatal("could not open file \"%s\": %s",
-						 output_path, strerror(errno));
+				pg_fatal("could not open file \"%s\": %m", output_path);
 			if (!db_used)
 			{
 				fprintf(script, "In database: %s\n", active_db->db_name);
@@ -976,8 +1468,7 @@ check_for_incompatible_polymorphics(ClusterInfo *cluster)
 		{
 			if (script == NULL &&
 				(script = fopen_priv(output_path, "w")) == NULL)
-				pg_fatal("could not open file \"%s\": %s",
-						 output_path, strerror(errno));
+				pg_fatal("could not open file \"%s\": %m", output_path);
 			if (!db_used)
 			{
 				fprintf(script, "In database: %s\n", active_db->db_name);
@@ -1053,8 +1544,7 @@ check_for_tables_with_oids(ClusterInfo *cluster)
 		for (rowno = 0; rowno < ntups; rowno++)
 		{
 			if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
-				pg_fatal("could not open file \"%s\": %s",
-						 output_path, strerror(errno));
+				pg_fatal("could not open file \"%s\": %m", output_path);
 			if (!db_used)
 			{
 				fprintf(script, "In database: %s\n", active_db->db_name);
@@ -1084,184 +1574,6 @@ check_for_tables_with_oids(ClusterInfo *cluster)
 		check_ok();
 }
 
-
-/*
- * check_for_composite_data_type_usage()
- *	Check for system-defined composite types used in user tables.
- *
- *	The OIDs of rowtypes of system catalogs and information_schema views
- *	can change across major versions; unlike user-defined types, we have
- *	no mechanism for forcing them to be the same in the new cluster.
- *	Hence, if any user table uses one, that's problematic for pg_upgrade.
- */
-static void
-check_for_composite_data_type_usage(ClusterInfo *cluster)
-{
-	bool		found;
-	Oid			firstUserOid;
-	char		output_path[MAXPGPATH];
-	char	   *base_query;
-
-	prep_status("Checking for system-defined composite types in user tables");
-
-	snprintf(output_path, sizeof(output_path), "%s/%s",
-			 log_opts.basedir,
-			 "tables_using_composite.txt");
-
-	/*
-	 * Look for composite types that were made during initdb *or* belong to
-	 * information_schema; that's important in case information_schema was
-	 * dropped and reloaded.
-	 *
-	 * The cutoff OID here should match the source cluster's value of
-	 * FirstNormalObjectId.  We hardcode it rather than using that C #define
-	 * because, if that #define is ever changed, our own version's value is
-	 * NOT what to use.  Eventually we may need a test on the source cluster's
-	 * version to select the correct value.
-	 */
-	firstUserOid = 16384;
-
-	base_query = psprintf("SELECT t.oid FROM pg_catalog.pg_type t "
-						  "LEFT JOIN pg_catalog.pg_namespace n ON t.typnamespace = n.oid "
-						  " WHERE typtype = 'c' AND (t.oid < %u OR nspname = 'information_schema')",
-						  firstUserOid);
-
-	found = check_for_data_types_usage(cluster, base_query, output_path);
-
-	free(base_query);
-
-	if (found)
-	{
-		pg_log(PG_REPORT, "fatal");
-		pg_fatal("Your installation contains system-defined composite type(s) in user tables.\n"
-				 "These type OIDs are not stable across PostgreSQL versions,\n"
-				 "so this cluster cannot currently be upgraded.  You can\n"
-				 "drop the problem columns and restart the upgrade.\n"
-				 "A list of the problem columns is in the file:\n"
-				 "    %s", output_path);
-	}
-	else
-		check_ok();
-}
-
-/*
- * check_for_reg_data_type_usage()
- *	pg_upgrade only preserves these system values:
- *		pg_class.oid
- *		pg_type.oid
- *		pg_enum.oid
- *
- *	Many of the reg* data types reference system catalog info that is
- *	not preserved, and hence these data types cannot be used in user
- *	tables upgraded by pg_upgrade.
- */
-static void
-check_for_reg_data_type_usage(ClusterInfo *cluster)
-{
-	bool		found;
-	char		output_path[MAXPGPATH];
-
-	prep_status("Checking for reg* data types in user tables");
-
-	snprintf(output_path, sizeof(output_path), "%s/%s",
-			 log_opts.basedir,
-			 "tables_using_reg.txt");
-
-	/*
-	 * Note: older servers will not have all of these reg* types, so we have
-	 * to write the query like this rather than depending on casts to regtype.
-	 */
-	found = check_for_data_types_usage(cluster,
-									   "SELECT oid FROM pg_catalog.pg_type t "
-									   "WHERE t.typnamespace = "
-									   "        (SELECT oid FROM pg_catalog.pg_namespace "
-									   "         WHERE nspname = 'pg_catalog') "
-									   "  AND t.typname IN ( "
-	/* pg_class.oid is preserved, so 'regclass' is OK */
-									   "           'regcollation', "
-									   "           'regconfig', "
-									   "           'regdictionary', "
-									   "           'regnamespace', "
-									   "           'regoper', "
-									   "           'regoperator', "
-									   "           'regproc', "
-									   "           'regprocedure' "
-	/* pg_authid.oid is preserved, so 'regrole' is OK */
-	/* pg_type.oid is (mostly) preserved, so 'regtype' is OK */
-									   "         )",
-									   output_path);
-
-	if (found)
-	{
-		pg_log(PG_REPORT, "fatal");
-		pg_fatal("Your installation contains one of the reg* data types in user tables.\n"
-				 "These data types reference system OIDs that are not preserved by\n"
-				 "pg_upgrade, so this cluster cannot currently be upgraded.  You can\n"
-				 "drop the problem columns and restart the upgrade.\n"
-				 "A list of the problem columns is in the file:\n"
-				 "    %s", output_path);
-	}
-	else
-		check_ok();
-}
-
-/*
- * check_for_aclitem_data_type_usage
- *
- *	aclitem changed its storage format in 16, so check for it.
- */
-static void
-check_for_aclitem_data_type_usage(ClusterInfo *cluster)
-{
-	char		output_path[MAXPGPATH];
-
-	prep_status("Checking for incompatible \"aclitem\" data type in user tables");
-
-	snprintf(output_path, sizeof(output_path), "tables_using_aclitem.txt");
-
-	if (check_for_data_type_usage(cluster, "pg_catalog.aclitem", output_path))
-	{
-		pg_log(PG_REPORT, "fatal");
-		pg_fatal("Your installation contains the \"aclitem\" data type in user tables.\n"
-				 "The internal format of \"aclitem\" changed in PostgreSQL version 16\n"
-				 "so this cluster cannot currently be upgraded.  You can drop the\n"
-				 "problem columns and restart the upgrade.  A list of the problem\n"
-				 "columns is in the file:\n"
-				 "    %s", output_path);
-	}
-	else
-		check_ok();
-}
-
-/*
- * check_for_jsonb_9_4_usage()
- *
- *	JSONB changed its storage format during 9.4 beta, so check for it.
- */
-static void
-check_for_jsonb_9_4_usage(ClusterInfo *cluster)
-{
-	char		output_path[MAXPGPATH];
-
-	prep_status("Checking for incompatible \"jsonb\" data type");
-
-	snprintf(output_path, sizeof(output_path), "%s/%s",
-			 log_opts.basedir,
-			 "tables_using_jsonb.txt");
-
-	if (check_for_data_type_usage(cluster, "pg_catalog.jsonb", output_path))
-	{
-		pg_log(PG_REPORT, "fatal");
-		pg_fatal("Your installation contains the \"jsonb\" data type in user tables.\n"
-				 "The internal format of \"jsonb\" changed during 9.4 beta so this\n"
-				 "cluster cannot currently be upgraded.  You can\n"
-				 "drop the problem columns and restart the upgrade.\n"
-				 "A list of the problem columns is in the file:\n"
-				 "    %s", output_path);
-	}
-	else
-		check_ok();
-}
 
 /*
  * check_for_pg_role_prefix()
@@ -1296,8 +1608,7 @@ check_for_pg_role_prefix(ClusterInfo *cluster)
 	for (int rowno = 0; rowno < ntups; rowno++)
 	{
 		if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
-			pg_fatal("could not open file \"%s\": %s",
-					 output_path, strerror(errno));
+			pg_fatal("could not open file \"%s\": %m", output_path);
 		fprintf(script, "%s (oid=%s)\n",
 				PQgetvalue(res, rowno, i_rolname),
 				PQgetvalue(res, rowno, i_roloid));
@@ -1370,8 +1681,7 @@ check_for_user_defined_encoding_conversions(ClusterInfo *cluster)
 		{
 			if (script == NULL &&
 				(script = fopen_priv(output_path, "w")) == NULL)
-				pg_fatal("could not open file \"%s\": %s",
-						 output_path, strerror(errno));
+				pg_fatal("could not open file \"%s\": %m", output_path);
 			if (!db_used)
 			{
 				fprintf(script, "In database: %s\n", active_db->db_name);
@@ -1397,6 +1707,323 @@ check_for_user_defined_encoding_conversions(ClusterInfo *cluster)
 				 "so this cluster cannot currently be upgraded.  You can remove the\n"
 				 "encoding conversions in the old cluster and restart the upgrade.\n"
 				 "A list of user-defined encoding conversions is in the file:\n"
+				 "    %s", output_path);
+	}
+	else
+		check_ok();
+}
+
+/*
+ * check_new_cluster_logical_replication_slots()
+ *
+ * Verify that there are no logical replication slots on the new cluster and
+ * that the parameter settings necessary for creating slots are sufficient.
+ */
+static void
+check_new_cluster_logical_replication_slots(void)
+{
+	PGresult   *res;
+	PGconn	   *conn;
+	int			nslots_on_old;
+	int			nslots_on_new;
+	int			max_replication_slots;
+	char	   *wal_level;
+
+	/* Logical slots can be migrated since PG17. */
+	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 1600)
+		return;
+
+	nslots_on_old = count_old_cluster_logical_slots();
+
+	/* Quick return if there are no logical slots to be migrated. */
+	if (nslots_on_old == 0)
+		return;
+
+	conn = connectToServer(&new_cluster, "template1");
+
+	prep_status("Checking for new cluster logical replication slots");
+
+	res = executeQueryOrDie(conn, "SELECT count(*) "
+							"FROM pg_catalog.pg_replication_slots "
+							"WHERE slot_type = 'logical' AND "
+							"temporary IS FALSE;");
+
+	if (PQntuples(res) != 1)
+		pg_fatal("could not count the number of logical replication slots");
+
+	nslots_on_new = atoi(PQgetvalue(res, 0, 0));
+
+	if (nslots_on_new)
+		pg_fatal("Expected 0 logical replication slots but found %d.",
+				 nslots_on_new);
+
+	PQclear(res);
+
+	res = executeQueryOrDie(conn, "SELECT setting FROM pg_settings "
+							"WHERE name IN ('wal_level', 'max_replication_slots') "
+							"ORDER BY name DESC;");
+
+	if (PQntuples(res) != 2)
+		pg_fatal("could not determine parameter settings on new cluster");
+
+	wal_level = PQgetvalue(res, 0, 0);
+
+	if (strcmp(wal_level, "logical") != 0)
+		pg_fatal("\"wal_level\" must be \"logical\", but is set to \"%s\"",
+				 wal_level);
+
+	max_replication_slots = atoi(PQgetvalue(res, 1, 0));
+
+	if (nslots_on_old > max_replication_slots)
+		pg_fatal("\"max_replication_slots\" (%d) must be greater than or equal to the number of "
+				 "logical replication slots (%d) on the old cluster",
+				 max_replication_slots, nslots_on_old);
+
+	PQclear(res);
+	PQfinish(conn);
+
+	check_ok();
+}
+
+/*
+ * check_new_cluster_subscription_configuration()
+ *
+ * Verify that the max_replication_slots configuration specified is enough for
+ * creating the subscriptions. This is required to create the replication
+ * origin for each subscription.
+ */
+static void
+check_new_cluster_subscription_configuration(void)
+{
+	PGresult   *res;
+	PGconn	   *conn;
+	int			nsubs_on_old;
+	int			max_replication_slots;
+
+	/* Subscriptions and their dependencies can be migrated since PG17. */
+	if (GET_MAJOR_VERSION(old_cluster.major_version) < 1700)
+		return;
+
+	nsubs_on_old = count_old_cluster_subscriptions();
+
+	/* Quick return if there are no subscriptions to be migrated. */
+	if (nsubs_on_old == 0)
+		return;
+
+	prep_status("Checking for new cluster configuration for subscriptions");
+
+	conn = connectToServer(&new_cluster, "template1");
+
+	res = executeQueryOrDie(conn, "SELECT setting FROM pg_settings "
+							"WHERE name = 'max_replication_slots';");
+
+	if (PQntuples(res) != 1)
+		pg_fatal("could not determine parameter settings on new cluster");
+
+	max_replication_slots = atoi(PQgetvalue(res, 0, 0));
+	if (nsubs_on_old > max_replication_slots)
+		pg_fatal("\"max_replication_slots\" (%d) must be greater than or equal to the number of "
+				 "subscriptions (%d) on the old cluster",
+				 max_replication_slots, nsubs_on_old);
+
+	PQclear(res);
+	PQfinish(conn);
+
+	check_ok();
+}
+
+/*
+ * check_old_cluster_for_valid_slots()
+ *
+ * Verify that all the logical slots are valid and have consumed all the WAL
+ * before shutdown.
+ */
+static void
+check_old_cluster_for_valid_slots(bool live_check)
+{
+	char		output_path[MAXPGPATH];
+	FILE	   *script = NULL;
+
+	prep_status("Checking for valid logical replication slots");
+
+	snprintf(output_path, sizeof(output_path), "%s/%s",
+			 log_opts.basedir,
+			 "invalid_logical_slots.txt");
+
+	for (int dbnum = 0; dbnum < old_cluster.dbarr.ndbs; dbnum++)
+	{
+		LogicalSlotInfoArr *slot_arr = &old_cluster.dbarr.dbs[dbnum].slot_arr;
+
+		for (int slotnum = 0; slotnum < slot_arr->nslots; slotnum++)
+		{
+			LogicalSlotInfo *slot = &slot_arr->slots[slotnum];
+
+			/* Is the slot usable? */
+			if (slot->invalid)
+			{
+				if (script == NULL &&
+					(script = fopen_priv(output_path, "w")) == NULL)
+					pg_fatal("could not open file \"%s\": %m", output_path);
+
+				fprintf(script, "The slot \"%s\" is invalid\n",
+						slot->slotname);
+
+				continue;
+			}
+
+			/*
+			 * Do additional check to ensure that all logical replication
+			 * slots have consumed all the WAL before shutdown.
+			 *
+			 * Note: This can be satisfied only when the old cluster has been
+			 * shut down, so we skip this for live checks.
+			 */
+			if (!live_check && !slot->caught_up)
+			{
+				if (script == NULL &&
+					(script = fopen_priv(output_path, "w")) == NULL)
+					pg_fatal("could not open file \"%s\": %m", output_path);
+
+				fprintf(script,
+						"The slot \"%s\" has not consumed the WAL yet\n",
+						slot->slotname);
+			}
+		}
+	}
+
+	if (script)
+	{
+		fclose(script);
+
+		pg_log(PG_REPORT, "fatal");
+		pg_fatal("Your installation contains logical replication slots that can't be upgraded.\n"
+				 "You can remove invalid slots and/or consume the pending WAL for other slots,\n"
+				 "and then restart the upgrade.\n"
+				 "A list of the problematic slots is in the file:\n"
+				 "    %s", output_path);
+	}
+
+	check_ok();
+}
+
+/*
+ * check_old_cluster_subscription_state()
+ *
+ * Verify that the replication origin corresponding to each of the
+ * subscriptions are present and each of the subscribed tables is in
+ * 'i' (initialize) or 'r' (ready) state.
+ */
+static void
+check_old_cluster_subscription_state(void)
+{
+	FILE	   *script = NULL;
+	char		output_path[MAXPGPATH];
+	int			ntup;
+
+	prep_status("Checking for subscription state");
+
+	snprintf(output_path, sizeof(output_path), "%s/%s",
+			 log_opts.basedir,
+			 "subs_invalid.txt");
+	for (int dbnum = 0; dbnum < old_cluster.dbarr.ndbs; dbnum++)
+	{
+		PGresult   *res;
+		DbInfo	   *active_db = &old_cluster.dbarr.dbs[dbnum];
+		PGconn	   *conn = connectToServer(&old_cluster, active_db->db_name);
+
+		/* We need to check for pg_replication_origin only once. */
+		if (dbnum == 0)
+		{
+			/*
+			 * Check that all the subscriptions have their respective
+			 * replication origin.
+			 */
+			res = executeQueryOrDie(conn,
+									"SELECT d.datname, s.subname "
+									"FROM pg_catalog.pg_subscription s "
+									"LEFT OUTER JOIN pg_catalog.pg_replication_origin o "
+									"	ON o.roname = 'pg_' || s.oid "
+									"INNER JOIN pg_catalog.pg_database d "
+									"	ON d.oid = s.subdbid "
+									"WHERE o.roname IS NULL;");
+
+			ntup = PQntuples(res);
+			for (int i = 0; i < ntup; i++)
+			{
+				if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
+					pg_fatal("could not open file \"%s\": %m", output_path);
+				fprintf(script, "The replication origin is missing for database:\"%s\" subscription:\"%s\"\n",
+						PQgetvalue(res, i, 0),
+						PQgetvalue(res, i, 1));
+			}
+			PQclear(res);
+		}
+
+		/*
+		 * We don't allow upgrade if there is a risk of dangling slot or
+		 * origin corresponding to initial sync after upgrade.
+		 *
+		 * A slot/origin not created yet refers to the 'i' (initialize) state,
+		 * while 'r' (ready) state refers to a slot/origin created previously
+		 * but already dropped. These states are supported for pg_upgrade. The
+		 * other states listed below are not supported:
+		 *
+		 * a) SUBREL_STATE_DATASYNC: A relation upgraded while in this state
+		 * would retain a replication slot, which could not be dropped by the
+		 * sync worker spawned after the upgrade because the subscription ID
+		 * used for the slot name won't match anymore.
+		 *
+		 * b) SUBREL_STATE_SYNCDONE: A relation upgraded while in this state
+		 * would retain the replication origin when there is a failure in
+		 * tablesync worker immediately after dropping the replication slot in
+		 * the publisher.
+		 *
+		 * c) SUBREL_STATE_FINISHEDCOPY: A tablesync worker spawned to work on
+		 * a relation upgraded while in this state would expect an origin ID
+		 * with the OID of the subscription used before the upgrade, causing
+		 * it to fail.
+		 *
+		 * d) SUBREL_STATE_SYNCWAIT, SUBREL_STATE_CATCHUP and
+		 * SUBREL_STATE_UNKNOWN: These states are not stored in the catalog,
+		 * so we need not allow these states.
+		 */
+		res = executeQueryOrDie(conn,
+								"SELECT r.srsubstate, s.subname, n.nspname, c.relname "
+								"FROM pg_catalog.pg_subscription_rel r "
+								"LEFT JOIN pg_catalog.pg_subscription s"
+								"	ON r.srsubid = s.oid "
+								"LEFT JOIN pg_catalog.pg_class c"
+								"	ON r.srrelid = c.oid "
+								"LEFT JOIN pg_catalog.pg_namespace n"
+								"	ON c.relnamespace = n.oid "
+								"WHERE r.srsubstate NOT IN ('i', 'r') "
+								"ORDER BY s.subname");
+
+		ntup = PQntuples(res);
+		for (int i = 0; i < ntup; i++)
+		{
+			if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
+				pg_fatal("could not open file \"%s\": %m", output_path);
+
+			fprintf(script, "The table sync state \"%s\" is not allowed for database:\"%s\" subscription:\"%s\" schema:\"%s\" relation:\"%s\"\n",
+					PQgetvalue(res, i, 0),
+					active_db->db_name,
+					PQgetvalue(res, i, 1),
+					PQgetvalue(res, i, 2),
+					PQgetvalue(res, i, 3));
+		}
+
+		PQclear(res);
+		PQfinish(conn);
+	}
+
+	if (script)
+	{
+		fclose(script);
+		pg_log(PG_REPORT, "fatal");
+		pg_fatal("Your installation contains subscriptions without origin or having relations not in i (initialize) or r (ready) state.\n"
+				 "You can allow the initial sync to finish for all relations and then restart the upgrade.\n"
+				 "A list of the problematic subscriptions is in the file:\n"
 				 "    %s", output_path);
 	}
 	else

@@ -237,7 +237,7 @@
  *    to filter expressions having to be evaluated early, and allows to JIT
  *    the entire expression into one native function.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -260,7 +260,6 @@
 #include "executor/nodeAgg.h"
 #include "lib/hyperloglog.h"
 #include "miscadmin.h"
-#include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/optimizer.h"
 #include "parser/parse_agg.h"
@@ -4356,16 +4355,6 @@ ExecEndAgg(AggState *node)
 		ReScanExprContext(node->aggcontexts[setno]);
 	if (node->hashcontext)
 		ReScanExprContext(node->hashcontext);
-
-	/*
-	 * We don't actually free any ExprContexts here (see comment in
-	 * ExecFreeExprContext), just unlinking the output one from the plan node
-	 * suffices.
-	 */
-	ExecFreeExprContext(&node->ss.ps);
-
-	/* clean up tuple table */
-	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 
 	outerPlan = outerPlanState(node);
 	ExecEndNode(outerPlan);

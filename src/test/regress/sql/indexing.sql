@@ -483,8 +483,27 @@ create table idxpart (a int, b int primary key) partition by range (b, a);
 create table idxpart (a int, b int, c text, primary key  (a, b, c)) partition by range (b, c, a);
 drop table idxpart;
 
--- not other types of index-based constraints
-create table idxpart (a int, exclude (a with = )) partition by range (a);
+-- OK to add an exclusion constraint if partitioning by its equal column
+create table idxpart (a int4range, exclude USING GIST (a with = )) partition by range (a);
+drop table idxpart;
+-- OK more than one equal column
+create table idxpart (a int4range, b int4range, exclude USING GIST (a with =, b with =)) partition by range (a, b);
+drop table idxpart;
+-- OK with more than one equal column: constraint is a proper superset of partition key
+create table idxpart (a int4range, b int4range, exclude USING GIST (a with =, b with =)) partition by range (a);
+drop table idxpart;
+-- Not OK more than one equal column: partition keys are a proper superset of constraint
+create table idxpart (a int4range, b int4range, exclude USING GIST (a with = )) partition by range (a, b);
+-- Not OK with just -|-
+create table idxpart (a int4range, exclude USING GIST (a with -|- )) partition by range (a);
+-- OK with equals and &&, and equals is the partition key
+create table idxpart (a int4range, b int4range, exclude USING GIST (a with =, b with &&)) partition by range (a);
+drop table idxpart;
+-- Not OK with equals and &&, and equals is not the partition key
+create table idxpart (a int4range, b int4range, c int4range, exclude USING GIST (b with =, c with &&)) partition by range (a);
+-- OK more than one equal column and a && column
+create table idxpart (a int4range, b int4range, c int4range, exclude USING GIST (a with =, b with =, c with &&)) partition by range (a, b);
+drop table idxpart;
 
 -- no expressions in partition key for PK/UNIQUE
 create table idxpart (a int primary key, b int) partition by range ((b + a));
@@ -506,9 +525,37 @@ alter table idxpart add unique (b, a);		-- this works
 \d idxpart
 drop table idxpart;
 
--- Exclusion constraints cannot be added
-create table idxpart (a int, b int) partition by range (a);
-alter table idxpart add exclude (a with =);
+-- Exclusion constraints can be added if partitioning by their equal column
+create table idxpart (a int4range, b int4range) partition by range (a);
+alter table idxpart add exclude USING GIST (a with =);
+drop table idxpart;
+-- OK more than one equal column
+create table idxpart (a int4range, b int4range) partition by range (a, b);
+alter table idxpart add exclude USING GIST (a with =, b with =);
+drop table idxpart;
+-- OK with more than one equal column: constraint is a proper superset of partition key
+create table idxpart (a int4range, b int4range) partition by range (a);
+alter table idxpart add exclude USING GIST (a with =, b with =);
+drop table idxpart;
+-- Not OK more than one equal column: partition keys are a proper superset of constraint
+create table idxpart (a int4range, b int4range) partition by range (a, b);
+alter table idxpart add exclude USING GIST (a with =);
+drop table idxpart;
+-- Not OK with just -|-
+create table idxpart (a int4range, b int4range) partition by range (a, b);
+alter table idxpart add exclude USING GIST (a with -|-);
+drop table idxpart;
+-- OK with equals and &&, and equals is the partition key
+create table idxpart (a int4range, b int4range) partition by range (a);
+alter table idxpart add exclude USING GIST (a with =, b with &&);
+drop table idxpart;
+-- Not OK with equals and &&, and equals is not the partition key
+create table idxpart (a int4range, b int4range, c int4range) partition by range (a);
+alter table idxpart add exclude USING GIST (b with =, c with &&);
+drop table idxpart;
+-- OK more than one equal column and a && column
+create table idxpart (a int4range, b int4range, c int4range) partition by range (a, b);
+alter table idxpart add exclude USING GIST (a with =, b with =, c with &&);
 drop table idxpart;
 
 -- When (sub)partitions are created, they also contain the constraint
@@ -522,7 +569,7 @@ create table idxpart3 (b int not null, a int not null);
 alter table idxpart attach partition idxpart3 for values from (20, 20) to (30, 30);
 select conname, contype, conrelid::regclass, conindid::regclass, conkey
   from pg_constraint where conrelid::regclass::text like 'idxpart%'
-  order by conname;
+  order by conrelid::regclass::text, conname;
 drop table idxpart;
 
 -- Verify that multi-layer partitioning honors the requirement that all
@@ -620,9 +667,10 @@ create table idxpart (a int) partition by range (a);
 create table idxpart0 (like idxpart);
 alter table idxpart0 add unique (a);
 alter table idxpart attach partition idxpart0 default;
-alter table only idxpart add primary key (a);  -- fail, no NOT NULL constraint
+alter table only idxpart add primary key (a);  -- fail, no not-null constraint
 alter table idxpart0 alter column a set not null;
 alter table only idxpart add primary key (a);  -- now it works
+alter index idxpart_pkey attach partition idxpart0_a_key;
 alter table idxpart0 alter column a drop not null;  -- fail, pkey needs it
 drop table idxpart;
 
@@ -666,6 +714,26 @@ insert into idxpart select a * 2, b || b from idxpart where a between 2^16 and 2
 insert into idxpart values (572814, 'five');
 insert into idxpart values (857142, 'six');
 select tableoid::regclass, * from idxpart order by a;
+drop table idxpart;
+
+-- Test some other non-btree index types
+create table idxpart (a int, b text, c int[]) partition by range (a);
+create table idxpart1 partition of idxpart for values from (0) to (100000);
+set enable_seqscan to off;
+
+create index idxpart_brin on idxpart using brin(b);
+explain (costs off) select * from idxpart where b = 'abcd';
+drop index idxpart_brin;
+
+create index idxpart_spgist on idxpart using spgist(b);
+explain (costs off) select * from idxpart where b = 'abcd';
+drop index idxpart_spgist;
+
+create index idxpart_gin on idxpart using gin(c);
+explain (costs off) select * from idxpart where c @> array[42];
+drop index idxpart_gin;
+
+reset enable_seqscan;
 drop table idxpart;
 
 -- intentionally leave some objects around
@@ -782,3 +850,72 @@ select indexrelid::regclass, indisvalid,
   where indexrelid::regclass::text like 'parted_inval%'
   order by indexrelid::regclass::text collate "C";
 drop table parted_inval_tab;
+
+-- Check setup of indisvalid across a complex partition tree on index
+-- creation.  If one index in a partition index is invalid, so should its
+-- partitioned index.
+create table parted_isvalid_tab (a int, b int) partition by range (a);
+create table parted_isvalid_tab_1 partition of parted_isvalid_tab
+  for values from (1) to (10) partition by range (a);
+create table parted_isvalid_tab_2 partition of parted_isvalid_tab
+  for values from (10) to (20) partition by range (a);
+create table parted_isvalid_tab_11 partition of parted_isvalid_tab_1
+  for values from (1) to (5);
+create table parted_isvalid_tab_12 partition of parted_isvalid_tab_1
+  for values from (5) to (10);
+-- create an invalid index on one of the partitions.
+insert into parted_isvalid_tab_11 values (1, 0);
+create index concurrently parted_isvalid_idx_11 on parted_isvalid_tab_11 ((a/b));
+-- The previous invalid index is selected, invalidating all the indexes up to
+-- the top-most parent.
+create index parted_isvalid_idx on parted_isvalid_tab ((a/b));
+select indexrelid::regclass, indisvalid,
+       indrelid::regclass, inhparent::regclass
+  from pg_index idx left join
+       pg_inherits inh on (idx.indexrelid = inh.inhrelid)
+  where indexrelid::regclass::text like 'parted_isvalid%'
+  order by indexrelid::regclass::text collate "C";
+drop table parted_isvalid_tab;
+
+-- Check state of replica indexes when attaching a partition.
+begin;
+create table parted_replica_tab (id int not null) partition by range (id);
+create table parted_replica_tab_1 partition of parted_replica_tab
+  for values from (1) to (10) partition by range (id);
+create table parted_replica_tab_11 partition of parted_replica_tab_1
+  for values from (1) to (5);
+create unique index parted_replica_idx
+  on only parted_replica_tab using btree (id);
+create unique index parted_replica_idx_1
+  on only parted_replica_tab_1 using btree (id);
+-- This triggers an update of pg_index.indisreplident for parted_replica_idx.
+alter table only parted_replica_tab_1 replica identity
+  using index parted_replica_idx_1;
+create unique index parted_replica_idx_11 on parted_replica_tab_11 USING btree (id);
+select indexrelid::regclass, indisvalid, indisreplident,
+       indrelid::regclass, inhparent::regclass
+  from pg_index idx left join
+       pg_inherits inh on (idx.indexrelid = inh.inhrelid)
+  where indexrelid::regclass::text like 'parted_replica%'
+  order by indexrelid::regclass::text collate "C";
+-- parted_replica_idx is not valid yet here, because parted_replica_idx_1
+-- is not valid.
+alter index parted_replica_idx ATTACH PARTITION parted_replica_idx_1;
+select indexrelid::regclass, indisvalid, indisreplident,
+       indrelid::regclass, inhparent::regclass
+  from pg_index idx left join
+       pg_inherits inh on (idx.indexrelid = inh.inhrelid)
+  where indexrelid::regclass::text like 'parted_replica%'
+  order by indexrelid::regclass::text collate "C";
+-- parted_replica_idx becomes valid here.
+alter index parted_replica_idx_1 ATTACH PARTITION parted_replica_idx_11;
+alter table only parted_replica_tab_1 replica identity
+  using index parted_replica_idx_1;
+commit;
+select indexrelid::regclass, indisvalid, indisreplident,
+       indrelid::regclass, inhparent::regclass
+  from pg_index idx left join
+       pg_inherits inh on (idx.indexrelid = inh.inhrelid)
+  where indexrelid::regclass::text like 'parted_replica%'
+  order by indexrelid::regclass::text collate "C";
+drop table parted_replica_tab;

@@ -3,7 +3,7 @@
  * fastpath.c
  *	  routines to handle function requests from the frontend
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,8 +22,8 @@
 #include "catalog/objectaccess.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
-#include "libpq/libpq.h"
 #include "libpq/pqformat.h"
+#include "libpq/protocol.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "port/pg_bswap.h"
@@ -69,7 +69,7 @@ SendFunctionResult(Datum retval, bool isnull, Oid rettype, int16 format)
 {
 	StringInfoData buf;
 
-	pq_beginmessage(&buf, 'V');
+	pq_beginmessage(&buf, PqMsg_FunctionCallResponse);
 
 	if (isnull)
 	{
@@ -85,7 +85,7 @@ SendFunctionResult(Datum retval, bool isnull, Oid rettype, int16 format)
 
 			getTypeOutputInfo(rettype, &typoutput, &typisvarlena);
 			outputstr = OidOutputFunctionCall(typoutput, retval);
-			pq_sendcountedtext(&buf, outputstr, strlen(outputstr), false);
+			pq_sendcountedtext(&buf, outputstr, strlen(outputstr));
 			pfree(outputstr);
 		}
 		else if (format == 1)

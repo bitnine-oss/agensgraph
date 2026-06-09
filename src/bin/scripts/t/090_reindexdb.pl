@@ -1,8 +1,8 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
@@ -236,9 +236,11 @@ $node->safe_psql(
 	CREATE SCHEMA s1;
 	CREATE TABLE s1.t1(id integer);
 	CREATE INDEX ON s1.t1(id);
+	CREATE INDEX i1 ON s1.t1(id);
 	CREATE SCHEMA s2;
 	CREATE TABLE s2.t2(id integer);
 	CREATE INDEX ON s2.t2(id);
+	CREATE INDEX i2 ON s2.t2(id);
 	-- empty schema
 	CREATE SCHEMA s3;
 |);
@@ -246,9 +248,9 @@ $node->safe_psql(
 $node->command_fails(
 	[ 'reindexdb', '-j', '2', '-s', 'postgres' ],
 	'parallel reindexdb cannot process system catalogs');
-$node->command_fails(
-	[ 'reindexdb', '-j', '2', '-i', 'i1', 'postgres' ],
-	'parallel reindexdb cannot process indexes');
+$node->command_ok(
+	[ 'reindexdb', '-j', '2', '-i', 's1.i1', '-i', 's2.i2', 'postgres' ],
+	'parallel reindexdb for indices');
 # Note that the ordering of the commands is not stable, so the second
 # command for s2.t2 is not checked after.
 $node->issues_sql_like(
@@ -261,5 +263,19 @@ $node->command_ok(
 $node->command_ok(
 	[ 'reindexdb', '-j', '2', '--concurrently', '-d', 'postgres' ],
 	'parallel reindexdb on database, concurrently');
+
+# combinations of objects
+$node->issues_sql_like(
+	[ 'reindexdb', '-s', '-t', 'test1', 'postgres' ],
+	qr/statement:\ REINDEX SYSTEM postgres;/,
+	'specify both --system and --table');
+$node->issues_sql_like(
+	[ 'reindexdb', '-s', '-i', 'test1x', 'postgres' ],
+	qr/statement:\ REINDEX INDEX public.test1x;/,
+	'specify both --system and --index');
+$node->issues_sql_like(
+	[ 'reindexdb', '-s', '-S', 'pg_catalog', 'postgres' ],
+	qr/statement:\ REINDEX SCHEMA pg_catalog;/,
+	'specify both --system and --schema');
 
 done_testing();

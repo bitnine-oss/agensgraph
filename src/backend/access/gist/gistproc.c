@@ -7,7 +7,7 @@
  * This gives R-tree behavior, with Guttman's poly-time split algorithm.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -21,8 +21,8 @@
 
 #include "access/gist.h"
 #include "access/stratnum.h"
-#include "utils/builtins.h"
 #include "utils/float.h"
+#include "utils/fmgrprotos.h"
 #include "utils/geo_decls.h"
 #include "utils/sortsupport.h"
 

@@ -25,10 +25,11 @@ CREATE DATABASE <replaceable class="parameter">name</replaceable>
     [ WITH ] [ OWNER [=] <replaceable class="parameter">user_name</replaceable> ]
            [ TEMPLATE [=] <replaceable class="parameter">template</replaceable> ]
            [ ENCODING [=] <replaceable class="parameter">encoding</replaceable> ]
-           [ STRATEGY [=] <replaceable class="parameter">strategy</replaceable> ] ]
+           [ STRATEGY [=] <replaceable class="parameter">strategy</replaceable> ]
            [ LOCALE [=] <replaceable class="parameter">locale</replaceable> ]
            [ LC_COLLATE [=] <replaceable class="parameter">lc_collate</replaceable> ]
            [ LC_CTYPE [=] <replaceable class="parameter">lc_ctype</replaceable> ]
+           [ BUILTIN_LOCALE [=] <replaceable class="parameter">builtin_locale</replaceable> ]
            [ ICU_LOCALE [=] <replaceable class="parameter">icu_locale</replaceable> ]
            [ ICU_RULES [=] <replaceable class="parameter">icu_rules</replaceable> ]
            [ LOCALE_PROVIDER [=] <replaceable class="parameter">locale_provider</replaceable> ]
@@ -159,8 +160,15 @@ CREATE DATABASE <replaceable class="parameter">name</replaceable>
        <para>
         Can be overridden by setting <xref
         linkend="create-database-lc-collate"/>, <xref
-        linkend="create-database-lc-ctype"/>, or <xref
+        linkend="create-database-lc-ctype"/>, <xref
+        linkend="create-database-builtin-locale"/>, or <xref
         linkend="create-database-icu-locale"/> individually.
+       </para>
+       <para>
+        If <xref linkend="create-database-locale-provider"/> is
+        <literal>builtin</literal>, then <replaceable>locale</replaceable> or
+        <replaceable>builtin_locale</replaceable> must be specified and set to
+        either <literal>C</literal> or <literal>C.UTF-8</literal>.
        </para>
        <tip>
         <para>
@@ -211,6 +219,25 @@ CREATE DATABASE <replaceable class="parameter">name</replaceable>
       </listitem>
      </varlistentry>
 
+     <varlistentry id="create-database-builtin-locale">
+      <term><replaceable class="parameter">builtin_locale</replaceable></term>
+      <listitem>
+       <para>
+        Specifies the builtin provider locale for the database default
+        collation order and character classification, overriding the setting
+        <xref linkend="create-database-locale"/>.  The <link
+        linkend="create-database-locale-provider">locale provider</link> must
+        be <literal>builtin</literal>.  The default is the setting of <xref
+        linkend="create-database-locale"/> if specified; otherwise the same
+        setting as the template database.
+       </para>
+       <para>
+        The locales available for the <literal>builtin</literal> provider are
+        <literal>C</literal> and <literal>C.UTF-8</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="create-database-icu-locale">
       <term><replaceable class="parameter">icu_locale</replaceable></term>
       <listitem>
@@ -232,9 +259,7 @@ CREATE DATABASE <replaceable class="parameter">name</replaceable>
        <para>
         Specifies additional collation rules to customize the behavior of the
         default collation of this database.  This is supported for ICU only.
-        See <ulink
-        url="https://unicode-org.github.io/icu/userguide/collation/customization/"/>
-        for details on the syntax.
+        See <xref linkend="icu-tailoring-rules"/> for details.
        </para>
       </listitem>
      </varlistentry>
@@ -245,7 +270,7 @@ CREATE DATABASE <replaceable class="parameter">name</replaceable>
       <listitem>
        <para>
         Specifies the provider to use for the default collation in this
-        database.  Possible values are
+        database.  Possible values are <literal>builtin</literal>,
         <literal>icu</literal><indexterm><primary>ICU</primary></indexterm>
         (if the server was built with ICU support) or <literal>libc</literal>.
         By default, the provider is the same as that of the <xref

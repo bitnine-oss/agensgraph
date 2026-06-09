@@ -1,8 +1,10 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 common_sources = files(
   'archive.c',
   'base64.c',
+  'binaryheap.c',
+  'blkreftable.c',
   'checksum_helper.c',
   'compression.c',
   'controldata_utils.c',
@@ -17,6 +19,7 @@ common_sources = files(
   'kwlookup.c',
   'link-canary.c',
   'md5_common.c',
+  'parse_manifest.c',
   'percentrepl.c',
   'pg_get_line.c',
   'pg_lzcompress.c',
@@ -29,6 +32,8 @@ common_sources = files(
   'scram-common.c',
   'string.c',
   'stringinfo.c',
+  'unicode_case.c',
+  'unicode_category.c',
   'unicode_norm.c',
   'username.c',
   'wait_error.c',
@@ -93,11 +98,10 @@ common_sources_cflags = {
 }
 
 
-# A few files are currently only built for frontend, not server
-# (Mkvcbuild.pm has a copy of this list, too).  logging.c is excluded
-# from OBJS_FRONTEND_SHLIB (shared library) as a matter of policy,
-# because it is not appropriate for general purpose libraries such
-# as libpq to report errors directly.
+# A few files are currently only built for frontend, not server.
+# logging.c is excluded from OBJS_FRONTEND_SHLIB (shared library) as
+# a matter of policy, because it is not appropriate for general purpose
+# libraries such as libpq to report errors directly.
 
 common_sources_frontend_shlib = common_sources
 common_sources_frontend_shlib += files(
@@ -111,24 +115,28 @@ common_sources_frontend_static += files(
   'logging.c',
 )
 
-# Build pgport once for backend, once for use in frontend binaries, and once
-# for use in shared libraries
+# Build pgcommon once for backend, once for use in frontend binaries, and
+# once for use in shared libraries
 #
 # XXX: in most environments we could probably link_whole pgcommon_shlib
 # against pgcommon_static, instead of compiling twice.
 #
-# For the server build of pgcommon, depend on lwlocknames_h, because at least
-# cryptohash_openssl.c, hmac_openssl.c depend on it. That's arguably a
+# For the server build of pgcommon, depend on lwlocknames_h and because at
+# least cryptohash_openssl.c, hmac_openssl.c depend on it.
+# controldata_utils.c depends on wait_event_types_h. That's arguably a
 # layering violation, but ...
 pgcommon = {}
 pgcommon_variants = {
   '_srv': internal_lib_args + {
-    'sources': common_sources + [lwlocknames_h],
+    'sources': common_sources + [lwlocknames_h] + [wait_event_types_h],
     'dependencies': [backend_common_code],
   },
   '': default_lib_args + {
     'sources': common_sources_frontend_static,
     'dependencies': [frontend_common_code],
+    # Files in libpgcommon.a should use/export the "xxx_private" versions
+    # of pg_char_to_encoding() and friends.
+    'c_args': ['-DUSE_PRIVATE_ENCODING_FUNCS'],
   },
   '_shlib': default_lib_args + {
     'pic': true,

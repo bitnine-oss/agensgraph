@@ -9,7 +9,7 @@
  * proper FooMain() routine for the incarnation.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -34,7 +34,6 @@
 #include "common/username.h"
 #include "port/atomics.h"
 #include "postmaster/postmaster.h"
-#include "storage/spin.h"
 #include "tcop/tcopprot.h"
 #include "utils/help_config.h"
 #include "utils/memutils.h"
@@ -288,12 +287,6 @@ startup_hacks(const char *progname)
 		_CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDERR);
 	}
 #endif							/* WIN32 */
-
-	/*
-	 * Initialize dummy_spinlock, in case we are on a platform where we have
-	 * to use the fallback implementation of pg_memory_barrier().
-	 */
-	SpinLockInit(&dummy_spinlock);
 }
 
 

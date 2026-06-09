@@ -4,7 +4,7 @@
  *	  Declarations for XML data type support.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/xml.h
@@ -27,13 +27,13 @@ typedef enum
 	XML_STANDALONE_YES,
 	XML_STANDALONE_NO,
 	XML_STANDALONE_NO_VALUE,
-	XML_STANDALONE_OMITTED
+	XML_STANDALONE_OMITTED,
 }			XmlStandaloneType;
 
 typedef enum
 {
 	XMLBINARY_BASE64,
-	XMLBINARY_HEX
+	XMLBINARY_HEX,
 }			XmlBinaryType;
 
 typedef enum
@@ -41,7 +41,7 @@ typedef enum
 	PG_XML_STRICTNESS_LEGACY,	/* ignore errors unless function result
 								 * indicates error condition */
 	PG_XML_STRICTNESS_WELLFORMED,	/* ignore non-parser messages */
-	PG_XML_STRICTNESS_ALL		/* report all notices/warnings/errors */
+	PG_XML_STRICTNESS_ALL,		/* report all notices/warnings/errors */
 } PgXmlStrictness;
 
 /* struct PgXmlErrorContext is private to xml.c */

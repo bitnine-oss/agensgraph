@@ -171,6 +171,11 @@ select 10 as test01, 20 as test02 from generate_series(1,3) \gset
 more than one row returned for \gset
 select 10 as test01, 20 as test02 from generate_series(1,0) \gset
 no rows returned for \gset
+-- \gset returns no tuples
+select a from generate_series(1, 10) as a where a = 11 \gset
+no rows returned for \gset
+\echo :ROW_COUNT
+0
 -- \gset should work in FETCH_COUNT mode too
 \set FETCH_COUNT 1
 select 1 as x, 2 as y \gset pref01_ \\ \echo :pref01_x
@@ -4593,6 +4598,7 @@ bar 'bar' "bar"
 	\echo `nosuchcommand` :foo :'foo' :"foo"
 	\pset fieldsep | `nosuchcommand` :foo :'foo' :"foo"
 	\a
+	SELECT $1 \bind 1 \g
 	\C arg1
 	\c arg1 arg2 arg3 arg4
 	\cd arg1
@@ -4841,7 +4847,7 @@ number of rows: 0
 last error message: syntax error at end of input
 \echo 'last error code:' :LAST_ERROR_SQLSTATE
 last error code: 42601
--- check row count for a cursor-fetched query
+-- check row count for a query with chunked results
 \set FETCH_COUNT 10
 select unique2 from tenk1 order by unique2 limit 19;
  unique2 
@@ -4873,7 +4879,9 @@ error: false
 error code: 00000
 \echo 'number of rows:' :ROW_COUNT
 number of rows: 19
--- cursor-fetched query with an error after the first group
+-- chunked results with an error after the first chunk
+-- (we must disable parallel query here, else the behavior is timing-dependent)
+set debug_parallel_query = off;
 select 1/(15-unique2) from tenk1 order by unique2 limit 19;
  ?column? 
 ----------
@@ -4898,6 +4906,7 @@ number of rows: 0
 last error message: division by zero
 \echo 'last error code:' :LAST_ERROR_SQLSTATE
 last error code: 22012
+reset debug_parallel_query;
 \unset FETCH_COUNT
 create schema testpart;
 create role regress_partitioning_role;
@@ -5381,33 +5390,37 @@ comment on function psql_df_plpgsql () is 'some comment';
 rollback;
 drop role regress_psql_user;
 -- check \sf
-\sf information_schema._pg_expandarray
-CREATE OR REPLACE FUNCTION information_schema._pg_expandarray(anyarray, OUT x anyelement, OUT n integer)
- RETURNS SETOF record
+\sf information_schema._pg_index_position
+CREATE OR REPLACE FUNCTION information_schema._pg_index_position(oid, smallint)
+ RETURNS integer
  LANGUAGE sql
- IMMUTABLE PARALLEL SAFE STRICT
-AS $function$select $1[s],
-        s operator(pg_catalog.-) pg_catalog.array_lower($1,1) operator(pg_catalog.+) 1
-        from pg_catalog.generate_series(pg_catalog.array_lower($1,1),
-                                        pg_catalog.array_upper($1,1),
-                                        1) as g(s)$function$
-\sf+ information_schema._pg_expandarray
-        CREATE OR REPLACE FUNCTION information_schema._pg_expandarray(anyarray, OUT x anyelement, OUT n integer)
-         RETURNS SETOF record
+ STABLE STRICT
+BEGIN ATOMIC
+ SELECT (ss.a).n AS n
+    FROM ( SELECT information_schema._pg_expandarray(pg_index.indkey) AS a
+            FROM pg_index
+           WHERE (pg_index.indexrelid = $1)) ss
+   WHERE ((ss.a).x = $2);
+END
+\sf+ information_schema._pg_index_position
+        CREATE OR REPLACE FUNCTION information_schema._pg_index_position(oid, smallint)
+         RETURNS integer
          LANGUAGE sql
-         IMMUTABLE PARALLEL SAFE STRICT
-1       AS $function$select $1[s],
-2               s operator(pg_catalog.-) pg_catalog.array_lower($1,1) operator(pg_catalog.+) 1
-3               from pg_catalog.generate_series(pg_catalog.array_lower($1,1),
-4                                               pg_catalog.array_upper($1,1),
-5                                               1) as g(s)$function$
+         STABLE STRICT
+1       BEGIN ATOMIC
+2        SELECT (ss.a).n AS n
+3           FROM ( SELECT information_schema._pg_expandarray(pg_index.indkey) AS a
+4                   FROM pg_index
+5                  WHERE (pg_index.indexrelid = $1)) ss
+6          WHERE ((ss.a).x = $2);
+7       END
 \sf+ interval_pl_time
         CREATE OR REPLACE FUNCTION pg_catalog.interval_pl_time(interval, time without time zone)
          RETURNS time without time zone
          LANGUAGE sql
          IMMUTABLE PARALLEL SAFE STRICT COST 1
 1       RETURN ($2 + $1)
-\sf ts_debug(text)
+\sf ts_debug(text);
 CREATE OR REPLACE FUNCTION pg_catalog.ts_debug(document text, OUT alias text, OUT description text, OUT token text, OUT dictionaries regdictionary[], OUT dictionary regdictionary, OUT lexemes text[])
  RETURNS SETOF record
  LANGUAGE sql
@@ -5900,6 +5913,7 @@ SELECT * FROM bla ORDER BY 1;
  Susie
 (5 rows)
 
+COMMIT;
 -- reset all
 \set AUTOCOMMIT on
 \set ON_ERROR_ROLLBACK off
@@ -6280,9 +6294,9 @@ List of text search templates
 (0 rows)
 
 \dg "no.such.role"
-           List of roles
- Role name | Attributes | Member of 
------------+------------+-----------
+     List of roles
+ Role name | Attributes 
+-----------+------------
 
 \dL "no.such.language"
           List of languages
@@ -6303,9 +6317,9 @@ List of schemas
 (0 rows)
 
 \dO "no.such.collation"
-                                  List of collations
- Schema | Name | Provider | Collate | Ctype | ICU Locale | ICU Rules | Deterministic? 
---------+------+----------+---------+-------+------------+-----------+----------------
+                                List of collations
+ Schema | Name | Provider | Collate | Ctype | Locale | ICU Rules | Deterministic? 
+--------+------+----------+---------+-------+--------+-----------+----------------
 (0 rows)
 
 \dp "no.such.access.privilege"
@@ -6492,9 +6506,9 @@ cross-database references are not implemented: "no.such.schema"."no.such.languag
 (0 rows)
 
 \dO "no.such.schema"."no.such.collation"
-                                  List of collations
- Schema | Name | Provider | Collate | Ctype | ICU Locale | ICU Rules | Deterministic? 
---------+------+----------+---------+-------+------------+-----------+----------------
+                                List of collations
+ Schema | Name | Provider | Collate | Ctype | Locale | ICU Rules | Deterministic? 
+--------+------+----------+---------+-------+--------+-----------+----------------
 (0 rows)
 
 \dp "no.such.schema"."no.such.access.privilege"
@@ -6635,9 +6649,9 @@ List of text search templates
 (0 rows)
 
 \dO regression."no.such.schema"."no.such.collation"
-                                  List of collations
- Schema | Name | Provider | Collate | Ctype | ICU Locale | ICU Rules | Deterministic? 
---------+------+----------+---------+-------+------------+-----------+----------------
+                                List of collations
+ Schema | Name | Provider | Collate | Ctype | Locale | ICU Rules | Deterministic? 
+--------+------+----------+---------+-------+--------+-----------+----------------
 (0 rows)
 
 \dp regression."no.such.schema"."no.such.access.privilege"
@@ -6711,3 +6725,97 @@ cross-database references are not implemented: "no.such.database"."no.such.schem
 cross-database references are not implemented: "no.such.database"."no.such.schema"."no.such.data.type"
 \dX "no.such.database"."no.such.schema"."no.such.extended.statistics"
 cross-database references are not implemented: "no.such.database"."no.such.schema"."no.such.extended.statistics"
+-- check \drg and \du
+CREATE ROLE regress_du_role0;
+CREATE ROLE regress_du_role1;
+CREATE ROLE regress_du_role2;
+CREATE ROLE regress_du_admin;
+GRANT regress_du_role0 TO regress_du_admin WITH ADMIN TRUE;
+GRANT regress_du_role1 TO regress_du_admin WITH ADMIN TRUE;
+GRANT regress_du_role2 TO regress_du_admin WITH ADMIN TRUE;
+GRANT regress_du_role0 TO regress_du_role1 WITH ADMIN TRUE,  INHERIT TRUE,  SET TRUE  GRANTED BY regress_du_admin;
+GRANT regress_du_role0 TO regress_du_role2 WITH ADMIN TRUE,  INHERIT FALSE, SET FALSE GRANTED BY regress_du_admin;
+GRANT regress_du_role1 TO regress_du_role2 WITH ADMIN TRUE , INHERIT FALSE, SET TRUE  GRANTED BY regress_du_admin;
+GRANT regress_du_role0 TO regress_du_role1 WITH ADMIN FALSE, INHERIT TRUE,  SET FALSE GRANTED BY regress_du_role1;
+GRANT regress_du_role0 TO regress_du_role2 WITH ADMIN FALSE, INHERIT TRUE , SET TRUE  GRANTED BY regress_du_role1;
+GRANT regress_du_role0 TO regress_du_role1 WITH ADMIN FALSE, INHERIT FALSE, SET TRUE  GRANTED BY regress_du_role2;
+GRANT regress_du_role0 TO regress_du_role2 WITH ADMIN FALSE, INHERIT FALSE, SET FALSE GRANTED BY regress_du_role2;
+\drg regress_du_role*
+                             List of role grants
+    Role name     |    Member of     |       Options       |     Grantor      
+------------------+------------------+---------------------+------------------
+ regress_du_role1 | regress_du_role0 | ADMIN, INHERIT, SET | regress_du_admin
+ regress_du_role1 | regress_du_role0 | INHERIT             | regress_du_role1
+ regress_du_role1 | regress_du_role0 | SET                 | regress_du_role2
+ regress_du_role2 | regress_du_role0 | ADMIN               | regress_du_admin
+ regress_du_role2 | regress_du_role0 | INHERIT, SET        | regress_du_role1
+ regress_du_role2 | regress_du_role0 |                     | regress_du_role2
+ regress_du_role2 | regress_du_role1 | ADMIN, SET          | regress_du_admin
+(7 rows)
+
+\du regress_du_role*
+          List of roles
+    Role name     |  Attributes  
+------------------+--------------
+ regress_du_role0 | Cannot login
+ regress_du_role1 | Cannot login
+ regress_du_role2 | Cannot login
+
+DROP ROLE regress_du_role0;
+DROP ROLE regress_du_role1;
+DROP ROLE regress_du_role2;
+DROP ROLE regress_du_admin;
+-- Test display of empty privileges.
+BEGIN;
+-- Create an owner for tested objects because output contains owner name.
+CREATE ROLE regress_zeropriv_owner;
+SET LOCAL ROLE regress_zeropriv_owner;
+CREATE DOMAIN regress_zeropriv_domain AS int;
+REVOKE ALL ON DOMAIN regress_zeropriv_domain FROM CURRENT_USER, PUBLIC;
+\dD+ regress_zeropriv_domain
+                                                    List of domains
+ Schema |          Name           |  Type   | Collation | Nullable | Default | Check | Access privileges | Description 
+--------+-------------------------+---------+-----------+----------+---------+-------+-------------------+-------------
+ public | regress_zeropriv_domain | integer |           |          |         |       | (none)            | 
+(1 row)
+
+CREATE PROCEDURE regress_zeropriv_proc() LANGUAGE sql AS '';
+REVOKE ALL ON PROCEDURE regress_zeropriv_proc() FROM CURRENT_USER, PUBLIC;
+\df+ regress_zeropriv_proc
+                                                                                            List of functions
+ Schema |         Name          | Result data type | Argument data types | Type | Volatility | Parallel |         Owner          | Security | Access privileges | Language | Internal name | Description 
+--------+-----------------------+------------------+---------------------+------+------------+----------+------------------------+----------+-------------------+----------+---------------+-------------
+ public | regress_zeropriv_proc |                  |                     | proc | volatile   | unsafe   | regress_zeropriv_owner | invoker  | (none)            | sql      |               | 
+(1 row)
+
+CREATE TABLE regress_zeropriv_tbl (a int);
+REVOKE ALL ON TABLE regress_zeropriv_tbl FROM CURRENT_USER;
+\dp regress_zeropriv_tbl
+                                    Access privileges
+ Schema |         Name         | Type  | Access privileges | Column privileges | Policies 
+--------+----------------------+-------+-------------------+-------------------+----------
+ public | regress_zeropriv_tbl | table | (none)            |                   | 
+(1 row)
+
+CREATE TYPE regress_zeropriv_type AS (a int);
+REVOKE ALL ON TYPE regress_zeropriv_type FROM CURRENT_USER, PUBLIC;
+\dT+ regress_zeropriv_type
+                                                          List of data types
+ Schema |         Name          |     Internal name     | Size  | Elements |         Owner          | Access privileges | Description 
+--------+-----------------------+-----------------------+-------+----------+------------------------+-------------------+-------------
+ public | regress_zeropriv_type | regress_zeropriv_type | tuple |          | regress_zeropriv_owner | (none)            | 
+(1 row)
+
+ROLLBACK;
+-- Test display of default privileges with \pset null.
+CREATE TABLE defprivs (a int);
+\pset null '(default)'
+\z defprivs
+                              Access privileges
+ Schema |   Name   | Type  | Access privileges | Column privileges | Policies 
+--------+----------+-------+-------------------+-------------------+----------
+ public | defprivs | table | (default)         |                   | 
+(1 row)
+
+\pset null ''
+DROP TABLE defprivs;

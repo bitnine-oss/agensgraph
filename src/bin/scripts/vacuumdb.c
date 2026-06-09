@@ -2,7 +2,7 @@
  *
  * vacuumdb
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/scripts/vacuumdb.c
@@ -57,7 +57,7 @@ typedef enum
 	OBJFILTER_DATABASE = (1 << 1),	/* -d | --dbname */
 	OBJFILTER_TABLE = (1 << 2), /* -t | --table */
 	OBJFILTER_SCHEMA = (1 << 3),	/* -n | --schema */
-	OBJFILTER_SCHEMA_EXCLUDE = (1 << 4) /* -N | --exclude-schema */
+	OBJFILTER_SCHEMA_EXCLUDE = (1 << 4),	/* -N | --exclude-schema */
 } VacObjFilter;
 
 VacObjFilter objfilter = OBJFILTER_NONE;
@@ -72,6 +72,7 @@ static void vacuum_one_database(ConnParams *cparams,
 static void vacuum_all_databases(ConnParams *cparams,
 								 vacuumingOptions *vacopts,
 								 bool analyze_in_stages,
+								 SimpleStringList *objects,
 								 int concurrentCons,
 								 const char *progname, bool echo, bool quiet);
 
@@ -84,6 +85,8 @@ static void run_vacuum_command(PGconn *conn, const char *sql, bool echo,
 static void help(const char *progname);
 
 void		check_objfilter(void);
+
+static char *escape_quotes(const char *src);
 
 /* For analyze-in-stages mode */
 #define ANALYZE_NO_STAGE	-1
@@ -270,7 +273,7 @@ main(int argc, char *argv[])
 				vacopts.process_main = false;
 				break;
 			case 13:
-				vacopts.buffer_usage_limit = pg_strdup(optarg);
+				vacopts.buffer_usage_limit = escape_quotes(optarg);
 				break;
 			default:
 				/* getopt_long already emitted a complaint */
@@ -376,6 +379,7 @@ main(int argc, char *argv[])
 
 		vacuum_all_databases(&cparams, &vacopts,
 							 analyze_in_stages,
+							 &objects,
 							 concurrentCons,
 							 progname, echo, quiet);
 	}
@@ -427,18 +431,6 @@ check_objfilter(void)
 		(objfilter & OBJFILTER_DATABASE))
 		pg_fatal("cannot vacuum all databases and a specific one at the same time");
 
-	if ((objfilter & OBJFILTER_ALL_DBS) &&
-		(objfilter & OBJFILTER_TABLE))
-		pg_fatal("cannot vacuum specific table(s) in all databases");
-
-	if ((objfilter & OBJFILTER_ALL_DBS) &&
-		(objfilter & OBJFILTER_SCHEMA))
-		pg_fatal("cannot vacuum specific schema(s) in all databases");
-
-	if ((objfilter & OBJFILTER_ALL_DBS) &&
-		(objfilter & OBJFILTER_SCHEMA_EXCLUDE))
-		pg_fatal("cannot exclude specific schema(s) in all databases");
-
 	if ((objfilter & OBJFILTER_TABLE) &&
 		(objfilter & OBJFILTER_SCHEMA))
 		pg_fatal("cannot vacuum all tables in schema(s) and specific table(s) at the same time");
@@ -450,6 +442,20 @@ check_objfilter(void)
 	if ((objfilter & OBJFILTER_SCHEMA) &&
 		(objfilter & OBJFILTER_SCHEMA_EXCLUDE))
 		pg_fatal("cannot vacuum all tables in schema(s) and exclude schema(s) at the same time");
+}
+
+/*
+ * Returns a newly malloc'd version of 'src' with escaped single quotes and
+ * backslashes.
+ */
+static char *
+escape_quotes(const char *src)
+{
+	char	   *result = escape_single_quotes_ascii(src);
+
+	if (!result)
+		pg_fatal("out of memory");
+	return result;
 }
 
 /*
@@ -662,18 +668,22 @@ vacuum_one_database(ConnParams *cparams,
 	/* Used to match the tables or schemas listed by the user */
 	if (objects_listed)
 	{
-		appendPQExpBufferStr(&catalog_query, " JOIN listed_objects"
-							 " ON listed_objects.object_oid ");
-
-		if (objfilter & OBJFILTER_SCHEMA_EXCLUDE)
-			appendPQExpBufferStr(&catalog_query, "OPERATOR(pg_catalog.!=) ");
-		else
-			appendPQExpBufferStr(&catalog_query, "OPERATOR(pg_catalog.=) ");
+		appendPQExpBufferStr(&catalog_query, " LEFT JOIN listed_objects"
+							 " ON listed_objects.object_oid"
+							 " OPERATOR(pg_catalog.=) ");
 
 		if (objfilter & OBJFILTER_TABLE)
 			appendPQExpBufferStr(&catalog_query, "c.oid\n");
 		else
 			appendPQExpBufferStr(&catalog_query, "ns.oid\n");
+
+		if (objfilter & OBJFILTER_SCHEMA_EXCLUDE)
+			appendPQExpBuffer(&catalog_query,
+							  " WHERE listed_objects.object_oid IS NULL\n");
+		else
+			appendPQExpBuffer(&catalog_query,
+							  " WHERE listed_objects.object_oid IS NOT NULL\n");
+		has_where = true;
 	}
 
 	/*
@@ -684,9 +694,11 @@ vacuum_one_database(ConnParams *cparams,
 	 */
 	if ((objfilter & OBJFILTER_TABLE) == 0)
 	{
-		appendPQExpBufferStr(&catalog_query, " WHERE c.relkind OPERATOR(pg_catalog.=) ANY (array["
-							 CppAsString2(RELKIND_RELATION) ", "
-							 CppAsString2(RELKIND_MATVIEW) "])\n");
+		appendPQExpBuffer(&catalog_query,
+						  " %s c.relkind OPERATOR(pg_catalog.=) ANY (array["
+						  CppAsString2(RELKIND_RELATION) ", "
+						  CppAsString2(RELKIND_MATVIEW) "])\n",
+						  has_where ? "AND" : "WHERE");
 		has_where = true;
 	}
 
@@ -873,6 +885,7 @@ static void
 vacuum_all_databases(ConnParams *cparams,
 					 vacuumingOptions *vacopts,
 					 bool analyze_in_stages,
+					 SimpleStringList *objects,
 					 int concurrentCons,
 					 const char *progname, bool echo, bool quiet)
 {
@@ -883,7 +896,7 @@ vacuum_all_databases(ConnParams *cparams,
 
 	conn = connectMaintenanceDatabase(cparams, progname, echo);
 	result = executeQuery(conn,
-						  "SELECT datname FROM pg_database WHERE datallowconn ORDER BY 1;",
+						  "SELECT datname FROM pg_database WHERE datallowconn AND datconnlimit <> -2 ORDER BY 1;",
 						  echo);
 	PQfinish(conn);
 
@@ -905,7 +918,7 @@ vacuum_all_databases(ConnParams *cparams,
 
 				vacuum_one_database(cparams, vacopts,
 									stage,
-									NULL,
+									objects,
 									concurrentCons,
 									progname, echo, quiet);
 			}
@@ -919,7 +932,7 @@ vacuum_all_databases(ConnParams *cparams,
 
 			vacuum_one_database(cparams, vacopts,
 								ANALYZE_NO_STAGE,
-								NULL,
+								objects,
 								concurrentCons,
 								progname, echo, quiet);
 		}
@@ -962,6 +975,13 @@ prepare_vacuum_command(PQExpBuffer sql, int serverVersion,
 			if (vacopts->verbose)
 			{
 				appendPQExpBuffer(sql, "%sVERBOSE", sep);
+				sep = comma;
+			}
+			if (vacopts->buffer_usage_limit)
+			{
+				Assert(serverVersion >= 160000);
+				appendPQExpBuffer(sql, "%sBUFFER_USAGE_LIMIT '%s'", sep,
+								  vacopts->buffer_usage_limit);
 				sep = comma;
 			}
 			if (sep != paren)
@@ -1142,8 +1162,8 @@ help(const char *progname)
 	printf(_("      --no-process-main           skip the main relation\n"));
 	printf(_("      --no-process-toast          skip the TOAST table associated with the table to vacuum\n"));
 	printf(_("      --no-truncate               don't truncate empty pages at the end of the table\n"));
-	printf(_("  -n, --schema=PATTERN            vacuum tables in the specified schema(s) only\n"));
-	printf(_("  -N, --exclude-schema=PATTERN    do not vacuum tables in the specified schema(s)\n"));
+	printf(_("  -n, --schema=SCHEMA             vacuum tables in the specified schema(s) only\n"));
+	printf(_("  -N, --exclude-schema=SCHEMA     do not vacuum tables in the specified schema(s)\n"));
 	printf(_("  -P, --parallel=PARALLEL_WORKERS use this many background workers for vacuum, if available\n"));
 	printf(_("  -q, --quiet                     don't write any messages\n"));
 	printf(_("      --skip-locked               skip relations that cannot be immediately locked\n"));

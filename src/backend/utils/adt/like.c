@@ -7,7 +7,7 @@
  *		A big hack of the regexp.c code!! Contributed by
  *		Keith Parks <emkxp01@mtcc.demon.co.uk> (7/95).
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -22,7 +22,7 @@
 #include "catalog/pg_collation.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
-#include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
 #include "utils/pg_locale.h"
 #include "varatt.h"
 
@@ -95,10 +95,8 @@ SB_lower_char(unsigned char c, pg_locale_t locale, bool locale_is_c)
 {
 	if (locale_is_c)
 		return pg_ascii_tolower(c);
-#ifdef HAVE_LOCALE_T
 	else if (locale)
 		return tolower_l(c, locale->info.lt);
-#endif
 	else
 		return pg_tolower(c);
 }

@@ -12,7 +12,7 @@
  * example.  For the most part, however, code outside the core planner
  * should not need to include any optimizer/ header except this one.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/optimizer.h
@@ -90,6 +90,7 @@ extern PGDLLIMPORT double recursive_worktable_factor;
 extern PGDLLIMPORT int effective_cache_size;
 
 extern double clamp_row_est(double nrows);
+extern int32 clamp_width_est(int64 tuple_width);
 extern long clamp_cardinality_to_long(Cardinality x);
 
 /* in path/indxpath.c: */
@@ -104,7 +105,7 @@ typedef enum
 {
 	DEBUG_PARALLEL_OFF,
 	DEBUG_PARALLEL_ON,
-	DEBUG_PARALLEL_REGRESS
+	DEBUG_PARALLEL_REGRESS,
 }			DebugParallelMode;
 
 /* GUC parameters */
@@ -138,7 +139,9 @@ extern Expr *canonicalize_qual(Expr *qual, bool is_check);
 /* in util/clauses.c: */
 
 extern bool contain_mutable_functions(Node *clause);
+extern bool contain_mutable_functions_after_planning(Expr *expr);
 extern bool contain_volatile_functions(Node *clause);
+extern bool contain_volatile_functions_after_planning(Expr *expr);
 extern bool contain_volatile_functions_not_nextval(Node *clause);
 
 extern Node *eval_const_expressions(PlannerInfo *root, Node *node);

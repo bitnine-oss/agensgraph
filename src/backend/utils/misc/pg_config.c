@@ -3,7 +3,7 @@
  * pg_config.c
  *		Expose same output as pg_config except as an SRF
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -14,7 +14,6 @@
 
 #include "postgres.h"
 
-#include "catalog/pg_type.h"
 #include "common/config_info.h"
 #include "funcapi.h"
 #include "miscadmin.h"

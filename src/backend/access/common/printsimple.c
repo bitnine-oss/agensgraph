@@ -8,7 +8,7 @@
  *	  doesn't handle standalone backends or protocol versions other than
  *	  3.0, because we don't need such handling for current applications.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -21,6 +21,7 @@
 #include "access/printsimple.h"
 #include "catalog/pg_type.h"
 #include "libpq/pqformat.h"
+#include "libpq/protocol.h"
 #include "utils/builtins.h"
 
 /*
@@ -32,7 +33,7 @@ printsimple_startup(DestReceiver *self, int operation, TupleDesc tupdesc)
 	StringInfoData buf;
 	int			i;
 
-	pq_beginmessage(&buf, 'T'); /* RowDescription */
+	pq_beginmessage(&buf, PqMsg_RowDescription);
 	pq_sendint16(&buf, tupdesc->natts);
 
 	for (i = 0; i < tupdesc->natts; ++i)
@@ -65,7 +66,7 @@ printsimple(TupleTableSlot *slot, DestReceiver *self)
 	slot_getallattrs(slot);
 
 	/* Prepare and send message */
-	pq_beginmessage(&buf, 'D');
+	pq_beginmessage(&buf, PqMsg_DataRow);
 	pq_sendint16(&buf, tupdesc->natts);
 
 	for (i = 0; i < tupdesc->natts; ++i)
@@ -94,8 +95,7 @@ printsimple(TupleTableSlot *slot, DestReceiver *self)
 
 					pq_sendcountedtext(&buf,
 									   VARDATA_ANY(t),
-									   VARSIZE_ANY_EXHDR(t),
-									   false);
+									   VARSIZE_ANY_EXHDR(t));
 				}
 				break;
 
@@ -106,7 +106,7 @@ printsimple(TupleTableSlot *slot, DestReceiver *self)
 					int			len;
 
 					len = pg_ltoa(num, str);
-					pq_sendcountedtext(&buf, str, len, false);
+					pq_sendcountedtext(&buf, str, len);
 				}
 				break;
 
@@ -117,7 +117,7 @@ printsimple(TupleTableSlot *slot, DestReceiver *self)
 					int			len;
 
 					len = pg_lltoa(num, str);
-					pq_sendcountedtext(&buf, str, len, false);
+					pq_sendcountedtext(&buf, str, len);
 				}
 				break;
 
@@ -128,7 +128,7 @@ printsimple(TupleTableSlot *slot, DestReceiver *self)
 					int			len;
 
 					len = pg_ultoa_n(num, str);
-					pq_sendcountedtext(&buf, str, len, false);
+					pq_sendcountedtext(&buf, str, len);
 				}
 				break;
 

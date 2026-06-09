@@ -1,10 +1,10 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 #  src/pl/plperl/plc_perlboot.pl
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use vars qw(%_SHARED $_TD);
 
@@ -58,7 +58,7 @@ sub ::encode_array_constructor
 	package PostgreSQL::InServer;  ## no critic (RequireFilenameMatchesPackage)
 #>>>
 	use strict;
-	use warnings;
+	use warnings FATAL => 'all';
 
 	sub plperl_warn
 	{
@@ -107,7 +107,7 @@ sub ::encode_array_constructor
 
 	package PostgreSQL::InServer::ARRAY;
 	use strict;
-	use warnings;
+	use warnings FATAL => 'all';
 
 	use overload
 	  '""' => \&to_str,

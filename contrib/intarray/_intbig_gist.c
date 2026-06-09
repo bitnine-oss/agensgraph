@@ -9,6 +9,7 @@
 #include "access/gist.h"
 #include "access/reloptions.h"
 #include "access/stratnum.h"
+#include "common/int.h"
 #include "port/pg_bitutils.h"
 
 #define GETENTRY(vec,pos) ((GISTTYPE *) DatumGetPointer((vec)->vector[(pos)].key))
@@ -178,9 +179,6 @@ g_intbig_compress(PG_FUNCTION_ARGS)
 					  entry->rel, entry->page,
 					  entry->offset, false);
 
-		if (in != DatumGetArrayTypeP(entry->key))
-			pfree(in);
-
 		PG_RETURN_POINTER(retval);
 	}
 	else if (!ISALLTRUE(DatumGetPointer(entry->key)))
@@ -315,7 +313,8 @@ typedef struct
 static int
 comparecost(const void *a, const void *b)
 {
-	return ((const SPLITCOST *) a)->cost - ((const SPLITCOST *) b)->cost;
+	return pg_cmp_s32(((const SPLITCOST *) a)->cost,
+					  ((const SPLITCOST *) b)->cost);
 }
 
 

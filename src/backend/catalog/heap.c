@@ -3,7 +3,7 @@
  * heap.c
  *	  code to create and destroy POSTGRES heap relations
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -56,6 +56,7 @@
 #include "catalog/storage.h"
 #include "commands/tablecmds.h"
 #include "commands/typecmds.h"
+#include "common/int.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/optimizer.h"
@@ -228,7 +229,7 @@ static const FormData_pg_attribute a6 = {
 	.attislocal = true,
 };
 
-static const FormData_pg_attribute *SysAtt[] = {&a1, &a2, &a3, &a4, &a5, &a6};
+static const FormData_pg_attribute *const SysAtt[] = {&a1, &a2, &a3, &a4, &a5, &a6};
 
 /*
  * This function returns a Form_pg_attribute pointer for a system attribute.
@@ -552,6 +553,9 @@ CheckAttributeType(const char *attname,
 	char		att_typtype = get_typtype(atttypid);
 	Oid			att_typelem;
 
+	/* since this function recurses, it could be driven to stack overflow */
+	check_stack_depth();
+
 	if (att_typtype == TYPTYPE_PSEUDO)
 	{
 		/*
@@ -680,10 +684,11 @@ CheckAttributeType(const char *attname,
  *		Construct and insert a set of tuples in pg_attribute.
  *
  * Caller has already opened and locked pg_attribute.  tupdesc contains the
- * attributes to insert.  attcacheoff is always initialized to -1.  attoptions
- * supplies the values for the attoptions fields and must contain the same
- * number of elements as tupdesc or be NULL.  The other variable-length fields
- * of pg_attribute are always initialized to null values.
+ * attributes to insert.  attcacheoff is always initialized to -1.
+ * tupdesc_extra supplies the values for certain variable-length/nullable
+ * pg_attribute fields and must contain the same number of elements as tupdesc
+ * or be NULL.  The other variable-length fields of pg_attribute are always
+ * initialized to null values.
  *
  * indstate is the index state for CatalogTupleInsertWithInfo.  It can be
  * passed as NULL, in which case we'll fetch the necessary info.  (Don't do
@@ -697,7 +702,7 @@ void
 InsertPgAttributeTuples(Relation pg_attribute_rel,
 						TupleDesc tupdesc,
 						Oid new_rel_oid,
-						Datum *attoptions,
+						const FormExtraData_pg_attribute tupdesc_extra[],
 						CatalogIndexState indstate)
 {
 	TupleTableSlot **slot;
@@ -719,6 +724,7 @@ InsertPgAttributeTuples(Relation pg_attribute_rel,
 	while (natts < tupdesc->natts)
 	{
 		Form_pg_attribute attrs = TupleDescAttr(tupdesc, natts);
+		const FormExtraData_pg_attribute *attrs_extra = tupdesc_extra ? &tupdesc_extra[natts] : NULL;
 
 		ExecClearTuple(slot[slotCount]);
 
@@ -749,14 +755,24 @@ InsertPgAttributeTuples(Relation pg_attribute_rel,
 		slot[slotCount]->tts_values[Anum_pg_attribute_attisdropped - 1] = BoolGetDatum(attrs->attisdropped);
 		slot[slotCount]->tts_values[Anum_pg_attribute_attislocal - 1] = BoolGetDatum(attrs->attislocal);
 		slot[slotCount]->tts_values[Anum_pg_attribute_attinhcount - 1] = Int16GetDatum(attrs->attinhcount);
-		slot[slotCount]->tts_values[Anum_pg_attribute_attstattarget - 1] = Int16GetDatum(attrs->attstattarget);
 		slot[slotCount]->tts_values[Anum_pg_attribute_attcollation - 1] = ObjectIdGetDatum(attrs->attcollation);
-		if (attoptions && attoptions[natts] != (Datum) 0)
-			slot[slotCount]->tts_values[Anum_pg_attribute_attoptions - 1] = attoptions[natts];
-		else
-			slot[slotCount]->tts_isnull[Anum_pg_attribute_attoptions - 1] = true;
+		if (attrs_extra)
+		{
+			slot[slotCount]->tts_values[Anum_pg_attribute_attstattarget - 1] = attrs_extra->attstattarget.value;
+			slot[slotCount]->tts_isnull[Anum_pg_attribute_attstattarget - 1] = attrs_extra->attstattarget.isnull;
 
-		/* start out with empty permissions and empty options */
+			slot[slotCount]->tts_values[Anum_pg_attribute_attoptions - 1] = attrs_extra->attoptions.value;
+			slot[slotCount]->tts_isnull[Anum_pg_attribute_attoptions - 1] = attrs_extra->attoptions.isnull;
+		}
+		else
+		{
+			slot[slotCount]->tts_isnull[Anum_pg_attribute_attstattarget - 1] = true;
+			slot[slotCount]->tts_isnull[Anum_pg_attribute_attoptions - 1] = true;
+		}
+
+		/*
+		 * The remaining fields are not set for new columns.
+		 */
 		slot[slotCount]->tts_isnull[Anum_pg_attribute_attacl - 1] = true;
 		slot[slotCount]->tts_isnull[Anum_pg_attribute_attfdwoptions - 1] = true;
 		slot[slotCount]->tts_isnull[Anum_pg_attribute_attmissingval - 1] = true;
@@ -818,9 +834,6 @@ AddNewAttributeTuples(Oid new_rel_oid,
 
 	indstate = CatalogOpenIndexes(rel);
 
-	/* set stats detail level to a sane default */
-	for (int i = 0; i < natts; i++)
-		tupdesc->attrs[i].attstattarget = -1;
 	InsertPgAttributeTuples(rel, tupdesc, new_rel_oid, NULL, indstate);
 
 	/* add dependencies on their datatypes and collations */
@@ -843,9 +856,9 @@ AddNewAttributeTuples(Oid new_rel_oid,
 	}
 
 	/*
-	 * Next we add the system attributes.  Skip OID if rel has no OIDs. Skip
-	 * all for a view or type relation.  We don't bother with making datatype
-	 * dependencies here, since presumably all these types are pinned.
+	 * Next we add the system attributes.  Skip all for a view or type
+	 * relation.  We don't bother with making datatype dependencies here,
+	 * since presumably all these types are pinned.
 	 */
 	if (relkind != RELKIND_VIEW && relkind != RELKIND_COMPOSITE_TYPE)
 	{
@@ -1235,6 +1248,13 @@ heap_create_with_catalog(const char *relname,
 			relid = GetNewRelFileNumber(reltablespace, pg_class_desc,
 										relpersistence);
 	}
+
+	/*
+	 * Other sessions' catalog scans can't find this until we commit.  Hence,
+	 * it doesn't hurt to hold AccessExclusiveLock.  Do it here so callers
+	 * can't accidentally vary in their lock mode or acquisition timing.
+	 */
+	LockRelationOid(relid, AccessExclusiveLock);
 
 	/*
 	 * Determine the relation's initial permissions.
@@ -1647,6 +1667,9 @@ RemoveAttributeById(Oid relid, AttrNumber attnum)
 	HeapTuple	tuple;
 	Form_pg_attribute attStruct;
 	char		newattname[NAMEDATALEN];
+	Datum		valuesAtt[Natts_pg_attribute] = {0};
+	bool		nullsAtt[Natts_pg_attribute] = {0};
+	bool		replacesAtt[Natts_pg_attribute] = {0};
 
 	/*
 	 * Grab an exclusive lock on the target table, which we will NOT release
@@ -1666,67 +1689,54 @@ RemoveAttributeById(Oid relid, AttrNumber attnum)
 			 attnum, relid);
 	attStruct = (Form_pg_attribute) GETSTRUCT(tuple);
 
-	if (attnum < 0)
-	{
-		/* System attribute (probably OID) ... just delete the row */
+	/* Mark the attribute as dropped */
+	attStruct->attisdropped = true;
 
-		CatalogTupleDelete(attr_rel, &tuple->t_self);
-	}
-	else
-	{
-		/* Dropping user attributes is lots harder */
+	/*
+	 * Set the type OID to invalid.  A dropped attribute's type link cannot be
+	 * relied on (once the attribute is dropped, the type might be too).
+	 * Fortunately we do not need the type row --- the only really essential
+	 * information is the type's typlen and typalign, which are preserved in
+	 * the attribute's attlen and attalign.  We set atttypid to zero here as a
+	 * means of catching code that incorrectly expects it to be valid.
+	 */
+	attStruct->atttypid = InvalidOid;
 
-		/* Mark the attribute as dropped */
-		attStruct->attisdropped = true;
+	/* Remove any not-null constraint the column may have */
+	attStruct->attnotnull = false;
 
-		/*
-		 * Set the type OID to invalid.  A dropped attribute's type link
-		 * cannot be relied on (once the attribute is dropped, the type might
-		 * be too). Fortunately we do not need the type row --- the only
-		 * really essential information is the type's typlen and typalign,
-		 * which are preserved in the attribute's attlen and attalign.  We set
-		 * atttypid to zero here as a means of catching code that incorrectly
-		 * expects it to be valid.
-		 */
-		attStruct->atttypid = InvalidOid;
+	/* Unset this so no one tries to look up the generation expression */
+	attStruct->attgenerated = '\0';
 
-		/* Remove any NOT NULL constraint the column may have */
-		attStruct->attnotnull = false;
+	/*
+	 * Change the column name to something that isn't likely to conflict
+	 */
+	snprintf(newattname, sizeof(newattname),
+			 "........pg.dropped.%d........", attnum);
+	namestrcpy(&(attStruct->attname), newattname);
 
-		/* We don't want to keep stats for it anymore */
-		attStruct->attstattarget = 0;
+	/* Clear the missing value */
+	attStruct->atthasmissing = false;
+	nullsAtt[Anum_pg_attribute_attmissingval - 1] = true;
+	replacesAtt[Anum_pg_attribute_attmissingval - 1] = true;
 
-		/* Unset this so no one tries to look up the generation expression */
-		attStruct->attgenerated = '\0';
+	/*
+	 * Clear the other nullable fields.  This saves some space in pg_attribute
+	 * and removes no longer useful information.
+	 */
+	nullsAtt[Anum_pg_attribute_attstattarget - 1] = true;
+	replacesAtt[Anum_pg_attribute_attstattarget - 1] = true;
+	nullsAtt[Anum_pg_attribute_attacl - 1] = true;
+	replacesAtt[Anum_pg_attribute_attacl - 1] = true;
+	nullsAtt[Anum_pg_attribute_attoptions - 1] = true;
+	replacesAtt[Anum_pg_attribute_attoptions - 1] = true;
+	nullsAtt[Anum_pg_attribute_attfdwoptions - 1] = true;
+	replacesAtt[Anum_pg_attribute_attfdwoptions - 1] = true;
 
-		/*
-		 * Change the column name to something that isn't likely to conflict
-		 */
-		snprintf(newattname, sizeof(newattname),
-				 "........pg.dropped.%d........", attnum);
-		namestrcpy(&(attStruct->attname), newattname);
+	tuple = heap_modify_tuple(tuple, RelationGetDescr(attr_rel),
+							  valuesAtt, nullsAtt, replacesAtt);
 
-		/* clear the missing value if any */
-		if (attStruct->atthasmissing)
-		{
-			Datum		valuesAtt[Natts_pg_attribute] = {0};
-			bool		nullsAtt[Natts_pg_attribute] = {0};
-			bool		replacesAtt[Natts_pg_attribute] = {0};
-
-			/* update the tuple - set atthasmissing and attmissingval */
-			valuesAtt[Anum_pg_attribute_atthasmissing - 1] =
-				BoolGetDatum(false);
-			replacesAtt[Anum_pg_attribute_atthasmissing - 1] = true;
-			valuesAtt[Anum_pg_attribute_attmissingval - 1] = (Datum) 0;
-			nullsAtt[Anum_pg_attribute_attmissingval - 1] = true;
-			replacesAtt[Anum_pg_attribute_attmissingval - 1] = true;
-
-			tuple = heap_modify_tuple(tuple, RelationGetDescr(attr_rel),
-									  valuesAtt, nullsAtt, replacesAtt);
-		}
-
-		CatalogTupleUpdate(attr_rel, &tuple->t_self, tuple);
-	}
+	CatalogTupleUpdate(attr_rel, &tuple->t_self, tuple);
 
 	/*
 	 * Because updating the pg_attribute row will trigger a relcache flush for
@@ -1736,8 +1746,7 @@ RemoveAttributeById(Oid relid, AttrNumber attnum)
 
 	table_close(attr_rel, RowExclusiveLock);
 
-	if (attnum > 0)
-		RemoveStatistics(relid, attnum);
+	RemoveStatistics(relid, attnum);
 
 	relation_close(rel, NoLock);
 }
@@ -2228,6 +2237,8 @@ StoreConstraints(Relation rel, List *cooked_constraints, bool is_internal)
  * allow_merge: true if check constraints may be merged with existing ones
  * is_local: true if definition is local, false if it's inherited
  * is_internal: true if result of some internal process, not a user request
+ * queryString: used during expression transformation of default values and
+ *		cooked CHECK constraints
  *
  * All entries in newColDefaults will be processed.  Entries in newConstraints
  * will be processed only if they are CONSTR_CHECK type.
@@ -2259,7 +2270,6 @@ AddRelationNewConstraints(Relation rel,
 	ParseNamespaceItem *nsitem;
 	int			numchecks;
 	List	   *checknames;
-	ListCell   *cell;
 	Node	   *expr;
 	CookedConstraint *cooked;
 
@@ -2290,9 +2300,8 @@ AddRelationNewConstraints(Relation rel,
 	/*
 	 * Process column default expressions.
 	 */
-	foreach(cell, newColDefaults)
+	foreach_ptr(RawColumnDefault, colDef, newColDefaults)
 	{
-		RawColumnDefault *colDef = (RawColumnDefault *) lfirst(cell);
 		Form_pg_attribute atp = TupleDescAttr(rel->rd_att, colDef->attnum - 1);
 		Oid			defOid;
 
@@ -2320,7 +2329,8 @@ AddRelationNewConstraints(Relation rel,
 			continue;
 
 		/* If the DEFAULT is volatile we cannot use a missing value */
-		if (colDef->missingMode && contain_volatile_functions((Node *) expr))
+		if (colDef->missingMode &&
+			contain_volatile_functions_after_planning((Expr *) expr))
 			colDef->missingMode = false;
 
 		defOid = StoreAttrDefault(rel, colDef->attnum, expr, is_internal,
@@ -2344,130 +2354,129 @@ AddRelationNewConstraints(Relation rel,
 	 */
 	numchecks = numoldchecks;
 	checknames = NIL;
-	foreach(cell, newConstraints)
+	foreach_node(Constraint, cdef, newConstraints)
 	{
-		Constraint *cdef = (Constraint *) lfirst(cell);
-		char	   *ccname;
 		Oid			constrOid;
 
-		if (cdef->contype != CONSTR_CHECK)
-			continue;
-
-		if (cdef->raw_expr != NULL)
+		if (cdef->contype == CONSTR_CHECK)
 		{
-			Assert(cdef->cooked_expr == NULL);
+			char	   *ccname;
 
-			/*
-			 * Transform raw parsetree to executable expression, and verify
-			 * it's valid as a CHECK constraint.
-			 */
-			expr = cookConstraint(pstate, cdef->raw_expr,
-								  RelationGetRelationName(rel));
-		}
-		else
-		{
-			Assert(cdef->cooked_expr != NULL);
-
-			/*
-			 * Here, we assume the parser will only pass us valid CHECK
-			 * expressions, so we do no particular checking.
-			 */
-			expr = stringToNode(cdef->cooked_expr);
-		}
-
-		/*
-		 * Check name uniqueness, or generate a name if none was given.
-		 */
-		if (cdef->conname != NULL)
-		{
-			ListCell   *cell2;
-
-			ccname = cdef->conname;
-			/* Check against other new constraints */
-			/* Needed because we don't do CommandCounterIncrement in loop */
-			foreach(cell2, checknames)
+			if (cdef->raw_expr != NULL)
 			{
-				if (strcmp((char *) lfirst(cell2), ccname) == 0)
-					ereport(ERROR,
-							(errcode(ERRCODE_DUPLICATE_OBJECT),
-							 errmsg("check constraint \"%s\" already exists",
-									ccname)));
+				Assert(cdef->cooked_expr == NULL);
+
+				/*
+				 * Transform raw parsetree to executable expression, and
+				 * verify it's valid as a CHECK constraint.
+				 */
+				expr = cookConstraint(pstate, cdef->raw_expr,
+									  RelationGetRelationName(rel));
+			}
+			else
+			{
+				Assert(cdef->cooked_expr != NULL);
+
+				/*
+				 * Here, we assume the parser will only pass us valid CHECK
+				 * expressions, so we do no particular checking.
+				 */
+				expr = stringToNode(cdef->cooked_expr);
 			}
 
-			/* save name for future checks */
-			checknames = lappend(checknames, ccname);
-
 			/*
-			 * Check against pre-existing constraints.  If we are allowed to
-			 * merge with an existing constraint, there's no more to do here.
-			 * (We omit the duplicate constraint from the result, which is
-			 * what ATAddCheckConstraint wants.)
+			 * Check name uniqueness, or generate a name if none was given.
 			 */
-			if (MergeWithExistingConstraint(rel, ccname, expr,
-											allow_merge, is_local,
-											cdef->initially_valid,
-											cdef->is_no_inherit))
-				continue;
-		}
-		else
-		{
-			/*
-			 * When generating a name, we want to create "tab_col_check" for a
-			 * column constraint and "tab_check" for a table constraint.  We
-			 * no longer have any info about the syntactic positioning of the
-			 * constraint phrase, so we approximate this by seeing whether the
-			 * expression references more than one column.  (If the user
-			 * played by the rules, the result is the same...)
-			 *
-			 * Note: pull_var_clause() doesn't descend into sublinks, but we
-			 * eliminated those above; and anyway this only needs to be an
-			 * approximate answer.
-			 */
-			List	   *vars;
-			char	   *colname;
+			if (cdef->conname != NULL)
+			{
+				ccname = cdef->conname;
+				/* Check against other new constraints */
+				/* Needed because we don't do CommandCounterIncrement in loop */
+				foreach_ptr(char, chkname, checknames)
+				{
+					if (strcmp(chkname, ccname) == 0)
+						ereport(ERROR,
+								(errcode(ERRCODE_DUPLICATE_OBJECT),
+								 errmsg("check constraint \"%s\" already exists",
+										ccname)));
+				}
 
-			vars = pull_var_clause(expr, 0);
+				/* save name for future checks */
+				checknames = lappend(checknames, ccname);
 
-			/* eliminate duplicates */
-			vars = list_union(NIL, vars);
-
-			if (list_length(vars) == 1)
-				colname = get_attname(RelationGetRelid(rel),
-									  ((Var *) linitial(vars))->varattno,
-									  true);
+				/*
+				 * Check against pre-existing constraints.  If we are allowed
+				 * to merge with an existing constraint, there's no more to do
+				 * here. (We omit the duplicate constraint from the result,
+				 * which is what ATAddCheckConstraint wants.)
+				 */
+				if (MergeWithExistingConstraint(rel, ccname, expr,
+												allow_merge, is_local,
+												cdef->initially_valid,
+												cdef->is_no_inherit))
+					continue;
+			}
 			else
-				colname = NULL;
+			{
+				/*
+				 * When generating a name, we want to create "tab_col_check"
+				 * for a column constraint and "tab_check" for a table
+				 * constraint.  We no longer have any info about the syntactic
+				 * positioning of the constraint phrase, so we approximate
+				 * this by seeing whether the expression references more than
+				 * one column.  (If the user played by the rules, the result
+				 * is the same...)
+				 *
+				 * Note: pull_var_clause() doesn't descend into sublinks, but
+				 * we eliminated those above; and anyway this only needs to be
+				 * an approximate answer.
+				 */
+				List	   *vars;
+				char	   *colname;
 
-			ccname = ChooseConstraintName(RelationGetRelationName(rel),
-										  colname,
-										  "check",
-										  RelationGetNamespace(rel),
-										  checknames);
+				vars = pull_var_clause(expr, 0);
 
-			/* save name for future checks */
-			checknames = lappend(checknames, ccname);
+				/* eliminate duplicates */
+				vars = list_union(NIL, vars);
+
+				if (list_length(vars) == 1)
+					colname = get_attname(RelationGetRelid(rel),
+										  ((Var *) linitial(vars))->varattno,
+										  true);
+				else
+					colname = NULL;
+
+				ccname = ChooseConstraintName(RelationGetRelationName(rel),
+											  colname,
+											  "check",
+											  RelationGetNamespace(rel),
+											  checknames);
+
+				/* save name for future checks */
+				checknames = lappend(checknames, ccname);
+			}
+
+			/*
+			 * OK, store it.
+			 */
+			constrOid =
+				StoreRelCheck(rel, ccname, expr, cdef->initially_valid, is_local,
+							  is_local ? 0 : 1, cdef->is_no_inherit, is_internal);
+
+			numchecks++;
+
+			cooked = (CookedConstraint *) palloc(sizeof(CookedConstraint));
+			cooked->contype = CONSTR_CHECK;
+			cooked->conoid = constrOid;
+			cooked->name = ccname;
+			cooked->attnum = 0;
+			cooked->expr = expr;
+			cooked->skip_validation = cdef->skip_validation;
+			cooked->is_local = is_local;
+			cooked->inhcount = is_local ? 0 : 1;
+			cooked->is_no_inherit = cdef->is_no_inherit;
+			cookedConstraints = lappend(cookedConstraints, cooked);
 		}
-
-		/*
-		 * OK, store it.
-		 */
-		constrOid =
-			StoreRelCheck(rel, ccname, expr, cdef->initially_valid, is_local,
-						  is_local ? 0 : 1, cdef->is_no_inherit, is_internal);
-
-		numchecks++;
-
-		cooked = (CookedConstraint *) palloc(sizeof(CookedConstraint));
-		cooked->contype = CONSTR_CHECK;
-		cooked->conoid = constrOid;
-		cooked->name = ccname;
-		cooked->attnum = 0;
-		cooked->expr = expr;
-		cooked->skip_validation = cdef->skip_validation;
-		cooked->is_local = is_local;
-		cooked->inhcount = is_local ? 0 : 1;
-		cooked->is_no_inherit = cdef->is_no_inherit;
-		cookedConstraints = lappend(cookedConstraints, cooked);
 	}
 
 	/*
@@ -2760,9 +2769,11 @@ cookDefault(ParseState *pstate,
 
 	if (attgenerated)
 	{
+		/* Disallow refs to other generated columns */
 		check_nested_generated(pstate, expr);
 
-		if (contain_mutable_functions(expr))
+		/* Disallow mutable functions */
+		if (contain_mutable_functions_after_planning((Expr *) expr))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 					 errmsg("generation expression is not immutable")));

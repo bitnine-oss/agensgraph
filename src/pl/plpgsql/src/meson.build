@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 plpgsql_sources = files(
   'pl_comp.c',
@@ -76,12 +76,13 @@ tests += {
   'regress': {
     'sql': [
       'plpgsql_array',
+      'plpgsql_cache',
       'plpgsql_call',
       'plpgsql_control',
       'plpgsql_copy',
       'plpgsql_domain',
+      'plpgsql_misc',
       'plpgsql_record',
-      'plpgsql_cache',
       'plpgsql_simple',
       'plpgsql_transaction',
       'plpgsql_trap',

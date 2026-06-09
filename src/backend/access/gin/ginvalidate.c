@@ -3,7 +3,7 @@
  * ginvalidate.c
  *	  Opclass validator for GIN.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -21,8 +21,6 @@
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_type.h"
-#include "utils/builtins.h"
-#include "utils/lsyscache.h"
 #include "utils/regproc.h"
 #include "utils/syscache.h"
 

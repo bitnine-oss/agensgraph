@@ -3,7 +3,7 @@
  * reloptions.c
  *	  Core support for relation options (pg_class.reloptions)
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -27,9 +27,7 @@
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "commands/tablespace.h"
-#include "commands/view.h"
 #include "nodes/makefuncs.h"
-#include "postmaster/postmaster.h"
 #include "utils/array.h"
 #include "utils/attoptcache.h"
 #include "utils/builtins.h"
@@ -42,9 +40,9 @@
  *
  * To add an option:
  *
- * (i) decide on a type (integer, real, bool, string), name, default value,
- * upper and lower bounds (if applicable); for strings, consider a validation
- * routine.
+ * (i) decide on a type (bool, integer, real, enum, string), name, default
+ * value, upper and lower bounds (if applicable); for strings, consider a
+ * validation routine.
  * (ii) add a record below (or use add_<type>_reloption).
  * (iii) add it to the appropriate options struct (perhaps StdRdOptions)
  * (iv) add it to the appropriate handling routine (perhaps
@@ -68,24 +66,24 @@
  * since they are only used by the AV procs and don't change anything
  * currently executing.
  *
- * Fillfactor can be set because it applies only to subsequent changes made to
- * data blocks, as documented in hio.c
+ * Fillfactor can be set at ShareUpdateExclusiveLock because it applies only to
+ * subsequent changes made to data blocks, as documented in hio.c
  *
  * n_distinct options can be set at ShareUpdateExclusiveLock because they
  * are only used during ANALYZE, which uses a ShareUpdateExclusiveLock,
  * so the ANALYZE will not be affected by in-flight changes. Changing those
  * values has no effect until the next ANALYZE, so no need for stronger lock.
  *
- * Planner-related parameters can be set with ShareUpdateExclusiveLock because
+ * Planner-related parameters can be set at ShareUpdateExclusiveLock because
  * they only affect planning and not the correctness of the execution. Plans
  * cannot be changed in mid-flight, so changes here could not easily result in
  * new improved plans in any case. So we allow existing queries to continue
  * and existing plans to survive, a small price to pay for allowing better
  * plans to be introduced concurrently without interfering with users.
  *
- * Setting parallel_workers is safe, since it acts the same as
- * max_parallel_workers_per_gather which is a USERSET parameter that doesn't
- * affect existing plans or queries.
+ * Setting parallel_workers at ShareUpdateExclusiveLock is safe, since it acts
+ * the same as max_parallel_workers_per_gather which is a USERSET parameter
+ * that doesn't affect existing plans or queries.
  *
  * vacuum_truncate can be set at ShareUpdateExclusiveLock because it
  * is only used during VACUUM, which uses a ShareUpdateExclusiveLock,
@@ -1989,7 +1987,7 @@ partitioned_table_reloptions(Datum reloptions, bool validate)
 		ereport(ERROR,
 				errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				errmsg("cannot specify storage parameters for a partitioned table"),
-				errhint("Specify storage parameters for its leaf partitions, instead."));
+				errhint("Specify storage parameters for its leaf partitions instead."));
 	return NULL;
 }
 

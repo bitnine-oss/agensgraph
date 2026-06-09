@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 if not python3_dep.found()
   subdir_done()
@@ -67,6 +67,7 @@ install_headers(
   'plpy_typeio.h',
   'plpy_util.h',
   'plpython.h',
+  'plpython_system.h',
   install_dir: dir_include_server,
 )
 

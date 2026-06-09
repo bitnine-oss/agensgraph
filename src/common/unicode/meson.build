@@ -1,6 +1,6 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
-UNICODE_VERSION = '15.0.0'
+UNICODE_VERSION = '15.1.0'
 
 unicode_data = {}
 unicode_baseurl = 'https://www.unicode.org/Public/@0@/ucd/@1@'
@@ -11,7 +11,7 @@ endif
 
 # These files are part of the Unicode Character Database. Download them on
 # demand.
-foreach f : ['UnicodeData.txt', 'EastAsianWidth.txt', 'DerivedNormalizationProps.txt', 'CompositionExclusions.txt', 'NormalizationTest.txt']
+foreach f : ['CompositionExclusions.txt', 'DerivedCoreProperties.txt', 'DerivedNormalizationProps.txt', 'EastAsianWidth.txt', 'NormalizationTest.txt', 'PropList.txt', 'UnicodeData.txt']
   url = unicode_baseurl.format(UNICODE_VERSION, f)
   target = custom_target(f,
     output: f,
@@ -25,14 +25,32 @@ endforeach
 update_unicode_targets = []
 
 update_unicode_targets += \
-  custom_target('unicode_norm_table.h',
-    input: [unicode_data['UnicodeData.txt'], unicode_data['CompositionExclusions.txt']],
-    output: ['unicode_norm_table.h', 'unicode_norm_hashfunc.h'],
-    depend_files: perfect_hash_pm,
+  custom_target('unicode_case_table.h',
+    input: [unicode_data['UnicodeData.txt']],
+    output: ['unicode_case_table.h'],
     command: [
-      perl, files('generate-unicode_norm_table.pl'),
+      perl, files('generate-unicode_case_table.pl'),
       '--outdir', '@OUTDIR@', '@INPUT@'],
     build_by_default: false,
+  )
+
+update_unicode_targets += \
+  custom_target('unicode_category_table.h',
+    input: [unicode_data['UnicodeData.txt'], unicode_data['DerivedCoreProperties.txt'], unicode_data['PropList.txt']],
+    output: ['unicode_category_table.h'],
+    command: [
+      perl, files('generate-unicode_category_table.pl'),
+      '--outdir', '@OUTDIR@', '@INPUT@'],
+    build_by_default: false,
+  )
+
+update_unicode_targets += \
+  custom_target('unicode_east_asian_fw_table.h',
+    input: [unicode_data['EastAsianWidth.txt']],
+    output: ['unicode_east_asian_fw_table.h'],
+    command: [perl, files('generate-unicode_east_asian_fw_table.pl'), '@INPUT@'],
+    build_by_default: false,
+    capture: true,
   )
 
 update_unicode_targets += \
@@ -46,12 +64,14 @@ update_unicode_targets += \
   )
 
 update_unicode_targets += \
-  custom_target('unicode_east_asian_fw_table.h',
-    input: [unicode_data['EastAsianWidth.txt']],
-    output: ['unicode_east_asian_fw_table.h'],
-    command: [perl, files('generate-unicode_east_asian_fw_table.pl'), '@INPUT@'],
+  custom_target('unicode_norm_table.h',
+    input: [unicode_data['UnicodeData.txt'], unicode_data['CompositionExclusions.txt']],
+    output: ['unicode_norm_table.h', 'unicode_norm_hashfunc.h'],
+    depend_files: perfect_hash_pm,
+    command: [
+      perl, files('generate-unicode_norm_table.pl'),
+      '--outdir', '@OUTDIR@', '@INPUT@'],
     build_by_default: false,
-    capture: true,
   )
 
 update_unicode_targets += \
@@ -64,6 +84,15 @@ update_unicode_targets += \
     capture: true,
   )
 
+update_unicode_targets += \
+  custom_target('unicode_version.h',
+    output: ['unicode_version.h'],
+    command: [
+      perl, files('generate-unicode_version.pl'),
+      '--outdir', '@OUTDIR@', '--version', UNICODE_VERSION],
+    build_by_default: false,
+  )
+
 norm_test_table = custom_target('norm_test_table.h',
     input: [unicode_data['NormalizationTest.txt']],
     output: ['norm_test_table.h'],
@@ -72,6 +101,28 @@ norm_test_table = custom_target('norm_test_table.h',
   )
 
 inc = include_directories('.')
+
+case_test = executable('case_test',
+  ['case_test.c'],
+  dependencies: [frontend_port_code, icu],
+  include_directories: inc,
+  link_with: [common_static, pgport_static],
+  build_by_default: false,
+  kwargs: default_bin_args + {
+    'install': false,
+  }
+)
+
+category_test = executable('category_test',
+  ['category_test.c'],
+  dependencies: [frontend_port_code, icu],
+  include_directories: inc,
+  link_with: [common_static, pgport_static],
+  build_by_default: false,
+  kwargs: default_bin_args + {
+    'install': false,
+  }
+)
 
 norm_test = executable('norm_test',
   ['norm_test.c', norm_test_table],
@@ -85,6 +136,26 @@ norm_test = executable('norm_test',
 )
 
 update_unicode_dep = []
+
+if not meson.is_cross_build()
+  update_unicode_dep += custom_target('case_test.run',
+    output: 'case_test.run',
+    input: update_unicode_targets,
+    command: [case_test, UNICODE_VERSION],
+    build_by_default: false,
+    build_always_stale: true,
+  )
+endif
+
+if not meson.is_cross_build()
+  update_unicode_dep += custom_target('category_test.run',
+    output: 'category_test.run',
+    input: update_unicode_targets,
+    command: [category_test, UNICODE_VERSION],
+    build_by_default: false,
+    build_always_stale: true,
+  )
+endif
 
 if not meson.is_cross_build()
   update_unicode_dep += custom_target('norm_test.run',

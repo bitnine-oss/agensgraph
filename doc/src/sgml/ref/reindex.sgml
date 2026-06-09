@@ -292,6 +292,12 @@ REINDEX [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] { DA
   </para>
 
   <para>
+   While <command>REINDEX</command> is running, the <xref
+   linkend="guc-search-path"/> is temporarily changed to <literal>pg_catalog,
+   pg_temp</literal>.
+  </para>
+
+  <para>
    Reindexing a single index or table requires
    having the <literal>MAINTAIN</literal> privilege on the
    table.  Note that while <command>REINDEX</command> on a partitioned index or

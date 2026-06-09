@@ -6,7 +6,7 @@
  * access control decisions recently used, and reduce number of kernel
  * invocations to avoid unnecessary performance hit.
  *
- * Copyright (c) 2011-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2011-2024, PostgreSQL Global Development Group
  *
  * -------------------------------------------------------------------------
  */
@@ -44,7 +44,7 @@ typedef struct
 	/* true, if tcontext is valid */
 	char	   *ncontext;		/* temporary scontext on execution of trusted
 								 * procedure, or NULL elsewhere */
-}			avc_cache;
+} avc_cache;
 
 /*
  * Declaration of static variables

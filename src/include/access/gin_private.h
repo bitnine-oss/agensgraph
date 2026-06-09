@@ -2,7 +2,7 @@
  * gin_private.h
  *	  header file for postgres inverted index access method implementation.
  *
- *	Copyright (c) 2006-2023, PostgreSQL Global Development Group
+ *	Copyright (c) 2006-2024, PostgreSQL Global Development Group
  *
  *	src/include/access/gin_private.h
  *--------------------------------------------------------------------------
@@ -14,6 +14,7 @@
 #include "access/gin.h"
 #include "access/ginblock.h"
 #include "access/itup.h"
+#include "common/int.h"
 #include "catalog/pg_am_d.h"
 #include "fmgr.h"
 #include "lib/rbtree.h"
@@ -143,7 +144,7 @@ typedef enum
 {
 	GPTP_NO_WORK,
 	GPTP_INSERT,
-	GPTP_SPLIT
+	GPTP_SPLIT,
 } GinPlaceToPageRC;
 
 typedef struct GinBtreeData
@@ -202,7 +203,7 @@ typedef struct
  */
 
 extern GinBtreeStack *ginFindLeafPage(GinBtree btree, bool searchMode,
-									  bool rootConflictCheck, Snapshot snapshot);
+									  bool rootConflictCheck);
 extern Buffer ginStepRight(Buffer buffer, Relation index, int lockmode);
 extern void freeGinBtreeStack(GinBtreeStack *stack);
 extern void ginInsertValue(GinBtree btree, GinBtreeStack *stack,
@@ -230,7 +231,7 @@ extern void GinPageDeletePostingItem(Page page, OffsetNumber offset);
 extern void ginInsertItemPointers(Relation index, BlockNumber rootBlkno,
 								  ItemPointerData *items, uint32 nitem,
 								  GinStatsData *buildStats);
-extern GinBtreeStack *ginScanBeginPostingTree(GinBtree btree, Relation index, BlockNumber rootBlkno, Snapshot snapshot);
+extern GinBtreeStack *ginScanBeginPostingTree(GinBtree btree, Relation index, BlockNumber rootBlkno);
 extern void ginDataFillRoot(GinBtree btree, Page root, BlockNumber lblkno, Page lpage, BlockNumber rblkno, Page rpage);
 
 /*
@@ -489,12 +490,7 @@ ginCompareItemPointers(ItemPointer a, ItemPointer b)
 	uint64		ia = (uint64) GinItemPointerGetBlockNumber(a) << 32 | GinItemPointerGetOffsetNumber(a);
 	uint64		ib = (uint64) GinItemPointerGetBlockNumber(b) << 32 | GinItemPointerGetOffsetNumber(b);
 
-	if (ia == ib)
-		return 0;
-	else if (ia > ib)
-		return 1;
-	else
-		return -1;
+	return pg_cmp_u64(ia, ib);
 }
 
 extern int	ginTraverseLock(Buffer buffer, bool searchMode);

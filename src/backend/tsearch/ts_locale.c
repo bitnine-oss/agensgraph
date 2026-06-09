@@ -3,7 +3,7 @@
  * ts_locale.c
  *		locale compatibility layer for tsearch
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -13,11 +13,9 @@
  */
 #include "postgres.h"
 
-#include "catalog/pg_collation.h"
 #include "common/string.h"
 #include "storage/fd.h"
 #include "tsearch/ts_locale.h"
-#include "tsearch/ts_public.h"
 
 static void tsearch_readline_callback(void *arg);
 

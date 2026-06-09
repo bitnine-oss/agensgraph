@@ -7,6 +7,7 @@
 #include "access/reloptions.h"
 #include "access/stratnum.h"
 #include "catalog/pg_type.h"
+#include "common/int.h"
 #include "hstore.h"
 #include "utils/pg_crc.h"
 
@@ -77,7 +78,7 @@ typedef struct
 
 /* shorthand for calculating CRC-32 of a single chunk of data. */
 static pg_crc32
-crc32_sz(char *buf, int size)
+crc32_sz(const char *buf, int size)
 {
 	pg_crc32	crc;
 
@@ -356,7 +357,8 @@ typedef struct
 static int
 comparecost(const void *a, const void *b)
 {
-	return ((const SPLITCOST *) a)->cost - ((const SPLITCOST *) b)->cost;
+	return pg_cmp_s32(((const SPLITCOST *) a)->cost,
+					  ((const SPLITCOST *) b)->cost);
 }
 
 

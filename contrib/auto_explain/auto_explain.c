@@ -3,7 +3,7 @@
  * auto_explain.c
  *
  *
- * Copyright (c) 2008-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2008-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/auto_explain/auto_explain.c
@@ -396,6 +396,8 @@ explain_ExecutorEnd(QueryDesc *queryDesc)
 			es->wal = (es->analyze && auto_explain_log_wal);
 			es->timing = (es->analyze && auto_explain_log_timing);
 			es->summary = es->analyze;
+			/* No support for MEMORY */
+			/* es->memory = false; */
 			es->format = auto_explain_log_format;
 			es->settings = auto_explain_log_settings;
 

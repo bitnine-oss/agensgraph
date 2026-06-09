@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Test WAL replay when some operation has skipped WAL.
 #
@@ -10,7 +10,7 @@
 # For many years, individual commands made the decision to skip WAL, hence the
 # frequent appearance of COPY in these tests.
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;

@@ -414,12 +414,6 @@ EXEC SQL DISCONNECT <optional><replaceable>connection</replaceable></optional>;
 
     <listitem>
      <simpara>
-      <literal>DEFAULT</literal>
-     </simpara>
-    </listitem>
-
-    <listitem>
-     <simpara>
       <literal>CURRENT</literal>
      </simpara>
     </listitem>
@@ -1506,9 +1500,9 @@ EXEC SQL TYPE serial_t IS long;
      </para>
 
      <para>
-      Any word you declare as a typedef cannot be used as an SQL keyword
-      in <literal>EXEC SQL</literal> commands later in the same program.
-      For example, this won't work:
+      Any word you declare as a <literal>typedef</literal> cannot be used as
+      an SQL keyword in <literal>EXEC SQL</literal> commands later in the same
+      program. For example, this won't work:
 <programlisting>
 EXEC SQL BEGIN DECLARE SECTION;
     typedef int start;
@@ -2396,9 +2390,10 @@ int PGTYPESnumeric_to_long(numeric *nv, long *lp);
        The function converts the numeric value from the variable that
        <literal>nv</literal> points to into the long integer variable that
        <literal>lp</literal> points to. It returns 0 on success and -1 if an error
-       occurs, including overflow. On overflow, the global variable
+       occurs, including overflow and underflow. On overflow, the global variable
        <literal>errno</literal> will be set to <literal>PGTYPES_NUM_OVERFLOW</literal>
-       additionally.
+       and on underflow <literal>errno</literal> will be set to
+       <literal>PGTYPES_NUM_UNDERFLOW</literal>.
       </para>
      </listitem>
     </varlistentry>
@@ -3322,7 +3317,7 @@ int PGTYPEStimestamp_fmt_asc(timestamp *ts, char *output, int str_len, char *fmt
            <literal>%z</literal> - is replaced by the time zone offset from
            UTC; a leading plus sign stands for east of UTC, a minus sign for
            west of UTC, hours and minutes follow with two digits each and no
-           delimiter between them (common form for <ulink url="https://tools.ietf.org/html/rfc822">RFC 822</ulink> date headers).
+           delimiter between them (common form for <ulink url="https://datatracker.ietf.org/doc/html/rfc822">RFC 822</ulink> date headers).
           </para>
          </listitem>
          <listitem>
@@ -4769,6 +4764,7 @@ datdba = 10 (type: 1)
 encoding = 0 (type: 5)
 datistemplate = t (type: 1)
 datallowconn = t (type: 1)
+dathasloginevt = f (type: 1)
 datconnlimit = -1 (type: 5)
 datfrozenxid = 379 (type: 1)
 dattablespace = 1663 (type: 1)
@@ -4793,6 +4789,7 @@ datdba = 10 (type: 1)
 encoding = 0 (type: 5)
 datistemplate = f (type: 1)
 datallowconn = t (type: 1)
+dathasloginevt = f (type: 1)
 datconnlimit = -1 (type: 5)
 datfrozenxid = 379 (type: 1)
 dattablespace = 1663 (type: 1)
@@ -5795,6 +5792,14 @@ EXEC SQL UPDATE Tbl SET col = MYNUMBER;
     <literal>#define</literal> for a constant that you are going to use in an
     embedded SQL query because in this case the embedded SQL precompiler is not
     able to see this declaration.
+   </para>
+
+   <para>
+    If multiple input files are named on the <command>ecpg</command>
+    preprocessor's command line, the effects of <literal>EXEC SQL
+    DEFINE</literal> and <literal>EXEC SQL UNDEF</literal> do not carry
+    across files: each file starts with only the symbols defined
+    by <option>-D</option> switches on the command line.
    </para>
   </sect2>
 
@@ -7128,7 +7133,6 @@ EXEC SQL DEALLOCATE DESCRIPTOR mydesc;
 <synopsis>
 DISCONNECT <replaceable class="parameter">connection_name</replaceable>
 DISCONNECT [ CURRENT ]
-DISCONNECT DEFAULT
 DISCONNECT ALL
 </synopsis>
    </refsynopsisdiv>
@@ -7169,15 +7173,6 @@ DISCONNECT ALL
       </listitem>
      </varlistentry>
 
-     <varlistentry id="ecpg-sql-disconnect-default">
-      <term><literal>DEFAULT</literal></term>
-      <listitem>
-       <para>
-        Close the default connection.
-       </para>
-      </listitem>
-     </varlistentry>
-
      <varlistentry id="ecpg-sql-disconnect-all">
       <term><literal>ALL</literal></term>
       <listitem>
@@ -7196,13 +7191,11 @@ DISCONNECT ALL
 int
 main(void)
 {
-    EXEC SQL CONNECT TO testdb AS DEFAULT USER testuser;
     EXEC SQL CONNECT TO testdb AS con1 USER testuser;
     EXEC SQL CONNECT TO testdb AS con2 USER testuser;
     EXEC SQL CONNECT TO testdb AS con3 USER testuser;
 
     EXEC SQL DISCONNECT CURRENT;  /* close con3          */
-    EXEC SQL DISCONNECT DEFAULT;  /* close DEFAULT       */
     EXEC SQL DISCONNECT ALL;      /* close con2 and con1 */
 
     return 0;
@@ -7770,11 +7763,11 @@ SET CONNECTION [ TO | = ] <replaceable class="parameter">connection_name</replac
       </listitem>
      </varlistentry>
 
-     <varlistentry id="ecpg-sql-set-connection-default">
-      <term><literal>DEFAULT</literal></term>
+     <varlistentry id="ecpg-sql-set-connection-current">
+      <term><literal>CURRENT</literal></term>
       <listitem>
        <para>
-        Set the connection to the default connection.
+        Set the connection to the current connection (thus, nothing happens).
        </para>
       </listitem>
      </varlistentry>
@@ -8900,7 +8893,7 @@ int dectodbl(decimal *np, double *dblp);
       <term><function>dectoint</function></term>
       <listitem>
        <para>
-        Convert a variable to type decimal to an integer.
+        Convert a variable of type decimal to an integer.
 <synopsis>
 int dectoint(decimal *np, int *ip);
 </synopsis>
@@ -8926,7 +8919,7 @@ int dectoint(decimal *np, int *ip);
       <term><function>dectolong</function></term>
       <listitem>
        <para>
-        Convert a variable to type decimal to a long integer.
+        Convert a variable of type decimal to a long integer.
 <synopsis>
 int dectolong(decimal *np, long *lngp);
 </synopsis>

@@ -9,7 +9,7 @@
  * though.)
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -24,11 +24,9 @@
 #include "access/xlogutils.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
-#include "pgstat.h"
-#include "postmaster/interrupt.h"
+#include "postmaster/auxprocess.h"
 #include "postmaster/startup.h"
 #include "storage/ipc.h"
-#include "storage/latch.h"
 #include "storage/pmsignal.h"
 #include "storage/procsignal.h"
 #include "storage/standby.h"
@@ -94,39 +92,27 @@ static void StartupProcExit(int code, Datum arg);
 static void
 StartupProcTriggerHandler(SIGNAL_ARGS)
 {
-	int			save_errno = errno;
-
 	promote_signaled = true;
 	WakeupRecovery();
-
-	errno = save_errno;
 }
 
 /* SIGHUP: set flag to re-read config file at next convenient time */
 static void
 StartupProcSigHupHandler(SIGNAL_ARGS)
 {
-	int			save_errno = errno;
-
 	got_SIGHUP = true;
 	WakeupRecovery();
-
-	errno = save_errno;
 }
 
 /* SIGTERM: set flag to abort redo and exit */
 static void
 StartupProcShutdownHandler(SIGNAL_ARGS)
 {
-	int			save_errno = errno;
-
 	if (in_restore_command)
 		proc_exit(1);
 	else
 		shutdown_requested = true;
 	WakeupRecovery();
-
-	errno = save_errno;
 }
 
 /*
@@ -227,8 +213,13 @@ StartupProcExit(int code, Datum arg)
  * ----------------------------------
  */
 void
-StartupProcessMain(void)
+StartupProcessMain(char *startup_data, size_t startup_data_len)
 {
+	Assert(startup_data_len == 0);
+
+	MyBackendType = B_STARTUP;
+	AuxiliaryProcessMainCommon();
+
 	/* Arrange to clean up at startup process exit */
 	on_shmem_exit(StartupProcExit, 0);
 

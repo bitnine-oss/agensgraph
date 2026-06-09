@@ -3,7 +3,7 @@
  * relnode.c
  *	  Relation-node lookup/construction routines
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,14 +22,15 @@
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
 #include "optimizer/inherit.h"
+#include "optimizer/optimizer.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
 #include "optimizer/placeholder.h"
 #include "optimizer/plancat.h"
 #include "optimizer/restrictinfo.h"
 #include "optimizer/tlist.h"
-#include "rewrite/rewriteManip.h"
 #include "parser/parse_relation.h"
+#include "rewrite/rewriteManip.h"
 #include "utils/hsearch.h"
 #include "utils/lsyscache.h"
 
@@ -221,6 +222,7 @@ build_simple_rel(PlannerInfo *root, int relid, RelOptInfo *parent)
 	rel->relid = relid;
 	rel->rtekind = rte->rtekind;
 	/* min_attr, max_attr, attr_needed, attr_widths are set below */
+	rel->notnullattnums = NULL;
 	rel->lateral_vars = NIL;
 	rel->indexlist = NIL;
 	rel->statlist = NIL;
@@ -371,10 +373,20 @@ build_simple_rel(PlannerInfo *root, int relid, RelOptInfo *parent)
 	}
 
 	/*
-	 * Copy the parent's quals to the child, with appropriate substitution of
-	 * variables.  If any constant false or NULL clauses turn up, we can mark
-	 * the child as dummy right away.  (We must do this immediately so that
-	 * pruning works correctly when recursing in expand_partitioned_rtentry.)
+	 * We must apply the partially filled in RelOptInfo before calling
+	 * apply_child_basequals due to some transformations within that function
+	 * which require the RelOptInfo to be available in the simple_rel_array.
+	 */
+	root->simple_rel_array[relid] = rel;
+
+	/*
+	 * Apply the parent's quals to the child, with appropriate substitution of
+	 * variables.  If the resulting clause is constant-FALSE or NULL after
+	 * applying transformations, apply_child_basequals returns false to
+	 * indicate that scanning this relation won't yield any rows.  In this
+	 * case, we mark the child as dummy right away.  (We must do this
+	 * immediately so that pruning works correctly when recursing in
+	 * expand_partitioned_rtentry.)
 	 */
 	if (parent)
 	{
@@ -384,15 +396,12 @@ build_simple_rel(PlannerInfo *root, int relid, RelOptInfo *parent)
 		if (!apply_child_basequals(root, parent, rel, rte, appinfo))
 		{
 			/*
-			 * Some restriction clause reduced to constant FALSE or NULL after
-			 * substitution, so this child need not be scanned.
+			 * Restriction clause reduced to constant FALSE or NULL.  Mark as
+			 * dummy so we won't scan this relation.
 			 */
 			mark_dummy_rel(rel);
 		}
 	}
-
-	/* Save the finished struct in the query's simple_rel_array */
-	root->simple_rel_array[relid] = rel;
 
 	return rel;
 }
@@ -406,9 +415,8 @@ find_base_rel(PlannerInfo *root, int relid)
 {
 	RelOptInfo *rel;
 
-	Assert(relid > 0);
-
-	if (relid < root->simple_rel_array_size)
+	/* use an unsigned comparison to prevent negative array element access */
+	if ((uint32) relid < (uint32) root->simple_rel_array_size)
 	{
 		rel = root->simple_rel_array[relid];
 		if (rel)
@@ -418,6 +426,19 @@ find_base_rel(PlannerInfo *root, int relid)
 	elog(ERROR, "no relation entry for relid %d", relid);
 
 	return NULL;				/* keep compiler quiet */
+}
+
+/*
+ * find_base_rel_noerr
+ *	  Find a base or otherrel relation entry, returning NULL if there's none
+ */
+RelOptInfo *
+find_base_rel_noerr(PlannerInfo *root, int relid)
+{
+	/* use an unsigned comparison to prevent negative array element access */
+	if ((uint32) relid < (uint32) root->simple_rel_array_size)
+		return root->simple_rel_array[relid];
+	return NULL;
 }
 
 /*
@@ -432,9 +453,8 @@ find_base_rel(PlannerInfo *root, int relid)
 RelOptInfo *
 find_base_rel_ignore_join(PlannerInfo *root, int relid)
 {
-	Assert(relid > 0);
-
-	if (relid < root->simple_rel_array_size)
+	/* use an unsigned comparison to prevent negative array element access */
+	if ((uint32) relid < (uint32) root->simple_rel_array_size)
 	{
 		RelOptInfo *rel;
 		RangeTblEntry *rte;
@@ -707,6 +727,7 @@ build_join_rel(PlannerInfo *root,
 	joinrel->max_attr = 0;
 	joinrel->attr_needed = NULL;
 	joinrel->attr_widths = NULL;
+	joinrel->notnullattnums = NULL;
 	joinrel->nulling_relids = NULL;
 	joinrel->lateral_vars = NIL;
 	joinrel->lateral_referencers = NULL;
@@ -871,10 +892,19 @@ build_child_join_rel(PlannerInfo *root, RelOptInfo *outer_rel,
 	/* The parent joinrel should have consider_partitionwise_join set. */
 	Assert(parent_joinrel->consider_partitionwise_join);
 
+	/*
+	 * Find the AppendRelInfo structures for the child baserels.  We'll need
+	 * these for computing the child join's relid set, and later for mapping
+	 * Vars to the child rel.
+	 */
+	appinfos = find_appinfos_by_relids(root,
+									   bms_union(outer_rel->relids,
+												 inner_rel->relids),
+									   &nappinfos);
+
 	joinrel->reloptkind = RELOPT_OTHER_JOINREL;
-	joinrel->relids = bms_union(outer_rel->relids, inner_rel->relids);
-	joinrel->relids = add_outer_joins_to_relids(root, joinrel->relids, sjinfo,
-												NULL);
+	joinrel->relids = adjust_child_relids(parent_joinrel->relids,
+										  nappinfos, appinfos);
 	joinrel->rows = 0;
 	/* cheap startup cost is interesting iff not all tuples to be retrieved */
 	joinrel->consider_startup = (root->tuple_fraction > 0);
@@ -896,6 +926,7 @@ build_child_join_rel(PlannerInfo *root, RelOptInfo *outer_rel,
 	joinrel->max_attr = 0;
 	joinrel->attr_needed = NULL;
 	joinrel->attr_widths = NULL;
+	joinrel->notnullattnums = NULL;
 	joinrel->nulling_relids = NULL;
 	joinrel->lateral_vars = NIL;
 	joinrel->lateral_referencers = NULL;
@@ -934,9 +965,6 @@ build_child_join_rel(PlannerInfo *root, RelOptInfo *outer_rel,
 
 	/* Compute information relevant to foreign relations. */
 	set_foreign_rel_properties(joinrel, outer_rel, inner_rel);
-
-	/* Compute information needed for mapping Vars to the child rel */
-	appinfos = find_appinfos_by_relids(root, joinrel->relids, &nappinfos);
 
 	/* Set up reltarget struct */
 	build_child_join_reltarget(root, parent_joinrel, joinrel,
@@ -1088,6 +1116,7 @@ build_joinrel_tlist(PlannerInfo *root, RelOptInfo *joinrel,
 					bool can_null)
 {
 	Relids		relids = joinrel->relids;
+	int64		tuple_width = joinrel->reltarget->width;
 	ListCell   *vars;
 	ListCell   *lc;
 
@@ -1140,7 +1169,7 @@ build_joinrel_tlist(PlannerInfo *root, RelOptInfo *joinrel,
 				joinrel->reltarget->exprs = lappend(joinrel->reltarget->exprs,
 													phv);
 				/* Bubbling up the precomputed result has cost zero */
-				joinrel->reltarget->width += phinfo->ph_width;
+				tuple_width += phinfo->ph_width;
 			}
 			continue;
 		}
@@ -1161,7 +1190,7 @@ build_joinrel_tlist(PlannerInfo *root, RelOptInfo *joinrel,
 				list_nth(root->row_identity_vars, var->varattno - 1);
 
 			/* Update reltarget width estimate from RowIdentityVarInfo */
-			joinrel->reltarget->width += ridinfo->rowidwidth;
+			tuple_width += ridinfo->rowidwidth;
 		}
 		else
 		{
@@ -1177,7 +1206,7 @@ build_joinrel_tlist(PlannerInfo *root, RelOptInfo *joinrel,
 				continue;		/* nope, skip it */
 
 			/* Update reltarget width estimate from baserel's attr_widths */
-			joinrel->reltarget->width += baserel->attr_widths[ndx];
+			tuple_width += baserel->attr_widths[ndx];
 		}
 
 		/*
@@ -1217,6 +1246,8 @@ build_joinrel_tlist(PlannerInfo *root, RelOptInfo *joinrel,
 
 		/* Vars have cost zero, so no need to adjust reltarget->cost */
 	}
+
+	joinrel->reltarget->width = clamp_width_est(tuple_width);
 }
 
 /*
@@ -1529,6 +1560,7 @@ get_baserel_parampathinfo(PlannerInfo *root, RelOptInfo *baserel,
 	ParamPathInfo *ppi;
 	Relids		joinrelids;
 	List	   *pclauses;
+	List	   *eqclauses;
 	Bitmapset  *pserials;
 	double		rows;
 	ListCell   *lc;
@@ -1564,14 +1596,25 @@ get_baserel_parampathinfo(PlannerInfo *root, RelOptInfo *baserel,
 
 	/*
 	 * Add in joinclauses generated by EquivalenceClasses, too.  (These
-	 * necessarily satisfy join_clause_is_movable_into.)
+	 * necessarily satisfy join_clause_is_movable_into; but in assert-enabled
+	 * builds, let's verify that.)
 	 */
-	pclauses = list_concat(pclauses,
-						   generate_join_implied_equalities(root,
-															joinrelids,
-															required_outer,
-															baserel,
-															NULL));
+	eqclauses = generate_join_implied_equalities(root,
+												 joinrelids,
+												 required_outer,
+												 baserel,
+												 NULL);
+#ifdef USE_ASSERT_CHECKING
+	foreach(lc, eqclauses)
+	{
+		RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
+
+		Assert(join_clause_is_movable_into(rinfo,
+										   baserel->relids,
+										   joinrelids));
+	}
+#endif
+	pclauses = list_concat(pclauses, eqclauses);
 
 	/* Compute set of serial numbers of the enforced clauses */
 	pserials = NULL;

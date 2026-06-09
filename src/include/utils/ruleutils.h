@@ -3,7 +3,7 @@
  * ruleutils.h
  *		Declarations for ruleutils.c
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/ruleutils.h
@@ -48,5 +48,7 @@ extern char *generate_opclass_name(Oid opclass);
 extern char *get_range_partbound_string(List *bound_datums);
 
 extern char *pg_get_statisticsobjdef_string(Oid statextid);
+
+extern char *get_list_partvalue_string(Const *val);
 
 #endif							/* RULEUTILS_H */

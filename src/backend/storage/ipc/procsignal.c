@@ -4,7 +4,7 @@
  *	  Routines for interprocess signaling
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -18,19 +18,18 @@
 #include <unistd.h>
 
 #include "access/parallel.h"
-#include "port/pg_bitutils.h"
 #include "commands/async.h"
 #include "miscadmin.h"
 #include "pgstat.h"
+#include "port/pg_bitutils.h"
 #include "replication/logicalworker.h"
 #include "replication/walsender.h"
 #include "storage/condition_variable.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
-#include "storage/proc.h"
 #include "storage/shmem.h"
-#include "storage/smgr.h"
 #include "storage/sinval.h"
+#include "storage/smgr.h"
 #include "tcop/tcopprot.h"
 #include "utils/memutils.h"
 
@@ -43,10 +42,10 @@
  * observe it only once.)
  *
  * Each process that wants to receive signals registers its process ID
- * in the ProcSignalSlots array. The array is indexed by backend ID to make
+ * in the ProcSignalSlots array. The array is indexed by ProcNumber to make
  * slot allocation simple, and to avoid having to search the array when you
- * know the backend ID of the process you're signaling.  (We do support
- * signaling without backend ID, but it's a bit less efficient.)
+ * know the ProcNumber of the process you're signaling.  (We do support
+ * signaling without ProcNumber, but it's a bit less efficient.)
  *
  * The flags are actually declared as "volatile sig_atomic_t" for maximum
  * portability.  This should ensure that loads and stores of the flag
@@ -83,11 +82,11 @@ typedef struct
 } ProcSignalHeader;
 
 /*
- * We reserve a slot for each possible BackendId, plus one for each
+ * We reserve a slot for each possible ProcNumber, plus one for each
  * possible auxiliary process type.  (This scheme assumes there is not
  * more than one of any auxiliary process type at a time.)
  */
-#define NumProcSignalSlots	(MaxBackends + NUM_AUXPROCTYPES)
+#define NumProcSignalSlots	(MaxBackends + NUM_AUXILIARY_PROCS)
 
 /* Check whether the relevant type bit is set in the flags. */
 #define BARRIER_SHOULD_CHECK(flags, type) \
@@ -154,24 +153,23 @@ ProcSignalShmemInit(void)
 /*
  * ProcSignalInit
  *		Register the current process in the ProcSignal array
- *
- * The passed index should be my BackendId if the process has one,
- * or MaxBackends + aux process type if not.
  */
 void
-ProcSignalInit(int pss_idx)
+ProcSignalInit(void)
 {
 	ProcSignalSlot *slot;
 	uint64		barrier_generation;
 
-	Assert(pss_idx >= 1 && pss_idx <= NumProcSignalSlots);
-
-	slot = &ProcSignal->psh_slot[pss_idx - 1];
+	if (MyProcNumber < 0)
+		elog(ERROR, "MyProcNumber not set");
+	if (MyProcNumber >= NumProcSignalSlots)
+		elog(ERROR, "unexpected MyProcNumber %d in ProcSignalInit (max %d)", MyProcNumber, NumProcSignalSlots);
+	slot = &ProcSignal->psh_slot[MyProcNumber];
 
 	/* sanity check */
 	if (slot->pss_pid != 0)
 		elog(LOG, "process %d taking over ProcSignal slot %d, but it's not empty",
-			 MyProcPid, pss_idx);
+			 MyProcPid, MyProcNumber);
 
 	/* Clear out any leftover signal reasons */
 	MemSet(slot->pss_signalFlags, 0, NUM_PROCSIGNALS * sizeof(sig_atomic_t));
@@ -200,7 +198,7 @@ ProcSignalInit(int pss_idx)
 	MyProcSignalSlot = slot;
 
 	/* Set up to release the slot on process exit */
-	on_shmem_exit(CleanupProcSignalState, Int32GetDatum(pss_idx));
+	on_shmem_exit(CleanupProcSignalState, (Datum) 0);
 }
 
 /*
@@ -212,17 +210,14 @@ ProcSignalInit(int pss_idx)
 static void
 CleanupProcSignalState(int status, Datum arg)
 {
-	int			pss_idx = DatumGetInt32(arg);
-	ProcSignalSlot *slot;
-
-	slot = &ProcSignal->psh_slot[pss_idx - 1];
-	Assert(slot == MyProcSignalSlot);
+	ProcSignalSlot *slot = MyProcSignalSlot;
 
 	/*
 	 * Clear MyProcSignalSlot, so that a SIGUSR1 received after this point
 	 * won't try to access it after it's no longer ours (and perhaps even
 	 * after we've unmapped the shared memory segment).
 	 */
+	Assert(MyProcSignalSlot != NULL);
 	MyProcSignalSlot = NULL;
 
 	/* sanity check */
@@ -233,7 +228,7 @@ CleanupProcSignalState(int status, Datum arg)
 		 * infinite loop trying to exit
 		 */
 		elog(LOG, "process %d releasing ProcSignal slot %d, but it contains %d",
-			 MyProcPid, pss_idx, (int) slot->pss_pid);
+			 MyProcPid, (int) (slot - ProcSignal->psh_slot), (int) slot->pss_pid);
 		return;					/* XXX better to zero the slot anyway? */
 	}
 
@@ -251,7 +246,7 @@ CleanupProcSignalState(int status, Datum arg)
  * SendProcSignal
  *		Send a signal to a Postgres process
  *
- * Providing backendId is optional, but it will speed up the operation.
+ * Providing procNumber is optional, but it will speed up the operation.
  *
  * On success (a signal was sent), zero is returned.
  * On error, -1 is returned, and errno is set (typically to ESRCH or EPERM).
@@ -259,13 +254,13 @@ CleanupProcSignalState(int status, Datum arg)
  * Not to be confused with ProcSendSignal
  */
 int
-SendProcSignal(pid_t pid, ProcSignalReason reason, BackendId backendId)
+SendProcSignal(pid_t pid, ProcSignalReason reason, ProcNumber procNumber)
 {
 	volatile ProcSignalSlot *slot;
 
-	if (backendId != InvalidBackendId)
+	if (procNumber != INVALID_PROC_NUMBER)
 	{
-		slot = &ProcSignal->psh_slot[backendId - 1];
+		slot = &ProcSignal->psh_slot[procNumber];
 
 		/*
 		 * Note: Since there's no locking, it's possible that the target
@@ -286,10 +281,11 @@ SendProcSignal(pid_t pid, ProcSignalReason reason, BackendId backendId)
 	else
 	{
 		/*
-		 * BackendId not provided, so search the array using pid.  We search
+		 * Pronumber not provided, so search the array using pid.  We search
 		 * the array back to front so as to reduce search overhead.  Passing
-		 * InvalidBackendId means that the target is most likely an auxiliary
-		 * process, which will have a slot near the end of the array.
+		 * INVALID_PROC_NUMBER means that the target is most likely an
+		 * auxiliary process, which will have a slot near the end of the
+		 * array.
 		 */
 		int			i;
 
@@ -638,8 +634,6 @@ CheckProcSignal(ProcSignalReason reason)
 void
 procsignal_sigusr1_handler(SIGNAL_ARGS)
 {
-	int			save_errno = errno;
-
 	if (CheckProcSignal(PROCSIG_CATCHUP_INTERRUPT))
 		HandleCatchupInterrupt();
 
@@ -662,27 +656,25 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
 		HandleParallelApplyMessageInterrupt();
 
 	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_DATABASE))
-		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_DATABASE);
+		HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_DATABASE);
 
 	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_TABLESPACE))
-		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_TABLESPACE);
+		HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_TABLESPACE);
 
 	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_LOCK))
-		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_LOCK);
+		HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_LOCK);
 
 	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_SNAPSHOT))
-		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_SNAPSHOT);
+		HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_SNAPSHOT);
 
 	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_LOGICALSLOT))
-		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_LOGICALSLOT);
+		HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_LOGICALSLOT);
 
 	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK))
-		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK);
+		HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK);
 
 	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN))
-		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN);
+		HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN);
 
 	SetLatch(MyLatch);
-
-	errno = save_errno;
 }

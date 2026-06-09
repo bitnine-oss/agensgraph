@@ -2,7 +2,7 @@
 #
 # Makefile for backend/utils
 #
-# Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/backend/utils/Makefile
@@ -34,13 +34,14 @@ catalogdir  = $(top_srcdir)/src/backend/catalog
 
 include $(top_srcdir)/src/backend/common.mk
 
-all: distprep probes.h generated-header-symlinks
+all: probes.h generated-header-symlinks
 
-distprep: fmgr-stamp errcodes.h
+.PHONY: generated-header-symlinks submake-adt-headers
 
-.PHONY: generated-header-symlinks
+generated-header-symlinks: $(top_builddir)/src/include/utils/header-stamp submake-adt-headers
 
-generated-header-symlinks: $(top_builddir)/src/include/utils/header-stamp $(top_builddir)/src/include/utils/probes.h
+submake-adt-headers:
+	$(MAKE) -C adt jsonpath_gram.h
 
 $(SUBDIRS:%=%-recursive): fmgr-stamp errcodes.h
 
@@ -62,36 +63,18 @@ probes.h: postprocess_dtrace.sed probes.h.tmp
 probes.h.tmp: probes.d
 	$(DTRACE) -C -h -s $< -o $@
 else
-probes.h: Gen_dummy_probes.sed probes.d
-	sed -f $^ >$@
+probes.h: Gen_dummy_probes.pl probes.d
+	$(PERL) -n $^ >$@
 endif
 
-# These generated headers must be symlinked into builddir/src/include/,
-# using absolute links for the reasons explained in src/backend/Makefile.
+# These generated headers must be symlinked into src/include/.
 # We use header-stamp to record that we've done this because the symlinks
 # themselves may appear older than fmgr-stamp.
-$(top_builddir)/src/include/utils/header-stamp: fmgr-stamp errcodes.h
-	prereqdir=`cd '$(dir $<)' >/dev/null && pwd` && \
-	cd '$(dir $@)' && for file in fmgroids.h fmgrprotos.h errcodes.h; do \
-	  rm -f $$file && $(LN_S) "$$prereqdir/$$file" . ; \
+$(top_builddir)/src/include/utils/header-stamp: fmgr-stamp errcodes.h probes.h
+	cd '$(dir $@)' && for file in fmgroids.h fmgrprotos.h errcodes.h probes.h; do \
+	  rm -f $$file && $(LN_S) "../../../$(subdir)/$$file" . ; \
 	done
 	touch $@
-
-# probes.h is handled differently because it's not in the distribution tarball.
-$(top_builddir)/src/include/utils/probes.h: probes.h
-	cd '$(dir $@)' && rm -f $(notdir $@) && \
-	    $(LN_S) "../../../$(subdir)/probes.h" .
-
-# Recipe for rebuilding the Perl version of Gen_dummy_probes
-# Nothing depends on it, so it will never be called unless explicitly requested
-# The last two lines of the recipe format the script according to  our
-# standard and put back some blank lines for improved readability.
-Gen_dummy_probes.pl: Gen_dummy_probes.sed Gen_dummy_probes.pl.prolog
-	cp $(srcdir)/Gen_dummy_probes.pl.prolog $@
-	s2p -f $<  | sed -e 1,3d -e '/# #/ d' -e '$$d' >> $@
-	perltidy --profile=$(srcdir)/../../tools/pgindent/perltidyrc $@
-	perl -pi -e '!$$lb && ( /^\t+#/  || /^# prototypes/ ) && print qq{\n};'\
-		-e '$$lb = m/^\n/; ' $@
 
 .PHONY: install-data
 install-data: errcodes.txt installdirs
@@ -104,10 +87,6 @@ installdirs:
 uninstall-data:
 	rm -f $(addprefix '$(DESTDIR)$(datadir)'/, errcodes.txt)
 
-# fmgroids.h, fmgrprotos.h, fmgrtab.c, fmgr-stamp, and errcodes.h are in the
-# distribution tarball, so they are not cleaned here.
 clean:
 	rm -f probes.h probes.h.tmp
-
-maintainer-clean: clean
 	rm -f fmgroids.h fmgrprotos.h fmgrtab.c fmgr-stamp errcodes.h

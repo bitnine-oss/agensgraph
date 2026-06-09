@@ -6,7 +6,7 @@
  * Estimates are based on histograms of lower and upper bounds, and the
  * fraction of empty multiranges.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,12 +22,11 @@
 #include "access/htup_details.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_statistic.h"
-#include "catalog/pg_type.h"
 #include "utils/float.h"
 #include "utils/fmgrprotos.h"
 #include "utils/lsyscache.h"
-#include "utils/rangetypes.h"
 #include "utils/multirangetypes.h"
+#include "utils/rangetypes.h"
 #include "utils/selfuncs.h"
 #include "utils/typcache.h"
 

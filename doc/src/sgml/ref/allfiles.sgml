@@ -202,8 +202,10 @@ Complete list of usable sgml source files in this directory.
 <!ENTITY pgBasebackup       SYSTEM "pg_basebackup.sgml">
 <!ENTITY pgbench            SYSTEM "pgbench.sgml">
 <!ENTITY pgChecksums        SYSTEM "pg_checksums.sgml">
+<!ENTITY pgCombinebackup    SYSTEM "pg_combinebackup.sgml">
 <!ENTITY pgConfig           SYSTEM "pg_config-ref.sgml">
 <!ENTITY pgControldata      SYSTEM "pg_controldata.sgml">
+<!ENTITY pgCreateSubscriber SYSTEM "pg_createsubscriber.sgml">
 <!ENTITY pgCtl              SYSTEM "pg_ctl-ref.sgml">
 <!ENTITY pgDump             SYSTEM "pg_dump.sgml">
 <!ENTITY pgDumpall          SYSTEM "pg_dumpall.sgml">
@@ -218,6 +220,7 @@ Complete list of usable sgml source files in this directory.
 <!ENTITY pgtesttiming       SYSTEM "pgtesttiming.sgml">
 <!ENTITY pgupgrade          SYSTEM "pgupgrade.sgml">
 <!ENTITY pgwaldump          SYSTEM "pg_waldump.sgml">
+<!ENTITY pgwalsummary       SYSTEM "pg_walsummary.sgml">
 <!ENTITY postgres           SYSTEM "postgres-ref.sgml">
 <!ENTITY psqlRef            SYSTEM "psql-ref.sgml">
 <!ENTITY reindexdb          SYSTEM "reindexdb.sgml">

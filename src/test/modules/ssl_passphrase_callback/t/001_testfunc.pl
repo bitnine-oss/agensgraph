@@ -1,8 +1,8 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use File::Copy;
 
@@ -33,7 +33,7 @@ my $ddir = $node->data_dir;
 # install certificate and protected key
 copy("server.crt", $ddir);
 copy("server.key", $ddir);
-chmod 0600, "$ddir/server.key";
+chmod 0600, "$ddir/server.key" or die $!;
 
 $node->start;
 
@@ -56,7 +56,7 @@ my $log_contents = slurp_file($log);
 
 like(
 	$log_contents,
-	qr/WARNING.*ssl_passphrase_command setting ignored by ssl_passphrase_func module/,
+	qr/WARNING.*"ssl_passphrase_command" setting ignored by ssl_passphrase_func module/,
 	"ssl_passphrase_command set warning");
 
 # set the wrong passphrase

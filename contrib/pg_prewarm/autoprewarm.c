@@ -16,7 +16,7 @@
  *		relevant database in turn.  The former keeps running after the
  *		initial prewarm is complete to update the dump file periodically.
  *
- *	Copyright (c) 2016-2023, PostgreSQL Global Development Group
+ *	Copyright (c) 2016-2024, PostgreSQL Global Development Group
  *
  *	IDENTIFICATION
  *		contrib/pg_prewarm/autoprewarm.c
@@ -32,12 +32,12 @@
 #include "access/xact.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_type.h"
-#include "miscadmin.h"
 #include "pgstat.h"
 #include "postmaster/bgworker.h"
 #include "postmaster/interrupt.h"
 #include "storage/buf_internals.h"
 #include "storage/dsm.h"
+#include "storage/dsm_registry.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
@@ -95,8 +95,6 @@ static void apw_start_database_worker(void);
 static bool apw_init_shmem(void);
 static void apw_detach_shmem(int code, Datum arg);
 static int	apw_compare_blockinfo(const void *p, const void *q);
-static void autoprewarm_shmem_request(void);
-static shmem_request_hook_type prev_shmem_request_hook = NULL;
 
 /* Pointer to shared-memory state. */
 static AutoPrewarmSharedState *apw_state = NULL;
@@ -140,24 +138,9 @@ _PG_init(void)
 
 	MarkGUCPrefixReserved("pg_prewarm");
 
-	prev_shmem_request_hook = shmem_request_hook;
-	shmem_request_hook = autoprewarm_shmem_request;
-
 	/* Register autoprewarm worker, if enabled. */
 	if (autoprewarm)
 		apw_start_leader_worker();
-}
-
-/*
- * Requests any additional shared memory required for autoprewarm.
- */
-static void
-autoprewarm_shmem_request(void)
-{
-	if (prev_shmem_request_hook)
-		prev_shmem_request_hook();
-
-	RequestAddinShmemSpace(MAXALIGN(sizeof(AutoPrewarmSharedState)));
 }
 
 /*
@@ -181,8 +164,14 @@ autoprewarm_main(Datum main_arg)
 	if (apw_init_shmem())
 		first_time = false;
 
-	/* Set on-detach hook so that our PID will be cleared on exit. */
-	on_shmem_exit(apw_detach_shmem, 0);
+	/*
+	 * Set on-detach hook so that our PID will be cleared on exit.
+	 *
+	 * NB: Autoprewarm's state is stored in a DSM segment, and DSM segments
+	 * are detached before calling the on_shmem_exit callbacks, so we must put
+	 * apw_detach_shmem in the before_shmem_exit callback list.
+	 */
+	before_shmem_exit(apw_detach_shmem, 0);
 
 	/*
 	 * Store our PID in the shared memory area --- unless there's already
@@ -357,8 +346,8 @@ apw_load_buffers(void)
 	FreeFile(file);
 
 	/* Sort the blocks to be loaded. */
-	pg_qsort(blkinfo, num_elements, sizeof(BlockInfoRecord),
-			 apw_compare_blockinfo);
+	qsort(blkinfo, num_elements, sizeof(BlockInfoRecord),
+		  apw_compare_blockinfo);
 
 	/* Populate shared memory state. */
 	apw_state->block_info_handle = dsm_segment_handle(seg);
@@ -767,6 +756,16 @@ autoprewarm_dump_now(PG_FUNCTION_ARGS)
 	PG_RETURN_INT64((int64) num_blocks);
 }
 
+static void
+apw_init_state(void *ptr)
+{
+	AutoPrewarmSharedState *state = (AutoPrewarmSharedState *) ptr;
+
+	LWLockInitialize(&state->lock, LWLockNewTrancheId());
+	state->bgworker_pid = InvalidPid;
+	state->pid_using_dumpfile = InvalidPid;
+}
+
 /*
  * Allocate and initialize autoprewarm related shared memory, if not already
  * done, and set up backend-local pointer to that state.  Returns true if an
@@ -777,19 +776,10 @@ apw_init_shmem(void)
 {
 	bool		found;
 
-	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
-	apw_state = ShmemInitStruct("autoprewarm",
-								sizeof(AutoPrewarmSharedState),
-								&found);
-	if (!found)
-	{
-		/* First time through ... */
-		LWLockInitialize(&apw_state->lock, LWLockNewTrancheId());
-		apw_state->bgworker_pid = InvalidPid;
-		apw_state->pid_using_dumpfile = InvalidPid;
-	}
-	LWLockRelease(AddinShmemInitLock);
-
+	apw_state = GetNamedDSMSegment("autoprewarm",
+								   sizeof(AutoPrewarmSharedState),
+								   apw_init_state,
+								   &found);
 	LWLockRegisterTranche(apw_state->lock.tranche, "autoprewarm");
 
 	return found;
@@ -841,7 +831,7 @@ apw_start_leader_worker(void)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
 				 errmsg("could not register background process"),
-				 errhint("You may need to increase max_worker_processes.")));
+				 errhint("You may need to increase \"max_worker_processes\".")));
 
 	status = WaitForBackgroundWorkerStartup(handle, &pid);
 	if (status != BGWH_STARTED)
@@ -877,7 +867,7 @@ apw_start_database_worker(void)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
 				 errmsg("registering dynamic bgworker autoprewarm failed"),
-				 errhint("Consider increasing configuration parameter \"max_worker_processes\".")));
+				 errhint("Consider increasing the configuration parameter \"%s\".", "max_worker_processes")));
 
 	/*
 	 * Ignore return value; if it fails, postmaster has died, but we have

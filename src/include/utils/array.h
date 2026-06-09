@@ -51,7 +51,7 @@
  * arrays holding the elements.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/array.h
@@ -73,6 +73,13 @@ struct ExprContext;
  * Maximum number of array subscripts (arbitrary limit)
  */
 #define MAXDIM 6
+
+/*
+ * Maximum number of elements in an array.  We limit this to at most about a
+ * quarter billion elements, so that it's not necessary to check for overflow
+ * in quite so many places --- for instance when palloc'ing Datum arrays.
+ */
+#define MaxArraySize ((Size) (MaxAllocSize / sizeof(Datum)))
 
 /*
  * Arrays are varlena objects, so must meet the varlena convention that
@@ -448,7 +455,6 @@ extern void array_free_iterator(ArrayIterator iterator);
  */
 
 extern int	ArrayGetOffset(int n, const int *dim, const int *lb, const int *indx);
-extern int	ArrayGetOffset0(int n, const int *tup, const int *scale);
 extern int	ArrayGetNItems(int ndim, const int *dims);
 extern int	ArrayGetNItemsSafe(int ndim, const int *dims,
 							   struct Node *escontext);

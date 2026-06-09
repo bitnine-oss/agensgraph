@@ -1,4 +1,4 @@
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Tests that standbys:
 # - drop stats for objects when the those records are replayed
@@ -6,7 +6,7 @@
 # - discard stats after immediate / crash restarts
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;

@@ -4,7 +4,7 @@
  *		Internal definitions for parser
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/parser/parse_node.h
@@ -61,7 +61,8 @@ typedef enum ParseExprKind
 	EXPR_KIND_DISTINCT_ON,		/* DISTINCT ON */
 	EXPR_KIND_LIMIT,			/* LIMIT */
 	EXPR_KIND_OFFSET,			/* OFFSET */
-	EXPR_KIND_RETURNING,		/* RETURNING */
+	EXPR_KIND_RETURNING,		/* RETURNING in INSERT/UPDATE/DELETE */
+	EXPR_KIND_MERGE_RETURNING,	/* RETURNING in MERGE */
 	EXPR_KIND_VALUES,			/* VALUES */
 	EXPR_KIND_VALUES_SINGLE,	/* single-row VALUES (in INSERT only) */
 	EXPR_KIND_CHECK_CONSTRAINT, /* CHECK constraint for a table */

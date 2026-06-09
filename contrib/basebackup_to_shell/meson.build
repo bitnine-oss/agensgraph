@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 basebackup_to_shell_sources = files(
   'basebackup_to_shell.c',
@@ -24,7 +24,7 @@ tests += {
     'tests': [
       't/001_basic.pl',
     ],
-    'env': {'GZIP_PROGRAM': gzip.path(),
-            'TAR': tar.path()},
+    'env': {'GZIP_PROGRAM': gzip.found() ? gzip.path() : '',
+            'TAR': tar.found() ? tar.path() : '' },
   },
 }

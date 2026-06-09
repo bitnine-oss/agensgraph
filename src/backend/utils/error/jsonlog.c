@@ -3,7 +3,7 @@
  * jsonlog.c
  *	  JSON logging
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -16,16 +16,14 @@
 #include "postgres.h"
 
 #include "access/xact.h"
-#include "libpq/libpq.h"
+#include "libpq/libpq-be.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
-#include "postmaster/bgworker.h"
 #include "postmaster/syslogger.h"
 #include "storage/lock.h"
 #include "storage/proc.h"
 #include "tcop/tcopprot.h"
 #include "utils/backend_status.h"
-#include "utils/elog.h"
 #include "utils/guc.h"
 #include "utils/json.h"
 #include "utils/ps_status.h"
@@ -197,9 +195,9 @@ write_jsonlog(ErrorData *edata)
 
 	/* Virtual transaction id */
 	/* keep VXID format in sync with lockfuncs.c */
-	if (MyProc != NULL && MyProc->backendId != InvalidBackendId)
-		appendJSONKeyValueFmt(&buf, "vxid", true, "%d/%u", MyProc->backendId,
-							  MyProc->lxid);
+	if (MyProc != NULL && MyProc->vxid.procNumber != INVALID_PROC_NUMBER)
+		appendJSONKeyValueFmt(&buf, "vxid", true, "%d/%u",
+							  MyProc->vxid.procNumber, MyProc->vxid.lxid);
 
 	/* Transaction id */
 	appendJSONKeyValueFmt(&buf, "txid", false, "%u",

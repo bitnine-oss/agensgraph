@@ -68,10 +68,13 @@
 #define K_VERS_1_15 MAKE_ARCHIVE_VERSION(1, 15, 0)	/* add
 													 * compression_algorithm
 													 * in header */
+#define K_VERS_1_16 MAKE_ARCHIVE_VERSION(1, 16, 0)	/* BLOB METADATA entries
+													 * and multiple BLOBS,
+													 * relkind */
 
 /* Current archive version number (the format we can output) */
 #define K_VERS_MAJOR 1
-#define K_VERS_MINOR 15
+#define K_VERS_MINOR 16
 #define K_VERS_REV 0
 #define K_VERS_SELF MAKE_ARCHIVE_VERSION(K_VERS_MAJOR, K_VERS_MINOR, K_VERS_REV)
 
@@ -113,7 +116,7 @@ struct ParallelState;
 typedef enum T_Action
 {
 	ACT_DUMP,
-	ACT_RESTORE
+	ACT_RESTORE,
 } T_Action;
 
 typedef void (*ClosePtrType) (ArchiveHandle *AH);
@@ -151,7 +154,7 @@ typedef enum
 {
 	SQL_SCAN = 0,				/* normal */
 	SQL_IN_SINGLE_QUOTE,		/* '...' literal */
-	SQL_IN_DOUBLE_QUOTE			/* "..." identifier */
+	SQL_IN_DOUBLE_QUOTE,		/* "..." identifier */
 } sqlparseState;
 
 typedef struct
@@ -166,14 +169,14 @@ typedef enum
 	STAGE_NONE = 0,
 	STAGE_INITIALIZING,
 	STAGE_PROCESSING,
-	STAGE_FINALIZING
+	STAGE_FINALIZING,
 } ArchiverStage;
 
 typedef enum
 {
 	OUTPUT_SQLCMDS = 0,			/* emitting general SQL commands */
 	OUTPUT_COPYDATA,			/* writing COPY data */
-	OUTPUT_OTHERDATA			/* writing data as INSERT commands */
+	OUTPUT_OTHERDATA,			/* writing data as INSERT commands */
 } ArchiverOutput;
 
 /*
@@ -199,7 +202,7 @@ typedef enum
 {
 	RESTORE_PASS_MAIN = 0,		/* Main pass (most TOC item types) */
 	RESTORE_PASS_ACL,			/* ACL item types */
-	RESTORE_PASS_POST_ACL		/* Event trigger and matview refresh items */
+	RESTORE_PASS_POST_ACL,		/* Event trigger and matview refresh items */
 
 #define RESTORE_PASS_LAST RESTORE_PASS_POST_ACL
 } RestorePass;
@@ -312,6 +315,7 @@ struct _archiveHandle
 	pg_compress_specification compression_spec; /* Requested specification for
 												 * compression */
 	bool		dosync;			/* data requested to be synced on sight */
+	DataDirSyncMethod sync_method;
 	ArchiveMode mode;			/* File mode - r or w */
 	void	   *formatData;		/* Header data specific to file format */
 
@@ -320,6 +324,9 @@ struct _archiveHandle
 	char	   *currSchema;		/* current schema, or NULL */
 	char	   *currTablespace; /* current tablespace, or NULL */
 	char	   *currTableAm;	/* current table access method, or NULL */
+
+	/* in --transaction-size mode, this counts objects emitted in cur xact */
+	int			txnCount;
 
 	void	   *lo_buf;
 	size_t		lo_buf_used;
@@ -347,6 +354,7 @@ struct _tocEntry
 	char	   *tablespace;		/* null if not in a tablespace; empty string
 								 * means use database default */
 	char	   *tableam;		/* table access method, only for TABLE tags */
+	char		relkind;		/* relation kind, only for TABLE tags */
 	char	   *owner;
 	char	   *desc;
 	char	   *defn;
@@ -387,6 +395,7 @@ typedef struct _archiveOpts
 	const char *namespace;
 	const char *tablespace;
 	const char *tableam;
+	char		relkind;
 	const char *owner;
 	const char *description;
 	teSection	section;
@@ -447,6 +456,9 @@ extern void InitArchiveFmt_Tar(ArchiveHandle *AH);
 extern bool isValidTarHeader(char *header);
 
 extern void ReconnectToServer(ArchiveHandle *AH, const char *dbname);
+extern void IssueCommandPerBlob(ArchiveHandle *AH, TocEntry *te,
+								const char *cmdBegin, const char *cmdEnd);
+extern void IssueACLPerBlob(ArchiveHandle *AH, TocEntry *te);
 extern void DropLOIfExists(ArchiveHandle *AH, Oid oid);
 
 void		ahwrite(const void *ptr, size_t size, size_t nmemb, ArchiveHandle *AH);

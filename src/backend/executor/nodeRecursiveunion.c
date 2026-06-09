@@ -7,7 +7,7 @@
  * already seen.  The hash key is computed from the grouping columns.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,7 +18,7 @@
  */
 #include "postgres.h"
 
-#include "executor/execdebug.h"
+#include "executor/executor.h"
 #include "executor/nodeRecursiveunion.h"
 #include "miscadmin.h"
 #include "utils/memutils.h"
@@ -317,7 +317,7 @@ ExecReScanRecursiveUnion(RecursiveUnionState *node)
 
 	/* Release any hashtable storage */
 	if (node->tableContext)
-		MemoryContextResetAndDeleteChildren(node->tableContext);
+		MemoryContextReset(node->tableContext);
 
 	/* Empty hashtable if needed */
 	if (plan->numCols > 0)

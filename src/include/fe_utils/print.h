@@ -3,7 +3,7 @@
  * Query-result printing support for frontend code
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/fe_utils/print.h
@@ -36,7 +36,7 @@ enum printFormat
 	PRINT_LATEX_LONGTABLE,
 	PRINT_TROFF_MS,
 	PRINT_UNALIGNED,
-	PRINT_WRAPPED
+	PRINT_WRAPPED,
 	/* add your favourite output format here ... */
 };
 
@@ -55,7 +55,7 @@ typedef enum printTextRule
 	PRINT_RULE_TOP,				/* top horizontal line */
 	PRINT_RULE_MIDDLE,			/* intra-data horizontal line */
 	PRINT_RULE_BOTTOM,			/* bottom horizontal line */
-	PRINT_RULE_DATA				/* data line (hrule is unused here) */
+	PRINT_RULE_DATA,			/* data line (hrule is unused here) */
 } printTextRule;
 
 typedef enum printTextLineWrap
@@ -63,7 +63,7 @@ typedef enum printTextLineWrap
 	/* Line wrapping conditions */
 	PRINT_LINE_WRAP_NONE,		/* No wrapping */
 	PRINT_LINE_WRAP_WRAP,		/* Wraparound due to overlength line */
-	PRINT_LINE_WRAP_NEWLINE		/* Newline in data */
+	PRINT_LINE_WRAP_NEWLINE,	/* Newline in data */
 } printTextLineWrap;
 
 typedef enum printXheaderWidthType
@@ -99,7 +99,7 @@ typedef struct printTextFormat
 typedef enum unicode_linestyle
 {
 	UNICODE_LINESTYLE_SINGLE = 0,
-	UNICODE_LINESTYLE_DOUBLE
+	UNICODE_LINESTYLE_DOUBLE,
 } unicode_linestyle;
 
 struct separator
@@ -171,7 +171,7 @@ typedef struct printTableContent
 	const char **cells;			/* NULL-terminated array of cell content
 								 * strings */
 	const char **cell;			/* Pointer to the last added cell */
-	long		cellsadded;		/* Number of cells added this far */
+	uint64		cellsadded;		/* Number of cells added this far */
 	bool	   *cellmustfree;	/* true for cells that need to be free()d */
 	printTableFooter *footers;	/* Pointer to the first footer */
 	printTableFooter *footer;	/* Pointer to the last added footer */

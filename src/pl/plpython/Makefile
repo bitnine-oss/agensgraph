@@ -39,6 +39,7 @@ DATA = $(NAME)u.control $(NAME)u--1.0.sql
 # header files to install - it's not clear which of these might be needed
 # so install them all.
 INCS = 	plpython.h \
+	plpython_system.h \
 	plpy_cursorobject.h \
 	plpy_elog.h \
 	plpy_exec.h \
@@ -120,7 +121,7 @@ install-data: installdirs
 
 uninstall-data:
 	rm -f $(addprefix '$(DESTDIR)$(datadir)/extension'/, $(notdir $(DATA)))
-	rm -f $(addprefix '$(DESTDIR)$(includedir_server)'/, plpython.h plpy_util.h)
+	rm -f $(addprefix '$(DESTDIR)$(includedir_server)'/, $(INCS))
 
 .PHONY: install-data uninstall-data
 
@@ -142,6 +143,7 @@ clean distclean: clean-lib
 ifeq ($(PORTNAME), win32)
 	rm -f python${pytverstr}.def
 endif
+	rm -f spiexceptions.h
 
 
 # Force this dependency to be known even without dependency info built:
@@ -149,8 +151,3 @@ plpy_plpymodule.o: spiexceptions.h
 
 spiexceptions.h: $(top_srcdir)/src/backend/utils/errcodes.txt generate-spiexceptions.pl
 	$(PERL) $(srcdir)/generate-spiexceptions.pl $< > $@
-
-distprep: spiexceptions.h
-
-maintainer-clean: distclean
-	rm -f spiexceptions.h

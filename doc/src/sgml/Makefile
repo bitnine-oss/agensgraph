@@ -7,8 +7,7 @@
 #----------------------------------------------------------------------------
 
 # This makefile is for building and installing the documentation.
-# When a release tarball is created, the documentation files are
-# prepared using the distprep target.  In Git-based trees these files
+# In Git-based trees these files
 # don't exist, unless explicitly built, so we skip the installation in
 # that case.
 
@@ -16,6 +15,8 @@
 # Make "html" the default target, since that is what most people tend
 # to want to use.
 html:
+# Note that all is *not* the default target in this directory
+all: html man
 
 # We don't need the tree-wide headers or install support here.
 NO_GENERATED_HEADERS=yes
@@ -26,10 +27,6 @@ top_builddir = ../../..
 include $(top_builddir)/src/Makefile.global
 
 
-all: html man
-
-distprep: html distprep-man
-
 
 ifndef DBTOEPUB
 DBTOEPUB = $(missing) dbtoepub
@@ -38,6 +35,8 @@ endif
 ifndef FOP
 FOP = $(missing) fop
 endif
+
+PANDOC = pandoc
 
 XMLINCLUDE = --path . --path $(srcdir)
 
@@ -58,7 +57,7 @@ override XSLTPROCFLAGS += --stringparam pg.version '$(VERSION)'
 
 GENERATED_SGML = version.sgml \
 	features-supported.sgml features-unsupported.sgml errcodes-table.sgml \
-	keywords-table.sgml
+	keywords-table.sgml targets-meson.sgml wait_event_types.sgml
 
 ALLSGML := $(wildcard $(srcdir)/*.sgml $(srcdir)/ref/*.sgml) $(GENERATED_SGML)
 
@@ -77,7 +76,7 @@ postgres-full.xml: postgres.sgml $(ALLSGML)
 ## Man pages
 ##
 
-man distprep-man: man-stamp
+man: man-stamp
 
 man-stamp: stylesheet-man.xsl postgres-full.xml
 	$(XSLTPROC) $(XMLINCLUDE) $(XSLTPROCFLAGS) $(XSLTPROC_MAN_FLAGS) $^
@@ -89,10 +88,9 @@ man-stamp: stylesheet-man.xsl postgres-full.xml
 ##
 
 # Technically, this should depend on Makefile.global, but then
-# version.sgml would need to be rebuilt after every configure run,
-# even in distribution tarballs.  So this is cheating a bit, but it
-# will achieve the goal of updating the version number when it
-# changes.
+# version.sgml would need to be rebuilt after every configure run.  So
+# this is cheating a bit, but it will achieve the goal of updating the
+# version number when it changes.
 version.sgml: $(top_srcdir)/configure
 	{ \
 	  echo "<!ENTITY version \"$(VERSION)\">"; \
@@ -111,25 +109,11 @@ errcodes-table.sgml: $(top_srcdir)/src/backend/utils/errcodes.txt generate-errco
 keywords-table.sgml: $(top_srcdir)/src/include/parser/kwlist.h $(wildcard $(srcdir)/keywords/sql*.txt) generate-keywords-table.pl
 	$(PERL) $(srcdir)/generate-keywords-table.pl $(srcdir) > $@
 
+wait_event_types.sgml: $(top_srcdir)/src/backend/utils/activity/wait_event_names.txt $(top_srcdir)/src/backend/utils/activity/generate-wait_event_types.pl
+	$(PERL) $(top_srcdir)/src/backend/utils/activity/generate-wait_event_types.pl --docs $<
 
-##
-## Generation of some text files.
-##
-
-ICONV = iconv
-PANDOC = pandoc
-
-INSTALL: % : %.html
-	$(PANDOC) -t plain -o $@.tmp $<
-	$(ICONV) -f utf8 -t us-ascii//TRANSLIT $@.tmp > $@
-	rm $@.tmp
-
-INSTALL.html: %.html : stylesheet-text.xsl %.xml
-	$(XMLLINT) --noout --valid $*.xml
-	$(XSLTPROC) $(XSLTPROCFLAGS) $(XSLTPROC_HTML_FLAGS) $^ >$@
-
-INSTALL.xml: standalone-profile.xsl standalone-install.xml postgres-full.xml
-	$(XSLTPROC) $(XMLINCLUDE) $(XSLTPROCFLAGS) --xinclude $(wordlist 1,2,$^) >$@
+targets-meson.sgml: targets-meson.txt $(srcdir)/generate-targets-meson.pl
+	$(PERL) $(srcdir)/generate-targets-meson.pl $^ > $@
 
 
 ##
@@ -231,7 +215,7 @@ uninstall:
 ## Install html
 
 install-html: html installdirs
-	cp -R $(call vpathsearch,html) '$(DESTDIR)$(htmldir)'
+	cp -R html '$(DESTDIR)$(htmldir)'
 
 
 ## Install man
@@ -246,7 +230,7 @@ sqlmansectnum = $(shell expr X'$(sqlmansect)' : X'\([0-9]\)')
 #
 ifeq ($(sqlmansectnum),7)
 install-man:
-	cp -R $(foreach dir,man1 man3 man7,$(call vpathsearch,$(dir))) '$(DESTDIR)$(mandir)'
+	cp -R man1 man3 man7 '$(DESTDIR)$(mandir)'
 
 else # sqlmansectnum != 7
 fix_sqlmansectnum = sed -e '/^\.TH/s/"7"/"$(sqlmansect)"/' \
@@ -257,9 +241,9 @@ man: fixed-man-stamp
 
 fixed-man-stamp: man-stamp
 	@$(MKDIR_P) $(addprefix fixedman/,man1 man3 man$(sqlmansectnum))
-	for file in $(call vpathsearch,man1)/*.1; do $(fix_sqlmansectnum) $$file >fixedman/man1/`basename $$file` || exit; done
-	for file in $(call vpathsearch,man3)/*.3; do $(fix_sqlmansectnum) $$file >fixedman/man3/`basename $$file` || exit; done
-	for file in $(call vpathsearch,man7)/*.7; do $(fix_sqlmansectnum) $$file >fixedman/man$(sqlmansectnum)/`basename $$file | sed s/\.7$$/.$(sqlmansect)/` || exit; done
+	for file in man1/*.1; do $(fix_sqlmansectnum) $$file >fixedman/man1/`basename $$file` || exit; done
+	for file in man3/*.3; do $(fix_sqlmansectnum) $$file >fixedman/man3/`basename $$file` || exit; done
+	for file in man7/*.7; do $(fix_sqlmansectnum) $$file >fixedman/man$(sqlmansectnum)/`basename $$file | sed s/\.7$$/.$(sqlmansect)/` || exit; done
 
 install-man:
 	cp -R $(foreach dir,man1 man3 man$(sqlmansectnum),fixedman/$(dir)) '$(DESTDIR)$(mandir)'
@@ -283,13 +267,9 @@ check-tabs:
 # keeping the dependencies satisfied.
 .SECONDARY: $(GENERATED_SGML)
 .SECONDARY: postgres-full.xml
-.SECONDARY: INSTALL.html INSTALL.xml
 .SECONDARY: postgres-A4.fo postgres-US.fo
 
 clean:
-# text --- these are shipped, but not in this directory
-	rm -f INSTALL
-	rm -f INSTALL.html INSTALL.xml
 # single-page output
 	rm -f postgres.html postgres.txt
 # print
@@ -303,8 +283,6 @@ clean:
 	rm -f *.texixml *.texi *.info db2texi.refs
 
 distclean: clean
-
-maintainer-clean: distclean
 # HTML
 	rm -fr html/ html-stamp
 # man

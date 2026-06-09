@@ -1,10 +1,10 @@
-# Copyright (c) 2023, PostgreSQL Global Development Group
+# Copyright (c) 2023-2024, PostgreSQL Global Development Group
 
 # logical decoding on standby : test logical decoding,
 # recovery conflict and standby promotion.
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
@@ -21,7 +21,6 @@ my $node_cascading_standby =
   PostgreSQL::Test::Cluster->new('cascading_standby');
 my $node_subscriber = PostgreSQL::Test::Cluster->new('subscriber');
 my $default_timeout = $PostgreSQL::Test::Utils::timeout_default;
-my $psql_timeout = IPC::Run::timer($default_timeout);
 my $res;
 
 # Name for the physical slot on primary
@@ -90,7 +89,8 @@ sub make_slot_active
 		'>',
 		$to_stdout,
 		'2>',
-		$to_stderr);
+		$to_stderr,
+		IPC::Run::timeout($default_timeout));
 
 	if ($wait)
 	{
@@ -168,27 +168,27 @@ sub change_hot_standby_feedback_and_wait_for_xmins
 	}
 }
 
-# Check conflicting status in pg_replication_slots.
-sub check_slots_conflicting_status
+# Check reason for conflict in pg_replication_slots.
+sub check_slots_conflict_reason
 {
-	my ($conflicting) = @_;
+	my ($slot_prefix, $reason) = @_;
 
-	if ($conflicting)
-	{
-		$res = $node_standby->safe_psql(
-			'postgres', qq(
-				 select bool_and(conflicting) from pg_replication_slots;));
+	my $active_slot = $slot_prefix . 'activeslot';
+	my $inactive_slot = $slot_prefix . 'inactiveslot';
 
-		is($res, 't', "Logical slots are reported as conflicting");
-	}
-	else
-	{
-		$res = $node_standby->safe_psql(
-			'postgres', qq(
-				select bool_or(conflicting) from pg_replication_slots;));
+	$res = $node_standby->safe_psql(
+		'postgres', qq(
+			 select invalidation_reason from pg_replication_slots where slot_name = '$active_slot' and conflicting;)
+	);
 
-		is($res, 'f', "Logical slots are reported as non conflicting");
-	}
+	is($res, "$reason", "$active_slot reason for conflict is $reason");
+
+	$res = $node_standby->safe_psql(
+		'postgres', qq(
+			 select invalidation_reason from pg_replication_slots where slot_name = '$inactive_slot' and conflicting;)
+	);
+
+	is($res, "$reason", "$inactive_slot reason for conflict is $reason");
 }
 
 # Drop the slots, re-create them, change hot_standby_feedback,
@@ -240,6 +240,40 @@ sub check_for_invalidation
 	) or die "Timed out waiting confl_active_logicalslot to be updated";
 }
 
+# Launch $sql query, wait for a new snapshot that has a newer horizon and
+# launch a VACUUM.  $vac_option is the set of options to be passed to the
+# VACUUM command, $sql the sql to launch before triggering the vacuum and
+# $to_vac the relation to vacuum.
+#
+# Note that pg_current_snapshot() is used to get the horizon.  It does
+# not generate a Transaction/COMMIT WAL record, decreasing the risk of
+# seeing a xl_running_xacts that would advance an active replication slot's
+# catalog_xmin.  Advancing the active replication slot's catalog_xmin
+# would break some tests that expect the active slot to conflict with
+# the catalog xmin horizon.
+sub wait_until_vacuum_can_remove
+{
+	my ($vac_option, $sql, $to_vac) = @_;
+
+	# Get the current xid horizon,
+	my $xid_horizon = $node_primary->safe_psql('testdb',
+		qq[select pg_snapshot_xmin(pg_current_snapshot());]);
+
+	# Launch our sql.
+	$node_primary->safe_psql('testdb', qq[$sql]);
+
+	# Wait until we get a newer horizon.
+	$node_primary->poll_query_until('testdb',
+		"SELECT (select pg_snapshot_xmin(pg_current_snapshot())::text::int - $xid_horizon) > 0"
+	) or die "new snapshot does not have a newer horizon";
+
+	# Launch the vacuum command and insert into flush_wal (see CREATE
+	# TABLE flush_wal for the reason).
+	$node_primary->safe_psql(
+		'testdb', qq[VACUUM $vac_option verbose $to_vac;
+										  INSERT INTO flush_wal DEFAULT VALUES;]);
+}
+
 ########################
 # Initialize primary node
 ########################
@@ -250,6 +284,7 @@ $node_primary->append_conf(
 wal_level = 'logical'
 max_replication_slots = 4
 max_wal_senders = 4
+autovacuum = off
 });
 $node_primary->dump_info;
 $node_primary->start;
@@ -293,7 +328,7 @@ $node_primary->wait_for_replay_catchup($node_standby);
 #######################
 # Initialize subscriber node
 #######################
-$node_subscriber->init(allows_streaming => 'logical');
+$node_subscriber->init;
 $node_subscriber->start;
 
 my %psql_subscriber = (
@@ -308,7 +343,7 @@ $psql_subscriber{run} = IPC::Run::start(
 	\$psql_subscriber{subscriber_stdout},
 	'2>',
 	\$psql_subscriber{subscriber_stderr},
-	$psql_timeout);
+	IPC::Run::timeout($default_timeout));
 
 ##################################################
 # Test that logical decoding on the standby
@@ -432,8 +467,8 @@ $psql_subscriber{subscriber_stdin} .= "\n";
 
 $psql_subscriber{run}->pump_nb();
 
-# Speed up the subscription creation
-$node_primary->safe_psql('postgres', "SELECT pg_log_standby_snapshot()");
+# Log the standby snapshot to speed up the subscription creation
+$node_primary->log_standby_snapshot($node_standby, 'tap_sub');
 
 # Explicitly shut down psql instance gracefully - to avoid hangs
 # or worse on windows
@@ -461,6 +496,9 @@ $node_subscriber->stop;
 ##################################################
 # Recovery conflict: Invalidate conflicting slots, including in-use slots
 # Scenario 1: hot_standby_feedback off and vacuum FULL
+#
+# In passing, ensure that replication slot stats are not removed when the
+# active slot is invalidated.
 ##################################################
 
 # One way to produce recovery conflict is to create/drop a relation and
@@ -469,22 +507,35 @@ $node_subscriber->stop;
 reactive_slots_change_hfs_and_wait_for_xmins('behaves_ok_', 'vacuum_full_',
 	0, 1);
 
+# Ensure that replication slot stats are not empty before triggering the
+# conflict.
+$node_primary->safe_psql('testdb',
+	qq[INSERT INTO decoding_test(x,y) SELECT 100,'100';]);
+
+$node_standby->poll_query_until('testdb',
+	qq[SELECT total_txns > 0 FROM pg_stat_replication_slots WHERE slot_name = 'vacuum_full_activeslot']
+) or die "replication slot stats of vacuum_full_activeslot not updated";
+
 # This should trigger the conflict
-$node_primary->safe_psql(
-	'testdb', qq[
-  CREATE TABLE conflict_test(x integer, y text);
-  DROP TABLE conflict_test;
-  VACUUM full pg_class;
-  INSERT INTO flush_wal DEFAULT VALUES; -- see create table flush_wal
-]);
+wait_until_vacuum_can_remove(
+	'full', 'CREATE TABLE conflict_test(x integer, y text);
+								 DROP TABLE conflict_test;', 'pg_class');
 
 $node_primary->wait_for_replay_catchup($node_standby);
 
 # Check invalidation in the logfile and in pg_stat_database_conflicts
 check_for_invalidation('vacuum_full_', 1, 'with vacuum FULL on pg_class');
 
-# Verify slots are reported as conflicting in pg_replication_slots
-check_slots_conflicting_status(1);
+# Verify reason for conflict is 'rows_removed' in pg_replication_slots
+check_slots_conflict_reason('vacuum_full_', 'rows_removed');
+
+# Ensure that replication slot stats are not removed after invalidation.
+is( $node_standby->safe_psql(
+		'testdb',
+		qq[SELECT total_txns > 0 FROM pg_stat_replication_slots WHERE slot_name = 'vacuum_full_activeslot']
+	),
+	't',
+	'replication slot stats not removed after invalidation');
 
 $handle =
   make_slot_active($node_standby, 'vacuum_full_', 0, \$stdout, \$stderr);
@@ -502,16 +553,18 @@ change_hot_standby_feedback_and_wait_for_xmins(1, 1);
 ##################################################
 $node_standby->restart;
 
-# Verify slots are reported as conflicting in pg_replication_slots
-check_slots_conflicting_status(1);
+# Verify reason for conflict is retained across a restart.
+check_slots_conflict_reason('vacuum_full_', 'rows_removed');
 
 ##################################################
 # Verify that invalidated logical slots do not lead to retaining WAL.
 ##################################################
 
 # Get the restart_lsn from an invalidated slot
-my $restart_lsn = $node_standby->safe_psql('postgres',
-	"SELECT restart_lsn from pg_replication_slots WHERE slot_name = 'vacuum_full_activeslot' and conflicting is true;"
+my $restart_lsn = $node_standby->safe_psql(
+	'postgres',
+	"SELECT restart_lsn FROM pg_replication_slots
+		WHERE slot_name = 'vacuum_full_activeslot' AND conflicting;"
 );
 
 chomp($restart_lsn);
@@ -524,11 +577,8 @@ my $walfile_name = $node_primary->safe_psql('postgres',
 chomp($walfile_name);
 
 # Generate some activity and switch WAL file on the primary
-$node_primary->safe_psql(
-	'postgres', "create table retain_test(a int);
-									 select pg_switch_wal();
-									 insert into retain_test values(1);
-									 checkpoint;");
+$node_primary->advance_wal(1);
+$node_primary->safe_psql('postgres', "checkpoint;");
 
 # Wait for the standby to catch up
 $node_primary->wait_for_replay_catchup($node_standby);
@@ -550,26 +600,23 @@ ok(!-f "$standby_walfile",
 my $logstart = -s $node_standby->logfile;
 
 # One way to produce recovery conflict is to create/drop a relation and
-# launch a vacuum on pg_class with hot_standby_feedback turned off on the standby.
+# launch a vacuum on pg_class with hot_standby_feedback turned off on the
+# standby.
 reactive_slots_change_hfs_and_wait_for_xmins('vacuum_full_', 'row_removal_',
 	0, 1);
 
 # This should trigger the conflict
-$node_primary->safe_psql(
-	'testdb', qq[
-  CREATE TABLE conflict_test(x integer, y text);
-  DROP TABLE conflict_test;
-  VACUUM pg_class;
-  INSERT INTO flush_wal DEFAULT VALUES; -- see create table flush_wal
-]);
+wait_until_vacuum_can_remove(
+	'', 'CREATE TABLE conflict_test(x integer, y text);
+							 DROP TABLE conflict_test;', 'pg_class');
 
 $node_primary->wait_for_replay_catchup($node_standby);
 
 # Check invalidation in the logfile and in pg_stat_database_conflicts
 check_for_invalidation('row_removal_', $logstart, 'with vacuum on pg_class');
 
-# Verify slots are reported as conflicting in pg_replication_slots
-check_slots_conflicting_status(1);
+# Verify reason for conflict is 'rows_removed' in pg_replication_slots
+check_slots_conflict_reason('row_removal_', 'rows_removed');
 
 $handle =
   make_slot_active($node_standby, 'row_removal_', 0, \$stdout, \$stderr);
@@ -587,19 +634,16 @@ check_pg_recvlogical_stderr($handle,
 # get the position to search from in the standby logfile
 $logstart = -s $node_standby->logfile;
 
-# One way to produce recovery conflict is to create/drop a relation and
-# launch a vacuum on pg_class with hot_standby_feedback turned off on the standby.
+# One way to produce recovery conflict on a shared catalog table is to
+# create/drop a role and launch a vacuum on pg_authid with
+# hot_standby_feedback turned off on the standby.
 reactive_slots_change_hfs_and_wait_for_xmins('row_removal_',
 	'shared_row_removal_', 0, 1);
 
 # Trigger the conflict
-$node_primary->safe_psql(
-	'testdb', qq[
-  CREATE ROLE create_trash;
-  DROP ROLE create_trash;
-  VACUUM pg_authid;
-  INSERT INTO flush_wal DEFAULT VALUES; -- see create table flush_wal
-]);
+wait_until_vacuum_can_remove(
+	'', 'CREATE ROLE create_trash;
+							 DROP ROLE create_trash;', 'pg_authid');
 
 $node_primary->wait_for_replay_catchup($node_standby);
 
@@ -607,8 +651,8 @@ $node_primary->wait_for_replay_catchup($node_standby);
 check_for_invalidation('shared_row_removal_', $logstart,
 	'with vacuum on pg_authid');
 
-# Verify slots are reported as conflicting in pg_replication_slots
-check_slots_conflicting_status(1);
+# Verify reason for conflict is 'rows_removed' in pg_replication_slots
+check_slots_conflict_reason('shared_row_removal_', 'rows_removed');
 
 $handle = make_slot_active($node_standby, 'shared_row_removal_', 0, \$stdout,
 	\$stderr);
@@ -630,14 +674,11 @@ reactive_slots_change_hfs_and_wait_for_xmins('shared_row_removal_',
 	'no_conflict_', 0, 1);
 
 # This should not trigger a conflict
-$node_primary->safe_psql(
-	'testdb', qq[
-  CREATE TABLE conflict_test(x integer, y text);
-  INSERT INTO conflict_test(x,y) SELECT s, s::text FROM generate_series(1,4) s;
-  UPDATE conflict_test set x=1, y=1;
-  VACUUM conflict_test;
-  INSERT INTO flush_wal DEFAULT VALUES; -- see create table flush_wal
-]);
+wait_until_vacuum_can_remove(
+	'', 'CREATE TABLE conflict_test(x integer, y text);
+							 INSERT INTO conflict_test(x,y) SELECT s, s::text FROM generate_series(1,4) s;
+							 UPDATE conflict_test set x=1, y=1;', 'conflict_test');
+
 $node_primary->wait_for_replay_catchup($node_standby);
 
 # message should not be issued
@@ -660,7 +701,13 @@ ok( $node_standby->poll_query_until(
 ) or die "Timed out waiting confl_active_logicalslot to be updated";
 
 # Verify slots are reported as non conflicting in pg_replication_slots
-check_slots_conflicting_status(0);
+is( $node_standby->safe_psql(
+		'postgres',
+		q[select bool_or(conflicting) from
+		  (select conflicting from pg_replication_slots
+			where slot_type = 'logical')]),
+	'f',
+	'Logical slots are reported as non conflicting');
 
 # Turn hot_standby_feedback back on
 change_hot_standby_feedback_and_wait_for_xmins(1, 0);
@@ -670,7 +717,7 @@ $node_standby->restart;
 
 ##################################################
 # Recovery conflict: Invalidate conflicting slots, including in-use slots
-# Scenario 4: conflict due to on-access pruning.
+# Scenario 5: conflict due to on-access pruning.
 ##################################################
 
 # get the position to search from in the standby logfile
@@ -696,8 +743,8 @@ $node_primary->wait_for_replay_catchup($node_standby);
 # Check invalidation in the logfile and in pg_stat_database_conflicts
 check_for_invalidation('pruning_', $logstart, 'with on-access pruning');
 
-# Verify slots are reported as conflicting in pg_replication_slots
-check_slots_conflicting_status(1);
+# Verify reason for conflict is 'rows_removed' in pg_replication_slots
+check_slots_conflict_reason('pruning_', 'rows_removed');
 
 $handle = make_slot_active($node_standby, 'pruning_', 0, \$stdout, \$stderr);
 
@@ -710,7 +757,7 @@ change_hot_standby_feedback_and_wait_for_xmins(1, 1);
 
 ##################################################
 # Recovery conflict: Invalidate conflicting slots, including in-use slots
-# Scenario 5: incorrect wal_level on primary.
+# Scenario 6: incorrect wal_level on primary.
 ##################################################
 
 # get the position to search from in the standby logfile
@@ -740,14 +787,14 @@ $node_primary->wait_for_replay_catchup($node_standby);
 # Check invalidation in the logfile and in pg_stat_database_conflicts
 check_for_invalidation('wal_level_', $logstart, 'due to wal_level');
 
-# Verify slots are reported as conflicting in pg_replication_slots
-check_slots_conflicting_status(1);
+# Verify reason for conflict is 'wal_level_insufficient' in pg_replication_slots
+check_slots_conflict_reason('wal_level_', 'wal_level_insufficient');
 
 $handle =
   make_slot_active($node_standby, 'wal_level_', 0, \$stdout, \$stderr);
 # We are not able to read from the slot as it requires wal_level >= logical on the primary server
 check_pg_recvlogical_stderr($handle,
-	"logical decoding on standby requires wal_level >= logical on the primary"
+	"logical decoding on standby requires \"wal_level\" >= \"logical\" on the primary"
 );
 
 # Restore primary wal_level

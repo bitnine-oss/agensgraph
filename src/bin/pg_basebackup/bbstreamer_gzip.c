@@ -2,7 +2,7 @@
  *
  * bbstreamer_gzip.c
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/bbstreamer_gzip.c
@@ -18,8 +18,8 @@
 #endif
 
 #include "bbstreamer.h"
-#include "common/logging.h"
 #include "common/file_perm.h"
+#include "common/logging.h"
 #include "common/string.h"
 
 #ifdef HAVE_LIBZ
@@ -269,7 +269,7 @@ bbstreamer_gzip_decompressor_content(bbstreamer *streamer,
 	mystreamer = (bbstreamer_gzip_decompressor *) streamer;
 
 	zs = &mystreamer->zstream;
-	zs->next_in = (uint8 *) data;
+	zs->next_in = (const uint8 *) data;
 	zs->avail_in = len;
 
 	/* Process the current chunk */

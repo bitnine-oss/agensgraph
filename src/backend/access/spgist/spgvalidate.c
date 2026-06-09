@@ -3,7 +3,7 @@
  * spgvalidate.c
  *	  Opclass validator for SP-GiST.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -15,7 +15,7 @@
 
 #include "access/amvalidate.h"
 #include "access/htup_details.h"
-#include "access/spgist_private.h"
+#include "access/spgist.h"
 #include "catalog/pg_amop.h"
 #include "catalog/pg_amproc.h"
 #include "catalog/pg_opclass.h"

@@ -214,6 +214,12 @@ createdb -O <replaceable>rolename</replaceable> <replaceable>dbname</replaceable
   </para>
 
   <para>
+   However, <command>CREATE DATABASE</command> does not copy database-level
+   <command>GRANT</command> permissions attached to the source database.
+   The new database has default database-level permissions.
+  </para>
+
+  <para>
    There is a second standard system database named
    <literal>template0</literal>.<indexterm><primary>template0</primary></indexterm> This
    database contains the same data as the initial contents of
@@ -498,7 +504,7 @@ CREATE TABLE foo(i int);
   <para>
    Two tablespaces are automatically created when the database cluster
    is initialized.  The
-   <literal>pg_global</literal> tablespace is used for shared system catalogs. The
+   <literal>pg_global</literal> tablespace is used only for shared system catalogs. The
    <literal>pg_default</literal> tablespace is the default tablespace of the
    <literal>template1</literal> and <literal>template0</literal> databases (and, therefore,
    will be the default tablespace for other databases as well, unless

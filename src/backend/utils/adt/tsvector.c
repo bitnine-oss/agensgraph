@@ -3,7 +3,7 @@
  * tsvector.c
  *	  I/O functions for tsvector
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -14,11 +14,12 @@
 
 #include "postgres.h"
 
+#include "common/int.h"
 #include "libpq/pqformat.h"
 #include "nodes/miscnodes.h"
 #include "tsearch/ts_locale.h"
 #include "tsearch/ts_utils.h"
-#include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
 #include "utils/memutils.h"
 #include "varatt.h"
 
@@ -37,9 +38,7 @@ compareWordEntryPos(const void *a, const void *b)
 	int			apos = WEP_GETPOS(*(const WordEntryPos *) a);
 	int			bpos = WEP_GETPOS(*(const WordEntryPos *) b);
 
-	if (apos == bpos)
-		return 0;
-	return (apos > bpos) ? 1 : -1;
+	return pg_cmp_s32(apos, bpos);
 }
 
 /*
@@ -498,7 +497,7 @@ tsvectorrecv(PG_FUNCTION_ARGS)
 		 * But make sure the buffer is large enough first.
 		 */
 		while (hdrlen + SHORTALIGN(datalen + lex_len) +
-			   (npos + 1) * sizeof(WordEntryPos) >= len)
+			   sizeof(uint16) + npos * sizeof(WordEntryPos) >= len)
 		{
 			len *= 2;
 			vec = (TSVector) repalloc(vec, len);
@@ -544,7 +543,7 @@ tsvectorrecv(PG_FUNCTION_ARGS)
 					elog(ERROR, "position information is misordered");
 			}
 
-			datalen += (npos + 1) * sizeof(WordEntry);
+			datalen += sizeof(uint16) + npos * sizeof(WordEntryPos);
 		}
 	}
 

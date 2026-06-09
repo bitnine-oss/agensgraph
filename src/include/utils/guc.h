@@ -3,7 +3,7 @@
  *
  * External declarations pertaining to Grand Unified Configuration.
  *
- * Copyright (c) 2000-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2024, PostgreSQL Global Development Group
  * Written by Peter Eisentraut <peter_e@gmx.net>.
  *
  * src/include/utils/guc.h
@@ -72,7 +72,7 @@ typedef enum
 	PGC_SU_BACKEND,
 	PGC_BACKEND,
 	PGC_SUSET,
-	PGC_USERSET
+	PGC_USERSET,
 } GucContext;
 
 /*
@@ -119,7 +119,7 @@ typedef enum
 	PGC_S_OVERRIDE,				/* special case to forcibly set default */
 	PGC_S_INTERACTIVE,			/* dividing line for error reporting */
 	PGC_S_TEST,					/* test per-database or per-user setting */
-	PGC_S_SESSION				/* SET command */
+	PGC_S_SESSION,				/* SET command */
 } GucSource;
 
 /*
@@ -143,6 +143,8 @@ typedef struct ConfigVariable
 	bool		applied;
 	struct ConfigVariable *next;
 } ConfigVariable;
+
+typedef struct config_generic config_handle;
 
 extern bool ParseConfigFile(const char *config_file, bool strict,
 							const char *calling_file, int calling_lineno,
@@ -196,7 +198,7 @@ typedef enum
 	/* Types of set_config_option actions */
 	GUC_ACTION_SET,				/* regular SET command */
 	GUC_ACTION_LOCAL,			/* SET LOCAL command */
-	GUC_ACTION_SAVE				/* function SET option, or temp assignment */
+	GUC_ACTION_SAVE,			/* function SET option, or temp assignment */
 } GucAction;
 
 #define GUC_QUALIFIER_SEPARATOR '.'
@@ -250,8 +252,9 @@ extern PGDLLIMPORT bool log_statement_stats;
 extern PGDLLIMPORT bool log_btree_build_stats;
 
 extern PGDLLIMPORT bool check_function_bodies;
-extern PGDLLIMPORT bool session_auth_is_superuser;
+extern PGDLLIMPORT bool current_role_is_superuser;
 
+extern PGDLLIMPORT bool AllowAlterSystem;
 extern PGDLLIMPORT bool log_duration;
 extern PGDLLIMPORT int log_parameter_max_length;
 extern PGDLLIMPORT int log_parameter_max_length_on_error;
@@ -363,12 +366,13 @@ extern const char *GetConfigOptionResetString(const char *name);
 extern int	GetConfigOptionFlags(const char *name, bool missing_ok);
 extern void ProcessConfigFile(GucContext context);
 extern char *convert_GUC_name_for_parameter_acl(const char *name);
-extern bool check_GUC_name_for_parameter_acl(const char *name);
+extern void check_GUC_name_for_parameter_acl(const char *name);
 extern void InitializeGUCOptions(void);
 extern bool SelectConfigFiles(const char *userDoption, const char *progname);
 extern void ResetAllOptions(void);
 extern void AtStart_GUC(void);
 extern int	NewGUCNestLevel(void);
+extern void RestrictSearchPath(void);
 extern void AtEOXact_GUC(bool isCommit, int nestLevel);
 extern void BeginReportingGUCOptions(void);
 extern void ReportChangedGUCOptions(void);
@@ -387,10 +391,19 @@ extern int	set_config_option_ext(const char *name, const char *value,
 								  Oid srole,
 								  GucAction action, bool changeVal, int elevel,
 								  bool is_reload);
+extern int	set_config_with_handle(const char *name, config_handle *handle,
+								   const char *value,
+								   GucContext context, GucSource source,
+								   Oid srole,
+								   GucAction action, bool changeVal,
+								   int elevel, bool is_reload);
+extern config_handle *get_config_handle(const char *name);
 extern void AlterSystemSetConfigFile(AlterSystemStmt *altersysstmt);
 extern char *GetConfigOptionByName(const char *name, const char **varname,
 								   bool missing_ok);
 
+extern void TransformGUCArray(ArrayType *array, List **names,
+							  List **values);
 extern void ProcessGUCArray(ArrayType *array,
 							GucContext context, GucSource source, GucAction action);
 extern ArrayType *GUCArrayAdd(ArrayType *array, const char *name, const char *value);

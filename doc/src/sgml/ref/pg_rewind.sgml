@@ -285,6 +285,28 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>--sync-method=<replaceable class="parameter">method</replaceable></option></term>
+      <listitem>
+       <para>
+        When set to <literal>fsync</literal>, which is the default,
+        <command>pg_rewind</command> will recursively open and synchronize all
+        files in the data directory.  The search for files will follow symbolic
+        links for the WAL directory and each configured tablespace.
+       </para>
+       <para>
+        On Linux, <literal>syncfs</literal> may be used instead to ask the
+        operating system to synchronize the whole file systems that contain the
+        data directory, the WAL files, and each tablespace.  See
+        <xref linkend="guc-recovery-init-sync-method"/> for information about
+        the caveats to be aware of when using <literal>syncfs</literal>.
+       </para>
+       <para>
+        This option has no effect when <option>--no-sync</option> is used.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>-V</option></term>
       <term><option>--version</option></term>
       <listitem><para>Display version information, then exit.</para></listitem>
@@ -381,8 +403,9 @@ GRANT EXECUTE ON function pg_catalog.pg_read_binary_file(text, bigint, bigint, b
       <filename>backup_label</filename>,
       <filename>tablespace_map</filename>,
       <filename>pg_internal.init</filename>,
-      <filename>postmaster.opts</filename>, and
-      <filename>postmaster.pid</filename>, as well as any file or directory
+      <filename>postmaster.opts</filename>,
+      <filename>postmaster.pid</filename> and
+      <filename>.DS_Store</filename> as well as any file or directory
       beginning with <filename>pgsql_tmp</filename>, are omitted.
      </para>
     </step>

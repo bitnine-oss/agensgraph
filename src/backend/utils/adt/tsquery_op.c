@@ -3,7 +3,7 @@
  * tsquery_op.c
  *	  Various operations with tsquery
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -16,7 +16,7 @@
 
 #include "lib/qunique.h"
 #include "tsearch/ts_utils.h"
-#include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
 #include "varatt.h"
 
 Datum

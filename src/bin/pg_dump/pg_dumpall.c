@@ -2,7 +2,7 @@
  *
  * pg_dumpall.c
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * pg_dumpall forces all pg_dump output to be text, since it also outputs
@@ -21,18 +21,17 @@
 #include "catalog/pg_authid_d.h"
 #include "common/connect.h"
 #include "common/file_utils.h"
-#include "common/hashfn.h"
+#include "common/hashfn_unstable.h"
 #include "common/logging.h"
 #include "common/string.h"
 #include "dumputils.h"
 #include "fe_utils/string_utils.h"
+#include "filter.h"
 #include "getopt_long.h"
 #include "pg_backup.h"
 
 /* version string we expect back from pg_dump */
 #define PGDUMP_VERSIONSTR "pg_dump (PostgreSQL) " PG_VERSION "\n"
-
-static uint32 hash_string_pointer(char *s);
 
 typedef struct
 {
@@ -45,7 +44,7 @@ typedef struct
 #define SH_ELEMENT_TYPE	RoleNameEntry
 #define SH_KEY_TYPE	char *
 #define SH_KEY		rolename
-#define SH_HASH_KEY(tb, key)	hash_string_pointer(key)
+#define SH_HASH_KEY(tb, key)	hash_string(key)
 #define SH_EQUAL(tb, a, b)		(strcmp(a, b) == 0)
 #define SH_STORE_HASH
 #define SH_GET_HASH(tb, a)		(a)->hashval
@@ -81,6 +80,7 @@ static PGresult *executeQuery(PGconn *conn, const char *query);
 static void executeCommand(PGconn *conn, const char *query);
 static void expand_dbname_patterns(PGconn *conn, SimpleStringList *patterns,
 								   SimpleStringList *names);
+static void read_dumpall_filters(const char *filename, SimpleStringList *pattern);
 
 static char pg_dump_bin[MAXPGPATH];
 static const char *progname;
@@ -177,6 +177,7 @@ main(int argc, char *argv[])
 		{"no-unlogged-table-data", no_argument, &no_unlogged_table_data, 1},
 		{"on-conflict-do-nothing", no_argument, &on_conflict_do_nothing, 1},
 		{"rows-per-insert", required_argument, NULL, 7},
+		{"filter", required_argument, NULL, 8},
 
 		{NULL, 0, NULL, 0}
 	};
@@ -358,6 +359,10 @@ main(int argc, char *argv[])
 			case 7:
 				appendPQExpBufferStr(pgdumpopts, " --rows-per-insert ");
 				appendShellString(pgdumpopts, optarg);
+				break;
+
+			case 8:
+				read_dumpall_filters(optarg, &database_exclude_patterns);
 				break;
 
 			default:
@@ -653,6 +658,7 @@ help(void)
 	printf(_("  --disable-triggers           disable triggers during data-only restore\n"));
 	printf(_("  --exclude-database=PATTERN   exclude databases whose name matches PATTERN\n"));
 	printf(_("  --extra-float-digits=NUM     override default setting for extra_float_digits\n"));
+	printf(_("  --filter=FILENAME            exclude databases specified in FILENAME\n"));
 	printf(_("  --if-exists                  use IF EXISTS when dropping objects\n"));
 	printf(_("  --inserts                    dump data as INSERT commands, rather than COPY\n"));
 	printf(_("  --load-via-partition-root    load partitions via the root table\n"));
@@ -761,28 +767,31 @@ dumpRoles(PGconn *conn)
 				i_is_current_user;
 	int			i;
 
-	/* note: rolconfig is dumped later */
+	/*
+	 * Notes: rolconfig is dumped later, and pg_authid must be used for
+	 * extracting rolcomment regardless of role_catalog.
+	 */
 	if (server_version >= 90600)
 		printfPQExpBuffer(buf,
 						  "SELECT oid, rolname, rolsuper, rolinherit, "
 						  "rolcreaterole, rolcreatedb, "
 						  "rolcanlogin, rolconnlimit, rolpassword, "
 						  "rolvaliduntil, rolreplication, rolbypassrls, "
-						  "pg_catalog.shobj_description(oid, '%s') as rolcomment, "
+						  "pg_catalog.shobj_description(oid, 'pg_authid') as rolcomment, "
 						  "rolname = current_user AS is_current_user "
 						  "FROM %s "
 						  "WHERE rolname !~ '^pg_' "
-						  "ORDER BY 2", role_catalog, role_catalog);
+						  "ORDER BY 2", role_catalog);
 	else if (server_version >= 90500)
 		printfPQExpBuffer(buf,
 						  "SELECT oid, rolname, rolsuper, rolinherit, "
 						  "rolcreaterole, rolcreatedb, "
 						  "rolcanlogin, rolconnlimit, rolpassword, "
 						  "rolvaliduntil, rolreplication, rolbypassrls, "
-						  "pg_catalog.shobj_description(oid, '%s') as rolcomment, "
+						  "pg_catalog.shobj_description(oid, 'pg_authid') as rolcomment, "
 						  "rolname = current_user AS is_current_user "
 						  "FROM %s "
-						  "ORDER BY 2", role_catalog, role_catalog);
+						  "ORDER BY 2", role_catalog);
 	else
 		printfPQExpBuffer(buf,
 						  "SELECT oid, rolname, rolsuper, rolinherit, "
@@ -790,10 +799,10 @@ dumpRoles(PGconn *conn)
 						  "rolcanlogin, rolconnlimit, rolpassword, "
 						  "rolvaliduntil, rolreplication, "
 						  "false as rolbypassrls, "
-						  "pg_catalog.shobj_description(oid, '%s') as rolcomment, "
+						  "pg_catalog.shobj_description(oid, 'pg_authid') as rolcomment, "
 						  "rolname = current_user AS is_current_user "
 						  "FROM %s "
-						  "ORDER BY 2", role_catalog, role_catalog);
+						  "ORDER BY 2", role_catalog);
 
 	res = executeQuery(conn, buf->data);
 
@@ -1286,7 +1295,16 @@ dumpTablespaces(PGconn *conn)
 		appendPQExpBuffer(buf, " OWNER %s", fmtId(spcowner));
 
 		appendPQExpBufferStr(buf, " LOCATION ");
-		appendStringLiteralConn(buf, spclocation, conn);
+
+		/*
+		 * In-place tablespaces use a relative path, and need to be dumped
+		 * with an empty string as location.
+		 */
+		if (is_absolute_path(spclocation))
+			appendStringLiteralConn(buf, spclocation, conn);
+		else
+			appendStringLiteralConn(buf, "", conn);
+
 		appendPQExpBufferStr(buf, ";\n");
 
 		if (spcoptions && spcoptions[0] != '\0')
@@ -1345,7 +1363,7 @@ dropDBs(PGconn *conn)
 	res = executeQuery(conn,
 					   "SELECT datname "
 					   "FROM pg_database d "
-					   "WHERE datallowconn "
+					   "WHERE datallowconn AND datconnlimit != -2 "
 					   "ORDER BY datname");
 
 	if (PQntuples(res) > 0)
@@ -1488,7 +1506,7 @@ dumpDatabases(PGconn *conn)
 	res = executeQuery(conn,
 					   "SELECT datname "
 					   "FROM pg_database d "
-					   "WHERE datallowconn "
+					   "WHERE datallowconn AND datconnlimit != -2 "
 					   "ORDER BY (datname <> 'template1'), datname");
 
 	if (PQntuples(res) > 0)
@@ -1564,11 +1582,14 @@ dumpDatabases(PGconn *conn)
 static int
 runPgDump(const char *dbname, const char *create_opts)
 {
-	PQExpBuffer connstrbuf = createPQExpBuffer();
-	PQExpBuffer cmd = createPQExpBuffer();
+	PQExpBufferData connstrbuf;
+	PQExpBufferData cmd;
 	int			ret;
 
-	appendPQExpBuffer(cmd, "\"%s\" %s %s", pg_dump_bin,
+	initPQExpBuffer(&connstrbuf);
+	initPQExpBuffer(&cmd);
+
+	printfPQExpBuffer(&cmd, "\"%s\" %s %s", pg_dump_bin,
 					  pgdumpopts->data, create_opts);
 
 	/*
@@ -1576,27 +1597,27 @@ runPgDump(const char *dbname, const char *create_opts)
 	 * format.
 	 */
 	if (filename)
-		appendPQExpBufferStr(cmd, " -Fa ");
+		appendPQExpBufferStr(&cmd, " -Fa ");
 	else
-		appendPQExpBufferStr(cmd, " -Fp ");
+		appendPQExpBufferStr(&cmd, " -Fp ");
 
 	/*
 	 * Append the database name to the already-constructed stem of connection
 	 * string.
 	 */
-	appendPQExpBuffer(connstrbuf, "%s dbname=", connstr);
-	appendConnStrVal(connstrbuf, dbname);
+	appendPQExpBuffer(&connstrbuf, "%s dbname=", connstr);
+	appendConnStrVal(&connstrbuf, dbname);
 
-	appendShellString(cmd, connstrbuf->data);
+	appendShellString(&cmd, connstrbuf.data);
 
-	pg_log_info("running \"%s\"", cmd->data);
+	pg_log_info("running \"%s\"", cmd.data);
 
 	fflush(NULL);
 
-	ret = system(cmd->data);
+	ret = system(cmd.data);
 
-	destroyPQExpBuffer(cmd);
-	destroyPQExpBuffer(connstrbuf);
+	termPQExpBuffer(&cmd);
+	termPQExpBuffer(&connstrbuf);
 
 	return ret;
 }
@@ -1916,12 +1937,60 @@ dumpTimestamp(const char *msg)
 }
 
 /*
- * Helper function for rolename_hash hash table.
+ * read_dumpall_filters - retrieve database identifier patterns from file
+ *
+ * Parse the specified filter file for include and exclude patterns, and add
+ * them to the relevant lists.  If the filename is "-" then filters will be
+ * read from STDIN rather than a file.
+ *
+ * At the moment, the only allowed filter is for database exclusion.
  */
-static uint32
-hash_string_pointer(char *s)
+static void
+read_dumpall_filters(const char *filename, SimpleStringList *pattern)
 {
-	unsigned char *ss = (unsigned char *) s;
+	FilterStateData fstate;
+	char	   *objname;
+	FilterCommandType comtype;
+	FilterObjectType objtype;
 
-	return hash_bytes(ss, strlen(s));
+	filter_init(&fstate, filename, exit);
+
+	while (filter_read_item(&fstate, &objname, &comtype, &objtype))
+	{
+		if (comtype == FILTER_COMMAND_TYPE_INCLUDE)
+		{
+			pg_log_filter_error(&fstate, _("%s filter for \"%s\" is not allowed"),
+								"include",
+								filter_object_type_name(objtype));
+			exit_nicely(1);
+		}
+
+		switch (objtype)
+		{
+			case FILTER_OBJECT_TYPE_NONE:
+				break;
+			case FILTER_OBJECT_TYPE_FUNCTION:
+			case FILTER_OBJECT_TYPE_INDEX:
+			case FILTER_OBJECT_TYPE_TABLE_DATA:
+			case FILTER_OBJECT_TYPE_TABLE_DATA_AND_CHILDREN:
+			case FILTER_OBJECT_TYPE_TRIGGER:
+			case FILTER_OBJECT_TYPE_EXTENSION:
+			case FILTER_OBJECT_TYPE_FOREIGN_DATA:
+			case FILTER_OBJECT_TYPE_SCHEMA:
+			case FILTER_OBJECT_TYPE_TABLE:
+			case FILTER_OBJECT_TYPE_TABLE_AND_CHILDREN:
+				pg_log_filter_error(&fstate, _("unsupported filter object"));
+				exit_nicely(1);
+				break;
+
+			case FILTER_OBJECT_TYPE_DATABASE:
+				simple_string_list_append(pattern, objname);
+				break;
+		}
+
+		if (objname)
+			free(objname);
+	}
+
+	filter_free(&fstate);
 }

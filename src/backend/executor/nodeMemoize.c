@@ -3,7 +3,7 @@
  * nodeMemoize.c
  *	  Routines to handle caching of results from parameterized nodes
  *
- * Portions Copyright (c) 2021-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2021-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -13,7 +13,7 @@
  * Memoize nodes are intended to sit above parameterized nodes in the plan
  * tree in order to cache results from them.  The intention here is that a
  * repeat scan with a parameter value that has already been seen by the node
- * can fetch tuples from the cache rather than having to re-scan the outer
+ * can fetch tuples from the cache rather than having to re-scan the inner
  * node all over again.  The query planner may choose to make use of one of
  * these when it thinks rescans for previously seen values are likely enough
  * to warrant adding the additional node.
@@ -158,9 +158,13 @@ static uint32
 MemoizeHash_hash(struct memoize_hash *tb, const MemoizeKey *key)
 {
 	MemoizeState *mstate = (MemoizeState *) tb->private_data;
+	ExprContext *econtext = mstate->ss.ps.ps_ExprContext;
+	MemoryContext oldcontext;
 	TupleTableSlot *pslot = mstate->probeslot;
 	uint32		hashkey = 0;
 	int			numkeys = mstate->nkeys;
+
+	oldcontext = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 
 	if (mstate->binary_mode)
 	{
@@ -203,6 +207,7 @@ MemoizeHash_hash(struct memoize_hash *tb, const MemoizeKey *key)
 		}
 	}
 
+	MemoryContextSwitchTo(oldcontext);
 	return murmurhash32(hashkey);
 }
 
@@ -226,7 +231,11 @@ MemoizeHash_equal(struct memoize_hash *tb, const MemoizeKey *key1,
 
 	if (mstate->binary_mode)
 	{
+		MemoryContext oldcontext;
 		int			numkeys = mstate->nkeys;
+		bool		match = true;
+
+		oldcontext = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 
 		slot_getallattrs(tslot);
 		slot_getallattrs(pslot);
@@ -236,7 +245,10 @@ MemoizeHash_equal(struct memoize_hash *tb, const MemoizeKey *key1,
 			FormData_pg_attribute *attr;
 
 			if (tslot->tts_isnull[i] != pslot->tts_isnull[i])
-				return false;
+			{
+				match = false;
+				break;
+			}
 
 			/* both NULL? they're equal */
 			if (tslot->tts_isnull[i])
@@ -246,24 +258,32 @@ MemoizeHash_equal(struct memoize_hash *tb, const MemoizeKey *key1,
 			attr = &tslot->tts_tupleDescriptor->attrs[i];
 			if (!datum_image_eq(tslot->tts_values[i], pslot->tts_values[i],
 								attr->attbyval, attr->attlen))
-				return false;
+			{
+				match = false;
+				break;
+			}
 		}
-		return true;
+
+		MemoryContextSwitchTo(oldcontext);
+		return match;
 	}
 	else
 	{
 		econtext->ecxt_innertuple = tslot;
 		econtext->ecxt_outertuple = pslot;
-		return ExecQualAndReset(mstate->cache_eq_expr, econtext);
+		return ExecQual(mstate->cache_eq_expr, econtext);
 	}
 }
 
 /*
- * Initialize the hash table to empty.
+ * Initialize the hash table to empty.  The MemoizeState's hashtable field
+ * must point to NULL.
  */
 static void
 build_hash_table(MemoizeState *mstate, uint32 size)
 {
+	Assert(mstate->hashtable == NULL);
+
 	/* Make a guess at a good size when we're not given a valid size. */
 	if (size == 0)
 		size = 1024;
@@ -381,8 +401,10 @@ remove_cache_entry(MemoizeState *mstate, MemoizeEntry *entry)
 static void
 cache_purge_all(MemoizeState *mstate)
 {
-	uint64		evictions = mstate->hashtable->members;
-	PlanState  *pstate = (PlanState *) mstate;
+	uint64		evictions = 0;
+
+	if (mstate->hashtable != NULL)
+		evictions = mstate->hashtable->members;
 
 	/*
 	 * Likely the most efficient way to remove all items is to just reset the
@@ -391,8 +413,8 @@ cache_purge_all(MemoizeState *mstate)
 	 */
 	MemoryContextReset(mstate->tableContext);
 
-	/* Make the hash table the same size as the original size */
-	build_hash_table(mstate, ((Memoize *) pstate->plan)->est_entries);
+	/* NULLify so we recreate the table on the next call */
+	mstate->hashtable = NULL;
 
 	/* reset the LRU list */
 	dlist_init(&mstate->lru_list);
@@ -675,8 +697,17 @@ static TupleTableSlot *
 ExecMemoize(PlanState *pstate)
 {
 	MemoizeState *node = castNode(MemoizeState, pstate);
+	ExprContext *econtext = node->ss.ps.ps_ExprContext;
 	PlanState  *outerNode;
 	TupleTableSlot *slot;
+
+	CHECK_FOR_INTERRUPTS();
+
+	/*
+	 * Reset per-tuple memory context to free any expression evaluation
+	 * storage allocated in the previous tuple cycle.
+	 */
+	ResetExprContext(econtext);
 
 	switch (node->mstatus)
 	{
@@ -687,6 +718,10 @@ ExecMemoize(PlanState *pstate)
 				bool		found;
 
 				Assert(node->entry == NULL);
+
+				/* first call? we'll need a hash table. */
+				if (unlikely(node->hashtable == NULL))
+					build_hash_table(node, ((Memoize *) pstate->plan)->est_entries);
 
 				/*
 				 * We're only ever in this state for the first call of the
@@ -1032,8 +1067,11 @@ ExecInitMemoize(Memoize *node, EState *estate, int eflags)
 	/* Zero the statistics counters */
 	memset(&mstate->stats, 0, sizeof(MemoizeInstrumentation));
 
-	/* Allocate and set up the actual cache */
-	build_hash_table(mstate, node->est_entries);
+	/*
+	 * Because it may require a large allocation, we delay building of the
+	 * hash table until executor run.
+	 */
+	mstate->hashtable = NULL;
 
 	return mstate;
 }
@@ -1043,6 +1081,7 @@ ExecEndMemoize(MemoizeState *node)
 {
 #ifdef USE_ASSERT_CHECKING
 	/* Validate the memory accounting code is correct in assert builds. */
+	if (node->hashtable != NULL)
 	{
 		int			count;
 		uint64		mem = 0;
@@ -1090,15 +1129,6 @@ ExecEndMemoize(MemoizeState *node)
 
 	/* Remove the cache context */
 	MemoryContextDelete(node->tableContext);
-
-	ExecClearTuple(node->ss.ss_ScanTupleSlot);
-	/* must drop pointer to cache result tuple */
-	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
-
-	/*
-	 * free exprcontext
-	 */
-	ExecFreeExprContext(&node->ss.ps);
 
 	/*
 	 * shut down the subplan

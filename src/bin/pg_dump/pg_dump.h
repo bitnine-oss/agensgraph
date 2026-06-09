@@ -3,7 +3,7 @@
  * pg_dump.h
  *	  Common header file for the pg_dump utility
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pg_dump/pg_dump.h
@@ -82,7 +82,8 @@ typedef enum
 	DO_PUBLICATION,
 	DO_PUBLICATION_REL,
 	DO_PUBLICATION_TABLE_IN_SCHEMA,
-	DO_SUBSCRIPTION
+	DO_SUBSCRIPTION,
+	DO_SUBSCRIPTION_REL,		/* see note for SubRelInfo */
 } DumpableObjectType;
 
 /*
@@ -347,7 +348,7 @@ typedef struct _tableInfo
 	char	   *attcompression; /* per-attribute compression method */
 	char	  **attfdwoptions;	/* per-attribute fdw options */
 	char	  **attmissingval;	/* per attribute missing value */
-	bool	   *notnull;		/* NOT NULL constraints on attributes */
+	bool	   *notnull;		/* not-null constraints on attributes */
 	bool	   *inhNotNull;		/* true if NOT NULL is inherited */
 	struct _attrDefInfo **attrdefs; /* DEFAULT expressions */
 	struct _constraintInfo *checkexprs; /* CHECK constraints */
@@ -424,7 +425,8 @@ typedef struct _indexAttachInfo
 typedef struct _statsExtInfo
 {
 	DumpableObject dobj;
-	const char *rolname;
+	const char *rolname;		/* owner */
+	TableInfo  *stattable;		/* link to table the stats are for */
 	int			stattarget;		/* statistics target */
 } StatsExtInfo;
 
@@ -443,18 +445,8 @@ typedef struct _triggerInfo
 {
 	DumpableObject dobj;
 	TableInfo  *tgtable;		/* link to table the trigger is for */
-	char	   *tgfname;
-	int			tgtype;
-	int			tgnargs;
-	char	   *tgargs;
-	bool		tgisconstraint;
-	char	   *tgconstrname;
-	Oid			tgconstrrelid;
-	char	   *tgconstrrelname;
 	char		tgenabled;
 	bool		tgispartition;
-	bool		tgdeferrable;
-	bool		tginitdeferred;
 	char	   *tgdef;
 } TriggerInfo;
 
@@ -590,11 +582,21 @@ typedef struct _defaultACLInfo
 	char		defaclobjtype;
 } DefaultACLInfo;
 
+/*
+ * LoInfo represents a group of large objects (blobs) that share the same
+ * owner and ACL setting.  dobj.components has the DUMP_COMPONENT_COMMENT bit
+ * set if any blob in the group has a comment; similarly for sec labels.
+ * If there are many blobs with the same owner/ACL, we can divide them into
+ * multiple LoInfo groups, which will each spawn a BLOB METADATA and a BLOBS
+ * (data) TOC entry.  This allows more parallelism during restore.
+ */
 typedef struct _loInfo
 {
 	DumpableObject dobj;
 	DumpableAcl dacl;
 	const char *rolname;
+	int			numlos;
+	Oid			looids[FLEXIBLE_ARRAY_MEMBER];
 } LoInfo;
 
 /*
@@ -661,17 +663,40 @@ typedef struct _SubscriptionInfo
 {
 	DumpableObject dobj;
 	const char *rolname;
-	char	   *subconninfo;
-	char	   *subslotname;
+	char	   *subenabled;
 	char	   *subbinary;
 	char	   *substream;
 	char	   *subtwophasestate;
 	char	   *subdisableonerr;
-	char	   *suborigin;
+	char	   *subpasswordrequired;
+	char	   *subrunasowner;
+	char	   *subconninfo;
+	char	   *subslotname;
 	char	   *subsynccommit;
 	char	   *subpublications;
-	char	   *subpasswordrequired;
+	char	   *suborigin;
+	char	   *suboriginremotelsn;
+	char	   *subfailover;
 } SubscriptionInfo;
+
+/*
+ * The SubRelInfo struct is used to represent a subscription relation.
+ *
+ * XXX Currently, the subscription tables are added to the subscription after
+ * enabling the subscription in binary-upgrade mode. As the apply workers will
+ * not be started in binary_upgrade mode the ordering of enable subscription
+ * does not matter. The order of adding the subscription tables to the
+ * subscription and enabling the subscription should be taken care of if this
+ * feature will be supported in a non-binary-upgrade mode in the future.
+ */
+typedef struct _SubRelInfo
+{
+	DumpableObject dobj;
+	SubscriptionInfo *subinfo;
+	TableInfo  *tblinfo;
+	char		srsubstate;
+	char	   *srsublsn;
+} SubRelInfo;
 
 /*
  *	common utility functions
@@ -680,6 +705,7 @@ typedef struct _SubscriptionInfo
 extern TableInfo *getSchemaData(Archive *fout, int *numTablesPtr);
 
 extern void AssignDumpId(DumpableObject *dobj);
+extern void recordAdditionalCatalogID(CatalogId catId, DumpableObject *dobj);
 extern DumpId createDumpId(void);
 extern DumpId getMaxDumpId(void);
 extern DumpableObject *findObjectByDumpId(DumpId dumpId);
@@ -697,6 +723,7 @@ extern CollInfo *findCollationByOid(Oid oid);
 extern NamespaceInfo *findNamespaceByOid(Oid oid);
 extern ExtensionInfo *findExtensionByOid(Oid oid);
 extern PublicationInfo *findPublicationByOid(Oid oid);
+extern SubscriptionInfo *findSubscriptionByOid(Oid oid);
 
 extern void recordExtensionMembership(CatalogId catId, ExtensionInfo *ext);
 extern ExtensionInfo *findOwningExtension(CatalogId catalogId);
@@ -756,5 +783,6 @@ extern void getPublicationNamespaces(Archive *fout);
 extern void getPublicationTables(Archive *fout, TableInfo tblinfo[],
 								 int numTables);
 extern void getSubscriptions(Archive *fout);
+extern void getSubscriptionTables(Archive *fout);
 
 #endif							/* PG_DUMP_H */

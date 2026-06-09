@@ -2,7 +2,7 @@
 #
 # Makefile for src/interfaces/libpq library
 #
-# Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/interfaces/libpq/Makefile
@@ -13,7 +13,7 @@ subdir = src/interfaces/libpq
 top_builddir = ../../..
 include $(top_builddir)/src/Makefile.global
 
-export with_ssl
+export with_ssl with_gssapi with_krb_srvnam
 
 PGFILEDESC = "PostgreSQL Access Library"
 
@@ -27,12 +27,10 @@ ifneq ($(PORTNAME), win32)
 override CFLAGS += $(PTHREAD_CFLAGS)
 endif
 
-# The MSVC build system scrapes OBJS from this file.  If you change any of
-# the conditional additions of files to OBJS, update Mkvcbuild.pm to match.
-
 OBJS = \
 	$(WIN32RES) \
 	fe-auth-scram.o \
+	fe-cancel.o \
 	fe-connect.o \
 	fe-exec.o \
 	fe-lobj.o \
@@ -69,11 +67,8 @@ endif
 
 ifeq ($(PORTNAME), win32)
 OBJS += \
+	pthread-win32.o \
 	win32.o
-
-ifeq ($(enable_thread_safety), yes)
-OBJS += pthread-win32.o
-endif
 endif
 
 
@@ -110,15 +105,17 @@ backend_src = $(top_srcdir)/src/backend
 # build toolchains insert abort() calls, e.g. to implement assert().)
 # If nm doesn't exist or doesn't work on shlibs, this test will do nothing,
 # which is fine.  The exclusion of __cxa_atexit is necessary on OpenBSD,
-# which seems to insert references to that even in pure C code.
+# which seems to insert references to that even in pure C code. Excluding
+# __tsan_func_exit is necessary when using ThreadSanitizer data race detector
+# which use this function for instrumentation of function exit.
 # Skip the test when profiling, as gcc may insert exit() calls for that.
 # Also skip the test on platforms where libpq infrastructure may be provided
 # by statically-linked libraries, as we can't expect them to honor this
 # coding rule.
 libpq-refs-stamp: $(shlib)
 ifneq ($(enable_coverage), yes)
-ifeq (,$(filter aix solaris,$(PORTNAME)))
-	@if nm -A -u $< 2>/dev/null | grep -v __cxa_atexit | grep exit; then \
+ifeq (,$(filter solaris,$(PORTNAME)))
+	@if nm -A -u $< 2>/dev/null | grep -v -e __cxa_atexit -e __tsan_func_exit | grep exit; then \
 		echo 'libpq must not be calling any function which invokes exit'; exit 1; \
 	fi
 endif
@@ -168,6 +165,3 @@ clean distclean: clean-lib
 	rm -f $(OBJS) pthread.h libpq-refs-stamp
 # Might be left over from a Win32 client-only build
 	rm -f pg_config_paths.h
-
-maintainer-clean: distclean
-	$(MAKE) -C test $@

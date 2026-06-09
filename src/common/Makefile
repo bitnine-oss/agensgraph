@@ -43,11 +43,11 @@ override CPPFLAGS += -DVAL_LIBS="\"$(LIBS)\""
 override CPPFLAGS := -DFRONTEND -I. -I$(top_srcdir)/src/common $(CPPFLAGS)
 LIBS += $(PTHREAD_LIBS)
 
-# If you add objects here, see also src/tools/msvc/Mkvcbuild.pm
-
 OBJS_COMMON = \
 	archive.o \
 	base64.o \
+	binaryheap.o \
+	blkreftable.o \
 	checksum_helper.o \
 	compression.o \
 	config_info.o \
@@ -65,6 +65,7 @@ OBJS_COMMON = \
 	kwlookup.o \
 	link-canary.o \
 	md5_common.o \
+	parse_manifest.o \
 	percentrepl.o \
 	pg_get_line.o \
 	pg_lzcompress.o \
@@ -77,6 +78,8 @@ OBJS_COMMON = \
 	scram-common.o \
 	string.o \
 	stringinfo.o \
+	unicode_case.o \
+	unicode_category.o \
 	unicode_norm.o \
 	username.o \
 	wait_error.o \
@@ -96,11 +99,10 @@ OBJS_COMMON += \
 	sha2.o
 endif
 
-# A few files are currently only built for frontend, not server
-# (Mkvcbuild.pm has a copy of this list, too).  logging.c is excluded
-# from OBJS_FRONTEND_SHLIB (shared library) as a matter of policy,
-# because it is not appropriate for general purpose libraries such
-# as libpq to report errors directly.
+# A few files are currently only built for frontend, not server.
+# logging.c is excluded from OBJS_FRONTEND_SHLIB (shared library) as
+# a matter of policy, because it is not appropriate for general purpose
+# libraries such as libpq to report errors directly.
 OBJS_FRONTEND_SHLIB = \
 	$(OBJS_COMMON) \
 	fe_memutils.o \
@@ -121,8 +123,6 @@ GEN_KEYWORDLIST_DEPS = $(TOOLSDIR)/gen_keywordlist.pl $(TOOLSDIR)/PerfectHash.pm
 
 all: libpgcommon.a libpgcommon_shlib.a libpgcommon_srv.a
 
-distprep: kwlist_d.h
-
 # libpgcommon is needed by some contrib
 install: all installdirs
 	$(INSTALL_STLIB) libpgcommon.a '$(DESTDIR)$(libdir)/libpgcommon.a'
@@ -138,6 +138,13 @@ uninstall:
 libpgcommon.a: $(OBJS_FRONTEND)
 	rm -f $@
 	$(AR) $(AROPT) $@ $^
+
+#
+# Files in libpgcommon.a should use/export the "xxx_private" versions
+# of pg_char_to_encoding() and friends.
+#
+$(OBJS_FRONTEND): CPPFLAGS += -DUSE_PRIVATE_ENCODING_FUNCS
+
 
 #
 # Shared library versions of object files
@@ -188,10 +195,7 @@ RYU_OBJS = $(RYU_FILES) $(RYU_FILES:%.o=%_shlib.o) $(RYU_FILES:%.o=%_srv.o)
 
 $(RYU_OBJS): CFLAGS += $(PERMIT_DECLARATION_AFTER_STATEMENT)
 
-# kwlist_d.h is in the distribution tarball, so it is not cleaned here.
 clean distclean:
 	rm -f libpgcommon.a libpgcommon_shlib.a libpgcommon_srv.a
 	rm -f $(OBJS_FRONTEND) $(OBJS_SHLIB) $(OBJS_SRV)
-
-maintainer-clean: distclean
 	rm -f kwlist_d.h

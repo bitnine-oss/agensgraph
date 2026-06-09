@@ -16,7 +16,7 @@
  * across tables.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_shdescription.h
@@ -57,7 +57,7 @@ typedef FormData_pg_shdescription * Form_pg_shdescription;
 
 DECLARE_TOAST_WITH_MACRO(pg_shdescription, 2846, 2847, PgShdescriptionToastTable, PgShdescriptionToastIndex);
 
-DECLARE_UNIQUE_INDEX_PKEY(pg_shdescription_o_c_index, 2397, SharedDescriptionObjIndexId, on pg_shdescription using btree(objoid oid_ops, classoid oid_ops));
+DECLARE_UNIQUE_INDEX_PKEY(pg_shdescription_o_c_index, 2397, SharedDescriptionObjIndexId, pg_shdescription, btree(objoid oid_ops, classoid oid_ops));
 
 /* We do not use BKI_LOOKUP here because it causes problems for genbki.pl */
 DECLARE_FOREIGN_KEY((classoid), pg_class, (oid));

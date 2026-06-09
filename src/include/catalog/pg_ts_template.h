@@ -4,7 +4,7 @@
  *	  definition of the "text search template" system catalog (pg_ts_template)
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_ts_template.h
@@ -45,7 +45,10 @@ CATALOG(pg_ts_template,3764,TSTemplateRelationId)
 
 typedef FormData_pg_ts_template *Form_pg_ts_template;
 
-DECLARE_UNIQUE_INDEX(pg_ts_template_tmplname_index, 3766, TSTemplateNameNspIndexId, on pg_ts_template using btree(tmplname name_ops, tmplnamespace oid_ops));
-DECLARE_UNIQUE_INDEX_PKEY(pg_ts_template_oid_index, 3767, TSTemplateOidIndexId, on pg_ts_template using btree(oid oid_ops));
+DECLARE_UNIQUE_INDEX(pg_ts_template_tmplname_index, 3766, TSTemplateNameNspIndexId, pg_ts_template, btree(tmplname name_ops, tmplnamespace oid_ops));
+DECLARE_UNIQUE_INDEX_PKEY(pg_ts_template_oid_index, 3767, TSTemplateOidIndexId, pg_ts_template, btree(oid oid_ops));
+
+MAKE_SYSCACHE(TSTEMPLATENAMENSP, pg_ts_template_tmplname_index, 2);
+MAKE_SYSCACHE(TSTEMPLATEOID, pg_ts_template_oid_index, 2);
 
 #endif							/* PG_TS_TEMPLATE_H */

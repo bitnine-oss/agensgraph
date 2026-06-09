@@ -3,7 +3,7 @@
  * arrayutils.c
  *	  This file contains some support routines required for array functions.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -44,29 +44,10 @@ ArrayGetOffset(int n, const int *dim, const int *lb, const int *indx)
 }
 
 /*
- * Same, but subscripts are assumed 0-based, and use a scale array
- * instead of raw dimension data (see mda_get_prod to create scale array)
- */
-int
-ArrayGetOffset0(int n, const int *tup, const int *scale)
-{
-	int			i,
-				lin = 0;
-
-	for (i = 0; i < n; i++)
-		lin += tup[i] * scale[i];
-	return lin;
-}
-
-/*
  * Convert array dimensions into number of elements
  *
  * This must do overflow checking, since it is used to validate that a user
  * dimensionality request doesn't overflow what we can handle.
- *
- * We limit array sizes to at most about a quarter billion elements,
- * so that it's not necessary to check for overflow in quite so many
- * places --- for instance when palloc'ing Datum arrays.
  *
  * The multiplication overflow check only works on machines that have int64
  * arithmetic, but that is nearly all platforms these days, and doing check
@@ -87,8 +68,6 @@ ArrayGetNItemsSafe(int ndim, const int *dims, struct Node *escontext)
 {
 	int32		ret;
 	int			i;
-
-#define MaxArraySize ((Size) (MaxAllocSize / sizeof(Datum)))
 
 	if (ndim <= 0)
 		return 0;

@@ -13,7 +13,7 @@
  * come from different tuples. In theory, the standard scalar selectivity
  * functions could be used with the combined histogram.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -29,8 +29,8 @@
 #include "utils/float.h"
 #include "utils/fmgrprotos.h"
 #include "utils/lsyscache.h"
-#include "utils/rangetypes.h"
 #include "utils/multirangetypes.h"
+#include "utils/rangetypes.h"
 #include "varatt.h"
 
 static int	float8_qsort_cmp(const void *a1, const void *a2, void *arg);
@@ -47,18 +47,17 @@ range_typanalyze(PG_FUNCTION_ARGS)
 {
 	VacAttrStats *stats = (VacAttrStats *) PG_GETARG_POINTER(0);
 	TypeCacheEntry *typcache;
-	Form_pg_attribute attr = stats->attr;
 
 	/* Get information about range type; note column might be a domain */
 	typcache = range_get_typcache(fcinfo, getBaseType(stats->attrtypid));
 
-	if (attr->attstattarget < 0)
-		attr->attstattarget = default_statistics_target;
+	if (stats->attstattarget < 0)
+		stats->attstattarget = default_statistics_target;
 
 	stats->compute_stats = compute_range_stats;
 	stats->extra_data = typcache;
 	/* same as in std_typanalyze */
-	stats->minrows = 300 * attr->attstattarget;
+	stats->minrows = 300 * stats->attstattarget;
 
 	PG_RETURN_BOOL(true);
 }
@@ -74,18 +73,17 @@ multirange_typanalyze(PG_FUNCTION_ARGS)
 {
 	VacAttrStats *stats = (VacAttrStats *) PG_GETARG_POINTER(0);
 	TypeCacheEntry *typcache;
-	Form_pg_attribute attr = stats->attr;
 
 	/* Get information about multirange type; note column might be a domain */
 	typcache = multirange_get_typcache(fcinfo, getBaseType(stats->attrtypid));
 
-	if (attr->attstattarget < 0)
-		attr->attstattarget = default_statistics_target;
+	if (stats->attstattarget < 0)
+		stats->attstattarget = default_statistics_target;
 
 	stats->compute_stats = compute_range_stats;
 	stats->extra_data = typcache;
 	/* same as in std_typanalyze */
-	stats->minrows = 300 * attr->attstattarget;
+	stats->minrows = 300 * stats->attstattarget;
 
 	PG_RETURN_BOOL(true);
 }
@@ -136,7 +134,7 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	int			empty_cnt = 0;
 	int			range_no;
 	int			slot_idx;
-	int			num_bins = stats->attr->attstattarget;
+	int			num_bins = stats->attstattarget;
 	int			num_hist;
 	float8	   *lengths;
 	RangeBound *lowers,

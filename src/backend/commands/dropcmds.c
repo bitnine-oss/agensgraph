@@ -3,7 +3,7 @@
  * dropcmds.c
  *	  handle various "DROP" operations
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -14,23 +14,19 @@
  */
 #include "postgres.h"
 
-#include "access/htup_details.h"
 #include "access/table.h"
 #include "access/xact.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/dependency.h"
 #include "catalog/namespace.h"
 #include "catalog/objectaddress.h"
-#include "catalog/pg_class.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
 #include "commands/defrem.h"
 #include "commands/graphcmds.h"
 #include "miscadmin.h"
-#include "nodes/makefuncs.h"
 #include "parser/parse_type.h"
 #include "utils/acl.h"
-#include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "pgstat.h"

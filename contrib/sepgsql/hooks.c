@@ -4,7 +4,7 @@
  *
  * Entrypoints of the hooks in PostgreSQL, and dispatches the callbacks.
  *
- * Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *
  * -------------------------------------------------------------------------
  */
@@ -50,7 +50,7 @@ typedef struct
 	 * command. Elsewhere (including the case of default) NULL.
 	 */
 	const char *createdb_dtemplate;
-}			sepgsql_context_info_t;
+} sepgsql_context_info_t;
 
 static sepgsql_context_info_t sepgsql_context_info;
 
@@ -406,7 +406,7 @@ _PG_init(void)
 	if (IsUnderPostmaster)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-				 errmsg("sepgsql must be loaded via shared_preload_libraries")));
+				 errmsg("sepgsql must be loaded via \"shared_preload_libraries\"")));
 
 	/*
 	 * Check availability of SELinux on the platform. If disabled, we cannot

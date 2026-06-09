@@ -3,7 +3,7 @@
  * pg_subscription.h
  *	  definition of the "subscription" system catalog (pg_subscription)
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_subscription.h
@@ -93,6 +93,11 @@ CATALOG(pg_subscription,6100,SubscriptionRelationId) BKI_SHARED_RELATION BKI_ROW
 	bool		subrunasowner;	/* True if replication should execute as the
 								 * subscription owner */
 
+	bool		subfailover;	/* True if the associated replication slots
+								 * (i.e. the main slot and the table sync
+								 * slots) in the upstream database are enabled
+								 * to be synchronized to the standbys. */
+
 #ifdef CATALOG_VARLEN			/* variable-length fields start here */
 	/* Connection string to the publisher */
 	text		subconninfo BKI_FORCE_NOT_NULL;
@@ -115,8 +120,11 @@ typedef FormData_pg_subscription *Form_pg_subscription;
 
 DECLARE_TOAST_WITH_MACRO(pg_subscription, 4183, 4184, PgSubscriptionToastTable, PgSubscriptionToastIndex);
 
-DECLARE_UNIQUE_INDEX_PKEY(pg_subscription_oid_index, 6114, SubscriptionObjectIndexId, on pg_subscription using btree(oid oid_ops));
-DECLARE_UNIQUE_INDEX(pg_subscription_subname_index, 6115, SubscriptionNameIndexId, on pg_subscription using btree(subdbid oid_ops, subname name_ops));
+DECLARE_UNIQUE_INDEX_PKEY(pg_subscription_oid_index, 6114, SubscriptionObjectIndexId, pg_subscription, btree(oid oid_ops));
+DECLARE_UNIQUE_INDEX(pg_subscription_subname_index, 6115, SubscriptionNameIndexId, pg_subscription, btree(subdbid oid_ops, subname name_ops));
+
+MAKE_SYSCACHE(SUBSCRIPTIONOID, pg_subscription_oid_index, 4);
+MAKE_SYSCACHE(SUBSCRIPTIONNAME, pg_subscription_subname_index, 4);
 
 typedef struct Subscription
 {
@@ -127,6 +135,7 @@ typedef struct Subscription
 								 * skipped */
 	char	   *name;			/* Name of the subscription */
 	Oid			owner;			/* Oid of the subscription owner */
+	bool		ownersuperuser; /* Is the subscription owner a superuser? */
 	bool		enabled;		/* Indicates if the subscription is enabled */
 	bool		binary;			/* Indicates if the subscription wants data in
 								 * binary format */
@@ -138,6 +147,10 @@ typedef struct Subscription
 								 * occurs */
 	bool		passwordrequired;	/* Must connection use a password? */
 	bool		runasowner;		/* Run replication as subscription owner */
+	bool		failover;		/* True if the associated replication slots
+								 * (i.e. the main slot and the table sync
+								 * slots) in the upstream database are enabled
+								 * to be synchronized to the standbys. */
 	char	   *conninfo;		/* Connection string to the publisher */
 	char	   *slotname;		/* Name of the replication slot */
 	char	   *synccommit;		/* Synchronous commit setting for worker */

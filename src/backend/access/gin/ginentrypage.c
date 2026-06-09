@@ -4,7 +4,7 @@
  *	  routines for handling GIN entry tree pages.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -17,7 +17,6 @@
 #include "access/gin_private.h"
 #include "access/ginxlog.h"
 #include "access/xloginsert.h"
-#include "miscadmin.h"
 #include "utils/rel.h"
 
 static void entrySplitPage(GinBtree btree, Buffer origbuf,
@@ -571,6 +570,8 @@ entryExecPlaceToPage(GinBtree btree, Buffer buf, GinBtreeStack *stack,
 		elog(ERROR, "failed to add item to index page in \"%s\"",
 			 RelationGetRelationName(btree->index));
 
+	MarkBufferDirty(buf);
+
 	if (RelationNeedsWAL(btree->index) && !btree->isBuild)
 	{
 		/*
@@ -583,6 +584,7 @@ entryExecPlaceToPage(GinBtree btree, Buffer buf, GinBtreeStack *stack,
 		data.isDelete = insertData->isDelete;
 		data.offset = off;
 
+		XLogRegisterBuffer(0, buf, REGBUF_STANDARD);
 		XLogRegisterBufData(0, (char *) &data,
 							offsetof(ginxlogInsertEntry, tuple));
 		XLogRegisterBufData(0, (char *) insertData->entry,

@@ -1381,6 +1381,18 @@ select * from mki4(42);
 drop function mki8(bigint, bigint);
 drop function mki4(int);
 
+-- test const-folding of a whole-row Var into a per-field Var
+-- (need to inline a function to reach this case, else parser does it)
+create function f_field_select(t onek) returns int4 as
+$$ select t.unique2; $$ language sql immutable;
+
+explain (verbose, costs off)
+select (t2.*).unique1, f_field_select(t2) from tenk1 t1
+    left join onek t2 on t1.unique1 = t2.unique1
+    left join int8_tbl t3 on true;
+
+drop function f_field_select(t onek);
+
 --
 -- test extraction of restriction OR clauses from join OR clause
 -- (we used to only do this for indexable clauses)
@@ -1852,11 +1864,11 @@ reset enable_nestloop;
 explain (costs off)
 select a.unique1, b.unique2
   from onek a left join onek b on a.unique1 = b.unique2
-  where b.unique2 = any (select q1 from int8_tbl c where c.q1 < b.unique1);
+  where (b.unique2, random() > 0) = any (select q1, random() > 0 from int8_tbl c where c.q1 < b.unique1);
 
 select a.unique1, b.unique2
   from onek a left join onek b on a.unique1 = b.unique2
-  where b.unique2 = any (select q1 from int8_tbl c where c.q1 < b.unique1);
+  where (b.unique2, random() > 0) = any (select q1, random() > 0 from int8_tbl c where c.q1 < b.unique1);
 
 --
 -- test full-join strength reduction
@@ -2510,6 +2522,18 @@ select * from
   ) on c.q2 = ss2.q1,
   lateral (select ss2.y offset 0) ss3;
 
+-- another case requiring nested PlaceHolderVars
+explain (verbose, costs off)
+select * from
+  (select 0 as val0) as ss0
+  left join (select 1 as val) as ss1 on true
+  left join lateral (select ss1.val as val_filtered where false) as ss2 on true;
+
+select * from
+  (select 0 as val0) as ss0
+  left join (select 1 as val) as ss1 on true
+  left join lateral (select ss1.val as val_filtered where false) as ss2 on true;
+
 -- case that breaks the old ph_may_need optimization
 explain (verbose, costs off)
 select c.*,a.*,ss1.q1,ss2.q1,ss3.* from
@@ -2578,7 +2602,7 @@ select * from (values (0), (1)) v(id),
 lateral (select * from int8_tbl t1,
          lateral (select * from
                     (select * from int8_tbl t2
-                     where q1 = any (select q2 from int8_tbl t3
+                     where (q1, random() > 0) = any (select q2, random() > 0 from int8_tbl t3
                                      where q2 = (select greatest(t1.q1,t2.q2))
                                        and (select v.id=0)) offset 0) ss2) ss
          where t1.q1 = ss.q2) ss0;
@@ -2587,7 +2611,7 @@ select * from (values (0), (1)) v(id),
 lateral (select * from int8_tbl t1,
          lateral (select * from
                     (select * from int8_tbl t2
-                     where q1 = any (select q2 from int8_tbl t3
+                     where (q1, random() > 0) = any (select q2, random() > 0 from int8_tbl t3
                                      where q2 = (select greatest(t1.q1,t2.q2))
                                        and (select v.id=0)) offset 0) ss2) ss
          where t1.q1 = ss.q2) ss0;
@@ -2880,3 +2904,27 @@ where exists (select 1 from j3
       and t1.unique1 < 1;
 
 drop table j3;
+
+-- Exercise the "skip fetch" Bitmap Heap Scan optimization when candidate
+-- tuples are discarded. This may occur when:
+--   1. A join doesn't require all inner tuples to be scanned for each outer
+--      tuple, and
+--   2. The inner side is scanned using a bitmap heap scan, and
+--   3. The bitmap heap scan is eligible for the "skip fetch" optimization.
+--      This optimization is usable when no data from the underlying table is
+--      needed. Use a temp table so it is only visible to this backend and
+--      vacuum may reliably mark all blocks in the table all visible in the
+--      visibility map.
+CREATE TEMP TABLE skip_fetch (a INT, b INT) WITH (fillfactor=10);
+INSERT INTO skip_fetch SELECT i % 3, i FROM generate_series(0,30) i;
+CREATE INDEX ON skip_fetch(a);
+VACUUM (ANALYZE) skip_fetch;
+
+SET enable_indexonlyscan = off;
+SET enable_seqscan = off;
+EXPLAIN (COSTS OFF)
+SELECT t1.a FROM skip_fetch t1 LEFT JOIN skip_fetch t2 ON t2.a = 1 WHERE t2.a IS NULL;
+SELECT t1.a FROM skip_fetch t1 LEFT JOIN skip_fetch t2 ON t2.a = 1 WHERE t2.a IS NULL;
+
+RESET enable_indexonlyscan;
+RESET enable_seqscan;

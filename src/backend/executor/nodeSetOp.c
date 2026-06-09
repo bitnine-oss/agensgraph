@@ -32,7 +32,7 @@
  * input group.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -582,13 +582,9 @@ ExecInitSetOp(SetOp *node, EState *estate, int eflags)
 void
 ExecEndSetOp(SetOpState *node)
 {
-	/* clean up tuple table */
-	ExecClearTuple(node->ps.ps_ResultTupleSlot);
-
 	/* free subsidiary stuff including hashtable */
 	if (node->tableContext)
 		MemoryContextDelete(node->tableContext);
-	ExecFreeExprContext(&node->ps);
 
 	ExecEndNode(outerPlanState(node));
 }
@@ -635,7 +631,7 @@ ExecReScanSetOp(SetOpState *node)
 
 	/* Release any hashtable storage */
 	if (node->tableContext)
-		MemoryContextResetAndDeleteChildren(node->tableContext);
+		MemoryContextReset(node->tableContext);
 
 	/* And rebuild empty hashtable if needed */
 	if (((SetOp *) node->ps.plan)->strategy == SETOP_HASHED)

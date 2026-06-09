@@ -4,7 +4,7 @@
  *
  * Shared definitions for compression methods and specifications.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/include/common/compression.h
@@ -23,7 +23,7 @@ typedef enum pg_compress_algorithm
 	PG_COMPRESSION_NONE,
 	PG_COMPRESSION_GZIP,
 	PG_COMPRESSION_LZ4,
-	PG_COMPRESSION_ZSTD
+	PG_COMPRESSION_ZSTD,
 } pg_compress_algorithm;
 
 #define PG_COMPRESSION_OPTION_WORKERS		(1 << 0)

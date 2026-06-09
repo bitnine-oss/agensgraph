@@ -1,9 +1,8 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 ecpg_inc = include_directories('.')
 
 ecpg_conf_keys = [
-  'ENABLE_THREAD_SAFETY',
   'HAVE_INT64',
   'HAVE_LONG_INT_64',
   'HAVE_LONG_LONG_INT_64',
@@ -11,6 +10,8 @@ ecpg_conf_keys = [
 ]
 
 ecpg_conf_data = configuration_data()
+
+ecpg_conf_data.set('ENABLE_THREAD_SAFETY', 1)
 
 foreach key : ecpg_conf_keys
   if cdata.has(key)

@@ -900,11 +900,6 @@ ExecEndShortestpath(ShortestpathState *node)
 		heap_freetuple(node->innerNode->vertexRow);
 
 	/*
-	 * Free the exprcontext
-	 */
-	ExecFreeExprContext(&node->js.ps);
-
-	/*
 	 * clean out the tuple table
 	 */
 	ExecClearTuple(node->js.ps.ps_ResultTupleSlot);

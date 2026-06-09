@@ -2,7 +2,7 @@
 #
 # Makefile for src/bin/pg_ctl
 #
-# Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/bin/pg_ctl/Makefile
@@ -50,7 +50,7 @@ uninstall:
 	rm -f '$(DESTDIR)$(bindir)/pg_ctl$(X)'
 	rm -f '$(DESTDIR)$(bindir)/ag_ctl$(X)'
 
-clean distclean maintainer-clean:
+clean distclean:
 	rm -f pg_ctl$(X) $(OBJS)
 	rm -f ag_ctl$(X) ag_ctl.c ag_ctl.o
 	rm -rf tmp_check

@@ -3,7 +3,7 @@
  * statscmds.c
  *	  Commands for creating and altering extended statistics objects
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -14,9 +14,7 @@
  */
 #include "postgres.h"
 
-#include "access/heapam.h"
 #include "access/relation.h"
-#include "access/relscan.h"
 #include "access/table.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -32,11 +30,10 @@
 #include "nodes/nodeFuncs.h"
 #include "optimizer/optimizer.h"
 #include "statistics/statistics.h"
+#include "utils/acl.h"
 #include "utils/builtins.h"
-#include "utils/lsyscache.h"
-#include "utils/fmgroids.h"
 #include "utils/inval.h"
-#include "utils/memutils.h"
+#include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
@@ -498,9 +495,9 @@ CreateStatistics(CreateStatsStmt *stmt)
 	values[Anum_pg_statistic_ext_stxrelid - 1] = ObjectIdGetDatum(relid);
 	values[Anum_pg_statistic_ext_stxname - 1] = NameGetDatum(&stxname);
 	values[Anum_pg_statistic_ext_stxnamespace - 1] = ObjectIdGetDatum(namespaceId);
-	values[Anum_pg_statistic_ext_stxstattarget - 1] = Int32GetDatum(-1);
 	values[Anum_pg_statistic_ext_stxowner - 1] = ObjectIdGetDatum(stxowner);
 	values[Anum_pg_statistic_ext_stxkeys - 1] = PointerGetDatum(stxkeys);
+	nulls[Anum_pg_statistic_ext_stxstattarget - 1] = true;
 	values[Anum_pg_statistic_ext_stxkind - 1] = PointerGetDatum(stxkind);
 
 	values[Anum_pg_statistic_ext_stxexprs - 1] = exprsDatum;
@@ -609,23 +606,36 @@ AlterStatistics(AlterStatsStmt *stmt)
 	bool		repl_null[Natts_pg_statistic_ext];
 	bool		repl_repl[Natts_pg_statistic_ext];
 	ObjectAddress address;
-	int			newtarget = stmt->stxstattarget;
+	int			newtarget = 0;
+	bool		newtarget_default;
 
-	/* Limit statistics target to a sane range */
-	if (newtarget < -1)
+	/* -1 was used in previous versions for the default setting */
+	if (stmt->stxstattarget && intVal(stmt->stxstattarget) != -1)
 	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("statistics target %d is too low",
-						newtarget)));
+		newtarget = intVal(stmt->stxstattarget);
+		newtarget_default = false;
 	}
-	else if (newtarget > 10000)
+	else
+		newtarget_default = true;
+
+	if (!newtarget_default)
 	{
-		newtarget = 10000;
-		ereport(WARNING,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("lowering statistics target to %d",
-						newtarget)));
+		/* Limit statistics target to a sane range */
+		if (newtarget < 0)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("statistics target %d is too low",
+							newtarget)));
+		}
+		else if (newtarget > MAX_STATISTICS_TARGET)
+		{
+			newtarget = MAX_STATISTICS_TARGET;
+			ereport(WARNING,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("lowering statistics target to %d",
+							newtarget)));
+		}
 	}
 
 	/* lookup OID of the statistics object */
@@ -676,7 +686,10 @@ AlterStatistics(AlterStatsStmt *stmt)
 
 	/* replace the stxstattarget column */
 	repl_repl[Anum_pg_statistic_ext_stxstattarget - 1] = true;
-	repl_val[Anum_pg_statistic_ext_stxstattarget - 1] = Int32GetDatum(newtarget);
+	if (!newtarget_default)
+		repl_val[Anum_pg_statistic_ext_stxstattarget - 1] = Int16GetDatum(newtarget);
+	else
+		repl_null[Anum_pg_statistic_ext_stxstattarget - 1] = true;
 
 	newtup = heap_modify_tuple(oldtup, RelationGetDescr(rel),
 							   repl_val, repl_null, repl_repl);
@@ -734,17 +747,10 @@ void
 RemoveStatisticsById(Oid statsOid)
 {
 	Relation	relation;
+	Relation	rel;
 	HeapTuple	tup;
 	Form_pg_statistic_ext statext;
 	Oid			relid;
-
-	/*
-	 * First delete the pg_statistic_ext_data tuples holding the actual
-	 * statistical data. There might be data with/without inheritance, so
-	 * attempt deleting both.
-	 */
-	RemoveStatisticsDataById(statsOid, true);
-	RemoveStatisticsDataById(statsOid, false);
 
 	/*
 	 * Delete the pg_statistic_ext tuple.  Also send out a cache inval on the
@@ -760,11 +766,25 @@ RemoveStatisticsById(Oid statsOid)
 	statext = (Form_pg_statistic_ext) GETSTRUCT(tup);
 	relid = statext->stxrelid;
 
+	/*
+	 * Delete the pg_statistic_ext_data tuples holding the actual statistical
+	 * data. There might be data with/without inheritance, so attempt deleting
+	 * both. We lock the user table first, to prevent other processes (e.g.
+	 * DROP STATISTICS) from removing the row concurrently.
+	 */
+	rel = table_open(relid, ShareUpdateExclusiveLock);
+
+	RemoveStatisticsDataById(statsOid, true);
+	RemoveStatisticsDataById(statsOid, false);
+
 	CacheInvalidateRelcacheByRelid(relid);
 
 	CatalogTupleDelete(relation, &tup->t_self);
 
 	ReleaseSysCache(tup);
+
+	/* Keep lock until the end of the transaction. */
+	table_close(rel, NoLock);
 
 	table_close(relation, RowExclusiveLock);
 }

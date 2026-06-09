@@ -29,7 +29,7 @@
  * at runtime.  If we knew exactly which functions require collation
  * information, we could throw those errors at parse time instead.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -58,7 +58,7 @@ typedef enum
 	COLLATE_NONE,				/* expression is of a noncollatable datatype */
 	COLLATE_IMPLICIT,			/* collation was derived implicitly */
 	COLLATE_CONFLICT,			/* we had a conflict of implicit collations */
-	COLLATE_EXPLICIT			/* collation was derived explicitly */
+	COLLATE_EXPLICIT,			/* collation was derived explicitly */
 } CollateStrength;
 
 typedef struct

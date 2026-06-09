@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 backend_build_deps = [backend_code]
 backend_sources = []
@@ -72,7 +72,7 @@ postgres_lib = static_library('postgres_lib',
 
 if cc.get_id() == 'msvc'
   postgres_def = custom_target('postgres.def',
-    command: [perl, files('../tools/msvc/gendef.pl'),
+    command: [perl, files('../tools/msvc_gendef.pl'),
               '--arch', host_cpu,
               '--tempdir', '@PRIVATE_DIR@',
               '--deffile', '@OUTPUT@',
@@ -91,21 +91,6 @@ if cc.get_id() == 'msvc'
   # be restricted to b_pch=true.
   backend_link_with += postgres_lib
 
-elif host_system == 'aix'
-  # The '.' argument leads mkldexport.sh to emit "#! .", which refers to the
-  # main executable, allowing extension libraries to resolve their undefined
-  # symbols to symbols in the postgres binary.
-  postgres_imp = custom_target('postgres.imp',
-    command: [files('port/aix/mkldexport.sh'), '@INPUT@', '.'],
-    input: postgres_lib,
-    output: 'postgres.imp',
-    capture: true,
-    install: true,
-    install_dir: dir_lib,
-    build_by_default: false,
-  )
-  backend_link_args += '-Wl,-bE:@0@'.format(postgres_imp.full_path())
-  backend_link_depends += postgres_imp
 endif
 
 backend_input = []
@@ -148,7 +133,7 @@ postgres = executable('postgres',
   link_with: backend_link_with,
   link_depends: backend_link_depends,
   export_dynamic: true,
-  implib: true,
+  implib: 'postgres',
   dependencies: backend_build_deps,
   kwargs: default_bin_args,
 )

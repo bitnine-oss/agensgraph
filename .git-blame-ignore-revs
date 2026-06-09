@@ -17,6 +17,66 @@
 14b7befef6b574376e59454f5e33a2ce29e4d07a # 2025-06-23 12:03:10 +0500
 # Run pgindent prior to branching v2.16
 
+da256a4a7fdcca35fe7ca808686ad3de6ee22306 # 2024-05-14 16:34:50 -0400
+# Pre-beta mechanical code beautification.
+
+64e401b62b1559d617db5c1e1070d7a05e794c27 # 2024-03-25 14:18:33 +0100
+# Fix indentation from a11f330b5
+
+0984a3b851abe89bec6c3eff51b03038808e1997 # 2024-03-05 11:16:23 -0800
+# Run pgindent again on the same file.
+
+b406af1806e9fc5c090e58282c7d98f22a4b397f # 2024-03-05 10:58:24 -0800
+# Run pgindent for commit ef4cfdce0e.
+
+dd7ea37c435e10f9c5aa3fb257a05c08814a4ad2 # 2024-03-04 14:37:35 -0500
+# Fix pgindent damage.
+
+3d47b75546d1ef70145f58e162a96f7e0c649389 # 2024-02-22 08:00:58 +0100
+# pgindent fix
+
+49e7c6f78ed608c5d5454080ae19c0e7f1b09a04 # 2024-02-09 11:05:01 +0900
+# Fix indentation of copyto.c
+
+96c019ffa3f883d139709ea0cfe76dc1bce0f1f8 # 2024-01-13 13:54:11 -0500
+# Re-pgindent catcache.c after previous commit.
+
+611806cd726fc92989ac918eac48fd8d684869c7 # 2023-10-26 09:20:54 +0200
+# Add trailing commas to enum definitions
+
+e9718b4bd3e4234ffd5a4907a903367fc483c843 # 2023-10-16 09:36:31 +0900
+# Fix code indentation violations in e83d1b0c40cc
+
+01529c7040088db2718628d0814058598152bd39 # 2023-10-16 13:32:41 +1300
+# Fix comment from commit 22655aa231.
+
+b6a77c6a6ccf698787201b001cbbbf9c89fe5715 # 2023-10-11 17:14:31 -0400
+# Reindent comment in GenericXLogFinish().
+
+bc6041b61f6678d32a5cfb70744653cd8f8d01c0 # 2023-08-30 15:56:22 +0900
+# Fix code indentation vioaltion introduced in commit 3c662643c4.
+
+89be0b89ae60c63856fd26d82a104781540e2312 # 2023-08-15 17:45:00 +0900
+# Fix code indentation vioaltion introduced in commit 9e9931d2b.
+
+5dc456b7dda4f7d0d7735b066607c190c74d174a # 2023-08-11 20:43:34 +0900
+# Fix code indentation violations introduced by recent commit
+
+62e9af4c63fbd36fb9af8450fb44bece76d7766f # 2023-07-25 12:35:58 +0530
+# Fix code indentation vioaltion introduced in commit d38ad8e31d.
+
+4e465aac36ce9a9533c68dbdc83e67579880e628 # 2023-07-18 14:04:31 +0900
+# Fix indentation in twophase.c
+
+328f492d2565cfbe383f13a69425d751fd79415f # 2023-07-13 22:26:10 +0900
+# Fix code indentation violation in commit b6e1157e7d
+
+69a674a170058e63e8178aec8a36a673efce8801 # 2023-07-06 11:49:18 +0530
+# Fix code indentation vioaltion introduced in commit cc32ec24fd.
+
+a4cfeeca5a97f2b5969c31aa69ba775af95ee5a3 # 2023-07-03 12:47:49 +0200
+# Fix code indentation violations
+
 b334612b8aee9f9a34378982d8938b201dfad323 # 2023-06-20 09:50:43 -0400
 # Pre-beta2 mechanical code beautification.
 

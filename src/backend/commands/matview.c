@@ -3,7 +3,7 @@
  * matview.c
  *	  materialized view support
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -20,13 +20,10 @@
 #include "access/multixact.h"
 #include "access/tableam.h"
 #include "access/xact.h"
-#include "access/xlog.h"
-#include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_opclass.h"
-#include "catalog/pg_operator.h"
 #include "commands/cluster.h"
 #include "commands/matview.h"
 #include "commands/tablecmds.h"
@@ -34,11 +31,9 @@
 #include "executor/executor.h"
 #include "executor/spi.h"
 #include "miscadmin.h"
-#include "parser/parse_relation.h"
 #include "pgstat.h"
 #include "rewrite/rewriteHandler.h"
 #include "storage/lmgr.h"
-#include "storage/smgr.h"
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
@@ -179,6 +174,7 @@ ExecRefreshMatView(RefreshMatViewStmt *stmt, const char *queryString,
 	SetUserIdAndSecContext(relowner,
 						   save_sec_context | SECURITY_RESTRICTED_OPERATION);
 	save_nestlevel = NewGUCNestLevel();
+	RestrictSearchPath();
 
 	/* Make sure it is a materialized view. */
 	if (matviewRel->rd_rel->relkind != RELKIND_MATVIEW)
@@ -657,13 +653,35 @@ refresh_by_match_merge(Oid matviewOid, Oid tempOid, Oid relowner,
 						   SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1))));
 	}
 
+	/*
+	 * Create the temporary "diff" table.
+	 *
+	 * Temporarily switch out of the SECURITY_RESTRICTED_OPERATION context,
+	 * because you cannot create temp tables in SRO context.  For extra
+	 * paranoia, add the composite type column only after switching back to
+	 * SRO context.
+	 */
 	SetUserIdAndSecContext(relowner,
 						   save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
-
-	/* Start building the query for creating the diff table. */
 	resetStringInfo(&querybuf);
 	appendStringInfo(&querybuf,
-					 "CREATE TEMP TABLE %s AS "
+					 "CREATE TEMP TABLE %s (tid pg_catalog.tid)",
+					 diffname);
+	if (SPI_exec(querybuf.data, 0) != SPI_OK_UTILITY)
+		elog(ERROR, "SPI_exec failed: %s", querybuf.data);
+	SetUserIdAndSecContext(relowner,
+						   save_sec_context | SECURITY_RESTRICTED_OPERATION);
+	resetStringInfo(&querybuf);
+	appendStringInfo(&querybuf,
+					 "ALTER TABLE %s ADD COLUMN newdata %s",
+					 diffname, tempname);
+	if (SPI_exec(querybuf.data, 0) != SPI_OK_UTILITY)
+		elog(ERROR, "SPI_exec failed: %s", querybuf.data);
+
+	/* Start building the query for populating the diff table. */
+	resetStringInfo(&querybuf);
+	appendStringInfo(&querybuf,
+					 "INSERT INTO %s "
 					 "SELECT mv.ctid AS tid, newdata.*::%s AS newdata "
 					 "FROM %s mv FULL JOIN %s newdata ON (",
 					 diffname, tempname, matviewname, tempname);
@@ -780,21 +798,21 @@ refresh_by_match_merge(Oid matviewOid, Oid tempOid, Oid relowner,
 	 *
 	 * ExecRefreshMatView() checks that after taking the exclusive lock on the
 	 * matview. So at least one unique index is guaranteed to exist here
-	 * because the lock is still being held; so an Assert seems sufficient.
+	 * because the lock is still being held.  (One known exception is if a
+	 * function called as part of refreshing the matview drops the index.
+	 * That's a pretty silly thing to do.)
 	 */
-	Assert(foundUniqueIndex);
+	if (!foundUniqueIndex)
+		elog(ERROR, "could not find suitable unique index on materialized view");
 
 	appendStringInfoString(&querybuf,
 						   " AND newdata.* OPERATOR(pg_catalog.*=) mv.*) "
 						   "WHERE newdata.* IS NULL OR mv.* IS NULL "
 						   "ORDER BY tid");
 
-	/* Create the temporary "diff" table. */
-	if (SPI_exec(querybuf.data, 0) != SPI_OK_UTILITY)
+	/* Populate the temporary "diff" table. */
+	if (SPI_exec(querybuf.data, 0) != SPI_OK_INSERT)
 		elog(ERROR, "SPI_exec failed: %s", querybuf.data);
-
-	SetUserIdAndSecContext(relowner,
-						   save_sec_context | SECURITY_RESTRICTED_OPERATION);
 
 	/*
 	 * We have no further use for data from the "full-data" temp table, but we

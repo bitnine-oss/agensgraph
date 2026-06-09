@@ -3,7 +3,7 @@
  * proclang.c
  *	  PostgreSQL LANGUAGE support code.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -19,10 +19,8 @@
 #include "catalog/indexing.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_language.h"
-#include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
-#include "commands/defrem.h"
 #include "commands/proclang.h"
 #include "miscadmin.h"
 #include "parser/parse_func.h"

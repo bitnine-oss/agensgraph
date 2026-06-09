@@ -4,7 +4,7 @@
  *	  include file for the bootstrapping code
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/bootstrap/bootstrap.h
@@ -15,6 +15,7 @@
 #define BOOTSTRAP_H
 
 #include "nodes/execnodes.h"
+#include "nodes/parsenodes.h"
 
 
 /*
@@ -42,7 +43,7 @@ extern void InsertOneTuple(void);
 extern void InsertOneValue(char *value, int i);
 extern void InsertOneNull(int i);
 
-extern void index_register(Oid heap, Oid ind, IndexInfo *indexInfo);
+extern void index_register(Oid heap, Oid ind, const IndexInfo *indexInfo);
 extern void build_indices(void);
 
 extern void boot_get_type_io_data(Oid typid,

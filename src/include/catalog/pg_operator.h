@@ -4,7 +4,7 @@
  *	  definition of the "operator" system catalog (pg_operator)
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_operator.h
@@ -82,9 +82,16 @@ CATALOG(pg_operator,2617,OperatorRelationId)
  */
 typedef FormData_pg_operator *Form_pg_operator;
 
-DECLARE_UNIQUE_INDEX_PKEY(pg_operator_oid_index, 2688, OperatorOidIndexId, on pg_operator using btree(oid oid_ops));
-DECLARE_UNIQUE_INDEX(pg_operator_oprname_l_r_n_index, 2689, OperatorNameNspIndexId, on pg_operator using btree(oprname name_ops, oprleft oid_ops, oprright oid_ops, oprnamespace oid_ops));
+DECLARE_UNIQUE_INDEX_PKEY(pg_operator_oid_index, 2688, OperatorOidIndexId, pg_operator, btree(oid oid_ops));
+DECLARE_UNIQUE_INDEX(pg_operator_oprname_l_r_n_index, 2689, OperatorNameNspIndexId, pg_operator, btree(oprname name_ops, oprleft oid_ops, oprright oid_ops, oprnamespace oid_ops));
 
+MAKE_SYSCACHE(OPEROID, pg_operator_oid_index, 32);
+MAKE_SYSCACHE(OPERNAMENSP, pg_operator_oprname_l_r_n_index, 256);
+
+extern Oid	OperatorLookup(List *operatorName,
+						   Oid leftObjectId,
+						   Oid rightObjectId,
+						   bool *defined);
 
 extern ObjectAddress OperatorCreate(const char *operatorName,
 									Oid operatorNamespace,
@@ -101,6 +108,16 @@ extern ObjectAddress OperatorCreate(const char *operatorName,
 extern ObjectAddress makeOperatorDependencies(HeapTuple tuple,
 											  bool makeExtensionDep,
 											  bool isUpdate);
+
+extern void OperatorValidateParams(Oid leftTypeId,
+								   Oid rightTypeId,
+								   Oid operResultType,
+								   bool hasCommutator,
+								   bool hasNegator,
+								   bool hasRestrictionSelectivity,
+								   bool hasJoinSelectivity,
+								   bool canMerge,
+								   bool canHash);
 
 extern void OperatorUpd(Oid baseId, Oid commId, Oid negId, bool isDelete);
 

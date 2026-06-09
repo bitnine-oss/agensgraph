@@ -2,7 +2,7 @@
  *
  * bbstreamer_lz4.c
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/bbstreamer_lz4.c
@@ -18,8 +18,8 @@
 #endif
 
 #include "bbstreamer.h"
-#include "common/logging.h"
 #include "common/file_perm.h"
+#include "common/logging.h"
 #include "common/string.h"
 
 #ifdef USE_LZ4

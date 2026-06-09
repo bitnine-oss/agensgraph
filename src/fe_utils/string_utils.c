@@ -6,7 +6,7 @@
  * and interpreting backend output.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/fe_utils/string_utils.c
@@ -761,7 +761,7 @@ appendPGArray(PQExpBuffer buffer, const char *value)
 
 			if (ch == '"' || ch == '\\' ||
 				ch == '{' || ch == '}' || ch == ',' ||
-			/* these match array_isspace(): */
+			/* these match scanner_isspace(): */
 				ch == ' ' || ch == '\t' || ch == '\n' ||
 				ch == '\r' || ch == '\v' || ch == '\f')
 			{

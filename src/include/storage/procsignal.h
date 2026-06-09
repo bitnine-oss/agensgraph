@@ -4,7 +4,7 @@
  *	  Routines for interprocess signaling
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/procsignal.h
@@ -14,7 +14,7 @@
 #ifndef PROCSIGNAL_H
 #define PROCSIGNAL_H
 
-#include "storage/backendid.h"
+#include "storage/procnumber.h"
 
 
 /*
@@ -38,20 +38,22 @@ typedef enum
 	PROCSIG_PARALLEL_APPLY_MESSAGE, /* Message from parallel apply workers */
 
 	/* Recovery conflict reasons */
-	PROCSIG_RECOVERY_CONFLICT_DATABASE,
+	PROCSIG_RECOVERY_CONFLICT_FIRST,
+	PROCSIG_RECOVERY_CONFLICT_DATABASE = PROCSIG_RECOVERY_CONFLICT_FIRST,
 	PROCSIG_RECOVERY_CONFLICT_TABLESPACE,
 	PROCSIG_RECOVERY_CONFLICT_LOCK,
 	PROCSIG_RECOVERY_CONFLICT_SNAPSHOT,
 	PROCSIG_RECOVERY_CONFLICT_LOGICALSLOT,
 	PROCSIG_RECOVERY_CONFLICT_BUFFERPIN,
 	PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK,
+	PROCSIG_RECOVERY_CONFLICT_LAST = PROCSIG_RECOVERY_CONFLICT_STARTUP_DEADLOCK,
 
 	NUM_PROCSIGNALS				/* Must be last! */
 } ProcSignalReason;
 
 typedef enum
 {
-	PROCSIGNAL_BARRIER_SMGRRELEASE	/* ask smgr to close files */
+	PROCSIGNAL_BARRIER_SMGRRELEASE, /* ask smgr to close files */
 } ProcSignalBarrierType;
 
 /*
@@ -60,9 +62,9 @@ typedef enum
 extern Size ProcSignalShmemSize(void);
 extern void ProcSignalShmemInit(void);
 
-extern void ProcSignalInit(int pss_idx);
+extern void ProcSignalInit(void);
 extern int	SendProcSignal(pid_t pid, ProcSignalReason reason,
-						   BackendId backendId);
+						   ProcNumber procNumber);
 
 extern uint64 EmitProcSignalBarrier(ProcSignalBarrierType type);
 extern void WaitForProcSignalBarrier(uint64 generation);

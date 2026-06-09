@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 backend_sources += files(
   'acl.c',
@@ -69,6 +69,7 @@ backend_sources += files(
   'pg_lsn.c',
   'pg_upgrade_support.c',
   'pgstatfuncs.c',
+  'pseudorandomfuncs.c',
   'pseudotypes.c',
   'quote.c',
   'rangetypes.c',
@@ -102,6 +103,7 @@ backend_sources += files(
   'varchar.c',
   'varlena.c',
   'version.c',
+  'waitfuncs.c',
   'windowfuncs.c',
   'xid.c',
   'xid8funcs.c',

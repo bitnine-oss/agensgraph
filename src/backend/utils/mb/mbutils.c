@@ -23,7 +23,7 @@
  * the result is validly encoded according to the destination encoding.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -37,9 +37,8 @@
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "mb/pg_wchar.h"
-#include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
 #include "utils/memutils.h"
-#include "utils/syscache.h"
 #include "varatt.h"
 
 /*
@@ -585,19 +584,19 @@ pg_convert(PG_FUNCTION_ARGS)
 												  src_encoding,
 												  dest_encoding);
 
-	/* update len if conversion actually happened */
-	if (dest_str != src_str)
-		len = strlen(dest_str);
+
+	/* return source string if no conversion happened */
+	if (dest_str == src_str)
+		PG_RETURN_BYTEA_P(string);
 
 	/*
 	 * build bytea data type structure.
 	 */
+	len = strlen(dest_str);
 	retval = (bytea *) palloc(len + VARHDRSZ);
 	SET_VARSIZE(retval, len + VARHDRSZ);
 	memcpy(VARDATA(retval), dest_str, len);
-
-	if (dest_str != src_str)
-		pfree(dest_str);
+	pfree(dest_str);
 
 	/* free memory if allocated by the toaster */
 	PG_FREE_IF_COPY(string, 0);
@@ -1188,24 +1187,18 @@ static bool
 raw_pg_bind_textdomain_codeset(const char *domainname, int encoding)
 {
 	bool		elog_ok = (CurrentMemoryContext != NULL);
-	int			i;
 
-	for (i = 0; pg_enc2gettext_tbl[i].name != NULL; i++)
-	{
-		if (pg_enc2gettext_tbl[i].encoding == encoding)
-		{
-			if (bind_textdomain_codeset(domainname,
-										pg_enc2gettext_tbl[i].name) != NULL)
-				return true;
+	if (!PG_VALID_ENCODING(encoding) || pg_enc2gettext_tbl[encoding] == NULL)
+		return false;
 
-			if (elog_ok)
-				elog(LOG, "bind_textdomain_codeset failed");
-			else
-				write_stderr("bind_textdomain_codeset failed");
+	if (bind_textdomain_codeset(domainname,
+								pg_enc2gettext_tbl[encoding]) != NULL)
+		return true;
 
-			break;
-		}
-	}
+	if (elog_ok)
+		elog(LOG, "bind_textdomain_codeset failed");
+	else
+		write_stderr("bind_textdomain_codeset failed");
 
 	return false;
 }

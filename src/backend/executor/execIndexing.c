@@ -95,7 +95,7 @@
  * with the higher XID backs out.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -121,21 +121,21 @@ typedef enum
 {
 	CEOUC_WAIT,
 	CEOUC_NOWAIT,
-	CEOUC_LIVELOCK_PREVENTING_WAIT
+	CEOUC_LIVELOCK_PREVENTING_WAIT,
 } CEOUC_WAIT_MODE;
 
 static bool check_exclusion_or_unique_constraint(Relation heap, Relation index,
 												 IndexInfo *indexInfo,
 												 ItemPointer tupleid,
-												 Datum *values, bool *isnull,
+												 const Datum *values, const bool *isnull,
 												 EState *estate, bool newIndex,
 												 CEOUC_WAIT_MODE waitMode,
 												 bool violationOK,
 												 ItemPointer conflictTid);
 
-static bool index_recheck_constraint(Relation index, Oid *constr_procs,
-									 Datum *existing_values, bool *existing_isnull,
-									 Datum *new_values);
+static bool index_recheck_constraint(Relation index, const Oid *constr_procs,
+									 const Datum *existing_values, const bool *existing_isnull,
+									 const Datum *new_values);
 static bool index_unchanged_by_update(ResultRelInfo *resultRelInfo,
 									  EState *estate, IndexInfo *indexInfo,
 									  Relation indexRelation);
@@ -233,14 +233,19 @@ ExecCloseIndices(ResultRelInfo *resultRelInfo)
 	int			i;
 	int			numIndices;
 	RelationPtr indexDescs;
+	IndexInfo **indexInfos;
 
 	numIndices = resultRelInfo->ri_NumIndices;
 	indexDescs = resultRelInfo->ri_IndexRelationDescs;
+	indexInfos = resultRelInfo->ri_IndexRelationInfo;
 
 	for (i = 0; i < numIndices; i++)
 	{
 		if (indexDescs[i] == NULL)
 			continue;			/* shouldn't happen? */
+
+		/* Give the index a chance to do some post-insert cleanup */
+		index_insert_cleanup(indexDescs[i], indexInfos[i]);
 
 		/* Drop lock acquired by ExecOpenIndices */
 		index_close(indexDescs[i], RowExclusiveLock);
@@ -684,7 +689,7 @@ static bool
 check_exclusion_or_unique_constraint(Relation heap, Relation index,
 									 IndexInfo *indexInfo,
 									 ItemPointer tupleid,
-									 Datum *values, bool *isnull,
+									 const Datum *values, const bool *isnull,
 									 EState *estate, bool newIndex,
 									 CEOUC_WAIT_MODE waitMode,
 									 bool violationOK,
@@ -910,7 +915,7 @@ void
 check_exclusion_constraint(Relation heap, Relation index,
 						   IndexInfo *indexInfo,
 						   ItemPointer tupleid,
-						   Datum *values, bool *isnull,
+						   const Datum *values, const bool *isnull,
 						   EState *estate, bool newIndex)
 {
 	(void) check_exclusion_or_unique_constraint(heap, index, indexInfo, tupleid,
@@ -924,9 +929,9 @@ check_exclusion_constraint(Relation heap, Relation index,
  * exclusion condition against the new_values.  Returns true if conflict.
  */
 static bool
-index_recheck_constraint(Relation index, Oid *constr_procs,
-						 Datum *existing_values, bool *existing_isnull,
-						 Datum *new_values)
+index_recheck_constraint(Relation index, const Oid *constr_procs,
+						 const Datum *existing_values, const bool *existing_isnull,
+						 const Datum *new_values)
 {
 	int			indnkeyatts = IndexRelationGetNumberOfKeyAttributes(index);
 	int			i;

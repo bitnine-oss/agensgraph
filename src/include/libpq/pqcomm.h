@@ -6,7 +6,7 @@
  * NOTE: for historical reasons, this does not correspond to pqcomm.c.
  * pqcomm.c's routines are declared in libpq.h.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/libpq/pqcomm.h
@@ -20,6 +20,12 @@
 #include <sys/un.h>
 #include <netdb.h>
 #include <netinet/in.h>
+
+/*
+ * The definitions for the request/response codes are kept in a separate file
+ * for ease of use in third party programs.
+ */
+#include "libpq/protocol.h"
 
 typedef struct
 {
@@ -103,8 +109,6 @@ typedef ProtocolVersion MsgType;
 
 typedef uint32 PacketLen;
 
-extern PGDLLIMPORT bool Db_user_namespace;
-
 /*
  * In protocol 3.0 and later, the startup packet length is not fixed, but
  * we set an arbitrary limit on it anyway.  This is just to prevent simple
@@ -113,23 +117,6 @@ extern PGDLLIMPORT bool Db_user_namespace;
  */
 #define MAX_STARTUP_PACKET_LENGTH 10000
 
-
-/* These are the authentication request codes sent by the backend. */
-
-#define AUTH_REQ_OK			0	/* User is authenticated  */
-#define AUTH_REQ_KRB4		1	/* Kerberos V4. Not supported any more. */
-#define AUTH_REQ_KRB5		2	/* Kerberos V5. Not supported any more. */
-#define AUTH_REQ_PASSWORD	3	/* Password */
-#define AUTH_REQ_CRYPT		4	/* crypt password. Not supported any more. */
-#define AUTH_REQ_MD5		5	/* md5 password */
-/* 6 is available.  It was used for SCM creds, not supported any more. */
-#define AUTH_REQ_GSS		7	/* GSSAPI without wrap() */
-#define AUTH_REQ_GSS_CONT	8	/* Continue GSS exchanges */
-#define AUTH_REQ_SSPI		9	/* SSPI negotiate without wrap() */
-#define AUTH_REQ_SASL	   10	/* Begin SASL authentication */
-#define AUTH_REQ_SASL_CONT 11	/* Continue SASL authentication */
-#define AUTH_REQ_SASL_FIN  12	/* Final SASL message */
-#define AUTH_REQ_MAX	   AUTH_REQ_SASL_FIN	/* maximum AUTH_REQ_* value */
 
 typedef uint32 AuthRequest;
 
@@ -152,6 +139,25 @@ typedef struct CancelRequestPacket
 	uint32		cancelAuthCode; /* secret key to authorize cancel */
 } CancelRequestPacket;
 
+/* Application-Layer Protocol Negotiation is required for direct connections
+ * to avoid protocol confusion attacks (e.g https://alpaca-attack.com/).
+ *
+ * ALPN is specified in RFC 7301
+ *
+ * This string should be registered at:
+ * https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml#alpn-protocol-ids
+ *
+ * OpenSSL uses this wire-format for the list of alpn protocols even in the
+ * API. Both server and client take the same format parameter but the client
+ * actually sends it to the server as-is and the server it specifies the
+ * preference order to use to choose the one selected to send back.
+ *
+ * c.f. https://www.openssl.org/docs/manmaster/man3/SSL_CTX_set_alpn_select_cb.html
+ *
+ * The #define can be used to initialize a char[] vector to use directly in the API
+ */
+#define PG_ALPN_PROTOCOL "postgresql"
+#define PG_ALPN_PROTOCOL_VECTOR { 10, 'p','o','s','t','g','r','e','s','q','l' }
 
 /*
  * A client can also start by sending a SSL or GSSAPI negotiation request to

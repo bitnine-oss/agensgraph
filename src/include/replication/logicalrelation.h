@@ -3,7 +3,7 @@
  * logicalrelation.h
  *	  Relation definitions for logical replication relation mapping.
  *
- * Portions Copyright (c) 2016-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2016-2024, PostgreSQL Global Development Group
  *
  * src/include/replication/logicalrelation.h
  *
@@ -48,7 +48,7 @@ extern LogicalRepRelMapEntry *logicalrep_partition_open(LogicalRepRelMapEntry *r
 														Relation partrel, AttrMap *map);
 extern void logicalrep_rel_close(LogicalRepRelMapEntry *rel,
 								 LOCKMODE lockmode);
-extern bool IsIndexUsableForReplicaIdentityFull(IndexInfo *indexInfo);
+extern bool IsIndexUsableForReplicaIdentityFull(IndexInfo *indexInfo, AttrMap *attrmap);
 extern Oid	GetRelationIdentityOrPK(Relation rel);
 
 #endif							/* LOGICALRELATION_H */

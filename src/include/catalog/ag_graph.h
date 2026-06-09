@@ -36,8 +36,11 @@ CATALOG(ag_graph,7040,GraphRelationId) BKI_SCHEMA_MACRO
 typedef FormData_ag_graph *Form_ag_graph;
 
 #define GraphOidIndexId 7041
-DECLARE_UNIQUE_INDEX_PKEY(ag_graph_oid_index, 7041, GraphOidIndexId, on ag_graph using btree(oid oid_ops));
+DECLARE_UNIQUE_INDEX_PKEY(ag_graph_oid_index, 7041, GraphOidIndexId, ag_graph, btree(oid oid_ops));
 #define GraphNameIndexId 7042
-DECLARE_UNIQUE_INDEX(ag_graph_graphname_index, 7042, GraphNameIndexId, on ag_graph using btree(graphname name_ops));
+DECLARE_UNIQUE_INDEX(ag_graph_graphname_index, 7042, GraphNameIndexId, ag_graph, btree(graphname name_ops));
+
+MAKE_SYSCACHE(GRAPHOID, ag_graph_oid_index, 16);
+MAKE_SYSCACHE(GRAPHNAME, ag_graph_graphname_index, 4);
 
 #endif							/* AG_GRAPH_H */

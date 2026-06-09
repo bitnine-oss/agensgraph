@@ -3,7 +3,7 @@
  * execGrouping.c
  *	  executor utility routines for grouping, hashing, and aggregation
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -19,7 +19,6 @@
 #include "executor/executor.h"
 #include "miscadmin.h"
 #include "utils/lsyscache.h"
-#include "utils/memutils.h"
 
 static int	TupleHashTableMatch(struct tuplehash_hash *tb, const MinimalTuple tuple1, const MinimalTuple tuple2);
 static inline uint32 TupleHashTableHash_internal(struct tuplehash_hash *tb,

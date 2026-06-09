@@ -5,7 +5,7 @@
  *	  commands.  At one time acted as an interface between the Lisp and C
  *	  systems.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -16,13 +16,11 @@
  */
 #include "postgres.h"
 
-#include "access/htup_details.h"
 #include "access/reloptions.h"
 #include "access/twophase.h"
 #include "access/xact.h"
 #include "access/xlog.h"
-#include "catalog/catalog.h"
-#include "catalog/index.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_inherits.h"
@@ -41,6 +39,7 @@
 #include "commands/event_trigger.h"
 #include "commands/explain.h"
 #include "commands/extension.h"
+#include "commands/graphcmds.h"
 #include "commands/lockcmds.h"
 #include "commands/matview.h"
 #include "commands/policy.h"
@@ -63,17 +62,13 @@
 #include "parser/parse_utilcmd.h"
 #include "postmaster/bgwriter.h"
 #include "rewrite/rewriteDefine.h"
-#include "rewrite/rewriteRemove.h"
 #include "storage/fd.h"
-#include "tcop/pquery.h"
 #include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
-#include "catalog/ag_graph_fn.h"
-#include "commands/graphcmds.h"
 
 /* Hook for plugins to get control in ProcessUtility() */
 ProcessUtility_hook_type ProcessUtility_hook = NULL;
@@ -958,6 +953,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 			if (!has_privs_of_role(GetUserId(), ROLE_PG_CHECKPOINT))
 				ereport(ERROR,
 						(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				/* translator: %s is name of a SQL command, eg CHECKPOINT */
 						 errmsg("permission denied to execute %s command",
 								"CHECKPOINT"),
 						 errdetail("Only roles with privileges of the \"%s\" role may execute this command.",
@@ -965,10 +961,6 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 
 			RequestCheckpoint(CHECKPOINT_IMMEDIATE | CHECKPOINT_WAIT |
 							  (RecoveryInProgress() ? 0 : CHECKPOINT_FORCE));
-			break;
-
-		case T_ReindexStmt:
-			ExecReindex(pstate, (ReindexStmt *) parsetree, isTopLevel);
 			break;
 
 			/*
@@ -1619,6 +1611,13 @@ ProcessUtilitySlow(ParseState *pstate,
 				}
 				break;
 
+			case T_ReindexStmt:
+				ExecReindex(pstate, (ReindexStmt *) parsetree, isTopLevel);
+
+				/* EventTriggerCollectSimpleCommand is called directly */
+				commandCollected = true;
+				break;
+
 			case T_CreateExtensionStmt:
 				address = CreateExtension(pstate, (CreateExtensionStmt *) parsetree);
 				break;
@@ -2237,11 +2236,10 @@ QueryReturnsTuples(Query *parsetree)
 		case CMD_SELECT:
 			/* returns tuples */
 			return true;
-		case CMD_MERGE:
-			return false;
 		case CMD_INSERT:
 		case CMD_UPDATE:
 		case CMD_DELETE:
+		case CMD_MERGE:
 			/* the forms with RETURNING return tuples */
 			if (parsetree->returningList)
 				return true;

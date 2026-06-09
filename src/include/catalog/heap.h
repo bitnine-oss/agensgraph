@@ -4,7 +4,7 @@
  *	  prototypes for functions in backend/catalog/heap.c
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/heap.h
@@ -97,7 +97,7 @@ extern List *heap_truncate_find_FKs(List *relationIds);
 extern void InsertPgAttributeTuples(Relation pg_attribute_rel,
 									TupleDesc tupdesc,
 									Oid new_rel_oid,
-									Datum *attoptions,
+									const FormExtraData_pg_attribute tupdesc_extra[],
 									CatalogIndexState indstate);
 
 extern void InsertPgClassTuple(Relation pg_class_desc,

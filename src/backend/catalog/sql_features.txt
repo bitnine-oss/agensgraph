@@ -231,7 +231,6 @@ F292	UNIQUE null treatment			YES
 F301	CORRESPONDING in query expressions			NO	
 F302	INTERSECT table operator			YES	
 F303	INTERSECT DISTINCT table operator			YES	
-F302	INTERSECT table operator	02	INTERSECT ALL table operator	YES	
 F304	EXCEPT ALL table operator			YES	
 F305	INTERSECT ALL table operator			YES	
 F311	Schema definition statement			YES	
@@ -548,15 +547,15 @@ T811	Basic SQL/JSON constructor functions			YES
 T812	SQL/JSON: JSON_OBJECTAGG			YES	
 T813	SQL/JSON: JSON_ARRAYAGG with ORDER BY			YES	
 T814	Colon in JSON_OBJECT or JSON_OBJECTAGG			YES	
-T821	Basic SQL/JSON query operators			NO	
+T821	Basic SQL/JSON query operators			YES	
 T822	SQL/JSON: IS JSON WITH UNIQUE KEYS predicate			YES	
-T823	SQL/JSON: PASSING clause			NO	
+T823	SQL/JSON: PASSING clause			YES	
 T824	JSON_TABLE: specific PLAN clause			NO	
-T825	SQL/JSON: ON EMPTY and ON ERROR clauses			NO	
-T826	General value expression in ON ERROR or ON EMPTY clauses			NO	
-T827	JSON_TABLE: sibling NESTED COLUMNS clauses			NO	
-T828	JSON_QUERY			NO	
-T829	JSON_QUERY: array wrapper options			NO	
+T825	SQL/JSON: ON EMPTY and ON ERROR clauses			YES	
+T826	General value expression in ON ERROR or ON EMPTY clauses			YES	
+T827	JSON_TABLE: sibling NESTED COLUMNS clauses			YES	
+T828	JSON_QUERY			YES	
+T829	JSON_QUERY: array wrapper options			YES	
 T830	Enforcing unique keys in SQL/JSON constructor functions			YES	
 T831	SQL/JSON path language: strict mode			YES	
 T832	SQL/JSON path language: item method			YES	
@@ -574,20 +573,20 @@ T861	SQL/JSON simplified accessor: case-sensitive JSON member accessor			NO
 T862	SQL/JSON simplified accessor: wildcard member accessor			NO	
 T863	SQL/JSON simplified accessor: single-quoted string literal as member accessor			NO	
 T864	SQL/JSON simplified accessor			NO	
-T865	SQL/JSON item method: bigint()			NO	
-T866	SQL/JSON item method: boolean()			NO	
-T867	SQL/JSON item method: date()			NO	
-T868	SQL/JSON item method: decimal()			NO	
-T869	SQL/JSON item method: decimal() with precision and scale			NO	
-T870	SQL/JSON item method: integer()			NO	
-T871	SQL/JSON item method: number()			NO	
-T872	SQL/JSON item method: string()			NO	
-T873	SQL/JSON item method: time()			NO	
-T874	SQL/JSON item method: time_tz()			NO	
-T875	SQL/JSON item method: time precision			NO	
-T876	SQL/JSON item method: timestamp()			NO	
-T877	SQL/JSON item method: timestamp_tz()			NO	
-T878	SQL/JSON item method: timestamp precision			NO	
+T865	SQL/JSON item method: bigint()			YES	
+T866	SQL/JSON item method: boolean()			YES	
+T867	SQL/JSON item method: date()			YES	
+T868	SQL/JSON item method: decimal()			YES	
+T869	SQL/JSON item method: decimal() with precision and scale			YES	
+T870	SQL/JSON item method: integer()			YES	
+T871	SQL/JSON item method: number()			YES	
+T872	SQL/JSON item method: string()			YES	
+T873	SQL/JSON item method: time()			YES	
+T874	SQL/JSON item method: time_tz()			YES	
+T875	SQL/JSON item method: time precision			YES	
+T876	SQL/JSON item method: timestamp()			YES	
+T877	SQL/JSON item method: timestamp_tz()			YES	
+T878	SQL/JSON item method: timestamp precision			YES	
 T879	JSON in equality operations			YES	with jsonb
 T880	JSON in grouping operations			YES	with jsonb
 T881	JSON in ordering operations			NO	with jsonb, partially supported
@@ -633,7 +632,7 @@ X034	XMLAgg			YES
 X035	XMLAgg: ORDER BY option			YES	
 X036	XMLComment			YES	
 X037	XMLPI			YES	
-X038	XMLText			NO	
+X038	XMLText			YES	supported except for RETURNING
 X040	Basic table mapping			YES	
 X041	Basic table mapping: null absent			YES	
 X042	Basic table mapping: null as nil			YES	

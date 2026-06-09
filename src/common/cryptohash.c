@@ -6,7 +6,7 @@
  * This is the set of in-core functions used when there are no other
  * alternative options like OpenSSL.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -44,7 +44,7 @@
 typedef enum pg_cryptohash_errno
 {
 	PG_CRYPTOHASH_ERROR_NONE = 0,
-	PG_CRYPTOHASH_ERROR_DEST_LEN
+	PG_CRYPTOHASH_ERROR_DEST_LEN,
 } pg_cryptohash_errno;
 
 /* Internal pg_cryptohash_ctx structure */

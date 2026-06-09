@@ -3,7 +3,7 @@
  * libpq_pipeline.c
  *		Verify libpq pipeline execution functionality
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -65,6 +65,11 @@ exit_nicely(PGconn *conn)
 }
 
 /*
+ * The following few functions are wrapped in macros to make the reported line
+ * number in an error match the line number of the invocation.
+ */
+
+/*
  * Print an error to stderr and terminate the program.
  */
 #define pg_fatal(...) pg_fatal_impl(__LINE__, __VA_ARGS__)
@@ -73,7 +78,6 @@ pg_attribute_noreturn()
 pg_fatal_impl(int line, const char *fmt,...)
 {
 	va_list		args;
-
 
 	fflush(stdout);
 
@@ -84,6 +88,321 @@ pg_fatal_impl(int line, const char *fmt,...)
 	Assert(fmt[strlen(fmt) - 1] != '\n');
 	fprintf(stderr, "\n");
 	exit(1);
+}
+
+/*
+ * Check that the query on the given connection got canceled.
+ */
+#define confirm_query_canceled(conn) confirm_query_canceled_impl(__LINE__, conn)
+static void
+confirm_query_canceled_impl(int line, PGconn *conn)
+{
+	PGresult   *res = NULL;
+
+	res = PQgetResult(conn);
+	if (res == NULL)
+		pg_fatal_impl(line, "PQgetResult returned null: %s",
+					  PQerrorMessage(conn));
+	if (PQresultStatus(res) != PGRES_FATAL_ERROR)
+		pg_fatal_impl(line, "query did not fail when it was expected");
+	if (strcmp(PQresultErrorField(res, PG_DIAG_SQLSTATE), "57014") != 0)
+		pg_fatal_impl(line, "query failed with a different error than cancellation: %s",
+					  PQerrorMessage(conn));
+	PQclear(res);
+
+	while (PQisBusy(conn))
+		PQconsumeInput(conn);
+}
+
+/*
+ * Using monitorConn, query pg_stat_activity to see that the connection with
+ * the given PID is either in the given state, or waiting on the given event
+ * (only one of them can be given).
+ */
+static void
+wait_for_connection_state(int line, PGconn *monitorConn, int procpid,
+						  char *state, char *event)
+{
+	const Oid	paramTypes[] = {INT4OID, TEXTOID};
+	const char *paramValues[2];
+	char	   *pidstr = psprintf("%d", procpid);
+
+	Assert((state == NULL) ^ (event == NULL));
+
+	paramValues[0] = pidstr;
+	paramValues[1] = state ? state : event;
+
+	while (true)
+	{
+		PGresult   *res;
+		char	   *value;
+
+		if (state != NULL)
+			res = PQexecParams(monitorConn,
+							   "SELECT count(*) FROM pg_stat_activity WHERE "
+							   "pid = $1 AND state = $2",
+							   2, paramTypes, paramValues, NULL, NULL, 0);
+		else
+			res = PQexecParams(monitorConn,
+							   "SELECT count(*) FROM pg_stat_activity WHERE "
+							   "pid = $1 AND wait_event = $2",
+							   2, paramTypes, paramValues, NULL, NULL, 0);
+
+		if (PQresultStatus(res) != PGRES_TUPLES_OK)
+			pg_fatal_impl(line, "could not query pg_stat_activity: %s", PQerrorMessage(monitorConn));
+		if (PQntuples(res) != 1)
+			pg_fatal_impl(line, "unexpected number of rows received: %d", PQntuples(res));
+		if (PQnfields(res) != 1)
+			pg_fatal_impl(line, "unexpected number of columns received: %d", PQnfields(res));
+		value = PQgetvalue(res, 0, 0);
+		if (strcmp(value, "0") != 0)
+		{
+			PQclear(res);
+			break;
+		}
+		PQclear(res);
+
+		/* wait 10ms before polling again */
+		pg_usleep(10000);
+	}
+
+	pfree(pidstr);
+}
+
+#define send_cancellable_query(conn, monitorConn) \
+	send_cancellable_query_impl(__LINE__, conn, monitorConn)
+static void
+send_cancellable_query_impl(int line, PGconn *conn, PGconn *monitorConn)
+{
+	const char *env_wait;
+	const Oid	paramTypes[1] = {INT4OID};
+
+	/*
+	 * Wait for the connection to be idle, so that our check for an active
+	 * connection below is reliable, instead of possibly seeing an outdated
+	 * state.
+	 */
+	wait_for_connection_state(line, monitorConn, PQbackendPID(conn), "idle", NULL);
+
+	env_wait = getenv("PG_TEST_TIMEOUT_DEFAULT");
+	if (env_wait == NULL)
+		env_wait = "180";
+
+	if (PQsendQueryParams(conn, "SELECT pg_sleep($1)", 1, paramTypes,
+						  &env_wait, NULL, NULL, 0) != 1)
+		pg_fatal_impl(line, "failed to send query: %s", PQerrorMessage(conn));
+
+	/*
+	 * Wait for the sleep to be active, because if the query is not running
+	 * yet, the cancel request that we send won't have any effect.
+	 */
+	wait_for_connection_state(line, monitorConn, PQbackendPID(conn), NULL, "PgSleep");
+}
+
+/*
+ * Create a new connection with the same conninfo as the given one.
+ */
+static PGconn *
+copy_connection(PGconn *conn)
+{
+	PGconn	   *copyConn;
+	PQconninfoOption *opts = PQconninfo(conn);
+	const char **keywords;
+	const char **vals;
+	int			nopts = 1;
+	int			i = 0;
+
+	for (PQconninfoOption *opt = opts; opt->keyword != NULL; ++opt)
+		nopts++;
+
+	keywords = pg_malloc(sizeof(char *) * nopts);
+	vals = pg_malloc(sizeof(char *) * nopts);
+
+	for (PQconninfoOption *opt = opts; opt->keyword != NULL; ++opt)
+	{
+		if (opt->val)
+		{
+			keywords[i] = opt->keyword;
+			vals[i] = opt->val;
+			i++;
+		}
+	}
+	keywords[i] = vals[i] = NULL;
+
+	copyConn = PQconnectdbParams(keywords, vals, false);
+
+	if (PQstatus(copyConn) != CONNECTION_OK)
+		pg_fatal("Connection to database failed: %s",
+				 PQerrorMessage(copyConn));
+
+	return copyConn;
+}
+
+/*
+ * Test query cancellation routines
+ */
+static void
+test_cancel(PGconn *conn)
+{
+	PGcancel   *cancel;
+	PGcancelConn *cancelConn;
+	PGconn	   *monitorConn;
+	char		errorbuf[256];
+
+	fprintf(stderr, "test cancellations... ");
+
+	if (PQsetnonblocking(conn, 1) != 0)
+		pg_fatal("failed to set nonblocking mode: %s", PQerrorMessage(conn));
+
+	/*
+	 * Make a separate connection to the database to monitor the query on the
+	 * main connection.
+	 */
+	monitorConn = copy_connection(conn);
+	Assert(PQstatus(monitorConn) == CONNECTION_OK);
+
+	/* test PQcancel */
+	send_cancellable_query(conn, monitorConn);
+	cancel = PQgetCancel(conn);
+	if (!PQcancel(cancel, errorbuf, sizeof(errorbuf)))
+		pg_fatal("failed to run PQcancel: %s", errorbuf);
+	confirm_query_canceled(conn);
+
+	/* PGcancel object can be reused for the next query */
+	send_cancellable_query(conn, monitorConn);
+	if (!PQcancel(cancel, errorbuf, sizeof(errorbuf)))
+		pg_fatal("failed to run PQcancel: %s", errorbuf);
+	confirm_query_canceled(conn);
+
+	PQfreeCancel(cancel);
+
+	/* test PQrequestCancel */
+	send_cancellable_query(conn, monitorConn);
+	if (!PQrequestCancel(conn))
+		pg_fatal("failed to run PQrequestCancel: %s", PQerrorMessage(conn));
+	confirm_query_canceled(conn);
+
+	/* test PQcancelBlocking */
+	send_cancellable_query(conn, monitorConn);
+	cancelConn = PQcancelCreate(conn);
+	if (!PQcancelBlocking(cancelConn))
+		pg_fatal("failed to run PQcancelBlocking: %s", PQcancelErrorMessage(cancelConn));
+	confirm_query_canceled(conn);
+	PQcancelFinish(cancelConn);
+
+	/* test PQcancelCreate and then polling with PQcancelPoll */
+	send_cancellable_query(conn, monitorConn);
+	cancelConn = PQcancelCreate(conn);
+	if (!PQcancelStart(cancelConn))
+		pg_fatal("bad cancel connection: %s", PQcancelErrorMessage(cancelConn));
+	while (true)
+	{
+		struct timeval tv;
+		fd_set		input_mask;
+		fd_set		output_mask;
+		PostgresPollingStatusType pollres = PQcancelPoll(cancelConn);
+		int			sock = PQcancelSocket(cancelConn);
+
+		if (pollres == PGRES_POLLING_OK)
+			break;
+
+		FD_ZERO(&input_mask);
+		FD_ZERO(&output_mask);
+		switch (pollres)
+		{
+			case PGRES_POLLING_READING:
+				pg_debug("polling for reads\n");
+				FD_SET(sock, &input_mask);
+				break;
+			case PGRES_POLLING_WRITING:
+				pg_debug("polling for writes\n");
+				FD_SET(sock, &output_mask);
+				break;
+			default:
+				pg_fatal("bad cancel connection: %s", PQcancelErrorMessage(cancelConn));
+		}
+
+		if (sock < 0)
+			pg_fatal("sock did not exist: %s", PQcancelErrorMessage(cancelConn));
+
+		tv.tv_sec = 3;
+		tv.tv_usec = 0;
+
+		while (true)
+		{
+			if (select(sock + 1, &input_mask, &output_mask, NULL, &tv) < 0)
+			{
+				if (errno == EINTR)
+					continue;
+				pg_fatal("select() failed: %m");
+			}
+			break;
+		}
+	}
+	if (PQcancelStatus(cancelConn) != CONNECTION_OK)
+		pg_fatal("unexpected cancel connection status: %s", PQcancelErrorMessage(cancelConn));
+	confirm_query_canceled(conn);
+
+	/*
+	 * test PQcancelReset works on the cancel connection and it can be reused
+	 * afterwards
+	 */
+	PQcancelReset(cancelConn);
+
+	send_cancellable_query(conn, monitorConn);
+	if (!PQcancelStart(cancelConn))
+		pg_fatal("bad cancel connection: %s", PQcancelErrorMessage(cancelConn));
+	while (true)
+	{
+		struct timeval tv;
+		fd_set		input_mask;
+		fd_set		output_mask;
+		PostgresPollingStatusType pollres = PQcancelPoll(cancelConn);
+		int			sock = PQcancelSocket(cancelConn);
+
+		if (pollres == PGRES_POLLING_OK)
+			break;
+
+		FD_ZERO(&input_mask);
+		FD_ZERO(&output_mask);
+		switch (pollres)
+		{
+			case PGRES_POLLING_READING:
+				pg_debug("polling for reads\n");
+				FD_SET(sock, &input_mask);
+				break;
+			case PGRES_POLLING_WRITING:
+				pg_debug("polling for writes\n");
+				FD_SET(sock, &output_mask);
+				break;
+			default:
+				pg_fatal("bad cancel connection: %s", PQcancelErrorMessage(cancelConn));
+		}
+
+		if (sock < 0)
+			pg_fatal("sock did not exist: %s", PQcancelErrorMessage(cancelConn));
+
+		tv.tv_sec = 3;
+		tv.tv_usec = 0;
+
+		while (true)
+		{
+			if (select(sock + 1, &input_mask, &output_mask, NULL, &tv) < 0)
+			{
+				if (errno == EINTR)
+					continue;
+				pg_fatal("select() failed: %m");
+			}
+			break;
+		}
+	}
+	if (PQcancelStatus(cancelConn) != CONNECTION_OK)
+		pg_fatal("unexpected cancel connection status: %s", PQcancelErrorMessage(cancelConn));
+	confirm_query_canceled(conn);
+
+	PQcancelFinish(cancelConn);
+
+	fprintf(stderr, "ok\n");
 }
 
 static void
@@ -162,6 +481,7 @@ test_multi_pipelines(PGconn *conn)
 	if (PQenterPipelineMode(conn) != 1)
 		pg_fatal("failed to enter pipeline mode: %s", PQerrorMessage(conn));
 
+	/* first pipeline */
 	if (PQsendQueryParams(conn, "SELECT $1", 1, dummy_param_oids,
 						  dummy_params, NULL, NULL, 0) != 1)
 		pg_fatal("dispatching first SELECT failed: %s", PQerrorMessage(conn));
@@ -169,14 +489,27 @@ test_multi_pipelines(PGconn *conn)
 	if (PQpipelineSync(conn) != 1)
 		pg_fatal("Pipeline sync failed: %s", PQerrorMessage(conn));
 
+	/* second pipeline */
 	if (PQsendQueryParams(conn, "SELECT $1", 1, dummy_param_oids,
 						  dummy_params, NULL, NULL, 0) != 1)
 		pg_fatal("dispatching second SELECT failed: %s", PQerrorMessage(conn));
+
+	/* Skip flushing once. */
+	if (PQsendPipelineSync(conn) != 1)
+		pg_fatal("Pipeline sync failed: %s", PQerrorMessage(conn));
+
+	/* third pipeline */
+	if (PQsendQueryParams(conn, "SELECT $1", 1, dummy_param_oids,
+						  dummy_params, NULL, NULL, 0) != 1)
+		pg_fatal("dispatching third SELECT failed: %s", PQerrorMessage(conn));
 
 	if (PQpipelineSync(conn) != 1)
 		pg_fatal("pipeline sync failed: %s", PQerrorMessage(conn));
 
 	/* OK, start processing the results */
+
+	/* first pipeline */
+
 	res = PQgetResult(conn);
 	if (res == NULL)
 		pg_fatal("PQgetResult returned null when there's a pipeline item: %s",
@@ -213,6 +546,35 @@ test_multi_pipelines(PGconn *conn)
 
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 		pg_fatal("Unexpected result code %s from second pipeline item",
+				 PQresStatus(PQresultStatus(res)));
+	PQclear(res);
+	res = NULL;
+
+	if (PQgetResult(conn) != NULL)
+		pg_fatal("PQgetResult returned something extra after first result");
+
+	if (PQexitPipelineMode(conn) != 0)
+		pg_fatal("exiting pipeline mode after query but before sync succeeded incorrectly");
+
+	res = PQgetResult(conn);
+	if (res == NULL)
+		pg_fatal("PQgetResult returned null when sync result expected: %s",
+				 PQerrorMessage(conn));
+
+	if (PQresultStatus(res) != PGRES_PIPELINE_SYNC)
+		pg_fatal("Unexpected result code %s instead of sync result, error: %s",
+				 PQresStatus(PQresultStatus(res)), PQerrorMessage(conn));
+	PQclear(res);
+
+	/* third pipeline */
+
+	res = PQgetResult(conn);
+	if (res == NULL)
+		pg_fatal("PQgetResult returned null when there's a pipeline item: %s",
+				 PQerrorMessage(conn));
+
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		pg_fatal("Unexpected result code %s from third pipeline item",
 				 PQresStatus(PQresultStatus(res)));
 
 	res = PQgetResult(conn);
@@ -281,7 +643,7 @@ test_nosync(PGconn *conn)
 		tv.tv_usec = 0;
 		if (select(sock + 1, &input_mask, NULL, NULL, &tv) < 0)
 		{
-			fprintf(stderr, "select() failed: %s\n", strerror(errno));
+			fprintf(stderr, "select() failed: %m\n");
 			exit_nicely(conn);
 		}
 		if (FD_ISSET(sock, &input_mask) && PQconsumeInput(conn) != 1)
@@ -639,7 +1001,7 @@ enum PipelineInsertStep
 	BI_INSERT_ROWS,
 	BI_COMMIT_TX,
 	BI_SYNC,
-	BI_DONE
+	BI_DONE,
 };
 
 static void
@@ -732,7 +1094,7 @@ test_pipelined_insert(PGconn *conn, int n_rows)
 
 		if (select(sock + 1, &input_mask, &output_mask, NULL, NULL) < 0)
 		{
-			fprintf(stderr, "select() failed: %s\n", strerror(errno));
+			fprintf(stderr, "select() failed: %m\n");
 			exit_nicely(conn);
 		}
 
@@ -929,7 +1291,7 @@ test_prepared(PGconn *conn)
 	if (PQresultStatus(res) != PGRES_COMMAND_OK)
 		pg_fatal("expected COMMAND_OK, got %s", PQresStatus(PQresultStatus(res)));
 	if (PQnfields(res) != lengthof(expected_oids))
-		pg_fatal("expected %zd columns, got %d",
+		pg_fatal("expected %zu columns, got %d",
 				 lengthof(expected_oids), PQnfields(res));
 	for (int i = 0; i < PQnfields(res); i++)
 	{
@@ -947,9 +1309,42 @@ test_prepared(PGconn *conn)
 	if (PQresultStatus(res) != PGRES_PIPELINE_SYNC)
 		pg_fatal("expected PGRES_PIPELINE_SYNC, got %s", PQresStatus(PQresultStatus(res)));
 
+	fprintf(stderr, "closing statement..");
+	if (PQsendClosePrepared(conn, "select_one") != 1)
+		pg_fatal("PQsendClosePrepared failed: %s", PQerrorMessage(conn));
+	if (PQpipelineSync(conn) != 1)
+		pg_fatal("pipeline sync failed: %s", PQerrorMessage(conn));
+
+	res = PQgetResult(conn);
+	if (res == NULL)
+		pg_fatal("expected non-NULL result");
+	if (PQresultStatus(res) != PGRES_COMMAND_OK)
+		pg_fatal("expected COMMAND_OK, got %s", PQresStatus(PQresultStatus(res)));
+	PQclear(res);
+	res = PQgetResult(conn);
+	if (res != NULL)
+		pg_fatal("expected NULL result");
+	res = PQgetResult(conn);
+	if (PQresultStatus(res) != PGRES_PIPELINE_SYNC)
+		pg_fatal("expected PGRES_PIPELINE_SYNC, got %s", PQresStatus(PQresultStatus(res)));
+
 	if (PQexitPipelineMode(conn) != 1)
 		pg_fatal("could not exit pipeline mode: %s", PQerrorMessage(conn));
 
+	/* Now that it's closed we should get an error when describing */
+	res = PQdescribePrepared(conn, "select_one");
+	if (PQresultStatus(res) != PGRES_FATAL_ERROR)
+		pg_fatal("expected FATAL_ERROR, got %s", PQresStatus(PQresultStatus(res)));
+
+	/*
+	 * Also test the blocking close, this should not fail since closing a
+	 * non-existent prepared statement is a no-op
+	 */
+	res = PQclosePrepared(conn, "select_one");
+	if (PQresultStatus(res) != PGRES_COMMAND_OK)
+		pg_fatal("expected COMMAND_OK, got %s", PQresStatus(PQresultStatus(res)));
+
+	fprintf(stderr, "creating portal... ");
 	PQexec(conn, "BEGIN");
 	PQexec(conn, "DECLARE cursor_one CURSOR FOR SELECT 1");
 	PQenterPipelineMode(conn);
@@ -975,8 +1370,40 @@ test_prepared(PGconn *conn)
 	if (PQresultStatus(res) != PGRES_PIPELINE_SYNC)
 		pg_fatal("expected PGRES_PIPELINE_SYNC, got %s", PQresStatus(PQresultStatus(res)));
 
+	fprintf(stderr, "closing portal... ");
+	if (PQsendClosePortal(conn, "cursor_one") != 1)
+		pg_fatal("PQsendClosePortal failed: %s", PQerrorMessage(conn));
+	if (PQpipelineSync(conn) != 1)
+		pg_fatal("pipeline sync failed: %s", PQerrorMessage(conn));
+
+	res = PQgetResult(conn);
+	if (res == NULL)
+		pg_fatal("expected non-NULL result");
+	if (PQresultStatus(res) != PGRES_COMMAND_OK)
+		pg_fatal("expected COMMAND_OK, got %s", PQresStatus(PQresultStatus(res)));
+	PQclear(res);
+	res = PQgetResult(conn);
+	if (res != NULL)
+		pg_fatal("expected NULL result");
+	res = PQgetResult(conn);
+	if (PQresultStatus(res) != PGRES_PIPELINE_SYNC)
+		pg_fatal("expected PGRES_PIPELINE_SYNC, got %s", PQresStatus(PQresultStatus(res)));
+
 	if (PQexitPipelineMode(conn) != 1)
 		pg_fatal("could not exit pipeline mode: %s", PQerrorMessage(conn));
+
+	/* Now that it's closed we should get an error when describing */
+	res = PQdescribePortal(conn, "cursor_one");
+	if (PQresultStatus(res) != PGRES_FATAL_ERROR)
+		pg_fatal("expected FATAL_ERROR, got %s", PQresStatus(PQresultStatus(res)));
+
+	/*
+	 * Also test the blocking close, this should not fail since closing a
+	 * non-existent portal is a no-op
+	 */
+	res = PQclosePortal(conn, "cursor_one");
+	if (PQresultStatus(res) != PGRES_COMMAND_OK)
+		pg_fatal("expected COMMAND_OK, got %s", PQresStatus(PQresultStatus(res)));
 
 	fprintf(stderr, "ok\n");
 }
@@ -1289,6 +1716,46 @@ test_singlerowmode(PGconn *conn)
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 		pg_fatal("Expected PGRES_TUPLES_OK, got %s",
 				 PQresStatus(PQresultStatus(res)));
+	if (PQgetResult(conn) != NULL)
+		pg_fatal("expected NULL result");
+
+	/*
+	 * Try chunked mode as well; make sure that it correctly delivers a
+	 * partial final chunk.
+	 */
+	if (PQsendQueryParams(conn, "SELECT generate_series(1, 5)",
+						  0, NULL, NULL, NULL, NULL, 0) != 1)
+		pg_fatal("failed to send query: %s",
+				 PQerrorMessage(conn));
+	if (PQsendFlushRequest(conn) != 1)
+		pg_fatal("failed to send flush request");
+	if (PQsetChunkedRowsMode(conn, 3) != 1)
+		pg_fatal("PQsetChunkedRowsMode() failed");
+	res = PQgetResult(conn);
+	if (res == NULL)
+		pg_fatal("unexpected NULL");
+	if (PQresultStatus(res) != PGRES_TUPLES_CHUNK)
+		pg_fatal("Expected PGRES_TUPLES_CHUNK, got %s: %s",
+				 PQresStatus(PQresultStatus(res)),
+				 PQerrorMessage(conn));
+	if (PQntuples(res) != 3)
+		pg_fatal("Expected 3 rows, got %d", PQntuples(res));
+	res = PQgetResult(conn);
+	if (res == NULL)
+		pg_fatal("unexpected NULL");
+	if (PQresultStatus(res) != PGRES_TUPLES_CHUNK)
+		pg_fatal("Expected PGRES_TUPLES_CHUNK, got %s",
+				 PQresStatus(PQresultStatus(res)));
+	if (PQntuples(res) != 2)
+		pg_fatal("Expected 2 rows, got %d", PQntuples(res));
+	res = PQgetResult(conn);
+	if (res == NULL)
+		pg_fatal("unexpected NULL");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		pg_fatal("Expected PGRES_TUPLES_OK, got %s",
+				 PQresStatus(PQresultStatus(res)));
+	if (PQntuples(res) != 0)
+		pg_fatal("Expected 0 rows, got %d", PQntuples(res));
 	if (PQgetResult(conn) != NULL)
 		pg_fatal("expected NULL result");
 
@@ -1681,6 +2148,7 @@ usage(const char *progname)
 static void
 print_test_list(void)
 {
+	printf("cancel\n");
 	printf("disallowed_in_pipeline\n");
 	printf("multi_pipelines\n");
 	printf("nosync\n");
@@ -1759,10 +2227,10 @@ main(int argc, char **argv)
 
 	res = PQexec(conn, "SET lc_messages TO \"C\"");
 	if (PQresultStatus(res) != PGRES_COMMAND_OK)
-		pg_fatal("failed to set lc_messages: %s", PQerrorMessage(conn));
+		pg_fatal("failed to set \"lc_messages\": %s", PQerrorMessage(conn));
 	res = PQexec(conn, "SET debug_parallel_query = off");
 	if (PQresultStatus(res) != PGRES_COMMAND_OK)
-		pg_fatal("failed to set debug_parallel_query: %s", PQerrorMessage(conn));
+		pg_fatal("failed to set \"debug_parallel_query\": %s", PQerrorMessage(conn));
 
 	/* Set the trace file, if requested */
 	if (tracefile != NULL)
@@ -1782,7 +2250,9 @@ main(int argc, char **argv)
 						PQTRACE_SUPPRESS_TIMESTAMPS | PQTRACE_REGRESS_MODE);
 	}
 
-	if (strcmp(testname, "disallowed_in_pipeline") == 0)
+	if (strcmp(testname, "cancel") == 0)
+		test_cancel(conn);
+	else if (strcmp(testname, "disallowed_in_pipeline") == 0)
 		test_disallowed_in_pipeline(conn);
 	else if (strcmp(testname, "multi_pipelines") == 0)
 		test_multi_pipelines(conn);

@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 # test/ is entered via top-level meson.build, that way it can use the default
 # args for executables (which depend on libpq).
@@ -6,6 +6,7 @@
 libpq_sources = files(
   'fe-auth-scram.c',
   'fe-auth.c',
+  'fe-cancel.c',
   'fe-connect.c',
   'fe-exec.c',
   'fe-lobj.c',
@@ -53,9 +54,8 @@ libpq_c_args = ['-DSO_MAJOR_VERSION=5']
 #    libpq_st, and {pgport,common}_shlib for libpq_sh
 #
 # We could try to avoid building the source files twice, but it probably adds
-# more complexity than its worth (AIX doesn't support link_whole yet, reusing
-# object files requires also linking to the library on windows or breaks
-# precompiled headers).
+# more complexity than its worth (reusing object files requires also linking
+# to the library on windows or breaks precompiled headers).
 libpq_st = static_library('libpq',
   libpq_sources,
   include_directories: [libpq_inc],
@@ -118,8 +118,13 @@ tests += {
       't/002_api.pl',
       't/003_load_balance_host_list.pl',
       't/004_load_balance_dns.pl',
+      't/005_negotiate_encryption.pl',
     ],
-    'env': {'with_ssl': ssl_library},
+    'env': {
+      'with_ssl': ssl_library,
+      'with_gssapi': gssapi.found() ? 'yes' : 'no',
+      'with_krb_srvnam': 'postgres',
+    },
   },
 }
 

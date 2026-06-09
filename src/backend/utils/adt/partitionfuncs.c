@@ -3,7 +3,7 @@
  * partitionfuncs.c
  *	  Functions for accessing partition-related metadata
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -19,7 +19,6 @@
 #include "catalog/partition.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_inherits.h"
-#include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "utils/fmgrprotos.h"
 #include "utils/lsyscache.h"

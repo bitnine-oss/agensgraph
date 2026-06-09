@@ -4,7 +4,7 @@
  * repl_scanner.l
  *	  a lexical scanner for the replication commands
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -73,7 +73,7 @@ static void addlitchar(unsigned char ychar);
 %x xd
 %x xq
 
-space			[ \t\n\r\f]
+space			[ \t\n\r\f\v]
 
 quote			'
 quotestop		{quote}
@@ -125,6 +125,7 @@ TIMELINE			{ return K_TIMELINE; }
 START_REPLICATION	{ return K_START_REPLICATION; }
 CREATE_REPLICATION_SLOT		{ return K_CREATE_REPLICATION_SLOT; }
 DROP_REPLICATION_SLOT		{ return K_DROP_REPLICATION_SLOT; }
+ALTER_REPLICATION_SLOT		{ return K_ALTER_REPLICATION_SLOT; }
 TIMELINE_HISTORY	{ return K_TIMELINE_HISTORY; }
 PHYSICAL			{ return K_PHYSICAL; }
 RESERVE_WAL			{ return K_RESERVE_WAL; }
@@ -136,6 +137,7 @@ EXPORT_SNAPSHOT		{ return K_EXPORT_SNAPSHOT; }
 NOEXPORT_SNAPSHOT	{ return K_NOEXPORT_SNAPSHOT; }
 USE_SNAPSHOT		{ return K_USE_SNAPSHOT; }
 WAIT				{ return K_WAIT; }
+UPLOAD_MANIFEST		{ return K_UPLOAD_MANIFEST; }
 
 {space}+		{ /* do nothing */ }
 
@@ -301,8 +303,10 @@ replication_scanner_is_replication_command(void)
 		case K_START_REPLICATION:
 		case K_CREATE_REPLICATION_SLOT:
 		case K_DROP_REPLICATION_SLOT:
+		case K_ALTER_REPLICATION_SLOT:
 		case K_READ_REPLICATION_SLOT:
 		case K_TIMELINE_HISTORY:
+		case K_UPLOAD_MANIFEST:
 		case K_SHOW:
 			/* Yes; push back the first token so we can parse later. */
 			repl_pushed_back_token = first_token;

@@ -734,7 +734,7 @@ cache_label(FmgrInfo *flinfo, uint16 labid)
 		flinfo->fn_extra = palloc(sizeof(*my_extra));
 		my_extra = (LabelOutData *) flinfo->fn_extra;
 		my_extra->label_labid = 0;
-		MemSetLoop(NameStr(my_extra->label), '\0', sizeof(my_extra->label));
+		MemSet(NameStr(my_extra->label), '\0', sizeof(my_extra->label));
 	}
 
 	if (my_extra->label_labid != labid)

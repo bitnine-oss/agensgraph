@@ -3,7 +3,7 @@
  * mcxtfuncs.c
  *	  Functions to show backend memory context.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -16,7 +16,6 @@
 #include "postgres.h"
 
 #include "funcapi.h"
-#include "miscadmin.h"
 #include "mb/pg_wchar.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
@@ -146,21 +145,13 @@ pg_log_backend_memory_contexts(PG_FUNCTION_ARGS)
 {
 	int			pid = PG_GETARG_INT32(0);
 	PGPROC	   *proc;
-	BackendId	backendId = InvalidBackendId;
-
-	proc = BackendPidGetProc(pid);
+	ProcNumber	procNumber = INVALID_PROC_NUMBER;
 
 	/*
 	 * See if the process with given pid is a backend or an auxiliary process.
-	 *
-	 * If the given process is a backend, use its backend id in
-	 * SendProcSignal() later to speed up the operation. Otherwise, don't do
-	 * that because auxiliary processes (except the startup process) don't
-	 * have a valid backend id.
 	 */
-	if (proc != NULL)
-		backendId = proc->backendId;
-	else
+	proc = BackendPidGetProc(pid);
+	if (proc == NULL)
 		proc = AuxiliaryPidGetProc(pid);
 
 	/*
@@ -183,7 +174,8 @@ pg_log_backend_memory_contexts(PG_FUNCTION_ARGS)
 		PG_RETURN_BOOL(false);
 	}
 
-	if (SendProcSignal(pid, PROCSIG_LOG_MEMORY_CONTEXT, backendId) < 0)
+	procNumber = GetNumberFromPGProc(proc);
+	if (SendProcSignal(pid, PROCSIG_LOG_MEMORY_CONTEXT, procNumber) < 0)
 	{
 		/* Again, just a warning to allow loops */
 		ereport(WARNING,

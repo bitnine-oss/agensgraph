@@ -3,7 +3,7 @@
  * xlogbackup.h
  *		Definitions for internals of base backups.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -28,6 +28,8 @@ typedef struct BackupState
 	XLogRecPtr	checkpointloc;	/* last checkpoint location */
 	pg_time_t	starttime;		/* backup start time */
 	bool		started_in_recovery;	/* backup started in recovery? */
+	XLogRecPtr	istartpoint;	/* incremental based on backup at this LSN */
+	TimeLineID	istarttli;		/* incremental based on backup on this TLI */
 
 	/* Fields saved at the end of backup */
 	XLogRecPtr	stoppoint;		/* backup stop WAL location */

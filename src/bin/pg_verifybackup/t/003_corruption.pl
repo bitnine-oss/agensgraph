@@ -1,11 +1,12 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Verify that various forms of corruption are detected by pg_verifybackup.
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use File::Path qw(rmtree);
+use File::Copy;
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -69,6 +70,12 @@ my @scenario = (
 		'fails_like' => qr/checksum mismatch for file/
 	},
 	{
+		'name' => 'system_identifier',
+		'mutilate' => \&mutilate_system_identifier,
+		'fails_like' =>
+		  qr/manifest system identifier is .*, but control file has/
+	},
+	{
 		'name' => 'bad_manifest',
 		'mutilate' => \&mutilate_bad_manifest,
 		'fails_like' => qr/manifest checksum mismatch/
@@ -101,7 +108,8 @@ for my $scenario (@scenario)
   SKIP:
 	{
 		skip "unix-style permissions not supported on Windows", 4
-		  if $scenario->{'skip_on_windows'} && $windows_os;
+		  if ($scenario->{'skip_on_windows'}
+			&& ($windows_os || $Config::Config{osname} eq 'cygwin'));
 
 		# Take a backup and check that it verifies OK.
 		my $backup_path = $primary->backup_dir . '/' . $name;
@@ -216,7 +224,7 @@ sub mutilate_append_to_file
 sub mutilate_truncate_file
 {
 	my ($backup_path) = @_;
-	my $pathname = "$backup_path/global/pg_control";
+	my $pathname = "$backup_path/pg_hba.conf";
 	open(my $fh, '>', $pathname) || die "open $pathname: $!";
 	close($fh);
 	return;
@@ -233,6 +241,25 @@ sub mutilate_replace_file
 	open(my $fh, '>', $pathname) || die "open $pathname: $!";
 	print $fh 'q' x length($contents);
 	close($fh);
+	return;
+}
+
+# Copy manifest of other backups to demonstrate the case where the wrong
+# manifest is referred
+sub mutilate_system_identifier
+{
+	my ($backup_path) = @_;
+
+	# Set up another new database instance with different system identifier and
+	# make backup
+	my $node = PostgreSQL::Test::Cluster->new('node');
+	$node->init(force_initdb => 1, allows_streaming => 1);
+	$node->start;
+	$node->backup('backup2');
+	move($node->backup_dir . '/backup2/backup_manifest',
+		$backup_path . '/backup_manifest')
+	  or BAIL_OUT "could not copy manifest to $backup_path";
+	$node->teardown_node(fail_ok => 1);
 	return;
 }
 

@@ -21,7 +21,6 @@ LDFLAGS_INTERNAL += -L$(top_builddir)/src/fe_utils -lpgfeutils $(libpq_pgport)
 
 OBJS = \
 	$(WIN32RES) \
-	parse_manifest.o \
 	pg_verifybackup.o
 
 all: pg_verifybackup
@@ -38,7 +37,7 @@ installdirs:
 uninstall:
 	rm -f '$(DESTDIR)$(bindir)/pg_verifybackup$(X)'
 
-clean distclean maintainer-clean:
+clean distclean:
 	rm -f pg_verifybackup$(X) $(OBJS)
 	rm -rf tmp_check
 

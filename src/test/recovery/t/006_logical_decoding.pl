@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Testing of logical decoding using SQL interface and/or pg_recvlogical
 #
@@ -7,7 +7,7 @@
 # is for work that doesn't fit well there, like where server restarts
 # are required.
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -70,7 +70,7 @@ is(scalar(my @foobar = split /^/m, $result),
 # If we immediately crash the server we might lose the progress we just made
 # and replay the same changes again. But a clean shutdown should never repeat
 # the same changes when we use the SQL decoding interface.
-$node_primary->restart('fast');
+$node_primary->restart;
 
 # There are no new writes, so the result should be empty.
 $result = $node_primary->safe_psql('postgres',
@@ -172,9 +172,10 @@ is($node_primary->slot('otherdb_slot')->{'slot_name'},
 	undef, 'logical slot was actually dropped with DB');
 
 # Test logical slot advancing and its durability.
+# Passing failover=true (last arg) should not have any impact on advancing.
 my $logical_slot = 'logical_slot';
 $node_primary->safe_psql('postgres',
-	"SELECT pg_create_logical_replication_slot('$logical_slot', 'test_decoding', false);"
+	"SELECT pg_create_logical_replication_slot('$logical_slot', 'test_decoding', false, false, true);"
 );
 $node_primary->psql(
 	'postgres', "

@@ -3,7 +3,7 @@
  * functions.c
  *	  Execution of SQL-language functions
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -59,7 +59,7 @@ typedef struct
  */
 typedef enum
 {
-	F_EXEC_START, F_EXEC_RUN, F_EXEC_DONE
+	F_EXEC_START, F_EXEC_RUN, F_EXEC_DONE,
 } ExecStatus;
 
 typedef struct execution_state
@@ -747,6 +747,7 @@ init_sql_fcache(FunctionCallInfo fcinfo, Oid collation, bool lazyEvalOK)
 	fcache->returnsTuple = check_sql_fn_retval(queryTree_list,
 											   rettype,
 											   rettupdesc,
+											   procedureStruct->prokind,
 											   false,
 											   &resulttlist);
 
@@ -800,7 +801,7 @@ init_sql_fcache(FunctionCallInfo fcinfo, Oid collation, bool lazyEvalOK)
 											  lazyEvalOK);
 
 	/* Mark fcache with time of creation to show it's valid */
-	fcache->lxid = MyProc->lxid;
+	fcache->lxid = MyProc->vxid.lxid;
 	fcache->subxid = GetCurrentSubTransactionId();
 
 	ReleaseSysCache(procedureTuple);
@@ -1082,7 +1083,7 @@ fmgr_sql(PG_FUNCTION_ARGS)
 
 	if (fcache != NULL)
 	{
-		if (fcache->lxid != MyProc->lxid ||
+		if (fcache->lxid != MyProc->vxid.lxid ||
 			!SubTransactionIsActive(fcache->subxid))
 		{
 			/* It's stale; unlink and delete */
@@ -1607,6 +1608,7 @@ check_sql_fn_statements(List *queryTreeLists)
 bool
 check_sql_fn_retval(List *queryTreeLists,
 					Oid rettype, TupleDesc rettupdesc,
+					char prokind,
 					bool insertDroppedCols,
 					List **resultTargetList)
 {
@@ -1626,7 +1628,7 @@ check_sql_fn_retval(List *queryTreeLists,
 
 	/*
 	 * If it's declared to return VOID, we don't care what's in the function.
-	 * (This takes care of the procedure case, as well.)
+	 * (This takes care of procedures with no output parameters, as well.)
 	 */
 	if (rettype == VOIDOID)
 		return false;
@@ -1661,8 +1663,8 @@ check_sql_fn_retval(List *queryTreeLists,
 
 	/*
 	 * If it's a plain SELECT, it returns whatever the targetlist says.
-	 * Otherwise, if it's INSERT/UPDATE/DELETE with RETURNING, it returns
-	 * that. Otherwise, the function return type must be VOID.
+	 * Otherwise, if it's INSERT/UPDATE/DELETE/MERGE with RETURNING, it
+	 * returns that. Otherwise, the function return type must be VOID.
 	 *
 	 * Note: eventually replace this test with QueryReturnsTuples?	We'd need
 	 * a more general method of determining the output type, though.  Also, it
@@ -1680,7 +1682,8 @@ check_sql_fn_retval(List *queryTreeLists,
 	else if (parse &&
 			 (parse->commandType == CMD_INSERT ||
 			  parse->commandType == CMD_UPDATE ||
-			  parse->commandType == CMD_DELETE) &&
+			  parse->commandType == CMD_DELETE ||
+			  parse->commandType == CMD_MERGE) &&
 			 parse->returningList)
 	{
 		tlist = parse->returningList;
@@ -1694,7 +1697,7 @@ check_sql_fn_retval(List *queryTreeLists,
 				(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 				 errmsg("return type mismatch in function declared to return %s",
 						format_type_be(rettype)),
-				 errdetail("Function's final statement must be SELECT or INSERT/UPDATE/DELETE RETURNING.")));
+				 errdetail("Function's final statement must be SELECT or INSERT/UPDATE/DELETE/MERGE RETURNING.")));
 		return false;			/* keep compiler quiet */
 	}
 
@@ -1781,8 +1784,13 @@ check_sql_fn_retval(List *queryTreeLists,
 		 * or not the record type really matches.  For the moment we rely on
 		 * runtime type checking to catch any discrepancy, but it'd be nice to
 		 * do better at parse time.
+		 *
+		 * We must *not* do this for a procedure, however.  Procedures with
+		 * output parameter(s) have rettype RECORD, and the CALL code expects
+		 * to get results corresponding to the list of output parameters, even
+		 * when there's just one parameter that's composite.
 		 */
-		if (tlistlen == 1)
+		if (tlistlen == 1 && prokind != PROKIND_PROCEDURE)
 		{
 			TargetEntry *tle = (TargetEntry *) linitial(tlist);
 

@@ -6,7 +6,7 @@
  * archive_command GUC) to copy write-ahead log files.  It is used as the
  * default, but other modules may define their own custom archiving logic.
  *
- * Copyright (c) 2022-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2022-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/archive/shell_archive.c
@@ -45,7 +45,12 @@ shell_archive_init(void)
 static bool
 shell_archive_configured(ArchiveModuleState *state)
 {
-	return XLogArchiveCommand[0] != '\0';
+	if (XLogArchiveCommand[0] != '\0')
+		return true;
+
+	arch_module_check_errdetail("%s is not set.",
+								"archive_command");
+	return false;
 }
 
 static bool
@@ -65,9 +70,6 @@ shell_archive_file(ArchiveModuleState *state, const char *file,
 	xlogarchcmd = replace_percent_placeholders(XLogArchiveCommand,
 											   "archive_command", "fp",
 											   file, nativePath);
-
-	if (nativePath)
-		pfree(nativePath);
 
 	ereport(DEBUG3,
 			(errmsg_internal("executing archive command \"%s\"",
@@ -123,10 +125,10 @@ shell_archive_file(ArchiveModuleState *state, const char *file,
 					 errdetail("The failed archive command was: %s",
 							   xlogarchcmd)));
 		}
+		pfree(xlogarchcmd);
 
 		return false;
 	}
-
 	pfree(xlogarchcmd);
 
 	elog(DEBUG1, "archived write-ahead log file \"%s\"", file);

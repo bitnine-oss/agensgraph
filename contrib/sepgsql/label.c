@@ -4,7 +4,7 @@
  *
  * Routines to support SELinux labels (security context)
  *
- * Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *
  * -------------------------------------------------------------------------
  */
@@ -67,7 +67,7 @@ typedef struct
 {
 	SubTransactionId subid;
 	char	   *label;
-}			pending_label;
+} pending_label;
 
 /*
  * sepgsql_get_client_label

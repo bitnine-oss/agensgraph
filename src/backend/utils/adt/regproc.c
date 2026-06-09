@@ -8,7 +8,7 @@
  * special I/O conversion routines.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1218,6 +1218,26 @@ to_regtype(PG_FUNCTION_ARGS)
 									 &result))
 		PG_RETURN_NULL();
 	PG_RETURN_DATUM(result);
+}
+
+/*
+ * to_regtypemod	- converts "typename" to type modifier
+ *
+ * If the name is not found, we return NULL.
+ */
+Datum
+to_regtypemod(PG_FUNCTION_ARGS)
+{
+	char	   *typ_name = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	Oid			typid;
+	int32		typmod;
+	ErrorSaveContext escontext = {T_ErrorSaveContext};
+
+	/* We rely on parseTypeString to parse the input. */
+	if (!parseTypeString(typ_name, &typid, &typmod, (Node *) &escontext))
+		PG_RETURN_NULL();
+
+	PG_RETURN_INT32(typmod);
 }
 
 /*

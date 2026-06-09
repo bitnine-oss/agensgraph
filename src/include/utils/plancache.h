@@ -5,7 +5,7 @@
  *
  * See plancache.c for comments.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/plancache.h
@@ -31,7 +31,7 @@ typedef enum
 {
 	PLAN_CACHE_MODE_AUTO,
 	PLAN_CACHE_MODE_FORCE_GENERIC_PLAN,
-	PLAN_CACHE_MODE_FORCE_CUSTOM_PLAN
+	PLAN_CACHE_MODE_FORCE_CUSTOM_PLAN,
 }			PlanCacheMode;
 
 /* GUC parameter */
@@ -111,7 +111,7 @@ typedef struct CachedPlanSource
 	List	   *query_list;		/* list of Query nodes, or NIL if not valid */
 	List	   *relationOids;	/* OIDs of relations the queries depend on */
 	List	   *invalItems;		/* other dependencies, as PlanInvalItems */
-	struct OverrideSearchPath *search_path; /* search_path used for parsing
+	struct SearchPathMatcher *search_path;	/* search_path used for parsing
 											 * and planning */
 	MemoryContext query_context;	/* context holding the above, or NULL */
 	Oid			rewriteRoleId;	/* Role ID we did rewriting for */
@@ -187,6 +187,8 @@ typedef struct CachedExpression
 
 extern void InitPlanCache(void);
 extern void ResetPlanCache(void);
+
+extern void ReleaseAllPlanCacheRefsInOwner(ResourceOwner owner);
 
 extern CachedPlanSource *CreateCachedPlan(struct RawStmt *raw_parse_tree,
 										  const char *query_string,

@@ -8,7 +8,7 @@
  * None of this code is used during normal system operation.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/xlogutils.c
@@ -22,13 +22,10 @@
 #include "access/timeline.h"
 #include "access/xlogrecovery.h"
 #include "access/xlog_internal.h"
-#include "access/xlogprefetcher.h"
 #include "access/xlogutils.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "storage/fd.h"
 #include "storage/smgr.h"
-#include "utils/guc.h"
 #include "utils/hsearch.h"
 #include "utils/rel.h"
 
@@ -491,7 +488,7 @@ XLogReadBufferExtended(RelFileLocator rlocator, ForkNumber forknum,
 	}
 
 	/* Open the relation at smgr level */
-	smgr = smgropen(rlocator, InvalidBackendId);
+	smgr = smgropen(rlocator, INVALID_PROC_NUMBER);
 
 	/*
 	 * Create the target file if it doesn't already exist.  This lets us cope
@@ -524,7 +521,7 @@ XLogReadBufferExtended(RelFileLocator rlocator, ForkNumber forknum,
 		/* OK to extend the file */
 		/* we do this in recovery only - no rel-extension lock needed */
 		Assert(InRecovery);
-		buffer = ExtendBufferedRelTo(EB_SMGR(smgr, RELPERSISTENCE_PERMANENT),
+		buffer = ExtendBufferedRelTo(BMR_SMGR(smgr, RELPERSISTENCE_PERMANENT),
 									 forknum,
 									 NULL,
 									 EB_PERFORMING_RECOVERY |
@@ -598,7 +595,7 @@ CreateFakeRelcacheEntry(RelFileLocator rlocator)
 	 * We will never be working with temp rels during recovery or while
 	 * syncing WAL-skipped files.
 	 */
-	rel->rd_backend = InvalidBackendId;
+	rel->rd_backend = INVALID_PROC_NUMBER;
 
 	/* It must be a permanent table here */
 	rel->rd_rel->relpersistence = RELPERSISTENCE_PERMANENT;
@@ -616,7 +613,11 @@ CreateFakeRelcacheEntry(RelFileLocator rlocator)
 	rel->rd_lockInfo.lockRelId.dbId = rlocator.dbOid;
 	rel->rd_lockInfo.lockRelId.relId = rlocator.relNumber;
 
-	rel->rd_smgr = NULL;
+	/*
+	 * Set up a non-pinned SMgrRelation reference, so that we don't need to
+	 * worry about unpinning it on error.
+	 */
+	rel->rd_smgr = smgropen(rlocator, INVALID_PROC_NUMBER);
 
 	return rel;
 }
@@ -627,9 +628,6 @@ CreateFakeRelcacheEntry(RelFileLocator rlocator)
 void
 FreeFakeRelcacheEntry(Relation fakerel)
 {
-	/* make sure the fakerel is not referenced by the SmgrRelation anymore */
-	if (fakerel->rd_smgr != NULL)
-		smgrclearowner(&fakerel->rd_smgr, fakerel->rd_smgr);
 	pfree(fakerel);
 }
 
@@ -656,10 +654,10 @@ XLogDropDatabase(Oid dbid)
 	/*
 	 * This is unnecessarily heavy-handed, as it will close SMgrRelation
 	 * objects for other databases as well. DROP DATABASE occurs seldom enough
-	 * that it's not worth introducing a variant of smgrclose for just this
-	 * purpose. XXX: Or should we rather leave the smgr entries dangling?
+	 * that it's not worth introducing a variant of smgrdestroy for just this
+	 * purpose.
 	 */
-	smgrcloseall();
+	smgrdestroyall();
 
 	forget_invalid_pages_db(dbid);
 }
@@ -1006,12 +1004,7 @@ read_local_xlog_page_guts(XLogReaderState *state, XLogRecPtr targetPagePtr,
 		count = read_upto - targetPagePtr;
 	}
 
-	/*
-	 * Even though we just determined how much of the page can be validly read
-	 * as 'count', read the whole page anyway. It's guaranteed to be
-	 * zero-padded up to the page boundary if it's incomplete.
-	 */
-	if (!WALRead(state, cur_page, targetPagePtr, XLOG_BLCKSZ, tli,
+	if (!WALRead(state, cur_page, targetPagePtr, count, tli,
 				 &errinfo))
 		WALReadRaiseError(&errinfo);
 

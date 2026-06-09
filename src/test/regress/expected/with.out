@@ -51,11 +51,11 @@ SELECT * FROM t;
 
 -- UNION DISTINCT requires hashable type
 WITH RECURSIVE t(n) AS (
-    VALUES (1::money)
+    VALUES ('01'::varbit)
 UNION
-    SELECT n+1::money FROM t WHERE n < 100::money
+    SELECT n || '10'::varbit FROM t WHERE n < '100'::varbit
 )
-SELECT sum(n) FROM t;
+SELECT n FROM t;
 ERROR:  could not implement recursive UNION
 DETAIL:  All column datatypes must be hashable.
 -- recursive view
@@ -635,6 +635,59 @@ SELECT t1.id, t2.path, t2 FROM t AS t1 JOIN t AS t2 ON
  15 | {3,7,11,15} | (15,"{3,7,11,15}")
  16 | {3,7,11,16} | (16,"{3,7,11,16}")
 (16 rows)
+
+-- test that column statistics from a materialized CTE are available
+-- to upper planner (otherwise, we'd get a stupider plan)
+explain (costs off)
+with x as materialized (select unique1 from tenk1 b)
+select count(*) from tenk1 a
+  where unique1 in (select * from x);
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Aggregate
+   CTE x
+     ->  Index Only Scan using tenk1_unique1 on tenk1 b
+   ->  Hash Semi Join
+         Hash Cond: (a.unique1 = x.unique1)
+         ->  Index Only Scan using tenk1_unique1 on tenk1 a
+         ->  Hash
+               ->  CTE Scan on x
+(8 rows)
+
+explain (costs off)
+with x as materialized (insert into tenk1 default values returning unique1)
+select count(*) from tenk1 a
+  where unique1 in (select * from x);
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Aggregate
+   CTE x
+     ->  Insert on tenk1
+           ->  Result
+   ->  Nested Loop
+         ->  HashAggregate
+               Group Key: x.unique1
+               ->  CTE Scan on x
+         ->  Index Only Scan using tenk1_unique1 on tenk1 a
+               Index Cond: (unique1 = x.unique1)
+(10 rows)
+
+-- test that pathkeys from a materialized CTE are propagated up to the
+-- outer query
+explain (costs off)
+with x as materialized (select unique1 from tenk1 b order by unique1)
+select count(*) from tenk1 a
+  where unique1 in (select * from x);
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Aggregate
+   CTE x
+     ->  Index Only Scan using tenk1_unique1 on tenk1 b
+   ->  Merge Semi Join
+         Merge Cond: (a.unique1 = x.unique1)
+         ->  Index Only Scan using tenk1_unique1 on tenk1 a
+         ->  CTE Scan on x
+(7 rows)
 
 -- SEARCH clause
 create temp table graph0( f int, t int, label text );
@@ -3015,28 +3068,30 @@ WITH cte_basic AS MATERIALIZED (SELECT 1 a, 'cte_basic val' b)
 MERGE INTO m USING (select 0 k, 'merge source SubPlan' v offset 0) o ON m.k=o.k
 WHEN MATCHED THEN UPDATE SET v = (SELECT b || ' merge update' FROM cte_basic WHERE cte_basic.a = m.k LIMIT 1)
 WHEN NOT MATCHED THEN INSERT VALUES(o.k, o.v);
-                           QUERY PLAN                           
-----------------------------------------------------------------
+                            QUERY PLAN                             
+-------------------------------------------------------------------
  Merge on public.m
    CTE cte_basic
      ->  Result
            Output: 1, 'cte_basic val'::text
    ->  Hash Right Join
-         Output: m.ctid, (0), ('merge source SubPlan'::text)
-         Hash Cond: (m.k = (0))
+         Output: m.ctid, o.k, o.v, o.*
+         Hash Cond: (m.k = o.k)
          ->  Seq Scan on public.m
                Output: m.ctid, m.k
          ->  Hash
-               Output: (0), ('merge source SubPlan'::text)
-               ->  Result
-                     Output: 0, 'merge source SubPlan'::text
+               Output: o.k, o.v, o.*
+               ->  Subquery Scan on o
+                     Output: o.k, o.v, o.*
+                     ->  Result
+                           Output: 0, 'merge source SubPlan'::text
    SubPlan 2
      ->  Limit
            Output: ((cte_basic.b || ' merge update'::text))
            ->  CTE Scan on cte_basic
                  Output: (cte_basic.b || ' merge update'::text)
                  Filter: (cte_basic.a = m.k)
-(19 rows)
+(21 rows)
 
 -- InitPlan
 WITH cte_init AS MATERIALIZED (SELECT 1 a, 'cte_init val' b)
@@ -3056,28 +3111,30 @@ WITH cte_init AS MATERIALIZED (SELECT 1 a, 'cte_init val' b)
 MERGE INTO m USING (select 1 k, 'merge source InitPlan' v offset 0) o ON m.k=o.k
 WHEN MATCHED THEN UPDATE SET v = (SELECT b || ' merge update' FROM cte_init WHERE a = 1 LIMIT 1)
 WHEN NOT MATCHED THEN INSERT VALUES(o.k, o.v);
-                          QUERY PLAN                           
----------------------------------------------------------------
+                             QUERY PLAN                             
+--------------------------------------------------------------------
  Merge on public.m
    CTE cte_init
      ->  Result
            Output: 1, 'cte_init val'::text
-   InitPlan 2 (returns $1)
+   InitPlan 2
      ->  Limit
            Output: ((cte_init.b || ' merge update'::text))
            ->  CTE Scan on cte_init
                  Output: (cte_init.b || ' merge update'::text)
                  Filter: (cte_init.a = 1)
    ->  Hash Right Join
-         Output: m.ctid, (1), ('merge source InitPlan'::text)
-         Hash Cond: (m.k = (1))
+         Output: m.ctid, o.k, o.v, o.*
+         Hash Cond: (m.k = o.k)
          ->  Seq Scan on public.m
                Output: m.ctid, m.k
          ->  Hash
-               Output: (1), ('merge source InitPlan'::text)
-               ->  Result
-                     Output: 1, 'merge source InitPlan'::text
-(19 rows)
+               Output: o.k, o.v, o.*
+               ->  Subquery Scan on o
+                     Output: o.k, o.v, o.*
+                     ->  Result
+                           Output: 1, 'merge source InitPlan'::text
+(21 rows)
 
 -- MERGE source comes from CTE:
 WITH merge_source_cte AS MATERIALIZED (SELECT 15 a, 'merge_source_cte val' b)
@@ -3103,22 +3160,22 @@ WHEN NOT MATCHED THEN INSERT VALUES(o.a, o.b || (SELECT merge_source_cte.*::text
    CTE merge_source_cte
      ->  Result
            Output: 15, 'merge_source_cte val'::text
-   InitPlan 2 (returns $1)
+   InitPlan 2
      ->  CTE Scan on merge_source_cte merge_source_cte_1
            Output: ((merge_source_cte_1.b || (merge_source_cte_1.*)::text) || ' merge update'::text)
            Filter: (merge_source_cte_1.a = 15)
-   InitPlan 3 (returns $2)
+   InitPlan 3
      ->  CTE Scan on merge_source_cte merge_source_cte_2
            Output: ((merge_source_cte_2.*)::text || ' merge insert'::text)
    ->  Hash Right Join
-         Output: m.ctid, merge_source_cte.a, merge_source_cte.b
+         Output: m.ctid, merge_source_cte.a, merge_source_cte.b, merge_source_cte.*
          Hash Cond: (m.k = merge_source_cte.a)
          ->  Seq Scan on public.m
                Output: m.ctid, m.k
          ->  Hash
-               Output: merge_source_cte.a, merge_source_cte.b
+               Output: merge_source_cte.a, merge_source_cte.b, merge_source_cte.*
                ->  CTE Scan on merge_source_cte
-                     Output: merge_source_cte.a, merge_source_cte.b
+                     Output: merge_source_cte.a, merge_source_cte.b, merge_source_cte.*
 (20 rows)
 
 DROP TABLE m;
@@ -3453,6 +3510,16 @@ SELECT * FROM t;
 ERROR:  WITH query "t" does not have a RETURNING clause
 LINE 4: SELECT * FROM t;
                       ^
+-- RETURNING tries to return its own output
+WITH RECURSIVE t(action, a) AS (
+	MERGE INTO y USING (VALUES (11)) v(a) ON y.a = v.a
+		WHEN NOT MATCHED THEN INSERT VALUES (v.a)
+		RETURNING merge_action(), (SELECT a FROM t)
+)
+SELECT * FROM t;
+ERROR:  recursive query "t" must not contain data-modifying statements
+LINE 1: WITH RECURSIVE t(action, a) AS (
+                       ^
 -- data-modifying WITH allowed only at the top level
 SELECT * FROM (
 	WITH t AS (UPDATE y SET a=a+1 RETURNING *)

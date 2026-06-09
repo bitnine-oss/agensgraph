@@ -3,7 +3,7 @@
  * appendinfo.c
  *	  Routines for mapping between append parent(s) and children
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -891,8 +891,7 @@ add_row_identity_columns(PlannerInfo *root, Index rtindex,
 
 	Assert(commandType == CMD_UPDATE || commandType == CMD_DELETE || commandType == CMD_MERGE);
 
-	if (commandType == CMD_MERGE ||
-		relkind == RELKIND_RELATION ||
+	if (relkind == RELKIND_RELATION ||
 		relkind == RELKIND_MATVIEW ||
 		relkind == RELKIND_PARTITIONED_TABLE)
 	{

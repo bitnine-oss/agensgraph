@@ -3,7 +3,7 @@
  * pg_verifybackup.c
  *	  Verify a backup against a backup manifest.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pg_verifybackup/pg_verifybackup.c
@@ -18,11 +18,12 @@
 #include <sys/stat.h>
 #include <time.h>
 
-#include "common/hashfn.h"
+#include "common/controldata_utils.h"
+#include "common/hashfn_unstable.h"
 #include "common/logging.h"
+#include "common/parse_manifest.h"
 #include "fe_utils/simple_list.h"
 #include "getopt_long.h"
-#include "parse_manifest.h"
 #include "pgtime.h"
 
 /*
@@ -42,7 +43,7 @@
 /*
  * How many bytes should we try to read from a file at once?
  */
-#define READ_CHUNK_SIZE				4096
+#define READ_CHUNK_SIZE				(128 * 1024)
 
 /*
  * Each file described by the manifest file is parsed to produce an object
@@ -51,7 +52,7 @@
 typedef struct manifest_file
 {
 	uint32		status;			/* hash status */
-	char	   *pathname;
+	const char *pathname;
 	size_t		size;
 	pg_checksum_type checksum_type;
 	int			checksum_length;
@@ -67,12 +68,11 @@ typedef struct manifest_file
  * Define a hash table which we can use to store information about the files
  * mentioned in the backup manifest.
  */
-static uint32 hash_string_pointer(char *s);
 #define SH_PREFIX		manifest_files
 #define SH_ELEMENT_TYPE	manifest_file
-#define SH_KEY_TYPE		char *
+#define SH_KEY_TYPE		const char *
 #define	SH_KEY			pathname
-#define SH_HASH_KEY(tb, key)	hash_string_pointer(key)
+#define SH_HASH_KEY(tb, key)	hash_string(key)
 #define SH_EQUAL(tb, a, b)		(strcmp(a, b) == 0)
 #define	SH_SCOPE		static inline
 #define SH_RAW_ALLOCATOR	pg_malloc0
@@ -94,40 +94,43 @@ typedef struct manifest_wal_range
 } manifest_wal_range;
 
 /*
- * Details we need in callbacks that occur while parsing a backup manifest.
+ * All the data parsed from a backup_manifest file.
  */
-typedef struct parser_context
+typedef struct manifest_data
 {
-	manifest_files_hash *ht;
+	int			version;
+	uint64		system_identifier;
+	manifest_files_hash *files;
 	manifest_wal_range *first_wal_range;
 	manifest_wal_range *last_wal_range;
-} parser_context;
+} manifest_data;
 
 /*
  * All of the context information we need while checking a backup manifest.
  */
 typedef struct verifier_context
 {
-	manifest_files_hash *ht;
+	manifest_data *manifest;
 	char	   *backup_directory;
 	SimpleStringList ignore_list;
 	bool		exit_on_error;
 	bool		saw_any_error;
 } verifier_context;
 
-static void parse_manifest_file(char *manifest_path,
-								manifest_files_hash **ht_p,
-								manifest_wal_range **first_wal_range_p);
-
-static void record_manifest_details_for_file(JsonManifestParseContext *context,
-											 char *pathname, size_t size,
-											 pg_checksum_type checksum_type,
-											 int checksum_length,
-											 uint8 *checksum_payload);
-static void record_manifest_details_for_wal_range(JsonManifestParseContext *context,
-												  TimeLineID tli,
-												  XLogRecPtr start_lsn,
-												  XLogRecPtr end_lsn);
+static manifest_data *parse_manifest_file(char *manifest_path);
+static void verifybackup_version_cb(JsonManifestParseContext *context,
+									int manifest_version);
+static void verifybackup_system_identifier(JsonManifestParseContext *context,
+										   uint64 manifest_system_identifier);
+static void verifybackup_per_file_cb(JsonManifestParseContext *context,
+									 const char *pathname, size_t size,
+									 pg_checksum_type checksum_type,
+									 int checksum_length,
+									 uint8 *checksum_payload);
+static void verifybackup_per_wal_range_cb(JsonManifestParseContext *context,
+										  TimeLineID tli,
+										  XLogRecPtr start_lsn,
+										  XLogRecPtr end_lsn);
 static void report_manifest_error(JsonManifestParseContext *context,
 								  const char *fmt,...)
 			pg_attribute_printf(2, 3) pg_attribute_noreturn();
@@ -136,21 +139,23 @@ static void verify_backup_directory(verifier_context *context,
 									char *relpath, char *fullpath);
 static void verify_backup_file(verifier_context *context,
 							   char *relpath, char *fullpath);
+static void verify_control_file(const char *controlpath,
+								uint64 manifest_system_identifier);
 static void report_extra_backup_files(verifier_context *context);
 static void verify_backup_checksums(verifier_context *context);
 static void verify_file_checksum(verifier_context *context,
-								 manifest_file *m, char *fullpath);
+								 manifest_file *m, char *fullpath,
+								 uint8 *buffer);
 static void parse_required_wal(verifier_context *context,
 							   char *pg_waldump_path,
-							   char *wal_directory,
-							   manifest_wal_range *first_wal_range);
+							   char *wal_directory);
 
 static void report_backup_error(verifier_context *context,
 								const char *pg_restrict fmt,...)
 			pg_attribute_printf(2, 3);
 static void report_fatal_error(const char *pg_restrict fmt,...)
 			pg_attribute_printf(1, 2) pg_attribute_noreturn();
-static bool should_ignore_relpath(verifier_context *context, char *relpath);
+static bool should_ignore_relpath(verifier_context *context, const char *relpath);
 
 static void progress_report(bool finished);
 static void usage(void);
@@ -185,7 +190,6 @@ main(int argc, char **argv)
 
 	int			c;
 	verifier_context context;
-	manifest_wal_range *first_wal_range;
 	char	   *manifest_path = NULL;
 	bool		no_parse_wal = false;
 	bool		quiet = false;
@@ -338,7 +342,7 @@ main(int argc, char **argv)
 	 * the manifest as fatal; there doesn't seem to be much point in trying to
 	 * verify the backup directory against a corrupted manifest.
 	 */
-	parse_manifest_file(manifest_path, &context.ht, &first_wal_range);
+	context.manifest = parse_manifest_file(manifest_path);
 
 	/*
 	 * Now scan the files in the backup directory. At this stage, we verify
@@ -367,8 +371,7 @@ main(int argc, char **argv)
 	 * not to do so.
 	 */
 	if (!no_parse_wal)
-		parse_required_wal(&context, pg_waldump_path,
-						   wal_directory, first_wal_range);
+		parse_required_wal(&context, pg_waldump_path, wal_directory);
 
 	/*
 	 * If everything looks OK, tell the user this, unless we were asked to
@@ -381,13 +384,10 @@ main(int argc, char **argv)
 }
 
 /*
- * Parse a manifest file. Construct a hash table with information about
- * all the files it mentions, and a linked list of all the WAL ranges it
- * mentions.
+ * Parse a manifest file and return a data structure describing the contents.
  */
-static void
-parse_manifest_file(char *manifest_path, manifest_files_hash **ht_p,
-					manifest_wal_range **first_wal_range_p)
+static manifest_data *
+parse_manifest_file(char *manifest_path)
 {
 	int			fd;
 	struct stat statbuf;
@@ -396,8 +396,10 @@ parse_manifest_file(char *manifest_path, manifest_files_hash **ht_p,
 	manifest_files_hash *ht;
 	char	   *buffer;
 	int			rc;
-	parser_context private_context;
 	JsonManifestParseContext context;
+	manifest_data *result;
+
+	int			chunk_size = READ_CHUNK_SIZE;
 
 	/* Open the manifest file. */
 	if ((fd = open(manifest_path, O_RDONLY | PG_BINARY, 0)) < 0)
@@ -414,43 +416,85 @@ parse_manifest_file(char *manifest_path, manifest_files_hash **ht_p,
 	/* Create the hash table. */
 	ht = manifest_files_create(initial_size, NULL);
 
-	/*
-	 * Slurp in the whole file.
-	 *
-	 * This is not ideal, but there's currently no easy way to get
-	 * pg_parse_json() to perform incremental parsing.
-	 */
-	buffer = pg_malloc(statbuf.st_size);
-	rc = read(fd, buffer, statbuf.st_size);
-	if (rc != statbuf.st_size)
-	{
-		if (rc < 0)
-			report_fatal_error("could not read file \"%s\": %m",
-							   manifest_path);
-		else
-			report_fatal_error("could not read file \"%s\": read %d of %lld",
-							   manifest_path, rc, (long long int) statbuf.st_size);
-	}
-
-	/* Close the manifest file. */
-	close(fd);
-
-	/* Parse the manifest. */
-	private_context.ht = ht;
-	private_context.first_wal_range = NULL;
-	private_context.last_wal_range = NULL;
-	context.private_data = &private_context;
-	context.perfile_cb = record_manifest_details_for_file;
-	context.perwalrange_cb = record_manifest_details_for_wal_range;
+	result = pg_malloc0(sizeof(manifest_data));
+	result->files = ht;
+	context.private_data = result;
+	context.version_cb = verifybackup_version_cb;
+	context.system_identifier_cb = verifybackup_system_identifier;
+	context.per_file_cb = verifybackup_per_file_cb;
+	context.per_wal_range_cb = verifybackup_per_wal_range_cb;
 	context.error_cb = report_manifest_error;
-	json_parse_manifest(&context, buffer, statbuf.st_size);
+
+	/*
+	 * Parse the file, in chunks if necessary.
+	 */
+	if (statbuf.st_size <= chunk_size)
+	{
+		buffer = pg_malloc(statbuf.st_size);
+		rc = read(fd, buffer, statbuf.st_size);
+		if (rc != statbuf.st_size)
+		{
+			if (rc < 0)
+				pg_fatal("could not read file \"%s\": %m", manifest_path);
+			else
+				pg_fatal("could not read file \"%s\": read %d of %lld",
+						 manifest_path, rc, (long long int) statbuf.st_size);
+		}
+
+		/* Close the manifest file. */
+		close(fd);
+
+		/* Parse the manifest. */
+		json_parse_manifest(&context, buffer, statbuf.st_size);
+	}
+	else
+	{
+		int			bytes_left = statbuf.st_size;
+		JsonManifestParseIncrementalState *inc_state;
+
+		inc_state = json_parse_manifest_incremental_init(&context);
+
+		buffer = pg_malloc(chunk_size + 1);
+
+		while (bytes_left > 0)
+		{
+			int			bytes_to_read = chunk_size;
+
+			/*
+			 * Make sure that the last chunk is sufficiently large. (i.e. at
+			 * least half the chunk size) so that it will contain fully the
+			 * piece at the end with the checksum.
+			 */
+			if (bytes_left < chunk_size)
+				bytes_to_read = bytes_left;
+			else if (bytes_left < 2 * chunk_size)
+				bytes_to_read = bytes_left / 2;
+			rc = read(fd, buffer, bytes_to_read);
+			if (rc != bytes_to_read)
+			{
+				if (rc < 0)
+					pg_fatal("could not read file \"%s\": %m", manifest_path);
+				else
+					pg_fatal("could not read file \"%s\": read %lld of %lld",
+							 manifest_path,
+							 (long long int) (statbuf.st_size + rc - bytes_left),
+							 (long long int) statbuf.st_size);
+			}
+			bytes_left -= rc;
+			json_parse_manifest_incremental_chunk(inc_state, buffer, rc,
+												  bytes_left == 0);
+		}
+
+		/* Release the incremental state memory */
+		json_parse_manifest_incremental_shutdown(inc_state);
+
+		close(fd);
+	}
 
 	/* Done with the buffer. */
 	pfree(buffer);
 
-	/* Return the file hash table and WAL range list we constructed. */
-	*ht_p = ht;
-	*first_wal_range_p = private_context.first_wal_range;
+	return result;
 }
 
 /*
@@ -472,16 +516,42 @@ report_manifest_error(JsonManifestParseContext *context, const char *fmt,...)
 }
 
 /*
+ * Record details extracted from the backup manifest.
+ */
+static void
+verifybackup_version_cb(JsonManifestParseContext *context,
+						int manifest_version)
+{
+	manifest_data *manifest = context->private_data;
+
+	/* Validation will be at the later stage */
+	manifest->version = manifest_version;
+}
+
+/*
+ * Record details extracted from the backup manifest.
+ */
+static void
+verifybackup_system_identifier(JsonManifestParseContext *context,
+							   uint64 manifest_system_identifier)
+{
+	manifest_data *manifest = context->private_data;
+
+	/* Validation will be at the later stage */
+	manifest->system_identifier = manifest_system_identifier;
+}
+
+/*
  * Record details extracted from the backup manifest for one file.
  */
 static void
-record_manifest_details_for_file(JsonManifestParseContext *context,
-								 char *pathname, size_t size,
-								 pg_checksum_type checksum_type,
-								 int checksum_length, uint8 *checksum_payload)
+verifybackup_per_file_cb(JsonManifestParseContext *context,
+						 const char *pathname, size_t size,
+						 pg_checksum_type checksum_type,
+						 int checksum_length, uint8 *checksum_payload)
 {
-	parser_context *pcxt = context->private_data;
-	manifest_files_hash *ht = pcxt->ht;
+	manifest_data *manifest = context->private_data;
+	manifest_files_hash *ht = manifest->files;
 	manifest_file *m;
 	bool		found;
 
@@ -504,11 +574,11 @@ record_manifest_details_for_file(JsonManifestParseContext *context,
  * Record details extracted from the backup manifest for one WAL range.
  */
 static void
-record_manifest_details_for_wal_range(JsonManifestParseContext *context,
-									  TimeLineID tli,
-									  XLogRecPtr start_lsn, XLogRecPtr end_lsn)
+verifybackup_per_wal_range_cb(JsonManifestParseContext *context,
+							  TimeLineID tli,
+							  XLogRecPtr start_lsn, XLogRecPtr end_lsn)
 {
-	parser_context *pcxt = context->private_data;
+	manifest_data *manifest = context->private_data;
 	manifest_wal_range *range;
 
 	/* Allocate and initialize a struct describing this WAL range. */
@@ -516,15 +586,15 @@ record_manifest_details_for_wal_range(JsonManifestParseContext *context,
 	range->tli = tli;
 	range->start_lsn = start_lsn;
 	range->end_lsn = end_lsn;
-	range->prev = pcxt->last_wal_range;
+	range->prev = manifest->last_wal_range;
 	range->next = NULL;
 
 	/* Add it to the end of the list. */
-	if (pcxt->first_wal_range == NULL)
-		pcxt->first_wal_range = range;
+	if (manifest->first_wal_range == NULL)
+		manifest->first_wal_range = range;
 	else
-		pcxt->last_wal_range->next = range;
-	pcxt->last_wal_range = range;
+		manifest->last_wal_range->next = range;
+	manifest->last_wal_range = range;
 }
 
 /*
@@ -639,7 +709,7 @@ verify_backup_file(verifier_context *context, char *relpath, char *fullpath)
 	}
 
 	/* Check whether there's an entry in the manifest hash. */
-	m = manifest_files_lookup(context->ht, relpath);
+	m = manifest_files_lookup(context->manifest->files, relpath);
 	if (m == NULL)
 	{
 		report_backup_error(context,
@@ -660,6 +730,14 @@ verify_backup_file(verifier_context *context, char *relpath, char *fullpath)
 		m->bad = true;
 	}
 
+	/*
+	 * Validate the manifest system identifier, not available in manifest
+	 * version 1.
+	 */
+	if (context->manifest->version != 1 &&
+		strcmp(relpath, "global/pg_control") == 0)
+		verify_control_file(fullpath, context->manifest->system_identifier);
+
 	/* Update statistics for progress report, if necessary */
 	if (show_progress && !skip_checksums && should_verify_checksum(m))
 		total_size += m->size;
@@ -673,17 +751,51 @@ verify_backup_file(verifier_context *context, char *relpath, char *fullpath)
 }
 
 /*
+ * Sanity check control file and validate system identifier against manifest
+ * system identifier.
+ */
+static void
+verify_control_file(const char *controlpath, uint64 manifest_system_identifier)
+{
+	ControlFileData *control_file;
+	bool		crc_ok;
+
+	pg_log_debug("reading \"%s\"", controlpath);
+	control_file = get_controlfile_by_exact_path(controlpath, &crc_ok);
+
+	/* Control file contents not meaningful if CRC is bad. */
+	if (!crc_ok)
+		report_fatal_error("%s: CRC is incorrect", controlpath);
+
+	/* Can't interpret control file if not current version. */
+	if (control_file->pg_control_version != PG_CONTROL_VERSION)
+		report_fatal_error("%s: unexpected control file version",
+						   controlpath);
+
+	/* System identifiers should match. */
+	if (manifest_system_identifier != control_file->system_identifier)
+		report_fatal_error("%s: manifest system identifier is %llu, but control file has %llu",
+						   controlpath,
+						   (unsigned long long) manifest_system_identifier,
+						   (unsigned long long) control_file->system_identifier);
+
+	/* Release memory. */
+	pfree(control_file);
+}
+
+/*
  * Scan the hash table for entries where the 'matched' flag is not set; report
  * that such files are present in the manifest but not on disk.
  */
 static void
 report_extra_backup_files(verifier_context *context)
 {
+	manifest_data *manifest = context->manifest;
 	manifest_files_iterator it;
 	manifest_file *m;
 
-	manifest_files_start_iterate(context->ht, &it);
-	while ((m = manifest_files_iterate(context->ht, &it)) != NULL)
+	manifest_files_start_iterate(manifest->files, &it);
+	while ((m = manifest_files_iterate(manifest->files, &it)) != NULL)
 		if (!m->matched && !should_ignore_relpath(context, m->pathname))
 			report_backup_error(context,
 								"\"%s\" is present in the manifest but not on disk",
@@ -698,13 +810,17 @@ report_extra_backup_files(verifier_context *context)
 static void
 verify_backup_checksums(verifier_context *context)
 {
+	manifest_data *manifest = context->manifest;
 	manifest_files_iterator it;
 	manifest_file *m;
+	uint8	   *buffer;
 
 	progress_report(false);
 
-	manifest_files_start_iterate(context->ht, &it);
-	while ((m = manifest_files_iterate(context->ht, &it)) != NULL)
+	buffer = pg_malloc(READ_CHUNK_SIZE * sizeof(uint8));
+
+	manifest_files_start_iterate(manifest->files, &it);
+	while ((m = manifest_files_iterate(manifest->files, &it)) != NULL)
 	{
 		if (should_verify_checksum(m) &&
 			!should_ignore_relpath(context, m->pathname))
@@ -716,12 +832,14 @@ verify_backup_checksums(verifier_context *context)
 								m->pathname);
 
 			/* Do the actual checksum verification. */
-			verify_file_checksum(context, m, fullpath);
+			verify_file_checksum(context, m, fullpath, buffer);
 
 			/* Avoid leaking memory. */
 			pfree(fullpath);
 		}
 	}
+
+	pfree(buffer);
 
 	progress_report(true);
 }
@@ -731,14 +849,13 @@ verify_backup_checksums(verifier_context *context)
  */
 static void
 verify_file_checksum(verifier_context *context, manifest_file *m,
-					 char *fullpath)
+					 char *fullpath, uint8 *buffer)
 {
 	pg_checksum_context checksum_ctx;
-	char	   *relpath = m->pathname;
+	const char *relpath = m->pathname;
 	int			fd;
 	int			rc;
 	size_t		bytes_read = 0;
-	uint8		buffer[READ_CHUNK_SIZE];
 	uint8		checksumbuf[PG_CHECKSUM_MAX_LENGTH];
 	int			checksumlen;
 
@@ -833,9 +950,10 @@ verify_file_checksum(verifier_context *context, manifest_file *m,
  */
 static void
 parse_required_wal(verifier_context *context, char *pg_waldump_path,
-				   char *wal_directory, manifest_wal_range *first_wal_range)
+				   char *wal_directory)
 {
-	manifest_wal_range *this_wal_range = first_wal_range;
+	manifest_data *manifest = context->manifest;
+	manifest_wal_range *this_wal_range = manifest->first_wal_range;
 
 	while (this_wal_range != NULL)
 	{
@@ -898,13 +1016,13 @@ report_fatal_error(const char *pg_restrict fmt,...)
  * "aa/bb" is not a prefix of "aa/bbb", but it is a prefix of "aa/bb/cc".
  */
 static bool
-should_ignore_relpath(verifier_context *context, char *relpath)
+should_ignore_relpath(verifier_context *context, const char *relpath)
 {
 	SimpleStringListCell *cell;
 
 	for (cell = context->ignore_list.head; cell != NULL; cell = cell->next)
 	{
-		char	   *r = relpath;
+		const char *r = relpath;
 		char	   *v = cell->val;
 
 		while (*v != '\0' && *r == *v)
@@ -915,17 +1033,6 @@ should_ignore_relpath(verifier_context *context, char *relpath)
 	}
 
 	return false;
-}
-
-/*
- * Helper function for manifest_files hash table.
- */
-static uint32
-hash_string_pointer(char *s)
-{
-	unsigned char *ss = (unsigned char *) s;
-
-	return hash_bytes(ss, strlen(s));
 }
 
 /*

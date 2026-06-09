@@ -3,7 +3,7 @@
  * copyto.c
  *		COPY <table> TO file/program/client
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,11 +18,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-#include "access/heapam.h"
-#include "access/htup_details.h"
 #include "access/tableam.h"
-#include "access/xact.h"
-#include "access/xlog.h"
 #include "commands/copy.h"
 #include "commands/progress.h"
 #include "executor/execdesc.h"
@@ -32,14 +28,11 @@
 #include "libpq/pqformat.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
-#include "optimizer/optimizer.h"
 #include "pgstat.h"
-#include "rewrite/rewriteHandler.h"
 #include "storage/fd.h"
 #include "tcop/tcopprot.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
-#include "utils/partcache.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 
@@ -51,7 +44,7 @@ typedef enum CopyDest
 {
 	COPY_FILE,					/* to file (or a piped program) */
 	COPY_FRONTEND,				/* to frontend */
-	COPY_CALLBACK				/* to callback function */
+	COPY_CALLBACK,				/* to callback function */
 } CopyDest;
 
 /*
@@ -119,7 +112,7 @@ static void ClosePipeToProgram(CopyToState cstate);
 static void CopyOneRowTo(CopyToState cstate, TupleTableSlot *slot);
 static void CopyAttributeOutText(CopyToState cstate, const char *string);
 static void CopyAttributeOutCSV(CopyToState cstate, const char *string,
-								bool use_quote, bool single_attr);
+								bool use_quote);
 
 /* Low-level communications functions */
 static void SendCopyBegin(CopyToState cstate);
@@ -144,7 +137,7 @@ SendCopyBegin(CopyToState cstate)
 	int16		format = (cstate->opts.binary ? 1 : 0);
 	int			i;
 
-	pq_beginmessage(&buf, 'H');
+	pq_beginmessage(&buf, PqMsg_CopyOutResponse);
 	pq_sendbyte(&buf, format);	/* overall format */
 	pq_sendint16(&buf, natts);
 	for (i = 0; i < natts; i++)
@@ -159,7 +152,7 @@ SendCopyEnd(CopyToState cstate)
 	/* Shouldn't have any unsent data */
 	Assert(cstate->fe_msgbuf->len == 0);
 	/* Send Copy Done message */
-	pq_putemptymessage('c');
+	pq_putemptymessage(PqMsg_CopyDone);
 }
 
 /*----------
@@ -247,7 +240,7 @@ CopySendEndOfRow(CopyToState cstate)
 				CopySendChar(cstate, '\n');
 
 			/* Dump the accumulated row as one CopyData message */
-			(void) pq_putmessage('d', fe_msgbuf->data, fe_msgbuf->len);
+			(void) pq_putmessage(PqMsg_CopyData, fe_msgbuf->data, fe_msgbuf->len);
 			break;
 		case COPY_CALLBACK:
 			cstate->data_dest_cb(fe_msgbuf->data, fe_msgbuf->len);
@@ -510,7 +503,8 @@ BeginCopyTo(ParseState *pstate,
 		{
 			Assert(query->commandType == CMD_INSERT ||
 				   query->commandType == CMD_UPDATE ||
-				   query->commandType == CMD_DELETE);
+				   query->commandType == CMD_DELETE ||
+				   query->commandType == CMD_MERGE);
 
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -582,10 +576,7 @@ BeginCopyTo(ParseState *pstate,
 	cstate->opts.force_quote_flags = (bool *) palloc0(num_phys_attrs * sizeof(bool));
 	if (cstate->opts.force_quote_all)
 	{
-		int			i;
-
-		for (i = 0; i < num_phys_attrs; i++)
-			cstate->opts.force_quote_flags[i] = true;
+		MemSet(cstate->opts.force_quote_flags, true, num_phys_attrs * sizeof(bool));
 	}
 	else if (cstate->opts.force_quote)
 	{
@@ -615,13 +606,15 @@ BeginCopyTo(ParseState *pstate,
 		cstate->file_encoding = cstate->opts.file_encoding;
 
 	/*
-	 * Set up encoding conversion info.  Even if the file and server encodings
-	 * are the same, we must apply pg_any_to_server() to validate data in
-	 * multibyte encodings.
+	 * Set up encoding conversion info if the file and server encodings differ
+	 * (see also pg_server_to_any).
 	 */
-	cstate->need_transcoding =
-		(cstate->file_encoding != GetDatabaseEncoding() ||
-		 pg_database_encoding_max_length() > 1);
+	if (cstate->file_encoding == GetDatabaseEncoding() ||
+		cstate->file_encoding == PG_SQL_ASCII)
+		cstate->need_transcoding = false;
+	else
+		cstate->need_transcoding = true;
+
 	/* See Multibyte encoding comment above */
 	cstate->encoding_embeds_ascii = PG_ENCODING_IS_CLIENT_ONLY(cstate->file_encoding);
 
@@ -840,8 +833,7 @@ DoCopyTo(CopyToState cstate)
 				colname = NameStr(TupleDescAttr(tupDesc, attnum - 1)->attname);
 
 				if (cstate->opts.csv_mode)
-					CopyAttributeOutCSV(cstate, colname, false,
-										list_length(cstate->attnumlist) == 1);
+					CopyAttributeOutCSV(cstate, colname, false);
 				else
 					CopyAttributeOutText(cstate, colname);
 			}
@@ -955,8 +947,7 @@ CopyOneRowTo(CopyToState cstate, TupleTableSlot *slot)
 											value);
 				if (cstate->opts.csv_mode)
 					CopyAttributeOutCSV(cstate, string,
-										cstate->opts.force_quote_flags[attnum - 1],
-										list_length(cstate->attnumlist) == 1);
+										cstate->opts.force_quote_flags[attnum - 1]);
 				else
 					CopyAttributeOutText(cstate, string);
 			}
@@ -1142,7 +1133,7 @@ CopyAttributeOutText(CopyToState cstate, const char *string)
  */
 static void
 CopyAttributeOutCSV(CopyToState cstate, const char *string,
-					bool use_quote, bool single_attr)
+					bool use_quote)
 {
 	const char *ptr;
 	const char *start;
@@ -1150,6 +1141,7 @@ CopyAttributeOutCSV(CopyToState cstate, const char *string,
 	char		delimc = cstate->opts.delim[0];
 	char		quotec = cstate->opts.quote[0];
 	char		escapec = cstate->opts.escape[0];
+	bool		single_attr = (list_length(cstate->attnumlist) == 1);
 
 	/* force quoting if it matches null_print (before conversion!) */
 	if (!use_quote && strcmp(string, cstate->opts.null_print) == 0)

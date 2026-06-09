@@ -20,7 +20,7 @@
  *
  * Code originally contributed by Adriaan Joubert.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -38,7 +38,7 @@
 #include "nodes/supportnodes.h"
 #include "port/pg_bitutils.h"
 #include "utils/array.h"
-#include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
 #include "utils/varbit.h"
 
 #define HEXDIG(z)	 ((z)<10 ? ((z)+'0') : ((z)-10+'A'))

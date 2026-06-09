@@ -22,13 +22,12 @@ PostgreSQL documentation
  <refsynopsisdiv>
 <synopsis>
 ANALYZE [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] [ <replaceable class="parameter">table_and_columns</replaceable> [, ...] ]
-ANALYZE [ VERBOSE ] [ <replaceable class="parameter">table_and_columns</replaceable> [, ...] ]
 
 <phrase>where <replaceable class="parameter">option</replaceable> can be one of:</phrase>
 
     VERBOSE [ <replaceable class="parameter">boolean</replaceable> ]
     SKIP_LOCKED [ <replaceable class="parameter">boolean</replaceable> ]
-    BUFFER_USAGE_LIMIT [ <replaceable class="parameter">size</replaceable> ]
+    BUFFER_USAGE_LIMIT <replaceable class="parameter">size</replaceable>
 
 <phrase>and <replaceable class="parameter">table_and_columns</replaceable> is:</phrase>
 
@@ -55,13 +54,6 @@ ANALYZE [ VERBOSE ] [ <replaceable class="parameter">table_and_columns</replacea
    With a list, <command>ANALYZE</command> processes only those table(s).
    It is further possible to give a list of column names for a table,
    in which case only the statistics for those columns are collected.
-  </para>
-
-  <para>
-   When the option list is surrounded by parentheses, the options can be
-   written in any order.  The parenthesized syntax was added in
-   <productname>PostgreSQL</productname> 11;  the unparenthesized syntax
-   is deprecated.
   </para>
  </refsect1>
 
@@ -136,9 +128,9 @@ ANALYZE [ VERBOSE ] [ <replaceable class="parameter">table_and_columns</replacea
      <para>
       Specifies an amount of memory in kilobytes.  Sizes may also be specified
       as a string containing the numerical size followed by any one of the
-      following memory units: <literal>kB</literal> (kilobytes),
-      <literal>MB</literal> (megabytes), <literal>GB</literal> (gigabytes), or
-      <literal>TB</literal> (terabytes).
+      following memory units: <literal>B</literal> (bytes),
+      <literal>kB</literal> (kilobytes), <literal>MB</literal> (megabytes),
+      <literal>GB</literal> (gigabytes), or <literal>TB</literal> (terabytes).
      </para>
     </listitem>
    </varlistentry>
@@ -212,9 +204,15 @@ ANALYZE [ VERBOSE ] [ <replaceable class="parameter">table_and_columns</replacea
   </para>
 
   <para>
+   While <command>ANALYZE</command> is running, the <xref
+   linkend="guc-search-path"/> is temporarily changed to <literal>pg_catalog,
+   pg_temp</literal>.
+  </para>
+
+  <para>
    <command>ANALYZE</command>
    requires only a read lock on the target table, so it can run in
-   parallel with other activity on the table.
+   parallel with other non-DDL activity on the table.
   </para>
 
   <para>
@@ -336,6 +334,14 @@ ANALYZE [ VERBOSE ] [ <replaceable class="parameter">table_and_columns</replacea
 
   <para>
    There is no <command>ANALYZE</command> statement in the SQL standard.
+  </para>
+
+  <para>
+   The following syntax was used before <productname>PostgreSQL</productname>
+   version 11 and is still supported:
+<synopsis>
+ANALYZE [ VERBOSE ] [ <replaceable class="parameter">table_and_columns</replaceable> [, ...] ]
+</synopsis>
   </para>
  </refsect1>
 

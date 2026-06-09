@@ -32,8 +32,9 @@ DATA = plpgsql.control plpgsql--1.0.sql
 
 REGRESS_OPTS = --dbname=$(PL_TESTDB)
 
-REGRESS = plpgsql_array plpgsql_call plpgsql_control plpgsql_copy plpgsql_domain \
-	plpgsql_record plpgsql_cache plpgsql_simple plpgsql_transaction \
+REGRESS = plpgsql_array plpgsql_cache plpgsql_call plpgsql_control \
+	plpgsql_copy plpgsql_domain plpgsql_misc \
+	plpgsql_record plpgsql_simple plpgsql_transaction \
 	plpgsql_trap plpgsql_trigger plpgsql_varprops
 
 # where to find gen_keywordlist.pl and subsidiary files
@@ -104,14 +105,7 @@ submake:
 	$(MAKE) -C $(top_builddir)/src/test/regress pg_regress$(X)
 
 
-distprep: pl_gram.h pl_gram.c plerrcodes.h pl_reserved_kwlist_d.h pl_unreserved_kwlist_d.h
-
-# pl_gram.c, pl_gram.h, plerrcodes.h, pl_reserved_kwlist_d.h, and
-# pl_unreserved_kwlist_d.h are in the distribution tarball, so they
-# are not cleaned here.
 clean distclean: clean-lib
 	rm -f $(OBJS)
 	rm -rf $(pg_regress_clean_files)
-
-maintainer-clean: distclean
 	rm -f pl_gram.c pl_gram.h plerrcodes.h pl_reserved_kwlist_d.h pl_unreserved_kwlist_d.h

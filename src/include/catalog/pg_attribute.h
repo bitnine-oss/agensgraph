@@ -8,7 +8,7 @@
  * relations need be included.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_attribute.h
@@ -158,22 +158,22 @@ CATALOG(pg_attribute,1249,AttributeRelationId) BKI_BOOTSTRAP BKI_ROWTYPE_OID(75,
 	/* Number of times inherited from direct parent relation(s) */
 	int16		attinhcount BKI_DEFAULT(0);
 
-	/*
-	 * attstattarget is the target number of statistics datapoints to collect
-	 * during VACUUM ANALYZE of this column.  A zero here indicates that we do
-	 * not wish to collect any stats about this column. A "-1" here indicates
-	 * that no value has been explicitly set for this column, so ANALYZE
-	 * should use the default setting.
-	 *
-	 * int16 is sufficient because the max value is currently 10000.
-	 */
-	int16		attstattarget BKI_DEFAULT(-1);
-
 	/* attribute's collation, if any */
 	Oid			attcollation BKI_LOOKUP_OPT(pg_collation);
 
-#ifdef CATALOG_VARLEN			/* variable-length fields start here */
+#ifdef CATALOG_VARLEN			/* variable-length/nullable fields start here */
 	/* NOTE: The following fields are not present in tuple descriptors. */
+
+	/*
+	 * attstattarget is the target number of statistics datapoints to collect
+	 * during VACUUM ANALYZE of this column.  A zero here indicates that we do
+	 * not wish to collect any stats about this column. A null value here
+	 * indicates that no value has been explicitly set for this column, so
+	 * ANALYZE should use the default setting.
+	 *
+	 * int16 is sufficient for the current max value (MAX_STATISTICS_TARGET).
+	 */
+	int16		attstattarget BKI_DEFAULT(_null_) BKI_FORCE_NULL;
 
 	/* Column-level access permissions */
 	aclitem		attacl[1] BKI_DEFAULT(_null_);
@@ -208,8 +208,25 @@ CATALOG(pg_attribute,1249,AttributeRelationId) BKI_BOOTSTRAP BKI_ROWTYPE_OID(75,
  */
 typedef FormData_pg_attribute *Form_pg_attribute;
 
-DECLARE_UNIQUE_INDEX(pg_attribute_relid_attnam_index, 2658, AttributeRelidNameIndexId, on pg_attribute using btree(attrelid oid_ops, attname name_ops));
-DECLARE_UNIQUE_INDEX_PKEY(pg_attribute_relid_attnum_index, 2659, AttributeRelidNumIndexId, on pg_attribute using btree(attrelid oid_ops, attnum int2_ops));
+/*
+ * FormExtraData_pg_attribute contains (some of) the fields that are not in
+ * FormData_pg_attribute because they are excluded by CATALOG_VARLEN.  It is
+ * meant to be used by DDL code so that the combination of
+ * FormData_pg_attribute (often via tuple descriptor) and
+ * FormExtraData_pg_attribute can be used to pass around all the information
+ * about an attribute.  Fields can be included here as needed.
+ */
+typedef struct FormExtraData_pg_attribute
+{
+	NullableDatum attstattarget;
+	NullableDatum attoptions;
+} FormExtraData_pg_attribute;
+
+DECLARE_UNIQUE_INDEX(pg_attribute_relid_attnam_index, 2658, AttributeRelidNameIndexId, pg_attribute, btree(attrelid oid_ops, attname name_ops));
+DECLARE_UNIQUE_INDEX_PKEY(pg_attribute_relid_attnum_index, 2659, AttributeRelidNumIndexId, pg_attribute, btree(attrelid oid_ops, attnum int2_ops));
+
+MAKE_SYSCACHE(ATTNAME, pg_attribute_relid_attnam_index, 32);
+MAKE_SYSCACHE(ATTNUM, pg_attribute_relid_attnum_index, 128);
 
 #ifdef EXPOSE_TO_CLIENT_CODE
 

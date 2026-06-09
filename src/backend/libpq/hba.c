@@ -5,7 +5,7 @@
  *	  wherein you authenticate a user by seeing what IP address the system
  *	  says he comes from and choosing authentication method based on it).
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -26,24 +26,19 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 
-#include "access/htup_details.h"
 #include "catalog/pg_collation.h"
-#include "catalog/pg_type.h"
 #include "common/ip.h"
 #include "common/string.h"
-#include "funcapi.h"
+#include "libpq/hba.h"
 #include "libpq/ifaddr.h"
-#include "libpq/libpq.h"
-#include "miscadmin.h"
+#include "libpq/libpq-be.h"
 #include "postmaster/postmaster.h"
 #include "regex/regex.h"
 #include "replication/walsender.h"
 #include "storage/fd.h"
 #include "utils/acl.h"
-#include "utils/builtins.h"
 #include "utils/conffiles.h"
 #include "utils/guc.h"
-#include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/varlena.h"
 
@@ -55,8 +50,6 @@
 #endif
 #endif
 
-
-#define MAX_TOKEN	256
 
 /* callback data for check_network_callback */
 typedef struct check_network_data
@@ -161,8 +154,8 @@ pg_isblank(const char c)
  * commas, beginning of line, and end of line.  Blank means space or tab.
  *
  * Tokens can be delimited by double quotes (this allows the inclusion of
- * blanks or '#', but not newlines).  As in SQL, write two double-quotes
- * to represent a double quote.
+ * commas, blanks, and '#', but not newlines).  As in SQL, write two
+ * double-quotes to represent a double quote.
  *
  * Comments (started by an unquoted '#') are skipped, i.e. the remainder
  * of the line is ignored.
@@ -171,8 +164,8 @@ pg_isblank(const char c)
  * Thus, if a continuation occurs within quoted text or a comment, the
  * quoted text or comment is considered to continue to the next line.)
  *
- * The token, if any, is returned at *buf (a buffer of size bufsz), and
- * *lineptr is advanced past the token.
+ * The token, if any, is returned into buf (replacing any previous
+ * contents), and *lineptr is advanced past the token.
  *
  * Also, we set *initial_quote to indicate whether there was quoting before
  * the first character.  (We use that to prevent "@x" from being treated
@@ -180,30 +173,25 @@ pg_isblank(const char c)
  * we want to allow that to support embedded spaces in file paths.)
  *
  * We set *terminating_comma to indicate whether the token is terminated by a
- * comma (which is not returned).
+ * comma (which is not returned, nor advanced over).
  *
- * In event of an error, log a message at ereport level elevel, and also
- * set *err_msg to a string describing the error.  Currently the only
- * possible error is token too long for buf.
+ * The only possible error condition is lack of terminating quote, but we
+ * currently do not detect that, but just return the rest of the line.
  *
- * If successful: store null-terminated token at *buf and return true.
- * If no more tokens on line: set *buf = '\0' and return false.
- * If error: fill buf with truncated or misformatted token and return false.
+ * If successful: store dequoted token in buf and return true.
+ * If no more tokens on line: set buf to empty and return false.
  */
 static bool
-next_token(char **lineptr, char *buf, int bufsz,
-		   bool *initial_quote, bool *terminating_comma,
-		   int elevel, char **err_msg)
+next_token(char **lineptr, StringInfo buf,
+		   bool *initial_quote, bool *terminating_comma)
 {
 	int			c;
-	char	   *start_buf = buf;
-	char	   *end_buf = buf + (bufsz - 1);
 	bool		in_quote = false;
 	bool		was_quote = false;
 	bool		saw_quote = false;
 
-	Assert(end_buf > start_buf);
-
+	/* Initialize output parameters */
+	resetStringInfo(buf);
 	*initial_quote = false;
 	*terminating_comma = false;
 
@@ -226,22 +214,6 @@ next_token(char **lineptr, char *buf, int bufsz,
 			break;
 		}
 
-		if (buf >= end_buf)
-		{
-			*buf = '\0';
-			ereport(elevel,
-					(errcode(ERRCODE_CONFIG_FILE_ERROR),
-					 errmsg("authentication file token too long, skipping: \"%s\"",
-							start_buf)));
-			*err_msg = "authentication file token too long";
-			/* Discard remainder of line */
-			while ((c = (*(*lineptr)++)) != '\0')
-				;
-			/* Un-eat the '\0', in case we're called again */
-			(*lineptr)--;
-			return false;
-		}
-
 		/* we do not pass back a terminating comma in the token */
 		if (c == ',' && !in_quote)
 		{
@@ -250,7 +222,7 @@ next_token(char **lineptr, char *buf, int bufsz,
 		}
 
 		if (c != '"' || was_quote)
-			*buf++ = c;
+			appendStringInfoChar(buf, c);
 
 		/* Literal double-quote is two double-quotes */
 		if (in_quote && c == '"')
@@ -262,7 +234,7 @@ next_token(char **lineptr, char *buf, int bufsz,
 		{
 			in_quote = !in_quote;
 			saw_quote = true;
-			if (buf == start_buf)
+			if (buf->len == 0)
 				*initial_quote = true;
 		}
 
@@ -275,9 +247,7 @@ next_token(char **lineptr, char *buf, int bufsz,
 	 */
 	(*lineptr)--;
 
-	*buf = '\0';
-
-	return (saw_quote || buf > start_buf);
+	return (saw_quote || buf->len > 0);
 }
 
 /*
@@ -409,21 +379,22 @@ static List *
 next_field_expand(const char *filename, char **lineptr,
 				  int elevel, int depth, char **err_msg)
 {
-	char		buf[MAX_TOKEN];
+	StringInfoData buf;
 	bool		trailing_comma;
 	bool		initial_quote;
 	List	   *tokens = NIL;
 
+	initStringInfo(&buf);
+
 	do
 	{
-		if (!next_token(lineptr, buf, sizeof(buf),
-						&initial_quote, &trailing_comma,
-						elevel, err_msg))
+		if (!next_token(lineptr, &buf,
+						&initial_quote, &trailing_comma))
 			break;
 
 		/* Is this referencing a file? */
-		if (!initial_quote && buf[0] == '@' && buf[1] != '\0')
-			tokens = tokenize_expand_file(tokens, filename, buf + 1,
+		if (!initial_quote && buf.len > 1 && buf.data[0] == '@')
+			tokens = tokenize_expand_file(tokens, filename, buf.data + 1,
 										  elevel, depth + 1, err_msg);
 		else
 		{
@@ -434,10 +405,12 @@ next_field_expand(const char *filename, char **lineptr,
 			 * for the list of tokens.
 			 */
 			oldcxt = MemoryContextSwitchTo(tokenize_context);
-			tokens = lappend(tokens, make_auth_token(buf, initial_quote));
+			tokens = lappend(tokens, make_auth_token(buf.data, initial_quote));
 			MemoryContextSwitchTo(oldcxt);
 		}
 	} while (trailing_comma && (*err_msg == NULL));
+
+	pfree(buf.data);
 
 	return tokens;
 }
@@ -1405,7 +1378,7 @@ parse_hba_line(TokenizedAuthLine *tok_line, int elevel)
 				ereport(elevel,
 						(errcode(ERRCODE_CONFIG_FILE_ERROR),
 						 errmsg("hostssl record cannot match because SSL is disabled"),
-						 errhint("Set ssl = on in postgresql.conf."),
+						 errhint("Set \"ssl = on\" in postgresql.conf."),
 						 errcontext("line %d of configuration file \"%s\"",
 									line_num, file_name)));
 				*err_msg = "hostssl record cannot match because SSL is disabled";
@@ -1741,19 +1714,7 @@ parse_hba_line(TokenizedAuthLine *tok_line, int elevel)
 	else if (strcmp(token->string, "reject") == 0)
 		parsedline->auth_method = uaReject;
 	else if (strcmp(token->string, "md5") == 0)
-	{
-		if (Db_user_namespace)
-		{
-			ereport(elevel,
-					(errcode(ERRCODE_CONFIG_FILE_ERROR),
-					 errmsg("MD5 authentication is not supported when \"db_user_namespace\" is enabled"),
-					 errcontext("line %d of configuration file \"%s\"",
-								line_num, file_name)));
-			*err_msg = "MD5 authentication is not supported when \"db_user_namespace\" is enabled";
-			return NULL;
-		}
 		parsedline->auth_method = uaMD5;
-	}
 	else if (strcmp(token->string, "scram-sha-256") == 0)
 		parsedline->auth_method = uaSCRAM;
 	else if (strcmp(token->string, "pam") == 0)

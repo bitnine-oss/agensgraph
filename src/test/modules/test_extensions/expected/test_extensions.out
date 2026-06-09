@@ -1,3 +1,4 @@
+CREATE SCHEMA has$dollar;
 -- test some errors
 CREATE EXTENSION test_ext1;
 ERROR:  required extension "test_ext2" is not installed
@@ -6,35 +7,35 @@ CREATE EXTENSION test_ext1 SCHEMA test_ext1;
 ERROR:  schema "test_ext1" does not exist
 CREATE EXTENSION test_ext1 SCHEMA test_ext;
 ERROR:  schema "test_ext" does not exist
-CREATE SCHEMA test_ext;
-CREATE EXTENSION test_ext1 SCHEMA test_ext;
+CREATE EXTENSION test_ext1 SCHEMA has$dollar;
 ERROR:  extension "test_ext1" must be installed in schema "test_ext1"
 -- finally success
-CREATE EXTENSION test_ext1 SCHEMA test_ext CASCADE;
+CREATE EXTENSION test_ext1 SCHEMA has$dollar CASCADE;
 NOTICE:  installing required extension "test_ext2"
 NOTICE:  installing required extension "test_ext3"
 NOTICE:  installing required extension "test_ext5"
 NOTICE:  installing required extension "test_ext4"
 SELECT extname, nspname, extversion, extrelocatable FROM pg_extension e, pg_namespace n WHERE extname LIKE 'test_ext%' AND e.extnamespace = n.oid ORDER BY 1;
-  extname  |  nspname  | extversion | extrelocatable 
------------+-----------+------------+----------------
- test_ext1 | test_ext1 | 1.0        | f
- test_ext2 | test_ext  | 1.0        | t
- test_ext3 | test_ext  | 1.0        | t
- test_ext4 | test_ext  | 1.0        | t
- test_ext5 | test_ext  | 1.0        | t
+  extname  |  nspname   | extversion | extrelocatable 
+-----------+------------+------------+----------------
+ test_ext1 | test_ext1  | 1.0        | f
+ test_ext2 | has$dollar | 1.0        | t
+ test_ext3 | has$dollar | 1.0        | t
+ test_ext4 | has$dollar | 1.0        | t
+ test_ext5 | has$dollar | 1.0        | t
 (5 rows)
 
 CREATE EXTENSION test_ext_cyclic1 CASCADE;
 NOTICE:  installing required extension "test_ext_cyclic2"
 ERROR:  cyclic dependency detected between extensions "test_ext_cyclic1" and "test_ext_cyclic2"
-DROP SCHEMA test_ext CASCADE;
+DROP SCHEMA has$dollar CASCADE;
 NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to extension test_ext3
 drop cascades to extension test_ext5
 drop cascades to extension test_ext2
 drop cascades to extension test_ext4
 drop cascades to extension test_ext1
+CREATE SCHEMA has$dollar;
 CREATE EXTENSION test_ext6;
 DROP EXTENSION test_ext6;
 CREATE EXTENSION test_ext6;
@@ -52,7 +53,13 @@ Objects in extension "test_ext7"
  table ext7_table1
  table ext7_table2
  table old_table1
-(6 rows)
+ type ext7_table1
+ type ext7_table1[]
+ type ext7_table2
+ type ext7_table2[]
+ type old_table1
+ type old_table1[]
+(12 rows)
 
 alter extension test_ext7 update to '2.0';
 \dx+ test_ext7
@@ -61,7 +68,9 @@ Objects in extension "test_ext7"
 -------------------------------
  sequence ext7_table2_col2_seq
  table ext7_table2
-(2 rows)
+ type ext7_table2
+ type ext7_table2[]
+(4 rows)
 
 -- test handling of temp objects created by extensions
 create extension test_ext8;
@@ -78,8 +87,13 @@ order by 1;
  function pg_temp.ext8_temp_even(posint)
  table ext8_table1
  table ext8_temp_table1
+ type ext8_table1
+ type ext8_table1[]
+ type ext8_temp_table1
+ type ext8_temp_table1[]
  type posint
-(5 rows)
+ type posint[]
+(10 rows)
 
 -- Should be possible to drop and recreate this extension
 drop extension test_ext8;
@@ -96,8 +110,13 @@ order by 1;
  function pg_temp.ext8_temp_even(posint)
  table ext8_table1
  table ext8_temp_table1
+ type ext8_table1
+ type ext8_table1[]
+ type ext8_temp_table1
+ type ext8_temp_table1[]
  type posint
-(5 rows)
+ type posint[]
+(10 rows)
 
 -- here we want to start a new session and wait till old one is gone
 select pg_backend_pid() as oldpid \gset
@@ -116,11 +135,119 @@ Objects in extension "test_ext8"
 ----------------------------
  function ext8_even(posint)
  table ext8_table1
+ type ext8_table1
+ type ext8_table1[]
  type posint
-(3 rows)
+ type posint[]
+(6 rows)
 
 -- dropping it should still work
 drop extension test_ext8;
+-- check handling of types as extension members
+create extension test_ext9;
+\dx+ test_ext9
+          Objects in extension "test_ext9"
+                 Object description                 
+----------------------------------------------------
+ cast from varbitrange to varbitmultirange
+ function varbitmultirange()
+ function varbitmultirange(varbitrange)
+ function varbitmultirange(varbitrange[])
+ function varbitrange(bit varying,bit varying)
+ function varbitrange(bit varying,bit varying,text)
+ table sometable
+ type somecomposite
+ type somecomposite[]
+ type sometable
+ type sometable[]
+ type varbitmultirange
+ type varbitmultirange[]
+ type varbitrange
+ type varbitrange[]
+(15 rows)
+
+alter extension test_ext9 drop type varbitrange;
+\dx+ test_ext9
+          Objects in extension "test_ext9"
+                 Object description                 
+----------------------------------------------------
+ cast from varbitrange to varbitmultirange
+ function varbitmultirange()
+ function varbitmultirange(varbitrange)
+ function varbitmultirange(varbitrange[])
+ function varbitrange(bit varying,bit varying)
+ function varbitrange(bit varying,bit varying,text)
+ table sometable
+ type somecomposite
+ type somecomposite[]
+ type sometable
+ type sometable[]
+(11 rows)
+
+alter extension test_ext9 add type varbitrange;
+\dx+ test_ext9
+          Objects in extension "test_ext9"
+                 Object description                 
+----------------------------------------------------
+ cast from varbitrange to varbitmultirange
+ function varbitmultirange()
+ function varbitmultirange(varbitrange)
+ function varbitmultirange(varbitrange[])
+ function varbitrange(bit varying,bit varying)
+ function varbitrange(bit varying,bit varying,text)
+ table sometable
+ type somecomposite
+ type somecomposite[]
+ type sometable
+ type sometable[]
+ type varbitmultirange
+ type varbitmultirange[]
+ type varbitrange
+ type varbitrange[]
+(15 rows)
+
+alter extension test_ext9 drop table sometable;
+\dx+ test_ext9
+          Objects in extension "test_ext9"
+                 Object description                 
+----------------------------------------------------
+ cast from varbitrange to varbitmultirange
+ function varbitmultirange()
+ function varbitmultirange(varbitrange)
+ function varbitmultirange(varbitrange[])
+ function varbitrange(bit varying,bit varying)
+ function varbitrange(bit varying,bit varying,text)
+ type somecomposite
+ type somecomposite[]
+ type varbitmultirange
+ type varbitmultirange[]
+ type varbitrange
+ type varbitrange[]
+(12 rows)
+
+alter extension test_ext9 add table sometable;
+\dx+ test_ext9
+          Objects in extension "test_ext9"
+                 Object description                 
+----------------------------------------------------
+ cast from varbitrange to varbitmultirange
+ function varbitmultirange()
+ function varbitmultirange(varbitrange)
+ function varbitmultirange(varbitrange[])
+ function varbitrange(bit varying,bit varying)
+ function varbitrange(bit varying,bit varying,text)
+ table sometable
+ type somecomposite
+ type somecomposite[]
+ type sometable
+ type sometable[]
+ type varbitmultirange
+ type varbitmultirange[]
+ type varbitrange
+ type varbitrange[]
+(15 rows)
+
+drop extension test_ext9;
 -- Test creation of extension in temporary schema with two-phase commit,
 -- which should not work.  This function wrapper is useful for portability.
 -- Avoid noise caused by CONTEXT and NOTICE messages including the temporary
@@ -236,9 +363,12 @@ Objects in extension "test_ext_cor"
 ------------------------------
  function ext_cor_func()
  operator <<@@(point,polygon)
+ type ext_cor_view
+ type ext_cor_view[]
  type test_ext_type
+ type test_ext_type[]
  view ext_cor_view
-(4 rows)
+(7 rows)
 
 --
 -- CREATE IF NOT EXISTS is an entirely unsound thing for an extension
@@ -294,7 +424,13 @@ Objects in extension "test_ext_cine"
  server ext_cine_srv
  table ext_cine_tab1
  table ext_cine_tab2
-(8 rows)
+ type ext_cine_mv
+ type ext_cine_mv[]
+ type ext_cine_tab1
+ type ext_cine_tab1[]
+ type ext_cine_tab2
+ type ext_cine_tab2[]
+(14 rows)
 
 ALTER EXTENSION test_ext_cine UPDATE TO '1.1';
 \dx+ test_ext_cine
@@ -310,11 +446,112 @@ Objects in extension "test_ext_cine"
  table ext_cine_tab1
  table ext_cine_tab2
  table ext_cine_tab3
-(9 rows)
+ type ext_cine_mv
+ type ext_cine_mv[]
+ type ext_cine_tab1
+ type ext_cine_tab1[]
+ type ext_cine_tab2
+ type ext_cine_tab2[]
+ type ext_cine_tab3
+ type ext_cine_tab3[]
+(17 rows)
 
+--
+-- Test @extschema@ syntax.
+--
+CREATE SCHEMA "has space";
+CREATE EXTENSION test_ext_extschema SCHEMA has$dollar;
+ERROR:  invalid character in extension "test_ext_extschema" schema: must not contain any of ""$'\"
+CREATE EXTENSION test_ext_extschema SCHEMA "has space";
+--
+-- Test basic SET SCHEMA handling.
+--
+CREATE SCHEMA s1;
+CREATE SCHEMA s2;
+CREATE EXTENSION test_ext_set_schema SCHEMA s1;
+ALTER EXTENSION test_ext_set_schema SET SCHEMA s2;
+\dx+ test_ext_set_schema
+      Objects in extension "test_ext_set_schema"
+                  Object description                   
+-------------------------------------------------------
+ cast from s2.ess_range_type to s2.ess_multirange_type
+ function s2.ess_func(integer)
+ function s2.ess_multirange_type()
+ function s2.ess_multirange_type(s2.ess_range_type)
+ function s2.ess_multirange_type(s2.ess_range_type[])
+ function s2.ess_range_type(text,text)
+ function s2.ess_range_type(text,text,text)
+ table s2.ess_table
+ type s2.ess_composite_type
+ type s2.ess_composite_type[]
+ type s2.ess_multirange_type
+ type s2.ess_multirange_type[]
+ type s2.ess_range_type
+ type s2.ess_range_type[]
+ type s2.ess_table
+ type s2.ess_table[]
+(16 rows)
+
+\sf s2.ess_func(int)
+CREATE OR REPLACE FUNCTION s2.ess_func(integer)
+ RETURNS text
+ LANGUAGE sql
+BEGIN ATOMIC
+ SELECT ess_table.f3
+    FROM s2.ess_table
+   WHERE (ess_table.f1 = $1);
+END
+--
+-- Test extension with objects outside the extension's schema.
+--
+CREATE SCHEMA test_func_dep1;
+CREATE SCHEMA test_func_dep2;
+CREATE SCHEMA test_func_dep3;
+CREATE EXTENSION test_ext_req_schema1 SCHEMA test_func_dep1;
+ALTER FUNCTION test_func_dep1.dep_req1() SET SCHEMA test_func_dep2;
+SELECT pg_describe_object(classid, objid, objsubid) as obj,
+       pg_describe_object(refclassid, refobjid, refobjsubid) as objref,
+       deptype
+  FROM pg_depend
+  WHERE classid = 'pg_extension'::regclass AND
+        objid = (SELECT oid FROM pg_extension WHERE extname = 'test_ext_req_schema1')
+  ORDER BY 1, 2;
+              obj               |        objref         | deptype 
+--------------------------------+-----------------------+---------
+ extension test_ext_req_schema1 | schema test_func_dep1 | n
+(1 row)
+
+-- fails, as function dep_req1 is not in the same schema as the extension.
+ALTER EXTENSION test_ext_req_schema1 SET SCHEMA test_func_dep3;
+ERROR:  extension "test_ext_req_schema1" does not support SET SCHEMA
+DETAIL:  function test_func_dep2.dep_req1() is not in the extension's schema "test_func_dep1"
+-- Move back the function, and the extension can be moved.
+ALTER FUNCTION test_func_dep2.dep_req1() SET SCHEMA test_func_dep1;
+ALTER EXTENSION test_ext_req_schema1 SET SCHEMA test_func_dep3;
+SELECT pg_describe_object(classid, objid, objsubid) as obj,
+       pg_describe_object(refclassid, refobjid, refobjsubid) as objref,
+       deptype
+  FROM pg_depend
+  WHERE classid = 'pg_extension'::regclass AND
+        objid = (SELECT oid FROM pg_extension WHERE extname = 'test_ext_req_schema1')
+  ORDER BY 1, 2;
+              obj               |        objref         | deptype 
+--------------------------------+-----------------------+---------
+ extension test_ext_req_schema1 | schema test_func_dep3 | n
+(1 row)
+
+DROP EXTENSION test_ext_req_schema1 CASCADE;
+DROP SCHEMA test_func_dep1;
+DROP SCHEMA test_func_dep2;
+DROP SCHEMA test_func_dep3;
 --
 -- Test @extschema:extname@ syntax and no_relocate option
 --
+CREATE EXTENSION test_ext_req_schema1 SCHEMA has$dollar;
+CREATE EXTENSION test_ext_req_schema3 CASCADE;
+NOTICE:  installing required extension "test_ext_req_schema2"
+ERROR:  invalid character in extension "test_ext_req_schema1" schema: must not contain any of ""$'\"
+DROP EXTENSION test_ext_req_schema1;
 CREATE SCHEMA test_s_dep;
 CREATE EXTENSION test_ext_req_schema1 SCHEMA test_s_dep;
 CREATE EXTENSION test_ext_req_schema3 CASCADE;

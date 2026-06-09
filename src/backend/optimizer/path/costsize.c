@@ -60,7 +60,7 @@
  * values.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -91,7 +91,6 @@
 #include "optimizer/paths.h"
 #include "optimizer/placeholder.h"
 #include "optimizer/plancat.h"
-#include "optimizer/planmain.h"
 #include "optimizer/restrictinfo.h"
 #include "parser/parsetree.h"
 #include "utils/lsyscache.h"
@@ -216,6 +215,35 @@ clamp_row_est(double nrows)
 		nrows = rint(nrows);
 
 	return nrows;
+}
+
+/*
+ * clamp_width_est
+ *		Force a tuple-width estimate to a sane value.
+ *
+ * The planner represents datatype width and tuple width estimates as int32.
+ * When summing column width estimates to create a tuple width estimate,
+ * it's possible to reach integer overflow in edge cases.  To ensure sane
+ * behavior, we form such sums in int64 arithmetic and then apply this routine
+ * to clamp to int32 range.
+ */
+int32
+clamp_width_est(int64 tuple_width)
+{
+	/*
+	 * Anything more than MaxAllocSize is clearly bogus, since we could not
+	 * create a tuple that large.
+	 */
+	if (tuple_width > MaxAllocSize)
+		return (int32) MaxAllocSize;
+
+	/*
+	 * Unlike clamp_row_est, we just Assert that the value isn't negative,
+	 * rather than masking such errors.
+	 */
+	Assert(tuple_width >= 0);
+
+	return (int32) tuple_width;
 }
 
 /*
@@ -1227,7 +1255,7 @@ cost_tidscan(Path *path, PlannerInfo *root,
 	QualCost	qpqual_cost;
 	Cost		cpu_per_tuple;
 	QualCost	tid_qual_cost;
-	int			ntuples;
+	double		ntuples;
 	ListCell   *l;
 	double		spc_random_page_cost;
 
@@ -1254,7 +1282,7 @@ cost_tidscan(Path *path, PlannerInfo *root,
 			ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *) qual;
 			Node	   *arraynode = (Node *) lsecond(saop->args);
 
-			ntuples += estimate_array_length(arraynode);
+			ntuples += estimate_array_length(root, arraynode);
 		}
 		else if (IsA(qual, CurrentOfExpr))
 		{
@@ -2827,6 +2855,226 @@ cost_agg(Path *path, PlannerInfo *root,
 }
 
 /*
+ * get_windowclause_startup_tuples
+ *		Estimate how many tuples we'll need to fetch from a WindowAgg's
+ *		subnode before we can output the first WindowAgg tuple.
+ *
+ * How many tuples need to be read depends on the WindowClause.  For example,
+ * a WindowClause with no PARTITION BY and no ORDER BY requires that all
+ * subnode tuples are read and aggregated before the WindowAgg can output
+ * anything.  If there's a PARTITION BY, then we only need to look at tuples
+ * in the first partition.  Here we attempt to estimate just how many
+ * 'input_tuples' the WindowAgg will need to read for the given WindowClause
+ * before the first tuple can be output.
+ */
+static double
+get_windowclause_startup_tuples(PlannerInfo *root, WindowClause *wc,
+								double input_tuples)
+{
+	int			frameOptions = wc->frameOptions;
+	double		partition_tuples;
+	double		return_tuples;
+	double		peer_tuples;
+
+	/*
+	 * First, figure out how many partitions there are likely to be and set
+	 * partition_tuples according to that estimate.
+	 */
+	if (wc->partitionClause != NIL)
+	{
+		double		num_partitions;
+		List	   *partexprs = get_sortgrouplist_exprs(wc->partitionClause,
+														root->parse->targetList);
+
+		num_partitions = estimate_num_groups(root, partexprs, input_tuples,
+											 NULL, NULL);
+		list_free(partexprs);
+
+		partition_tuples = input_tuples / num_partitions;
+	}
+	else
+	{
+		/* all tuples belong to the same partition */
+		partition_tuples = input_tuples;
+	}
+
+	/* estimate the number of tuples in each peer group */
+	if (wc->orderClause != NIL)
+	{
+		double		num_groups;
+		List	   *orderexprs;
+
+		orderexprs = get_sortgrouplist_exprs(wc->orderClause,
+											 root->parse->targetList);
+
+		/* estimate out how many peer groups there are in the partition */
+		num_groups = estimate_num_groups(root, orderexprs,
+										 partition_tuples, NULL,
+										 NULL);
+		list_free(orderexprs);
+		peer_tuples = partition_tuples / num_groups;
+	}
+	else
+	{
+		/* no ORDER BY so only 1 tuple belongs in each peer group */
+		peer_tuples = 1.0;
+	}
+
+	if (frameOptions & FRAMEOPTION_END_UNBOUNDED_FOLLOWING)
+	{
+		/* include all partition rows */
+		return_tuples = partition_tuples;
+	}
+	else if (frameOptions & FRAMEOPTION_END_CURRENT_ROW)
+	{
+		if (frameOptions & FRAMEOPTION_ROWS)
+		{
+			/* just count the current row */
+			return_tuples = 1.0;
+		}
+		else if (frameOptions & (FRAMEOPTION_RANGE | FRAMEOPTION_GROUPS))
+		{
+			/*
+			 * When in RANGE/GROUPS mode, it's more complex.  If there's no
+			 * ORDER BY, then all rows in the partition are peers, otherwise
+			 * we'll need to read the first group of peers.
+			 */
+			if (wc->orderClause == NIL)
+				return_tuples = partition_tuples;
+			else
+				return_tuples = peer_tuples;
+		}
+		else
+		{
+			/*
+			 * Something new we don't support yet?  This needs attention.
+			 * We'll just return 1.0 in the meantime.
+			 */
+			Assert(false);
+			return_tuples = 1.0;
+		}
+	}
+	else if (frameOptions & FRAMEOPTION_END_OFFSET_PRECEDING)
+	{
+		/*
+		 * BETWEEN ... AND N PRECEDING will only need to read the WindowAgg's
+		 * subnode after N ROWS/RANGES/GROUPS.  N can be 0, but not negative,
+		 * so we'll just assume only the current row needs to be read to fetch
+		 * the first WindowAgg row.
+		 */
+		return_tuples = 1.0;
+	}
+	else if (frameOptions & FRAMEOPTION_END_OFFSET_FOLLOWING)
+	{
+		Const	   *endOffset = (Const *) wc->endOffset;
+		double		end_offset_value;
+
+		/* try and figure out the value specified in the endOffset. */
+		if (IsA(endOffset, Const))
+		{
+			if (endOffset->constisnull)
+			{
+				/*
+				 * NULLs are not allowed, but currently, there's no code to
+				 * error out if there's a NULL Const.  We'll only discover
+				 * this during execution.  For now, just pretend everything is
+				 * fine and assume that just the first row/range/group will be
+				 * needed.
+				 */
+				end_offset_value = 1.0;
+			}
+			else
+			{
+				switch (endOffset->consttype)
+				{
+					case INT2OID:
+						end_offset_value =
+							(double) DatumGetInt16(endOffset->constvalue);
+						break;
+					case INT4OID:
+						end_offset_value =
+							(double) DatumGetInt32(endOffset->constvalue);
+						break;
+					case INT8OID:
+						end_offset_value =
+							(double) DatumGetInt64(endOffset->constvalue);
+						break;
+					default:
+						end_offset_value =
+							partition_tuples / peer_tuples *
+							DEFAULT_INEQ_SEL;
+						break;
+				}
+			}
+		}
+		else
+		{
+			/*
+			 * When the end bound is not a Const, we'll just need to guess. We
+			 * just make use of DEFAULT_INEQ_SEL.
+			 */
+			end_offset_value =
+				partition_tuples / peer_tuples * DEFAULT_INEQ_SEL;
+		}
+
+		if (frameOptions & FRAMEOPTION_ROWS)
+		{
+			/* include the N FOLLOWING and the current row */
+			return_tuples = end_offset_value + 1.0;
+		}
+		else if (frameOptions & (FRAMEOPTION_RANGE | FRAMEOPTION_GROUPS))
+		{
+			/* include N FOLLOWING ranges/group and the initial range/group */
+			return_tuples = peer_tuples * (end_offset_value + 1.0);
+		}
+		else
+		{
+			/*
+			 * Something new we don't support yet?  This needs attention.
+			 * We'll just return 1.0 in the meantime.
+			 */
+			Assert(false);
+			return_tuples = 1.0;
+		}
+	}
+	else
+	{
+		/*
+		 * Something new we don't support yet?  This needs attention.  We'll
+		 * just return 1.0 in the meantime.
+		 */
+		Assert(false);
+		return_tuples = 1.0;
+	}
+
+	if (wc->partitionClause != NIL || wc->orderClause != NIL)
+	{
+		/*
+		 * Cap the return value to the estimated partition tuples and account
+		 * for the extra tuple WindowAgg will need to read to confirm the next
+		 * tuple does not belong to the same partition or peer group.
+		 */
+		return_tuples = Min(return_tuples + 1.0, partition_tuples);
+	}
+	else
+	{
+		/*
+		 * Cap the return value so it's never higher than the expected tuples
+		 * in the partition.
+		 */
+		return_tuples = Min(return_tuples, partition_tuples);
+	}
+
+	/*
+	 * We needn't worry about any EXCLUDE options as those only exclude rows
+	 * from being aggregated, not from being read from the WindowAgg's
+	 * subnode.
+	 */
+
+	return clamp_row_est(return_tuples);
+}
+
+/*
  * cost_windowagg
  *		Determines and returns the cost of performing a WindowAgg plan node,
  *		including the cost of its input.
@@ -2835,13 +3083,19 @@ cost_agg(Path *path, PlannerInfo *root,
  */
 void
 cost_windowagg(Path *path, PlannerInfo *root,
-			   List *windowFuncs, int numPartCols, int numOrderCols,
+			   List *windowFuncs, WindowClause *winclause,
 			   Cost input_startup_cost, Cost input_total_cost,
 			   double input_tuples)
 {
 	Cost		startup_cost;
 	Cost		total_cost;
+	double		startup_tuples;
+	int			numPartCols;
+	int			numOrderCols;
 	ListCell   *lc;
+
+	numPartCols = list_length(winclause->partitionClause);
+	numOrderCols = list_length(winclause->orderClause);
 
 	startup_cost = input_startup_cost;
 	total_cost = input_total_cost;
@@ -2897,6 +3151,21 @@ cost_windowagg(Path *path, PlannerInfo *root,
 	path->rows = input_tuples;
 	path->startup_cost = startup_cost;
 	path->total_cost = total_cost;
+
+	/*
+	 * Also, take into account how many tuples we need to read from the
+	 * subnode in order to produce the first tuple from the WindowAgg.  To do
+	 * this we proportion the run cost (total cost not including startup cost)
+	 * over the estimated startup tuples.  We already included the startup
+	 * cost of the subnode, so we only need to do this when the estimated
+	 * startup tuples is above 1.0.
+	 */
+	startup_tuples = get_windowclause_startup_tuples(root, winclause,
+													 input_tuples);
+
+	if (startup_tuples > 1.0)
+		path->startup_cost += (total_cost - startup_cost) / input_tuples *
+			(startup_tuples - 1.0);
 }
 
 /*
@@ -4517,7 +4786,7 @@ cost_qual_eval_walker(Node *node, cost_qual_eval_context *context)
 		Node	   *arraynode = (Node *) lsecond(saop->args);
 		QualCost	sacosts;
 		QualCost	hcosts;
-		int			estarraylen = estimate_array_length(arraynode);
+		double		estarraylen = estimate_array_length(context->root, arraynode);
 
 		set_sa_opfuncid(saop);
 		sacosts.startup = sacosts.per_tuple = 0;
@@ -4555,7 +4824,7 @@ cost_qual_eval_walker(Node *node, cost_qual_eval_context *context)
 			 */
 			context->total.startup += sacosts.startup;
 			context->total.per_tuple += sacosts.per_tuple *
-				estimate_array_length(arraynode) * 0.5;
+				estimate_array_length(context->root, arraynode) * 0.5;
 		}
 	}
 	else if (IsA(node, Aggref) ||
@@ -4606,7 +4875,7 @@ cost_qual_eval_walker(Node *node, cost_qual_eval_context *context)
 		context->total.startup += perelemcost.startup;
 		if (perelemcost.per_tuple > 0)
 			context->total.per_tuple += perelemcost.per_tuple *
-				estimate_array_length((Node *) acoerce->arg);
+				estimate_array_length(context->root, (Node *) acoerce->arg);
 	}
 	else if (IsA(node, RowCompareExpr))
 	{
@@ -4626,7 +4895,8 @@ cost_qual_eval_walker(Node *node, cost_qual_eval_context *context)
 			 IsA(node, SQLValueFunction) ||
 			 IsA(node, XmlExpr) ||
 			 IsA(node, CoerceToDomain) ||
-			 IsA(node, NextValueExpr))
+			 IsA(node, NextValueExpr) ||
+			 IsA(node, JsonExpr))
 	{
 		/* Treat all these as having cost 1 */
 		context->total.per_tuple += cpu_operator_cost;
@@ -4797,23 +5067,7 @@ compute_semi_anti_join_factors(PlannerInfo *root,
 	/*
 	 * Also get the normal inner-join selectivity of the join clauses.
 	 */
-	norm_sjinfo.type = T_SpecialJoinInfo;
-	norm_sjinfo.min_lefthand = outerrel->relids;
-	norm_sjinfo.min_righthand = innerrel->relids;
-	norm_sjinfo.syn_lefthand = outerrel->relids;
-	norm_sjinfo.syn_righthand = innerrel->relids;
-	norm_sjinfo.jointype = JOIN_INNER;
-	norm_sjinfo.ojrelid = 0;
-	norm_sjinfo.commute_above_l = NULL;
-	norm_sjinfo.commute_above_r = NULL;
-	norm_sjinfo.commute_below_l = NULL;
-	norm_sjinfo.commute_below_r = NULL;
-	/* we don't bother trying to make the remaining fields valid */
-	norm_sjinfo.lhs_strict = false;
-	norm_sjinfo.semi_can_btree = false;
-	norm_sjinfo.semi_can_hash = false;
-	norm_sjinfo.semi_operators = NIL;
-	norm_sjinfo.semi_rhs_exprs = NIL;
+	init_dummy_sjinfo(&norm_sjinfo, outerrel->relids, innerrel->relids);
 
 	nselec = clauselist_selectivity(root,
 									joinquals,
@@ -4966,23 +5220,8 @@ approx_tuple_count(PlannerInfo *root, JoinPath *path, List *quals)
 	/*
 	 * Make up a SpecialJoinInfo for JOIN_INNER semantics.
 	 */
-	sjinfo.type = T_SpecialJoinInfo;
-	sjinfo.min_lefthand = path->outerjoinpath->parent->relids;
-	sjinfo.min_righthand = path->innerjoinpath->parent->relids;
-	sjinfo.syn_lefthand = path->outerjoinpath->parent->relids;
-	sjinfo.syn_righthand = path->innerjoinpath->parent->relids;
-	sjinfo.jointype = JOIN_INNER;
-	sjinfo.ojrelid = 0;
-	sjinfo.commute_above_l = NULL;
-	sjinfo.commute_above_r = NULL;
-	sjinfo.commute_below_l = NULL;
-	sjinfo.commute_below_r = NULL;
-	/* we don't bother trying to make the remaining fields valid */
-	sjinfo.lhs_strict = false;
-	sjinfo.semi_can_btree = false;
-	sjinfo.semi_can_hash = false;
-	sjinfo.semi_operators = NIL;
-	sjinfo.semi_rhs_exprs = NIL;
+	init_dummy_sjinfo(&sjinfo, path->outerjoinpath->parent->relids,
+					  path->innerjoinpath->parent->relids);
 
 	/* Get the approximate selectivity */
 	foreach(l, quals)
@@ -5879,7 +6118,7 @@ static void
 set_rel_width(PlannerInfo *root, RelOptInfo *rel)
 {
 	Oid			reloid = planner_rt_fetch(rel->relid, root)->relid;
-	int32		tuple_width = 0;
+	int64		tuple_width = 0;
 	bool		have_wholerow_var = false;
 	ListCell   *lc;
 
@@ -5991,7 +6230,7 @@ set_rel_width(PlannerInfo *root, RelOptInfo *rel)
 	 */
 	if (have_wholerow_var)
 	{
-		int32		wholerow_width = MAXALIGN(SizeofHeapTupleHeader);
+		int64		wholerow_width = MAXALIGN(SizeofHeapTupleHeader);
 
 		if (reloid != InvalidOid)
 		{
@@ -6008,7 +6247,7 @@ set_rel_width(PlannerInfo *root, RelOptInfo *rel)
 				wholerow_width += rel->attr_widths[i - rel->min_attr];
 		}
 
-		rel->attr_widths[0 - rel->min_attr] = wholerow_width;
+		rel->attr_widths[0 - rel->min_attr] = clamp_width_est(wholerow_width);
 
 		/*
 		 * Include the whole-row Var as part of the output tuple.  Yes, that
@@ -6017,8 +6256,7 @@ set_rel_width(PlannerInfo *root, RelOptInfo *rel)
 		tuple_width += wholerow_width;
 	}
 
-	Assert(tuple_width >= 0);
-	rel->reltarget->width = tuple_width;
+	rel->reltarget->width = clamp_width_est(tuple_width);
 }
 
 /*
@@ -6036,7 +6274,7 @@ set_rel_width(PlannerInfo *root, RelOptInfo *rel)
 PathTarget *
 set_pathtarget_cost_width(PlannerInfo *root, PathTarget *target)
 {
-	int32		tuple_width = 0;
+	int64		tuple_width = 0;
 	ListCell   *lc;
 
 	/* Vars are assumed to have cost zero, but other exprs do not */
@@ -6060,8 +6298,7 @@ set_pathtarget_cost_width(PlannerInfo *root, PathTarget *target)
 		}
 	}
 
-	Assert(tuple_width >= 0);
-	target->width = tuple_width;
+	target->width = clamp_width_est(tuple_width);
 
 	return target;
 }
@@ -6171,12 +6408,20 @@ get_parallel_divisor(Path *path)
 
 /*
  * compute_bitmap_pages
+ *	  Estimate number of pages fetched from heap in a bitmap heap scan.
  *
- * compute number of pages fetched from heap in bitmap heap scan.
+ * 'baserel' is the relation to be scanned
+ * 'bitmapqual' is a tree of IndexPaths, BitmapAndPaths, and BitmapOrPaths
+ * 'loop_count' is the number of repetitions of the indexscan to factor into
+ *		estimates of caching behavior
+ *
+ * If cost_p isn't NULL, the indexTotalCost estimate is returned in *cost_p.
+ * If tuples_p isn't NULL, the tuples_fetched estimate is returned in *tuples_p.
  */
 double
-compute_bitmap_pages(PlannerInfo *root, RelOptInfo *baserel, Path *bitmapqual,
-					 int loop_count, Cost *cost, double *tuple)
+compute_bitmap_pages(PlannerInfo *root, RelOptInfo *baserel,
+					 Path *bitmapqual, double loop_count,
+					 Cost *cost_p, double *tuples_p)
 {
 	Cost		indexTotalCost;
 	Selectivity indexSelectivity;
@@ -6266,10 +6511,10 @@ compute_bitmap_pages(PlannerInfo *root, RelOptInfo *baserel, Path *bitmapqual,
 							  (lossy_pages / heap_pages) * baserel->tuples);
 	}
 
-	if (cost)
-		*cost = indexTotalCost;
-	if (tuple)
-		*tuple = tuples_fetched;
+	if (cost_p)
+		*cost_p = indexTotalCost;
+	if (tuples_p)
+		*tuples_p = tuples_fetched;
 
 	return pages_fetched;
 }

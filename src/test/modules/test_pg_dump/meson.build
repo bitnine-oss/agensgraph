@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 test_install_data += files(
   'test_pg_dump.control',
@@ -13,8 +13,6 @@ tests += {
     'sql': [
       'test_pg_dump',
     ],
-    # doesn't delete its user
-    'runningcheck': false,
   },
   'tap': {
     'tests': [

@@ -4,7 +4,7 @@
  *	  WAL replay logic for btrees.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -18,10 +18,8 @@
 #include "access/nbtree.h"
 #include "access/nbtxlog.h"
 #include "access/transam.h"
-#include "access/xlog.h"
 #include "access/xlogutils.h"
-#include "miscadmin.h"
-#include "storage/procarray.h"
+#include "storage/standby.h"
 #include "utils/memutils.h"
 
 static MemoryContext opCtx;		/* working memory for operations */

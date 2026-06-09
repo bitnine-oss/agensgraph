@@ -1,12 +1,11 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
-# Test WAL replay of FSM changes.
-#
-# FSM changes don't normally need to be WAL-logged, except for truncation.
+# Test FSM-driven INSERT just after truncation clears FSM slots indicating
+# free space in removed blocks.
 # The FSM mustn't return a page that doesn't exist (anymore).
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;

@@ -1355,6 +1355,17 @@
 
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>attcollation</structfield> <type>oid</type>
+       (references <link linkend="catalog-pg-collation"><structname>pg_collation</structname></link>.<structfield>oid</structfield>)
+      </para>
+      <para>
+       The defined collation of the column, or zero if the column is
+       not of a collatable data type
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
        <structfield>attstattarget</structfield> <type>int2</type>
       </para>
       <para>
@@ -1362,22 +1373,11 @@
        of statistics accumulated for this column by
        <link linkend="sql-analyze"><command>ANALYZE</command></link>.
        A zero value indicates that no statistics should be collected.
-       A negative value says to use the system default statistics target.
+       A null value says to use the system default statistics target.
        The exact meaning of positive values is data type-dependent.
        For scalar data types, <structfield>attstattarget</structfield>
        is both the target number of <quote>most common values</quote>
        to collect, and the target number of histogram bins to create.
-      </para></entry>
-     </row>
-
-     <row>
-      <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>attcollation</structfield> <type>oid</type>
-       (references <link linkend="catalog-pg-collation"><structname>pg_collation</structname></link>.<structfield>oid</structfield>)
-      </para>
-      <para>
-       The defined collation of the column, or zero if the column is
-       not of a collatable data type
       </para></entry>
      </row>
 
@@ -1624,7 +1624,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
 </synopsis>
    where <replaceable>salt</replaceable>, <replaceable>StoredKey</replaceable> and
    <replaceable>ServerKey</replaceable> are in Base64 encoded format. This format is
-   the same as that specified by <ulink url="https://tools.ietf.org/html/rfc5803">RFC 5803</ulink>.
+   the same as that specified by <ulink url="https://datatracker.ietf.org/doc/html/rfc5803">RFC 5803</ulink>.
   </para>
 
   <para>
@@ -1892,8 +1892,8 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
   </indexterm>
 
   <para>
-   The catalog <structname>pg_class</structname> catalogs tables and most
-   everything else that has columns or is otherwise similar to a
+   The catalog <structname>pg_class</structname> describes tables and
+   other objects that have columns or are otherwise similar to a
    table.  This includes indexes (but see also <link
    linkend="catalog-pg-index"><structname>pg_index</structname></link>),
    sequences (but see also <link
@@ -1901,8 +1901,8 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
    views, materialized views, composite types, and TOAST tables;
    see <structfield>relkind</structfield>.
    Below, when we mean all of these kinds of objects we speak of
-   <quote>relations</quote>.  Not all columns are meaningful for all relation
-   types.
+   <quote>relations</quote>.  Not all of <structname>pg_class</structname>'s
+   columns are meaningful for all relation kinds.
   </para>
 
   <table>
@@ -1987,9 +1987,13 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        (references <link linkend="catalog-pg-am"><structname>pg_am</structname></link>.<structfield>oid</structfield>)
       </para>
       <para>
-       If this is a table or an index, the access method used (heap,
-       B-tree, hash, etc.); otherwise zero (zero occurs for sequences,
-       as well as relations without storage, such as views)
+       The access method used to access this table or index.
+       Not meaningful if the relation is a sequence or
+       has no on-disk file,
+       except for partitioned tables, where, if set, it takes
+       precedence over <varname>default_table_access_method</varname>
+       when determining the access method to use for partitions created
+       when one is not specified in the creation command.
       </para></entry>
      </row>
 
@@ -2010,9 +2014,12 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        (references <link linkend="catalog-pg-tablespace"><structname>pg_tablespace</structname></link>.<structfield>oid</structfield>)
       </para>
       <para>
-       The tablespace in which this relation is stored.  If zero,
-       the database's default tablespace is implied.  (Not meaningful
-       if the relation has no on-disk file.)
+       The tablespace in which this relation is stored.
+       If zero, the database's default tablespace is implied.
+       Not meaningful if the relation has no on-disk file,
+       except for partitioned tables, where this is the tablespace
+       in which partitions will be created when one is not
+       specified in the creation command.
       </para></entry>
      </row>
 
@@ -2377,9 +2384,9 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        <structfield>collprovider</structfield> <type>char</type>
       </para>
       <para>
-       Provider of the collation: <literal>d</literal> = database
-       default, <literal>c</literal> = libc, <literal>i</literal> = icu
-      </para></entry>
+       Provider of the collation: <literal>d</literal> = database default,
+       <literal>b</literal> = builtin, <literal>c</literal> = libc,
+       <literal>i</literal> = icu </para></entry>
      </row>
 
      <row>
@@ -2406,7 +2413,10 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        <structfield>collcollate</structfield> <type>text</type>
       </para>
       <para>
-       <symbol>LC_COLLATE</symbol> for this collation object
+       <symbol>LC_COLLATE</symbol> for this collation object. If the provider is
+       not <literal>libc</literal>, <structfield>collcollate</structfield> is
+       <literal>NULL</literal> and <structfield>colllocale</structfield> is
+       used instead.
       </para></entry>
      </row>
 
@@ -2415,16 +2425,23 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        <structfield>collctype</structfield> <type>text</type>
       </para>
       <para>
-       <symbol>LC_CTYPE</symbol> for this collation object
+       <symbol>LC_CTYPE</symbol> for this collation object. If the provider is
+       not <literal>libc</literal>, <structfield>collctype</structfield> is
+       <literal>NULL</literal> and <structfield>colllocale</structfield> is
+       used instead.
       </para></entry>
      </row>
 
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>colliculocale</structfield> <type>text</type>
+       <structfield>colllocale</structfield> <type>text</type>
       </para>
       <para>
-       ICU locale ID for this collation object
+       Collation provider locale name for this collation object. If the
+       provider is <literal>libc</literal>,
+       <structfield>colllocale</structfield> is <literal>NULL</literal>;
+       <structfield>collcollate</structfield> and
+       <structfield>collctype</structfield> are used instead.
       </para></entry>
      </row>
 
@@ -2485,10 +2502,11 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
 
   <para>
    The catalog <structname>pg_constraint</structname> stores check, primary
-   key, unique, foreign key, and exclusion constraints on tables.
+   key, unique, foreign key, and exclusion constraints on tables, as well as
+   not-null constraints on domains.
    (Column constraints are not treated specially.  Every column constraint is
    equivalent to some table constraint.)
-   Not-null constraints are represented in the
+   Not-null constraints on relations are represented in the
    <link linkend="catalog-pg-attribute"><structname>pg_attribute</structname></link>
    catalog, not here.
   </para>
@@ -2552,6 +2570,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <para>
        <literal>c</literal> = check constraint,
        <literal>f</literal> = foreign key constraint,
+       <literal>n</literal> = not-null constraint (domains only),
        <literal>p</literal> = primary key constraint,
        <literal>u</literal> = unique constraint,
        <literal>t</literal> = constraint trigger,
@@ -3009,9 +3028,8 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        <structfield>datlocprovider</structfield> <type>char</type>
       </para>
       <para>
-       Locale provider for this database: <literal>c</literal> = libc,
-       <literal>i</literal> = icu
-      </para></entry>
+       Locale provider for this database: <literal>b</literal> = builtin,
+       <literal>c</literal> = libc, <literal>i</literal> = icu </para></entry>
      </row>
 
      <row>
@@ -3038,11 +3056,25 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
 
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>dathasloginevt</structfield> <type>bool</type>
+      </para>
+      <para>
+        Indicates that there are login event triggers defined for this database.
+        This flag is used to avoid extra lookups on the
+        <structname>pg_event_trigger</structname> table during each backend
+        startup.  This flag is used internally by <productname>PostgreSQL</productname>
+        and should not be manually altered or read for monitoring purposes.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
        <structfield>datconnlimit</structfield> <type>int4</type>
       </para>
       <para>
        Sets maximum number of concurrent connections that can be made
-       to this database.  -1 means no limit.
+       to this database.  -1 means no limit, -2 indicates the database is
+       invalid.
       </para></entry>
      </row>
 
@@ -3108,10 +3140,14 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
 
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>daticulocale</structfield> <type>text</type>
+       <structfield>datlocale</structfield> <type>text</type>
       </para>
       <para>
-       ICU locale ID for this database
+       Collation provider locale name for this database. If the
+       provider is <literal>libc</literal>,
+       <structfield>datlocale</structfield> is <literal>NULL</literal>;
+       <structfield>datcollate</structfield> and
+       <structfield>datctype</structfield> are used instead.
       </para></entry>
      </row>
 
@@ -7140,6 +7176,17 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
     </varlistentry>
 
     <varlistentry>
+     <term><symbol>SHARED_DEPENDENCY_INITACL</symbol> (<literal>i</literal>)</term>
+     <listitem>
+      <para>
+       The referenced object (which must be a role) is mentioned in a
+       <link linkend="catalog-pg-init-privs"><structname>pg_init_privs</structname></link>
+       entry for the dependent object.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
      <term><symbol>SHARED_DEPENDENCY_POLICY</symbol> (<literal>r</literal>)</term>
      <listitem>
       <para>
@@ -7622,23 +7669,6 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
 
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>stxstattarget</structfield> <type>int4</type>
-      </para>
-      <para>
-       <structfield>stxstattarget</structfield> controls the level of detail
-       of statistics accumulated for this statistics object by
-       <link linkend="sql-analyze"><command>ANALYZE</command></link>.
-       A zero value indicates that no statistics should be collected.
-       A negative value says to use the maximum of the statistics targets of
-       the referenced columns, if set, or the system default statistics target.
-       Positive values of <structfield>stxstattarget</structfield>
-       determine the target number of <quote>most common values</quote>
-       to collect.
-      </para></entry>
-     </row>
-
-     <row>
-      <entry role="catalog_table_entry"><para role="column_definition">
        <structfield>stxkeys</structfield> <type>int2vector</type>
        (references <link linkend="catalog-pg-attribute"><structname>pg_attribute</structname></link>.<structfield>attnum</structfield>)
       </para>
@@ -7647,6 +7677,23 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        covered by this statistics object;
        for example a value of <literal>1 3</literal> would
        mean that the first and the third table columns are covered
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>stxstattarget</structfield> <type>int2</type>
+      </para>
+      <para>
+       <structfield>stxstattarget</structfield> controls the level of detail
+       of statistics accumulated for this statistics object by
+       <link linkend="sql-analyze"><command>ANALYZE</command></link>.
+       A zero value indicates that no statistics should be collected.
+       A null value says to use the maximum of the statistics targets of
+       the referenced columns, if set, or the system default statistics target.
+       Positive values of <structfield>stxstattarget</structfield>
+       determine the target number of <quote>most common values</quote>
+       to collect.
       </para></entry>
      </row>
 
@@ -7729,8 +7776,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
    is a publicly readable view
    on <structname>pg_statistic_ext_data</structname> (after joining
    with <link linkend="catalog-pg-statistic-ext"><structname>pg_statistic_ext</structname></link>) that only exposes
-   information about those tables and columns that are readable by the
-   current user.
+   information about tables the current user owns.
   </para>
 
   <table>
@@ -7930,7 +7976,8 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        disk and apply at once after the transaction is committed on the
        publisher and received by the subscriber,
        <literal>p</literal> = apply changes directly using a parallel apply
-       worker if available (same as 't' if no worker is available)
+       worker if available (same as <literal>t</literal> if no worker is
+       available)
       </para></entry>
      </row>
 
@@ -7973,6 +8020,17 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       <para>
        If true, the subscription will be run with the permissions
        of the subscription owner
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>subfailover</structfield> <type>bool</type>
+      </para>
+      <para>
+       If true, the associated replication slots (i.e. the main slot and the
+       table sync slots) in the upstream database are enabled to be
+       synchronized to the standbys
       </para></entry>
      </row>
 

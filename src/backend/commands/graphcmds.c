@@ -313,11 +313,24 @@ static void
 SetMaxStatisticsTarget(Oid laboid)
 {
 	Relation	attrelation;
-	HeapTuple	tuple;
-	Form_pg_attribute attrtuple;
+	HeapTuple	tuple,
+				newtuple;
 	int			maxtarget = 10000;
+	Datum		repl_val[Natts_pg_attribute];
+	bool		repl_null[Natts_pg_attribute];
+	bool		repl_repl[Natts_pg_attribute];
 
 	attrelation = table_open(AttributeRelationId, RowExclusiveLock);
+
+	/*
+	 * attstattarget is a nullable column, so set it via heap_modify_tuple()
+	 * instead of the tuple's Form struct.  Both columns get the same target,
+	 * so build the replacement arrays once.
+	 */
+	memset(repl_null, false, sizeof(repl_null));
+	memset(repl_repl, false, sizeof(repl_repl));
+	repl_val[Anum_pg_attribute_attstattarget - 1] = Int16GetDatum(maxtarget);
+	repl_repl[Anum_pg_attribute_attstattarget - 1] = true;
 
 	/* start column */
 
@@ -328,11 +341,11 @@ SetMaxStatisticsTarget(Oid laboid)
 				(errcode(ERRCODE_UNDEFINED_COLUMN),
 				 errmsg("edge label must have start column")));
 
-	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
-	attrtuple->attstattarget = maxtarget;
+	newtuple = heap_modify_tuple(tuple, RelationGetDescr(attrelation),
+								 repl_val, repl_null, repl_repl);
+	CatalogTupleUpdate(attrelation, &tuple->t_self, newtuple);
 
-	CatalogTupleUpdate(attrelation, &tuple->t_self, tuple);
-
+	heap_freetuple(newtuple);
 	heap_freetuple(tuple);
 
 	/* end column */
@@ -344,12 +357,11 @@ SetMaxStatisticsTarget(Oid laboid)
 				(errcode(ERRCODE_UNDEFINED_COLUMN),
 				 errmsg("edge label must have end column")));
 
-	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
+	newtuple = heap_modify_tuple(tuple, RelationGetDescr(attrelation),
+								 repl_val, repl_null, repl_repl);
+	CatalogTupleUpdate(attrelation, &tuple->t_self, newtuple);
 
-	attrtuple->attstattarget = maxtarget;
-
-	CatalogTupleUpdate(attrelation, &tuple->t_self, tuple);
-
+	heap_freetuple(newtuple);
 	heap_freetuple(tuple);
 
 	table_close(attrelation, RowExclusiveLock);

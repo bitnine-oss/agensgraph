@@ -4,7 +4,7 @@
  *	  routines for managing the buffer pool's replacement strategy.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -561,7 +561,7 @@ GetAccessStrategy(BufferAccessStrategyType btype)
 			ring_size_kb = 16 * 1024;
 			break;
 		case BAS_VACUUM:
-			ring_size_kb = 256;
+			ring_size_kb = 2048;
 			break;
 
 		default:
@@ -627,6 +627,48 @@ GetAccessStrategyBufferCount(BufferAccessStrategy strategy)
 		return 0;
 
 	return strategy->nbuffers;
+}
+
+/*
+ * GetAccessStrategyPinLimit -- get cap of number of buffers that should be pinned
+ *
+ * When pinning extra buffers to look ahead, users of a ring-based strategy are
+ * in danger of pinning too much of the ring at once while performing look-ahead.
+ * For some strategies, that means "escaping" from the ring, and in others it
+ * means forcing dirty data to disk very frequently with associated WAL
+ * flushing.  Since external code has no insight into any of that, allow
+ * individual strategy types to expose a clamp that should be applied when
+ * deciding on a maximum number of buffers to pin at once.
+ *
+ * Callers should combine this number with other relevant limits and take the
+ * minimum.
+ */
+int
+GetAccessStrategyPinLimit(BufferAccessStrategy strategy)
+{
+	if (strategy == NULL)
+		return NBuffers;
+
+	switch (strategy->btype)
+	{
+		case BAS_BULKREAD:
+
+			/*
+			 * Since BAS_BULKREAD uses StrategyRejectBuffer(), dirty buffers
+			 * shouldn't be a problem and the caller is free to pin up to the
+			 * entire ring at once.
+			 */
+			return strategy->nbuffers;
+
+		default:
+
+			/*
+			 * Tell caller not to pin more than half the buffers in the ring.
+			 * This is a trade-off between look ahead distance and deferring
+			 * writeback and associated WAL traffic.
+			 */
+			return strategy->nbuffers / 2;
+	}
 }
 
 /*

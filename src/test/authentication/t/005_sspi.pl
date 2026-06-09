@@ -1,10 +1,10 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Tests targeting SSPI on Windows.
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -20,6 +20,10 @@ my $node = PostgreSQL::Test::Cluster->new('primary');
 $node->init;
 $node->append_conf('postgresql.conf', "log_connections = on\n");
 $node->start;
+
+my $huge_pages_status =
+  $node->safe_psql('postgres', q(SHOW huge_pages_status;));
+isnt($huge_pages_status, 'unknown', "check huge_pages_status");
 
 # SSPI is set up by default.  Make sure it interacts correctly with
 # require_auth.

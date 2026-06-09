@@ -718,7 +718,19 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
     <literal>IS NULL</literal> and <literal>IS NOT NULL</literal> do not always return
     inverse results for row-valued expressions; in particular, a row-valued
     expression that contains both null and non-null fields will return false
-    for both tests.  In some cases, it may be preferable to
+    for both tests.  For example:
+
+<programlisting>
+SELECT ROW(1,2.5,'this is a test') = ROW(1, 3, 'not the same');
+
+SELECT ROW(table.*) IS NULL FROM table;  -- detect all-null rows
+
+SELECT ROW(table.*) IS NOT NULL FROM table;  -- detect all-non-null rows
+
+SELECT NOT(ROW(table.*) IS NOT NULL) FROM TABLE; -- detect at least one null in rows
+</programlisting>
+
+    In some cases, it may be preferable to
     write <replaceable>row</replaceable> <literal>IS DISTINCT FROM NULL</literal>
     or <replaceable>row</replaceable> <literal>IS NOT DISTINCT FROM NULL</literal>,
     which will simply check whether the overall row value is null without any
@@ -1853,6 +1865,39 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
+         <primary>random</primary>
+        </indexterm>
+        <function>random</function> ( <parameter>min</parameter> <type>integer</type>, <parameter>max</parameter> <type>integer</type> )
+        <returnvalue>integer</returnvalue>
+       </para>
+       <para role="func_signature">
+        <function>random</function> ( <parameter>min</parameter> <type>bigint</type>, <parameter>max</parameter> <type>bigint</type> )
+        <returnvalue>bigint</returnvalue>
+       </para>
+       <para role="func_signature">
+        <function>random</function> ( <parameter>min</parameter> <type>numeric</type>, <parameter>max</parameter> <type>numeric</type> )
+        <returnvalue>numeric</returnvalue>
+       </para>
+       <para>
+        Returns a random value in the range
+        <parameter>min</parameter> &lt;= x &lt;= <parameter>max</parameter>.
+        For type <type>numeric</type>, the result will have the same number of
+        fractional decimal digits as <parameter>min</parameter> or
+        <parameter>max</parameter>, whichever has more.
+       </para>
+       <para>
+        <literal>random(1, 10)</literal>
+        <returnvalue>7</returnvalue>
+       </para>
+       <para>
+        <literal>random(-0.499, 0.499)</literal>
+        <returnvalue>0.347</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
          <primary>random_normal</primary>
         </indexterm>
 
@@ -1894,19 +1939,19 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
    </table>
 
   <para>
-   The <function>random()</function> function uses a deterministic
-   pseudo-random number generator.
+   The <function>random()</function> and <function>random_normal()</function>
+   functions listed in <xref linkend="functions-math-random-table"/> use a
+   deterministic pseudo-random number generator.
    It is fast but not suitable for cryptographic
    applications; see the <xref linkend="pgcrypto"/> module for a more
    secure alternative.
    If <function>setseed()</function> is called, the series of results of
-   subsequent <function>random()</function> calls in the current session
+   subsequent calls to these functions in the current session
    can be repeated by re-issuing <function>setseed()</function> with the same
    argument.
    Without any prior <function>setseed()</function> call in the same
-   session, the first <function>random()</function> call obtains a seed
+   session, the first call to any of these functions obtains a seed
    from a platform-dependent source of random bits.
-   These remarks hold equally for <function>random_normal()</function>.
   </para>
 
   <para>
@@ -2862,6 +2907,22 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
+         <primary>unicode_assigned</primary>
+        </indexterm>
+        <function>unicode_assigned</function> ( <type>text</type> )
+        <returnvalue>text</returnvalue>
+       </para>
+       <para>
+        Returns <literal>true</literal> if all characters in the string are
+        assigned Unicode codepoints; <literal>false</literal> otherwise. This
+        function can only be used when the server encoding is
+        <literal>UTF8</literal>.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
          <primary>upper</primary>
         </indexterm>
         <function>upper</function> ( <type>text</type> )
@@ -3740,6 +3801,32 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
+         <primary>to_bin</primary>
+        </indexterm>
+        <function>to_bin</function> ( <type>integer</type> )
+        <returnvalue>text</returnvalue>
+       </para>
+       <para role="func_signature">
+        <function>to_bin</function> ( <type>bigint</type> )
+        <returnvalue>text</returnvalue>
+       </para>
+       <para>
+        Converts the number to its equivalent two's complement binary
+        representation.
+       </para>
+       <para>
+        <literal>to_bin(2147483647)</literal>
+        <returnvalue>1111111111111111111111111111111</returnvalue>
+       </para>
+       <para>
+        <literal>to_bin(-1234)</literal>
+        <returnvalue>11111111111111111111101100101110</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
          <primary>to_hex</primary>
         </indexterm>
         <function>to_hex</function> ( <type>integer</type> )
@@ -3750,11 +3837,42 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
         <returnvalue>text</returnvalue>
        </para>
        <para>
-        Converts the number to its equivalent hexadecimal representation.
+        Converts the number to its equivalent two's complement hexadecimal
+        representation.
        </para>
        <para>
         <literal>to_hex(2147483647)</literal>
         <returnvalue>7fffffff</returnvalue>
+       </para>
+       <para>
+        <literal>to_hex(-1234)</literal>
+        <returnvalue>fffffb2e</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>to_oct</primary>
+        </indexterm>
+        <function>to_oct</function> ( <type>integer</type> )
+        <returnvalue>text</returnvalue>
+       </para>
+       <para role="func_signature">
+        <function>to_oct</function> ( <type>bigint</type> )
+        <returnvalue>text</returnvalue>
+       </para>
+       <para>
+        Converts the number to its equivalent two's complement octal
+        representation.
+       </para>
+       <para>
+        <literal>to_oct(2147483647)</literal>
+        <returnvalue>17777777777</returnvalue>
+       </para>
+       <para>
+        <literal>to_oct(-1234)</literal>
+        <returnvalue>37777775456</returnvalue>
        </para></entry>
       </row>
 
@@ -4783,7 +4901,7 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
      <listitem>
       <para>
        The <literal>base64</literal> format is that
-       of <ulink url="https://tools.ietf.org/html/rfc2045#section-6.8">RFC
+       of <ulink url="https://datatracker.ietf.org/doc/html/rfc2045#section-6.8">RFC
        2045 Section 6.8</ulink>.  As per the <acronym>RFC</acronym>, encoded lines are
        broken at 76 characters.  However instead of the MIME CRLF
        end-of-line marker, only a newline is used for end-of-line.
@@ -8046,13 +8164,11 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
        </row>
        <row>
         <entry><literal>TZ</literal></entry>
-        <entry>upper case time-zone abbreviation
-         (only supported in <function>to_char</function>)</entry>
+        <entry>upper case time-zone abbreviation</entry>
        </row>
        <row>
         <entry><literal>tz</literal></entry>
-        <entry>lower case time-zone abbreviation
-         (only supported in <function>to_char</function>)</entry>
+        <entry>lower case time-zone abbreviation</entry>
        </row>
        <row>
        <entry><literal>TZH</literal></entry>
@@ -8064,8 +8180,8 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
        </row>
        <row>
         <entry><literal>OF</literal></entry>
-        <entry>time-zone offset from UTC
-         (only supported in <function>to_char</function>)</entry>
+        <entry>time-zone offset from UTC (<replaceable>HH</replaceable>
+         or <replaceable>HH</replaceable><literal>:</literal><replaceable>MM</replaceable>)</entry>
        </row>
       </tbody>
      </tgroup>
@@ -8285,11 +8401,11 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
        use some non-digit character or template after <literal>YYYY</literal>,
        otherwise the year is always interpreted as 4 digits. For example
        (with the year 20000):
-       <literal>to_date('200001131', 'YYYYMMDD')</literal> will be
+       <literal>to_date('200001130', 'YYYYMMDD')</literal> will be
        interpreted as a 4-digit year; instead use a non-digit
        separator after the year, like
-       <literal>to_date('20000-1131', 'YYYY-MMDD')</literal> or
-       <literal>to_date('20000Nov31', 'YYYYMonDD')</literal>.
+       <literal>to_date('20000-1130', 'YYYY-MMDD')</literal> or
+       <literal>to_date('20000Nov30', 'YYYYMonDD')</literal>.
       </para>
      </listitem>
 
@@ -8507,6 +8623,14 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
 
      <listitem>
       <para>
+       If the format provides fewer fractional digits than the number being
+       formatted, <function>to_char()</function> will round the number to
+       the specified number of fractional digits.
+      </para>
+     </listitem>
+
+     <listitem>
+      <para>
        The pattern characters <literal>S</literal>, <literal>L</literal>, <literal>D</literal>,
        and <literal>G</literal> represent the sign, currency symbol, decimal point,
        and thousands separator characters defined by the current locale
@@ -8654,6 +8778,12 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
        <row>
         <entry><literal>to_char(current_timestamp, 'FMDay,&nbsp;FMDD&nbsp;&nbsp;HH12:MI:SS')</literal></entry>
         <entry><literal>'Tuesday,&nbsp;6&nbsp;&nbsp;05:39:18'</literal></entry>
+       </row>
+       <row>
+        <entry><literal>to_char(current_timestamp AT TIME ZONE
+        'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')</literal></entry>
+        <entry><literal>'2022-12-06T05:39:18Z'</literal>,
+        <acronym>ISO</acronym> 8601 extended format</entry>
        </row>
        <row>
         <entry><literal>to_char(-0.1, '99.99')</literal></entry>
@@ -9069,7 +9199,8 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
         </para>
         <para>
          Subtract timestamps (converting 24-hour intervals into days,
-         similarly to <function>justify_hours()</function>)
+         similarly to <link
+         linkend="function-justify-hours"><function>justify_hours()</function></link>)
         </para>
         <para>
          <literal>timestamp '2001-09-29 03:00' - timestamp '2001-07-27 12:00'</literal>
@@ -9472,7 +9603,7 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
          <returnvalue>boolean</returnvalue>
         </para>
         <para>
-         Test for finite interval (currently always true)
+         Test for finite interval (not +/-infinity)
         </para>
         <para>
          <literal>isfinite(interval '4 hours')</literal>
@@ -9482,35 +9613,35 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
 
        <row>
         <entry role="func_table_entry"><para role="func_signature">
-         <indexterm>
+         <indexterm id="function-justify-days">
           <primary>justify_days</primary>
          </indexterm>
          <function>justify_days</function> ( <type>interval</type> )
          <returnvalue>interval</returnvalue>
         </para>
         <para>
-         Adjust interval so 30-day time periods are represented as months
+         Adjust interval, converting 30-day time periods to months
         </para>
         <para>
-         <literal>justify_days(interval '35 days')</literal>
-         <returnvalue>1 mon 5 days</returnvalue>
+         <literal>justify_days(interval '1 year 65 days')</literal>
+         <returnvalue>1 year 2 mons 5 days</returnvalue>
         </para></entry>
        </row>
 
        <row>
         <entry role="func_table_entry"><para role="func_signature">
-         <indexterm>
+         <indexterm id="function-justify-hours">
           <primary>justify_hours</primary>
          </indexterm>
          <function>justify_hours</function> ( <type>interval</type> )
          <returnvalue>interval</returnvalue>
         </para>
         <para>
-         Adjust interval so 24-hour time periods are represented as days
+         Adjust interval, converting 24-hour time periods to days
         </para>
         <para>
-         <literal>justify_hours(interval '27 hours')</literal>
-         <returnvalue>1 day 03:00:00</returnvalue>
+         <literal>justify_hours(interval '50 hours 10 minutes')</literal>
+         <returnvalue>2 days 02:10:00</returnvalue>
         </para></entry>
        </row>
 
@@ -9943,13 +10074,19 @@ EXTRACT(<replaceable>field</replaceable> FROM <replaceable>source</replaceable>)
     The <function>extract</function> function retrieves subfields
     such as year or hour from date/time values.
     <replaceable>source</replaceable> must be a value expression of
-    type <type>timestamp</type>, <type>time</type>, or <type>interval</type>.
-    (Expressions of type <type>date</type> are
-    cast to <type>timestamp</type> and can therefore be used as
-    well.)  <replaceable>field</replaceable> is an identifier or
+    type <type>timestamp</type>, <type>date</type>, <type>time</type>,
+    or <type>interval</type>.  (Timestamps and times can be with or
+    without time zone.)
+    <replaceable>field</replaceable> is an identifier or
     string that selects what field to extract from the source value.
+    Not all fields are valid for every input data type; for example, fields
+    smaller than a day cannot be extracted from a <type>date</type>, while
+    fields of a day or more cannot be extracted from a <type>time</type>.
     The <function>extract</function> function returns values of type
     <type>numeric</type>.
+   </para>
+
+   <para>
     The following are valid field names:
 
     <!-- alphabetical -->
@@ -9958,7 +10095,8 @@ EXTRACT(<replaceable>field</replaceable> FROM <replaceable>source</replaceable>)
       <term><literal>century</literal></term>
       <listitem>
        <para>
-        The century
+        The century; for <type>interval</type> values, the year field
+        divided by 100
        </para>
 
 <screen>
@@ -9966,17 +10104,13 @@ SELECT EXTRACT(CENTURY FROM TIMESTAMP '2000-12-16 12:21:13');
 <lineannotation>Result: </lineannotation><computeroutput>20</computeroutput>
 SELECT EXTRACT(CENTURY FROM TIMESTAMP '2001-02-16 20:38:40');
 <lineannotation>Result: </lineannotation><computeroutput>21</computeroutput>
+SELECT EXTRACT(CENTURY FROM DATE '0001-01-01 AD');
+<lineannotation>Result: </lineannotation><computeroutput>1</computeroutput>
+SELECT EXTRACT(CENTURY FROM DATE '0001-12-31 BC');
+<lineannotation>Result: </lineannotation><computeroutput>-1</computeroutput>
+SELECT EXTRACT(CENTURY FROM INTERVAL '2001 years');
+<lineannotation>Result: </lineannotation><computeroutput>20</computeroutput>
 </screen>
-
-       <para>
-        The first century starts at 0001-01-01 00:00:00 AD, although
-        they did not know it at the time. This definition applies to all
-        Gregorian calendar countries. There is no century number 0,
-        you go from -1 century to 1 century.
-
-        If you disagree with this, please write your complaint to:
-        Pope, Cathedral Saint-Peter of Roma, Vatican.
-       </para>
       </listitem>
      </varlistentry>
 
@@ -9984,14 +10118,13 @@ SELECT EXTRACT(CENTURY FROM TIMESTAMP '2001-02-16 20:38:40');
       <term><literal>day</literal></term>
       <listitem>
        <para>
-        For <type>timestamp</type> values, the day (of the month) field
-        (1&ndash;31) ; for <type>interval</type> values, the number of days
+        The day of the month (1&ndash;31); for <type>interval</type>
+        values, the number of days
        </para>
 
 <screen>
 SELECT EXTRACT(DAY FROM TIMESTAMP '2001-02-16 20:38:40');
 <lineannotation>Result: </lineannotation><computeroutput>16</computeroutput>
-
 SELECT EXTRACT(DAY FROM INTERVAL '40 days 1 minute');
 <lineannotation>Result: </lineannotation><computeroutput>40</computeroutput>
 </screen>
@@ -10065,10 +10198,8 @@ SELECT EXTRACT(DOY FROM TIMESTAMP '2001-02-16 20:38:40');
 <screen>
 SELECT EXTRACT(EPOCH FROM TIMESTAMP WITH TIME ZONE '2001-02-16 20:38:40.12-08');
 <lineannotation>Result: </lineannotation><computeroutput>982384720.120000</computeroutput>
-
 SELECT EXTRACT(EPOCH FROM TIMESTAMP '2001-02-16 20:38:40.12');
 <lineannotation>Result: </lineannotation><computeroutput>982355920.120000</computeroutput>
-
 SELECT EXTRACT(EPOCH FROM INTERVAL '5 days 3 hours');
 <lineannotation>Result: </lineannotation><computeroutput>442800.000000</computeroutput>
 </screen>
@@ -10096,7 +10227,8 @@ SELECT to_timestamp(982384720.12);
       <term><literal>hour</literal></term>
       <listitem>
        <para>
-        The hour field (0&ndash;23)
+        The hour field (0&ndash;23 in timestamps, unrestricted in
+        intervals)
        </para>
 
 <screen>
@@ -10131,7 +10263,7 @@ SELECT EXTRACT(ISODOW FROM TIMESTAMP '2001-02-18 20:38:40');
       <listitem>
        <para>
         The <acronym>ISO</acronym> 8601 week-numbering year that the date
-        falls in (not applicable to intervals)
+        falls in
        </para>
 
 <screen>
@@ -10148,9 +10280,6 @@ SELECT EXTRACT(ISOYEAR FROM DATE '2006-01-02');
         different from the Gregorian year.  See the <literal>week</literal>
         field for more information.
        </para>
-       <para>
-        This field is not available in PostgreSQL releases prior to 8.3.
-       </para>
       </listitem>
      </varlistentry>
 
@@ -10159,7 +10288,7 @@ SELECT EXTRACT(ISOYEAR FROM DATE '2006-01-02');
       <listitem>
        <para>
         The <firstterm>Julian Date</firstterm> corresponding to the
-        date or timestamp (not applicable to intervals).  Timestamps
+        date or timestamp.  Timestamps
         that are not local midnight result in a fractional value.  See
         <xref linkend="datetime-julian-dates"/> for more information.
        </para>
@@ -10192,12 +10321,15 @@ SELECT EXTRACT(MICROSECONDS FROM TIME '17:12:28.5');
       <term><literal>millennium</literal></term>
       <listitem>
        <para>
-        The millennium
+        The millennium; for <type>interval</type> values, the year field
+        divided by 1000
        </para>
 
 <screen>
 SELECT EXTRACT(MILLENNIUM FROM TIMESTAMP '2001-02-16 20:38:40');
 <lineannotation>Result: </lineannotation><computeroutput>3</computeroutput>
+SELECT EXTRACT(MILLENNIUM FROM INTERVAL '2001 years');
+<lineannotation>Result: </lineannotation><computeroutput>2</computeroutput>
 </screen>
 
        <para>
@@ -10240,18 +10372,16 @@ SELECT EXTRACT(MINUTE FROM TIMESTAMP '2001-02-16 20:38:40');
       <term><literal>month</literal></term>
       <listitem>
        <para>
-        For <type>timestamp</type> values, the number of the month
-        within the year (1&ndash;12) ; for <type>interval</type> values,
-        the number of months, modulo 12 (0&ndash;11)
+        The number of the month within the year (1&ndash;12);
+        for <type>interval</type> values, the number of months modulo 12
+        (0&ndash;11)
        </para>
 
 <screen>
 SELECT EXTRACT(MONTH FROM TIMESTAMP '2001-02-16 20:38:40');
 <lineannotation>Result: </lineannotation><computeroutput>2</computeroutput>
-
 SELECT EXTRACT(MONTH FROM INTERVAL '2 years 3 months');
 <lineannotation>Result: </lineannotation><computeroutput>3</computeroutput>
-
 SELECT EXTRACT(MONTH FROM INTERVAL '2 years 13 months');
 <lineannotation>Result: </lineannotation><computeroutput>1</computeroutput>
 </screen>
@@ -10282,7 +10412,6 @@ SELECT EXTRACT(QUARTER FROM TIMESTAMP '2001-02-16 20:38:40');
 <screen>
 SELECT EXTRACT(SECOND FROM TIMESTAMP '2001-02-16 20:38:40');
 <lineannotation>Result: </lineannotation><computeroutput>40.000000</computeroutput>
-
 SELECT EXTRACT(SECOND FROM TIME '17:12:28.5');
 <lineannotation>Result: </lineannotation><computeroutput>28.500000</computeroutput>
 </screen>
@@ -10364,12 +10493,30 @@ SELECT EXTRACT(YEAR FROM TIMESTAMP '2001-02-16 20:38:40');
     </variablelist>
    </para>
 
+   <para>
+    When processing an <type>interval</type> value,
+    the <function>extract</function> function produces field values that
+    match the interpretation used by the interval output function.  This
+    can produce surprising results if one starts with a non-normalized
+    interval representation, for example:
+<screen>
+SELECT INTERVAL '80 minutes';
+<lineannotation>Result: </lineannotation><computeroutput>01:20:00</computeroutput>
+SELECT EXTRACT(MINUTES FROM INTERVAL '80 minutes');
+<lineannotation>Result: </lineannotation><computeroutput>20</computeroutput>
+</screen>
+   </para>
+
    <note>
     <para>
      When the input value is +/-Infinity, <function>extract</function> returns
      +/-Infinity for monotonically-increasing fields (<literal>epoch</literal>,
      <literal>julian</literal>, <literal>year</literal>, <literal>isoyear</literal>,
-     <literal>decade</literal>, <literal>century</literal>, and <literal>millennium</literal>).
+     <literal>decade</literal>, <literal>century</literal>, and <literal>millennium</literal>
+     for <type>timestamp</type> inputs; <literal>epoch</literal>, <literal>hour</literal>,
+     <literal>day</literal>, <literal>year</literal>, <literal>decade</literal>,
+     <literal>century</literal>, and <literal>millennium</literal> for
+     <type>interval</type> inputs).
      For other fields, NULL is returned.  <productname>PostgreSQL</productname>
      versions before 9.6 returned zero for all cases of infinite input.
     </para>
@@ -10401,7 +10548,6 @@ date_part('<replaceable>field</replaceable>', <replaceable>source</replaceable>)
 <screen>
 SELECT date_part('day', TIMESTAMP '2001-02-16 20:38:40');
 <lineannotation>Result: </lineannotation><computeroutput>16</computeroutput>
-
 SELECT date_part('hour', INTERVAL '4 hours 3 minutes');
 <lineannotation>Result: </lineannotation><computeroutput>4</computeroutput>
 </screen>
@@ -10479,16 +10625,12 @@ date_trunc(<replaceable>field</replaceable>, <replaceable>source</replaceable> [
 <screen>
 SELECT date_trunc('hour', TIMESTAMP '2001-02-16 20:38:40');
 <lineannotation>Result: </lineannotation><computeroutput>2001-02-16 20:00:00</computeroutput>
-
 SELECT date_trunc('year', TIMESTAMP '2001-02-16 20:38:40');
 <lineannotation>Result: </lineannotation><computeroutput>2001-01-01 00:00:00</computeroutput>
-
 SELECT date_trunc('day', TIMESTAMP WITH TIME ZONE '2001-02-16 20:38:40+00');
 <lineannotation>Result: </lineannotation><computeroutput>2001-02-16 00:00:00-05</computeroutput>
-
 SELECT date_trunc('day', TIMESTAMP WITH TIME ZONE '2001-02-16 20:38:40+00', 'Australia/Sydney');
 <lineannotation>Result: </lineannotation><computeroutput>2001-02-16 08:00:00-05</computeroutput>
-
 SELECT date_trunc('hour', INTERVAL '3 days 02:47:33');
 <lineannotation>Result: </lineannotation><computeroutput>3 days 02:00:00</computeroutput>
 </screen>
@@ -10527,7 +10669,6 @@ date_bin(<replaceable>stride</replaceable>, <replaceable>source</replaceable>, <
 <screen>
 SELECT date_bin('15 minutes', TIMESTAMP '2020-02-11 15:44:17', TIMESTAMP '2001-01-01');
 <lineannotation>Result: </lineannotation><computeroutput>2020-02-11 15:30:00</computeroutput>
-
 SELECT date_bin('15 minutes', TIMESTAMP '2020-02-11 15:44:17', TIMESTAMP '2001-01-01 00:02:30');
 <lineannotation>Result: </lineannotation><computeroutput>2020-02-11 15:32:30</computeroutput>
 </screen>
@@ -10546,7 +10687,7 @@ SELECT date_bin('15 minutes', TIMESTAMP '2020-02-11 15:44:17', TIMESTAMP '2001-0
   </sect2>
 
   <sect2 id="functions-datetime-zoneconvert">
-   <title><literal>AT TIME ZONE</literal></title>
+   <title><literal>AT TIME ZONE and AT LOCAL</literal></title>
 
    <indexterm>
     <primary>time zone</primary>
@@ -10555,6 +10696,10 @@ SELECT date_bin('15 minutes', TIMESTAMP '2020-02-11 15:44:17', TIMESTAMP '2001-0
 
    <indexterm>
     <primary>AT TIME ZONE</primary>
+   </indexterm>
+
+   <indexterm>
+    <primary>AT LOCAL</primary>
    </indexterm>
 
    <para>
@@ -10567,7 +10712,7 @@ SELECT date_bin('15 minutes', TIMESTAMP '2020-02-11 15:44:17', TIMESTAMP '2001-0
    </para>
 
     <table id="functions-datetime-zoneconvert-table">
-     <title><literal>AT TIME ZONE</literal> Variants</title>
+     <title><literal>AT TIME ZONE</literal> and <literal>AT LOCAL</literal> Variants</title>
      <tgroup cols="1">
       <thead>
        <row>
@@ -10602,6 +10747,22 @@ SELECT date_bin('15 minutes', TIMESTAMP '2020-02-11 15:44:17', TIMESTAMP '2001-0
 
        <row>
         <entry role="func_table_entry"><para role="func_signature">
+         <type>timestamp without time zone</type> <literal>AT LOCAL</literal>
+         <returnvalue>timestamp with time zone</returnvalue>
+        </para>
+        <para>
+         Converts given time stamp <emphasis>without</emphasis> time zone to
+         time stamp <emphasis>with</emphasis> the session's
+         <varname>TimeZone</varname> value as time zone.
+        </para>
+        <para>
+         <literal>timestamp '2001-02-16 20:38:40' at local</literal>
+         <returnvalue>2001-02-17 03:38:40+00</returnvalue>
+        </para></entry>
+       </row>
+
+       <row>
+        <entry role="func_table_entry"><para role="func_signature">
          <type>timestamp with time zone</type> <literal>AT TIME ZONE</literal> <replaceable>zone</replaceable>
          <returnvalue>timestamp without time zone</returnvalue>
         </para>
@@ -10612,6 +10773,22 @@ SELECT date_bin('15 minutes', TIMESTAMP '2020-02-11 15:44:17', TIMESTAMP '2001-0
         </para>
         <para>
          <literal>timestamp with time zone '2001-02-16 20:38:40-05' at time zone 'America/Denver'</literal>
+         <returnvalue>2001-02-16 18:38:40</returnvalue>
+        </para></entry>
+       </row>
+
+       <row>
+        <entry role="func_table_entry"><para role="func_signature">
+         <type>timestamp with time zone</type> <literal>AT LOCAL</literal>
+         <returnvalue>timestamp without time zone</returnvalue>
+        </para>
+        <para>
+         Converts given time stamp <emphasis>with</emphasis> time zone to
+         time stamp <emphasis>without</emphasis> time zone, as the time would
+         appear with the session's <varname>TimeZone</varname> value as time zone.
+        </para>
+        <para>
+         <literal>timestamp with time zone '2001-02-16 20:38:40-05' at local</literal>
          <returnvalue>2001-02-16 18:38:40</returnvalue>
         </para></entry>
        </row>
@@ -10631,6 +10808,25 @@ SELECT date_bin('15 minutes', TIMESTAMP '2020-02-11 15:44:17', TIMESTAMP '2001-0
          <returnvalue>10:34:17+00</returnvalue>
         </para></entry>
        </row>
+
+       <row>
+        <entry role="func_table_entry"><para role="func_signature">
+         <type>time with time zone</type> <literal>AT LOCAL</literal>
+         <returnvalue>time with time zone</returnvalue>
+        </para>
+        <para>
+         Converts given time <emphasis>with</emphasis> time zone to a new time
+         zone.  Since no date is supplied, this uses the currently active UTC
+         offset for the session's <varname>TimeZone</varname> value.
+        </para>
+        <para>
+         Assuming the session's <varname>TimeZone</varname> is set to <literal>UTC</literal>:
+        </para>
+        <para>
+         <literal>time with time zone '05:34:17-05' at local</literal>
+         <returnvalue>10:34:17+00</returnvalue>
+        </para></entry>
+       </row>
       </tbody>
      </tgroup>
     </table>
@@ -10646,17 +10842,26 @@ SELECT date_bin('15 minutes', TIMESTAMP '2020-02-11 15:44:17', TIMESTAMP '2001-0
    </para>
 
    <para>
+    The syntax <literal>AT LOCAL</literal> may be used as shorthand for
+    <literal>AT TIME ZONE <replaceable>local</replaceable></literal>, where
+    <replaceable>local</replaceable> is the session's
+    <varname>TimeZone</varname> value.
+   </para>
+
+   <para>
     Examples (assuming the current <xref linkend="guc-timezone"/> setting
     is <literal>America/Los_Angeles</literal>):
 <screen>
 SELECT TIMESTAMP '2001-02-16 20:38:40' AT TIME ZONE 'America/Denver';
 <lineannotation>Result: </lineannotation><computeroutput>2001-02-16 19:38:40-08</computeroutput>
-
 SELECT TIMESTAMP WITH TIME ZONE '2001-02-16 20:38:40-05' AT TIME ZONE 'America/Denver';
 <lineannotation>Result: </lineannotation><computeroutput>2001-02-16 18:38:40</computeroutput>
-
 SELECT TIMESTAMP '2001-02-16 20:38:40' AT TIME ZONE 'Asia/Tokyo' AT TIME ZONE 'America/Chicago';
 <lineannotation>Result: </lineannotation><computeroutput>2001-02-16 05:38:40</computeroutput>
+SELECT TIMESTAMP WITH TIME ZONE '2001-02-16 20:38:40-05' AT LOCAL;
+<lineannotation>Result: </lineannotation><computeroutput>2001-02-16 17:38:40</computeroutput>
+SELECT TIME WITH TIME ZONE '20:38:40-05' AT LOCAL;
+<lineannotation>Result: </lineannotation><computeroutput>17:38:40</computeroutput>
 </screen>
     The first example adds a time zone to a value that lacks it, and
     displays the value using the current <varname>TimeZone</varname>
@@ -10664,7 +10869,18 @@ SELECT TIMESTAMP '2001-02-16 20:38:40' AT TIME ZONE 'Asia/Tokyo' AT TIME ZONE 'A
     to the specified time zone, and returns the value without a time zone.
     This allows storage and display of values different from the current
     <varname>TimeZone</varname> setting.  The third example converts
-    Tokyo time to Chicago time.
+    Tokyo time to Chicago time.  The fourth example shifts the time stamp
+    with time zone value to the time zone currently specified by the
+    <varname>TimeZone</varname> setting and returns the value without a
+    time zone.
+   </para>
+
+   <para>
+    The fifth example is a cautionary tale. Due to the fact that there is no
+    date associated with the input value, the conversion is made using the
+    current date of the session. Therefore, this static example may show a wrong
+    result depending on the time of the year it is viewed because
+    <literal>'America/Los_Angeles'</literal> observes Daylight Savings Time.
    </para>
 
    <para>
@@ -10672,6 +10888,25 @@ SELECT TIMESTAMP '2001-02-16 20:38:40' AT TIME ZONE 'Asia/Tokyo' AT TIME ZONE 'A
     <replaceable>timestamp</replaceable>)</literal> is equivalent to the SQL-conforming construct
     <literal><replaceable>timestamp</replaceable> AT TIME ZONE
     <replaceable>zone</replaceable></literal>.
+   </para>
+
+   <para>
+    The function <literal><function>timezone</function>(<replaceable>zone</replaceable>,
+    <replaceable>time</replaceable>)</literal> is equivalent to the SQL-conforming construct
+    <literal><replaceable>time</replaceable> AT TIME ZONE
+    <replaceable>zone</replaceable></literal>.
+   </para>
+
+   <para>
+    The function <literal><function>timezone</function>(<replaceable>timestamp</replaceable>)</literal>
+    is equivalent to the SQL-conforming construct <literal><replaceable>timestamp</replaceable>
+    AT LOCAL</literal>.
+   </para>
+
+   <para>
+    The function <literal><function>timezone</function>(<replaceable>time</replaceable>)</literal>
+    is equivalent to the SQL-conforming construct <literal><replaceable>time</replaceable>
+    AT LOCAL</literal>.
    </para>
   </sect2>
 
@@ -10729,16 +10964,12 @@ LOCALTIMESTAMP(<replaceable>precision</replaceable>)
 <screen>
 SELECT CURRENT_TIME;
 <lineannotation>Result: </lineannotation><computeroutput>14:39:53.662522-05</computeroutput>
-
 SELECT CURRENT_DATE;
 <lineannotation>Result: </lineannotation><computeroutput>2019-12-23</computeroutput>
-
 SELECT CURRENT_TIMESTAMP;
 <lineannotation>Result: </lineannotation><computeroutput>2019-12-23 14:39:53.662522-05</computeroutput>
-
 SELECT CURRENT_TIMESTAMP(2);
 <lineannotation>Result: </lineannotation><computeroutput>2019-12-23 14:39:53.66-05</computeroutput>
-
 SELECT LOCALTIMESTAMP;
 <lineannotation>Result: </lineannotation><computeroutput>2019-12-23 14:39:53.662522</computeroutput>
 </screen>
@@ -12947,24 +13178,6 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
 
       <row>
        <entry role="func_table_entry"><para role="func_signature">
-        <type>tsvector</type> <literal>@@@</literal> <type>tsquery</type>
-        <returnvalue>boolean</returnvalue>
-       </para>
-       <para role="func_signature">
-        <type>tsquery</type> <literal>@@@</literal> <type>tsvector</type>
-        <returnvalue>boolean</returnvalue>
-       </para>
-       <para>
-        This is a deprecated synonym for <literal>@@</literal>.
-       </para>
-       <para>
-        <literal>to_tsvector('fat cats ate rats') @@@ to_tsquery('cat &amp; rat')</literal>
-        <returnvalue>t</returnvalue>
-       </para></entry>
-      </row>
-
-      <row>
-       <entry role="func_table_entry"><para role="func_signature">
         <type>tsvector</type> <literal>||</literal> <type>tsvector</type>
         <returnvalue>tsvector</returnvalue>
        </para>
@@ -13947,6 +14160,14 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
    <primary>gen_random_uuid</primary>
   </indexterm>
 
+  <indexterm>
+   <primary>uuid_extract_timestamp</primary>
+  </indexterm>
+
+  <indexterm>
+   <primary>uuid_extract_version</primary>
+  </indexterm>
+
   <para>
    <productname>PostgreSQL</productname> includes one function to generate a UUID:
 <synopsis>
@@ -13959,6 +14180,28 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
   <para>
    The <xref linkend="uuid-ossp"/> module provides additional functions that
    implement other standard algorithms for generating UUIDs.
+  </para>
+
+  <para>
+   There are also functions to extract data from UUIDs:
+<synopsis>
+<function>uuid_extract_timestamp</function> (uuid) <returnvalue>timestamp with time zone</returnvalue>
+</synopsis>
+   This function extracts a <type>timestamp with time zone</type> from UUID
+   version 1.  For other versions, this function returns null.  Note that the
+   extracted timestamp is not necessarily exactly equal to the time the UUID
+   was generated; this depends on the implementation that generated the UUID.
+  </para>
+
+  <para>
+<synopsis>
+<function>uuid_extract_version</function> (uuid) <returnvalue>smallint</returnvalue>
+</synopsis>
+   This function extracts the version from a UUID of the variant described by
+   <ulink url="https://datatracker.ietf.org/doc/html/rfc4122">RFC 4122</ulink>.  For
+   other variants, this function returns null.  For example, for a UUID
+   generated by <function>gen_random_uuid</function>, this function will
+   return 4.
   </para>
 
   <para>
@@ -14000,6 +14243,36 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
     particularly suitable for formatting query results into XML
     documents for processing in client applications.
    </para>
+
+  <sect3 id="functions-producing-xml-xmltext">
+    <title><literal>xmltext</literal></title>
+
+    <indexterm>
+     <primary>xmltext</primary>
+    </indexterm>
+
+<synopsis>
+<function>xmltext</function> ( <type>text</type> ) <returnvalue>xml</returnvalue>
+</synopsis>
+
+    <para>
+     The function <function>xmltext</function> returns an XML value with a single
+     text node containing the input argument as its content. Predefined entities
+     like ampersand (<literal><![CDATA[&]]></literal>), left and right angle brackets
+     (<literal><![CDATA[< >]]></literal>), and quotation marks (<literal><![CDATA[""]]></literal>)
+     are escaped.
+    </para>
+
+    <para>
+     Example:
+<screen><![CDATA[
+SELECT xmltext('< foo & bar >');
+         xmltext
+-------------------------
+ &lt; foo &amp; bar &gt;
+]]></screen>
+    </para>
+   </sect3>
 
    <sect3 id="functions-producing-xml-xmlcomment">
     <title><literal>xmlcomment</literal></title>
@@ -15248,6 +15521,11 @@ table2-mapping
       the SQL/JSON path language
      </para>
     </listitem>
+    <listitem>
+     <para>
+      the SQL/JSON query functions
+     </para>
+    </listitem>
    </itemizedlist>
   </para>
 
@@ -15259,7 +15537,7 @@ table2-mapping
    values, with an additional SQL/JSON null value, and composite data structures
    that use JSON arrays and objects. The model is a formalization of the implied
    data model in the JSON specification
-   <ulink url="https://tools.ietf.org/html/rfc7159">RFC 7159</ulink>.
+   <ulink url="https://datatracker.ietf.org/doc/html/rfc7159">RFC 7159</ulink>.
   </para>
 
   <para>
@@ -15676,6 +15954,9 @@ table2-mapping
        </para>
        <para>
         Does JSON path return any item for the specified JSON value?
+        (This is useful only with SQL-standard JSON path expressions, not
+        <link linkend="functions-sqljson-check-expressions">predicate check
+        expressions</link>, since those always return a value.)
        </para>
        <para>
         <literal>'{"a":[1,2,3,4,5]}'::jsonb @? '$.a[*] ? (@ > 2)'</literal>
@@ -15690,9 +15971,12 @@ table2-mapping
        </para>
        <para>
         Returns the result of a JSON path predicate check for the
-        specified JSON value.  Only the first item of the result is taken into
-        account.  If the result is not Boolean, then <literal>NULL</literal>
-        is returned.
+        specified JSON value.
+        (This is useful only
+        with <link linkend="functions-sqljson-check-expressions">predicate
+        check expressions</link>, not SQL-standard JSON path expressions,
+        since it will return <literal>NULL</literal> if the path result is
+        not a single boolean value.)
        </para>
        <para>
         <literal>'{"a":[1,2,3,4,5]}'::jsonb @@ '$.a[*] > 2'</literal>
@@ -15720,7 +16004,7 @@ table2-mapping
    Some functions in this table have a <literal>RETURNING</literal> clause,
    which specifies the data type returned.  It must be one of <type>json</type>,
    <type>jsonb</type>, <type>bytea</type>, a character string type (<type>text</type>,
-   <type>char</type>, <type>varchar</type>, or <type>nchar</type>), or a type
+   <type>char</type>, or <type>varchar</type>), or a type
    for which there is a cast from <type>json</type> to that type.
    By default, the <type>json</type> type is returned.
   </para>
@@ -16001,6 +16285,73 @@ table2-mapping
         <returnvalue>{"a": "1", "b": "2"}</returnvalue>
        </para></entry>
       </row>
+      <row>
+       <entry role="func_table_entry">
+        <para role="func_signature">
+         <indexterm><primary>json constructor</primary></indexterm>
+         <function>json</function> (
+         <replaceable>expression</replaceable>
+         <optional> <literal>FORMAT JSON</literal> <optional> <literal>ENCODING UTF8</literal> </optional></optional>
+         <optional> { <literal>WITH</literal> | <literal>WITHOUT</literal> } <literal>UNIQUE</literal> <optional> <literal>KEYS</literal> </optional></optional> )
+         <returnvalue>json</returnvalue>
+        </para>
+        <para>
+         Converts a given expression specified as <type>text</type> or
+         <type>bytea</type> string (in UTF8 encoding) into a JSON
+         value.  If <replaceable>expression</replaceable> is NULL, an
+         <acronym>SQL</acronym> null value is returned.
+         If <literal>WITH UNIQUE</literal> is specified, the
+         <replaceable>expression</replaceable> must not contain any duplicate
+         object keys.
+        </para>
+        <para>
+         <literal>json('{"a":123, "b":[true,"foo"], "a":"bar"}')</literal>
+         <returnvalue>{"a":123, "b":[true,"foo"], "a":"bar"}</returnvalue>
+        </para>
+       </entry>
+      </row>
+      <row>
+       <entry role="func_table_entry">
+        <para role="func_signature">
+        <indexterm><primary>json_scalar</primary></indexterm>
+        <function>json_scalar</function> ( <replaceable>expression</replaceable> )
+       </para>
+       <para>
+        Converts a given SQL scalar value into a JSON scalar value.
+        If the input is NULL, an <acronym>SQL</acronym> null is returned. If
+        the input is number or a boolean value, a corresponding JSON number
+        or boolean value is returned. For any other value, a JSON string is
+        returned.
+       </para>
+       <para>
+        <literal>json_scalar(123.45)</literal>
+        <returnvalue>123.45</returnvalue>
+       </para>
+       <para>
+        <literal>json_scalar(CURRENT_TIMESTAMP)</literal>
+        <returnvalue>"2022-05-10T10:51:04.62128-04:00"</returnvalue>
+      </para></entry>
+     </row>
+     <row>
+      <entry role="func_table_entry">
+       <para role="func_signature">
+        <function>json_serialize</function> (
+        <replaceable>expression</replaceable> <optional> <literal>FORMAT JSON</literal> <optional> <literal>ENCODING UTF8</literal> </optional> </optional>
+        <optional> <literal>RETURNING</literal> <replaceable>data_type</replaceable> <optional> <literal>FORMAT JSON</literal> <optional> <literal>ENCODING UTF8</literal> </optional> </optional> </optional> )
+       </para>
+       <para>
+        Converts an SQL/JSON expression into a character or binary string. The
+        <replaceable>expression</replaceable> can be of any JSON type, any
+        character string type, or <type>bytea</type> in UTF8 encoding.
+        The returned type used in <literal> RETURNING</literal> can be any
+        character string type or <type>bytea</type>. The default is
+        <type>text</type>.
+       </para>
+       <para>
+        <literal>json_serialize('{ "a" : 1 } ' RETURNING bytea)</literal>
+        <returnvalue>\x7b20226122203a2031207d20</returnvalue>
+      </para></entry>
+     </row>
      </tbody>
     </tgroup>
    </table>
@@ -16450,6 +16801,58 @@ array w/o UK? | t
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
+         <primary>jsonb_populate_record_valid</primary>
+        </indexterm>
+        <function>jsonb_populate_record_valid</function> ( <parameter>base</parameter> <type>anyelement</type>, <parameter>from_json</parameter> <type>json</type> )
+        <returnvalue>boolean</returnvalue>
+       </para>
+       <para>
+        Function for testing <function>jsonb_populate_record</function>.  Returns
+        <literal>true</literal> if the input <function>jsonb_populate_record</function>
+        would finish without an error for the given input JSON object; that is, it's
+        valid input, <literal>false</literal> otherwise.
+       </para>
+       <para>
+        <literal>create type jsb_char2 as (a char(2));</literal>
+       </para>
+       <para>
+        <literal>select jsonb_populate_record_valid(NULL::jsb_char2, '{"a": "aaa"}');</literal>
+        <returnvalue></returnvalue>
+<programlisting>
+ jsonb_populate_record_valid
+-----------------------------
+ f
+(1 row)
+</programlisting>
+
+        <literal>select * from jsonb_populate_record(NULL::jsb_char2, '{"a": "aaa"}') q;</literal>
+        <returnvalue></returnvalue>
+<programlisting>
+ERROR:  value too long for type character(2)
+</programlisting>
+        <literal>select jsonb_populate_record_valid(NULL::jsb_char2, '{"a": "aa"}');</literal>
+        <returnvalue></returnvalue>
+<programlisting>
+ jsonb_populate_record_valid
+-----------------------------
+ t
+(1 row)
+</programlisting>
+
+        <literal>select * from jsonb_populate_record(NULL::jsb_char2, '{"a": "aa"}') q;</literal>
+        <returnvalue></returnvalue>
+<programlisting>
+ a
+----
+ aa
+(1 row)
+</programlisting>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
          <primary>json_populate_recordset</primary>
         </indexterm>
         <function>json_populate_recordset</function> ( <parameter>base</parameter> <type>anyelement</type>, <parameter>from_json</parameter> <type>json</type> )
@@ -16697,6 +17100,9 @@ array w/o UK? | t
        <para>
         Checks whether the JSON path returns any item for the specified JSON
         value.
+        (This is useful only with SQL-standard JSON path expressions, not
+        <link linkend="functions-sqljson-check-expressions">predicate check
+        expressions</link>, since those always return a value.)
         If the <parameter>vars</parameter> argument is specified, it must
         be a JSON object, and its fields provide named values to be
         substituted into the <type>jsonpath</type> expression.
@@ -16720,8 +17126,12 @@ array w/o UK? | t
        </para>
        <para>
         Returns the result of a JSON path predicate check for the specified
-        JSON value.  Only the first item of the result is taken into account.
-        If the result is not Boolean, then <literal>NULL</literal> is returned.
+        JSON value.
+        (This is useful only
+        with <link linkend="functions-sqljson-check-expressions">predicate
+        check expressions</link>, not SQL-standard JSON path expressions,
+        since it will either fail or return <literal>NULL</literal> if the
+        path result is not a single boolean value.)
         The optional <parameter>vars</parameter>
         and <parameter>silent</parameter> arguments act the same as
         for <function>jsonb_path_exists</function>.
@@ -16743,6 +17153,12 @@ array w/o UK? | t
        <para>
         Returns all JSON items returned by the JSON path for the specified
         JSON value.
+        For SQL-standard JSON path expressions it returns the JSON
+        values selected from <parameter>target</parameter>.
+        For <link linkend="functions-sqljson-check-expressions">predicate
+        check expressions</link> it returns the result of the predicate
+        check: <literal>true</literal>, <literal>false</literal>,
+        or <literal>null</literal>.
         The optional <parameter>vars</parameter>
         and <parameter>silent</parameter> arguments act the same as
         for <function>jsonb_path_exists</function>.
@@ -16771,9 +17187,8 @@ array w/o UK? | t
        <para>
         Returns all JSON items returned by the JSON path for the specified
         JSON value, as a JSON array.
-        The optional <parameter>vars</parameter>
-        and <parameter>silent</parameter> arguments act the same as
-        for <function>jsonb_path_exists</function>.
+        The parameters are the same as
+        for <function>jsonb_path_query</function>.
        </para>
        <para>
         <literal>jsonb_path_query_array('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2, "max":4}')</literal>
@@ -16791,11 +17206,10 @@ array w/o UK? | t
        </para>
        <para>
         Returns the first JSON item returned by the JSON path for the
-        specified JSON value.  Returns <literal>NULL</literal> if there are no
+        specified JSON value, or <literal>NULL</literal> if there are no
         results.
-        The optional <parameter>vars</parameter>
-        and <parameter>silent</parameter> arguments act the same as
-        for <function>jsonb_path_exists</function>.
+        The parameters are the same as
+        for <function>jsonb_path_query</function>.
        </para>
        <para>
         <literal>jsonb_path_query_first('{"a":[1,2,3,4,5]}', '$.a[*] ? (@ >= $min &amp;&amp; @ &lt;= $max)', '{"min":2, "max":4}')</literal>
@@ -16934,9 +17348,9 @@ array w/o UK? | t
   </indexterm>
 
   <para>
-   SQL/JSON path expressions specify the items to be retrieved
-   from the JSON data, similar to XPath expressions used
-   for SQL access to XML. In <productname>PostgreSQL</productname>,
+   SQL/JSON path expressions specify item(s) to be retrieved
+   from a JSON value, similarly to XPath expressions used
+   for access to XML content. In <productname>PostgreSQL</productname>,
    path expressions are implemented as the <type>jsonpath</type>
    data type and can use any elements described in
    <xref linkend="datatype-jsonpath"/>.
@@ -16947,6 +17361,8 @@ array w/o UK? | t
    pass the provided path expression to the <firstterm>path engine</firstterm>
    for evaluation. If the expression matches the queried JSON data,
    the corresponding JSON item, or set of items, is returned.
+   If there is no match, the result will be <literal>NULL</literal>,
+   <literal>false</literal>, or an error, depending on the function.
    Path expressions are written in the SQL/JSON path language
    and can include arithmetic expressions and functions.
   </para>
@@ -16964,18 +17380,20 @@ array w/o UK? | t
   <para>
    To refer to the JSON value being queried (the
    <firstterm>context item</firstterm>), use the <literal>$</literal> variable
-   in the path expression. It can be followed by one or more
+   in the path expression. The first element of a path must always
+   be <literal>$</literal>. It can be followed by one or more
    <link linkend="type-jsonpath-accessors">accessor operators</link>,
    which go down the JSON structure level by level to retrieve sub-items
-   of the context item. Each operator that follows deals with the
-   result of the previous evaluation step.
+   of the context item. Each accessor operator acts on the
+   result(s) of the previous evaluation step, producing zero, one, or more
+   output items from each input item.
   </para>
 
   <para>
    For example, suppose you have some JSON data from a GPS tracker that you
    would like to parse, such as:
 <programlisting>
-{
+SELECT '{
   "track": {
     "segments": [
       {
@@ -16990,68 +17408,100 @@ array w/o UK? | t
       }
     ]
   }
-}
+}' AS json \gset
 </programlisting>
+   (The above example can be copied-and-pasted
+   into <application>psql</application> to set things up for the following
+   examples.  Then <application>psql</application> will
+   expand <literal>:'json'</literal> into a suitably-quoted string
+   constant containing the JSON value.)
   </para>
 
   <para>
    To retrieve the available track segments, you need to use the
    <literal>.<replaceable>key</replaceable></literal> accessor
-   operator to descend through surrounding JSON objects:
-<programlisting>
-$.track.segments
-</programlisting>
+   operator to descend through surrounding JSON objects, for example:
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', '$.track.segments');</userinput>
+                                                                         jsonb_path_query
+-----------------------------------------------------------&zwsp;-----------------------------------------------------------&zwsp;---------------------------------------------
+ [{"HR": 73, "location": [47.763, 13.4034], "start time": "2018-10-14 10:05:14"}, {"HR": 135, "location": [47.706, 13.2635], "start time": "2018-10-14 10:39:21"}]
+</screen>
   </para>
 
   <para>
    To retrieve the contents of an array, you typically use the
-   <literal>[*]</literal> operator. For example,
-   the following path will return the location coordinates for all
+   <literal>[*]</literal> operator.
+   The following example will return the location coordinates for all
    the available track segments:
-<programlisting>
-$.track.segments[*].location
-</programlisting>
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', '$.track.segments[*].location');</userinput>
+ jsonb_path_query
+-------------------
+ [47.763, 13.4034]
+ [47.706, 13.2635]
+</screen>
+   Here we started with the whole JSON input value (<literal>$</literal>),
+   then the <literal>.track</literal> accessor selected the JSON object
+   associated with the <literal>"track"</literal> object key, then
+   the <literal>.segments</literal> accessor selected the JSON array
+   associated with the <literal>"segments"</literal> key within that
+   object, then the <literal>[*]</literal> accessor selected each element
+   of that array (producing a series of items), then
+   the <literal>.location</literal> accessor selected the JSON array
+   associated with the <literal>"location"</literal> key within each of
+   those objects.  In this example, each of those objects had
+   a <literal>"location"</literal> key; but if any of them did not,
+   the <literal>.location</literal> accessor would have simply produced no
+   output for that input item.
   </para>
 
   <para>
    To return the coordinates of the first segment only, you can
    specify the corresponding subscript in the <literal>[]</literal>
    accessor operator. Recall that JSON array indexes are 0-relative:
-<programlisting>
-$.track.segments[0].location
-</programlisting>
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', '$.track.segments[0].location');</userinput>
+ jsonb_path_query
+-------------------
+ [47.763, 13.4034]
+</screen>
   </para>
 
   <para>
    The result of each path evaluation step can be processed
-   by one or more <type>jsonpath</type> operators and methods
+   by one or more of the <type>jsonpath</type> operators and methods
    listed in <xref linkend="functions-sqljson-path-operators"/>.
    Each method name must be preceded by a dot. For example,
    you can get the size of an array:
-<programlisting>
-$.track.segments.size()
-</programlisting>
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', '$.track.segments.size()');</userinput>
+ jsonb_path_query
+------------------
+ 2
+</screen>
    More examples of using <type>jsonpath</type> operators
    and methods within path expressions appear below in
    <xref linkend="functions-sqljson-path-operators"/>.
   </para>
 
   <para>
-   When defining a path, you can also use one or more
+   A path can also contain
    <firstterm>filter expressions</firstterm> that work similarly to the
    <literal>WHERE</literal> clause in SQL. A filter expression begins with
    a question mark and provides a condition in parentheses:
 
-<programlisting>
+<synopsis>
 ? (<replaceable>condition</replaceable>)
-</programlisting>
+</synopsis>
   </para>
 
   <para>
    Filter expressions must be written just after the path evaluation step
    to which they should apply. The result of that step is filtered to include
    only those items that satisfy the provided condition. SQL/JSON defines
-   three-valued logic, so the condition can be <literal>true</literal>, <literal>false</literal>,
+   three-valued logic, so the condition can
+   produce <literal>true</literal>, <literal>false</literal>,
    or <literal>unknown</literal>. The <literal>unknown</literal> value
    plays the same role as SQL <literal>NULL</literal> and can be tested
    for with the <literal>is unknown</literal> predicate. Further path
@@ -17063,90 +17513,133 @@ $.track.segments.size()
    The functions and operators that can be used in filter expressions are
    listed in <xref linkend="functions-sqljson-filter-ex-table"/>.  Within a
    filter expression, the <literal>@</literal> variable denotes the value
-   being filtered (i.e., one result of the preceding path step).  You can
+   being considered (i.e., one result of the preceding path step).  You can
    write accessor operators after <literal>@</literal> to retrieve component
    items.
   </para>
 
   <para>
    For example, suppose you would like to retrieve all heart rate values higher
-   than 130. You can achieve this using the following expression:
-<programlisting>
-$.track.segments[*].HR ? (@ &gt; 130)
-</programlisting>
+   than 130. You can achieve this as follows:
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', '$.track.segments[*].HR ? (@ &gt; 130)');</userinput>
+ jsonb_path_query
+------------------
+ 135
+</screen>
   </para>
 
   <para>
    To get the start times of segments with such values, you have to
-   filter out irrelevant segments before returning the start times, so the
+   filter out irrelevant segments before selecting the start times, so the
    filter expression is applied to the previous step, and the path used
    in the condition is different:
-<programlisting>
-$.track.segments[*] ? (@.HR &gt; 130)."start time"
-</programlisting>
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', '$.track.segments[*] ? (@.HR &gt; 130)."start time"');</userinput>
+   jsonb_path_query
+-----------------------
+ "2018-10-14 10:39:21"
+</screen>
   </para>
 
   <para>
-   You can use several filter expressions in sequence, if required. For
-   example, the following expression selects start times of all segments that
+   You can use several filter expressions in sequence, if required.
+   The following example selects start times of all segments that
    contain locations with relevant coordinates and high heart rate values:
-<programlisting>
-$.track.segments[*] ? (@.location[1] &lt; 13.4) ? (@.HR &gt; 130)."start time"
-</programlisting>
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', '$.track.segments[*] ? (@.location[1] &lt; 13.4) ? (@.HR &gt; 130)."start time"');</userinput>
+   jsonb_path_query
+-----------------------
+ "2018-10-14 10:39:21"
+</screen>
   </para>
 
   <para>
    Using filter expressions at different nesting levels is also allowed.
    The following example first filters all segments by location, and then
    returns high heart rate values for these segments, if available:
-<programlisting>
-$.track.segments[*] ? (@.location[1] &lt; 13.4).HR ? (@ &gt; 130)
-</programlisting>
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', '$.track.segments[*] ? (@.location[1] &lt; 13.4).HR ? (@ &gt; 130)');</userinput>
+ jsonb_path_query
+------------------
+ 135
+</screen>
   </para>
 
   <para>
-   You can also nest filter expressions within each other:
-<programlisting>
-$.track ? (exists(@.segments[*] ? (@.HR &gt; 130))).segments.size()
-</programlisting>
-   This expression returns the size of the track if it contains any
-   segments with high heart rate values, or an empty sequence otherwise.
+   You can also nest filter expressions within each other.
+   This example returns the size of the track if it contains any
+   segments with high heart rate values, or an empty sequence otherwise:
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', '$.track ? (exists(@.segments[*] ? (@.HR &gt; 130))).segments.size()');</userinput>
+ jsonb_path_query
+------------------
+ 2
+</screen>
   </para>
 
-  <para>
-   <productname>PostgreSQL</productname>'s implementation of the SQL/JSON path
-   language has the following deviations from the SQL/JSON standard:
-  </para>
+  <sect3 id="functions-sqljson-deviations">
+  <title>Deviations from the SQL Standard</title>
+   <para>
+    <productname>PostgreSQL</productname>'s implementation of the SQL/JSON path
+    language has the following deviations from the SQL/JSON standard.
+   </para>
 
-  <itemizedlist>
-   <listitem>
+   <sect4 id="functions-sqljson-check-expressions">
+   <title>Boolean Predicate Check Expressions</title>
     <para>
-     A path expression can be a Boolean predicate, although the SQL/JSON
-     standard allows predicates only in filters.  This is necessary for
-     implementation of the <literal>@@</literal> operator. For example,
-     the following <type>jsonpath</type> expression is valid in
-     <productname>PostgreSQL</productname>:
-<programlisting>
-$.track.segments[*].HR &lt; 70
-</programlisting>
-    </para>
-   </listitem>
+     As an extension to the SQL standard,
+     a <productname>PostgreSQL</productname> path expression can be a
+     Boolean predicate, whereas the SQL standard allows predicates only within
+     filters. While SQL-standard path expressions return the relevant
+     element(s) of the queried JSON value, predicate check expressions
+     return the single three-valued result of the
+     predicate: <literal>true</literal>,
+     <literal>false</literal>, or <literal>unknown</literal>.
+     For example, we could write this SQL-standard filter expression:
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', '$.track.segments ?(@[*].HR &gt; 130)');</userinput>
+                                jsonb_path_query
+-----------------------------------------------------------&zwsp;----------------------
+ {"HR": 135, "location": [47.706, 13.2635], "start time": "2018-10-14 10:39:21"}
+</screen>
+     The similar predicate check expression simply
+     returns <literal>true</literal>, indicating that a match exists:
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', '$.track.segments[*].HR &gt; 130');</userinput>
+ jsonb_path_query
+------------------
+ true
+</screen>
+     </para>
 
-   <listitem>
-    <para>
-     There are minor differences in the interpretation of regular
-     expression patterns used in <literal>like_regex</literal> filters, as
-     described in <xref linkend="jsonpath-regular-expressions"/>.
-    </para>
-   </listitem>
-  </itemizedlist>
+     <note>
+      <para>
+       Predicate check expressions are required in the
+       <literal>@@</literal> operator (and the
+       <function>jsonb_path_match</function> function), and should not be used
+       with the <literal>@?</literal> operator (or the
+       <function>jsonb_path_exists</function> function).
+      </para>
+     </note>
+    </sect4>
 
-   <sect3 id="strict-and-lax-modes">
+    <sect4 id="functions-sqljson-regular-expression-deviation">
+    <title>Regular Expression Interpretation</title>
+     <para>
+      There are minor differences in the interpretation of regular
+      expression patterns used in <literal>like_regex</literal> filters, as
+      described in <xref linkend="jsonpath-regular-expressions"/>.
+     </para>
+    </sect4>
+   </sect3>
+
+   <sect3 id="functions-sqljson-strict-and-lax-modes">
    <title>Strict and Lax Modes</title>
     <para>
      When you query JSON data, the path expression may not match the
      actual JSON data structure. An attempt to access a non-existent
-     member of an object or element of an array results in a
+     member of an object or element of an array is defined as a
      structural error. SQL/JSON path expressions have two modes
      of handling structural errors:
     </para>
@@ -17156,8 +17649,8 @@ $.track.segments[*].HR &lt; 70
      <para>
       lax (default) &mdash; the path engine implicitly adapts
       the queried data to the specified path.
-      Any remaining structural errors are suppressed and converted
-      to empty SQL/JSON sequences.
+      Any structural errors that cannot be fixed as described below
+      are suppressed, producing no match.
      </para>
     </listitem>
     <listitem>
@@ -17168,15 +17661,15 @@ $.track.segments[*].HR &lt; 70
    </itemizedlist>
 
    <para>
-    The lax mode facilitates matching of a JSON document structure and path
-    expression if the JSON data does not conform to the expected schema.
+    Lax mode facilitates matching of a JSON document and path
+    expression when the JSON data does not conform to the expected schema.
     If an operand does not match the requirements of a particular operation,
-    it can be automatically wrapped as an SQL/JSON array or unwrapped by
+    it can be automatically wrapped as an SQL/JSON array, or unwrapped by
     converting its elements into an SQL/JSON sequence before performing
-    this operation. Besides, comparison operators automatically unwrap their
-    operands in the lax mode, so you can compare SQL/JSON arrays
+    the operation. Also, comparison operators automatically unwrap their
+    operands in lax mode, so you can compare SQL/JSON arrays
     out-of-the-box. An array of size 1 is considered equal to its sole element.
-    Automatic unwrapping is not performed only when:
+    Automatic unwrapping is not performed when:
     <itemizedlist>
      <listitem>
       <para>
@@ -17199,41 +17692,96 @@ $.track.segments[*].HR &lt; 70
    <para>
     For example, when querying the GPS data listed above, you can
     abstract from the fact that it stores an array of segments
-    when using the lax mode:
-<programlisting>
-lax $.track.segments.location
-</programlisting>
+    when using lax mode:
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', 'lax $.track.segments.location');</userinput>
+ jsonb_path_query
+-------------------
+ [47.763, 13.4034]
+ [47.706, 13.2635]
+</screen>
    </para>
 
    <para>
-    In the strict mode, the specified path must exactly match the structure of
-    the queried JSON document to return an SQL/JSON item, so using this
-    path expression will cause an error. To get the same result as in
-    the lax mode, you have to explicitly unwrap the
+    In strict mode, the specified path must exactly match the structure of
+    the queried JSON document, so using this path
+    expression will cause an error:
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', 'strict $.track.segments.location');</userinput>
+ERROR:  jsonpath member accessor can only be applied to an object
+</screen>
+    To get the same result as in lax mode, you have to explicitly unwrap the
     <literal>segments</literal> array:
-<programlisting>
-strict $.track.segments[*].location
-</programlisting>
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', 'strict $.track.segments[*].location');</userinput>
+ jsonb_path_query
+-------------------
+ [47.763, 13.4034]
+ [47.706, 13.2635]
+</screen>
    </para>
 
    <para>
-    The <literal>.**</literal> accessor can lead to surprising results
-    when using the lax mode. For instance, the following query selects every
-    <literal>HR</literal> value twice:
-<programlisting>
-lax $.**.HR
-</programlisting>
+    The unwrapping behavior of lax mode can lead to surprising results. For
+    instance, the following query using the <literal>.**</literal> accessor
+    selects every <literal>HR</literal> value twice:
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', 'lax $.**.HR');</userinput>
+ jsonb_path_query
+------------------
+ 73
+ 135
+ 73
+ 135
+</screen>
     This happens because the <literal>.**</literal> accessor selects both
     the <literal>segments</literal> array and each of its elements, while
     the <literal>.HR</literal> accessor automatically unwraps arrays when
-    using the lax mode. To avoid surprising results, we recommend using
-    the <literal>.**</literal> accessor only in the strict mode. The
+    using lax mode. To avoid surprising results, we recommend using
+    the <literal>.**</literal> accessor only in strict mode. The
     following query selects each <literal>HR</literal> value just once:
-<programlisting>
-strict $.**.HR
-</programlisting>
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', 'strict $.**.HR');</userinput>
+ jsonb_path_query
+------------------
+ 73
+ 135
+</screen>
    </para>
 
+   <para>
+    The unwrapping of arrays can also lead to unexpected results. Consider this
+    example, which selects all the <literal>location</literal> arrays:
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', 'lax $.track.segments[*].location');</userinput>
+ jsonb_path_query
+-------------------
+ [47.763, 13.4034]
+ [47.706, 13.2635]
+(2 rows)
+</screen>
+    As expected it returns the full arrays. But applying a filter expression
+    causes the arrays to be unwrapped to evaluate each item, returning only the
+    items that match the expression:
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', 'lax $.track.segments[*].location ?(@[*] &gt; 15)');</userinput>
+ jsonb_path_query
+------------------
+ 47.763
+ 47.706
+(2 rows)
+</screen>
+    This despite the fact that the full arrays are selected by the path
+    expression. Use strict mode to restore selecting the arrays:
+<screen>
+<prompt>=&gt;</prompt> <userinput>select jsonb_path_query(:'json', 'strict $.track.segments[*].location ?(@[*] &gt; 15)');</userinput>
+ jsonb_path_query
+-------------------
+ [47.763, 13.4034]
+ [47.706, 13.2635]
+(2 rows)
+</screen>
+   </para>
    </sect3>
 
    <sect3 id="functions-sqljson-path-operators">
@@ -17244,7 +17792,10 @@ strict $.**.HR
     methods available in <type>jsonpath</type>.  Note that while the unary
     operators and methods can be applied to multiple values resulting from a
     preceding path step, the binary operators (addition etc.) can only be
-    applied to single values.
+    applied to single values.  In lax mode, methods applied to an array will be
+    executed for each value in the array.  The exceptions are
+    <literal>.type()</literal> and <literal>.size()</literal>, which apply to
+    the array itself.
    </para>
 
    <table id="functions-sqljson-op-table">
@@ -17396,6 +17947,38 @@ strict $.**.HR
 
       <row>
        <entry role="func_table_entry"><para role="func_signature">
+        <replaceable>value</replaceable> <literal>.</literal> <literal>boolean()</literal>
+        <returnvalue><replaceable>boolean</replaceable></returnvalue>
+       </para>
+       <para>
+        Boolean value converted from a JSON boolean, number, or string
+       </para>
+       <para>
+        <literal>jsonb_path_query_array('[1, "yes", false]', '$[*].boolean()')</literal>
+        <returnvalue>[true, true, false]</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <replaceable>value</replaceable> <literal>.</literal> <literal>string()</literal>
+        <returnvalue><replaceable>string</replaceable></returnvalue>
+       </para>
+       <para>
+        String value converted from a JSON boolean, number, string, or datetime
+       </para>
+       <para>
+        <literal>jsonb_path_query_array('[1.23, "xyz", false]', '$[*].string()')</literal>
+        <returnvalue>["1.23", "xyz", "false"]</returnvalue>
+       </para>
+       <para>
+        <literal>jsonb_path_query('"2023-08-15"', '$.datetime().string()')</literal>
+        <returnvalue>"2023-08-15"</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
         <replaceable>value</replaceable> <literal>.</literal> <literal>double()</literal>
         <returnvalue><replaceable>number</replaceable></returnvalue>
        </para>
@@ -17453,6 +18036,62 @@ strict $.**.HR
 
       <row>
        <entry role="func_table_entry"><para role="func_signature">
+        <replaceable>value</replaceable> <literal>.</literal> <literal>bigint()</literal>
+        <returnvalue><replaceable>bigint</replaceable></returnvalue>
+       </para>
+       <para>
+        Big integer value converted from a JSON number or string
+       </para>
+       <para>
+        <literal>jsonb_path_query('{"len": "9876543219"}', '$.len.bigint()')</literal>
+        <returnvalue>9876543219</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <replaceable>value</replaceable> <literal>.</literal> <literal>decimal( [ <replaceable>precision</replaceable> [ , <replaceable>scale</replaceable> ] ] )</literal>
+        <returnvalue><replaceable>decimal</replaceable></returnvalue>
+       </para>
+       <para>
+        Rounded decimal value converted from a JSON number or string. <literal>precision</literal> and <literal>scale</literal> must be integer values.
+       </para>
+       <para>
+        <literal>jsonb_path_query('1234.5678', '$.decimal(6, 2)')</literal>
+        <returnvalue>1234.57</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <replaceable>value</replaceable> <literal>.</literal> <literal>integer()</literal>
+        <returnvalue><replaceable>integer</replaceable></returnvalue>
+       </para>
+       <para>
+        Integer value converted from a JSON number or string
+       </para>
+       <para>
+        <literal>jsonb_path_query('{"len": "12345"}', '$.len.integer()')</literal>
+        <returnvalue>12345</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <replaceable>value</replaceable> <literal>.</literal> <literal>number()</literal>
+        <returnvalue><replaceable>numeric</replaceable></returnvalue>
+       </para>
+       <para>
+        Numeric value converted from a JSON number or string
+       </para>
+       <para>
+        <literal>jsonb_path_query('{"len": "123.45"}', '$.len.number()')</literal>
+        <returnvalue>123.45</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
         <replaceable>string</replaceable> <literal>.</literal> <literal>datetime()</literal>
         <returnvalue><replaceable>datetime_type</replaceable></returnvalue>
         (see note)
@@ -17479,6 +18118,136 @@ strict $.**.HR
        <para>
         <literal>jsonb_path_query_array('["12:30", "18:40"]', '$[*].datetime("HH24:MI")')</literal>
         <returnvalue>["12:30:00", "18:40:00"]</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <replaceable>string</replaceable> <literal>.</literal> <literal>date()</literal>
+        <returnvalue><replaceable>date</replaceable></returnvalue>
+       </para>
+       <para>
+        Date value converted from a string
+       </para>
+       <para>
+        <literal>jsonb_path_query('"2023-08-15"', '$.date()')</literal>
+        <returnvalue>"2023-08-15"</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <replaceable>string</replaceable> <literal>.</literal> <literal>time()</literal>
+        <returnvalue><replaceable>time without time zone</replaceable></returnvalue>
+       </para>
+       <para>
+        Time without time zone value converted from a string
+       </para>
+       <para>
+        <literal>jsonb_path_query('"12:34:56"', '$.time()')</literal>
+        <returnvalue>"12:34:56"</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <replaceable>string</replaceable> <literal>.</literal> <literal>time(<replaceable>precision</replaceable>)</literal>
+        <returnvalue><replaceable>time without time zone</replaceable></returnvalue>
+       </para>
+       <para>
+        Time without time zone value converted from a string, with fractional
+        seconds adjusted to the given precision.
+       </para>
+       <para>
+        <literal>jsonb_path_query('"12:34:56.789"', '$.time(2)')</literal>
+        <returnvalue>"12:34:56.79"</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <replaceable>string</replaceable> <literal>.</literal> <literal>time_tz()</literal>
+        <returnvalue><replaceable>time with time zone</replaceable></returnvalue>
+       </para>
+       <para>
+        Time with time zone value converted from a string
+       </para>
+       <para>
+        <literal>jsonb_path_query('"12:34:56 +05:30"', '$.time_tz()')</literal>
+        <returnvalue>"12:34:56+05:30"</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <replaceable>string</replaceable> <literal>.</literal> <literal>time_tz(<replaceable>precision</replaceable>)</literal>
+        <returnvalue><replaceable>time with time zone</replaceable></returnvalue>
+       </para>
+       <para>
+        Time with time zone value converted from a string, with fractional
+        seconds adjusted to the given precision.
+       </para>
+       <para>
+        <literal>jsonb_path_query('"12:34:56.789 +05:30"', '$.time_tz(2)')</literal>
+        <returnvalue>"12:34:56.79+05:30"</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <replaceable>string</replaceable> <literal>.</literal> <literal>timestamp()</literal>
+        <returnvalue><replaceable>timestamp without time zone</replaceable></returnvalue>
+       </para>
+       <para>
+        Timestamp without time zone value converted from a string
+       </para>
+       <para>
+        <literal>jsonb_path_query('"2023-08-15 12:34:56"', '$.timestamp()')</literal>
+        <returnvalue>"2023-08-15T12:34:56"</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <replaceable>string</replaceable> <literal>.</literal> <literal>timestamp(<replaceable>precision</replaceable>)</literal>
+        <returnvalue><replaceable>timestamp without time zone</replaceable></returnvalue>
+       </para>
+       <para>
+        Timestamp without time zone value converted from a string, with
+        fractional seconds adjusted to the given precision.
+       </para>
+       <para>
+        <literal>jsonb_path_query('"2023-08-15 12:34:56.789"', '$.timestamp(2)')</literal>
+        <returnvalue>"2023-08-15T12:34:56.79"</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <replaceable>string</replaceable> <literal>.</literal> <literal>timestamp_tz()</literal>
+        <returnvalue><replaceable>timestamp with time zone</replaceable></returnvalue>
+       </para>
+       <para>
+        Timestamp with time zone value converted from a string
+       </para>
+       <para>
+        <literal>jsonb_path_query('"2023-08-15 12:34:56 +05:30"', '$.timestamp_tz()')</literal>
+        <returnvalue>"2023-08-15T12:34:56+05:30"</returnvalue>
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <replaceable>string</replaceable> <literal>.</literal> <literal>timestamp_tz(<replaceable>precision</replaceable>)</literal>
+        <returnvalue><replaceable>timestamp with time zone</replaceable></returnvalue>
+       </para>
+       <para>
+        Timestamp with time zone value converted from a string, with fractional
+        seconds adjusted to the given precision.
+       </para>
+       <para>
+        <literal>jsonb_path_query('"2023-08-15 12:34:56.789 +05:30"', '$.timestamp_tz(2)')</literal>
+        <returnvalue>"2023-08-15T12:34:56.79+05:30"</returnvalue>
        </para></entry>
       </row>
 
@@ -17541,7 +18310,12 @@ strict $.**.HR
       <type>timestamptz</type>, and <type>time</type> to <type>timetz</type>.
       However, all but the first of these conversions depend on the current
       <xref linkend="guc-timezone"/> setting, and thus can only be performed
-      within timezone-aware <type>jsonpath</type> functions.
+      within timezone-aware <type>jsonpath</type> functions.  Similarly, other
+      date/time-related methods that convert strings to date/time types
+      also do this casting, which may involve the current
+      <xref linkend="guc-timezone"/> setting. Therefore, these conversions can
+      also only be performed within timezone-aware <type>jsonpath</type>
+      functions.
      </para>
     </note>
 
@@ -17882,6 +18656,708 @@ $.* ? (@ like_regex "^\\d+$")
 </programlisting>
     </para>
    </sect3>
+  </sect2>
+
+   <sect2 id="sqljson-query-functions">
+    <title>SQL/JSON Query Functions</title>
+  <para>
+   SQL/JSON functions <literal>JSON_EXISTS()</literal>,
+   <literal>JSON_QUERY()</literal>, and <literal>JSON_VALUE()</literal>
+   described in <xref linkend="functions-sqljson-querying"/> can be used
+   to query JSON documents.  Each of these functions apply a
+   <replaceable>path_expression</replaceable> (the query) to a
+   <replaceable>context_item</replaceable> (the document); see
+   <xref linkend="functions-sqljson-path"/> for more details on what
+   <replaceable>path_expression</replaceable> can contain.
+  </para>
+
+  <table id="functions-sqljson-querying">
+   <title>SQL/JSON Query Functions</title>
+   <tgroup cols="1">
+    <thead>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        Function signature
+       </para>
+       <para>
+        Description
+       </para>
+       <para>
+        Example(s)
+      </para></entry>
+     </row>
+    </thead>
+    <tbody>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        <indexterm><primary>json_exists</primary></indexterm>
+        <function>json_exists</function> (
+        <replaceable>context_item</replaceable>, <replaceable>path_expression</replaceable> <optional> <literal>PASSING</literal> { <replaceable>value</replaceable> <literal>AS</literal> <replaceable>varname</replaceable> } <optional>, ...</optional></optional>
+        <optional> { <literal>TRUE</literal> | <literal>FALSE</literal> |<literal> UNKNOWN</literal> | <literal>ERROR</literal> } <literal>ON ERROR</literal> </optional>)
+       </para>
+       <para>
+        Returns true if the SQL/JSON <replaceable>path_expression</replaceable>
+        applied to the <replaceable>context_item</replaceable> using the
+        <literal>PASSING</literal> <replaceable>value</replaceable>s yields any
+        items.
+       </para>
+       <para>
+        The <literal>ON ERROR</literal> clause specifies the behavior if
+        an error occurs; the default is to return the <type>boolean</type>
+        <literal>FALSE</literal> value. Note that if the
+        <replaceable>path_expression</replaceable> is <literal>strict</literal>
+        and <literal>ON ERROR</literal> behavior is <literal>ERROR</literal>,
+        an error is generated if it yields no items.
+       </para>
+       <para>
+        Examples:
+       </para>
+       <para>
+        <literal>select json_exists(jsonb '{"key1": [1,2,3]}', 'strict $.key1[*] ? (@ > 2)')</literal>
+        <returnvalue>t</returnvalue>
+       </para>
+       <para>
+        <literal>select json_exists(jsonb '{"a": [1,2,3]}', 'lax $.a[5]' ERROR ON ERROR)</literal>
+        <returnvalue>f</returnvalue>
+       </para>
+       <para>
+        <literal>select json_exists(jsonb '{"a": [1,2,3]}', 'strict $.a[5]' ERROR ON ERROR)</literal>
+        <returnvalue></returnvalue>
+<programlisting>
+ERROR:  jsonpath array subscript is out of bounds
+</programlisting>
+      </para></entry>
+     </row>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        <indexterm><primary>json_query</primary></indexterm>
+        <function>json_query</function> (
+        <replaceable>context_item</replaceable>, <replaceable>path_expression</replaceable> <optional> <literal>PASSING</literal> { <replaceable>value</replaceable> <literal>AS</literal> <replaceable>varname</replaceable> } <optional>, ...</optional></optional>
+        <optional> <literal>RETURNING</literal> <replaceable>data_type</replaceable> <optional> <literal>FORMAT JSON</literal> <optional> <literal>ENCODING UTF8</literal> </optional> </optional> </optional>
+        <optional> { <literal>WITHOUT</literal> | <literal>WITH</literal> { <literal>CONDITIONAL</literal> | <optional><literal>UNCONDITIONAL</literal></optional> } } <optional> <literal>ARRAY</literal> </optional> <literal>WRAPPER</literal> </optional>
+        <optional> { <literal>KEEP</literal> | <literal>OMIT</literal> } <literal>QUOTES</literal> <optional> <literal>ON SCALAR STRING</literal> </optional> </optional>
+        <optional> { <literal>ERROR</literal> | <literal>NULL</literal> | <literal>EMPTY</literal> { <optional> <literal>ARRAY</literal> </optional> | <literal>OBJECT</literal> } | <literal>DEFAULT</literal> <replaceable>expression</replaceable> } <literal>ON EMPTY</literal> </optional>
+        <optional> { <literal>ERROR</literal> | <literal>NULL</literal> | <literal>EMPTY</literal> { <optional> <literal>ARRAY</literal> </optional> | <literal>OBJECT</literal> } | <literal>DEFAULT</literal> <replaceable>expression</replaceable> } <literal>ON ERROR</literal> </optional>)
+      </para>
+       <para>
+        Returns the result of applying the SQL/JSON
+        <replaceable>path_expression</replaceable> to the
+        <replaceable>context_item</replaceable> using the
+        <literal>PASSING</literal> <replaceable>value</replaceable>s.
+       </para>
+       <para>
+        If the path expression returns multiple SQL/JSON items, it might be
+        necessary to wrap the result using the <literal>WITH WRAPPER</literal>
+        clause to make it a valid JSON string.  If the wrapper is
+        <literal>UNCONDITIONAL</literal>, an array wrapper will always be
+        applied, even if the returned value is already a single JSON object
+        or an array.  If it is <literal>CONDITIONAL</literal>, it will not be
+        applied to a single JSON object or an array.
+        <literal>UNCONDITIONAL</literal> is the default.
+       </para>
+       <para>
+        If the result is a scalar string, by default, the returned value will
+        be surrounded by quotes, making it a valid JSON value.  It can be made
+        explicit by specifying <literal>KEEP QUOTES</literal>.  Conversely,
+        quotes can be omitted by specifying <literal>OMIT QUOTES</literal>.
+        Note that <literal>OMIT QUOTES</literal> cannot be specified when
+        <literal>WITH WRAPPER</literal> is also specified.
+       </para>
+       <para>
+        The <literal>RETURNING</literal> clause can be used to specify the
+        <replaceable>data_type</replaceable> of the result value.  By default,
+        the returned value will be of type <type>jsonb</type>.
+       </para>
+       <para>
+        The <literal>ON EMPTY</literal> clause specifies the behavior if
+        evaluating <replaceable>path_expression</replaceable> yields no value
+        at all. The default when <literal>ON EMPTY</literal> is not specified
+        is to return a null value.
+       </para>
+       <para>
+        The <literal>ON ERROR</literal> clause specifies the
+        behavior if an error occurs when evaluating
+        <replaceable>path_expression</replaceable>, including the operation to
+        coerce the result value to the output type, or during the execution of
+        <literal>ON EMPTY</literal> behavior (that is caused by empty result
+        of <replaceable>path_expression</replaceable> evaluation).  The default
+        when <literal>ON ERROR</literal> is not specified is to return a null
+        value.
+       </para>
+       <para>
+        Examples:
+       </para>
+       <para>
+        <literal>select json_query(jsonb '[1,[2,3],null]', 'lax $[*][1]' WITH CONDITIONAL WRAPPER)</literal>
+        <returnvalue>[3]</returnvalue>
+       </para>
+       <para>
+        <literal>select json_query(jsonb '{"a": "[1, 2]"}', 'lax $.a' OMIT QUOTES);</literal>
+        <returnvalue>[1, 2]</returnvalue>
+       </para>
+       <para>
+        <literal>select json_query(jsonb '{"a": "[1, 2]"}', 'lax $.a' RETURNING int[] OMIT QUOTES ERROR ON ERROR);</literal>
+        <returnvalue></returnvalue>
+<programlisting>
+ERROR:  malformed array literal: "[1, 2]"
+DETAIL:  Missing "]" after array dimensions.
+</programlisting>
+       </para>
+      </entry>
+     </row>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+        <indexterm><primary>json_value</primary></indexterm>
+        <function>json_value</function> (
+        <replaceable>context_item</replaceable>, <replaceable>path_expression</replaceable>
+        <optional> <literal>PASSING</literal> { <replaceable>value</replaceable> <literal>AS</literal> <replaceable>varname</replaceable> } <optional>, ...</optional></optional>
+        <optional> <literal>RETURNING</literal> <replaceable>data_type</replaceable> </optional>
+        <optional> { <literal>ERROR</literal> | <literal>NULL</literal> | <literal>DEFAULT</literal> <replaceable>expression</replaceable> } <literal>ON EMPTY</literal> </optional>
+        <optional> { <literal>ERROR</literal> | <literal>NULL</literal> | <literal>DEFAULT</literal> <replaceable>expression</replaceable> } <literal>ON ERROR</literal> </optional>)
+       </para>
+       <para>
+        Returns the result of applying the SQL/JSON
+        <replaceable>path_expression</replaceable> to the
+        <replaceable>context_item</replaceable> using the
+        <literal>PASSING</literal> <replaceable>value</replaceable>s.
+       </para>
+       <para>
+        The extracted value must be a single <acronym>SQL/JSON</acronym>
+        scalar item; an error is thrown if that's not the case.  If you expect
+        that extracted value might be an object or an array, use the
+        <function>json_query</function> function instead.
+       </para>
+       <para>
+        The <literal>RETURNING</literal> clause can be used to specify the
+        <replaceable>data_type</replaceable> of the result value. By default,
+        the returned value will be of type <type>text</type>.
+       </para>
+       <para>
+        The <literal>ON ERROR</literal> and <literal>ON EMPTY</literal>
+        clauses have similar semantics as mentioned in the description of
+        <function>json_query</function>.
+       </para>
+       <para>
+        Note that scalar strings returned by <function>json_value</function>
+        always have their quotes removed, equivalent to specifying
+        <literal>OMIT QUOTES</literal> in <function>json_query</function>.
+       </para>
+       <para>
+        Examples:
+       </para>
+       <para>
+        <literal>select json_value(jsonb '"123.45"', '$' RETURNING float)</literal>
+        <returnvalue>123.45</returnvalue>
+       </para>
+       <para>
+        <literal>select json_value(jsonb '"03:04 2015-02-01"', '$.datetime("HH24:MI&nbsp;YYYY-MM-DD")' RETURNING date)</literal>
+        <returnvalue>2015-02-01</returnvalue>
+       </para>
+       <para>
+        <literal>select json_value(jsonb '[1,2]', 'strict $[*]' DEFAULT 9 ON ERROR)</literal>
+        <returnvalue>9</returnvalue>
+      </para></entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
+  <note>
+   <para>
+    The <replaceable>context_item</replaceable> expression is converted to
+    <type>jsonb</type> by an implicit cast if the expression is not already of
+    type <type>jsonb</type>. Note, however, that any parsing errors that occur
+    during that conversion are thrown unconditionally, that is, are not
+    handled according to the (specified or implicit) <literal>ON ERROR</literal>
+    clause.
+   </para>
+  </note>
+  </sect2>
+
+ <sect2 id="functions-sqljson-table">
+  <title>JSON_TABLE</title>
+  <indexterm>
+   <primary>json_table</primary>
+  </indexterm>
+
+  <para>
+   <function>JSON_TABLE</function> is an SQL/JSON function which
+   queries <acronym>JSON</acronym> data
+   and presents the results as a relational view, which can be accessed as a
+   regular SQL table. You can use <function>JSON_TABLE</function> inside
+   the <literal>FROM</literal> clause of a <literal>SELECT</literal>,
+   <literal>UPDATE</literal>, or <literal>DELETE</literal> and as data source
+   in a <literal>MERGE</literal> statement.
+  </para>
+
+  <para>
+   Taking JSON data as input, <function>JSON_TABLE</function> uses a JSON path
+   expression to extract a part of the provided data to use as a
+   <firstterm>row pattern</firstterm> for the constructed view.  Each SQL/JSON
+   value given by the row pattern serves as source for a separate row in the
+   constructed view.
+  </para>
+
+  <para>
+   To split the row pattern into columns, <function>JSON_TABLE</function>
+   provides the <literal>COLUMNS</literal> clause that defines the
+   schema of the created view. For each column, a separate JSON path expression
+   can be specified to be evaluated against the row pattern to get an SQL/JSON
+   value that will become the value for the specified column in a given output
+   row.
+  </para>
+
+  <para>
+   JSON data stored at a nested level of the row pattern can be extracted using
+   the <literal>NESTED PATH</literal> clause.  Each
+   <literal>NESTED PATH</literal> clause can be used to generate one or more
+   columns using the data from a nested level of the row pattern.  Those
+   columns can be specified using a <literal>COLUMNS</literal> clause that
+   looks similar to the top-level COLUMNS clause.  Rows constructed from
+   NESTED COLUMNS are called <firstterm>child rows</firstterm> and are joined
+   against the row constructed from the columns specified in the parent
+   <literal>COLUMNS</literal> clause to get the row in the final view.  Child
+   columns themselves may contain a <literal>NESTED PATH</literal>
+   specification thus allowing to extract data located at arbitrary nesting
+   levels.  Columns produced by multiple <literal>NESTED PATH</literal>s at the
+   same level are considered to be <firstterm>siblings</firstterm> of each
+   other and their rows after joining with the parent row are combined using
+   UNION.
+  </para>
+
+  <para>
+   The rows produced by <function>JSON_TABLE</function> are laterally
+   joined to the row that generated them, so you do not have to explicitly join
+   the constructed view with the original table holding <acronym>JSON</acronym>
+   data.
+  </para>
+
+  <para>
+   The syntax is:
+  </para>
+
+<synopsis>
+JSON_TABLE (
+    <replaceable>context_item</replaceable>, <replaceable>path_expression</replaceable> <optional> AS <replaceable>json_path_name</replaceable> </optional> <optional> PASSING { <replaceable>value</replaceable> AS <replaceable>varname</replaceable> } <optional>, ...</optional> </optional>
+    COLUMNS ( <replaceable class="parameter">json_table_column</replaceable> <optional>, ...</optional> )
+    <optional> { <literal>ERROR</literal> | <literal>EMPTY</literal> <optional>ARRAY</optional>} <literal>ON ERROR</literal> </optional>
+)
+
+<phrase>
+where <replaceable class="parameter">json_table_column</replaceable> is:
+</phrase>
+  <replaceable>name</replaceable> FOR ORDINALITY
+  | <replaceable>name</replaceable> <replaceable>type</replaceable>
+        <optional> FORMAT JSON <optional>ENCODING <literal>UTF8</literal></optional></optional>
+        <optional> PATH <replaceable>path_expression</replaceable> </optional>
+        <optional> { WITHOUT | WITH { CONDITIONAL | <optional>UNCONDITIONAL</optional> } } <optional> ARRAY </optional> WRAPPER </optional>
+        <optional> { KEEP | OMIT } QUOTES <optional> ON SCALAR STRING </optional> </optional>
+        <optional> { ERROR | NULL | EMPTY { <optional>ARRAY</optional> | OBJECT } | DEFAULT <replaceable>expression</replaceable> } ON EMPTY </optional>
+        <optional> { ERROR | NULL | EMPTY { <optional>ARRAY</optional> | OBJECT } | DEFAULT <replaceable>expression</replaceable> } ON ERROR </optional>
+  | <replaceable>name</replaceable> <replaceable>type</replaceable> EXISTS <optional> PATH <replaceable>path_expression</replaceable> </optional>
+        <optional> { ERROR | TRUE | FALSE | UNKNOWN } ON ERROR </optional>
+  | NESTED <optional> PATH </optional> <replaceable>path_expression</replaceable> <optional> AS <replaceable>json_path_name</replaceable> </optional> COLUMNS ( <replaceable>json_table_column</replaceable> <optional>, ...</optional> )
+</synopsis>
+
+  <para>
+   Each syntax element is described below in more detail.
+  </para>
+
+  <variablelist>
+   <varlistentry>
+    <term>
+     <literal><replaceable>context_item</replaceable>, <replaceable>path_expression</replaceable> <optional> <literal>AS</literal> <replaceable>json_path_name</replaceable> </optional> <optional> <literal>PASSING</literal> { <replaceable>value</replaceable> <literal>AS</literal> <replaceable>varname</replaceable> } <optional>, ...</optional></optional></literal>
+    </term>
+    <listitem>
+    <para>
+     The input data to query (<replaceable>context_item</replaceable>),
+     the JSON path expression defining the query (<replaceable>path_expression</replaceable>)
+     with an optional name (<replaceable>json_path_name</replaceable>), and an
+     optional <literal>PASSING</literal> clause, which can provide data values
+     to the <replaceable>path_expression</replaceable>.  The result of the input
+     data evaluation using the aforementioned elements is called the
+     <firstterm>row pattern</firstterm>, which is used as the source for row
+     values in the constructed view.
+    </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <literal>COLUMNS</literal> ( <replaceable>json_table_column</replaceable> <optional>, ...</optional> )
+    </term>
+    <listitem>
+
+    <para>
+     The <literal>COLUMNS</literal> clause defining the schema of the
+     constructed view. In this clause, you can specify each column to be
+     filled with an SQL/JSON value obtained by applying a JSON path expression
+     against the row pattern.  <replaceable>json_table_column</replaceable> has
+     the following variants:
+    </para>
+
+  <variablelist>
+   <varlistentry>
+    <term>
+     <replaceable>name</replaceable> <literal>FOR ORDINALITY</literal>
+    </term>
+    <listitem>
+    <para>
+     Adds an ordinality column that provides sequential row numbering starting
+     from 1.  Each <literal>NESTED PATH</literal> (see below) gets its own
+     counter for any nested ordinality columns.
+    </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <literal><replaceable>name</replaceable> <replaceable>type</replaceable>
+          <optional><literal>FORMAT JSON</literal> <optional>ENCODING <literal>UTF8</literal></optional></optional>
+          <optional> <literal>PATH</literal> <replaceable>path_expression</replaceable> </optional></literal>
+    </term>
+    <listitem>
+    <para>
+     Inserts an SQL/JSON value obtained by applying
+     <replaceable>path_expression</replaceable> against the row pattern into
+     the view's output row after coercing it to specified
+     <replaceable>type</replaceable>.
+    </para>
+    <para>
+     Specifying <literal>FORMAT JSON</literal> makes it explicit that you
+     expect the value to be a valid <type>json</type> object.  It only
+     makes sense to specify <literal>FORMAT JSON</literal> if
+     <replaceable>type</replaceable> is one of <type>bpchar</type>,
+     <type>bytea</type>, <type>character varying</type>, <type>name</type>,
+     <type>json</type>, <type>jsonb</type>, <type>text</type>, or a domain over
+     these types.
+    </para>
+    <para>
+     Optionally, you can specify <literal>WRAPPER</literal> and
+     <literal>QUOTES</literal> clauses to format the output. Note that
+     specifying <literal>OMIT QUOTES</literal> overrides
+     <literal>FORMAT JSON</literal> if also specified, because unquoted
+     literals do not constitute valid <type>json</type> values.
+    </para>
+    <para>
+     Optionally, you can use <literal>ON EMPTY</literal> and
+     <literal>ON ERROR</literal> clauses to specify whether to throw the error
+     or return the specified value when the result of JSON path evaluation is
+     empty and when an error occurs during JSON path evaluation or when
+     coercing the SQL/JSON value to the specified type, respectively.  The
+     default for both is to return a <literal>NULL</literal> value.
+    </para>
+    <note>
+     <para>
+      This clause is internally turned into and has the same semantics as
+      <function>JSON_VALUE</function> or <function>JSON_QUERY</function>.
+      The latter if the specified type is not a scalar type or if either of
+      <literal>FORMAT JSON</literal>, <literal>WRAPPER</literal>, or
+      <literal>QUOTES</literal> clause is present.
+     </para>
+    </note>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+       <replaceable>name</replaceable> <replaceable>type</replaceable>
+       <literal>EXISTS</literal> <optional> <literal>PATH</literal> <replaceable>path_expression</replaceable> </optional>
+    </term>
+    <listitem>
+    <para>
+     Inserts a boolean value obtained by applying
+     <replaceable>path_expression</replaceable> against the row pattern
+     into the view's output row after coercing it to specified
+     <replaceable>type</replaceable>.
+    </para>
+    <para>
+     The value corresponds to whether applying the <literal>PATH</literal>
+     expression to the row pattern yields any values.
+    </para>
+    <para>
+     The specified <replaceable>type</replaceable> should have a cast from the
+     <type>boolean</type> type.
+    </para>
+    <para>
+     Optionally, you can use <literal>ON ERROR</literal> to specify whether to
+     throw the error or return the specified value when an error occurs during
+     JSON path evaluation or when coercing SQL/JSON value to the specified
+     type.  The default is to return a boolean value
+     <literal>FALSE</literal>.
+    </para>
+    <note>
+     <para>
+      This clause is internally turned into and has the same semantics as
+      <function>JSON_EXISTS</function>.
+     </para>
+    </note>
+      </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+      <literal>NESTED <optional> PATH </optional></literal> <replaceable>path_expression</replaceable> <optional> <literal>AS</literal> <replaceable>json_path_name</replaceable> </optional>
+          <literal>COLUMNS</literal> ( <replaceable>json_table_column</replaceable> <optional>, ...</optional> )
+    </term>
+    <listitem>
+
+    <para>
+     Extracts SQL/JSON values from nested levels of the row pattern,
+     generates one or more columns as defined by the <literal>COLUMNS</literal>
+     subclause, and inserts the extracted SQL/JSON values into those
+     columns.  The <replaceable>json_table_column</replaceable>
+     expression in the <literal>COLUMNS</literal> subclause uses the same
+     syntax as in the parent <literal>COLUMNS</literal> clause.
+    </para>
+
+    <para>
+     The <literal>NESTED PATH</literal> syntax is recursive,
+     so you can go down multiple nested levels by specifying several
+     <literal>NESTED PATH</literal> subclauses within each other.
+     It allows to unnest the hierarchy of JSON objects and arrays
+     in a single function invocation rather than chaining several
+     <function>JSON_TABLE</function> expressions in an SQL statement.
+    </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+
+   <note>
+     <para>
+      In each variant of <replaceable>json_table_column</replaceable> described
+      above, if the <literal>PATH</literal> clause is omitted, path expression
+      <literal>$.<replaceable>name</replaceable></literal> is used, where
+      <replaceable>name</replaceable> is the provided column name.
+     </para>
+    </note>
+
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <literal>AS</literal> <replaceable>json_path_name</replaceable>
+    </term>
+    <listitem>
+
+    <para>
+     The optional <replaceable>json_path_name</replaceable> serves as an
+     identifier of the provided <replaceable>path_expression</replaceable>.
+     The name must be unique and distinct from the column names.
+    </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     { <literal>ERROR</literal> | <literal>EMPTY</literal> } <literal>ON ERROR</literal>
+    </term>
+    <listitem>
+
+    <para>
+     The optional <literal>ON ERROR</literal> can be used to specify how to
+     handle errors when evaluating the top-level
+     <replaceable>path_expression</replaceable>.  Use <literal>ERROR</literal>
+     if you want the errors to be thrown and <literal>EMPTY</literal> to
+     return an empty table, that is, a table containing 0 rows.  Note that
+     this clause does not affect the errors that occur when evaluating
+     columns, for which the behavior depends on whether the
+     <literal>ON ERROR</literal> clause is specified against a given column.
+    </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+
+  <para>Examples</para>
+
+     <para>
+      In the examples that follow, the following table containing JSON data
+      will be used:
+
+<programlisting>
+CREATE TABLE my_films ( js jsonb );
+
+INSERT INTO my_films VALUES (
+'{ "favorites" : [
+   { "kind" : "comedy", "films" : [
+     { "title" : "Bananas",
+       "director" : "Woody Allen"},
+     { "title" : "The Dinner Game",
+       "director" : "Francis Veber" } ] },
+   { "kind" : "horror", "films" : [
+     { "title" : "Psycho",
+       "director" : "Alfred Hitchcock" } ] },
+   { "kind" : "thriller", "films" : [
+     { "title" : "Vertigo",
+       "director" : "Alfred Hitchcock" } ] },
+   { "kind" : "drama", "films" : [
+     { "title" : "Yojimbo",
+       "director" : "Akira Kurosawa" } ] }
+  ] }');
+</programlisting>
+
+     </para>
+     <para>
+      The following query shows how to use <function>JSON_TABLE</function> to
+      turn the JSON objects in the <structname>my_films</structname> table
+      to a view containing columns for the keys <literal>kind</literal>,
+      <literal>title</literal>, and <literal>director</literal> contained in
+      the original JSON along with an ordinality column:
+
+<programlisting>
+SELECT jt.* FROM
+ my_films,
+ JSON_TABLE (js, '$.favorites[*]' COLUMNS (
+   id FOR ORDINALITY,
+   kind text PATH '$.kind',
+   title text PATH '$.films[*].title' WITH WRAPPER,
+   director text PATH '$.films[*].director' WITH WRAPPER)) AS jt;
+</programlisting>
+
+<screen>
+ id |   kind   |             title              |             director
+----+----------+--------------------------------+----------------------------------
+  1 | comedy   | ["Bananas", "The Dinner Game"] | ["Woody Allen", "Francis Veber"]
+  2 | horror   | ["Psycho"]                     | ["Alfred Hitchcock"]
+  3 | thriller | ["Vertigo"]                    | ["Alfred Hitchcock"]
+  4 | drama    | ["Yojimbo"]                    | ["Akira Kurosawa"]
+(4 rows)
+</screen>
+
+     </para>
+     <para>
+      The following is a modified version of the above query to show the
+      usage of <literal>PASSING</literal> arguments in the filter specified in
+      the top-level JSON path expression and the various options for the
+      individual columns:
+
+<programlisting>
+SELECT jt.* FROM
+ my_films,
+ JSON_TABLE (js, '$.favorites[*] ? (@.films[*].director == $filter)'
+   PASSING 'Alfred Hitchcock' AS filter, 'Vertigo' AS filter2
+     COLUMNS (
+     id FOR ORDINALITY,
+     kind text PATH '$.kind',
+     title text FORMAT JSON PATH '$.films[*].title' OMIT QUOTES,
+     director text PATH '$.films[*].director' KEEP QUOTES)) AS jt;
+</programlisting>
+
+<screen>
+ id |   kind   |  title  |      director
+----+----------+---------+--------------------
+  1 | horror   | Psycho  | "Alfred Hitchcock"
+  2 | thriller | Vertigo | "Alfred Hitchcock"
+(2 rows)
+</screen>
+
+     </para>
+     <para>
+      The following is a modified version of the above query to show the usage
+      of <literal>NESTED PATH</literal> for populating title and director
+      columns, illustrating how they are joined to the parent columns id and
+      kind:
+
+<programlisting>
+SELECT jt.* FROM
+ my_films,
+ JSON_TABLE ( js, '$.favorites[*] ? (@.films[*].director == $filter)'
+   PASSING 'Alfred Hitchcock' AS filter
+   COLUMNS (
+    id FOR ORDINALITY,
+    kind text PATH '$.kind',
+    NESTED PATH '$.films[*]' COLUMNS (
+      title text FORMAT JSON PATH '$.title' OMIT QUOTES,
+      director text PATH '$.director' KEEP QUOTES))) AS jt;
+</programlisting>
+
+<screen>
+ id |   kind   |  title  |      director
+----+----------+---------+--------------------
+  1 | horror   | Psycho  | "Alfred Hitchcock"
+  2 | thriller | Vertigo | "Alfred Hitchcock"
+(2 rows)
+</screen>
+
+     </para>
+
+     <para>
+      The following is the same query but without the filter in the root
+      path:
+
+<programlisting>
+SELECT jt.* FROM
+ my_films,
+ JSON_TABLE ( js, '$.favorites[*]'
+   COLUMNS (
+    id FOR ORDINALITY,
+    kind text PATH '$.kind',
+    NESTED PATH '$.films[*]' COLUMNS (
+      title text FORMAT JSON PATH '$.title' OMIT QUOTES,
+      director text PATH '$.director' KEEP QUOTES))) AS jt;
+</programlisting>
+
+<screen>
+ id |   kind   |      title      |      director
+----+----------+-----------------+--------------------
+  1 | comedy   | Bananas         | "Woody Allen"
+  1 | comedy   | The Dinner Game | "Francis Veber"
+  2 | horror   | Psycho          | "Alfred Hitchcock"
+  3 | thriller | Vertigo         | "Alfred Hitchcock"
+  4 | drama    | Yojimbo         | "Akira Kurosawa"
+(5 rows)
+</screen>
+
+     </para>
+
+     <para>
+      The following shows another query using a different <type>JSON</type>
+      object as input.  It shows the UNION "sibling join" between
+      <literal>NESTED</literal> paths <literal>$.movies[*]</literal> and
+      <literal>$.books[*]</literal> and also the usage of
+      <literal>FOR ORDINALITY</literal> column at <literal>NESTED</literal>
+      levels (columns <literal>movie_id</literal>, <literal>book_id</literal>,
+      and <literal>author_id</literal>):
+
+<programlisting>
+SELECT * FROM JSON_TABLE (
+'{"favorites":
+    {"movies":
+      [{"name": "One", "director": "John Doe"},
+       {"name": "Two", "director": "Don Joe"}],
+     "books":
+      [{"name": "Mystery", "authors": [{"name": "Brown Dan"}]},
+       {"name": "Wonder", "authors": [{"name": "Jun Murakami"}, {"name":"Craig Doe"}]}]
+}}'::json, '$.favorites[*]'
+COLUMNS (
+  user_id FOR ORDINALITY,
+  NESTED '$.movies[*]'
+    COLUMNS (
+    movie_id FOR ORDINALITY,
+    mname text PATH '$.name',
+    director text),
+  NESTED '$.books[*]'
+    COLUMNS (
+      book_id FOR ORDINALITY,
+      bname text PATH '$.name',
+      NESTED '$.authors[*]'
+        COLUMNS (
+          author_id FOR ORDINALITY,
+          author_name text PATH '$.name'))));
+</programlisting>
+
+<screen>
+ user_id | movie_id | mname | director | book_id |  bname  | author_id | author_name
+---------+----------+-------+----------+---------+---------+-----------+--------------
+       1 |        1 | One   | John Doe |         |         |           |
+       1 |        2 | Two   | Don Joe  |         |         |           |
+       1 |          |       |          |       1 | Mystery |         1 | Brown Dan
+       1 |          |       |          |       2 | Wonder  |         1 | Jun Murakami
+       1 |          |       |          |       2 | Wonder  |         2 | Craig Doe
+(5 rows)
+</screen>
+
+     </para>
   </sect2>
  </sect1>
 
@@ -19675,7 +21151,7 @@ SELECT NULLIF(value, '(none)') ...
        </para>
        <para>
         Extracts the lower bound of the range (<literal>NULL</literal> if the
-        range is empty or the lower bound is infinite).
+        range is empty or has no lower bound).
        </para>
        <para>
         <literal>lower(numrange(1.1,2.2))</literal>
@@ -19693,7 +21169,7 @@ SELECT NULLIF(value, '(none)') ...
        </para>
        <para>
         Extracts the upper bound of the range (<literal>NULL</literal> if the
-        range is empty or the upper bound is infinite).
+        range is empty or has no upper bound).
        </para>
        <para>
         <literal>upper(numrange(1.1,2.2))</literal>
@@ -19761,7 +21237,8 @@ SELECT NULLIF(value, '(none)') ...
         <returnvalue>boolean</returnvalue>
        </para>
        <para>
-        Is the range's lower bound infinite?
+        Does the range have no lower bound?  (A lower bound of
+        <literal>-Infinity</literal> returns false.)
        </para>
        <para>
         <literal>lower_inf('(,)'::daterange)</literal>
@@ -19778,7 +21255,8 @@ SELECT NULLIF(value, '(none)') ...
         <returnvalue>boolean</returnvalue>
        </para>
        <para>
-        Is the range's upper bound infinite?
+        Does the range have no upper bound?  (An upper bound of
+        <literal>Infinity</literal> returns false.)
        </para>
        <para>
         <literal>upper_inf('(,)'::daterange)</literal>
@@ -19833,7 +21311,7 @@ SELECT NULLIF(value, '(none)') ...
        </para>
        <para>
         Extracts the lower bound of the multirange (<literal>NULL</literal> if the
-        multirange is empty or the lower bound is infinite).
+        multirange is empty has no lower bound).
        </para>
        <para>
         <literal>lower('{[1.1,2.2)}'::nummultirange)</literal>
@@ -19851,7 +21329,7 @@ SELECT NULLIF(value, '(none)') ...
        </para>
        <para>
         Extracts the upper bound of the multirange (<literal>NULL</literal> if the
-        multirange is empty or the upper bound is infinite).
+        multirange is empty or has no upper bound).
        </para>
        <para>
         <literal>upper('{[1.1,2.2)}'::nummultirange)</literal>
@@ -19919,7 +21397,8 @@ SELECT NULLIF(value, '(none)') ...
         <returnvalue>boolean</returnvalue>
        </para>
        <para>
-        Is the multirange's lower bound infinite?
+        Does the multirange have no lower bound?  (A lower bound of
+        <literal>-Infinity</literal> returns false.)
        </para>
        <para>
         <literal>lower_inf('{(,)}'::datemultirange)</literal>
@@ -19936,7 +21415,8 @@ SELECT NULLIF(value, '(none)') ...
         <returnvalue>boolean</returnvalue>
        </para>
        <para>
-        Is the multirange's upper bound infinite?
+        Does the multirange have no upper bound?  (An upper bound of
+        <literal>Infinity</literal> returns false.)
        </para>
        <para>
         <literal>upper_inf('{(,)}'::datemultirange)</literal>
@@ -19988,8 +21468,7 @@ SELECT NULLIF(value, '(none)') ...
         <returnvalue>setof anyrange</returnvalue>
        </para>
        <para>
-        Expands a multirange into a set of ranges.
-        The ranges are read out in storage order (ascending).
+        Expands a multirange into a set of ranges in ascending order.
        </para>
        <para>
         <literal>unnest('{[1,2), [3,4)}'::int4multirange)</literal>
@@ -20043,6 +21522,13 @@ SELECT NULLIF(value, '(none)') ...
    aggregation.
   </para>
 
+  <para>
+   While all aggregates below accept an optional
+   <literal>ORDER BY</literal> clause (as outlined in <xref
+   linkend="syntax-aggregates"/>), the clause has only been added to
+   aggregates whose output is affected by ordering.
+  </para>
+
    <table id="functions-aggregate-table">
     <title>General-Purpose Aggregate Functions</title>
     <tgroup cols="2">
@@ -20080,7 +21566,7 @@ SELECT NULLIF(value, '(none)') ...
         <indexterm>
          <primary>array_agg</primary>
         </indexterm>
-        <function>array_agg</function> ( <type>anynonarray</type> )
+        <function>array_agg</function> ( <type>anynonarray</type> <literal>ORDER BY</literal> <literal>input_sort_columns</literal> )
         <returnvalue>anyarray</returnvalue>
        </para>
        <para>
@@ -20091,7 +21577,7 @@ SELECT NULLIF(value, '(none)') ...
 
       <row>
        <entry role="func_table_entry"><para role="func_signature">
-        <function>array_agg</function> ( <type>anyarray</type> )
+        <function>array_agg</function> ( <type>anyarray</type> <literal>ORDER BY</literal> <literal>input_sort_columns</literal> )
         <returnvalue>anyarray</returnvalue>
        </para>
        <para>
@@ -20296,14 +21782,14 @@ SELECT NULLIF(value, '(none)') ...
         <indexterm>
          <primary>json_agg</primary>
         </indexterm>
-        <function>json_agg</function> ( <type>anyelement</type> )
+        <function>json_agg</function> ( <type>anyelement</type> <literal>ORDER BY</literal> <literal>input_sort_columns</literal> )
         <returnvalue>json</returnvalue>
        </para>
        <para role="func_signature">
         <indexterm>
          <primary>jsonb_agg</primary>
         </indexterm>
-        <function>jsonb_agg</function> ( <type>anyelement</type> )
+        <function>jsonb_agg</function> ( <type>anyelement</type> <literal>ORDER BY</literal> <literal>input_sort_columns</literal> )
         <returnvalue>jsonb</returnvalue>
        </para>
        <para>
@@ -20343,7 +21829,8 @@ SELECT NULLIF(value, '(none)') ...
         </indexterm>
         <function>json_object_agg</function> ( <parameter>key</parameter>
          <type>"any"</type>, <parameter>value</parameter>
-         <type>"any"</type> )
+         <type>"any"</type>
+         <literal>ORDER BY</literal> <literal>input_sort_columns</literal> )
         <returnvalue>json</returnvalue>
        </para>
        <para role="func_signature">
@@ -20352,7 +21839,8 @@ SELECT NULLIF(value, '(none)') ...
         </indexterm>
         <function>jsonb_object_agg</function> ( <parameter>key</parameter>
          <type>"any"</type>, <parameter>value</parameter>
-         <type>"any"</type> )
+         <type>"any"</type>
+         <literal>ORDER BY</literal> <literal>input_sort_columns</literal> )
         <returnvalue>jsonb</returnvalue>
        </para>
        <para>
@@ -20589,7 +22077,8 @@ SELECT NULLIF(value, '(none)') ...
        </para>
        <para role="func_signature">
         <function>string_agg</function> ( <parameter>value</parameter>
-         <type>bytea</type>, <parameter>delimiter</parameter> <type>bytea</type> )
+         <type>bytea</type>, <parameter>delimiter</parameter> <type>bytea</type>
+         <literal>ORDER BY</literal> <literal>input_sort_columns</literal> )
         <returnvalue>bytea</returnvalue>
        </para>
        <para>
@@ -20647,7 +22136,7 @@ SELECT NULLIF(value, '(none)') ...
         <indexterm>
          <primary>xmlagg</primary>
         </indexterm>
-        <function>xmlagg</function> ( <type>xml</type> )
+        <function>xmlagg</function> ( <type>xml</type> <literal>ORDER BY</literal> <literal>input_sort_columns</literal> )
         <returnvalue>xml</returnvalue>
        </para>
        <para>
@@ -21705,6 +23194,85 @@ SELECT count(*) FROM sometable;
 
  </sect1>
 
+ <sect1 id="functions-merge-support">
+  <title>Merge Support Functions</title>
+
+  <indexterm>
+   <primary>MERGE</primary>
+   <secondary>RETURNING</secondary>
+  </indexterm>
+
+  <para>
+   <productname>PostgreSQL</productname> includes one merge support function
+   that may be used in the <literal>RETURNING</literal> list of a
+   <xref linkend="sql-merge"/> command to identify the action taken for each
+   row; see <xref linkend="functions-merge-support-table"/>.
+  </para>
+
+  <table id="functions-merge-support-table">
+   <title>Merge Support Functions</title>
+
+   <tgroup cols="1">
+    <thead>
+     <row>
+      <entry role="func_table_entry"><para role="func_signature">
+       Function
+      </para>
+      <para>
+       Description
+      </para></entry>
+     </row>
+    </thead>
+
+    <tbody>
+     <row>
+      <entry id="merge-action" role="func_table_entry"><para role="func_signature">
+       <indexterm>
+        <primary>merge_action</primary>
+       </indexterm>
+       <function>merge_action</function> ( )
+       <returnvalue>text</returnvalue>
+      </para>
+      <para>
+       Returns the merge action command executed for the current row.  This
+       will be <literal>'INSERT'</literal>, <literal>'UPDATE'</literal>, or
+       <literal>'DELETE'</literal>.
+      </para></entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
+
+  <para>
+   Example:
+<screen><![CDATA[
+MERGE INTO products p
+  USING stock s ON p.product_id = s.product_id
+  WHEN MATCHED AND s.quantity > 0 THEN
+    UPDATE SET in_stock = true, quantity = s.quantity
+  WHEN MATCHED THEN
+    UPDATE SET in_stock = false, quantity = 0
+  WHEN NOT MATCHED THEN
+    INSERT (product_id, in_stock, quantity)
+      VALUES (s.product_id, true, s.quantity)
+  RETURNING merge_action(), p.*;
+
+ merge_action | product_id | in_stock | quantity
+--------------+------------+----------+----------
+ UPDATE       |       1001 | t        |       50
+ UPDATE       |       1002 | f        |        0
+ INSERT       |       1003 | t        |       10
+]]></screen>
+  </para>
+
+  <para>
+   Note that this function can only be used in the <literal>RETURNING</literal>
+   list of a <command>MERGE</command> command.  It is an error to use it in any
+   other part of a query.
+  </para>
+
+ </sect1>
+
  <sect1 id="functions-subquery">
   <title>Subquery Expressions</title>
 
@@ -22127,7 +23695,7 @@ WHERE EXISTS (SELECT 1 FROM tab2 WHERE col2 = tab1.col2);
 
   <para>
    The right-hand side is a parenthesized list
-   of scalar expressions.  The result is <quote>true</quote> if the left-hand expression's
+   of expressions.  The result is <quote>true</quote> if the left-hand expression's
    result is equal to any of the right-hand expressions.  This is a shorthand
    notation for
 
@@ -22158,7 +23726,7 @@ OR
 
   <para>
    The right-hand side is a parenthesized list
-   of scalar expressions.  The result is <quote>true</quote> if the left-hand expression's
+   of expressions.  The result is <quote>true</quote> if the left-hand expression's
    result is unequal to all of the right-hand expressions.  This is a shorthand
    notation for
 
@@ -22269,25 +23837,23 @@ AND
   <para>
    Each side is a row constructor,
    as described in <xref linkend="sql-syntax-row-constructors"/>.
-   The two row values must have the same number of fields.
-   Each side is evaluated and they are compared row-wise.  Row constructor
-   comparisons are allowed when the <replaceable>operator</replaceable> is
+   The two row constructors must have the same number of fields.
+   The given <replaceable>operator</replaceable> is applied to each pair
+   of corresponding fields.  (Since the fields could be of different
+   types, this means that a different specific operator could be selected
+   for each pair.)
+   All the selected operators must be members of some B-tree operator
+   class, or be the negator of an <literal>=</literal> member of a B-tree
+   operator class, meaning that row constructor comparison is only
+   possible when the <replaceable>operator</replaceable> is
    <literal>=</literal>,
    <literal>&lt;&gt;</literal>,
    <literal>&lt;</literal>,
    <literal>&lt;=</literal>,
-   <literal>&gt;</literal> or
-   <literal>&gt;=</literal>.
-   Every row element must be of a type which has a default B-tree operator
-   class or the attempted comparison may generate an error.
+   <literal>&gt;</literal>, or
+   <literal>&gt;=</literal>,
+   or has semantics similar to one of these.
   </para>
-
-  <note>
-   <para>
-    Errors related to the number or types of elements might not occur if
-    the comparison is resolved using earlier columns.
-   </para>
-  </note>
 
   <para>
    The <literal>=</literal> and <literal>&lt;&gt;</literal> cases work slightly differently
@@ -22308,19 +23874,6 @@ AND
    yields true, not null, because the third pair of elements are not
    considered.
   </para>
-
-  <note>
-   <para>
-    Prior to <productname>PostgreSQL</productname> 8.2, the
-    <literal>&lt;</literal>, <literal>&lt;=</literal>, <literal>&gt;</literal> and <literal>&gt;=</literal>
-    cases were not handled per SQL specification.  A comparison like
-    <literal>ROW(a,b) &lt; ROW(c,d)</literal>
-    was implemented as
-    <literal>a &lt; c AND b &lt; d</literal>
-    whereas the correct behavior is equivalent to
-    <literal>a &lt; c OR (a = c AND b &lt; d)</literal>.
-   </para>
-  </note>
 
 <synopsis>
 <replaceable>row_constructor</replaceable> IS DISTINCT FROM <replaceable>row_constructor</replaceable>
@@ -22734,7 +24287,7 @@ SELECT * FROM pg_ls_dir('.') WITH ORDINALITY AS t(ls,n);
   <para>
    In addition to the functions listed in this section, there are a number of
    functions related to the statistics system that also provide system
-   information. See <xref linkend="monitoring-stats-views"/> for more
+   information. See <xref linkend="monitoring-stats-functions"/> for more
    information.
   </para>
 
@@ -23033,6 +24586,11 @@ SELECT * FROM pg_ls_dir('.') WITH ORDINALITY AS t(ls,n);
         <xref linkend="guc-log-destination"/>.
         The result reflects the contents of
         the <filename>current_logfiles</filename> file.
+       </para>
+       <para>
+        This function is restricted to superusers and roles with privileges of
+        the <literal>pg_monitor</literal> role by default, but other users can
+        be granted EXECUTE to run the function.
        </para></entry>
       </row>
 
@@ -23211,25 +24769,6 @@ SELECT * FROM pg_ls_dir('.') WITH ORDINALITY AS t(ls,n);
        </para>
        <para>
         This is equivalent to <function>current_user</function>.
-       </para></entry>
-      </row>
-
-      <row>
-       <entry role="func_table_entry"><para role="func_signature">
-        <indexterm>
-         <primary>version</primary>
-        </indexterm>
-        <function>version</function> ()
-        <returnvalue>text</returnvalue>
-       </para>
-       <para>
-        Returns a string describing the <productname>PostgreSQL</productname>
-        server's version.  You can also get this information from
-        <xref linkend="guc-server-version"/>, or for a machine-readable
-        version use <xref linkend="guc-server-version-num"/>.  Software
-        developers should use <varname>server_version_num</varname> (available
-        since 8.2) or <xref linkend="libpq-PQserverVersion"/> instead of
-        parsing the text version.
        </para></entry>
       </row>
      </tbody>
@@ -24076,7 +25615,7 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
 
      <tbody>
       <row>
-       <entry role="func_table_entry"><para role="func_signature">
+       <entry id="format-type" xreflabel="format_type" role="func_table_entry"><para role="func_signature">
         <indexterm>
          <primary>format_type</primary>
         </indexterm>
@@ -24087,6 +25626,30 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
         Returns the SQL name for a data type that is identified by its type
         OID and possibly a type modifier.  Pass NULL for the type modifier if
         no specific modifier is known.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_basetype</primary>
+        </indexterm>
+        <function>pg_basetype</function> ( <type>regtype</type> )
+        <returnvalue>regtype</returnvalue>
+       </para>
+       <para>
+        Returns the OID of the base type of a domain identified by its
+        type OID.  If the argument is the OID of a non-domain type,
+        returns the argument as-is.  Returns NULL if the argument is
+        not a valid type OID.  If there's a chain of domain dependencies,
+        it will recurse until finding the base type.
+       </para>
+       <para>
+        Assuming <literal>CREATE DOMAIN mytext AS text</literal>:
+       </para>
+       <para>
+        <literal>pg_basetype('mytext'::regtype)</literal>
+        <returnvalue>text</returnvalue>
        </para></entry>
       </row>
 
@@ -24591,18 +26154,8 @@ SELECT currval(pg_get_serial_sequence('sometable', 'id'));
         OID for comparison purposes but displays as a type name.
        </para>
        <para>
-        For example:
-<programlisting>
-SELECT pg_typeof(33);
- pg_typeof
------------
- integer
-
-SELECT typlen FROM pg_type WHERE oid = pg_typeof(33);
- typlen
---------
-      4
-</programlisting>
+        <literal>pg_typeof(33)</literal>
+        <returnvalue>integer</returnvalue>
        </para></entry>
       </row>
 
@@ -24622,18 +26175,12 @@ SELECT typlen FROM pg_type WHERE oid = pg_typeof(33);
         collatable data type, then an error is raised.
        </para>
        <para>
-        For example:
-<programlisting>
-SELECT collation for (description) FROM pg_description LIMIT 1;
- pg_collation_for
-------------------
- "default"
-
-SELECT collation for ('foo' COLLATE "de_DE");
- pg_collation_for
-------------------
- "de_DE"
-</programlisting>
+        <literal>collation for ('foo'::text)</literal>
+        <returnvalue>"default"</returnvalue>
+       </para>
+       <para>
+        <literal>collation for ('foo' COLLATE "de_DE")</literal>
+        <returnvalue>"de_DE"</returnvalue>
        </para></entry>
       </row>
 
@@ -24774,7 +26321,7 @@ SELECT collation for ('foo' COLLATE "de_DE");
       </row>
 
       <row>
-       <entry role="func_table_entry"><para role="func_signature">
+       <entry id="to-regtype" xreflabel="to_regtype" role="func_table_entry"><para role="func_signature">
         <indexterm>
          <primary>to_regtype</primary>
         </indexterm>
@@ -24782,11 +26329,42 @@ SELECT collation for ('foo' COLLATE "de_DE");
         <returnvalue>regtype</returnvalue>
        </para>
        <para>
-        Translates a textual type name to its OID.  A similar result is
-        obtained by casting the string to type <type>regtype</type> (see
-        <xref linkend="datatype-oid"/>); however, this function will return
-        <literal>NULL</literal> rather than throwing an error if the name is
-        not found.
+        Parses a string of text, extracts a potential type name from it,
+        and translates that name into a type OID.  A syntax error in the
+        string will result in an error; but if the string is a
+        syntactically valid type name that happens not to be found in the
+        catalogs, the result is <literal>NULL</literal>.  A similar result
+        is obtained by casting the string to type <type>regtype</type>
+        (see <xref linkend="datatype-oid"/>), except that that will throw
+        error for name not found.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>to_regtypemod</primary>
+        </indexterm>
+        <function>to_regtypemod</function> ( <type>text</type> )
+        <returnvalue>integer</returnvalue>
+       </para>
+       <para>
+        Parses a string of text, extracts a potential type name from it,
+        and translates its type modifier, if any.  A syntax error in the
+        string will result in an error; but if the string is a
+        syntactically valid type name that happens not to be found in the
+        catalogs, the result is <literal>NULL</literal>.  The result is
+        <literal>-1</literal> if no type modifier is present.
+       </para>
+       <para>
+        <function>to_regtypemod</function> can be combined with
+        <xref linkend="to-regtype"/> to produce appropriate inputs for
+        <xref linkend="format-type"/>, allowing a string representing a
+        type name to be canonicalized.
+       </para>
+       <para>
+        <literal>format_type(to_regtype('varchar(32)'), to_regtypemod('varchar(32)'))</literal>
+        <returnvalue>character varying(32)</returnvalue>
        </para></entry>
       </row>
      </tbody>
@@ -25314,21 +26892,12 @@ SELECT collation for ('foo' COLLATE "de_DE");
         directly.
        </para>
        <para>
-        <literal>select * from pg_input_error_info('42000000000', 'integer')</literal>
+        <literal>SELECT * FROM pg_input_error_info('42000000000', 'integer')</literal>
         <returnvalue></returnvalue>
 <programlisting>
                        message                        | detail | hint | sql_error_code
 ------------------------------------------------------+--------+------+----------------
  value "42000000000" is out of range for type integer |        |      | 22003
-</programlisting>
-       </para>
-       <para>
-        <literal>select message, detail from pg_input_error_info('1234.567', 'numeric(7,4)')</literal>
-        <returnvalue></returnvalue>
-<programlisting>
-        message         |                                      detail
-------------------------+----------------------------------&zwsp;-------------------------------------------------
- numeric field overflow | A field with precision 7, scale 4 must round to an absolute value less than 10^3.
 </programlisting>
        </para></entry>
       </row>
@@ -25592,6 +27161,34 @@ SELECT collation for ('foo' COLLATE "de_DE");
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
+         <primary>age</primary>
+        </indexterm>
+        <function>age</function>  ( <type>xid</type> )
+        <returnvalue>integer</returnvalue>
+       </para>
+       <para>
+        Returns the number of transactions between the supplied
+        transaction id and the current transaction counter.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>mxid_age</primary>
+        </indexterm>
+        <function>mxid_age</function>  ( <type>xid</type> )
+        <returnvalue>integer</returnvalue>
+       </para>
+       <para>
+        Returns the number of multixacts IDs between the supplied
+        multixact ID and the current multixacts counter.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
          <primary>txid_current</primary>
         </indexterm>
         <function>txid_current</function> ()
@@ -25707,7 +27304,8 @@ SELECT collation for ('foo' COLLATE "de_DE");
     They only provide useful data when the
     <xref linkend="guc-track-commit-timestamp"/> configuration option is
     enabled, and only for transactions that were committed after it was
-    enabled.
+    enabled.  Commit timestamp information is routinely removed during
+    vacuum.
    </para>
 
    <table id="functions-commit-timestamp">
@@ -26118,6 +27716,188 @@ SELECT collation for ('foo' COLLATE "de_DE");
 
   </sect2>
 
+  <sect2 id="functions-info-version">
+   <title>Version Information Functions</title>
+
+   <para>
+    The functions shown in <xref linkend="functions-version"/>
+    print version information.
+   </para>
+
+   <table id="functions-version">
+    <title>Version Information Functions</title>
+    <tgroup cols="1">
+     <thead>
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        Function
+       </para>
+       <para>
+        Description
+       </para></entry>
+      </row>
+     </thead>
+
+     <tbody>
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>version</primary>
+        </indexterm>
+        <function>version</function> ()
+        <returnvalue>text</returnvalue>
+       </para>
+       <para>
+        Returns a string describing the <productname>PostgreSQL</productname>
+        server's version.  You can also get this information from
+        <xref linkend="guc-server-version"/>, or for a machine-readable
+        version use <xref linkend="guc-server-version-num"/>.  Software
+        developers should use <varname>server_version_num</varname> (available
+        since 8.2) or <xref linkend="libpq-PQserverVersion"/> instead of
+        parsing the text version.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>unicode_version</primary>
+        </indexterm>
+        <function>unicode_version</function> ()
+        <returnvalue>text</returnvalue>
+       </para>
+       <para>
+        Returns a string representing the version of Unicode used by
+        <productname>PostgreSQL</productname>.
+       </para></entry>
+      </row>
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>icu_unicode_version</primary>
+        </indexterm>
+        <function>icu_unicode_version</function> ()
+        <returnvalue>text</returnvalue>
+       </para>
+       <para>
+        Returns a string representing the version of Unicode used by ICU, if
+        the server was built with ICU support; otherwise returns
+        <literal>NULL</literal> </para></entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+  </sect2>
+
+  <sect2 id="functions-info-wal-summary">
+   <title>WAL Summarization Information Functions</title>
+
+   <para>
+    The functions shown in <xref linkend="functions-wal-summary"/>
+    print information about the status of WAL summarization.
+    See <xref linkend="guc-summarize-wal" />.
+   </para>
+
+   <table id="functions-wal-summary">
+    <title>WAL Summarization Information Functions</title>
+    <tgroup cols="1">
+     <thead>
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        Function
+       </para>
+       <para>
+        Description
+       </para></entry>
+      </row>
+     </thead>
+
+     <tbody>
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_available_wal_summaries</primary>
+        </indexterm>
+        <function>pg_available_wal_summaries</function> ()
+        <returnvalue>setof record</returnvalue>
+        ( <parameter>tli</parameter> <type>bigint</type>,
+        <parameter>start_lsn</parameter> <type>pg_lsn</type>,
+        <parameter>end_lsn</parameter> <type>pg_lsn</type> )
+       </para>
+       <para>
+        Returns information about the WAL summary files present in the
+        data directory, under <literal>pg_wal/summaries</literal>.
+        One row will be returned per WAL summary file. Each file summarizes
+        WAL on the indicated TLI within the indicated LSN range. This function
+        might be useful to determine whether enough WAL summaries are present
+        on the server to take an incremental backup based on some prior
+        backup whose start LSN is known.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_wal_summary_contents</primary>
+        </indexterm>
+        <function>pg_wal_summary_contents</function> ( <parameter>tli</parameter> <type>bigint</type>, <parameter>start_lsn</parameter> <type>pg_lsn</type>, <parameter>end_lsn</parameter> <type>pg_lsn</type> )
+        <returnvalue>setof record</returnvalue>
+        ( <parameter>relfilenode</parameter> <type>oid</type>,
+        <parameter>reltablespace</parameter> <type>oid</type>,
+        <parameter>reldatabase</parameter> <type>oid</type>,
+        <parameter>relforknumber</parameter> <type>smallint</type>,
+        <parameter>relblocknumber</parameter> <type>bigint</type>,
+        <parameter>is_limit_block</parameter> <type>boolean</type> )
+       </para>
+       <para>
+        Returns one information about the contents of a single WAL summary file
+        identified by TLI and starting and ending LSNs. Each row with
+        <literal>is_limit_block</literal> false indicates that the block
+        identified by the remaining output columns was modified by at least
+        one WAL record within the range of records summarized by this file.
+        Each row with <literal>is_limit_block</literal> true indicates either
+        that (a) the relation fork was truncated to the length given by
+        <literal>relblocknumber</literal> within the relevant range of WAL
+        records or (b) that the relation fork was created or dropped within
+        the relevant range of WAL records; in such cases,
+        <literal>relblocknumber</literal> will be zero.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_get_wal_summarizer_state</primary>
+        </indexterm>
+        <function>pg_get_wal_summarizer_state</function> ()
+        <returnvalue>record</returnvalue>
+        ( <parameter>summarized_tli</parameter> <type>bigint</type>,
+        <parameter>summarized_lsn</parameter> <type>pg_lsn</type>,
+        <parameter>pending_lsn</parameter> <type>pg_lsn</type>,
+        <parameter>summarizer_pid</parameter> <type>int</type> )
+       </para>
+       <para>
+        Returns information about the progress of the WAL summarizer. If the
+        WAL summarizer has never run since the instance was started, then
+        <literal>summarized_tli</literal> and <literal>summarized_lsn</literal>
+        will be <literal>0</literal> and <literal>0/0</literal> respectively;
+        otherwise, they will be the TLI and ending LSN of the last WAL summary
+        file written to disk. If the WAL summarizer is currently running,
+        <literal>pending_lsn</literal> will be the ending LSN of the last
+        record that it has consumed, which must always be greater than or
+        equal to <literal>summarized_lsn</literal>; if the WAL summarizer is
+        not running, it will be equal to <literal>summarized_lsn</literal>.
+        <literal>summarizer_pid</literal> is the PID of the WAL summarizer
+        process, if it is running, and otherwise NULL.
+       </para></entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+  </sect2>
+
   </sect1>
 
   <sect1 id="functions-admin">
@@ -26313,7 +28093,7 @@ SELECT collation for ('foo' COLLATE "de_DE");
         of its children.) You can use the
         <link linkend="view-pg-file-settings"><structname>pg_file_settings</structname></link>,
         <link linkend="view-pg-hba-file-rules"><structname>pg_hba_file_rules</structname></link> and
-        <link linkend="view-pg-hba-file-rules"><structname>pg_ident_file_mappings</structname></link> views
+        <link linkend="view-pg-ident-file-mappings"><structname>pg_ident_file_mappings</structname></link> views
         to check the configuration files for possible errors, before reloading.
        </para></entry>
       </row>
@@ -26719,11 +28499,6 @@ postgres=# SELECT * FROM pg_walfile_name_offset((pg_backup_stop()).lsn);
 (1 row)
 </programlisting>
     Similarly, <function>pg_walfile_name</function> extracts just the write-ahead log file name.
-    When the given write-ahead log location is exactly at a write-ahead log file boundary, both
-    these functions return the name of the preceding write-ahead log file.
-    This is usually the desired behavior for managing write-ahead log archiving
-    behavior, since the preceding file is the last one that currently
-    needs to be archived.
    </para>
 
    <para>
@@ -27186,11 +28961,11 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
       </row>
 
       <row>
-       <entry role="func_table_entry"><para role="func_signature">
+       <entry id="pg-create-logical-replication-slot" role="func_table_entry"><para role="func_signature">
         <indexterm>
          <primary>pg_create_logical_replication_slot</primary>
         </indexterm>
-        <function>pg_create_logical_replication_slot</function> ( <parameter>slot_name</parameter> <type>name</type>, <parameter>plugin</parameter> <type>name</type> <optional>, <parameter>temporary</parameter> <type>boolean</type>, <parameter>twophase</parameter> <type>boolean</type> </optional> )
+        <function>pg_create_logical_replication_slot</function> ( <parameter>slot_name</parameter> <type>name</type>, <parameter>plugin</parameter> <type>name</type> <optional>, <parameter>temporary</parameter> <type>boolean</type>, <parameter>twophase</parameter> <type>boolean</type>, <parameter>failover</parameter> <type>boolean</type> </optional> )
         <returnvalue>record</returnvalue>
         ( <parameter>slot_name</parameter> <type>name</type>,
         <parameter>lsn</parameter> <type>pg_lsn</type> )
@@ -27205,8 +28980,13 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
         released upon any error. The optional fourth parameter,
         <parameter>twophase</parameter>, when set to true, specifies
         that the decoding of prepared transactions is enabled for this
-        slot. A call to this function has the same effect as the replication
-        protocol command <literal>CREATE_REPLICATION_SLOT ... LOGICAL</literal>.
+        slot. The optional fifth parameter,
+        <parameter>failover</parameter>, when set to true,
+        specifies that this slot is enabled to be synced to the
+        standbys so that logical replication can be resumed after
+        failover. A call to this function has the same effect as
+        the replication protocol command
+        <literal>CREATE_REPLICATION_SLOT ... LOGICAL</literal>.
        </para></entry>
       </row>
 
@@ -27252,7 +29032,7 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
       </row>
 
       <row>
-       <entry role="func_table_entry"><para role="func_signature">
+       <entry id="pg-logical-slot-get-changes" role="func_table_entry"><para role="func_signature">
         <indexterm>
          <primary>pg_logical_slot_get_changes</primary>
         </indexterm>
@@ -27275,11 +29055,15 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
         the specified value.  Note, however, that the actual number of
         rows returned may be larger, since this limit is only checked after
         adding the rows produced when decoding each new transaction commit.
+        If the specified slot is a logical failover slot then the function will
+        not return until all physical slots specified in
+        <link linkend="guc-standby-slot-names"><varname>standby_slot_names</varname></link>
+        have confirmed WAL receipt.
        </para></entry>
       </row>
 
       <row>
-       <entry role="func_table_entry"><para role="func_signature">
+       <entry id="pg-logical-slot-peek-changes" role="func_table_entry"><para role="func_signature">
         <indexterm>
          <primary>pg_logical_slot_peek_changes</primary>
         </indexterm>
@@ -27334,7 +29118,7 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
       </row>
 
       <row>
-       <entry role="func_table_entry"><para role="func_signature">
+       <entry id="pg-replication-slot-advance" role="func_table_entry"><para role="func_signature">
         <indexterm>
          <primary>pg_replication_slot_advance</primary>
         </indexterm>
@@ -27350,7 +29134,11 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
         the name of the slot and the actual position that it was advanced to.
         The updated slot position information is written out at the next
         checkpoint if any advancing is done. So in the event of a crash, the
-        slot may return to an earlier position.
+        slot may return to an earlier position. If the specified slot is a
+        logical failover slot then the function will not return until all
+        physical slots specified in
+        <link linkend="guc-standby-slot-names"><varname>standby_slot_names</varname></link>
+        have confirmed WAL receipt.
        </para></entry>
       </row>
 
@@ -27525,11 +29313,11 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
         <indexterm>
          <primary>pg_logical_emit_message</primary>
         </indexterm>
-        <function>pg_logical_emit_message</function> ( <parameter>transactional</parameter> <type>boolean</type>, <parameter>prefix</parameter> <type>text</type>, <parameter>content</parameter> <type>text</type> )
+        <function>pg_logical_emit_message</function> ( <parameter>transactional</parameter> <type>boolean</type>, <parameter>prefix</parameter> <type>text</type>, <parameter>content</parameter> <type>text</type> [, <parameter>flush</parameter> <type>boolean</type> <literal>DEFAULT</literal> <literal>false</literal>] )
         <returnvalue>pg_lsn</returnvalue>
        </para>
        <para role="func_signature">
-        <function>pg_logical_emit_message</function> ( <parameter>transactional</parameter> <type>boolean</type>, <parameter>prefix</parameter> <type>text</type>, <parameter>content</parameter> <type>bytea</type> )
+        <function>pg_logical_emit_message</function> ( <parameter>transactional</parameter> <type>boolean</type>, <parameter>prefix</parameter> <type>text</type>, <parameter>content</parameter> <type>bytea</type> [, <parameter>flush</parameter> <type>boolean</type> <literal>DEFAULT</literal> <literal>false</literal>] )
         <returnvalue>pg_lsn</returnvalue>
        </para>
        <para>
@@ -27543,8 +29331,50 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
         recognize messages that are interesting for them.
         The <parameter>content</parameter> parameter is the content of the
         message, given either in text or binary form.
+        The <parameter>flush</parameter> parameter (default set to
+        <literal>false</literal>) controls if the message is immediately
+        flushed to WAL or not. <parameter>flush</parameter> has no effect
+        with <parameter>transactional</parameter>, as the message's WAL
+        record is flushed along with its transaction.
        </para></entry>
       </row>
+
+      <row>
+       <entry id="pg-sync-replication-slots" role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_sync_replication_slots</primary>
+        </indexterm>
+        <function>pg_sync_replication_slots</function> ()
+        <returnvalue>void</returnvalue>
+       </para>
+       <para>
+        Synchronize the logical failover replication slots from the primary
+        server to the standby server. This function can only be executed on the
+        standby server. Temporary synced slots, if any, cannot be used for
+        logical decoding and must be dropped after promotion. See
+        <xref linkend="logicaldecoding-replication-slots-synchronization"/> for details.
+        Note that this function cannot be executed if
+        <link linkend="guc-sync-replication-slots"><varname>
+        sync_replication_slots</varname></link> is enabled and the slotsync
+        worker is already running to perform the synchronization of slots.
+       </para>
+
+       <caution>
+        <para>
+          If, after executing the function,
+          <link linkend="guc-hot-standby-feedback">
+          <varname>hot_standby_feedback</varname></link> is disabled on
+          the standby or the physical slot configured in
+          <link linkend="guc-primary-slot-name">
+          <varname>primary_slot_name</varname></link> is
+          removed, then it is possible that the necessary rows of the
+          synchronized slot will be removed by the VACUUM process on the primary
+          server, resulting in the synchronized slot becoming invalidated.
+        </para>
+       </caution>
+      </entry>
+      </row>
+
      </tbody>
     </tgroup>
    </table>
@@ -27605,6 +29435,23 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
         Shows the compression algorithm that was used to compress
         an individual variable-length value. Returns <literal>NULL</literal>
         if the value is not compressed.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_column_toast_chunk_id</primary>
+        </indexterm>
+        <function>pg_column_toast_chunk_id</function> ( <type>"any"</type> )
+        <returnvalue>oid</returnvalue>
+       </para>
+       <para>
+        Shows the <structfield>chunk_id</structfield> of an on-disk
+        <acronym>TOAST</acronym>ed value.  Returns <literal>NULL</literal>
+        if the value is un-<acronym>TOAST</acronym>ed or not on-disk.  See
+        <xref linkend="storage-toast"/> for more information about
+        <acronym>TOAST</acronym>.
        </para></entry>
       </row>
 

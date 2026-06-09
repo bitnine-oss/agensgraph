@@ -4,7 +4,7 @@
  *	  WAL replay logic for SP-GiST
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -17,8 +17,6 @@
 #include "access/bufmask.h"
 #include "access/spgist_private.h"
 #include "access/spgxlog.h"
-#include "access/transam.h"
-#include "access/xlog.h"
 #include "access/xlogutils.h"
 #include "storage/standby.h"
 #include "utils/memutils.h"
@@ -38,7 +36,7 @@ fillFakeState(SpGistState *state, spgxlogState stateSrc)
 {
 	memset(state, 0, sizeof(*state));
 
-	state->myXid = stateSrc.myXid;
+	state->redirectXid = stateSrc.redirectXid;
 	state->isBuild = stateSrc.isBuild;
 	state->deadTupleStorage = palloc0(SGDTSIZE);
 }

@@ -2,7 +2,7 @@
  * bgworker.c
  *		POSTGRES pluggable background workers implementation
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/postmaster/bgworker.c
@@ -18,21 +18,19 @@
 #include "pgstat.h"
 #include "port/atomics.h"
 #include "postmaster/bgworker_internals.h"
-#include "postmaster/interrupt.h"
 #include "postmaster/postmaster.h"
 #include "replication/logicallauncher.h"
 #include "replication/logicalworker.h"
-#include "storage/dsm.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
 #include "storage/lwlock.h"
-#include "storage/pg_shmem.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/procsignal.h"
 #include "storage/shmem.h"
 #include "tcop/tcopprot.h"
 #include "utils/ascii.h"
+#include "utils/memutils.h"
 #include "utils/ps_status.h"
 #include "utils/timeout.h"
 
@@ -131,6 +129,9 @@ static const struct
 	},
 	{
 		"ParallelApplyWorkerMain", ParallelApplyWorkerMain
+	},
+	{
+		"TablesyncWorkerMain", TablesyncWorkerMain
 	}
 };
 
@@ -344,7 +345,9 @@ BackgroundWorkerStateChange(bool allow_new_workers)
 		/*
 		 * Copy the registration data into the registered workers list.
 		 */
-		rw = malloc(sizeof(RegisteredBgWorker));
+		rw = MemoryContextAllocExtended(PostmasterContext,
+										sizeof(RegisteredBgWorker),
+										MCXT_ALLOC_NO_OOM | MCXT_ALLOC_ZERO);
 		if (rw == NULL)
 		{
 			ereport(LOG,
@@ -362,7 +365,7 @@ BackgroundWorkerStateChange(bool allow_new_workers)
 		ascii_safe_strlcpy(rw->rw_worker.bgw_type,
 						   slot->worker.bgw_type, BGW_MAXLEN);
 		ascii_safe_strlcpy(rw->rw_worker.bgw_library_name,
-						   slot->worker.bgw_library_name, BGW_MAXLEN);
+						   slot->worker.bgw_library_name, MAXPGPATH);
 		ascii_safe_strlcpy(rw->rw_worker.bgw_function_name,
 						   slot->worker.bgw_function_name, BGW_MAXLEN);
 
@@ -452,7 +455,7 @@ ForgetBackgroundWorker(slist_mutable_iter *cur)
 							 rw->rw_worker.bgw_name)));
 
 	slist_delete_current(cur);
-	free(rw);
+	pfree(rw);
 }
 
 /*
@@ -625,27 +628,6 @@ ResetBackgroundWorkerCrashTimes(void)
 	}
 }
 
-#ifdef EXEC_BACKEND
-/*
- * In EXEC_BACKEND mode, workers use this to retrieve their details from
- * shared memory.
- */
-BackgroundWorker *
-BackgroundWorkerEntry(int slotno)
-{
-	static BackgroundWorker myEntry;
-	BackgroundWorkerSlot *slot;
-
-	Assert(slotno < BackgroundWorkerData->total_slots);
-	slot = &BackgroundWorkerData->slot[slotno];
-	Assert(slot->in_use);
-
-	/* must copy this in case we don't intend to retain shmem access */
-	memcpy(&myEntry, &slot->worker, sizeof myEntry);
-	return &myEntry;
-}
-#endif
-
 /*
  * Complain about the BackgroundWorker definition using error level elevel.
  * Return true if it looks ok, false if not (unless elevel >= ERROR, in
@@ -735,23 +717,32 @@ bgworker_die(SIGNAL_ARGS)
 }
 
 /*
- * Start a new background worker
- *
- * This is the main entry point for background worker, to be called from
- * postmaster.
+ * Main entry point for background worker processes.
  */
 void
-StartBackgroundWorker(void)
+BackgroundWorkerMain(char *startup_data, size_t startup_data_len)
 {
 	sigjmp_buf	local_sigjmp_buf;
-	BackgroundWorker *worker = MyBgworkerEntry;
+	BackgroundWorker *worker;
 	bgworker_main_type entrypt;
 
-	if (worker == NULL)
+	if (startup_data == NULL)
 		elog(FATAL, "unable to find bgworker entry");
+	Assert(startup_data_len == sizeof(BackgroundWorker));
+	worker = MemoryContextAlloc(TopMemoryContext, sizeof(BackgroundWorker));
+	memcpy(worker, startup_data, sizeof(BackgroundWorker));
 
-	IsBackgroundWorker = true;
+	/*
+	 * Now that we're done reading the startup data, release postmaster's
+	 * working memory context.
+	 */
+	if (PostmasterContext)
+	{
+		MemoryContextDelete(PostmasterContext);
+		PostmasterContext = NULL;
+	}
 
+	MyBgworkerEntry = worker;
 	MyBackendType = B_BG_WORKER;
 	init_ps_display(worker->bgw_name);
 
@@ -828,14 +819,10 @@ StartBackgroundWorker(void)
 	PG_exception_stack = &local_sigjmp_buf;
 
 	/*
-	 * Create a per-backend PGPROC struct in shared memory, except in the
-	 * EXEC_BACKEND case where this was done in SubPostmasterMain. We must do
-	 * this before we can use LWLocks (and in the EXEC_BACKEND case we already
-	 * had to do some stuff with LWLocks).
+	 * Create a per-backend PGPROC struct in shared memory.  We must do this
+	 * before we can use LWLocks or access any shared memory.
 	 */
-#ifndef EXEC_BACKEND
 	InitProcess();
-#endif
 
 	/*
 	 * Early initialization.
@@ -877,20 +864,42 @@ RegisterBackgroundWorker(BackgroundWorker *worker)
 	RegisteredBgWorker *rw;
 	static int	numworkers = 0;
 
-	if (!IsUnderPostmaster)
-		ereport(DEBUG1,
-				(errmsg_internal("registering background worker \"%s\"", worker->bgw_name)));
-
-	if (!process_shared_preload_libraries_in_progress &&
-		strcmp(worker->bgw_library_name, "postgres") != 0)
+	/*
+	 * Static background workers can only be registered in the postmaster
+	 * process.
+	 */
+	if (IsUnderPostmaster || !IsPostmasterEnvironment)
 	{
-		if (!IsUnderPostmaster)
-			ereport(LOG,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("background worker \"%s\": must be registered in shared_preload_libraries",
-							worker->bgw_name)));
+		/*
+		 * In EXEC_BACKEND or single-user mode, we process
+		 * shared_preload_libraries in backend processes too.  We cannot
+		 * register static background workers at that stage, but many
+		 * libraries' _PG_init() functions don't distinguish whether they're
+		 * being loaded in the postmaster or in a backend, they just check
+		 * process_shared_preload_libraries_in_progress.  It's a bit sloppy,
+		 * but for historical reasons we tolerate it.  In EXEC_BACKEND mode,
+		 * the background workers should already have been registered when the
+		 * library was loaded in postmaster.
+		 */
+		if (process_shared_preload_libraries_in_progress)
+			return;
+		ereport(LOG,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("background worker \"%s\": must be registered in \"shared_preload_libraries\"",
+						worker->bgw_name)));
 		return;
 	}
+
+	/*
+	 * Cannot register static background workers after calling
+	 * BackgroundWorkerShmemInit().
+	 */
+	if (BackgroundWorkerData != NULL)
+		elog(ERROR, "cannot register background worker \"%s\" after shmem init",
+			 worker->bgw_name);
+
+	ereport(DEBUG1,
+			(errmsg_internal("registering background worker \"%s\"", worker->bgw_name)));
 
 	if (!SanityCheckBackgroundWorker(worker, LOG))
 		return;
@@ -919,14 +928,16 @@ RegisterBackgroundWorker(BackgroundWorker *worker)
 								  "Up to %d background workers can be registered with the current settings.",
 								  max_worker_processes,
 								  max_worker_processes),
-				 errhint("Consider increasing the configuration parameter \"max_worker_processes\".")));
+				 errhint("Consider increasing the configuration parameter \"%s\".", "max_worker_processes")));
 		return;
 	}
 
 	/*
 	 * Copy the registration data into the registered workers list.
 	 */
-	rw = malloc(sizeof(RegisteredBgWorker));
+	rw = MemoryContextAllocExtended(PostmasterContext,
+									sizeof(RegisteredBgWorker),
+									MCXT_ALLOC_NO_OOM);
 	if (rw == NULL)
 	{
 		ereport(LOG,

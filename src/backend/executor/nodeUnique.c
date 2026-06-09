@@ -11,7 +11,7 @@
  * (It's debatable whether the savings justifies carrying two plan node
  * types, though.)
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -36,7 +36,6 @@
 #include "executor/executor.h"
 #include "executor/nodeUnique.h"
 #include "miscadmin.h"
-#include "utils/memutils.h"
 
 
 /* ----------------------------------------------------------------
@@ -168,11 +167,6 @@ ExecInitUnique(Unique *node, EState *estate, int eflags)
 void
 ExecEndUnique(UniqueState *node)
 {
-	/* clean up tuple table */
-	ExecClearTuple(node->ps.ps_ResultTupleSlot);
-
-	ExecFreeExprContext(&node->ps);
-
 	ExecEndNode(outerPlanState(node));
 }
 

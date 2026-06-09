@@ -94,9 +94,11 @@ ALTER SUBSCRIPTION regress_testsub SET PUBLICATION testpub2, testpub3 WITH (refr
 ALTER SUBSCRIPTION regress_testsub CONNECTION 'dbname=regress_doesnotexist2';
 ALTER SUBSCRIPTION regress_testsub SET (slot_name = 'newname');
 ALTER SUBSCRIPTION regress_testsub SET (password_required = false);
+ALTER SUBSCRIPTION regress_testsub SET (run_as_owner = true);
 \dRs+
 
 ALTER SUBSCRIPTION regress_testsub SET (password_required = true);
+ALTER SUBSCRIPTION regress_testsub SET (run_as_owner = false);
 
 -- fail
 ALTER SUBSCRIPTION regress_testsub SET (slot_name = '');
@@ -329,6 +331,11 @@ RESET SESSION AUTHORIZATION;
 REVOKE CREATE ON DATABASE REGRESSION FROM regress_subscription_user3;
 SET SESSION AUTHORIZATION regress_subscription_user3;
 ALTER SUBSCRIPTION regress_testsub RENAME TO regress_testsub2;
+
+-- fail - cannot do ALTER SUBSCRIPTION SET (failover) inside transaction block
+BEGIN;
+ALTER SUBSCRIPTION regress_testsub SET (failover);
+COMMIT;
 
 -- ok, owning it is enough for this stuff
 ALTER SUBSCRIPTION regress_testsub SET (slot_name = NONE);

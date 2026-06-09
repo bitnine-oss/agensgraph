@@ -3,7 +3,7 @@
  * wparser_def.c
  *		Default text search parser
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -15,15 +15,16 @@
 #include "postgres.h"
 
 #include <limits.h>
+#include <wctype.h>
 
-#include "catalog/pg_collation.h"
 #include "commands/defrem.h"
+#include "mb/pg_wchar.h"
 #include "miscadmin.h"
-#include "tsearch/ts_locale.h"
 #include "tsearch/ts_public.h"
 #include "tsearch/ts_type.h"
 #include "tsearch/ts_utils.h"
 #include "utils/builtins.h"
+#include "utils/pg_locale.h"
 
 
 /* Define me to enable tracing of parser behavior */

@@ -3,7 +3,7 @@
  * win32pread.c
  *	  Implementation of pread(2) for Windows.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/port/win32pread.c
@@ -29,6 +29,9 @@ pg_pread(int fd, void *buf, size_t size, off_t offset)
 		errno = EBADF;
 		return -1;
 	}
+
+	/* Avoid overflowing DWORD. */
+	size = Min(size, 1024 * 1024 * 1024);
 
 	/* Note that this changes the file position, despite not using it. */
 	overlapped.Offset = offset;

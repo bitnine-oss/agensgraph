@@ -4,7 +4,7 @@
  *
  * src/include/utils/pg_locale.h
  *
- * Copyright (c) 2002-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2024, PostgreSQL Global Development Group
  *
  *-----------------------------------------------------------------------
  */
@@ -67,9 +67,7 @@ extern void cache_locale_time(void);
 
 
 /*
- * We define our own wrapper around locale_t so we can keep the same
- * function signatures for all builds, while not having to create a
- * fake version of the standard type locale_t in the global namespace.
+ * We use a discriminated union to hold either a locale_t or an ICU collator.
  * pg_locale_t is occasionally checked for truth, so make it a pointer.
  */
 struct pg_locale_struct
@@ -78,9 +76,11 @@ struct pg_locale_struct
 	bool		deterministic;
 	union
 	{
-#ifdef HAVE_LOCALE_T
+		struct
+		{
+			const char *locale;
+		}			builtin;
 		locale_t	lt;
-#endif
 #ifdef USE_ICU
 		struct
 		{
@@ -88,7 +88,6 @@ struct pg_locale_struct
 			UCollator  *ucol;
 		}			icu;
 #endif
-		int			dummy;		/* in case we have neither LOCALE_T nor ICU */
 	}			info;
 };
 
@@ -118,6 +117,8 @@ extern size_t pg_strxfrm_prefix(char *dest, const char *src, size_t destsize,
 extern size_t pg_strnxfrm_prefix(char *dest, size_t destsize, const char *src,
 								 size_t srclen, pg_locale_t locale);
 
+extern int	builtin_locale_encoding(const char *locale);
+extern const char *builtin_validate_locale(int encoding, const char *locale);
 extern void icu_validate_locale(const char *loc_str);
 extern char *icu_language_tag(const char *loc_str, int elevel);
 

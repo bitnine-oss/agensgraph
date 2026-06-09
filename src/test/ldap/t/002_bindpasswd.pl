@@ -1,8 +1,8 @@
 
-# Copyright (c) 2023, PostgreSQL Global Development Group
+# Copyright (c) 2023-2024, PostgreSQL Global Development Group
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use FindBin;
 use lib "$FindBin::RealBin/..";
@@ -18,15 +18,14 @@ if ($ENV{with_ldap} ne 'yes')
 {
 	plan skip_all => 'LDAP not supported by this build';
 }
-elsif ($ENV{PG_TEST_EXTRA} !~ /\bldap\b/)
+elsif (!$ENV{PG_TEST_EXTRA} || $ENV{PG_TEST_EXTRA} !~ /\bldap\b/)
 {
 	plan skip_all =>
 	  'Potentially unsafe test LDAP not enabled in PG_TEST_EXTRA';
 }
 elsif (!$LdapServer::setup)
 {
-	plan skip_all =>
-	  "ldap tests not supported on $^O or dependencies not installed";
+	plan skip_all => $LdapServer::setup_error;
 }
 
 note "setting up LDAP server";

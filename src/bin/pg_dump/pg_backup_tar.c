@@ -94,7 +94,7 @@ typedef struct
 	char	   *filename;
 } lclTocEntry;
 
-static void _LoadLOs(ArchiveHandle *AH);
+static void _LoadLOs(ArchiveHandle *AH, TocEntry *te);
 
 static TAR_MEMBER *tarOpen(ArchiveHandle *AH, const char *filename, char mode);
 static void tarClose(ArchiveHandle *AH, TAR_MEMBER *th);
@@ -155,10 +155,6 @@ InitArchiveFmt_Tar(ArchiveHandle *AH)
 	AH->formatData = (void *) ctx;
 	ctx->filePos = 0;
 	ctx->isSpecialScript = 0;
-
-	/* Initialize LO buffering */
-	AH->lo_buf_size = LOBBUFSIZE;
-	AH->lo_buf = (void *) pg_malloc(LOBBUFSIZE);
 
 	/*
 	 * Now open the tar file, and load the TOC if we're in read mode.
@@ -638,13 +634,13 @@ _PrintTocData(ArchiveHandle *AH, TocEntry *te)
 	}
 
 	if (strcmp(te->desc, "BLOBS") == 0)
-		_LoadLOs(AH);
+		_LoadLOs(AH, te);
 	else
 		_PrintFileData(AH, tctx->filename);
 }
 
 static void
-_LoadLOs(ArchiveHandle *AH)
+_LoadLOs(ArchiveHandle *AH, TocEntry *te)
 {
 	Oid			oid;
 	lclContext *ctx = (lclContext *) AH->formatData;
@@ -655,7 +651,26 @@ _LoadLOs(ArchiveHandle *AH)
 
 	StartRestoreLOs(AH);
 
-	th = tarOpen(AH, NULL, 'r');	/* Open next file */
+	/*
+	 * The blobs_NNN.toc or blobs.toc file is fairly useless to us because it
+	 * will appear only after the associated blob_NNN.dat files.  For archive
+	 * versions >= 16 we can look at the BLOBS entry's te->tag to discover the
+	 * OID of the first blob we want to restore, and then search forward to
+	 * find the appropriate blob_<oid>.dat file.  For older versions we rely
+	 * on the knowledge that there was only one BLOBS entry and just search
+	 * for the first blob_<oid>.dat file.  Once we find the first blob file to
+	 * restore, restore all blobs until we reach the blobs[_NNN].toc file.
+	 */
+	if (AH->version >= K_VERS_1_16)
+	{
+		/* We rely on atooid to not complain about nnnn..nnnn tags */
+		oid = atooid(te->tag);
+		snprintf(buf, sizeof(buf), "blob_%u.dat", oid);
+		th = tarOpen(AH, buf, 'r'); /* Advance to first desired file */
+	}
+	else
+		th = tarOpen(AH, NULL, 'r');	/* Open next file */
+
 	while (th != NULL)
 	{
 		ctx->FH = th;
@@ -685,9 +700,9 @@ _LoadLOs(ArchiveHandle *AH)
 
 			/*
 			 * Once we have found the first LO, stop at the first non-LO entry
-			 * (which will be 'blobs.toc').  This coding would eat all the
-			 * rest of the archive if there are no LOs ... but this function
-			 * shouldn't be called at all in that case.
+			 * (which will be 'blobs[_NNN].toc').  This coding would eat all
+			 * the rest of the archive if there are no LOs ... but this
+			 * function shouldn't be called at all in that case.
 			 */
 			if (foundLO)
 				break;
@@ -851,7 +866,7 @@ _scriptOut(ArchiveHandle *AH, const void *buf, size_t len)
  */
 
 /*
- * Called by the archiver when starting to save all BLOB DATA (not schema).
+ * Called by the archiver when starting to save BLOB DATA (not schema).
  * This routine should save whatever format-specific information is needed
  * to read the LOs back into memory.
  *
@@ -866,7 +881,7 @@ _StartLOs(ArchiveHandle *AH, TocEntry *te)
 	lclContext *ctx = (lclContext *) AH->formatData;
 	char		fname[K_STD_BUF_SIZE];
 
-	sprintf(fname, "blobs.toc");
+	sprintf(fname, "blobs_%d.toc", te->dumpId);
 	ctx->loToc = tarOpen(AH, fname, 'w');
 }
 
@@ -912,7 +927,7 @@ _EndLO(ArchiveHandle *AH, TocEntry *te, Oid oid)
 }
 
 /*
- * Called by the archiver when finishing saving all BLOB DATA.
+ * Called by the archiver when finishing saving BLOB DATA.
  *
  * Optional.
  *
@@ -975,20 +990,20 @@ isValidTarHeader(char *header)
 	int			sum;
 	int			chk = tarChecksum(header);
 
-	sum = read_tar_number(&header[148], 8);
+	sum = read_tar_number(&header[TAR_OFFSET_CHECKSUM], 8);
 
 	if (sum != chk)
 		return false;
 
 	/* POSIX tar format */
-	if (memcmp(&header[257], "ustar\0", 6) == 0 &&
-		memcmp(&header[263], "00", 2) == 0)
+	if (memcmp(&header[TAR_OFFSET_MAGIC], "ustar\0", 6) == 0 &&
+		memcmp(&header[TAR_OFFSET_VERSION], "00", 2) == 0)
 		return true;
 	/* GNU tar format */
-	if (memcmp(&header[257], "ustar  \0", 8) == 0)
+	if (memcmp(&header[TAR_OFFSET_MAGIC], "ustar  \0", 8) == 0)
 		return true;
 	/* not-quite-POSIX format written by pre-9.3 pg_dump */
-	if (memcmp(&header[257], "ustar00\0", 8) == 0)
+	if (memcmp(&header[TAR_OFFSET_MAGIC], "ustar00\0", 8) == 0)
 		return true;
 
 	return false;
@@ -1151,7 +1166,7 @@ _tarGetHeader(ArchiveHandle *AH, TAR_MEMBER *th)
 
 		/* Calc checksum */
 		chk = tarChecksum(h);
-		sum = read_tar_number(&h[148], 8);
+		sum = read_tar_number(&h[TAR_OFFSET_CHECKSUM], 8);
 
 		/*
 		 * If the checksum failed, see if it is a null block. If so, silently
@@ -1175,9 +1190,9 @@ _tarGetHeader(ArchiveHandle *AH, TAR_MEMBER *th)
 	}
 
 	/* Name field is 100 bytes, might not be null-terminated */
-	strlcpy(tag, &h[0], 100 + 1);
+	strlcpy(tag, &h[TAR_OFFSET_NAME], 100 + 1);
 
-	len = read_tar_number(&h[124], 12);
+	len = read_tar_number(&h[TAR_OFFSET_SIZE], 12);
 
 	pg_log_debug("TOC Entry %s at %llu (length %llu, checksum %d)",
 				 tag, (unsigned long long) hPos, (unsigned long long) len, sum);
