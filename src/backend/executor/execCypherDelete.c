@@ -239,6 +239,7 @@ ExecDeleteGraphElement(ModifyGraphState *mgstate, Datum elem, Oid type)
 											  GraphidGetLabid(vertex_id));
 		ResultRelInfo *resultRelInfo = getResultRelInfo(mgstate, rel_oid);
 		ItemPointer vertex_tid = (ItemPointer) DatumGetPointer(getVertexTidDatum(elem));
+
 		ExecDeleteEdgeOrVertex(mgstate, resultRelInfo, vertex_id, vertex_tid,
 							   VERTEXOID, true);
 	}
@@ -246,7 +247,7 @@ ExecDeleteGraphElement(ModifyGraphState *mgstate, Datum elem, Oid type)
 	{
 		bool		deleted;
 		Graphid		eid = getEdgeIdDatum(elem);
-		Labid 		edge_labid = GraphidGetLabid(eid);
+		Labid		edge_labid = GraphidGetLabid(eid);
 		Labid		start_labid = GraphidGetLabid(getEdgeStartDatum(elem));
 		Labid		end_labid = GraphidGetLabid(getEdgeEndDatum(elem));
 		ItemPointer tid = (ItemPointer) DatumGetPointer(getEdgeTidDatum(elem));
@@ -254,7 +255,7 @@ ExecDeleteGraphElement(ModifyGraphState *mgstate, Datum elem, Oid type)
 		ResultRelInfo *resultRelInfo = getResultRelInfo(mgstate, rel_oid);
 
 		deleted = ExecDeleteEdgeOrVertex(mgstate, resultRelInfo, eid, tid,
-							   			 EDGEOID, true);
+										 EDGEOID, true);
 		if (deleted && auto_gather_graphmeta)
 			agstat_count_edge_delete(edge_labid, start_labid, end_labid);
 	}
@@ -319,4 +320,3 @@ ExecDeleteGraphElement(ModifyGraphState *mgstate, Datum elem, Oid type)
 		elog(ERROR, "unexpected graph type %d", type);
 	}
 }
-

@@ -1297,8 +1297,7 @@ typedef struct RangeTblEntry
 	List	   *securityQuals pg_node_attr(query_jumble_ignore);
 
 	/*
-	 * Used in agensgraph DELETE operation, only if
-	 * inh is true for the RTE.
+	 * Used in agensgraph DELETE operation, only if inh is true for the RTE.
 	 */
 	/* indicates if this RTE has optimization for DELETE in Cypher */
 	bool		hasDeleteOptimization;

@@ -4639,7 +4639,7 @@ ExecInitCypherMap(ExprEvalStep *scratch, CypherMapExpr *mapexpr,
 
 		if (exprType((Node *) val) != JSONBOID)
 			val = (Expr *) coerce_expr(NULL, (Node *) val, exprType((Node *) val),
-									   JSONBOID, -1 , COERCION_EXPLICIT,
+									   JSONBOID, -1, COERCION_EXPLICIT,
 									   COERCE_EXPLICIT_CAST, -1);
 
 		Assert(exprType((Node *) val) == JSONBOID);

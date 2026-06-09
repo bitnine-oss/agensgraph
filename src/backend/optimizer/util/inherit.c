@@ -178,10 +178,10 @@ expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 			/*
 			 * Acquire locks on all connected relations, and add them to the
 			 * list of child OIDs.
-			 */			
+			 */
 			foreach(l, rte->connected_relids)
 			{
-				Oid crelid = lfirst_oid(l);
+				Oid			crelid = lfirst_oid(l);
 
 				if (lockmode != NoLock)
 				{
@@ -189,9 +189,9 @@ expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 					LockRelationOid(crelid, lockmode);
 
 					/*
-					 * Now that we have the lock, double-check to see if the relation
-					 * really exists or not.  If not, assume it was dropped while we
-					 * waited to acquire lock, and ignore it.
+					 * Now that we have the lock, double-check to see if the
+					 * relation really exists or not.  If not, assume it was
+					 * dropped while we waited to acquire lock, and ignore it.
 					 */
 					if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(crelid)))
 					{

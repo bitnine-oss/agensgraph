@@ -1830,7 +1830,7 @@ psql_completion(const char *text, int start, int end)
 	{
 		if (TailMatches("VLABEL|ELABEL"))
 			COMPLETE_WITH("IF NOT EXISTS");
-		else 
+		else
 			COMPLETE_WITH("DISABLE INDEX", "INHERITS (", "WITH", "TABLESPACE");
 	}
 
@@ -1840,7 +1840,7 @@ psql_completion(const char *text, int start, int end)
 	{
 		if (TailMatches("INDEX"))
 			COMPLETE_WITH("CONCURRENTLY");
-	}	
+	}
 
 	/* CREATE [ OR REPLACE ] CONSTRAINT */
 	else if (HeadMatches("CREATE", "CONSTRAINT") ||
@@ -1923,7 +1923,7 @@ psql_completion(const char *text, int start, int end)
 /* Agensgraph: MATCH */
 	/* do not auto-complete for match clause, search "naah" */
 
-/* Agensgraph: LOAD FROM */ 
+/* Agensgraph: LOAD FROM */
 	else if (Matches("LOAD", "FROM", MatchAnyExcept("AS")))
 		COMPLETE_WITH("AS");
 

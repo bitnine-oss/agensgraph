@@ -431,4 +431,3 @@ binary_upgrade_set_next_ag_label_oid(PG_FUNCTION_ARGS)
 	binary_upgrade_next_ag_label_oid = ag_label_oid;
 	PG_RETURN_VOID();
 }
-

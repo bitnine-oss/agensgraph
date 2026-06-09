@@ -383,7 +383,7 @@ static List *repairTargetListCollations(List *targetList);
 static Node *resolveVarOrExpr(ParseState *pstate, Node *node,
 							  char *colname, bool node_is_nsitem);
 static void markRelsAsNulledBy(ParseState *pstate, Node *n, int jindex);
-static void preprocess_merge_pattern(ParseState *pstate, List *pattern, 
+static void preprocess_merge_pattern(ParseState *pstate, List *pattern,
 									 ParseNamespaceItem *nsitem);
 
 Query *
@@ -1069,7 +1069,7 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	Query	   *qry;
 	ParseNamespaceItem *nsitem;
 	RangeTblEntry *prev_rte;
-	AclMode targetPerms;
+	AclMode		targetPerms;
 
 	if (list_length(detail->pattern) != 1)
 		ereport(ERROR,
@@ -4494,9 +4494,9 @@ transformSetProp(ParseState *pstate, CypherSetProp *sp, bool is_remove,
 											  pstate->p_last_srf, concat, false, -1);
 
 			/*
-			 * Wrap with COALESCE to handle NULL values gracefully.
-			 * If expr is NULL, jsonb_concat returns NULL, so we fall back
-			 * to the original prop_map.
+			 * Wrap with COALESCE to handle NULL values gracefully. If expr is
+			 * NULL, jsonb_concat returns NULL, so we fall back to the
+			 * original prop_map.
 			 */
 			coalesce = makeNode(CoalesceExpr);
 			coalesce->args = list_make2(concat_result, prop_map);
@@ -4800,9 +4800,8 @@ transformMergeMatchJoin(ParseState *pstate, CypherClause *clause)
 	pstate->p_lateral_active = true;
 
 	/*
-	 * preprocess merge pattern to check for pattern
-	 * rules, variable duplication and create non-existent
-	 * labels if needed.
+	 * preprocess merge pattern to check for pattern rules, variable
+	 * duplication and create non-existent labels if needed.
 	 */
 	preprocess_merge_pattern(pstate, detail->pattern, l_nsitem);
 
@@ -5270,14 +5269,14 @@ transformDeleteJoinNSItem(ParseState *pstate, CypherClause *clause)
 	Assert(r_qry->commandType == CMD_SELECT);
 
 	if (auto_gather_graphmeta &&
-		list_length(exprs) == 1 && 
+		list_length(exprs) == 1 &&
 		exprType(linitial(exprs)) == VERTEXOID)
 	{
-		char *varname;
+		char	   *varname;
 		EntityInfo *einfo;
-		char *labname;
+		char	   *labname;
 		RangeTblEntry *rte = NULL;
-		ColumnRef *cref = linitial_node(ColumnRef, detail->exprs);
+		ColumnRef  *cref = linitial_node(ColumnRef, detail->exprs);
 
 		foreach(lc, r_qry->rtable)
 		{
@@ -5297,9 +5296,9 @@ transformDeleteJoinNSItem(ParseState *pstate, CypherClause *clause)
 			{
 				rte->hasDeleteOptimization = true;
 				rte->connected_relids = get_connected_edge_labels_for_vertex(
-												GetLatestSnapshot(),
-												graph_oid,
-												get_labname_labid(labname, graph_oid));
+																			 GetLatestSnapshot(),
+																			 graph_oid,
+																			 get_labname_labid(labname, graph_oid));
 			}
 		}
 	}
@@ -5671,6 +5670,7 @@ addRangeTableLabels(ParseState *pstate, List *targets, Query *qry,
 																   NULL,
 																   false,
 																   false);
+
 		nsitem->p_perminfo->requiredPerms = requiredPerms;
 		table_close(relation, NoLock);
 		resultRelations = lappend_int(resultRelations, nsitem->p_rtindex);
@@ -6631,15 +6631,15 @@ markRelsAsNulledBy(ParseState *pstate, Node *n, int jindex)
  * involved in pattern does not exist, it will be created.
  */
 static void
-preprocess_merge_pattern(ParseState *pstate, List *pattern, 
+preprocess_merge_pattern(ParseState *pstate, List *pattern,
 						 ParseNamespaceItem *nsitem)
 {
-	CypherPath	*path;
-	ListCell	*le;
-	char		*varname;
-	TargetEntry	*te;
-	List		*targetList;
-	bool		 singlenode;
+	CypherPath *path;
+	ListCell   *le;
+	char	   *varname;
+	TargetEntry *te;
+	List	   *targetList;
+	bool		singlenode;
 
 	targetList = nsitem->p_rte->subquery->targetList;
 	path = linitial(pattern);
@@ -6660,8 +6660,8 @@ preprocess_merge_pattern(ParseState *pstate, List *pattern,
 
 		if (IsA(elem, CypherNode))
 		{
-			CypherNode	*cnode = (CypherNode *) elem;
-			char		*labname;
+			CypherNode *cnode = (CypherNode *) elem;
+			char	   *labname;
 
 			/* Check for duplicate variable */
 			varname = getCypherName(cnode->variable);
@@ -6673,15 +6673,15 @@ preprocess_merge_pattern(ParseState *pstate, List *pattern,
 			{
 				ereport(ERROR,
 						(errcode(ERRCODE_DUPLICATE_ALIAS),
-						errmsg("duplicate variable \"%s\"", varname),
-						parser_errposition(pstate, getCypherNameLoc(cnode->variable))));
+						 errmsg("duplicate variable \"%s\"", varname),
+						 parser_errposition(pstate, getCypherNameLoc(cnode->variable))));
 			}
 
 			/* Check for default label and non-existent label */
 			labname = getCypherName(cnode->label);
 			if (labname != NULL)
 			{
-				int labloc = getCypherNameLoc(cnode->label);
+				int			labloc = getCypherNameLoc(cnode->label);
 
 				if (strcmp(labname, AG_VERTEX) == 0)
 					ereport(ERROR,
@@ -6694,9 +6694,9 @@ preprocess_merge_pattern(ParseState *pstate, List *pattern,
 		}
 		else
 		{
-			CypherRel	*crel = (CypherRel *) elem;
-			Node		*type;
-			char		*typname;
+			CypherRel  *crel = (CypherRel *) elem;
+			Node	   *type;
+			char	   *typname;
 
 			/* Check for duplicate variable */
 			varname = getCypherName(crel->variable);
@@ -6724,7 +6724,7 @@ preprocess_merge_pattern(ParseState *pstate, List *pattern,
 			typname = getCypherName(type);
 			if (typname != NULL)
 			{
-				int typloc = getCypherNameLoc(type);
+				int			typloc = getCypherNameLoc(type);
 
 				if (strcmp(typname, AG_EDGE) == 0)
 					ereport(ERROR,

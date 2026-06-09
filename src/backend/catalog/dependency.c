@@ -1482,7 +1482,7 @@ doDeletion(const ObjectAddress *object, int flags)
 			elog(ERROR, "global objects cannot be deleted by doDeletion");
 			break;
 
-		/* Agensgraph cases below */
+			/* Agensgraph cases below */
 		case GraphRelationId:
 			RemoveGraphById(object->objectId);
 			break;

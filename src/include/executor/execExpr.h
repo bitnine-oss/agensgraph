@@ -755,9 +755,9 @@ typedef struct ExprEvalStep
 		{
 			Datum	   *elemvalue;
 			bool	   *elemnull;
-			ArrayBuildState **astate; /* array build state */
-			JsonbParseState **jstate; /* jsonb parse state */
-			Oid		   *result_type; /* result array type */
+			ArrayBuildState **astate;	/* array build state */
+			JsonbParseState **jstate;	/* jsonb parse state */
+			Oid		   *result_type;	/* result array type */
 		}			cypherlistcomp;
 
 		struct

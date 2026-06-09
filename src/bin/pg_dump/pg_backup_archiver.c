@@ -3280,7 +3280,7 @@ _doSetFixedOutputState(ArchiveHandle *AH)
 		ahprintf(AH, "SET row_security = on;\n");
 	else
 		ahprintf(AH, "SET row_security = off;\n");
-	
+
 	/* To support agensgraph binary upgrade */
 	ahprintf(AH, "SET cypher_allow_unsafe_ddl = on;\n");
 

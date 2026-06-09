@@ -93,11 +93,12 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->subplan = ExecInitNode(mgplan->subplan, estate, eflags);
 	Assert(mgplan->operation != GWROP_MERGE ||
 		   IsA(mgstate->subplan, NestLoopState) ||
-		   /*
-			* The subplan may be a Result node instead of a NestLoop
-			* if a one-time filter is applied (e.g. in case of MATCH
-			* with non-existent labels in previous clause).
-			*/
+
+	/*
+	 * The subplan may be a Result node instead of a NestLoop if a one-time
+	 * filter is applied (e.g. in case of MATCH with non-existent labels in
+	 * previous clause).
+	 */
 		   IsA(mgstate->subplan, ResultState));
 
 	mgstate->graphid = get_graph_path_oid();

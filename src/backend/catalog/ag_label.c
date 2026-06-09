@@ -175,7 +175,7 @@ get_connected_edge_labels_for_vertex(Snapshot snapshot, Oid graph_oid, Labid ver
 {
 	List	   *edge_labels = NIL;
 	List	   *seen_edge_labels = NIL;
-	int i;
+	int			i;
 	CatCList   *tuplist = SearchSysCacheList2(GRAPHMETASTART, graph_oid, vertex_labid);
 
 	for (i = 0; i < tuplist->n_members; i++)
@@ -188,6 +188,7 @@ get_connected_edge_labels_for_vertex(Snapshot snapshot, Oid graph_oid, Labid ver
 		if (!list_member_int(seen_edge_labels, edge_labid))
 		{
 			Oid			edge_relid = get_labid_relid(graph_oid, edge_labid);
+
 			edge_labels = lappend_oid(edge_labels, edge_relid);
 			seen_edge_labels = lappend_int(seen_edge_labels, edge_labid);
 		}
@@ -205,6 +206,7 @@ get_connected_edge_labels_for_vertex(Snapshot snapshot, Oid graph_oid, Labid ver
 		if (!list_member_int(seen_edge_labels, edge_labid))
 		{
 			Oid			edge_relid = get_labid_relid(graph_oid, edge_labid);
+
 			edge_labels = lappend_oid(edge_labels, edge_relid);
 			seen_edge_labels = lappend_int(seen_edge_labels, edge_labid);
 		}

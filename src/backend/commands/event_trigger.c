@@ -1150,9 +1150,9 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 		case OBJECT_VLABEL:
 		case OBJECT_GRAPH:
 		case OBJECT_ELABEL:
-			/* 
-			 * no support for event trigger on graph object
-			 * TODO: why?
+
+			/*
+			 * no support for event trigger on graph object TODO: why?
 			 */
 			return false;
 		default:

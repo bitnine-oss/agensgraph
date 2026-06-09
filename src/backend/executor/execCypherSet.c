@@ -373,8 +373,8 @@ lreplace:
 	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelationDesc);
 
 	/*
-	 * ExecWithCheckOptions() will skip any WCOs which are not of the kind
-	 * we are looking for at this point.
+	 * ExecWithCheckOptions() will skip any WCOs which are not of the kind we
+	 * are looking for at this point.
 	 */
 	if (resultRelInfo->ri_WithCheckOptions != NIL)
 		ExecWithCheckOptions(WCO_RLS_UPDATE_CHECK,
@@ -598,8 +598,8 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelationDesc);
 
 	/*
-	 * ExecWithCheckOptions() will skip any WCOs which are not of the kind
-	 * we are looking for at this point.
+	 * ExecWithCheckOptions() will skip any WCOs which are not of the kind we
+	 * are looking for at this point.
 	 */
 	if (resultRelInfo->ri_WithCheckOptions != NIL)
 		ExecWithCheckOptions(WCO_RLS_UPDATE_CHECK,

@@ -40,24 +40,25 @@ Oid			binary_upgrade_next_ag_graph_oid = InvalidOid;
 
 /* assign_hook for auto_gather_graphmeta */
 static bool prev_auto_gather_graphmeta = false;
-void auto_gather_graphmeta_assign(bool newval, void *extra)
+void
+auto_gather_graphmeta_assign(bool newval, void *extra)
 {
-    // Only trigger on false->true transition
-    if (newval && !prev_auto_gather_graphmeta && !IsParallelWorker())
-    {
-        if (IsTransactionState())
-        {
-            regather_graphmeta_internal();
-        }
-        else
-        {
-            ereport(WARNING,
-                    (errmsg("auto_gather_graphmeta: cannot gather metadata outside transaction"),
-                     errhint("Metadata will be gathered when set within a transaction.")));
-        }
-    }
+	/* Only trigger on false->true transition */
+	if (newval && !prev_auto_gather_graphmeta && !IsParallelWorker())
+	{
+		if (IsTransactionState())
+		{
+			regather_graphmeta_internal();
+		}
+		else
+		{
+			ereport(WARNING,
+					(errmsg("auto_gather_graphmeta: cannot gather metadata outside transaction"),
+					 errhint("Metadata will be gathered when set within a transaction.")));
+		}
+	}
 
-    prev_auto_gather_graphmeta = newval;
+	prev_auto_gather_graphmeta = newval;
 }
 
 /* check_hook: validate new graph_path value */

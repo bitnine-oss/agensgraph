@@ -14191,4 +14191,3 @@ deparse_prop_expression_pretty(Node *expr, List *dpcontext, int prettyFlags)
 
 	return si.data;
 }
-

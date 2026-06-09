@@ -294,47 +294,48 @@ exprType(const Node *expr)
 			type = JSONBOID;
 			break;
 		case T_CypherListCompExpr:
-		{
-			/*
-			 * Determine result type of list comprehension:
-			 * - Identity case, same as input list type
-			 * - Graph object elem, appropriate typed array (vertex/edge)
-			 * - Other elem, jsonb array
-			 */
-			CypherListCompExpr *clcexpr = (CypherListCompExpr *) expr;
-			bool		is_identity;
-			Oid			elem_type;
-
-			is_identity = (clcexpr->elem == NULL) ||
-						  (clcexpr->cond == NULL &&
-						   IsA(clcexpr->elem, CypherListCompVar));
-
-			if (is_identity)
 			{
-				type = exprType((Node *) clcexpr->list);
-			}
-			else if (clcexpr->elem != NULL)
-			{
-				/* Check the elem's result type */
-				elem_type = exprType((Node *) clcexpr->elem);
+				/*
+				 * Determine result type of list comprehension: - Identity
+				 * case, same as input list type - Graph object elem,
+				 * appropriate typed array (vertex/edge) - Other elem, jsonb
+				 * array
+				 */
+				CypherListCompExpr *clcexpr = (CypherListCompExpr *) expr;
+				bool		is_identity;
+				Oid			elem_type;
 
-				if (elem_type == VERTEXOID)
-					type = VERTEXARRAYOID;
-				else if (elem_type == EDGEOID)
-					type = EDGEARRAYOID;
+				is_identity = (clcexpr->elem == NULL) ||
+					(clcexpr->cond == NULL &&
+					 IsA(clcexpr->elem, CypherListCompVar));
+
+				if (is_identity)
+				{
+					type = exprType((Node *) clcexpr->list);
+				}
+				else if (clcexpr->elem != NULL)
+				{
+					/* Check the elem's result type */
+					elem_type = exprType((Node *) clcexpr->elem);
+
+					if (elem_type == VERTEXOID)
+						type = VERTEXARRAYOID;
+					else if (elem_type == EDGEOID)
+						type = EDGEARRAYOID;
+					else
+						type = JSONBOID;
+				}
 				else
+				{
+					/* No elem, return jsonb array */
 					type = JSONBOID;
+				}
 			}
-			else
-			{
-				/* No elem, return jsonb array */
-				type = JSONBOID;
-			}
-		}
-		break;
+			break;
 		case T_CypherListCompVar:
 			{
 				CypherListCompVar *clcvar = (CypherListCompVar *) expr;
+
 				type = clcvar->elem_type;
 			}
 			break;

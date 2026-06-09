@@ -5115,4 +5115,3 @@ ag_label_ownercheck(Oid laboid, Oid roleid)
 
 	return object_ownercheck(RelationRelationId, relid, roleid);
 }
-

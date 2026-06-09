@@ -684,7 +684,7 @@ deleteRelatedEdges(const char *vlab)
 	Oid			agedge;
 	ListCell   *lc;
 	List	   *edges = NIL;
-	bool 		temp_enable_graph_dml = enable_graph_dml;
+	bool		temp_enable_graph_dml = enable_graph_dml;
 
 	graphoid = get_graph_path_oid();
 	vlabid = get_labname_labid(vlab, graphoid);
@@ -754,22 +754,22 @@ SimpleProcessUtility(Node *node, const char *queryString, int stmt_location,
 				   NULL, NULL, None_Receiver, NULL);
 }
 
-/* 
+/*
  * Update default expression of id column
  * See transformLabelIdDefinition()
  */
 static void
 ReplaceLabelDefaultExpression(RenameStmt *stmt)
 {
-	AttrNumber		attnum;
-	HeapTuple		tup;
-	Form_ag_label	form_ag_label;
-	Relation 		rel;
-	FuncExpr	   *graphIdFuncExpr,
-				   *graphLabidFuncExpr;
-	char			buf[NAMEDATALEN] = {0};
-	Const		   *n;
-	Oid				graphid = get_graph_path_oid();
+	AttrNumber	attnum;
+	HeapTuple	tup;
+	Form_ag_label form_ag_label;
+	Relation	rel;
+	FuncExpr   *graphIdFuncExpr,
+			   *graphLabidFuncExpr;
+	char		buf[NAMEDATALEN] = {0};
+	Const	   *n;
+	Oid			graphid = get_graph_path_oid();
 
 	tup = SearchSysCacheCopy2(LABELNAMEGRAPH,
 							  CStringGetDatum(stmt->relation->relname),
@@ -788,7 +788,7 @@ ReplaceLabelDefaultExpression(RenameStmt *stmt)
 	/* First argument of graphid() is the graph_labid() */
 	graphLabidFuncExpr = (FuncExpr *) linitial(graphIdFuncExpr->args);
 
-	snprintf(buf, sizeof(buf), "%s.%s", stmt->relation->schemaname, 
+	snprintf(buf, sizeof(buf), "%s.%s", stmt->relation->schemaname,
 			 stmt->newname);
 
 	/* Create a replacement form for the graph_labid argument */

@@ -1950,7 +1950,7 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 		}
 		else if (parse->commandType == CMD_GRAPHWRITE)
 		{
-			List *withCheckOptionLists = NIL;
+			List	   *withCheckOptionLists = NIL;
 
 			if (parse->withCheckOptions)
 				withCheckOptionLists = list_make1(parse->withCheckOptions);

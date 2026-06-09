@@ -4317,14 +4317,15 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 			break;
 
 		case SPI_OK_GRAPHWRITE:
+
 			/*
 			 * The command is to execute graphwrite type from pl module.
 			 */
 			SPI_processed = graphWriteStats.insertVertex +
-						graphWriteStats.insertEdge +
-						graphWriteStats.deleteVertex +
-						graphWriteStats.deleteEdge +
-						graphWriteStats.updateProperty;
+				graphWriteStats.insertEdge +
+				graphWriteStats.deleteVertex +
+				graphWriteStats.deleteEdge +
+				graphWriteStats.updateProperty;
 			break;
 
 		case SPI_OK_SELINTO:

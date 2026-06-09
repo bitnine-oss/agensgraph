@@ -243,7 +243,7 @@ struct ParseState
 	 * Additional information for Cypher queries
 	 */
 	char	   *p_lc_varname;
-	Oid			p_lc_elem_type;	/* element type of lc iteration variable */
+	Oid			p_lc_elem_type; /* element type of lc iteration variable */
 	bool		p_is_match_quals;
 	bool		p_valid_labels;
 	bool		p_is_fp_processed;

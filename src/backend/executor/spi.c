@@ -2034,7 +2034,7 @@ SPI_result_code_string(int code)
 			return "SPI_OK_MERGE";
 		case SPI_OK_MERGE_RETURNING:
 			return "SPI_OK_MERGE_RETURNING";
-		/* Agengraph case below */
+			/* Agengraph case below */
 		case SPI_OK_GRAPHWRITE:
 			return "SPI_OK_GRAPHWRITE";
 	}

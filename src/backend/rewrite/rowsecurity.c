@@ -106,7 +106,7 @@ get_row_security_policies(Query *root, RangeTblEntry *rte, int rt_index,
 	List	   *permissive_policies;
 	List	   *restrictive_policies;
 	RTEPermissionInfo *perminfo;
-	int resultRelation = 0;
+	int			resultRelation = 0;
 
 	/* Defaults for the return values */
 	*securityQuals = NIL;
@@ -164,8 +164,9 @@ get_row_security_policies(Query *root, RangeTblEntry *rte, int rt_index,
 
 	if (root->commandType == CMD_GRAPHWRITE)
 	{
-		ListCell *lc;
-		foreach (lc, root->g_resultRelations)
+		ListCell   *lc;
+
+		foreach(lc, root->g_resultRelations)
 		{
 			resultRelation = lfirst_int(lc);
 			if (resultRelation == rt_index)
@@ -181,24 +182,24 @@ get_row_security_policies(Query *root, RangeTblEntry *rte, int rt_index,
 	if (commandType == CMD_GRAPHWRITE)
 	{
 		/*
-		 * For graph write operations, the specific operation is
-		 * determined by root->g_writeOp
+		 * For graph write operations, the specific operation is determined by
+		 * root->g_writeOp
 		 */
 		switch (root->g_writeOp)
 		{
-		case GWROP_CREATE:
-		case GWROP_MERGE:
-			commandType = CMD_INSERT;
-			break;
-		case GWROP_DELETE:
-			commandType = CMD_DELETE;
-			break;
-		case GWROP_SET:
-			commandType = CMD_UPDATE;
-			break;
-		
-		default:
-			break;
+			case GWROP_CREATE:
+			case GWROP_MERGE:
+				commandType = CMD_INSERT;
+				break;
+			case GWROP_DELETE:
+				commandType = CMD_DELETE;
+				break;
+			case GWROP_SET:
+				commandType = CMD_UPDATE;
+				break;
+
+			default:
+				break;
 		}
 	}
 

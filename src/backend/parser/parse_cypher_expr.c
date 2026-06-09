@@ -638,7 +638,7 @@ transformTypeCast(ParseState *pstate, TypeCast *tc)
 	{
 		node = coerce_to_target_type(pstate, expr, ityp, otyp, otypmod,
 									 COERCION_EXPLICIT, COERCE_EXPLICIT_CAST,
-								 	 loc);
+									 loc);
 	}
 	else
 		node = coerce_expr(pstate, expr, ityp, otyp, otypmod,
@@ -733,8 +733,8 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 	type = exprType(list);
 
 	/*
-	 * Determine the element type from the list's array type.
-	 * This is used for type checking of the iteration variable in LC.
+	 * Determine the element type from the list's array type. This is used for
+	 * type checking of the iteration variable in LC.
 	 */
 	switch (type)
 	{
@@ -765,6 +765,7 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 	if (elem == NULL && clc->varname != NULL)
 	{
 		CypherListCompVar *clcvar = makeNode(CypherListCompVar);
+
 		clcvar->varname = pstrdup(clc->varname);
 		clcvar->elem_type = pstate->p_lc_elem_type;
 		clcvar->location = clc->location;
@@ -775,10 +776,9 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 	pstate->p_lc_elem_type = save_elem_type;
 
 	/*
-	 * Determine if coercion to JSONB is needed for the result expression.
-	 * If it is identity case (the iteration variable itself) or a graph
-	 * object (vertex/edge), no coercion is needed.
-	 * Otherwise, coerce it to JSONB.
+	 * Determine if coercion to JSONB is needed for the result expression. If
+	 * it is identity case (the iteration variable itself) or a graph object
+	 * (vertex/edge), no coercion is needed. Otherwise, coerce it to JSONB.
 	 */
 	if (elem != NULL)
 	{
@@ -788,7 +788,7 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 
 		/* Check if this is the identity case */
 		is_identity_elem = (cond == NULL) &&
-						   (IsA(elem, CypherListCompVar));
+			(IsA(elem, CypherListCompVar));
 
 		/* Check if elem returns a graph object (vertex/edge) */
 		elem_result_type = exprType(elem);
@@ -1942,33 +1942,33 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 									  a->location);
 			break;
 		default:
-		{
-			/*
-			 * For other expr types, check if the result type is compatible
-			 * with JSONB containment.
-			 */
-			Oid rtype = exprType(rexpr);
-
-			if (rtype == JSONBOID || type_is_array(rtype) || rtype == ANYARRAYOID)
 			{
-				/* Coerce anyarray to jsonb for containment operator */
-				if (rtype == ANYARRAYOID || type_is_array(rtype))
-					rexpr = coerce_to_jsonb(pstate, rexpr, "list");
+				/*
+				 * For other expr types, check if the result type is
+				 * compatible with JSONB containment.
+				 */
+				Oid			rtype = exprType(rexpr);
 
-				result = (Node *) make_op(pstate, list_make1(makeString("@>")),
-										  rexpr, lexpr, pstate->p_last_srf,
-										  a->location);
+				if (rtype == JSONBOID || type_is_array(rtype) || rtype == ANYARRAYOID)
+				{
+					/* Coerce anyarray to jsonb for containment operator */
+					if (rtype == ANYARRAYOID || type_is_array(rtype))
+						rexpr = coerce_to_jsonb(pstate, rexpr, "list");
+
+					result = (Node *) make_op(pstate, list_make1(makeString("@>")),
+											  rexpr, lexpr, pstate->p_last_srf,
+											  a->location);
+				}
+				else
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_DATATYPE_MISMATCH),
+							 errmsg("CypherList is expected but %s",
+									format_type_be(rtype)),
+							 parser_errposition(pstate, exprLocation(a->rexpr))));
+				}
+				break;
 			}
-			else
-			{
-				ereport(ERROR,
-						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("CypherList is expected but %s",
-								format_type_be(rtype)),
-						 parser_errposition(pstate, exprLocation(a->rexpr))));
-			}
-			break;
-		}
 	}
 
 	/*
@@ -2368,7 +2368,7 @@ coerce_all_to_jsonb(ParseState *pstate, Node *expr)
 	if (tc != TYPCATEGORY_USER)
 		expr = coerce_expr(pstate, expr, type, JSONBOID, -1,
 						   COERCION_EXPLICIT, COERCE_IMPLICIT_CAST,
-					   	   exprLocation(expr));
+						   exprLocation(expr));
 	Assert(expr != NULL);
 	return expr;
 }
@@ -2700,7 +2700,7 @@ resolveItemList(ParseState *pstate, List *items)
 			is_graph_type(restype) ||
 			type_is_array(restype))
 			continue;
-		
+
 		if (!te->resjunk)
 			te->expr = (Expr *) coerce_all_to_jsonb(pstate,
 													(Node *) te->expr);

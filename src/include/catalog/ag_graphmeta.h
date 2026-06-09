@@ -41,7 +41,7 @@ CATALOG(ag_graphmeta,7055,GraphMetaRelationId) BKI_SCHEMA_MACRO
  *		the format of ag_graphmeta relation.
  * ----------------
  */
-typedef FormData_ag_graphmeta *Form_ag_graphmeta;
+typedef FormData_ag_graphmeta * Form_ag_graphmeta;
 
 typedef struct AgStat_key
 {

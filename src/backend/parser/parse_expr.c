@@ -372,7 +372,7 @@ transformExprRecurse(ParseState *pstate, Node *expr)
 			result = transformJsonFuncExpr(pstate, (JsonFuncExpr *) expr);
 			break;
 
-		/* Agensgraph case below */
+			/* Agensgraph case below */
 		case T_CypherGenericExpr:
 			result = transformCypherExpr(pstate,
 										 ((CypherGenericExpr *) expr)->expr,

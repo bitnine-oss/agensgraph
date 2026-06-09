@@ -789,7 +789,7 @@ ExecEndNode(PlanState *node)
 		case T_WorkTableScanState:
 			break;
 
-		/* Agensgraph */
+			/* Agensgraph */
 		case T_ShortestpathState:
 			ExecEndShortestpath((ShortestpathState *) node);
 			break;

@@ -5212,7 +5212,7 @@ ATPrepCmd(List **wqueue, Relation rel, AlterTableCmd *cmd,
 			/* No command-specific prep needed */
 			pass = AT_PASS_MISC;
 			break;
-		/* agensgraph */
+			/* agensgraph */
 		case AT_DisableIndex:
 			ATSimplePermissions(cmd->subtype, rel, ATT_TABLE);
 			pass = AT_PASS_MISC;
