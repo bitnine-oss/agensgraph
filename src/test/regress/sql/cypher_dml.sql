@@ -1618,8 +1618,81 @@ ALTER VLABEL v1 RENAME TO new_v1;
 CREATE (:new_v1)-[:new_e1]->(:new_v1);
 MATCH (v1:new_v1)-[e1:new_e1]->(v2:new_v1) RETURN v1,e1,v2;
 
+--
+-- DELETE/DETACH DELETE optimization
+--
+CREATE GRAPH delete_opt;
+SET graph_path = delete_opt;
+CREATE (:n1)-[:e1]->(:n2);
+CREATE (:n3)-[:e2]->(:n4);
+CREATE (:n5);
+
+-- Without auto_gather_graphmeta, append node should have all relations
+EXPLAIN MATCH (n:n1) DETACH DELETE (n);
+EXPLAIN MATCH (n:n2) DETACH DELETE (n);
+EXPLAIN MATCH (n:n3) DETACH DELETE (n);
+EXPLAIN MATCH (n:n4) DETACH DELETE (n);
+EXPLAIN MATCH (n:n5) DETACH DELETE (n);
+
+SET auto_gather_graphmeta = true;
+SELECT edge, start, "end"
+FROM ag_graphmeta
+ORDER BY edge, start, "end";
+
+-- Append node should not have relation e2, since n1 and n2 are not connected to e2 edge label.
+EXPLAIN MATCH (n:n1) DETACH DELETE (n);
+EXPLAIN MATCH (n:n2) DETACH DELETE (n);
+-- Append node should not have relation e1, since n3 is not connected to e1 edge label.
+EXPLAIN MATCH (n:n3) DETACH DELETE (n);
+EXPLAIN MATCH (n:n4) DETACH DELETE (n);
+-- Append node should not have any relations, since n5 is not connected to any edge labels
+EXPLAIN MATCH (n:n5) DETACH DELETE (n);
+
+--
+-- AGV2-315
+--
+CREATE GRAPH agv2_315;
+SET graph_path = agv2_315;
+
+CREATE (:person {name: 'Alice'})-[:knows {since: 2020}]->(:person {name: 'Bob'});
+CREATE (:person {name: 'Bob'})-[:knows {since: 2021}]->(:person {name: 'Charlie'});
+
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p)];
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) | l];
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) WHERE type(l) = 'knows'];
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) WHERE type(l) = 'knows' | l];
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) WHERE type(l) = 'knows' | type(l)];
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) WHERE label(startNode(l)) = 'person' | startNode(l)];
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) | type(l)];
+MATCH p=(:person)-[r]->(:person) RETURN [l in relationships(p) | l.since];
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p)];
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) | n];
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) WHERE n.name = 'Bob'];
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) WHERE n.name = 'Bob' | n];
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) WHERE label(n) = 'person' | n.name];
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) | label(n)];
+MATCH p=(:person)-[r]->(:person) RETURN [n in nodes(p) | n.name];
+
+MATCH p=(n1)-[r*1..2]->(n2) WHERE all(x in r where x.since >= 2020) RETURN count(p);
+MATCH p=(n1)-[r*1..2]->(n2) WHERE all(x in r where x.since IS NOT NULL) RETURN count(p);
+MATCH p=(n1)-[r*1..2]->(n2) WHERE any(x in r where x.since = 2021) RETURN count(p);
+
+MATCH p=(:person)-[r]->(:person) WHERE length([l in relationships(p) | type(l)]) > 0 RETURN count(p);
+
+--
+-- AGV2-308
+--
+CREATE GRAPH agv2_308;
+SET graph_path = agv2_308;
+CREATE (:test);
+UNWIND [{}] AS row
+MATCH (t:test)
+SET t += row.id
+RETURN t;
+
 -- cleanup
 
+DROP GRAPH agv2_308 CASCADE;
 DROP GRAPH srf CASCADE;
 DROP GRAPH impload CASCADE;
 DROP GRAPH gid CASCADE;
@@ -1631,6 +1704,8 @@ DROP GRAPH ag216 CASCADE;
 DROP GRAPH ag154 CASCADE;
 DROP GRAPH t CASCADE;
 DROP GRAPH o CASCADE;
+DROP GRAPH delete_opt CASCADE;
+DROP GRAPH agv2_315 CASCADE;
 
 SET graph_path = agens;
 

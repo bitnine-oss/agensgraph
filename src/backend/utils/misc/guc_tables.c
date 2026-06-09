@@ -2062,7 +2062,7 @@ struct config_bool ConfigureNamesBool[] =
 		},
 		&auto_gather_graphmeta,
 		false,
-		NULL, NULL, NULL
+		NULL, auto_gather_graphmeta_assign, NULL
 	},
 
 	{
@@ -2082,6 +2082,17 @@ struct config_bool ConfigureNamesBool[] =
 			GUC_IS_NAME
 		},
 		&cypher_allow_unsafe_ddl,
+		false,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"enable_graph_dml", PGC_SUSET, CLIENT_CONN_STATEMENT,
+			gettext_noop("Allows using SQL DML queries on graph objects."),
+			NULL,
+			GUC_SUPERUSER_ONLY
+		},
+		&enable_graph_dml,
 		false,
 		NULL, NULL, NULL
 	},

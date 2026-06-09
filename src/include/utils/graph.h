@@ -180,5 +180,6 @@ extern Datum gin_compare_partial_graphid(PG_FUNCTION_ARGS);
 
 /* graph meta */
 extern Datum regather_graphmeta(PG_FUNCTION_ARGS);
+extern void regather_graphmeta_internal(void);
 
 #endif							/* GRAPH_H */

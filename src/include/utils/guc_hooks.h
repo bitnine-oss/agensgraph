@@ -28,6 +28,7 @@
 extern bool check_application_name(char **newval, void **extra,
 								   GucSource source);
 extern void assign_application_name(const char *newval, void *extra);
+extern bool check_auto_gather_graphmeta(bool *newval, void **extra, GucSource source);
 extern const char *show_archive_command(void);
 extern bool check_autovacuum_max_workers(int *newval, void **extra,
 										 GucSource source);
@@ -180,5 +181,6 @@ extern void assign_standby_slot_names(const char *newval, void *extra);
 
 /* Agensgraph - in catalog/ag_graph.c */
 extern bool check_graph_path(char **newval, void **extra, GucSource source);
+extern void auto_gather_graphmeta_assign(bool newval, void *extra);
 
 #endif							/* GUC_HOOKS_H */

@@ -21,20 +21,44 @@
 #include "catalog/pg_namespace.h"
 #include "commands/schemacmds.h"
 #include "utils/builtins.h"
+#include "utils/graph.h"
 #include "utils/guc_hooks.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 #include "catalog/catalog.h"
 #include "miscadmin.h"
+#include "pgstat.h"
 
 /* a global variable for the GUC variable */
 char	   *graph_path = NULL;
-bool		enableGraphDML = false;
+bool		enable_graph_dml = false;
 bool		cypher_allow_unsafe_ddl = false;
 
 /* Potentially set by pg_upgrade_support functions */
 Oid			binary_upgrade_next_ag_graph_oid = InvalidOid;
+
+/* assign_hook for auto_gather_graphmeta */
+static bool prev_auto_gather_graphmeta = false;
+void auto_gather_graphmeta_assign(bool newval, void *extra)
+{
+    // Only trigger on false->true transition
+    if (newval && !prev_auto_gather_graphmeta && !IsParallelWorker())
+    {
+        if (IsTransactionState())
+        {
+            regather_graphmeta_internal();
+        }
+        else
+        {
+            ereport(WARNING,
+                    (errmsg("auto_gather_graphmeta: cannot gather metadata outside transaction"),
+                     errhint("Metadata will be gathered when set within a transaction.")));
+        }
+    }
+
+    prev_auto_gather_graphmeta = newval;
+}
 
 /* check_hook: validate new graph_path value */
 bool

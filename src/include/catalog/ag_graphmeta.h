@@ -41,7 +41,7 @@ CATALOG(ag_graphmeta,7055,GraphMetaRelationId) BKI_SCHEMA_MACRO
  *		the format of ag_graphmeta relation.
  * ----------------
  */
-typedef FormData_ag_graphmeta * Form_ag_graphmeta;
+typedef FormData_ag_graphmeta *Form_ag_graphmeta;
 
 typedef struct AgStat_key
 {
@@ -65,7 +65,13 @@ DECLARE_UNIQUE_INDEX_PKEY(ag_graphmeta_full_index, 7056, GraphMetaFullIndexId, a
 DECLARE_INDEX(ag_graphmeta_start_index, 7057, GraphMetaStartIndexId, ag_graphmeta, btree(graph oid_ops, start int2_ops));
 #define GraphMetaEndIndexId 7058
 DECLARE_INDEX(ag_graphmeta_end_index, 7058, GraphMetaEndIndexId, ag_graphmeta, btree(graph oid_ops, end int2_ops));
+#define GraphMetaFullStartIndexId 7053
+DECLARE_UNIQUE_INDEX(ag_graphmeta_full_start_index, 7053, GraphMetaFullStartIndexId, ag_graphmeta, btree(graph oid_ops, start int2_ops, end int2_ops, edge int2_ops));
+#define GraphMetaFullEndIndexId 7054
+DECLARE_UNIQUE_INDEX(ag_graphmeta_full_end_index, 7054, GraphMetaFullEndIndexId, ag_graphmeta, btree(graph oid_ops, end int2_ops, start int2_ops, edge int2_ops));
 
 MAKE_SYSCACHE(GRAPHMETAFULL, ag_graphmeta_full_index, 64);
+MAKE_SYSCACHE(GRAPHMETASTART, ag_graphmeta_full_start_index, 64);
+MAKE_SYSCACHE(GRAPHMETAEND, ag_graphmeta_full_end_index, 64);
 
 #endif							/* AG_GRAPHMETA_H */

@@ -1295,6 +1295,15 @@ typedef struct RangeTblEntry
 	bool		inFromCl pg_node_attr(query_jumble_ignore);
 	/* security barrier quals to apply, if any */
 	List	   *securityQuals pg_node_attr(query_jumble_ignore);
+
+	/*
+	 * Used in agensgraph DELETE operation, only if
+	 * inh is true for the RTE.
+	 */
+	/* indicates if this RTE has optimization for DELETE in Cypher */
+	bool		hasDeleteOptimization;
+	/* list of OIDs of connected edge relations */
+	List	   *connected_relids;
 } RangeTblEntry;
 
 /*

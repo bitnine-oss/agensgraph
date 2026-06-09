@@ -684,6 +684,7 @@ deleteRelatedEdges(const char *vlab)
 	Oid			agedge;
 	ListCell   *lc;
 	List	   *edges = NIL;
+	bool 		temp_enable_graph_dml = enable_graph_dml;
 
 	graphoid = get_graph_path_oid();
 	vlabid = get_labname_labid(vlab, graphoid);
@@ -721,12 +722,12 @@ deleteRelatedEdges(const char *vlab)
 		if (ret != SPI_OK_CONNECT)
 			elog(ERROR, "deleteRelatedEdges: SPI_connect returned %d", ret);
 
-		enableGraphDML = true;
+		enable_graph_dml = true;
 		ret = SPI_execute(sql.data, false, 0);
 		if (ret != SPI_OK_DELETE)
 			elog(ERROR, "deleteRelatedEdges: SPI_execute returned %d: %s",
 				 ret, sql.data);
-		enableGraphDML = false;
+		enable_graph_dml = temp_enable_graph_dml;
 
 		ret = SPI_finish();
 		if (ret != SPI_OK_FINISH)

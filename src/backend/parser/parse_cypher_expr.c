@@ -444,6 +444,7 @@ transformListCompColumnRef(ParseState *pstate, ColumnRef *cref, char *varname)
 
 	clcvar = makeNode(CypherListCompVar);
 	clcvar->varname = pstrdup(varname);
+	clcvar->elem_type = pstate->p_lc_elem_type;
 	clcvar->location = cref->location;
 
 	if (list_length(cref->fields) > 1)
@@ -723,6 +724,7 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 	Node	   *list;
 	Oid			type;
 	char	   *save_varname;
+	Oid			save_elem_type;
 	Node	   *cond;
 	Node	   *elem;
 	CypherListCompExpr *clcexpr;
@@ -730,23 +732,75 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 	list = transformCypherExprRecurse(pstate, (Node *) clc->list);
 	type = exprType(list);
 
+	/*
+	 * Determine the element type from the list's array type.
+	 * This is used for type checking of the iteration variable in LC.
+	 */
 	switch (type)
 	{
 		case JSONBOID:
+			pstate->p_lc_elem_type = JSONBOID;
+			break;
 		case VERTEXARRAYOID:
+			pstate->p_lc_elem_type = VERTEXOID;
+			break;
 		case EDGEARRAYOID:
+			pstate->p_lc_elem_type = EDGEOID;
 			break;
 		default:
 			list = coerce_all_to_jsonb(pstate, list);
+			pstate->p_lc_elem_type = JSONBOID;
 			break;
 	}
 
 	save_varname = pstate->p_lc_varname;
+	save_elem_type = pstate->p_lc_elem_type;
 	pstate->p_lc_varname = clc->varname;
 	cond = transformCypherWhere(pstate, clc->cond, pstate->p_expr_kind);
 	elem = transformCypherExprRecurse(pstate, clc->elem);
+
+	/*
+	 * If elem is NULL, implicitly use the iteration variable.
+	 */
+	if (elem == NULL && clc->varname != NULL)
+	{
+		CypherListCompVar *clcvar = makeNode(CypherListCompVar);
+		clcvar->varname = pstrdup(clc->varname);
+		clcvar->elem_type = pstate->p_lc_elem_type;
+		clcvar->location = clc->location;
+		elem = (Node *) clcvar;
+	}
+
 	pstate->p_lc_varname = save_varname;
-	elem = coerce_to_jsonb(pstate, elem, "list comprehension result");
+	pstate->p_lc_elem_type = save_elem_type;
+
+	/*
+	 * Determine if coercion to JSONB is needed for the result expression.
+	 * If it is identity case (the iteration variable itself) or a graph
+	 * object (vertex/edge), no coercion is needed.
+	 * Otherwise, coerce it to JSONB.
+	 */
+	if (elem != NULL)
+	{
+		bool		is_identity_elem;
+		bool		is_graph_object_result;
+		Oid			elem_result_type;
+
+		/* Check if this is the identity case */
+		is_identity_elem = (cond == NULL) &&
+						   (IsA(elem, CypherListCompVar));
+
+		/* Check if elem returns a graph object (vertex/edge) */
+		elem_result_type = exprType(elem);
+		is_graph_object_result = (elem_result_type == VERTEXOID ||
+								  elem_result_type == EDGEOID);
+
+		if (!is_identity_elem && !is_graph_object_result)
+		{
+			elem = coerce_to_jsonb(pstate, elem,
+								   "list comprehension result");
+		}
+	}
 
 	clcexpr = makeNode(CypherListCompExpr);
 	clcexpr->list = (Expr *) list;
@@ -1888,12 +1942,33 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 									  a->location);
 			break;
 		default:
-			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("CypherList is expected but %s",
-							format_type_be(exprType(rexpr))),
-					 parser_errposition(pstate, exprLocation(a->rexpr))));
+		{
+			/*
+			 * For other expr types, check if the result type is compatible
+			 * with JSONB containment.
+			 */
+			Oid rtype = exprType(rexpr);
+
+			if (rtype == JSONBOID || type_is_array(rtype) || rtype == ANYARRAYOID)
+			{
+				/* Coerce anyarray to jsonb for containment operator */
+				if (rtype == ANYARRAYOID || type_is_array(rtype))
+					rexpr = coerce_to_jsonb(pstate, rexpr, "list");
+
+				result = (Node *) make_op(pstate, list_make1(makeString("@>")),
+										  rexpr, lexpr, pstate->p_last_srf,
+										  a->location);
+			}
+			else
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("CypherList is expected but %s",
+								format_type_be(rtype)),
+						 parser_errposition(pstate, exprLocation(a->rexpr))));
+			}
 			break;
+		}
 	}
 
 	/*
@@ -1978,6 +2053,12 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 			result = (Node *) makeBoolExpr(OR_EXPR, list_make2(result, cmp),
 										   a->location);
 	}
+
+	/*
+	 * Handle empty list case: value IN [] is always FALSE
+	 */
+	if (result == NULL)
+		result = (Node *) makeBoolConst(false, false);
 
 	return result;
 }
