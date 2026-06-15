@@ -2110,6 +2110,11 @@ BBB	42
 CCC	42
 \.
 
+-- check detach/reattach behavior; statement triggers with transition tables
+-- should not prevent a table from becoming a partition again
+alter table parent detach partition child1;
+alter table parent attach partition child1 for values in ('AAA');
+
 -- DML affecting parent sees tuples collected from children even if
 -- there is no transition table trigger on the children
 drop trigger child1_insert_trig on child1;
@@ -2186,6 +2191,52 @@ drop trigger child_row_trig on child;
 alter table parent attach partition child for values in ('AAA');
 
 drop table child, parent;
+
+--
+-- Verify access of transition tables with UPDATE triggers and tuples
+-- moved across partitions.
+--
+create or replace function dump_update_new() returns trigger language plpgsql as
+$$
+  begin
+    raise notice 'trigger = %, new table = %', TG_NAME,
+                 (select string_agg(new_table::text, ', ' order by a) from new_table);
+    return null;
+  end;
+$$;
+create or replace function dump_update_old() returns trigger language plpgsql as
+$$
+  begin
+    raise notice 'trigger = %, old table = %', TG_NAME,
+                 (select string_agg(old_table::text, ', ' order by a) from old_table);
+    return null;
+  end;
+$$;
+create table trans_tab_parent (a text) partition by list (a);
+create table trans_tab_child1 partition of trans_tab_parent for values in ('AAA1', 'AAA2');
+create table trans_tab_child2 partition of trans_tab_parent for values in ('BBB1', 'BBB2');
+create trigger trans_tab_parent_update_trig
+  after update on trans_tab_parent referencing old table as old_table
+  for each statement execute procedure dump_update_old();
+create trigger trans_tab_parent_insert_trig
+  after insert on trans_tab_parent referencing new table as new_table
+  for each statement execute procedure dump_insert();
+create trigger trans_tab_parent_delete_trig
+  after delete on trans_tab_parent referencing old table as old_table
+  for each statement execute procedure dump_delete();
+insert into trans_tab_parent values ('AAA1'), ('BBB1');
+-- should not trigger access to new table when moving across partitions.
+update trans_tab_parent set a = 'BBB2' where a = 'AAA1';
+drop trigger trans_tab_parent_update_trig on trans_tab_parent;
+create trigger trans_tab_parent_update_trig
+  after update on trans_tab_parent referencing new table as new_table
+  for each statement execute procedure dump_update_new();
+-- should not trigger access to old table when moving across partitions.
+update trans_tab_parent set a = 'AAA2' where a = 'BBB1';
+delete from trans_tab_parent;
+-- clean up
+drop table trans_tab_parent, trans_tab_child1, trans_tab_child2;
+drop function dump_update_new, dump_update_old;
 
 --
 -- Verify behavior of statement triggers on (non-partition)
@@ -2283,6 +2334,11 @@ copy parent (a, b) from stdin;
 DDD	42
 \.
 
+-- check disinherit/reinherit behavior; statement triggers with transition
+-- tables should not prevent a table from becoming an inheritance child again
+alter table child1 no inherit parent;
+alter table child1 inherit parent;
+
 -- DML affecting parent sees tuples collected from children even if
 -- there is no transition table trigger on the children
 drop trigger child1_insert_trig on child1;
@@ -2346,6 +2402,10 @@ with wcte as (insert into table1 values (42))
 
 with wcte as (insert into table1 values (43))
   insert into table1 values (44);
+
+with wcte as (insert into table1 values (45))
+  merge into table1 using (values (46)) as v(a) on table1.a = v.a
+    when not matched then insert values (v.a);
 
 select * from table1;
 select * from table2;

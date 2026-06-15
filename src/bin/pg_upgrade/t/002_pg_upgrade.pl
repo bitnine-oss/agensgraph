@@ -315,6 +315,7 @@ if (defined($ENV{oldinstall}))
 # that we need to use pg_dumpall from the new node here.
 my @dump_command = (
 	'pg_dumpall', '--no-sync', '-d', $oldnode->connstr('postgres'),
+	'--restrict-key=test',
 	'-f', $dump1_file);
 # --extra-float-digits is needed when upgrading from a version older than 11.
 push(@dump_command, '--extra-float-digits', '0')
@@ -492,9 +493,14 @@ if (-d $log_path)
 			  if $File::Find::name =~ m/.*\.log/;
 		},
 		$newnode->data_dir . "/pg_upgrade_output.d");
+
+	my $test_logfile = $PostgreSQL::Test::Utils::test_logfile;
+
+	note "=== pg_upgrade logs found - appending to $test_logfile ===\n";
 	foreach my $log (@log_files)
 	{
-		note "=== contents of $log ===\n";
+		note "=== appending $log ===\n";
+		print "=== contents of $log ===\n";
 		print slurp_file($log);
 		print "=== EOF ===\n";
 	}
@@ -512,6 +518,7 @@ is( $result,
 # Second dump from the upgraded instance.
 @dump_command = (
 	'pg_dumpall', '--no-sync', '-d', $newnode->connstr('postgres'),
+	'--restrict-key=test',
 	'-f', $dump2_file);
 # --extra-float-digits is needed when upgrading from a version older than 11.
 push(@dump_command, '--extra-float-digits', '0')

@@ -342,7 +342,8 @@ $node_subscriber->safe_psql('postgres', "DELETE FROM tab_full_pk");
 # Note that the current location of the log file is not grabbed immediately
 # after reloading the configuration, but after sending one SQL command to
 # the node so as we are sure that the reloading has taken effect.
-my $log_location = -s $node_subscriber->logfile;
+my $log_location_pub = -s $node_publisher->logfile;
+my $log_location_sub = -s $node_subscriber->logfile;
 
 $node_publisher->safe_psql('postgres',
 	"UPDATE tab_full_pk SET b = 'quux' WHERE a = 1");
@@ -350,7 +351,7 @@ $node_publisher->safe_psql('postgres', "DELETE FROM tab_full_pk WHERE a = 2");
 
 $node_publisher->wait_for_catchup('tap_sub');
 
-my $logfile = slurp_file($node_subscriber->logfile, $log_location);
+my $logfile = slurp_file($node_subscriber->logfile, $log_location_sub);
 ok( $logfile =~
 	  qr/logical replication did not find row to be updated in replication target relation "tab_full_pk"/,
 	'update target row is missing');
@@ -419,23 +420,51 @@ is( $result, qq(11.11|baz|1
 22.22|bar|2),
 	'update works with dropped subscriber column');
 
+# Verify that GUC settings supplied in the CONNECTION string take effect on
+# the publisher's walsender.  We do this by enabling log_statement_stats in
+# the CONNECTION string later and checking that the publisher's log contains a
+# QUERY STATISTICS message.
+#
+# First, confirm that no such QUERY STATISTICS message appears before enabling
+# log_statement_stats.
+$logfile = slurp_file($node_publisher->logfile, $log_location_pub);
+unlike(
+	$logfile,
+	qr/QUERY STATISTICS/,
+	'log_statement_stats has not been enabled yet');
+$log_location_pub = -s $node_publisher->logfile;
+
 # check that change of connection string and/or publication list causes
 # restart of subscription workers. We check the state along with
 # application_name to ensure that the walsender is (re)started.
 #
 # Not all of these are registered as tests as we need to poll for a change
 # but the test suite will fail nonetheless when something goes wrong.
+#
+# Enable log_statement_stats as the change of connection string,
+# which is also for the above mentioned test of GUC settings passed through
+# CONNECTION.
 my $oldpid = $node_publisher->safe_psql('postgres',
 	"SELECT pid FROM pg_stat_replication WHERE application_name = 'tap_sub' AND state = 'streaming';"
 );
 $node_subscriber->safe_psql('postgres',
-	"ALTER SUBSCRIPTION tap_sub CONNECTION '$publisher_connstr sslmode=disable'"
+	"ALTER SUBSCRIPTION tap_sub CONNECTION '$publisher_connstr options=''-c log_statement_stats=on'''"
 );
 $node_publisher->poll_query_until('postgres',
 	"SELECT pid != $oldpid FROM pg_stat_replication WHERE application_name = 'tap_sub' AND state = 'streaming';"
   )
   or die
   "Timed out while waiting for apply to restart after changing CONNECTION";
+
+# Check that the expected QUERY STATISTICS message appears,
+# which shows that log_statement_stats=on from the CONNECTION string
+# was correctly passed through to and honored by the walsender.
+$logfile = slurp_file($node_publisher->logfile, $log_location_pub);
+like(
+	$logfile,
+	qr/QUERY STATISTICS/,
+	'log_statement_stats in CONNECTION string had effect on publisher\'s walsender'
+);
 
 $oldpid = $node_publisher->safe_psql('postgres',
 	"SELECT pid FROM pg_stat_replication WHERE application_name = 'tap_sub' AND state = 'streaming';"
@@ -492,13 +521,13 @@ $node_publisher->reload;
 # Note that the current location of the log file is not grabbed immediately
 # after reloading the configuration, but after sending one SQL command to
 # the node so that we are sure that the reloading has taken effect.
-$log_location = -s $node_publisher->logfile;
+$log_location_pub = -s $node_publisher->logfile;
 
 $node_publisher->safe_psql('postgres', "INSERT INTO tab_notrep VALUES (11)");
 
 $node_publisher->wait_for_catchup('tap_sub');
 
-$logfile = slurp_file($node_publisher->logfile, $log_location);
+$logfile = slurp_file($node_publisher->logfile, $log_location_pub);
 ok($logfile =~ qr/skipped replication of an empty transaction with XID/,
 	'empty transaction is skipped');
 

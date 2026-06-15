@@ -45,6 +45,10 @@ CREATE INDEX six ON shighway USING btree (name text_ops);
 COMMENT ON INDEX six_wrong IS 'bad index';
 COMMENT ON INDEX six IS 'good index';
 COMMENT ON INDEX six IS NULL;
+SELECT obj_description('six'::regclass, 'pg_class') IS NULL AS six_comment_is_null;
+COMMENT ON INDEX six IS 'add the comment back';
+COMMENT ON INDEX six IS ''; -- empty string removes the comment, same as NULL
+SELECT obj_description('six'::regclass, 'pg_class') IS NULL AS six_comment_is_null;
 
 --
 -- BTREE partial indices
@@ -629,7 +633,7 @@ DROP TABLE cwi_test;
 CREATE TABLE syscol_table (a INT);
 
 -- System columns cannot be indexed
-CREATE INDEX ON syscolcol_table (ctid);
+CREATE INDEX ON syscol_table (ctid);
 
 -- nor used in expressions
 CREATE INDEX ON syscol_table ((ctid >= '(1000,0)'));

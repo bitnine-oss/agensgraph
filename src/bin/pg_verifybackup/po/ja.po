@@ -7,8 +7,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: pg_verifybackup (PostgreSQL 17)\n"
 "Report-Msgid-Bugs-To: pgsql-bugs@lists.postgresql.org\n"
-"POT-Creation-Date: 2024-05-24 10:24+0900\n"
-"PO-Revision-Date: 2024-05-24 10:47+0900\n"
+"POT-Creation-Date: 2025-02-28 10:06+0900\n"
+"PO-Revision-Date: 2025-03-03 17:37+0900\n"
 "Last-Translator: Kyotaro Horiguchi <horikyota.ntt@gmail.com>\n"
 "Language-Team: Japan PostgreSQL Users Group <jpug-doc@ml.postgresql.jp>\n"
 "Language: ja\n"
@@ -36,6 +36,80 @@ msgstr "詳細: "
 #, c-format
 msgid "hint: "
 msgstr "ヒント: "
+
+#: ../../common/controldata_utils.c:97
+#, c-format
+msgid "could not open file \"%s\" for reading: %m"
+msgstr "ファイル\"%s\"を読み込み用にオープンできませんでした: %m"
+
+#: ../../common/controldata_utils.c:110 pg_verifybackup.c:438
+#: pg_verifybackup.c:476 pg_verifybackup.c:896
+#, c-format
+msgid "could not read file \"%s\": %m"
+msgstr "ファイル\"%s\"の読み取りに失敗しました: %m"
+
+#: ../../common/controldata_utils.c:119
+#, c-format
+msgid "could not read file \"%s\": read %d of %zu"
+msgstr "ファイル\"%1$s\"を読み込めませんでした: %3$zuバイトのうち%2$dバイトを読み込みました"
+
+#: ../../common/controldata_utils.c:132 ../../common/controldata_utils.c:280
+#: pg_verifybackup.c:902
+#, c-format
+msgid "could not close file \"%s\": %m"
+msgstr "ファイル\"%s\"をクローズできませんでした: %m"
+
+#: ../../common/controldata_utils.c:168
+msgid "byte ordering mismatch"
+msgstr "バイトオーダが合っていません"
+
+#: ../../common/controldata_utils.c:170
+#, c-format
+msgid ""
+"possible byte ordering mismatch\n"
+"The byte ordering used to store the pg_control file might not match the one\n"
+"used by this program.  In that case the results below would be incorrect, and\n"
+"the PostgreSQL installation would be incompatible with this data directory."
+msgstr ""
+"バイトオーダが異なる可能性があります。\n"
+"pg_controlファイルを格納するために使用するバイトオーダが本プログラムで使用\n"
+"されるものと一致しないようです。この場合以下の結果は不正確になります。また、\n"
+"PostgreSQLインストレーションはこのデータディレクトリと互換性がなくなります。"
+
+#: ../../common/controldata_utils.c:230 pg_verifybackup.c:406
+#: pg_verifybackup.c:865
+#, c-format
+msgid "could not open file \"%s\": %m"
+msgstr "ファイル\"%s\"をオープンできませんでした: %m"
+
+#: ../../common/controldata_utils.c:249
+#, c-format
+msgid "could not write file \"%s\": %m"
+msgstr "ファイル\"%s\"を書き出せませんでした: %m"
+
+#: ../../common/controldata_utils.c:268
+#, c-format
+msgid "could not fsync file \"%s\": %m"
+msgstr "ファイル\"%s\"をfsyncできませんでした: %m"
+
+#: ../../common/cryptohash.c:261 ../../common/cryptohash_openssl.c:356
+#: ../../common/parse_manifest.c:157 ../../common/parse_manifest.c:852
+#, c-format
+msgid "out of memory"
+msgstr "メモリ不足です"
+
+#: ../../common/cryptohash.c:266 ../../common/cryptohash.c:272
+#: ../../common/cryptohash_openssl.c:368 ../../common/cryptohash_openssl.c:376
+msgid "success"
+msgstr "成功"
+
+#: ../../common/cryptohash.c:268 ../../common/cryptohash_openssl.c:370
+msgid "destination buffer too small"
+msgstr "出力先バッファが小さすぎます"
+
+#: ../../common/cryptohash_openssl.c:372
+msgid "OpenSSL failure"
+msgstr "OpenSSLのエラー"
 
 #: ../../common/fe_memutils.c:35 ../../common/fe_memutils.c:75
 #: ../../common/fe_memutils.c:98 ../../common/fe_memutils.c:161
@@ -144,164 +218,159 @@ msgstr "Unicodeのハイサロゲートはハイサロゲートに続いては�
 msgid "Unicode low surrogate must follow a high surrogate."
 msgstr "Unicodeのローサロゲートはハイサロゲートに続かなければなりません。"
 
-#: ../../common/parse_manifest.c:157 ../../common/parse_manifest.c:853
-#, c-format
-msgid "out of memory"
-msgstr "メモリ不足です"
-
-#: ../../common/parse_manifest.c:159 ../../common/parse_manifest.c:855
+#: ../../common/parse_manifest.c:159 ../../common/parse_manifest.c:854
 #, c-format
 msgid "could not initialize checksum of manifest"
 msgstr "目録のチェックサムの初期化ができませんでした"
 
-#: ../../common/parse_manifest.c:204 ../../common/parse_manifest.c:261
+#: ../../common/parse_manifest.c:203 ../../common/parse_manifest.c:260
 msgid "manifest ended unexpectedly"
 msgstr "目録が予期せず終了しました。"
 
-#: ../../common/parse_manifest.c:210 ../../common/parse_manifest.c:862
+#: ../../common/parse_manifest.c:209 ../../common/parse_manifest.c:861
 #, c-format
 msgid "could not update checksum of manifest"
 msgstr "目録のチェックサムの更新ができませんでした"
 
-#: ../../common/parse_manifest.c:302
+#: ../../common/parse_manifest.c:301
 msgid "unexpected object start"
 msgstr "予期しないオブジェクトの開始"
 
-#: ../../common/parse_manifest.c:337
+#: ../../common/parse_manifest.c:336
 msgid "unexpected object end"
 msgstr "予期しないオブジェクトの終わり"
 
-#: ../../common/parse_manifest.c:366
+#: ../../common/parse_manifest.c:365
 msgid "unexpected array start"
 msgstr "予期しない配列の開始"
 
-#: ../../common/parse_manifest.c:391
+#: ../../common/parse_manifest.c:390
 msgid "unexpected array end"
 msgstr "予期しない配列の終わり"
 
-#: ../../common/parse_manifest.c:418
+#: ../../common/parse_manifest.c:417
 msgid "expected version indicator"
 msgstr "バージョン指示子を想定していました"
 
-#: ../../common/parse_manifest.c:454
+#: ../../common/parse_manifest.c:453
 msgid "unrecognized top-level field"
 msgstr "認識できないトップレベルフィールド"
 
-#: ../../common/parse_manifest.c:473
+#: ../../common/parse_manifest.c:472
 msgid "unexpected file field"
 msgstr "予期しないファイルフィールド"
 
-#: ../../common/parse_manifest.c:487
+#: ../../common/parse_manifest.c:486
 msgid "unexpected WAL range field"
 msgstr "予期しないWAL範囲フィールド"
 
-#: ../../common/parse_manifest.c:493
+#: ../../common/parse_manifest.c:492
 msgid "unexpected object field"
 msgstr "予期しないオブジェクトフィールド"
 
-#: ../../common/parse_manifest.c:583
+#: ../../common/parse_manifest.c:582
 msgid "unexpected scalar"
 msgstr "予期しないスカラー"
 
-#: ../../common/parse_manifest.c:609
+#: ../../common/parse_manifest.c:608
 msgid "manifest version not an integer"
 msgstr "目録バージョンが整数ではありません"
 
-#: ../../common/parse_manifest.c:613
+#: ../../common/parse_manifest.c:612
 msgid "unexpected manifest version"
 msgstr "予期しない目録バージョン"
 
-#: ../../common/parse_manifest.c:637
-msgid "manifest system identifier not an integer"
-msgstr "目録のシステム識別子が整数ではありません"
+#: ../../common/parse_manifest.c:636
+msgid "system identifier in manifest not an integer"
+msgstr "目録中のシステム識別子が整数ではありません"
 
-#: ../../common/parse_manifest.c:662
+#: ../../common/parse_manifest.c:661
 msgid "missing path name"
 msgstr "パス名がありません"
 
-#: ../../common/parse_manifest.c:665
+#: ../../common/parse_manifest.c:664
 msgid "both path name and encoded path name"
 msgstr "パス名とエンコードされたパス名の両方"
 
-#: ../../common/parse_manifest.c:667
+#: ../../common/parse_manifest.c:666
 msgid "missing size"
 msgstr "サイズがありません"
 
-#: ../../common/parse_manifest.c:670
+#: ../../common/parse_manifest.c:669
 msgid "checksum without algorithm"
 msgstr "アルゴリズムなしのチェックサム"
 
-#: ../../common/parse_manifest.c:684
+#: ../../common/parse_manifest.c:683
 msgid "could not decode file name"
 msgstr "ファイル名をデコードできませんでした"
 
-#: ../../common/parse_manifest.c:694
+#: ../../common/parse_manifest.c:693
 msgid "file size is not an integer"
 msgstr "ファイルサイズが整数ではありません"
 
-#: ../../common/parse_manifest.c:700
+#: ../../common/parse_manifest.c:699
 #, c-format
 msgid "unrecognized checksum algorithm: \"%s\""
 msgstr "認識できないチェックサムアルゴリズム: \"%s\""
 
-#: ../../common/parse_manifest.c:719
+#: ../../common/parse_manifest.c:718
 #, c-format
 msgid "invalid checksum for file \"%s\": \"%s\""
 msgstr "\"%s\" ファイルのチェックサムが無効: \"%s\""
 
-#: ../../common/parse_manifest.c:762
+#: ../../common/parse_manifest.c:761
 msgid "missing timeline"
 msgstr "タイムラインがありません"
 
-#: ../../common/parse_manifest.c:764
+#: ../../common/parse_manifest.c:763
 msgid "missing start LSN"
 msgstr "開始LSNがありません"
 
-#: ../../common/parse_manifest.c:766
+#: ../../common/parse_manifest.c:765
 msgid "missing end LSN"
 msgstr "終了LSNがありません"
 
-#: ../../common/parse_manifest.c:772
+#: ../../common/parse_manifest.c:771
 msgid "timeline is not an integer"
 msgstr "タイムラインが整数ではありません"
 
-#: ../../common/parse_manifest.c:775
+#: ../../common/parse_manifest.c:774
 msgid "could not parse start LSN"
 msgstr "開始LSNをパースできませんでした"
 
-#: ../../common/parse_manifest.c:778
+#: ../../common/parse_manifest.c:777
 msgid "could not parse end LSN"
 msgstr "終了LSNをパースできませんでした"
 
-#: ../../common/parse_manifest.c:843
+#: ../../common/parse_manifest.c:842
 msgid "expected at least 2 lines"
 msgstr "少なくとも2行が必要です"
 
-#: ../../common/parse_manifest.c:846
+#: ../../common/parse_manifest.c:845
 msgid "last line not newline-terminated"
 msgstr "最後の行が改行で終わっていません"
 
-#: ../../common/parse_manifest.c:865
+#: ../../common/parse_manifest.c:864
 #, c-format
 msgid "could not finalize checksum of manifest"
 msgstr "目録のチェックサムの完了ができませんでした"
 
-#: ../../common/parse_manifest.c:869
+#: ../../common/parse_manifest.c:868
 #, c-format
 msgid "manifest has no checksum"
 msgstr "目録にチェックサムがありません"
 
-#: ../../common/parse_manifest.c:873
+#: ../../common/parse_manifest.c:872
 #, c-format
 msgid "invalid manifest checksum: \"%s\""
 msgstr "無効な目録チェックサム: \"%s\""
 
-#: ../../common/parse_manifest.c:877
+#: ../../common/parse_manifest.c:876
 #, c-format
 msgid "manifest checksum mismatch"
 msgstr "目録チェックサムの不一致"
 
-#: ../../common/parse_manifest.c:892
+#: ../../common/parse_manifest.c:891
 #, c-format
 msgid "could not parse backup manifest: %s"
 msgstr "バックアップ目録をパースできませんでした: %s"
@@ -341,20 +410,10 @@ msgstr "\"%2$s\"がプログラム\"%1$s\"を見つけましたが、これは%3
 msgid "backup successfully verified\n"
 msgstr "バックアップが正常に検証されました\n"
 
-#: pg_verifybackup.c:406 pg_verifybackup.c:865
-#, c-format
-msgid "could not open file \"%s\": %m"
-msgstr "ファイル\"%s\"をオープンできませんでした: %m"
-
 #: pg_verifybackup.c:410
 #, c-format
 msgid "could not stat file \"%s\": %m"
 msgstr "ファイル\"%s\"のstatに失敗しました: %m"
-
-#: pg_verifybackup.c:438 pg_verifybackup.c:476 pg_verifybackup.c:896
-#, c-format
-msgid "could not read file \"%s\": %m"
-msgstr "ファイル\"%s\"の読み取りに失敗しました: %m"
 
 #: pg_verifybackup.c:440
 #, c-format
@@ -430,11 +489,6 @@ msgstr "ファイル\"%s\"のチェックサムの初期化ができませんで
 #, c-format
 msgid "could not update checksum of file \"%s\""
 msgstr "ファイル\"%s\"のチェックサムの更新ができませんでした"
-
-#: pg_verifybackup.c:902
-#, c-format
-msgid "could not close file \"%s\": %m"
-msgstr "ファイル\"%s\"をクローズできませんでした: %m"
 
 #: pg_verifybackup.c:921
 #, c-format
@@ -554,3 +608,24 @@ msgstr ""
 #, c-format
 msgid "%s home page: <%s>\n"
 msgstr "%s ホームページ: <%s>\n"
+
+#~ msgid "  -F, --format=p|t            backup format (plain, tar)\n"
+#~ msgstr "  -F, --format=p|t            出力フォーマット(plain, tar)\n"
+
+#~ msgid "\"%s\" is not a plain file"
+#~ msgstr "\"%s\"は通常ファイルではありません"
+
+#~ msgid "You must use -n or --no-parse-wal when verifying a tar-format backup."
+#~ msgstr "tarフォーマットのバックアップを検証するときには -n または --no-parse-wal を使う必要があります。"
+
+#~ msgid "file \"%s\" is not expected in a tar format backup"
+#~ msgstr "tar形式のバックアップではファイル\"%s\"は想定外です"
+
+#~ msgid "invalid backup format \"%s\", must be \"plain\" or \"tar\""
+#~ msgstr "不正なバックアップフォーマット\"%s\"、\"plain\"か\"tar\"でなければなりません"
+
+#~ msgid "out of memory while constructing error description"
+#~ msgstr "エラー記述の構築中にメモリ不足"
+
+#~ msgid "pg_waldump cannot read tar files"
+#~ msgstr "pg_waldumpはtarファイルを読めません"

@@ -49,7 +49,8 @@ PostgreSQL documentation
   <para>
    <application>pg_createsubscriber</application> creates a new logical
    replica from a physical standby server.  All tables in the specified
-   database are included in the logical replication setup.  A pair of
+   database are included in the <link linkend="logical-replication">logical
+   replication</link> setup.  A pair of
    publication and subscription objects are created for each database.  It
    must be run at the target server.
   </para>
@@ -57,20 +58,24 @@ PostgreSQL documentation
   <para>
    After a successful run, the state of the target server is analogous to a
    fresh logical replication setup.  The main difference between the logical
-   replication setup and <application>pg_createsubscriber</application> is the
-   initial data copy.  It does only the synchronization phase, which ensures
-   each table is brought up to a synchronized state.
+   replication setup and <application>pg_createsubscriber</application> is how
+   the data synchronization is done. <application>pg_createsubscriber</application>
+   does not copy the initial table data. It does only the synchronization phase,
+   which ensures each table is brought up to a synchronized state.
   </para>
 
   <para>
-   The <application>pg_createsubscriber</application> targets large database
+   <application>pg_createsubscriber</application> targets large database
    systems because in logical replication setup, most of the time is spent
    doing the initial data copy.  Furthermore, a side effect of this long time
    spent synchronizing data is usually a large amount of changes to be applied
    (that were produced during the initial data copy), which increases even
    more the time when the logical replica will be available. For smaller
-   databases, <link linkend="logical-replication-row-filter-initial-data-sync">
-   initial data synchronization</link> is recommended.
+   databases, it is recommended to set up logical replication with initial data
+   synchronization.  For details, see the <command>CREATE SUBSCRIPTION</command>
+   <link linkend="sql-createsubscription-params-with-copy-data">
+   <literal>copy_data</literal></link> option.
+
   </para>
  </refsect1>
 
@@ -87,8 +92,9 @@ PostgreSQL documentation
      <term><option>--database=<replaceable class="parameter">dbname</replaceable></option></term>
      <listitem>
       <para>
-       The database name to create the subscription.  Multiple databases can
-       be selected by writing multiple <option>-d</option> switches.
+       The name of the database in which to create a subscription.  Multiple
+       databases can be selected by writing multiple <option>-d</option>
+       switches.
       </para>
      </listitem>
     </varlistentry>
@@ -139,7 +145,7 @@ PostgreSQL documentation
 
     <varlistentry>
      <term><option>-s <replaceable class="parameter">dir</replaceable></option></term>
-     <term><option>--socket-directory=<replaceable class="parameter">dir</replaceable></option></term>
+     <term><option>--socketdir=<replaceable class="parameter">dir</replaceable></option></term>
      <listitem>
       <para>
        The directory to use for postmaster sockets on target server.  The
@@ -189,8 +195,8 @@ PostgreSQL documentation
      <listitem>
       <para>
        Use the specified main server configuration file for the target data
-       directory.  The <application>pg_createsubscriber</application> uses
-       internally the <application>pg_ctl</application> command to start and
+       directory.  <application>pg_createsubscriber</application> internally uses
+       the <application>pg_ctl</application> command to start and
        stop the target server.  It allows you to specify the actual
        <filename>postgresql.conf</filename> configuration file if it is stored
        outside the data directory.
@@ -405,11 +411,11 @@ PostgreSQL documentation
       Create a publication and replication slot for each specified database on
       the source server.  Each publication is created using <link
       linkend="sql-createpublication-params-for-all-tables"><literal>FOR ALL
-      TABLES</literal></link>.  If <option>publication-name</option> option is
-      not specified, it has the following name pattern:
+      TABLES</literal></link>.  If the <option>--publication</option> option
+      is not specified, the publication has the following name pattern:
       <quote><literal>pg_createsubscriber_%u_%x</literal></quote> (parameter:
       database <parameter>oid</parameter>, random <parameter>int</parameter>).
-      If <option>replication-slot-name</option> is not specified, the
+      If the <option>--replication-slot</option> option is not specified, the
       replication slot has the following name pattern:
       <quote><literal>pg_createsubscriber_%u_%x</literal></quote> (parameters:
       database <parameter>oid</parameter>, random <parameter>int</parameter>).
@@ -444,8 +450,8 @@ PostgreSQL documentation
     <step>
      <para>
       Create a subscription for each specified database on the target server.
-      If <option>subscription-name</option> is not specified, the subscription
-      has the following name pattern:
+      If the <option>--subscription</option> option is not specified, the
+      subscription has the following name pattern:
       <quote><literal>pg_createsubscriber_%u_%x</literal></quote> (parameters:
       database <parameter>oid</parameter>, random <parameter>int</parameter>).
       It does not copy existing data from the source server.  It does not

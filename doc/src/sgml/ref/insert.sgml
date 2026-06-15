@@ -26,7 +26,7 @@ INSERT INTO <replaceable class="parameter">table_name</replaceable> [ AS <replac
     [ OVERRIDING { SYSTEM | USER } VALUE ]
     { DEFAULT VALUES | VALUES ( { <replaceable class="parameter">expression</replaceable> | DEFAULT } [, ...] ) [, ...] | <replaceable class="parameter">query</replaceable> }
     [ ON CONFLICT [ <replaceable class="parameter">conflict_target</replaceable> ] <replaceable class="parameter">conflict_action</replaceable> ]
-    [ RETURNING * | <replaceable class="parameter">output_expression</replaceable> [ [ AS ] <replaceable class="parameter">output_name</replaceable> ] [, ...] ]
+    [ RETURNING { * | <replaceable class="parameter">output_expression</replaceable> [ [ AS ] <replaceable class="parameter">output_name</replaceable> ] } [, ...] ]
 
 <phrase>where <replaceable class="parameter">conflict_target</replaceable> can be one of:</phrase>
 
@@ -113,10 +113,13 @@ INSERT INTO <replaceable class="parameter">table_name</replaceable> [ AS <replac
    <literal>INSERT</literal> privilege on the listed columns.
    Similarly, when <literal>ON CONFLICT DO UPDATE</literal> is specified, you
    only need <literal>UPDATE</literal> privilege on the column(s) that are
-   listed to be updated.  However, <literal>ON CONFLICT DO UPDATE</literal>
-   also requires <literal>SELECT</literal> privilege on any column whose
-   values are read in the <literal>ON CONFLICT DO UPDATE</literal>
-   expressions or <replaceable>condition</replaceable>.
+   listed to be updated.  However, all forms of <literal>ON CONFLICT</literal>
+   also require <literal>SELECT</literal> privilege on any column whose values
+   are read.  This includes any column mentioned in
+   <replaceable>conflict_target</replaceable> (including columns referred to
+   by the arbiter constraint), and any column mentioned in an
+   <literal>ON CONFLICT DO UPDATE</literal> <replaceable>expression</replaceable>,
+   or a <literal>WHERE</literal> clause <replaceable>condition</replaceable>.
   </para>
 
   <para>
@@ -555,6 +558,15 @@ INSERT INTO <replaceable class="parameter">table_name</replaceable> [ AS <replac
      before dropping the index being replaced.
     </para>
    </tip>
+
+   <warning>
+    <para>
+      While <command>CREATE INDEX CONCURRENTLY</command> or <command>REINDEX
+      CONCURRENTLY</command> is running on a unique index, <command>INSERT
+      ... ON CONFLICT</command> statements on the same table may unexpectedly
+      fail with a unique violation.
+    </para>
+   </warning>
 
   </refsect2>
  </refsect1>

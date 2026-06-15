@@ -1489,6 +1489,310 @@ SELECT string_to_array('ABCDEFGHI' COLLATE case_sensitive, NULL, 'b');
  {A,B,C,D,E,F,G,H,I}
 (1 row)
 
+--
+-- A unique index under one collation does not prove uniqueness under
+-- another, so the planner must not use such a proof for any optimization.
+--
+-- Ensure that we do not use inner-unique join execution
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM test1cs t1, test3cs t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+                              QUERY PLAN                              
+----------------------------------------------------------------------
+ Sort
+   Output: t1.x, t2.x
+   Sort Key: t1.x COLLATE case_sensitive, t2.x COLLATE case_sensitive
+   ->  Hash Join
+         Output: t1.x, t2.x
+         Hash Cond: ((t2.x)::text = (t1.x)::text)
+         ->  Seq Scan on collate_tests.test3cs t2
+               Output: t2.x
+         ->  Hash
+               Output: t1.x
+               ->  Seq Scan on collate_tests.test1cs t1
+                     Output: t1.x
+(12 rows)
+
+SELECT * FROM test1cs t1, test3cs t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+  x  |  x  
+-----+-----
+ abc | abc
+ abc | ABC
+ ABC | abc
+ ABC | ABC
+ def | def
+ ghi | ghi
+(6 rows)
+
+-- Ensure that left-join is not removed
+EXPLAIN (COSTS OFF)
+SELECT t1.* FROM test3cs t1
+       LEFT JOIN test3cs t2 ON t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1;
+                QUERY PLAN                
+------------------------------------------
+ Sort
+   Sort Key: t1.x COLLATE case_sensitive
+   ->  Hash Left Join
+         Hash Cond: (t1.x = (t2.x)::text)
+         ->  Seq Scan on test3cs t1
+         ->  Hash
+               ->  Seq Scan on test3cs t2
+(7 rows)
+
+SELECT t1.* FROM test3cs t1
+       LEFT JOIN test3cs t2 ON t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1;
+  x  
+-----
+ abc
+ abc
+ ABC
+ ABC
+ def
+ ghi
+(6 rows)
+
+-- Ensure that self-join is not removed
+EXPLAIN (COSTS OFF)
+SELECT * FROM test3cs t1, test3cs t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+                              QUERY PLAN                              
+----------------------------------------------------------------------
+ Sort
+   Sort Key: t1.x COLLATE case_sensitive, t2.x COLLATE case_sensitive
+   ->  Hash Join
+         Hash Cond: ((t1.x)::text = (t2.x)::text)
+         ->  Seq Scan on test3cs t1
+         ->  Hash
+               ->  Seq Scan on test3cs t2
+(7 rows)
+
+SELECT * FROM test3cs t1, test3cs t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+  x  |  x  
+-----+-----
+ abc | abc
+ abc | ABC
+ ABC | abc
+ ABC | ABC
+ def | def
+ ghi | ghi
+(6 rows)
+
+-- Ensure that semijoin is not reduced to innerjoin
+EXPLAIN (COSTS OFF)
+SELECT * FROM test3cs t1
+  WHERE EXISTS (SELECT 1 FROM test3cs t2 WHERE t1.x = t2.x COLLATE case_insensitive)
+ORDER BY 1;
+                    QUERY PLAN                    
+--------------------------------------------------
+ Sort
+   Sort Key: t1.x COLLATE case_sensitive
+   ->  Hash Semi Join
+         Hash Cond: ((t1.x)::text = (t2.x)::text)
+         ->  Seq Scan on test3cs t1
+         ->  Hash
+               ->  Seq Scan on test3cs t2
+(7 rows)
+
+SELECT * FROM test3cs t1
+  WHERE EXISTS (SELECT 1 FROM test3cs t2 WHERE t1.x = t2.x COLLATE case_insensitive)
+ORDER BY 1;
+  x  
+-----
+ abc
+ ABC
+ def
+ ghi
+(4 rows)
+
+--
+-- A DISTINCT / GROUP BY / set-op on a subquery does not prove uniqueness
+-- under a different collation, so the planner must not use such a proof for
+-- any optimization.
+--
+-- Ensure that we do not use inner-unique join execution
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM test1cs t1, (SELECT DISTINCT x FROM test3cs) t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+                                QUERY PLAN                                 
+---------------------------------------------------------------------------
+ Sort
+   Output: t1.x, test3cs.x
+   Sort Key: t1.x COLLATE case_sensitive, test3cs.x COLLATE case_sensitive
+   ->  Hash Join
+         Output: t1.x, test3cs.x
+         Hash Cond: ((t1.x)::text = (test3cs.x)::text)
+         ->  Seq Scan on collate_tests.test1cs t1
+               Output: t1.x
+         ->  Hash
+               Output: test3cs.x
+               ->  HashAggregate
+                     Output: test3cs.x
+                     Group Key: test3cs.x
+                     ->  Seq Scan on collate_tests.test3cs
+                           Output: test3cs.x
+(15 rows)
+
+SELECT * FROM test1cs t1, (SELECT DISTINCT x FROM test3cs) t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+  x  |  x  
+-----+-----
+ abc | abc
+ abc | ABC
+ ABC | abc
+ ABC | ABC
+ def | def
+ ghi | ghi
+(6 rows)
+
+-- Same with GROUP BY
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM test1cs t1, (SELECT x FROM test3cs GROUP BY x) t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+                                QUERY PLAN                                 
+---------------------------------------------------------------------------
+ Sort
+   Output: t1.x, test3cs.x
+   Sort Key: t1.x COLLATE case_sensitive, test3cs.x COLLATE case_sensitive
+   ->  Hash Join
+         Output: t1.x, test3cs.x
+         Hash Cond: ((t1.x)::text = (test3cs.x)::text)
+         ->  Seq Scan on collate_tests.test1cs t1
+               Output: t1.x
+         ->  Hash
+               Output: test3cs.x
+               ->  HashAggregate
+                     Output: test3cs.x
+                     Group Key: test3cs.x
+                     ->  Seq Scan on collate_tests.test3cs
+                           Output: test3cs.x
+(15 rows)
+
+SELECT * FROM test1cs t1, (SELECT x FROM test3cs GROUP BY x) t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+  x  |  x  
+-----+-----
+ abc | abc
+ abc | ABC
+ ABC | abc
+ ABC | ABC
+ def | def
+ ghi | ghi
+(6 rows)
+
+-- Same with set-op
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM test1cs t1, (SELECT x FROM test3cs UNION SELECT x FROM test3cs) t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+                                QUERY PLAN                                 
+---------------------------------------------------------------------------
+ Sort
+   Output: t1.x, test3cs.x
+   Sort Key: t1.x COLLATE case_sensitive, test3cs.x COLLATE case_sensitive
+   ->  Hash Join
+         Output: t1.x, test3cs.x
+         Hash Cond: ((test3cs.x)::text = (t1.x)::text)
+         ->  HashAggregate
+               Output: test3cs.x
+               Group Key: test3cs.x
+               ->  Append
+                     ->  Seq Scan on collate_tests.test3cs
+                           Output: test3cs.x
+                     ->  Seq Scan on collate_tests.test3cs test3cs_1
+                           Output: test3cs_1.x
+         ->  Hash
+               Output: t1.x
+               ->  Seq Scan on collate_tests.test1cs t1
+                     Output: t1.x
+(18 rows)
+
+SELECT * FROM test1cs t1, (SELECT x FROM test3cs UNION SELECT x FROM test3cs) t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+  x  |  x  
+-----+-----
+ abc | abc
+ abc | ABC
+ ABC | abc
+ ABC | ABC
+ def | def
+ ghi | ghi
+(6 rows)
+
+-- Ensure that left-join is not removed
+EXPLAIN (COSTS OFF)
+SELECT t1.* FROM test3cs t1
+       LEFT JOIN (SELECT DISTINCT x FROM test3cs) t2 ON t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1;
+                  QUERY PLAN                   
+-----------------------------------------------
+ Sort
+   Sort Key: t1.x COLLATE case_sensitive
+   ->  Hash Left Join
+         Hash Cond: (t1.x = (test3cs.x)::text)
+         ->  Seq Scan on test3cs t1
+         ->  Hash
+               ->  HashAggregate
+                     Group Key: test3cs.x
+                     ->  Seq Scan on test3cs
+(9 rows)
+
+SELECT t1.* FROM test3cs t1
+       LEFT JOIN (SELECT DISTINCT x FROM test3cs) t2 ON t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1;
+  x  
+-----
+ abc
+ abc
+ ABC
+ ABC
+ def
+ ghi
+(6 rows)
+
+-- Ensure that semijoin is not reduced to innerjoin
+EXPLAIN (COSTS OFF)
+SELECT * FROM test3cs t1
+  WHERE EXISTS (SELECT 1 FROM (SELECT DISTINCT x FROM test3cs) t2
+                WHERE t1.x = t2.x COLLATE case_insensitive)
+ORDER BY 1;
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Sort
+   Sort Key: t1.x COLLATE case_sensitive
+   ->  Hash Semi Join
+         Hash Cond: ((t1.x)::text = (test3cs.x)::text)
+         ->  Seq Scan on test3cs t1
+         ->  Hash
+               ->  HashAggregate
+                     Group Key: test3cs.x
+                     ->  Seq Scan on test3cs
+(9 rows)
+
+SELECT * FROM test3cs t1
+  WHERE EXISTS (SELECT 1 FROM (SELECT DISTINCT x FROM test3cs) t2
+                WHERE t1.x = t2.x COLLATE case_insensitive)
+ORDER BY 1;
+  x  
+-----
+ abc
+ ABC
+ def
+ ghi
+(4 rows)
+
 CREATE TABLE test1ci (x text COLLATE case_insensitive);
 CREATE TABLE test2ci (x text COLLATE case_insensitive);
 CREATE TABLE test3ci (x text COLLATE case_insensitive);
@@ -2052,6 +2356,263 @@ SELECT (SELECT count(*) FROM test33_0) <> (SELECT count(*) FROM test33_1);
  t
 (1 row)
 
+--
+-- Bug #18568
+--
+-- Partitionwise aggregate (full or partial) should not be used when a
+-- partition key's collation doesn't match that of the GROUP BY column it is
+-- matched with.
+SET max_parallel_workers_per_gather TO 0;
+SET enable_incremental_sort TO off;
+CREATE TABLE pagg_tab3 (a text, c text collate case_insensitive) PARTITION BY LIST(c collate "C");
+CREATE TABLE pagg_tab3_p1 PARTITION OF pagg_tab3 FOR VALUES IN ('a', 'b');
+CREATE TABLE pagg_tab3_p2 PARTITION OF pagg_tab3 FOR VALUES IN ('B', 'A');
+INSERT INTO pagg_tab3 SELECT i % 4 + 1, substr('abAB', (i % 4) + 1 , 1) FROM generate_series(0, 19) i;
+ANALYZE pagg_tab3;
+SET enable_partitionwise_aggregate TO false;
+EXPLAIN (COSTS OFF)
+SELECT upper(c collate case_insensitive), count(c) FROM pagg_tab3 GROUP BY c collate case_insensitive ORDER BY 1;
+                        QUERY PLAN                         
+-----------------------------------------------------------
+ Sort
+   Sort Key: (upper(pagg_tab3.c)) COLLATE case_insensitive
+   ->  HashAggregate
+         Group Key: pagg_tab3.c
+         ->  Append
+               ->  Seq Scan on pagg_tab3_p2 pagg_tab3_1
+               ->  Seq Scan on pagg_tab3_p1 pagg_tab3_2
+(7 rows)
+
+SELECT upper(c collate case_insensitive), count(c) FROM pagg_tab3 GROUP BY c collate case_insensitive ORDER BY 1;
+ upper | count 
+-------+-------
+ A     |    10
+ B     |    10
+(2 rows)
+
+-- No "full" partitionwise aggregation allowed, though "partial" is allowed.
+SET enable_partitionwise_aggregate TO true;
+EXPLAIN (COSTS OFF)
+SELECT upper(c collate case_insensitive), count(c) FROM pagg_tab3 GROUP BY c collate case_insensitive ORDER BY 1;
+                          QUERY PLAN                          
+--------------------------------------------------------------
+ Sort
+   Sort Key: (upper(pagg_tab3.c)) COLLATE case_insensitive
+   ->  Finalize HashAggregate
+         Group Key: pagg_tab3.c
+         ->  Append
+               ->  Partial HashAggregate
+                     Group Key: pagg_tab3.c
+                     ->  Seq Scan on pagg_tab3_p2 pagg_tab3
+               ->  Partial HashAggregate
+                     Group Key: pagg_tab3_1.c
+                     ->  Seq Scan on pagg_tab3_p1 pagg_tab3_1
+(11 rows)
+
+SELECT upper(c collate case_insensitive), count(c) FROM pagg_tab3 GROUP BY c collate case_insensitive ORDER BY 1;
+ upper | count 
+-------+-------
+ A     |    10
+ B     |    10
+(2 rows)
+
+-- OK to use full partitionwise aggregate after changing the GROUP BY column's
+-- collation to be the same as that of the partition key.
+EXPLAIN (COSTS OFF)
+SELECT c collate "C", count(c) FROM pagg_tab3 GROUP BY c collate "C" ORDER BY 1;
+                       QUERY PLAN                       
+--------------------------------------------------------
+ Sort
+   Sort Key: ((pagg_tab3.c)::text) COLLATE "C"
+   ->  Append
+         ->  HashAggregate
+               Group Key: (pagg_tab3.c)::text
+               ->  Seq Scan on pagg_tab3_p2 pagg_tab3
+         ->  HashAggregate
+               Group Key: (pagg_tab3_1.c)::text
+               ->  Seq Scan on pagg_tab3_p1 pagg_tab3_1
+(9 rows)
+
+SELECT c collate "C", count(c) FROM pagg_tab3 GROUP BY c collate "C" ORDER BY 1;
+ c | count 
+---+-------
+ A |     5
+ B |     5
+ a |     5
+ b |     5
+(4 rows)
+
+-- Partitionwise join should not be allowed too when the collation used by the
+-- join keys doesn't match the partition key collation.
+SET enable_partitionwise_join TO false;
+EXPLAIN (COSTS OFF)
+SELECT t1.c, count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c GROUP BY 1 ORDER BY t1.c COLLATE "C";
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Sort
+   Sort Key: t1.c COLLATE "C"
+   ->  HashAggregate
+         Group Key: t1.c
+         ->  Hash Join
+               Hash Cond: (t1.c = t2.c)
+               ->  Append
+                     ->  Seq Scan on pagg_tab3_p2 t1_1
+                     ->  Seq Scan on pagg_tab3_p1 t1_2
+               ->  Hash
+                     ->  Append
+                           ->  Seq Scan on pagg_tab3_p2 t2_1
+                           ->  Seq Scan on pagg_tab3_p1 t2_2
+(13 rows)
+
+SELECT t1.c, count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c GROUP BY 1 ORDER BY t1.c COLLATE "C";
+ c | count 
+---+-------
+ A |   100
+ B |   100
+(2 rows)
+
+SET enable_partitionwise_join TO true;
+EXPLAIN (COSTS OFF)
+SELECT t1.c, count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c GROUP BY 1 ORDER BY t1.c COLLATE "C";
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Sort
+   Sort Key: t1.c COLLATE "C"
+   ->  HashAggregate
+         Group Key: t1.c
+         ->  Hash Join
+               Hash Cond: (t1.c = t2.c)
+               ->  Append
+                     ->  Seq Scan on pagg_tab3_p2 t1_1
+                     ->  Seq Scan on pagg_tab3_p1 t1_2
+               ->  Hash
+                     ->  Append
+                           ->  Seq Scan on pagg_tab3_p2 t2_1
+                           ->  Seq Scan on pagg_tab3_p1 t2_2
+(13 rows)
+
+SELECT t1.c, count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c GROUP BY 1 ORDER BY t1.c COLLATE "C";
+ c | count 
+---+-------
+ A |   100
+ B |   100
+(2 rows)
+
+-- OK when the join clause uses the same collation as the partition key.
+EXPLAIN (COSTS OFF)
+SELECT t1.c COLLATE "C", count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c COLLATE "C" GROUP BY t1.c COLLATE "C" ORDER BY t1.c COLLATE "C";
+                            QUERY PLAN                            
+------------------------------------------------------------------
+ Sort
+   Sort Key: ((t1.c)::text) COLLATE "C"
+   ->  Append
+         ->  HashAggregate
+               Group Key: (t1.c)::text
+               ->  Hash Join
+                     Hash Cond: ((t1.c)::text = (t2.c)::text)
+                     ->  Seq Scan on pagg_tab3_p2 t1
+                     ->  Hash
+                           ->  Seq Scan on pagg_tab3_p2 t2
+         ->  HashAggregate
+               Group Key: (t1_1.c)::text
+               ->  Hash Join
+                     Hash Cond: ((t1_1.c)::text = (t2_1.c)::text)
+                     ->  Seq Scan on pagg_tab3_p1 t1_1
+                     ->  Hash
+                           ->  Seq Scan on pagg_tab3_p1 t2_1
+(17 rows)
+
+SELECT t1.c COLLATE "C", count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c COLLATE "C" GROUP BY t1.c COLLATE "C" ORDER BY t1.c COLLATE "C";
+ c | count 
+---+-------
+ A |    25
+ B |    25
+ a |    25
+ b |    25
+(4 rows)
+
+SET enable_partitionwise_join TO false;
+EXPLAIN (COSTS OFF)
+SELECT t1.c COLLATE "C", count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c COLLATE "C" GROUP BY t1.c COLLATE "C" ORDER BY t1.c COLLATE "C";
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Sort
+   Sort Key: ((t1.c)::text) COLLATE "C"
+   ->  HashAggregate
+         Group Key: (t1.c)::text
+         ->  Hash Join
+               Hash Cond: ((t1.c)::text = (t2.c)::text)
+               ->  Append
+                     ->  Seq Scan on pagg_tab3_p2 t1_1
+                     ->  Seq Scan on pagg_tab3_p1 t1_2
+               ->  Hash
+                     ->  Append
+                           ->  Seq Scan on pagg_tab3_p2 t2_1
+                           ->  Seq Scan on pagg_tab3_p1 t2_2
+(13 rows)
+
+SELECT t1.c COLLATE "C", count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c COLLATE "C" GROUP BY t1.c COLLATE "C" ORDER BY t1.c COLLATE "C";
+ c | count 
+---+-------
+ A |    25
+ B |    25
+ a |    25
+ b |    25
+(4 rows)
+
+DROP TABLE pagg_tab3;
+RESET enable_partitionwise_aggregate;
+RESET max_parallel_workers_per_gather;
+RESET enable_incremental_sort;
+-- Check that DEFAULT expressions in SQL/JSON functions use the same collation
+-- as the RETURNING type.  Mismatched collations should raise an error.
+CREATE DOMAIN d1 AS text COLLATE case_insensitive;
+CREATE DOMAIN d2 AS text COLLATE "C";
+SELECT JSON_VALUE('{"a": "A"}', '$.a' RETURNING d1 DEFAULT ('C' COLLATE "C") COLLATE case_insensitive ON EMPTY) = 'a'; -- true
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT JSON_VALUE('{"a": "A"}', '$.a' RETURNING d1 DEFAULT 'C' ON EMPTY) = 'a'; -- true
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT JSON_VALUE('{"a": "A"}', '$.a' RETURNING d1 DEFAULT 'C'::d2 ON EMPTY) = 'a'; -- error
+ERROR:  collation of DEFAULT expression conflicts with RETURNING clause
+LINE 1: ...ON_VALUE('{"a": "A"}', '$.a' RETURNING d1 DEFAULT 'C'::d2 ON...
+                                                             ^
+DETAIL:  "C" versus "case_insensitive"
+SELECT JSON_VALUE('{"a": "A"}', '$.a' RETURNING d1 DEFAULT 'C' COLLATE "C" ON EMPTY) = 'a'; -- error
+ERROR:  collation of DEFAULT expression conflicts with RETURNING clause
+LINE 1: ...ON_VALUE('{"a": "A"}', '$.a' RETURNING d1 DEFAULT 'C' COLLAT...
+                                                             ^
+DETAIL:  "C" versus "case_insensitive"
+SELECT JSON_VALUE('{"a": "A"}', '$.c' RETURNING d1 DEFAULT 'A' ON EMPTY) = 'a'; -- true
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT JSON_VALUE('{"a": "A"}', '$.c' RETURNING d1 DEFAULT 'A' COLLATE case_insensitive ON EMPTY) = 'a'; -- true
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT JSON_VALUE('{"a": "A"}', '$.c' RETURNING d1 DEFAULT 'A'::d2 ON EMPTY) = 'a'; -- error
+ERROR:  collation of DEFAULT expression conflicts with RETURNING clause
+LINE 1: ...ON_VALUE('{"a": "A"}', '$.c' RETURNING d1 DEFAULT 'A'::d2 ON...
+                                                             ^
+DETAIL:  "C" versus "case_insensitive"
+SELECT JSON_VALUE('{"a": "A"}', '$.c' RETURNING d1 DEFAULT 'A' COLLATE "C" ON EMPTY) = 'a'; -- error
+ERROR:  collation of DEFAULT expression conflicts with RETURNING clause
+LINE 1: ...ON_VALUE('{"a": "A"}', '$.c' RETURNING d1 DEFAULT 'A' COLLAT...
+                                                             ^
+DETAIL:  "C" versus "case_insensitive"
+DROP DOMAIN d1, d2;
 -- cleanup
 RESET search_path;
 SET client_min_messages TO warning;

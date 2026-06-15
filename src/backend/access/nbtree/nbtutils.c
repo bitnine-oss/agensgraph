@@ -1800,6 +1800,12 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 				all_required_satisfied = true,
 				all_satisfied = true;
 
+	/*
+	 * Unset so->scanBehind in case it is still set from back when we dealt
+	 * with the previous page's high key/finaltup
+	 */
+	so->scanBehind = false;
+
 	if (sktrig_required)
 	{
 		/*
@@ -1807,8 +1813,6 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 		 */
 		Assert(!_bt_tuple_before_array_skeys(scan, dir, tuple, tupdesc,
 											 tupnatts, false, 0, NULL));
-
-		so->scanBehind = false; /* reset */
 
 		/*
 		 * Required scan key wasn't satisfied, so required arrays will have to
@@ -2426,8 +2430,10 @@ new_prim_scan:
 	/*
 	 * End this primitive index scan, but schedule another.
 	 *
-	 * Note: If the scan direction happens to change, this scheduled primitive
-	 * index scan won't go ahead after all.
+	 * Note: We make a soft assumption that the current scan direction will
+	 * also be used within _bt_next, when it is asked to step off this page.
+	 * It is up to _bt_next to cancel this scheduled primitive index scan
+	 * whenever it steps to a page in the direction opposite currPos.dir.
 	 */
 	pstate->continuescan = false;	/* Tell _bt_readpage we're done... */
 	so->needPrimScan = true;	/* ...but call _bt_first again */
@@ -4091,7 +4097,7 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 	 */
 	if (!pstate->targetdistance)
 		pstate->targetdistance = LOOK_AHEAD_DEFAULT_DISTANCE;
-	else
+	else if (pstate->targetdistance < MaxIndexTuplesPerPage / 2)
 		pstate->targetdistance *= 2;
 
 	/* Don't read past the end (or before the start) of the page, though */
@@ -4138,9 +4144,9 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
  * current page and killed tuples thereon (generally, this should only be
  * called if so->numKilled > 0).
  *
- * The caller does not have a lock on the page and may or may not have the
- * page pinned in a buffer.  Note that read-lock is sufficient for setting
- * LP_DEAD status (which is only a hint).
+ * Caller should not have a lock on the so->currPos page, but may hold a
+ * buffer pin.  When we return, it still won't be locked.  It'll continue to
+ * hold whatever pins were held before calling here.
  *
  * We match items by heap TID before assuming they are the right ones to
  * delete.  We cope with cases where items have moved right due to insertions.
@@ -4172,7 +4178,8 @@ _bt_killitems(IndexScanDesc scan)
 	int			i;
 	int			numKilled = so->numKilled;
 	bool		killedsomething = false;
-	bool		droppedpin PG_USED_FOR_ASSERTS_ONLY;
+	bool		droppedpin;
+	Buffer		buf;
 
 	Assert(BTScanPosIsValid(so->currPos));
 
@@ -4191,29 +4198,30 @@ _bt_killitems(IndexScanDesc scan)
 		 * LSN.
 		 */
 		droppedpin = false;
-		_bt_lockbuf(scan->indexRelation, so->currPos.buf, BT_READ);
-
-		page = BufferGetPage(so->currPos.buf);
+		buf = so->currPos.buf;
+		_bt_lockbuf(scan->indexRelation, buf, BT_READ);
 	}
 	else
 	{
-		Buffer		buf;
+		XLogRecPtr	latestlsn;
 
 		droppedpin = true;
 		/* Attempt to re-read the buffer, getting pin and lock. */
 		buf = _bt_getbuf(scan->indexRelation, so->currPos.currPage, BT_READ);
 
-		page = BufferGetPage(buf);
-		if (BufferGetLSNAtomic(buf) == so->currPos.lsn)
-			so->currPos.buf = buf;
-		else
+		latestlsn = BufferGetLSNAtomic(buf);
+		Assert(so->currPos.lsn <= latestlsn);
+		if (so->currPos.lsn != latestlsn)
 		{
 			/* Modified while not pinned means hinting is not safe. */
 			_bt_relbuf(scan->indexRelation, buf);
 			return;
 		}
+
+		/* Unmodified, hinting is safe */
 	}
 
+	page = BufferGetPage(buf);
 	opaque = BTPageGetOpaque(page);
 	minoff = P_FIRSTDATAKEY(opaque);
 	maxoff = PageGetMaxOffsetNumber(page);
@@ -4330,10 +4338,13 @@ _bt_killitems(IndexScanDesc scan)
 	if (killedsomething)
 	{
 		opaque->btpo_flags |= BTP_HAS_GARBAGE;
-		MarkBufferDirtyHint(so->currPos.buf, true);
+		MarkBufferDirtyHint(buf, true);
 	}
 
-	_bt_unlockbuf(scan->indexRelation, so->currPos.buf);
+	if (!droppedpin)
+		_bt_unlockbuf(scan->indexRelation, buf);
+	else
+		_bt_relbuf(scan->indexRelation, buf);
 }
 
 

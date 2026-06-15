@@ -2275,8 +2275,8 @@ exec_stmt_call(PLpgSQL_execstate *estate, PLpgSQL_stmt_call *stmt)
 static PLpgSQL_variable *
 make_callstmt_target(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 {
-	List	   *plansources;
-	CachedPlanSource *plansource;
+	CachedPlan *cplan;
+	PlannedStmt *pstmt;
 	CallStmt   *stmt;
 	FuncExpr   *funcexpr;
 	HeapTuple	func_tuple;
@@ -2293,16 +2293,15 @@ make_callstmt_target(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 	oldcontext = MemoryContextSwitchTo(get_eval_mcontext(estate));
 
 	/*
-	 * Get the parsed CallStmt, and look up the called procedure
+	 * Get the parsed CallStmt, and look up the called procedure.  We use
+	 * SPI_plan_get_cached_plan to cover the edge case where expr->plan is
+	 * already stale and needs to be updated.
 	 */
-	plansources = SPI_plan_get_plan_sources(expr->plan);
-	if (list_length(plansources) != 1)
+	cplan = SPI_plan_get_cached_plan(expr->plan);
+	if (cplan == NULL || list_length(cplan->stmt_list) != 1)
 		elog(ERROR, "query for CALL statement is not a CallStmt");
-	plansource = (CachedPlanSource *) linitial(plansources);
-	if (list_length(plansource->query_list) != 1)
-		elog(ERROR, "query for CALL statement is not a CallStmt");
-	stmt = (CallStmt *) linitial_node(Query,
-									  plansource->query_list)->utilityStmt;
+	pstmt = linitial_node(PlannedStmt, cplan->stmt_list);
+	stmt = (CallStmt *) pstmt->utilityStmt;
 	if (stmt == NULL || !IsA(stmt, CallStmt))
 		elog(ERROR, "query for CALL statement is not a CallStmt");
 
@@ -2381,6 +2380,8 @@ make_callstmt_target(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 	Assert(nfields == list_length(stmt->outargs));
 
 	row->nfields = nfields;
+
+	ReleaseCachedPlan(cplan, CurrentResourceOwner);
 
 	MemoryContextSwitchTo(oldcontext);
 
@@ -3242,28 +3243,14 @@ exec_stmt_return(PLpgSQL_execstate *estate, PLpgSQL_stmt_return *stmt)
 				}
 				break;
 
+			case PLPGSQL_DTYPE_ROW:
 			case PLPGSQL_DTYPE_REC:
 				{
-					PLpgSQL_rec *rec = (PLpgSQL_rec *) retvar;
-
-					/* If record is empty, we return NULL not a row of nulls */
-					if (rec->erh && !ExpandedRecordIsEmpty(rec->erh))
-					{
-						estate->retval = ExpandedRecordGetDatum(rec->erh);
-						estate->retisnull = false;
-						estate->rettype = rec->rectypeid;
-					}
-				}
-				break;
-
-			case PLPGSQL_DTYPE_ROW:
-				{
-					PLpgSQL_row *row = (PLpgSQL_row *) retvar;
+					/* exec_eval_datum can handle these cases */
 					int32		rettypmod;
 
-					/* We get here if there are multiple OUT parameters */
 					exec_eval_datum(estate,
-									(PLpgSQL_datum *) row,
+									retvar,
 									&estate->rettype,
 									&rettypmod,
 									&estate->retval,
@@ -4244,8 +4231,9 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 			/*
 			 * We could look at the raw_parse_tree, but it seems simpler to
 			 * check the command tag.  Note we should *not* look at the Query
-			 * tree(s), since those are the result of rewriting and could have
-			 * been transmogrified into something else entirely.
+			 * tree(s), since those are the result of rewriting and could be
+			 * stale, or could have been transmogrified into something else
+			 * entirely.
 			 */
 			if (plansource->commandTag == CMDTAG_INSERT ||
 				plansource->commandTag == CMDTAG_UPDATE ||
@@ -5721,7 +5709,7 @@ exec_eval_expr(PLpgSQL_execstate *estate,
 	/*
 	 * Else do it the hard way via exec_run_select
 	 */
-	rc = exec_run_select(estate, expr, 2, NULL);
+	rc = exec_run_select(estate, expr, 0, NULL);
 	if (rc != SPI_OK_SELECT)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
@@ -5775,6 +5763,10 @@ exec_eval_expr(PLpgSQL_execstate *estate,
 
 /* ----------
  * exec_run_select			Execute a select query
+ *
+ * Note: passing maxtuples different from 0 ("return all tuples") is
+ * deprecated because it will prevent parallel execution of the query.
+ * However, we retain the parameter in case we need it someday.
  * ----------
  */
 static int
@@ -8151,10 +8143,12 @@ exec_save_simple_expr(PLpgSQL_expr *expr, CachedPlan *cplan)
 	/*
 	 * Ordinarily, the plan node should be a simple Result.  However, if
 	 * debug_parallel_query is on, the planner might've stuck a Gather node
-	 * atop that.  The simplest way to deal with this is to look through the
-	 * Gather node.  The Gather node's tlist would normally contain a Var
-	 * referencing the child node's output, but it could also be a Param, or
-	 * it could be a Const that setrefs.c copied as-is.
+	 * atop that; and/or if this plan is for a scrollable cursor, the planner
+	 * might've stuck a Material node atop it.  The simplest way to deal with
+	 * this is to look through the Gather and/or Material nodes.  The upper
+	 * node's tlist would normally contain a Var referencing the child node's
+	 * output, but it could also be a Param, or it could be a Const that
+	 * setrefs.c copied as-is.
 	 */
 	plan = stmt->planTree;
 	for (;;)
@@ -8172,7 +8166,7 @@ exec_save_simple_expr(PLpgSQL_expr *expr, CachedPlan *cplan)
 				   ((Result *) plan)->resconstantqual == NULL);
 			break;
 		}
-		else if (IsA(plan, Gather))
+		else if (IsA(plan, Gather) || IsA(plan, Material))
 		{
 			Assert(plan->lefttree != NULL &&
 				   plan->righttree == NULL &&

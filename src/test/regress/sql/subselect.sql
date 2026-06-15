@@ -413,6 +413,15 @@ select (select (select view_a)) from view_a;
 select (select (a.*)::text) from view_a a;
 
 --
+-- Test case for bug #19037: no relation entry for relid N
+--
+
+explain (costs off)
+select (1 = any(array_agg(f1))) = any (select false) from int4_tbl;
+
+select (1 = any(array_agg(f1))) = any (select false) from int4_tbl;
+
+--
 -- Check that whole-row Vars reading the result of a subselect don't include
 -- any junk columns therein
 --
@@ -889,6 +898,72 @@ move forward all in c1;
 fetch backward all in c1;
 
 commit;
+
+--
+-- Check that JsonConstructorExpr is treated as non-strict, and thus can be
+-- wrapped in a PlaceHolderVar
+--
+
+begin;
+
+create temp table json_tab (a int);
+insert into json_tab values (1);
+
+explain (verbose, costs off)
+select * from json_tab t1 left join (select json_array(1, a) from json_tab t2) s on false;
+
+select * from json_tab t1 left join (select json_array(1, a) from json_tab t2) s on false;
+
+rollback;
+
+--
+-- Verify that we correctly flatten cases involving a subquery output
+-- expression that doesn't need to be wrapped in a PlaceHolderVar
+--
+
+explain (costs off)
+select tname, attname from (
+select relname::information_schema.sql_identifier as tname, * from
+  (select * from pg_class c) ss1) ss2
+  right join pg_attribute a on a.attrelid = ss2.oid
+where tname = 'tenk1' and attnum = 1;
+
+select tname, attname from (
+select relname::information_schema.sql_identifier as tname, * from
+  (select * from pg_class c) ss1) ss2
+  right join pg_attribute a on a.attrelid = ss2.oid
+where tname = 'tenk1' and attnum = 1;
+
+-- Check behavior when there's a lateral reference in the output expression
+explain (verbose, costs off)
+select t1.ten, sum(x) from
+  tenk1 t1 left join lateral (
+    select t1.ten + t2.ten as x, t2.fivethous from tenk1 t2
+  ) ss on t1.unique1 = ss.fivethous
+group by t1.ten
+order by t1.ten;
+
+select t1.ten, sum(x) from
+  tenk1 t1 left join lateral (
+    select t1.ten + t2.ten as x, t2.fivethous from tenk1 t2
+  ) ss on t1.unique1 = ss.fivethous
+group by t1.ten
+order by t1.ten;
+
+explain (verbose, costs off)
+select t1.q1, x from
+  int8_tbl t1 left join
+  (int8_tbl t2 left join
+   lateral (select t2.q1+t3.q1 as x, * from int8_tbl t3) t3 on t2.q2 = t3.q2)
+  on t1.q2 = t2.q2
+order by 1, 2;
+
+select t1.q1, x from
+  int8_tbl t1 left join
+  (int8_tbl t2 left join
+   lateral (select t2.q1+t3.q1 as x, * from int8_tbl t3) t3 on t2.q2 = t3.q2)
+  on t1.q2 = t2.q2
+order by 1, 2;
 
 --
 -- Tests for CTE inlining behavior

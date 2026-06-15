@@ -134,8 +134,10 @@ typedef struct ExprState
 	bool	   *innermost_domainnull;
 
 	/*
-	 * For expression nodes that support soft errors.  Should be set to NULL
-	 * before calling ExecInitExprRec() if the caller wants errors thrown.
+	 * For expression nodes that support soft errors. Should be set to NULL if
+	 * the caller wants errors to be thrown. Callers that do not want errors
+	 * thrown should set it to a valid ErrorSaveContext before calling
+	 * ExecInitExprRec().
 	 */
 	ErrorSaveContext *escontext;
 
@@ -168,7 +170,7 @@ typedef struct ExprState
  *		UniqueProcs
  *		UniqueStrats
  *		Unique				is it a unique index?
- *		OpclassOptions		opclass-specific options, or NULL if none
+ *		NullsNotDistinct	is NULLS NOT DISTINCT?
  *		ReadyForInserts		is it valid for inserts?
  *		CheckedUnchanged	IndexUnchanged status determined yet?
  *		IndexUnchanged		aminsert hint, cached for retail inserts
@@ -488,6 +490,9 @@ typedef struct ResultRelInfo
 	/* Have the projection and the slots above been initialized? */
 	bool		ri_projectNewInfoValid;
 
+	/* updates do LockTuple() before oldtup read; see README.tuplock */
+	bool		ri_needLockTagTuple;
+
 	/* triggers to be fired, if any */
 	TriggerDesc *ri_TrigDesc;
 
@@ -575,15 +580,13 @@ typedef struct ResultRelInfo
 	bool		ri_RootToChildMapValid;
 
 	/*
-	 * Information needed by tuple routing target relations
+	 * Other information needed by child result relations
 	 *
-	 * RootResultRelInfo gives the target relation mentioned in the query, if
-	 * it's a partitioned table. It is not set if the target relation
-	 * mentioned in the query is an inherited table, nor when tuple routing is
-	 * not needed.
+	 * ri_RootResultRelInfo gives the target relation mentioned in the query.
+	 * Used as the root for tuple routing and/or transition capture.
 	 *
-	 * PartitionTupleSlot is non-NULL if RootToChild conversion is needed and
-	 * the relation is a partition.
+	 * ri_PartitionTupleSlot is non-NULL if the relation is a partition to
+	 * route tuples into and ri_RootToChildMap conversion is needed.
 	 */
 	struct ResultRelInfo *ri_RootResultRelInfo;
 	TupleTableSlot *ri_PartitionTupleSlot;

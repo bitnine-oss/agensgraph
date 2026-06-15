@@ -421,12 +421,13 @@ set_locale_and_encoding(void)
 	datctype_literal = PQescapeLiteral(conn_new_template1,
 									   locale->db_ctype,
 									   strlen(locale->db_ctype));
+
 	if (locale->db_locale)
 		datlocale_literal = PQescapeLiteral(conn_new_template1,
 											locale->db_locale,
 											strlen(locale->db_locale));
 	else
-		datlocale_literal = pg_strdup("NULL");
+		datlocale_literal = "NULL";
 
 	/* update template0 in new cluster */
 	if (GET_MAJOR_VERSION(new_cluster.major_version) >= 1700)
@@ -470,7 +471,8 @@ set_locale_and_encoding(void)
 
 	PQfreemem(datcollate_literal);
 	PQfreemem(datctype_literal);
-	PQfreemem(datlocale_literal);
+	if (locale->db_locale)
+		PQfreemem(datlocale_literal);
 
 	PQfinish(conn_new_template1);
 

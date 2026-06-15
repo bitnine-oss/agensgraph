@@ -337,7 +337,7 @@ main(int argc, char *argv[])
 		 * won't have the WAL ranges for the resulting manifest.
 		 */
 		if (manifests[n_prior_backups] == NULL)
-			pg_fatal("can't generate a manifest because no manifest is available for the final input backup");
+			pg_fatal("cannot generate a manifest because no manifest is available for the final input backup");
 	}
 	else
 		mwriter = NULL;
@@ -420,7 +420,7 @@ main(int argc, char *argv[])
 		else
 		{
 			pg_log_debug("recursively fsyncing \"%s\"", opt.output);
-			sync_pgdata(opt.output, version * 10000, opt.sync_method);
+			sync_pgdata(opt.output, version, opt.sync_method);
 		}
 	}
 
@@ -481,7 +481,7 @@ add_tablespace_mapping(cb_options *opt, char *arg)
 				 tsmap->old_dir);
 
 	if (!is_absolute_path(tsmap->new_dir))
-		pg_fatal("old directory is not an absolute path in tablespace mapping: %s",
+		pg_fatal("new directory is not an absolute path in tablespace mapping: %s",
 				 tsmap->new_dir);
 
 	/* Canonicalize paths to avoid spurious failures when comparing. */
@@ -655,7 +655,7 @@ check_control_files(int n_backups, char **backup_dirs)
 	if (data_checksum_mismatch)
 	{
 		pg_log_warning("only some backups have checksums enabled");
-		pg_log_warning_hint("disable, and optionally reenable, checksums on the output directory to avoid failures");
+		pg_log_warning_hint("Disable, and optionally reenable, checksums on the output directory to avoid failures.");
 	}
 
 	return system_identifier;
@@ -766,9 +766,9 @@ help(const char *progname)
 	printf(_("  -o, --output=DIRECTORY    output directory\n"));
 	printf(_("  -T, --tablespace-mapping=OLDDIR=NEWDIR\n"
 			 "                            relocate tablespace in OLDDIR to NEWDIR\n"));
-	printf(_("      --clone               clone (reflink) instead of copying files\n"));
+	printf(_("      --clone               clone (reflink) files instead of copying\n"));
 	printf(_("      --copy                copy files (default)\n"));
-	printf(_("      --copy-file-range     copy using copy_file_range() syscall\n"));
+	printf(_("      --copy-file-range     copy using copy_file_range() system call\n"));
 	printf(_("      --manifest-checksums=SHA{224,256,384,512}|CRC32C|NONE\n"
 			 "                            use algorithm for manifest checksums\n"));
 	printf(_("      --no-manifest         suppress generation of backup manifest\n"));
@@ -804,7 +804,7 @@ parse_oid(char *s, Oid *result)
  * Copy files from the input directory to the output directory, reconstructing
  * full files from incremental files as required.
  *
- * If processing is a user-defined tablespace, the tsoid should be the OID
+ * If processing a user-defined tablespace, the tsoid should be the OID
  * of that tablespace and input_directory and output_directory should be the
  * toplevel input and output directories for that tablespace. Otherwise,
  * tsoid should be InvalidOid and input_directory and output_directory should
@@ -816,7 +816,7 @@ parse_oid(char *s, Oid *result)
  *
  * n_prior_backups is the number of prior backups that we have available.
  * This doesn't count the very last backup, which is referenced by
- * output_directory, just the older ones. prior_backup_dirs is an array of
+ * input_directory, just the older ones. prior_backup_dirs is an array of
  * the locations of those previous backups.
  */
 static void
@@ -1070,7 +1070,7 @@ process_directory_recursively(Oid tsoid,
 					 */
 					bmpath = psprintf("%s/%s", input_directory,
 									  "backup_manifest");
-					pg_log_warning("\"%s\" contains no entry for \"%s\"",
+					pg_log_warning("manifest file \"%s\" contains no entry for file \"%s\"",
 								   bmpath, manifest_path);
 					pfree(bmpath);
 				}

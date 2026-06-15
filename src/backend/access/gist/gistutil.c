@@ -156,7 +156,7 @@ gistMakeUnionItVec(GISTSTATE *giststate, IndexTuple *itvec, int len,
 {
 	int			i;
 	GistEntryVector *evec;
-	int			attrsize;
+	int			attrsize = 0;	/* silence compiler warning */
 
 	evec = (GistEntryVector *) palloc((len + 2) * sizeof(GISTENTRY) + GEVHDRSZ);
 
@@ -241,7 +241,7 @@ gistMakeUnionKey(GISTSTATE *giststate, int attno,
 		char		padding[2 * sizeof(GISTENTRY) + GEVHDRSZ];
 	}			storage;
 	GistEntryVector *evec = &storage.gev;
-	int			dstsize;
+	int			dstsize = 0;	/* silence compiler warning */
 
 	evec->n = 2;
 
@@ -1033,7 +1033,7 @@ gistGetFakeLSN(Relation rel)
 		 * last call.
 		 */
 		static XLogRecPtr lastlsn = InvalidXLogRecPtr;
-		XLogRecPtr	currlsn = GetXLogInsertRecPtr();
+		XLogRecPtr	currlsn = GetXLogInsertEndRecPtr();
 
 		/* Shouldn't be called for WAL-logging relations */
 		Assert(!RelationNeedsWAL(rel));

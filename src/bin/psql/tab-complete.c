@@ -1169,6 +1169,19 @@ Alter_procedure_options, "COST", "IMMUTABLE", "LEAKPROOF", "NOT LEAKPROOF", \
 Alter_routine_options, "CALLED ON NULL INPUT", "RETURNS NULL ON NULL INPUT", \
 "STRICT", "SUPPORT"
 
+/* COPY options shared between FROM and TO */
+#define Copy_common_options \
+"DELIMITER", "ENCODING", "ESCAPE", "FORMAT", "HEADER", "NULL", "QUOTE"
+
+/* COPY FROM options */
+#define Copy_from_options \
+Copy_common_options, "DEFAULT", "FORCE_NOT_NULL", "FORCE_NULL", "FREEZE", \
+"LOG_VERBOSITY", "ON_ERROR"
+
+/* COPY TO options */
+#define Copy_to_options \
+Copy_common_options, "FORCE_QUOTE"
+
 /* Agensgraph list of graphs */
 #define Query_for_list_of_graphs \
 "SELECT graphname FROM pg_catalog.ag_graph "\
@@ -1749,10 +1762,10 @@ psql_completion(const char *text, int start, int end)
 		"\\out",
 		"\\password", "\\print", "\\prompt", "\\pset",
 		"\\qecho", "\\quit",
-		"\\reset",
+		"\\reset", "\\restrict",
 		"\\s", "\\set", "\\setenv", "\\sf", "\\sv",
 		"\\t", "\\T", "\\timing",
-		"\\unset",
+		"\\unrestrict", "\\unset",
 		"\\x",
 		"\\warn", "\\watch", "\\write",
 		"\\z",
@@ -2484,7 +2497,6 @@ psql_completion(const char *text, int start, int end)
 					  "OWNER TO", "SET", "VALIDATE CONSTRAINT",
 					  "REPLICA IDENTITY", "ATTACH PARTITION",
 					  "DETACH PARTITION", "FORCE ROW LEVEL SECURITY",
-					  "SPLIT PARTITION", "MERGE PARTITIONS (",
 					  "OF", "NOT OF");
 	/* ALTER TABLE xxx ADD */
 	else if (Matches("ALTER", "TABLE", MatchAny, "ADD"))
@@ -2741,29 +2753,16 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("FROM (", "IN (", "WITH (");
 
 	/*
-	 * If we have ALTER TABLE <foo> DETACH|SPLIT PARTITION, provide a list of
+	 * If we have ALTER TABLE <foo> DETACH PARTITION, provide a list of
 	 * partitions of <foo>.
 	 */
-	else if (Matches("ALTER", "TABLE", MatchAny, "DETACH|SPLIT", "PARTITION"))
+	else if (Matches("ALTER", "TABLE", MatchAny, "DETACH", "PARTITION"))
 	{
 		set_completion_reference(prev3_wd);
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_partition_of_table);
 	}
 	else if (Matches("ALTER", "TABLE", MatchAny, "DETACH", "PARTITION", MatchAny))
 		COMPLETE_WITH("CONCURRENTLY", "FINALIZE");
-
-	/* ALTER TABLE <name> SPLIT PARTITION <name> */
-	else if (Matches("ALTER", "TABLE", MatchAny, "SPLIT", "PARTITION", MatchAny))
-		COMPLETE_WITH("INTO ( PARTITION");
-
-	/* ALTER TABLE <name> MERGE PARTITIONS ( */
-	else if (Matches("ALTER", "TABLE", MatchAny, "MERGE", "PARTITIONS", "("))
-	{
-		set_completion_reference(prev4_wd);
-		COMPLETE_WITH_SCHEMA_QUERY(Query_for_partition_of_table);
-	}
-	else if (Matches("ALTER", "TABLE", MatchAny, "MERGE", "PARTITIONS", "(*)"))
-		COMPLETE_WITH("INTO");
 
 	/* ALTER TABLE <name> OF */
 	else if (Matches("ALTER", "TABLE", MatchAny, "OF"))
@@ -3018,7 +3017,7 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_tables, "(");
 	/* Complete COPY ( with legal query commands */
 	else if (Matches("COPY|\\copy", "("))
-		COMPLETE_WITH("SELECT", "TABLE", "VALUES", "INSERT INTO", "UPDATE", "DELETE FROM", "WITH");
+		COMPLETE_WITH("SELECT", "TABLE", "VALUES", "INSERT INTO", "UPDATE", "DELETE FROM", "MERGE INTO", "WITH");
 	/* Complete COPY <sth> */
 	else if (Matches("COPY|\\copy", MatchAny))
 		COMPLETE_WITH("FROM", "TO");
@@ -3044,23 +3043,24 @@ psql_completion(const char *text, int start, int end)
 	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny))
 		COMPLETE_WITH("WITH (", "WHERE");
 
-	/* Complete COPY <sth> FROM|TO filename WITH ( */
-	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO", MatchAny, "WITH", "("))
-		COMPLETE_WITH("FORMAT", "FREEZE", "DELIMITER", "NULL",
-					  "HEADER", "QUOTE", "ESCAPE", "FORCE_QUOTE",
-					  "FORCE_NOT_NULL", "FORCE_NULL", "ENCODING", "DEFAULT",
-					  "ON_ERROR", "LOG_VERBOSITY");
+	/* Complete COPY <sth> FROM filename WITH ( */
+	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny, "WITH", "("))
+		COMPLETE_WITH(Copy_from_options);
+
+	/* Complete COPY <sth> TO filename WITH ( */
+	else if (Matches("COPY|\\copy", MatchAny, "TO", MatchAny, "WITH", "("))
+		COMPLETE_WITH(Copy_to_options);
 
 	/* Complete COPY <sth> FROM|TO filename WITH (FORMAT */
 	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO", MatchAny, "WITH", "(", "FORMAT"))
 		COMPLETE_WITH("binary", "csv", "text");
 
 	/* Complete COPY <sth> FROM filename WITH (ON_ERROR */
-	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO", MatchAny, "WITH", "(", "ON_ERROR"))
+	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny, "WITH", "(", "ON_ERROR"))
 		COMPLETE_WITH("stop", "ignore");
 
 	/* Complete COPY <sth> FROM filename WITH (LOG_VERBOSITY */
-	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO", MatchAny, "WITH", "(", "LOG_VERBOSITY"))
+	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny, "WITH", "(", "LOG_VERBOSITY"))
 		COMPLETE_WITH("default", "verbose");
 
 	/* Complete COPY <sth> FROM <sth> WITH (<options>) */

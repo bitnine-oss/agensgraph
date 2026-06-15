@@ -27,17 +27,17 @@ my $node = PostgreSQL::Test::Cluster->new('wraparound');
 $node->init;
 $node->append_conf(
 	'postgresql.conf', qq[
-autovacuum = off # run autovacuum only to prevent wraparound
 autovacuum_naptime = 1s
 log_autovacuum_min_duration = 0
 ]);
 $node->start;
 $node->safe_psql('postgres', 'CREATE EXTENSION xid_wraparound');
 
-# Create a test table
+# Create a test table. We disable autovacuum on the table to run it only
+# to prevent wraparound.
 $node->safe_psql(
 	'postgres', qq[
-CREATE TABLE wraparoundtest(t text);
+CREATE TABLE wraparoundtest(t text) WITH (autovacuum_enabled = off);
 INSERT INTO wraparoundtest VALUES ('start');
 ]);
 
@@ -103,7 +103,7 @@ $ret = $node->psql(
 	stderr => \$stderr);
 like(
 	$stderr,
-	qr/ERROR:  database is not accepting commands that assign new XIDs to avoid wraparound data loss in database "postgres"/,
+	qr/ERROR:  database is not accepting commands that assign new transaction IDs to avoid wraparound data loss in database "postgres"/,
 	"stop-limit");
 
 # Finish the old transaction, to allow vacuum freezing to advance

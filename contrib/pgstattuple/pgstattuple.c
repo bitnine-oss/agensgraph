@@ -323,7 +323,11 @@ pgstat_heap(Relation rel, FunctionCallInfo fcinfo)
 	pgstattuple_type stat = {0};
 	SnapshotData SnapshotDirty;
 
-	if (rel->rd_rel->relam != HEAP_TABLE_AM_OID)
+	/*
+	 * Sequences always use heap AM, but they don't show that in the catalogs.
+	 */
+	if (rel->rd_rel->relkind != RELKIND_SEQUENCE &&
+		rel->rd_rel->relam != HEAP_TABLE_AM_OID)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("only heap AM is supported")));
@@ -418,7 +422,7 @@ pgstat_btree_page(pgstattuple_type *stat, Relation rel, BlockNumber blkno,
 		/* fully empty page */
 		stat->free_space += BLCKSZ;
 	}
-	else
+	else if (PageGetSpecialSize(page) == MAXALIGN(sizeof(BTPageOpaqueData)))
 	{
 		BTPageOpaque opaque;
 
@@ -452,10 +456,16 @@ pgstat_hash_page(pgstattuple_type *stat, Relation rel, BlockNumber blkno,
 	Buffer		buf;
 	Page		page;
 
-	buf = _hash_getbuf_with_strategy(rel, blkno, HASH_READ, 0, bstrategy);
+	buf = ReadBufferExtended(rel, MAIN_FORKNUM, blkno, RBM_NORMAL, bstrategy);
+	LockBuffer(buf, HASH_READ);
 	page = BufferGetPage(buf);
 
-	if (PageGetSpecialSize(page) == MAXALIGN(sizeof(HashPageOpaqueData)))
+	if (PageIsNew(page))
+	{
+		/* fully empty page */
+		stat->free_space += BLCKSZ;
+	}
+	else if (PageGetSpecialSize(page) == MAXALIGN(sizeof(HashPageOpaqueData)))
 	{
 		HashPageOpaque opaque;
 
@@ -496,17 +506,23 @@ pgstat_gist_page(pgstattuple_type *stat, Relation rel, BlockNumber blkno,
 
 	buf = ReadBufferExtended(rel, MAIN_FORKNUM, blkno, RBM_NORMAL, bstrategy);
 	LockBuffer(buf, GIST_SHARE);
-	gistcheckpage(rel, buf);
 	page = BufferGetPage(buf);
-
-	if (GistPageIsLeaf(page))
+	if (PageIsNew(page))
 	{
-		pgstat_index_page(stat, page, FirstOffsetNumber,
-						  PageGetMaxOffsetNumber(page));
+		/* fully empty page */
+		stat->free_space += BLCKSZ;
 	}
-	else
+	else if (PageGetSpecialSize(page) == MAXALIGN(sizeof(GISTPageOpaqueData)))
 	{
-		/* root or node */
+		if (GistPageIsLeaf(page))
+		{
+			pgstat_index_page(stat, page, FirstOffsetNumber,
+							  PageGetMaxOffsetNumber(page));
+		}
+		else
+		{
+			/* root or node */
+		}
 	}
 
 	UnlockReleaseBuffer(buf);

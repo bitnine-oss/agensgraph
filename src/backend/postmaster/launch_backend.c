@@ -53,6 +53,7 @@
 #include "postmaster/walwriter.h"
 #include "replication/slotsync.h"
 #include "replication/walreceiver.h"
+#include "storage/dsm.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/pg_shmem.h"
@@ -63,6 +64,7 @@
 #include "utils/builtins.h"
 #include "utils/datetime.h"
 #include "utils/guc.h"
+#include "utils/injection_point.h"
 #include "utils/memutils.h"
 #include "utils/timestamp.h"
 
@@ -104,6 +106,9 @@ typedef struct
 	void	   *UsedShmemSegAddr;
 	slock_t    *ShmemLock;
 	struct bkend *ShmemBackendArray;
+#ifdef USE_INJECTION_POINTS
+	struct InjectionPointsCtl *ActiveInjectionPoints;
+#endif
 #ifndef HAVE_SPINLOCKS
 	PGSemaphore *SpinlockSemaArray;
 #endif
@@ -215,9 +220,9 @@ PostmasterChildName(BackendType child_type)
  * Start a new postmaster child process.
  *
  * The child process will be restored to roughly the same state whether
- * EXEC_BACKEND is used or not: it will be attached to shared memory, and fds
- * and other resources that we've inherited from postmaster that are not
- * needed in a child process have been closed.
+ * EXEC_BACKEND is used or not: it will be attached to shared memory if
+ * appropriate, and fds and other resources that we've inherited from
+ * postmaster that are not needed in a child process have been closed.
  *
  * 'startup_data' is an optional contiguous chunk of data that is passed to
  * the child process.
@@ -244,6 +249,13 @@ postmaster_child_launch(BackendType child_type,
 
 		/* Detangle from postmaster */
 		InitPostmasterChild();
+
+		/* Detach shared memory if not needed. */
+		if (!child_process_kinds[child_type].shmem_attach)
+		{
+			dsm_detach_all();
+			PGSharedMemoryDetach();
+		}
 
 		/*
 		 * Enter the Main function with TopMemoryContext.  The startup data is
@@ -722,6 +734,10 @@ save_backend_variables(BackendParameters *param, ClientSocket *client_sock,
 	param->ShmemLock = ShmemLock;
 	param->ShmemBackendArray = ShmemBackendArray;
 
+#ifdef USE_INJECTION_POINTS
+	param->ActiveInjectionPoints = ActiveInjectionPoints;
+#endif
+
 #ifndef HAVE_SPINLOCKS
 	param->SpinlockSemaArray = SpinlockSemaArray;
 #endif
@@ -764,7 +780,8 @@ save_backend_variables(BackendParameters *param, ClientSocket *client_sock,
 	strlcpy(param->pkglib_path, pkglib_path, MAXPGPATH);
 
 	param->startup_data_len = startup_data_len;
-	memcpy(param->startup_data, startup_data, startup_data_len);
+	if (startup_data_len > 0)
+		memcpy(param->startup_data, startup_data, startup_data_len);
 
 	return true;
 }
@@ -979,6 +996,10 @@ restore_backend_variables(BackendParameters *param)
 
 	ShmemLock = param->ShmemLock;
 	ShmemBackendArray = param->ShmemBackendArray;
+
+#ifdef USE_INJECTION_POINTS
+	ActiveInjectionPoints = param->ActiveInjectionPoints;
+#endif
 
 #ifndef HAVE_SPINLOCKS
 	SpinlockSemaArray = param->SpinlockSemaArray;

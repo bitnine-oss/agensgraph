@@ -13,7 +13,16 @@ set -e
 
 packages="$@"
 
-macports_url="https://github.com/macports/macports-base/releases/download/v2.8.1/MacPorts-2.8.1-13-Ventura.pkg"
+macos_major_version="` sw_vers -productVersion | sed 's/\..*//' `"
+echo "macOS major version: $macos_major_version"
+
+# Scan the available MacPorts releases to find one that matches the running
+# macOS release.
+macports_release_list_url="https://api.github.com/repos/macports/macports-base/releases"
+macports_version_pattern="2\.10\.1"
+macports_url="$( curl -s $macports_release_list_url | grep "\"https://github.com/macports/macports-base/releases/download/v$macports_version_pattern/MacPorts-$macports_version_pattern-$macos_major_version-[A-Za-z]*\.pkg\"" | sed 's/.*: "//;s/".*//' | head -1 )"
+echo "MacPorts package URL: $macports_url"
+
 cache_dmg="macports.hfs.dmg"
 
 if [ "$CIRRUS_CI" != "true" ]; then
@@ -50,11 +59,18 @@ if [ -n "$(port -q installed installed)" ] ; then
     sudo port unsetrequested installed
 fi
 
-# if setting all the required packages as requested fails, we need
-# to install at least one of them
-if ! sudo port setrequested $packages > /dev/null 2>&1 ; then
-    echo not all required packages installed, doing so now
+# If setting all the required packages as requested fails, we need
+# to install at least one of them. Need to do so one-by-one as
+# port setrequested only reports failures for the first package.
+echo "checking if all required packages are installed"
+for package in $packages ; do
+  if ! sudo port setrequested $package > /dev/null 2>&1 ; then
     update_cached_image=1
+  fi
+done
+echo "done"
+if [ "$update_cached_image" -eq 1 ]; then
+    echo not all required packages installed, doing so now
     # to keep the image small, we deleted the ports tree from the image...
     sudo port selfupdate
     # XXX likely we'll need some other way to force an upgrade at some

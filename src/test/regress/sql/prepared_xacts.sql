@@ -1,3 +1,8 @@
+SELECT current_setting('max_prepared_transactions')::integer < 2 AS skip_test \gset
+\if :skip_test
+\quit
+\endif
+
 --
 -- PREPARED TRANSACTIONS (two-phase commit)
 --
@@ -158,7 +163,32 @@ SELECT * FROM pxtest3;
 -- There should be no prepared transactions
 SELECT gid FROM pg_prepared_xacts WHERE gid ~ '^regress_' ORDER BY gid;
 
+
+-- Test row-level locks held by prepared transactions
+CREATE TABLE pxtest_rowlock (id int PRIMARY KEY, data text);
+INSERT INTO pxtest_rowlock VALUES (1, 'test data');
+
+BEGIN;
+SELECT * FROM pxtest_rowlock WHERE id = 1 FOR SHARE;
+PREPARE TRANSACTION 'regress_p1';
+
+-- Should fail because the row is locked
+SELECT * FROM pxtest_rowlock WHERE id = 1 FOR UPDATE NOWAIT;
+
+-- Test prepared transactions that participate in multixacts. For
+-- that, lock the same row again, creating a multixid.
+BEGIN;
+SELECT * FROM pxtest_rowlock WHERE id = 1 FOR SHARE;
+PREPARE TRANSACTION 'regress_p2';
+
+-- Should fail because the row is locked
+SELECT * FROM pxtest_rowlock WHERE id = 1 FOR UPDATE NOWAIT;
+
+ROLLBACK PREPARED 'regress_p1';
+ROLLBACK PREPARED 'regress_p2';
+
 -- Clean up
 DROP TABLE pxtest2;
-DROP TABLE pxtest3;  -- will still be there if prepared xacts are disabled
+-- pxtest3 was already dropped
 DROP TABLE pxtest4;
+DROP TABLE pxtest_rowlock;

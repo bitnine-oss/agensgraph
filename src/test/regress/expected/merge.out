@@ -2059,6 +2059,23 @@ SELECT * FROM pa_target ORDER BY tid;
 (8 rows)
 
 ROLLBACK;
+-- bug #18871: ExecInitPartitionInfo()'s handling of DO NOTHING actions
+BEGIN;
+TRUNCATE pa_target;
+MERGE INTO pa_target t
+  USING (VALUES (10, 100)) AS s(sid, delta)
+  ON t.tid = s.sid
+  WHEN NOT MATCHED THEN
+    INSERT VALUES (1, 10, 'inserted by merge')
+  WHEN MATCHED THEN
+    DO NOTHING;
+SELECT * FROM pa_target ORDER BY tid, val;
+ tid | balance |        val        
+-----+---------+-------------------
+   1 |      10 | inserted by merge
+(1 row)
+
+ROLLBACK;
 DROP TABLE pa_target CASCADE;
 -- The target table is partitioned in the same way, but this time by attaching
 -- partitions which have columns in different order, dropped columns etc.
@@ -2683,12 +2700,132 @@ SELECT * FROM new_measurement ORDER BY city_id, logdate;
        1 | 01-17-2007 |          |          
 (2 rows)
 
+-- MERGE into inheritance root table
+DROP TRIGGER insert_measurement_trigger ON measurement;
+ALTER TABLE measurement ADD CONSTRAINT mcheck CHECK (city_id = 0) NO INHERIT;
+EXPLAIN (COSTS OFF)
+MERGE INTO measurement m
+ USING (VALUES (1, '01-17-2007'::date)) nm(city_id, logdate) ON
+      (m.city_id = nm.city_id and m.logdate=nm.logdate)
+WHEN NOT MATCHED THEN INSERT
+     (city_id, logdate, peaktemp, unitsales)
+   VALUES (city_id - 1, logdate, 25, 100);
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Merge on measurement m
+   Merge on measurement_y2007m01 m_1
+   ->  Nested Loop Left Join
+         ->  Result
+         ->  Seq Scan on measurement_y2007m01 m_1
+               Filter: ((city_id = 1) AND (logdate = '01-17-2007'::date))
+(6 rows)
+
+BEGIN;
+MERGE INTO measurement m
+ USING (VALUES (1, '01-17-2007'::date)) nm(city_id, logdate) ON
+      (m.city_id = nm.city_id and m.logdate=nm.logdate)
+WHEN NOT MATCHED THEN INSERT
+     (city_id, logdate, peaktemp, unitsales)
+   VALUES (city_id - 1, logdate, 25, 100);
+SELECT * FROM ONLY measurement ORDER BY city_id, logdate;
+ city_id |  logdate   | peaktemp | unitsales 
+---------+------------+----------+-----------
+       0 | 07-21-2005 |       25 |        35
+       0 | 01-17-2007 |       25 |       100
+(2 rows)
+
+ROLLBACK;
+ALTER TABLE measurement ENABLE ROW LEVEL SECURITY;
+ALTER TABLE measurement FORCE ROW LEVEL SECURITY;
+CREATE POLICY measurement_p ON measurement USING (peaktemp IS NOT NULL);
+MERGE INTO measurement m
+ USING (VALUES (1, '01-17-2007'::date)) nm(city_id, logdate) ON
+      (m.city_id = nm.city_id and m.logdate=nm.logdate)
+WHEN NOT MATCHED THEN INSERT
+     (city_id, logdate, peaktemp, unitsales)
+   VALUES (city_id - 1, logdate, NULL, 100); -- should fail
+ERROR:  new row violates row-level security policy for table "measurement"
+MERGE INTO measurement m
+ USING (VALUES (1, '01-17-2007'::date)) nm(city_id, logdate) ON
+      (m.city_id = nm.city_id and m.logdate=nm.logdate)
+WHEN NOT MATCHED THEN INSERT
+     (city_id, logdate, peaktemp, unitsales)
+   VALUES (city_id - 1, logdate, 25, 100); -- ok
+SELECT * FROM ONLY measurement ORDER BY city_id, logdate;
+ city_id |  logdate   | peaktemp | unitsales 
+---------+------------+----------+-----------
+       0 | 07-21-2005 |       25 |        35
+       0 | 01-17-2007 |       25 |       100
+(2 rows)
+
+MERGE INTO measurement m
+ USING (VALUES (1, '01-18-2007'::date)) nm(city_id, logdate) ON
+      (m.city_id = nm.city_id and m.logdate=nm.logdate)
+WHEN NOT MATCHED THEN INSERT
+     (city_id, logdate, peaktemp, unitsales)
+   VALUES (city_id - 1, logdate, 25, 200)
+RETURNING merge_action(), m.*;
+ merge_action | city_id |  logdate   | peaktemp | unitsales 
+--------------+---------+------------+----------+-----------
+ INSERT       |       0 | 01-18-2007 |       25 |       200
+(1 row)
+
 DROP TABLE measurement, new_measurement CASCADE;
 NOTICE:  drop cascades to 3 other objects
 DETAIL:  drop cascades to table measurement_y2006m02
 drop cascades to table measurement_y2006m03
 drop cascades to table measurement_y2007m01
 DROP FUNCTION measurement_insert_trigger();
+--
+-- test non-strict join clause
+--
+CREATE TABLE src (a int, b text);
+INSERT INTO src VALUES (1, 'src row');
+CREATE TABLE tgt (a int, b text);
+INSERT INTO tgt VALUES (NULL, 'tgt row');
+MERGE INTO tgt USING src ON tgt.a IS NOT DISTINCT FROM src.a
+  WHEN MATCHED THEN UPDATE SET a = src.a, b = src.b
+  WHEN NOT MATCHED BY SOURCE THEN DELETE
+  RETURNING merge_action(), src.*, tgt.*;
+ merge_action | a | b | a |    b    
+--------------+---+---+---+---------
+ DELETE       |   |   |   | tgt row
+(1 row)
+
+SELECT * FROM tgt;
+ a | b 
+---+---
+(0 rows)
+
+DROP TABLE src, tgt;
+--
+-- test for bug #18634 (wrong varnullingrels error)
+--
+CREATE TABLE bug18634t (a int, b int, c text);
+INSERT INTO bug18634t VALUES(1, 10, 'tgt1'), (2, 20, 'tgt2');
+CREATE VIEW bug18634v AS
+  SELECT * FROM bug18634t WHERE EXISTS (SELECT 1 FROM bug18634t);
+CREATE TABLE bug18634s (a int, b int, c text);
+INSERT INTO bug18634s VALUES (1, 2, 'src1');
+MERGE INTO bug18634v t USING bug18634s s ON s.a = t.a
+  WHEN MATCHED THEN UPDATE SET b = s.b
+  WHEN NOT MATCHED BY SOURCE THEN DELETE
+  RETURNING merge_action(), s.c, t.*;
+ merge_action |  c   | a | b  |  c   
+--------------+------+---+----+------
+ UPDATE       | src1 | 1 |  2 | tgt1
+ DELETE       |      | 2 | 20 | tgt2
+(2 rows)
+
+SELECT * FROM bug18634t;
+ a | b |  c   
+---+---+------
+ 1 | 2 | tgt1
+(1 row)
+
+DROP TABLE bug18634t CASCADE;
+NOTICE:  drop cascades to view bug18634v
+DROP TABLE bug18634s;
 -- prepare
 RESET SESSION AUTHORIZATION;
 -- try a system catalog

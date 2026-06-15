@@ -77,8 +77,9 @@ static void read_block(rfile *s, off_t off, uint8 *buffer);
  *
  * relative_path should be the path to the directory containing this file,
  * relative to the root of the backup (NOT relative to the root of the
- * tablespace). bare_file_name should be the name of the file within that
- * directory, without "INCREMENTAL.".
+ * tablespace). It must always end with a trailing slash. bare_file_name
+ * should be the name of the file within that directory, without
+ * "INCREMENTAL.".
  *
  * n_prior_backups is the number of prior backups, and prior_backup_dirs is
  * an array of pathnames where those backups can be found.
@@ -110,6 +111,10 @@ reconstruct_from_incremental_file(char *input_filename,
 	int			copy_source_index = -1;
 	rfile	   *copy_source = NULL;
 	pg_checksum_context checksum_ctx;
+
+	/* Sanity check the relative_path. */
+	Assert(relative_path[0] != '\0');
+	Assert(relative_path[strlen(relative_path) - 1] == '/');
 
 	/*
 	 * Every block must come either from the latest version of the file or
@@ -174,11 +179,11 @@ reconstruct_from_incremental_file(char *input_filename,
 		 * Look for the full file in the previous backup. If not found, then
 		 * look for an incremental file instead.
 		 */
-		snprintf(source_filename, MAXPGPATH, "%s/%s/%s",
+		snprintf(source_filename, MAXPGPATH, "%s/%s%s",
 				 prior_backup_dirs[sidx], relative_path, bare_file_name);
 		if ((s = make_rfile(source_filename, true)) == NULL)
 		{
-			snprintf(source_filename, MAXPGPATH, "%s/%s/INCREMENTAL.%s",
+			snprintf(source_filename, MAXPGPATH, "%s/%sINCREMENTAL.%s",
 					 prior_backup_dirs[sidx], relative_path, bare_file_name);
 			s = make_incremental_rfile(source_filename);
 		}
@@ -321,11 +326,19 @@ reconstruct_from_incremental_file(char *input_filename,
 	 * result, then forget about performing reconstruction and just copy that
 	 * file in its entirety.
 	 *
+	 * If we have only incremental files, and there's no full file at any
+	 * point in the backup chain, something has gone wrong. Emit an error.
+	 *
 	 * Otherwise, reconstruct.
 	 */
 	if (copy_source != NULL)
 		copy_file(copy_source->filename, output_filename,
 				  &checksum_ctx, copy_method, dry_run);
+	else if (sidx == 0 && source[0]->header_length != 0)
+	{
+		pg_fatal("full backup contains unexpected incremental file \"%s\"",
+				 source[0]->filename);
+	}
 	else
 	{
 		write_reconstructed_file(input_filename, output_filename,
@@ -357,6 +370,7 @@ reconstruct_from_incremental_file(char *input_filename,
 		if (s->relative_block_numbers != NULL)
 			pfree(s->relative_block_numbers);
 		pg_free(s->filename);
+		pg_free(s);
 	}
 	pfree(sourcemap);
 	pfree(offsetmap);
@@ -449,7 +463,7 @@ make_incremental_rfile(char *filename)
 	/* Read and validate magic number. */
 	read_bytes(rf, &magic, sizeof(magic));
 	if (magic != INCREMENTAL_MAGIC)
-		pg_fatal("file \"%s\" has bad incremental magic number (0x%x not 0x%x)",
+		pg_fatal("file \"%s\" has bad incremental magic number (0x%x, expected 0x%x)",
 				 filename, magic, INCREMENTAL_MAGIC);
 
 	/* Read block count. */
@@ -504,6 +518,7 @@ make_rfile(char *filename, bool missing_ok)
 	{
 		if (missing_ok && errno == ENOENT)
 		{
+			pg_free(rf->filename);
 			pg_free(rf);
 			return NULL;
 		}

@@ -8,7 +8,7 @@
 
 project('postgresql',
   ['c'],
-  version: '17beta2',
+  version: '17.10',
   license: 'PostgreSQL',
 
   # We want < 0.56 for python 3.5 compatibility on old platforms. EPEL for
@@ -440,6 +440,14 @@ else
   segsize = (get_option('segsize') * 1024 * 1024 * 1024) / blocksize
 endif
 
+# If we don't have largefile support, can't handle segment size >= 2GB.
+if cc.sizeof('off_t', args: test_c_args) < 8
+  segsize_bytes = segsize * blocksize
+  if segsize_bytes >= (2 * 1024 * 1024 * 1024)
+    error('Large file support is not enabled. Segment size cannot be larger than 1GB.')
+  endif
+endif
+
 cdata.set('BLCKSZ', blocksize, description:
 '''Size of a disk block --- this also limits the size of a tuple. You can set
    it bigger if you need bigger tuples (although TOAST should reduce the need
@@ -547,7 +555,8 @@ test_c_args = cppflags + cflags
 bsd_authopt = get_option('bsd_auth')
 bsd_auth = not_found_dep
 if cc.check_header('bsd_auth.h', required: bsd_authopt,
-    args: test_c_args, include_directories: postgres_inc)
+    args: test_c_args, prefix: '#include <sys/types.h>',
+    include_directories: postgres_inc)
   cdata.set('USE_BSD_AUTH', 1)
   bsd_auth = declare_dependency()
 endif
@@ -614,31 +623,66 @@ gssapiopt = get_option('gssapi')
 krb_srvtab = ''
 have_gssapi = false
 if not gssapiopt.disabled()
-  gssapi = dependency('krb5-gssapi', required: gssapiopt)
+  gssapi = dependency('krb5-gssapi', required: false)
   have_gssapi = gssapi.found()
 
+  if have_gssapi
+      gssapi_deps = [gssapi]
+  elif not have_gssapi
+    # Hardcoded lookup for gssapi. This is necessary as gssapi on windows does
+    # not install neither pkg-config nor cmake dependency information.
+    if host_system == 'windows'
+      is_64  = cc.sizeof('void *', args: test_c_args) == 8
+      if is_64
+        gssapi_search_libs = ['gssapi64', 'krb5_64', 'comerr64']
+      else
+        gssapi_search_libs = ['gssapi32', 'krb5_32', 'comerr32']
+      endif
+    else
+      gssapi_search_libs = ['gssapi_krb5']
+    endif
+
+    gssapi_deps = []
+    foreach libname : gssapi_search_libs
+      lib = cc.find_library(libname, dirs: test_lib_d, required: false)
+      if lib.found()
+        have_gssapi = true
+        gssapi_deps += lib
+      endif
+    endforeach
+
+    if have_gssapi
+      # Meson before 0.57.0 did not support using check_header() etc with
+      # declare_dependency(). Thus the tests below use the library looked up
+      # above.  Once we require a newer meson version, we can simplify.
+      gssapi = declare_dependency(dependencies: gssapi_deps)
+    endif
+  endif
+
   if not have_gssapi
-  elif cc.check_header('gssapi/gssapi.h', dependencies: gssapi, required: false,
+  elif cc.check_header('gssapi/gssapi.h', dependencies: gssapi_deps, required: false,
       args: test_c_args, include_directories: postgres_inc)
     cdata.set('HAVE_GSSAPI_GSSAPI_H', 1)
-  elif cc.check_header('gssapi.h', args: test_c_args, dependencies: gssapi, required: gssapiopt)
+  elif cc.check_header('gssapi.h', dependencies: gssapi_deps, required: gssapiopt,
+      args: test_c_args, include_directories: postgres_inc)
     cdata.set('HAVE_GSSAPI_H', 1)
   else
     have_gssapi = false
   endif
 
   if not have_gssapi
-  elif cc.check_header('gssapi/gssapi_ext.h', dependencies: gssapi, required: false,
+  elif cc.check_header('gssapi/gssapi_ext.h', dependencies: gssapi_deps, required: false,
       args: test_c_args, include_directories: postgres_inc)
     cdata.set('HAVE_GSSAPI_GSSAPI_EXT_H', 1)
-  elif cc.check_header('gssapi_ext.h', args: test_c_args, dependencies: gssapi, required: gssapiopt)
+  elif cc.check_header('gssapi_ext.h', dependencies: gssapi_deps, required: gssapiopt,
+      args: test_c_args, include_directories: postgres_inc)
     cdata.set('HAVE_GSSAPI_EXT_H', 1)
   else
     have_gssapi = false
   endif
 
   if not have_gssapi
-  elif cc.has_function('gss_store_cred_into', dependencies: gssapi,
+  elif cc.has_function('gss_store_cred_into', dependencies: gssapi_deps,
       args: test_c_args, include_directories: postgres_inc)
     cdata.set('ENABLE_GSS', 1)
 
@@ -649,6 +693,11 @@ if not gssapiopt.disabled()
   else
     have_gssapi = false
   endif
+
+  if not have_gssapi and gssapiopt.enabled()
+    error('dependency lookup for gssapi failed')
+  endif
+
 endif
 if not have_gssapi
   gssapi = not_found_dep
@@ -759,7 +808,10 @@ if add_languages('cpp', required: llvmopt, native: false)
     llvm_binpath = llvm.get_variable(configtool: 'bindir')
 
     ccache = find_program('ccache', native: true, required: false)
-    clang = find_program(llvm_binpath / 'clang', required: true)
+
+    # Some distros put LLVM and clang in different paths, so fallback to
+    # find via PATH, too.
+    clang = find_program(llvm_binpath / 'clang', 'clang', required: true)
   endif
 elif llvmopt.auto()
   message('llvm requires a C++ compiler')
@@ -773,11 +825,25 @@ endif
 
 icuopt = get_option('icu')
 if not icuopt.disabled()
-  icu = dependency('icu-uc', required: icuopt)
-  icu_i18n = dependency('icu-i18n', required: icuopt)
+  icu = dependency('icu-uc', required: false)
+  if icu.found()
+    icu_i18n = dependency('icu-i18n', required: true)
+  endif
+
+  # Unfortunately the dependency is named differently with cmake
+  if not icu.found() # combine with above once meson 0.60.0 is required
+    icu = dependency('ICU', required: icuopt,
+                     components: ['uc'], modules: ['ICU::uc'], method: 'cmake')
+    if icu.found()
+      icu_i18n = dependency('ICU', required: true,
+                            components: ['i18n'], modules: ['ICU::i18n'])
+    endif
+  endif
 
   if icu.found()
     cdata.set('USE_ICU', 1)
+  else
+    icu_i18n = not_found_dep
   endif
 
 else
@@ -793,7 +859,12 @@ endif
 
 libxmlopt = get_option('libxml')
 if not libxmlopt.disabled()
-  libxml = dependency('libxml-2.0', required: libxmlopt, version: '>= 2.6.23')
+  libxml = dependency('libxml-2.0', required: false, version: '>= 2.6.23')
+  # Unfortunately the dependency is named differently with cmake
+  if not libxml.found() # combine with above once meson 0.60.0 is required
+    libxml = dependency('LibXml2', required: libxmlopt, version: '>= 2.6.23',
+      method: 'cmake')
+  endif
 
   if libxml.found()
     cdata.set('USE_LIBXML', 1)
@@ -810,7 +881,11 @@ endif
 
 libxsltopt = get_option('libxslt')
 if not libxsltopt.disabled()
-  libxslt = dependency('libxslt', required: libxsltopt)
+  libxslt = dependency('libxslt', required: false)
+  # Unfortunately the dependency is named differently with cmake
+  if not libxslt.found() # combine with above once meson 0.60.0 is required
+    libxslt = dependency('LibXslt', required: libxsltopt, method: 'cmake')
+  endif
 
   if libxslt.found()
     cdata.set('USE_LIBXSLT', 1)
@@ -827,7 +902,13 @@ endif
 
 lz4opt = get_option('lz4')
 if not lz4opt.disabled()
-  lz4 = dependency('liblz4', required: lz4opt)
+  lz4 = dependency('liblz4', required: false)
+  # Unfortunately the dependency is named differently with cmake
+  if not lz4.found() # combine with above once meson 0.60.0 is required
+    lz4 = dependency('lz4', required: lz4opt,
+                     method: 'cmake', modules: ['LZ4::lz4_shared'],
+                    )
+  endif
 
   if lz4.found()
     cdata.set('USE_LZ4', 1)
@@ -982,7 +1063,10 @@ if not perlopt.disabled()
       if cc.get_id() == 'msvc'
         # prevent binary mismatch between MSVC built plperl and Strawberry or
         # msys ucrt perl libraries
-        perl_ccflags += ['-DNO_THREAD_SAFE_LOCALE']
+        perl_v = run_command(perl, '-V', check: false).stdout()
+        if not perl_v.contains('USE_THREAD_SAFE_LOCALE')
+          perl_ccflags += ['-DNO_THREAD_SAFE_LOCALE']
+        endif
       endif
     endif
 
@@ -993,20 +1077,19 @@ if not perlopt.disabled()
     # Config's ccdlflags and ldflags.  (Those are the choices of those who
     # built the Perl installation, which are not necessarily appropriate
     # for building PostgreSQL.)
-    ldopts = run_command(perl, '-MExtUtils::Embed', '-e', 'ldopts', check: true).stdout().strip()
-    undesired = run_command(perl_conf_cmd, 'ccdlflags', check: true).stdout().split()
-    undesired += run_command(perl_conf_cmd, 'ldflags', check: true).stdout().split()
+    perl_ldopts = run_command(perl, '-e', '''
+use ExtUtils::Embed;
+use Text::ParseWords;
+# tell perl to suppress including these in ldopts
+*ExtUtils::Embed::_ldflags =*ExtUtils::Embed::_ccdlflags = sub { return ""; };
+# adding an argument to ldopts makes it return a value instead of printing
+# print one of these per line so splitting will preserve spaces in file names.
+# shellwords eats backslashes, so we need to escape them.
+(my $opts = ldopts(undef)) =~ s!\\!\\\\!g;
+print "$_\n" foreach shellwords($opts);
+''',
+     check: true).stdout().strip().split('\n')
 
-    perl_ldopts = []
-    foreach ldopt : ldopts.split(' ')
-      if ldopt == '' or ldopt in undesired
-        continue
-      endif
-
-      perl_ldopts += ldopt.strip('"')
-    endforeach
-
-    message('LDFLAGS recommended by perl: "@0@"'.format(ldopts))
     message('LDFLAGS for embedding perl: "@0@"'.format(' '.join(perl_ldopts)))
 
     perl_dep_int = declare_dependency(
@@ -1077,15 +1160,26 @@ endif
 
 if not get_option('readline').disabled()
   libedit_preferred = get_option('libedit_preferred')
-  # Set the order of readline dependencies
-  check_readline_deps = libedit_preferred ? \
-    ['libedit', 'readline'] : ['readline', 'libedit']
+  # Set the order of readline dependencies.
+  # cc.find_library breaks and throws on the first dependency which
+  # is marked as required=true and can't be found. Thus, we only mark
+  # the last dependency to look up as required, to not throw too early.
+  check_readline_deps = [
+    {
+      'name': libedit_preferred ? 'libedit' : 'readline',
+      'required': false
+    },
+    {
+      'name': libedit_preferred ? 'readline' : 'libedit',
+      'required': get_option('readline')
+    }
+  ]
 
   foreach readline_dep : check_readline_deps
-    readline = dependency(readline_dep, required: false)
+    readline = dependency(readline_dep['name'], required: false)
     if not readline.found()
-      readline = cc.find_library(readline_dep,
-        required: get_option('readline'),
+      readline = cc.find_library(readline_dep['name'],
+        required: readline_dep['required'],
         dirs: test_lib_d)
     endif
     if readline.found()
@@ -1248,14 +1342,37 @@ if sslopt in ['auto', 'openssl']
 
   # via library + headers
   if not ssl.found()
+    is_windows = host_system == 'windows'
+
+    ssl_lib_common_params = {
+      'dirs': test_lib_d,
+      'header_include_directories': postgres_inc,
+      'has_headers': ['openssl/ssl.h', 'openssl/err.h'],
+    }
     ssl_lib = cc.find_library('ssl',
-      dirs: test_lib_d,
-      header_include_directories: postgres_inc,
-      has_headers: ['openssl/ssl.h', 'openssl/err.h'],
-      required: openssl_required)
+      kwargs: ssl_lib_common_params,
+      required: openssl_required and not is_windows
+    )
+    # Before OpenSSL 1.1.0, there was a different naming convention for
+    # libraries on Windows, so try the alternative name if ssl wasn't found
+    if not ssl_lib.found() and is_windows
+      ssl_lib = cc.find_library('ssleay32',
+        kwargs: ssl_lib_common_params,
+        required: openssl_required
+      )
+    endif
+
     crypto_lib = cc.find_library('crypto',
       dirs: test_lib_d,
-      required: openssl_required)
+      required: openssl_required and not is_windows)
+    # Before OpenSSL 1.1.0, there was a different naming convention for
+    # libraries on Windows, so try the alternatve name if crypto wasn't found
+    if not crypto_lib.found() and is_windows
+      crypto_lib = cc.find_library('libeay32',
+        dirs: test_lib_d,
+        required: openssl_required)
+    endif
+
     if ssl_lib.found() and crypto_lib.found()
       ssl_int = [ssl_lib, crypto_lib]
       ssl = declare_dependency(dependencies: ssl_int, include_directories: postgres_inc)
@@ -1293,6 +1410,7 @@ if sslopt in ['auto', 'openssl']
 
       # Function introduced in OpenSSL 1.1.1
       ['X509_get_signature_info'],
+      ['SSL_CTX_set_num_tickets'],
     ]
 
     are_openssl_funcs_complete = true
@@ -1346,9 +1464,29 @@ if uuidopt != 'none'
     uuidfunc = 'uuid_to_string'
     uuidheader = 'uuid.h'
   elif uuidopt == 'ossp'
-    uuid = dependency('ossp-uuid', required: true)
+    # In upstream, the package and library is called just 'uuid', but many
+    # distros change it to 'ossp-uuid'.
+    uuid = dependency('ossp-uuid', required: false)
+    if not uuid.found()
+      uuid = dependency('uuid', required: false)
+    endif
     uuidfunc = 'uuid_export'
     uuidheader = 'uuid.h'
+
+    # Hardcoded lookup for ossp-uuid. This is necessary as ossp-uuid on
+    # windows installs neither a pkg-config nor a cmake dependency
+    # information. Nor is there another supported uuid implementation
+    # available on windows.
+    if not uuid.found()
+      uuid = cc.find_library('ossp-uuid',
+        required: false, dirs: test_lib_d,
+        has_headers: uuidheader, header_include_directories: postgres_inc)
+    endif
+    if not uuid.found()
+      uuid = cc.find_library('uuid',
+        required: true, dirs: test_lib_d,
+        has_headers: uuidheader, header_include_directories: postgres_inc)
+    endif
   else
     error('unknown uuid build option value: @0@'.format(uuidopt))
   endif
@@ -1429,7 +1567,12 @@ endif
 
 zstdopt = get_option('zstd')
 if not zstdopt.disabled()
-  zstd = dependency('libzstd', required: zstdopt, version: '>=1.4.0')
+  zstd = dependency('libzstd', required: false, version: '>=1.4.0')
+  # Unfortunately the dependency is named differently with cmake
+  if not zstd.found() # combine with above once meson 0.60.0 is required
+    zstd = dependency('zstd', required: zstdopt, version: '>=1.4.0',
+                      method: 'cmake', modules: ['zstd::libzstd_shared'])
+  endif
 
   if zstd.found()
     cdata.set('USE_ZSTD', 1)
@@ -1656,16 +1799,15 @@ if cc.compiles('''
 endif
 
 
-# We use <stdbool.h> if we have it and it declares type bool as having
-# size 1.  Otherwise, c.h will fall back to declaring bool as unsigned char.
-if cc.has_type('_Bool', args: test_c_args) \
-    and cc.has_type('bool', prefix: '#include <stdbool.h>', args: test_c_args) \
-    and cc.sizeof('bool', prefix: '#include <stdbool.h>', args: test_c_args) == 1
-  cdata.set('HAVE__BOOL', 1)
+# We use <stdbool.h> if bool has size 1 after including it.  Otherwise, c.h
+# will fall back to declaring bool as unsigned char.
+if cc.sizeof('bool', prefix: '#include <stdbool.h>', args: test_c_args) == 1
   cdata.set('PG_USE_STDBOOL', 1)
 endif
 
 
+# Select the format archetype to be used to check printf-type functions.
+#
 # Need to check a call with %m because netbsd supports gnu_printf but emits a
 # warning for each use of %m.
 printf_attributes = ['gnu_printf', '__syslog__', 'printf']
@@ -1680,10 +1822,23 @@ attrib_error_args = cc.get_supported_arguments('-Werror=format', '-Werror=ignore
 foreach a : printf_attributes
   if cc.compiles(testsrc.format(a),
       args: test_c_args + attrib_error_args, name: 'format ' + a)
-    cdata.set('PG_PRINTF_ATTRIBUTE', a)
+    cdata.set('PG_C_PRINTF_ATTRIBUTE', a)
     break
   endif
 endforeach
+
+# We need to repeat the test for C++ because gcc and clang prefer different
+# format archetypes.
+if llvm.found()
+  attrib_error_args = cpp.get_supported_arguments('-Werror=format', '-Werror=ignored-attributes')
+  foreach a : printf_attributes
+    if cpp.compiles(testsrc.format(a),
+        args: attrib_error_args, name: 'cppformat ' + a)
+      cdata.set('PG_CXX_PRINTF_ATTRIBUTE', a)
+      break
+    endif
+  endforeach
+endif
 
 
 if cc.has_function_attribute('visibility:default') and \
@@ -1759,10 +1914,7 @@ if cc.links('''
   cdata.set('HAVE__BUILTIN_OP_OVERFLOW', 1)
 endif
 
-
-# XXX: The configure.ac check for __cpuid() is broken, we don't copy that
-# here. To prevent problems due to two detection methods working, stop
-# checking after one.
+# Check for __get_cpuid() and __cpuid().
 if cc.links('''
     #include <cpuid.h>
     int main(int arg, char **argv)
@@ -2198,6 +2350,13 @@ int main(void)
     # Use ARM CRC Extension unconditionally
     cdata.set('USE_ARMV8_CRC32C', 1)
     have_optimized_crc = true
+  elif cc.links(prog, name: '__crc32cb, __crc32ch, __crc32cw, and __crc32cd with -march=armv8-a+crc+simd',
+      args: test_c_args + ['-march=armv8-a+crc+simd'])
+    # Use ARM CRC Extension, with runtime check
+    cflags_crc += '-march=armv8-a+crc+simd'
+    cdata.set('USE_ARMV8_CRC32C', false)
+    cdata.set('USE_ARMV8_CRC32C_WITH_RUNTIME_CHECK', 1)
+    have_optimized_crc = true
   elif cc.links(prog, name: '__crc32cb, __crc32ch, __crc32cw, and __crc32cd with -march=armv8-a+crc',
       args: test_c_args + ['-march=armv8-a+crc'])
     # Use ARM CRC Extension, with runtime check
@@ -2295,7 +2454,6 @@ header_checks = [
   'ifaddrs.h',
   'langinfo.h',
   'mbarrier.h',
-  'stdbool.h',
   'strings.h',
   'sys/epoll.h',
   'sys/event.h',
@@ -2326,6 +2484,7 @@ decl_checks = [
   ['strlcat', 'string.h'],
   ['strlcpy', 'string.h'],
   ['strnlen', 'string.h'],
+  ['timingsafe_bcmp',  'string.h'],
 ]
 
 # Need to check for function declarations for these functions, because
@@ -2334,6 +2493,8 @@ decl_checks = [
 decl_checks += [
   ['preadv', 'sys/uio.h'],
   ['pwritev', 'sys/uio.h'],
+  ['strchrnul', 'string.h'],
+  ['memset_s', 'string.h', '#define __STDC_WANT_LIB_EXT1__ 1'],
 ]
 
 # Check presence of some optional LLVM functions.
@@ -2347,11 +2508,28 @@ endif
 foreach c : decl_checks
   func = c.get(0)
   header = c.get(1)
-  args = c.get(2, {})
+  prologue = c.get(2, '')
+  args = c.get(3, {})
   varname = 'HAVE_DECL_' + func.underscorify().to_upper()
 
-  found = cc.has_header_symbol(header, func,
-    args: test_c_args, include_directories: postgres_inc,
+  found = cc.compiles('''
+@0@
+#include <@1@>
+
+int main()
+{
+#ifndef @2@
+    (void) @2@;
+#endif
+
+return 0;
+}
+'''.format(prologue, header, func),
+    name: 'test whether @0@ is declared'.format(func),
+    # need to add cflags_warn to get at least
+    # -Werror=unguarded-availability-new if applicable
+    args: test_c_args + cflags_warn,
+    include_directories: postgres_inc,
     kwargs: args)
   cdata.set10(varname, found, description:
 '''Define to 1 if you have the declaration of `@0@', and to 0 if you
@@ -2535,7 +2713,7 @@ gnugetopt_dep = cc.find_library('gnugetopt', required: false)
 #   (i.e., allow '-' as a flag character), so use our version on those platforms
 # - We want to use system's getopt_long() only if the system provides struct
 #   option
-always_replace_getopt = host_system in ['windows', 'cygwin', 'openbsd', 'solaris']
+always_replace_getopt = host_system in ['windows', 'cygwin', 'openbsd', 'sunos']
 always_replace_getopt_long = host_system in ['windows', 'cygwin'] or not cdata.has('HAVE_STRUCT_OPTION')
 
 # Required on BSDs
@@ -2575,7 +2753,6 @@ func_checks = [
   ['inet_pton'],
   ['kqueue'],
   ['mbstowcs_l'],
-  ['memset_s'],
   ['mkdtemp'],
   ['posix_fadvise'],
   ['posix_fallocate'],
@@ -2589,7 +2766,6 @@ func_checks = [
   ['shm_unlink', {'dependencies': [rt_dep], 'define': false}],
   ['shmget', {'dependencies': [cygipc_dep], 'define': false}],
   ['socket', {'dependencies': [socket_dep], 'define': false}],
-  ['strchrnul'],
   ['strerror_r', {'dependencies': [thread_dep]}],
   ['strlcat'],
   ['strlcpy'],
@@ -2597,6 +2773,7 @@ func_checks = [
   ['strsignal'],
   ['sync_file_range'],
   ['syncfs'],
+  ['timingsafe_bcmp'],
   ['uselocale'],
   ['wcstombs_l'],
 ]
@@ -2967,6 +3144,16 @@ frontend_shlib_code = declare_dependency(
   dependencies: [shlib_code, os_deps, libintl],
 )
 
+# For frontend code that doesn't use fe_utils - this mainly exists for libpq's
+# tests, which are defined before fe_utils is defined, as fe_utils depends on
+# libpq.
+frontend_no_fe_utils_code = declare_dependency(
+  include_directories: [postgres_inc],
+  link_with: [common_static, pgport_static],
+  sources: generated_headers,
+  dependencies: [os_deps, libintl],
+)
+
 # Dependencies both for static and shared libpq
 libpq_deps += [
   thread_dep,
@@ -3034,7 +3221,6 @@ subdir('src')
 subdir('contrib')
 
 subdir('src/test')
-subdir('src/interfaces/libpq/test')
 subdir('src/interfaces/ecpg/test')
 
 subdir('doc/src/sgml')
@@ -3128,15 +3314,21 @@ if libintl.found() and meson.version().version_compare('>=0.60')
 endif
 
 
-all_built = [
+# all targets that 'meson install' needs
+installed_targets = [
   backend_targets,
   bin_targets,
   libpq_st,
   pl_targets,
   contrib_targets,
   nls_mo_targets,
-  testprep_targets,
   ecpg_targets,
+]
+
+# all targets that require building code
+all_built = [
+  installed_targets,
+  testprep_targets,
 ]
 
 # Meson's default install target is quite verbose. Provide one that is quiet.
@@ -3145,7 +3337,7 @@ install_quiet = custom_target('install-quiet',
   build_always_stale: true,
   build_by_default: false,
   command: [meson_bin, meson_args, 'install', '--quiet', '--no-rebuild'],
-  depends: all_built,
+  depends: installed_targets,
 )
 
 # Target to install files used for tests, which aren't installed by default
@@ -3173,15 +3365,17 @@ test_install_destdir = meson.build_root() / 'tmp_install/'
 if build_system != 'windows'
   # On unixoid systems this is trivial, we just prepend the destdir
   assert(dir_prefix.startswith('/')) # enforced by meson
-  test_install_location = '@0@@1@'.format(test_install_destdir, dir_prefix)
+  temp_install_bindir = '@0@@1@'.format(test_install_destdir, dir_prefix / dir_bin)
+  temp_install_libdir = '@0@@1@'.format(test_install_destdir, dir_prefix / dir_lib)
 else
   # drives, drive-relative paths, etc make this complicated on windows, call
   # into a copy of meson's logic for it
   command = [
     python, '-c',
     'import sys; from pathlib import PurePath; d1=sys.argv[1]; d2=sys.argv[2]; print(str(PurePath(d1, *PurePath(d2).parts[1:])))',
-    test_install_destdir, dir_prefix]
-  test_install_location = run_command(command, check: true).stdout().strip()
+    test_install_destdir]
+  temp_install_bindir = run_command(command, dir_prefix / dir_bin, check: true).stdout().strip()
+  temp_install_libdir = run_command(command, dir_prefix / dir_lib, check: true).stdout().strip()
 endif
 
 meson_install_args = meson_args + ['install'] + {
@@ -3198,6 +3392,7 @@ test('tmp_install',
     priority: setup_tests_priority,
     timeout: 300,
     is_parallel: false,
+    depends: installed_targets,
     suite: ['setup'])
 
 test('install_test_files',
@@ -3218,11 +3413,12 @@ testport = 40000
 
 test_env = environment()
 
-temp_install_bindir = test_install_location / get_option('bindir')
 test_initdb_template = meson.build_root() / 'tmp_install' / 'initdb-template'
 test_env.set('PG_REGRESS', pg_regress.full_path())
 test_env.set('REGRESS_SHLIB', regress_module.full_path())
 test_env.set('INITDB_TEMPLATE', test_initdb_template)
+# for Cluster.pm's portlock logic
+test_env.set('top_builddir', meson.build_root())
 
 # Test suites that are not safe by default but can be run if selected
 # by the user via the whitespace-separated list in variable PG_TEST_EXTRA.
@@ -3233,7 +3429,7 @@ test_env.set('PG_TEST_EXTRA', get_option('PG_TEST_EXTRA'))
 # that works (everything but windows, basically). On windows everything
 # library-like gets installed into bindir, solving that issue.
 if library_path_var != ''
-  test_env.prepend(library_path_var, test_install_location / get_option('libdir'))
+  test_env.prepend(library_path_var, temp_install_libdir)
 endif
 
 

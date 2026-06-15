@@ -3037,7 +3037,14 @@ commandFailed(CState *st, const char *cmd, const char *message)
 static void
 commandError(CState *st, const char *message)
 {
-	Assert(sql_script[st->use_file].commands[st->command]->type == SQL_COMMAND);
+	/*
+	 * Errors should only be detected during an SQL command or the
+	 * \endpipeline meta command. Any other case triggers an assertion
+	 * failure.
+	 */
+	Assert(sql_script[st->use_file].commands[st->command]->type == SQL_COMMAND ||
+		   sql_script[st->use_file].commands[st->command]->meta == META_ENDPIPELINE);
+
 	pg_log_info("client %d got an error in command %d (SQL) of script %d; %s",
 				st->id, st->command, st->use_file, message);
 }
@@ -3327,8 +3334,22 @@ readCommandResponse(CState *st, MetaCommand meta, char *varprefix)
 				st->num_syncs--;
 				if (st->num_syncs == 0 && PQexitPipelineMode(st->con) != 1)
 					pg_log_error("client %d failed to exit pipeline mode: %s", st->id,
-								 PQerrorMessage(st->con));
+								 PQresultErrorMessage(res));
 				break;
+
+			case PGRES_COPY_IN:
+			case PGRES_COPY_OUT:
+			case PGRES_COPY_BOTH:
+				pg_log_error("COPY is not supported in pgbench, aborting");
+
+				/*
+				 * We need to exit the copy state.  Otherwise, PQgetResult()
+				 * will always return an empty PGresult as an effect of
+				 * getCopyResult(), leading to an infinite loop in the error
+				 * cleanup done below.
+				 */
+				PQendcopy(st->con);
+				goto error;
 
 			case PGRES_NONFATAL_ERROR:
 			case PGRES_FATAL_ERROR:
@@ -3337,7 +3358,7 @@ readCommandResponse(CState *st, MetaCommand meta, char *varprefix)
 				if (canRetryError(st->estatus))
 				{
 					if (verbose_errors)
-						commandError(st, PQerrorMessage(st->con));
+						commandError(st, PQresultErrorMessage(res));
 					goto error;
 				}
 				/* fall through */
@@ -3346,7 +3367,7 @@ readCommandResponse(CState *st, MetaCommand meta, char *varprefix)
 				/* anything else is unexpected */
 				pg_log_error("client %d script %d aborted in command %d query %d: %s",
 							 st->id, st->use_file, st->command, qrynum,
-							 PQerrorMessage(st->con));
+							 PQresultErrorMessage(res));
 				goto error;
 		}
 
@@ -3468,12 +3489,18 @@ doRetry(CState *st, pg_time_usec_t *now)
 }
 
 /*
- * Read results and discard it until a sync point.
+ * Read and discard results until the last sync point.
  */
 static int
 discardUntilSync(CState *st)
 {
-	/* send a sync */
+	bool		received_sync = false;
+
+	/*
+	 * Send a Sync message to ensure at least one PGRES_PIPELINE_SYNC is
+	 * received and to avoid an infinite loop, since all earlier ones may have
+	 * already been received.
+	 */
 	if (!PQpipelineSync(st->con))
 	{
 		pg_log_error("client %d aborted: failed to send a pipeline sync",
@@ -3481,17 +3508,41 @@ discardUntilSync(CState *st)
 		return 0;
 	}
 
-	/* receive PGRES_PIPELINE_SYNC and null following it */
+	/*
+	 * Continue reading results until the last sync point, i.e., until
+	 * reaching null just after PGRES_PIPELINE_SYNC.
+	 */
 	for (;;)
 	{
 		PGresult   *res = PQgetResult(st->con);
 
-		if (PQresultStatus(res) == PGRES_PIPELINE_SYNC)
+		if (PQstatus(st->con) == CONNECTION_BAD)
 		{
+			pg_log_error("client %d aborted while rolling back the transaction after an error; perhaps the backend died while processing",
+						 st->id);
 			PQclear(res);
-			res = PQgetResult(st->con);
-			Assert(res == NULL);
+			return 0;
+		}
+
+		if (PQresultStatus(res) == PGRES_PIPELINE_SYNC)
+			received_sync = true;
+		else if (received_sync && res == NULL)
+		{
+			/*
+			 * Reset ongoing sync count to 0 since all PGRES_PIPELINE_SYNC
+			 * results have been discarded.
+			 */
+			st->num_syncs = 0;
 			break;
+		}
+		else
+		{
+			/*
+			 * If a PGRES_PIPELINE_SYNC is followed by something other than
+			 * PGRES_PIPELINE_SYNC or NULL, another PGRES_PIPELINE_SYNC will
+			 * appear later. Reset received_sync to false to wait for it.
+			 */
+			received_sync = false;
 		}
 		PQclear(res);
 	}
@@ -3879,8 +3930,14 @@ advanceConnectionState(TState *thread, CState *st, StatsData *agg)
 						switch (conditional_stack_peek(st->cstack))
 						{
 							case IFSTATE_FALSE:
-								if (command->meta == META_IF ||
-									command->meta == META_ELIF)
+								if (command->meta == META_IF)
+								{
+									/* nested if in skipped branch - ignore */
+									conditional_stack_push(st->cstack,
+														   IFSTATE_IGNORED);
+									st->command++;
+								}
+								else if (command->meta == META_ELIF)
 								{
 									/* we must evaluate the condition */
 									st->state = CSTATE_START_COMMAND;
@@ -3899,11 +3956,7 @@ advanceConnectionState(TState *thread, CState *st, StatsData *agg)
 									conditional_stack_pop(st->cstack);
 									if (conditional_active(st->cstack))
 										st->state = CSTATE_START_COMMAND;
-
-									/*
-									 * else state remains in
-									 * CSTATE_SKIP_COMMAND
-									 */
+									/* else state remains CSTATE_SKIP_COMMAND */
 									st->command++;
 								}
 								break;
@@ -4943,6 +4996,7 @@ initPopulateTable(PGconn *con, const char *table, int64 base,
 	int			n;
 	int64		k;
 	int			chars = 0;
+	int			prev_chars = 0;
 	PGresult   *res;
 	PQExpBufferData sql;
 	char		copy_statement[256];
@@ -5003,10 +5057,20 @@ initPopulateTable(PGconn *con, const char *table, int64 base,
 			double		elapsed_sec = PG_TIME_GET_DOUBLE(pg_time_now() - start);
 			double		remaining_sec = ((double) total - j) * elapsed_sec / j;
 
-			chars = fprintf(stderr, INT64_FORMAT " of " INT64_FORMAT " tuples (%d%%) of %s done (elapsed %.2f s, remaining %.2f s)%c",
+			chars = fprintf(stderr, INT64_FORMAT " of " INT64_FORMAT " tuples (%d%%) of %s done (elapsed %.2f s, remaining %.2f s)",
 							j, total,
 							(int) ((j * 100) / total),
-							table, elapsed_sec, remaining_sec, eol);
+							table, elapsed_sec, remaining_sec);
+
+			/*
+			 * If the previous progress message is longer than the current
+			 * one, add spaces to the current line to fully overwrite any
+			 * remaining characters from the previous message.
+			 */
+			if (prev_chars > chars)
+				fprintf(stderr, "%*c", prev_chars - chars, ' ');
+			fputc(eol, stderr);
+			prev_chars = chars;
 		}
 		/* let's not call the timing for each row, but only each 100 rows */
 		else if (use_quiet && (j % 100 == 0))
@@ -5017,10 +5081,20 @@ initPopulateTable(PGconn *con, const char *table, int64 base,
 			/* have we reached the next interval (or end)? */
 			if ((j == total) || (elapsed_sec >= log_interval * LOG_STEP_SECONDS))
 			{
-				chars = fprintf(stderr, INT64_FORMAT " of " INT64_FORMAT " tuples (%d%%) of %s done (elapsed %.2f s, remaining %.2f s)%c",
+				chars = fprintf(stderr, INT64_FORMAT " of " INT64_FORMAT " tuples (%d%%) of %s done (elapsed %.2f s, remaining %.2f s)",
 								j, total,
 								(int) ((j * 100) / total),
-								table, elapsed_sec, remaining_sec, eol);
+								table, elapsed_sec, remaining_sec);
+
+				/*
+				 * If the previous progress message is longer than the current
+				 * one, add spaces to the current line to fully overwrite any
+				 * remaining characters from the previous message.
+				 */
+				if (prev_chars > chars)
+					fprintf(stderr, "%*c", prev_chars - chars, ' ');
+				fputc(eol, stderr);
+				prev_chars = chars;
 
 				/* skip to the next interval */
 				log_interval = (int) ceil(elapsed_sec / LOG_STEP_SECONDS);
@@ -5029,7 +5103,7 @@ initPopulateTable(PGconn *con, const char *table, int64 base,
 	}
 
 	if (chars != 0 && eol != '\n')
-		fprintf(stderr, "%*c\r", chars - 1, ' ');	/* Clear the current line */
+		fprintf(stderr, "%*c\r", chars, ' ');	/* Clear the current line */
 
 	if (PQputline(con, "\\.\n"))
 		pg_fatal("very last PQputline failed");
@@ -6155,7 +6229,7 @@ findBuiltin(const char *name)
 static int
 parseScriptWeight(const char *option, char **script)
 {
-	char	   *sep;
+	const char *sep;
 	int			weight;
 
 	if ((sep = strrchr(option, WSEP)))

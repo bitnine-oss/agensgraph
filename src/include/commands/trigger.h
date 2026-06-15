@@ -78,7 +78,9 @@ typedef struct TransitionCaptureState
 	/*
 	 * Private data including the tuplestore(s) into which to insert tuples.
 	 */
-	struct AfterTriggersTableData *tcs_private;
+	struct AfterTriggersTableData *tcs_insert_private;
+	struct AfterTriggersTableData *tcs_update_private;
+	struct AfterTriggersTableData *tcs_delete_private;
 } TransitionCaptureState;
 
 /*
@@ -206,6 +208,15 @@ extern void ExecBSDeleteTriggers(EState *estate,
 extern void ExecASDeleteTriggers(EState *estate,
 								 ResultRelInfo *relinfo,
 								 TransitionCaptureState *transition_capture);
+extern bool ExecBRDeleteTriggersNew(EState *estate,
+									EPQState *epqstate,
+									ResultRelInfo *relinfo,
+									ItemPointer tupleid,
+									HeapTuple fdw_trigtuple,
+									TupleTableSlot **epqslot,
+									TM_Result *tmresult,
+									TM_FailureData *tmfd,
+									bool is_merge_delete);
 extern bool ExecBRDeleteTriggers(EState *estate,
 								 EPQState *epqstate,
 								 ResultRelInfo *relinfo,
@@ -228,6 +239,15 @@ extern void ExecBSUpdateTriggers(EState *estate,
 extern void ExecASUpdateTriggers(EState *estate,
 								 ResultRelInfo *relinfo,
 								 TransitionCaptureState *transition_capture);
+extern bool ExecBRUpdateTriggersNew(EState *estate,
+									EPQState *epqstate,
+									ResultRelInfo *relinfo,
+									ItemPointer tupleid,
+									HeapTuple fdw_trigtuple,
+									TupleTableSlot *newslot,
+									TM_Result *tmresult,
+									TM_FailureData *tmfd,
+									bool is_merge_update);
 extern bool ExecBRUpdateTriggers(EState *estate,
 								 EPQState *epqstate,
 								 ResultRelInfo *relinfo,

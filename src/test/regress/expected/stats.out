@@ -791,6 +791,8 @@ SELECT (n_tup_ins + n_tup_upd) > 0 AS has_data FROM pg_stat_all_tables
  t
 (1 row)
 
+-- stats_reset may not be set for datid=0 and shared objects in
+-- pg_stat_database, so reset once.
 SELECT pg_stat_reset_single_table_counters('pg_shdescription'::regclass);
  pg_stat_reset_single_table_counters 
 -------------------------------------
@@ -802,6 +804,22 @@ SELECT (n_tup_ins + n_tup_upd) > 0 AS has_data FROM pg_stat_all_tables
  has_data 
 ----------
  f
+(1 row)
+
+SELECT stats_reset AS shared_db_reset_before
+  FROM pg_stat_database WHERE datid = 0 \gset
+-- Second reset for comparison.
+SELECT pg_stat_reset_single_table_counters('pg_shdescription'::regclass);
+ pg_stat_reset_single_table_counters 
+-------------------------------------
+ 
+(1 row)
+
+SELECT stats_reset > :'shared_db_reset_before'::timestamptz AS has_updated
+  FROM pg_stat_database WHERE datid = 0;
+ has_updated 
+-------------
+ t
 (1 row)
 
 -- set back comment
@@ -1646,4 +1664,21 @@ SELECT COUNT(*) FROM brin_hot_3 WHERE a = 2;
 
 DROP TABLE brin_hot_3;
 SET enable_seqscan = on;
+-- Test that estimation of relation size works with tuples wider than the
+-- relation fillfactor. We create a table with wide inline attributes and
+-- low fillfactor, insert rows and then see how many rows EXPLAIN shows
+-- before running analyze. We disable autovacuum so that it does not
+-- interfere with the test.
+CREATE TABLE table_fillfactor (
+  n char(1000)
+) with (fillfactor=10, autovacuum_enabled=off);
+INSERT INTO table_fillfactor
+SELECT 'x' FROM generate_series(1,1000);
+SELECT * FROM check_estimated_rows('SELECT * FROM table_fillfactor');
+ estimated | actual 
+-----------+--------
+      1000 |   1000
+(1 row)
+
+DROP TABLE table_fillfactor;
 -- End of Stats Test

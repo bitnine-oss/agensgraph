@@ -199,6 +199,9 @@ MERGE INTO ro_view13 AS t USING (VALUES (3, 'Row 3')) AS v(a,b) ON t.a = v.a
 ERROR:  cannot insert into view "ro_view13"
 DETAIL:  Views that do not select from a single table or view are not automatically updatable.
 HINT:  To enable inserting into the view using MERGE, provide an INSTEAD OF INSERT trigger.
+MERGE INTO ro_view13 AS t USING (VALUES (2, 'Row 2')) AS v(a,b) ON t.a = v.a
+  WHEN MATCHED THEN DO NOTHING
+  WHEN NOT MATCHED THEN DO NOTHING; -- should be OK to do nothing
 MERGE INTO ro_view13 AS t USING (VALUES (3, 'Row 3')) AS v(a,b) ON t.a = v.a
   WHEN MATCHED THEN DO NOTHING
   WHEN NOT MATCHED THEN DO NOTHING; -- should be OK to do nothing
@@ -375,6 +378,8 @@ DELETE FROM ro_view18;
 ERROR:  cannot delete from view "ro_view18"
 DETAIL:  Views that do not select from a single table or view are not automatically updatable.
 HINT:  To enable deleting from the view, provide an INSTEAD OF DELETE trigger or an unconditional ON DELETE DO INSTEAD rule.
+MERGE INTO ro_view18 AS t USING (VALUES (1, 'Row 1')) AS v(a,b) ON t.a = v.a
+  WHEN MATCHED THEN DO NOTHING; -- should be OK to do nothing
 UPDATE ro_view19 SET last_value=1000;
 ERROR:  cannot update view "ro_view19"
 DETAIL:  Views that do not select from a single table or view are not automatically updatable.
@@ -1274,7 +1279,7 @@ MERGE INTO rw_view2 t
   WHEN MATCHED THEN UPDATE SET b = s.b
   WHEN NOT MATCHED AND s.a > 0 THEN INSERT VALUES (s.a, s.b); -- should fail
 ERROR:  cannot merge into view "rw_view2"
-DETAIL:  MERGE is not supported for views with INSTEAD OF triggers for some actions, but not others.
+DETAIL:  MERGE is not supported for views with INSTEAD OF triggers for some actions but not all.
 HINT:  To enable merging into the view, either provide a full set of INSTEAD OF triggers or drop the existing INSTEAD OF triggers.
 MERGE INTO rw_view2 t
   USING (SELECT x, 'R'||x FROM generate_series(0,3) x) AS s(a,b) ON t.a = s.a
@@ -2094,6 +2099,9 @@ INSERT INTO rw_view1 VALUES (null, null, 1.1, null); -- should fail
 ERROR:  cannot insert into column "ctid" of view "rw_view1"
 DETAIL:  View columns that refer to system columns are not updatable.
 INSERT INTO rw_view1 (s, c, a) VALUES (null, null, 1.1); -- should fail
+ERROR:  cannot insert into column "s" of view "rw_view1"
+DETAIL:  View columns that are not columns of their base relation are not updatable.
+INSERT INTO rw_view1 (s, c, a) VALUES (default, default, 1.1); -- should fail
 ERROR:  cannot insert into column "s" of view "rw_view1"
 DETAIL:  View columns that are not columns of their base relation are not updatable.
 INSERT INTO rw_view1 (a) VALUES (1.1) RETURNING a, s, c; -- OK

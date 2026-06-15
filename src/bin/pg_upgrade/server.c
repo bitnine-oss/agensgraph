@@ -71,6 +71,8 @@ get_db_conn(ClusterInfo *cluster, const char *db_name)
 		appendPQExpBufferStr(&conn_opts, " host=");
 		appendConnStrVal(&conn_opts, cluster->sockdir);
 	}
+	if (!protocol_negotiation_supported(cluster))
+		appendPQExpBufferStr(&conn_opts, " max_protocol_version=3.0");
 
 	conn = PQconnectdb(conn_opts.data);
 	termPQExpBuffer(&conn_opts);
@@ -240,17 +242,6 @@ start_postmaster(ClusterInfo *cluster, bool report_and_exit_on_error)
 	 */
 	if (cluster == &new_cluster)
 		appendPQExpBufferStr(&pgoptions, " -c synchronous_commit=off -c fsync=off -c full_page_writes=off");
-
-	/*
-	 * Use max_slot_wal_keep_size as -1 to prevent the WAL removal by the
-	 * checkpointer process.  If WALs required by logical replication slots
-	 * are removed, the slots are unusable.  This setting prevents the
-	 * invalidation of slots during the upgrade. We set this option when
-	 * cluster is PG17 or later because logical replication slots can only be
-	 * migrated since then. Besides, max_slot_wal_keep_size is added in PG13.
-	 */
-	if (GET_MAJOR_VERSION(cluster->major_version) >= 1700)
-		appendPQExpBufferStr(&pgoptions, " -c max_slot_wal_keep_size=-1");
 
 	/*
 	 * Use -b to disable autovacuum and logical replication launcher

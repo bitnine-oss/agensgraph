@@ -447,6 +447,8 @@ reset enable_bitmapscan;
 insert into arr_pk_tbl values(10, '[-2147483648:-2147483647]={1,2}');
 update arr_pk_tbl set f1[2147483647] = 42 where pk = 10;
 update arr_pk_tbl set f1[2147483646:2147483647] = array[4,2] where pk = 10;
+insert into arr_pk_tbl(pk, f1[0:2147483647]) values (2, '{}');
+insert into arr_pk_tbl(pk, f1[-2147483648:2147483647]) values (2, '{}');
 
 -- also exercise the expanded-array case
 do $$ declare a int[];
@@ -525,6 +527,10 @@ select '[0:1]={1.1,2.2}'::float8[];
 select '[2147483646:2147483646]={1}'::int[];
 select '[-2147483648:-2147483647]={1,2}'::int[];
 -- all of the above should be accepted
+
+-- some day we might allow these cases, but for now they're errors:
+select array[]::oidvector;
+select array[]::int2vector;
 
 -- tests for array aggregates
 CREATE TEMP TABLE arraggtest ( f1 INT[], f2 TEXT[][], f3 FLOAT[]);
@@ -710,6 +716,28 @@ select array_replace(array['AB',NULL,'CDE'],NULL,'12');
 -- array(select array-value ...)
 select array(select array[i,i/2] from generate_series(1,5) i);
 select array(select array['Hello', i::text] from generate_series(9,11) i);
+
+-- int2vector and oidvector should be treated as scalar types for this purpose
+select pg_typeof(array(select '11 22 33'::int2vector from generate_series(1,5)));
+select array(select '11 22 33'::int2vector from generate_series(1,5));
+select unnest(array(select '11 22 33'::int2vector from generate_series(1,5)));
+select pg_typeof(array(select '11 22 33'::oidvector from generate_series(1,5)));
+select array(select '11 22 33'::oidvector from generate_series(1,5));
+select unnest(array(select '11 22 33'::oidvector from generate_series(1,5)));
+
+-- array[] should do the same
+select pg_typeof(array['11 22 33'::int2vector]);
+select array['11 22 33'::int2vector];
+select pg_typeof(unnest(array['11 22 33'::int2vector]));
+select unnest(array['11 22 33'::int2vector]);
+select pg_typeof(unnest('11 22 33'::int2vector));
+select unnest('11 22 33'::int2vector);
+select pg_typeof(array['11 22 33'::oidvector]);
+select array['11 22 33'::oidvector];
+select pg_typeof(unnest(array['11 22 33'::oidvector]));
+select unnest(array['11 22 33'::oidvector]);
+select pg_typeof(unnest('11 22 33'::oidvector));
+select unnest('11 22 33'::oidvector);
 
 -- Insert/update on a column that is array of composite
 

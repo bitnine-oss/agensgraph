@@ -694,6 +694,30 @@ reset enable_hashjoin;
 reset enable_nestloop;
 
 --
+-- regression test for bug #18522 (merge-right-anti-join in inner_unique cases)
+--
+
+create temp table tbl_ra(a int unique, b int);
+insert into tbl_ra select i, i%100 from generate_series(1,1000)i;
+create index on tbl_ra (b);
+analyze tbl_ra;
+
+set enable_hashjoin to off;
+set enable_nestloop to off;
+
+-- ensure we get a merge right anti join
+explain (costs off)
+select * from tbl_ra t1
+where not exists (select 1 from tbl_ra t2 where t2.b = t1.a) and t1.b < 2;
+
+-- and check we get the expected results
+select * from tbl_ra t1
+where not exists (select 1 from tbl_ra t2 where t2.b = t1.a) and t1.b < 2;
+
+reset enable_hashjoin;
+reset enable_nestloop;
+
+--
 -- regression test for bug #13908 (hash join with skew tuples & nbatch increase)
 --
 
@@ -1304,6 +1328,30 @@ select * from int4_tbl left join (
   select text 'foo' union all select text 'bar'
 ) ss(x) on true
 where ss.x is null;
+
+-- Test computation of varnullingrels when translating appendrel Var
+begin;
+
+create temp table t_append (a int not null, b int);
+insert into t_append values (1, 1);
+insert into t_append values (2, 3);
+
+explain (verbose, costs off)
+select t1.a, s.a from t_append t1
+  left join t_append t2 on t1.a = t2.b
+  join lateral (
+    select t1.a as a union all select t2.a as a
+  ) s on true
+where s.a is not null;
+
+select t1.a, s.a from t_append t1
+  left join t_append t2 on t1.a = t2.b
+  join lateral (
+    select t1.a as a union all select t2.a as a
+  ) s on true
+where s.a is not null;
+
+rollback;
 
 --
 -- test inlining of immutable functions
@@ -2010,6 +2058,29 @@ from int8_tbl t1
     on t1.q2 = t2.q2
   left join onek t4
     on t2.q2 < t3.unique2;
+
+-- bug #19460: we need to clean up RestrictInfos more than we had been doing
+explain (costs off)
+select * from
+  (select 1::int as id) as lhs
+full join
+  (select dummy_source.id
+   from (select null::int as id) as dummy_source
+   left join (select a.id from a where a.id = 42) as sub
+   on sub.id = dummy_source.id
+  ) as rhs
+on lhs.id = rhs.id;
+
+explain (costs off)
+select * from
+  (select 1::int as id) as lhs
+full join
+  (select dummy_source.id
+   from (select 2::int as id) as dummy_source
+   left join (select a.id from a) as sub
+   on sub.id = dummy_source.id
+  ) as rhs
+on lhs.id = rhs.id;
 
 -- More tests of correct placement of pseudoconstant quals
 
@@ -2928,3 +2999,16 @@ SELECT t1.a FROM skip_fetch t1 LEFT JOIN skip_fetch t2 ON t2.a = 1 WHERE t2.a IS
 
 RESET enable_indexonlyscan;
 RESET enable_seqscan;
+
+-- Test that we do not account for nullingrels when looking up statistics
+CREATE TABLE group_tbl (a INT, b INT);
+INSERT INTO group_tbl SELECT 1, 1;
+CREATE STATISTICS group_tbl_stat (ndistinct) ON a, b FROM group_tbl;
+ANALYZE group_tbl;
+
+EXPLAIN (COSTS OFF)
+SELECT 1 FROM group_tbl t1
+    LEFT JOIN (SELECT a c1, COALESCE(a) c2 FROM group_tbl t2) s ON TRUE
+GROUP BY s.c1, s.c2;
+
+DROP TABLE group_tbl;

@@ -112,6 +112,10 @@
    `LLVMCreatePerfJITEventListener', and to 0 if you don't. */
 #undef HAVE_DECL_LLVMCREATEPERFJITEVENTLISTENER
 
+/* Define to 1 if you have the declaration of `memset_s', and to 0 if you
+   don't. */
+#undef HAVE_DECL_MEMSET_S
+
 /* Define to 1 if you have the declaration of `posix_fadvise', and to 0 if you
    don't. */
 #undef HAVE_DECL_POSIX_FADVISE
@@ -124,6 +128,10 @@
    don't. */
 #undef HAVE_DECL_PWRITEV
 
+/* Define to 1 if you have the declaration of `strchrnul', and to 0 if you
+   don't. */
+#undef HAVE_DECL_STRCHRNUL
+
 /* Define to 1 if you have the declaration of `strlcat', and to 0 if you
    don't. */
 #undef HAVE_DECL_STRLCAT
@@ -135,6 +143,10 @@
 /* Define to 1 if you have the declaration of `strnlen', and to 0 if you
    don't. */
 #undef HAVE_DECL_STRNLEN
+
+/* Define to 1 if you have the declaration of `timingsafe_bcmp', and to 0 if
+   you don't. */
+#undef HAVE_DECL_TIMINGSAFE_BCMP
 
 /* Define to 1 if you have the <editline/history.h> header file. */
 #undef HAVE_EDITLINE_HISTORY_H
@@ -306,9 +318,6 @@
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
 
-/* Define to 1 if you have the `memset_s' function. */
-#undef HAVE_MEMSET_S
-
 /* Define to 1 if you have the `mkdtemp' function. */
 #undef HAVE_MKDTEMP
 
@@ -393,17 +402,14 @@
 /* Define to 1 if you have the `SSL_CTX_set_cert_cb' function. */
 #undef HAVE_SSL_CTX_SET_CERT_CB
 
-/* Define to 1 if stdbool.h conforms to C99. */
-#undef HAVE_STDBOOL_H
+/* Define to 1 if you have the `SSL_CTX_set_num_tickets' function. */
+#undef HAVE_SSL_CTX_SET_NUM_TICKETS
 
 /* Define to 1 if you have the <stdint.h> header file. */
 #undef HAVE_STDINT_H
 
 /* Define to 1 if you have the <stdlib.h> header file. */
 #undef HAVE_STDLIB_H
-
-/* Define to 1 if you have the `strchrnul' function. */
-#undef HAVE_STRCHRNUL
 
 /* Define to 1 if you have the `strerror_r' function. */
 #undef HAVE_STRERROR_R
@@ -474,6 +480,9 @@
 /* Define to 1 if you have the <termios.h> header file. */
 #undef HAVE_TERMIOS_H
 
+/* Define to 1 if you have the `timingsafe_bcmp' function. */
+#undef HAVE_TIMINGSAFE_BCMP
+
 /* Define to 1 if your compiler understands `typeof' or something similar. */
 #undef HAVE_TYPEOF
 
@@ -524,9 +533,6 @@
 
 /* Define to 1 if you have XSAVE intrinsics. */
 #undef HAVE_XSAVE_INTRINSICS
-
-/* Define to 1 if the system has the type `_Bool'. */
-#undef HAVE__BOOL
 
 /* Define to 1 if your compiler understands __builtin_bswap16. */
 #undef HAVE__BUILTIN_BSWAP16
@@ -613,6 +619,14 @@
 /* Define to the version of this package. */
 #undef PACKAGE_VERSION
 
+/* Define to best C++ printf format archetype, usually gnu_printf if
+   available. */
+#undef PG_CXX_PRINTF_ATTRIBUTE
+
+/* Define to best C printf format archetype, usually gnu_printf if available.
+   */
+#undef PG_C_PRINTF_ATTRIBUTE
+
 /* Define to the name of a signed 128-bit integer type. */
 #undef PG_INT128_TYPE
 
@@ -631,9 +645,6 @@
 
 /* PostgreSQL minor version number */
 #undef PG_MINORVERSION_NUM
-
-/* Define to best printf format archetype, usually gnu_printf if available. */
-#undef PG_PRINTF_ATTRIBUTE
 
 /* Define to 1 to use <stdbool.h> to define type bool. */
 #undef PG_USE_STDBOOL

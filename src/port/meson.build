@@ -70,6 +70,7 @@ replace_funcs_neg = [
   ['strlcat'],
   ['strlcpy'],
   ['strnlen'],
+  ['timingsafe_bcmp'],
 ]
 
 if host_system != 'windows'
@@ -185,6 +186,7 @@ foreach name, opts : pgport_variants
   lib = static_library('libpgport@0@'.format(name),
       pgport_sources,
       link_with: cflag_libs,
+      link_whole: cflag_libs,
       c_pch: pch_c_h,
       kwargs: opts + {
         'dependencies': opts['dependencies'] + [ssl],

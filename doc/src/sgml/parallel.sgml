@@ -202,7 +202,7 @@ EXPLAIN SELECT * FROM pgbench_accounts WHERE filler LIKE '%x%';
   </itemizedlist>
 
   <para>
-    Even when parallel query plan is generated for a particular query, there
+    Even when a parallel query plan is generated for a particular query, there
     are several circumstances under which it will be impossible to execute
     that plan in parallel at execution time.  If this occurs, the leader
     will execute the portion of the plan below the <literal>Gather</literal>
@@ -507,12 +507,6 @@ EXPLAIN SELECT * FROM pgbench_accounts WHERE filler LIKE '%x%';
       <para>
         Scans of foreign tables, unless the foreign data wrapper has
         an <literal>IsForeignScanParallelSafe</literal> API that indicates otherwise.
-      </para>
-    </listitem>
-
-    <listitem>
-      <para>
-        Plan nodes to which an <literal>InitPlan</literal> is attached.
       </para>
     </listitem>
 

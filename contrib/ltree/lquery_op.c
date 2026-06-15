@@ -27,21 +27,21 @@ getlexeme(char *start, char *end, int *len)
 	char	   *ptr;
 
 	while (start < end && t_iseq(start, '_'))
-		start += pg_mblen(start);
+		start += pg_mblen_range(start, end);
 
 	ptr = start;
 	if (ptr >= end)
 		return NULL;
 
 	while (ptr < end && !t_iseq(ptr, '_'))
-		ptr += pg_mblen(ptr);
+		ptr += pg_mblen_range(ptr, end);
 
 	*len = ptr - start;
 	return start;
 }
 
 bool
-compare_subnode(ltree_level *t, char *qn, int len, int (*cmpptr) (const char *, const char *, size_t), bool anyend)
+compare_subnode(ltree_level *t, char *qn, int len, bool prefix, bool ci)
 {
 	char	   *endt = t->name + t->len;
 	char	   *endq = qn + len;
@@ -56,10 +56,8 @@ compare_subnode(ltree_level *t, char *qn, int len, int (*cmpptr) (const char *, 
 		isok = false;
 		while ((tn = getlexeme(tn, endt, &lent)) != NULL)
 		{
-			if ((lent == lenq || (lent > lenq && anyend)) &&
-				(*cmpptr) (qn, tn, lenq) == 0)
+			if (ltree_label_match(qn, lenq, tn, lent, prefix, ci))
 			{
-
 				isok = true;
 				break;
 			}
@@ -74,17 +72,41 @@ compare_subnode(ltree_level *t, char *qn, int len, int (*cmpptr) (const char *, 
 	return true;
 }
 
-int
-ltree_strncasecmp(const char *a, const char *b, size_t s)
+/*
+ * Check if the label matches the predicate string. If 'prefix' is true, then
+ * the predicate string is treated as a prefix. If 'ci' is true, then the
+ * predicate string is case-insensitive (and locale-aware).
+ */
+bool
+ltree_label_match(const char *pred, size_t pred_len, const char *label,
+				  size_t label_len, bool prefix, bool ci)
 {
-	char	   *al = str_tolower(a, s, DEFAULT_COLLATION_OID);
-	char	   *bl = str_tolower(b, s, DEFAULT_COLLATION_OID);
-	int			res;
+	char	   *fpred;			/* casefolded predicate */
+	size_t		fpred_len;
+	char	   *flabel;			/* casefolded label */
+	size_t		flabel_len;
+	bool		res;
 
-	res = strncmp(al, bl, s);
+	/* fast path for binary match or binary prefix match */
+	if ((pred_len == label_len || (prefix && pred_len < label_len)) &&
+		strncmp(pred, label, pred_len) == 0)
+		return true;
+	else if (!ci)
+		return false;
 
-	pfree(al);
-	pfree(bl);
+	fpred = str_tolower(pred, pred_len, DEFAULT_COLLATION_OID);
+	fpred_len = strlen(fpred);
+	flabel = str_tolower(label, label_len, DEFAULT_COLLATION_OID);
+	flabel_len = strlen(flabel);
+
+	if ((fpred_len == flabel_len || (prefix && fpred_len < flabel_len)) &&
+		strncmp(fpred, flabel, fpred_len) == 0)
+		res = true;
+	else
+		res = false;
+
+	pfree(fpred);
+	pfree(flabel);
 
 	return res;
 }
@@ -109,19 +131,16 @@ checkLevel(lquery_level *curq, ltree_level *curt)
 
 	for (int i = 0; i < curq->numvar; i++)
 	{
-		int			(*cmpptr) (const char *, const char *, size_t);
-
-		cmpptr = (curvar->flag & LVAR_INCASE) ? ltree_strncasecmp : strncmp;
+		bool		prefix = (curvar->flag & LVAR_ANYEND);
+		bool		ci = (curvar->flag & LVAR_INCASE);
 
 		if (curvar->flag & LVAR_SUBLEXEME)
 		{
-			if (compare_subnode(curt, curvar->name, curvar->len, cmpptr,
-								(curvar->flag & LVAR_ANYEND)))
+			if (compare_subnode(curt, curvar->name, curvar->len, prefix, ci))
 				return success;
 		}
-		else if ((curvar->len == curt->len ||
-				  (curt->len > curvar->len && (curvar->flag & LVAR_ANYEND))) &&
-				 (*cmpptr) (curvar->name, curt->name, curvar->len) == 0)
+		else if (ltree_label_match(curvar->name, curvar->len, curt->name,
+								   curt->len, prefix, ci))
 			return success;
 
 		curvar = LVAR_NEXT(curvar);

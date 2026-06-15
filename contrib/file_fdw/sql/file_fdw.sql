@@ -55,6 +55,8 @@ CREATE USER MAPPING FOR regress_file_fdw_superuser SERVER file_server;
 CREATE USER MAPPING FOR regress_no_priv_user SERVER file_server;
 
 -- validator tests
+CREATE FOREIGN TABLE tbl () SERVER file_server OPTIONS (foo 'bar');  -- ERROR
+CREATE FOREIGN TABLE tbl () SERVER file_server OPTIONS ("a=b" 'true');  -- ERROR
 CREATE FOREIGN TABLE tbl () SERVER file_server OPTIONS (format 'xml');  -- ERROR
 CREATE FOREIGN TABLE tbl () SERVER file_server OPTIONS (format 'text', quote ':');          -- ERROR
 CREATE FOREIGN TABLE tbl () SERVER file_server OPTIONS (format 'text', escape ':');         -- ERROR
@@ -224,6 +226,24 @@ UPDATE pt set a = 1 where a = 2; -- ERROR
 SELECT tableoid::regclass, * FROM pt;
 SELECT tableoid::regclass, * FROM p1;
 SELECT tableoid::regclass, * FROM p2;
+
+-- Test DELETE/UPDATE/MERGE on a partitioned table when all partitions
+-- are excluded and only the dummy root result relation remains. The
+-- operation is a no-op but should not fail regardless of whether the
+-- foreign child was processed (pruning off) or not (pruning on).
+DROP TABLE p2;
+SET enable_partition_pruning TO off;
+DELETE FROM pt WHERE false;
+UPDATE pt SET b = 'x' WHERE false;
+MERGE INTO pt t USING (VALUES (1, 'x'::text)) AS s(a, b)
+  ON false WHEN MATCHED THEN UPDATE SET b = s.b;
+
+SET enable_partition_pruning TO on;
+DELETE FROM pt WHERE false;
+UPDATE pt SET b = 'x' WHERE false;
+MERGE INTO pt t USING (VALUES (1, 'x'::text)) AS s(a, b)
+  ON false WHEN MATCHED THEN UPDATE SET b = s.b;
+
 DROP TABLE pt;
 
 -- generated column tests

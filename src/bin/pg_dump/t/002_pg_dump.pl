@@ -172,6 +172,15 @@ my %pgdump_runs = (
 			'--format=directory', '--compress=lz4:1',
 			"--file=$tempdir/compression_lz4_dir", 'postgres',
 		],
+		# Give coverage for manually compressed blobs.toc files during
+		# restore.
+		compress_cmd => {
+			program => $ENV{'LZ4'},
+			args => [
+				'-z', '-f', '-m', '--rm',
+				"$tempdir/compression_lz4_dir/blobs_*.toc",
+			],
+		},
 		# Verify that data files were compressed
 		glob_patterns => [
 			"$tempdir/compression_lz4_dir/toc.dat",
@@ -537,6 +546,29 @@ my %pgdump_runs = (
 			'postgres',
 		],
 	},
+	no_subscriptions => {
+		dump_cmd => [
+			'pg_dump', '--no-sync',
+			'--file' => "$tempdir/no_subscriptions.sql",
+			'--no-subscriptions',
+			'postgres',
+		],
+	},
+	no_subscriptions_restore => {
+		dump_cmd => [
+			'pg_dump', '--no-sync',
+			'--format' => 'custom',
+			'--file' => "$tempdir/no_subscriptions_restore.dump",
+			'postgres',
+		],
+		restore_cmd => [
+			'pg_restore',
+			'--format' => 'custom',
+			'--file' => "$tempdir/no_subscriptions_restore.sql",
+			'--no-subscriptions',
+			"$tempdir/no_subscriptions_restore.dump",
+		],
+	},
 	no_table_access_method => {
 		dump_cmd => [
 			'pg_dump', '--no-sync',
@@ -711,6 +743,8 @@ my %full_runs = (
 	no_large_objects => 1,
 	no_owner => 1,
 	no_privs => 1,
+	no_subscriptions => 1,
+	no_subscriptions_restore => 1,
 	no_table_access_method => 1,
 	pg_dumpall_dbprivs => 1,
 	pg_dumpall_exclude => 1,
@@ -718,6 +752,16 @@ my %full_runs = (
 
 # This is where the actual tests are defined.
 my %tests = (
+	'restrict' => {
+		all_runs => 1,
+		regexp => qr/^\\restrict [a-zA-Z0-9]+$/m,
+	},
+
+	'unrestrict' => {
+		all_runs => 1,
+		regexp => qr/^\\unrestrict [a-zA-Z0-9]+$/m,
+	},
+
 	'ALTER DEFAULT PRIVILEGES FOR ROLE regress_dump_test_role GRANT' => {
 		create_order => 14,
 		create_sql => 'ALTER DEFAULT PRIVILEGES
@@ -1154,7 +1198,7 @@ my %tests = (
 
 	'ALTER FOREIGN TABLE foreign_table ALTER COLUMN c1 OPTIONS' => {
 		regexp => qr/^
-			\QALTER FOREIGN TABLE dump_test.foreign_table ALTER COLUMN c1 OPTIONS (\E\n
+			\QALTER FOREIGN TABLE ONLY dump_test.foreign_table ALTER COLUMN c1 OPTIONS (\E\n
 			\s+\Qcolumn_name 'col1'\E\n
 			\Q);\E\n
 			/xm,
@@ -1522,6 +1566,10 @@ my %tests = (
 		regexp =>
 		  qr/^COMMENT ON SUBSCRIPTION sub1 IS 'comment on subscription';/m,
 		like => { %full_runs, section_post_data => 1, },
+		unlike => {
+			no_subscriptions => 1,
+			no_subscriptions_restore => 1,
+		},
 	},
 
 	'COMMENT ON TEXT SEARCH CONFIGURATION dump_test.alt_ts_conf1' => {
@@ -1893,6 +1941,27 @@ my %tests = (
 		},
 	},
 
+	'newline of role or table name in comment' => {
+		create_sql => qq{CREATE ROLE regress_newline;
+						 ALTER ROLE regress_newline SET enable_seqscan = off;
+						 ALTER ROLE regress_newline
+							RENAME TO "regress_newline\nattack";
+
+						 -- meet getPartitioningInfo() "unsafe" condition
+						 CREATE TYPE pp_colors AS
+							ENUM ('green', 'blue', 'black');
+						 CREATE TABLE pp_enumpart (a pp_colors)
+							PARTITION BY HASH (a);
+						 CREATE TABLE pp_enumpart1 PARTITION OF pp_enumpart
+							FOR VALUES WITH (MODULUS 2, REMAINDER 0);
+						 CREATE TABLE pp_enumpart2 PARTITION OF pp_enumpart
+							FOR VALUES WITH (MODULUS 2, REMAINDER 1);
+						 ALTER TABLE pp_enumpart
+							RENAME TO "pp_enumpart\nattack";},
+		regexp => qr/\n--[^\n]*\nattack/s,
+		like => {},
+	},
+
 	'CREATE TABLESPACE regress_dump_tablespace' => {
 		create_order => 2,
 		create_sql => q(
@@ -2041,18 +2110,44 @@ my %tests = (
 		create_sql => 'CREATE DOMAIN dump_test.us_postal_code AS TEXT
 		               COLLATE "C"
 					   DEFAULT \'10014\'
+					   CONSTRAINT nn NOT NULL
 					   CHECK(VALUE ~ \'^\d{5}$\' OR
 							 VALUE ~ \'^\d{5}-\d{4}$\');
+					   COMMENT ON CONSTRAINT nn
+						 ON DOMAIN dump_test.us_postal_code IS \'not null\';
 					   COMMENT ON CONSTRAINT us_postal_code_check
 						 ON DOMAIN dump_test.us_postal_code IS \'check it\';',
 		regexp => qr/^
-			\QCREATE DOMAIN dump_test.us_postal_code AS text COLLATE pg_catalog."C" DEFAULT '10014'::text\E\n\s+
+			\QCREATE DOMAIN dump_test.us_postal_code AS text COLLATE pg_catalog."C" CONSTRAINT nn NOT NULL DEFAULT '10014'::text\E\n\s+
 			\QCONSTRAINT us_postal_code_check CHECK \E
 			\Q(((VALUE ~ '^\d{5}\E
 			\$\Q'::text) OR (VALUE ~ '^\d{5}-\d{4}\E\$
 			\Q'::text)));\E(.|\n)*
-			\QCOMMENT ON CONSTRAINT us_postal_code_check ON DOMAIN dump_test.us_postal_code IS 'check it';\E
 			/xm,
+		like =>
+		  { %full_runs, %dump_test_schema_runs, section_pre_data => 1, },
+		unlike => {
+			exclude_dump_test_schema => 1,
+			only_dump_measurement => 1,
+		},
+	},
+
+	'COMMENT ON CONSTRAINT ON DOMAIN (1)' => {
+		regexp => qr/^
+		\QCOMMENT ON CONSTRAINT nn ON DOMAIN dump_test.us_postal_code IS 'not null';\E
+		/xm,
+		like =>
+		  { %full_runs, %dump_test_schema_runs, section_pre_data => 1, },
+		unlike => {
+			exclude_dump_test_schema => 1,
+			only_dump_measurement => 1,
+		},
+	},
+
+	'COMMENT ON CONSTRAINT ON DOMAIN (2)' => {
+		regexp => qr/^
+		\QCOMMENT ON CONSTRAINT us_postal_code_check ON DOMAIN dump_test.us_postal_code IS 'check it';\E
+		/xm,
 		like =>
 		  { %full_runs, %dump_test_schema_runs, section_pre_data => 1, },
 		unlike => {
@@ -2959,6 +3054,10 @@ my %tests = (
 			\QCREATE SUBSCRIPTION sub1 CONNECTION 'dbname=doesnotexist' PUBLICATION pub1 WITH (connect = false, slot_name = 'sub1');\E
 			/xm,
 		like => { %full_runs, section_post_data => 1, },
+		unlike => {
+			no_subscriptions => 1,
+			no_subscriptions_restore => 1,
+		},
 	},
 
 	'CREATE SUBSCRIPTION sub2' => {
@@ -2970,6 +3069,10 @@ my %tests = (
 			\QCREATE SUBSCRIPTION sub2 CONNECTION 'dbname=doesnotexist' PUBLICATION pub1 WITH (connect = false, slot_name = 'sub2', origin = none);\E
 			/xm,
 		like => { %full_runs, section_post_data => 1, },
+		unlike => {
+			no_subscriptions => 1,
+			no_subscriptions_restore => 1,
+		},
 	},
 
 	'CREATE SUBSCRIPTION sub3' => {
@@ -2981,6 +3084,10 @@ my %tests = (
 			\QCREATE SUBSCRIPTION sub3 CONNECTION 'dbname=doesnotexist' PUBLICATION pub1 WITH (connect = false, slot_name = 'sub3');\E
 			/xm,
 		like => { %full_runs, section_post_data => 1, },
+		unlike => {
+			no_subscriptions => 1,
+			no_subscriptions_restore => 1,
+		},
 	},
 
 	'ALTER PUBLICATION pub1 ADD TABLE test_table' => {
@@ -3828,7 +3935,6 @@ my %tests = (
 	},
 
 	'ALTER TABLE measurement PRIMARY KEY' => {
-		all_runs => 1,
 		catch_all => 'CREATE ... commands',
 		create_order => 93,
 		create_sql =>
@@ -3880,7 +3986,6 @@ my %tests = (
 	},
 
 	'ALTER INDEX ... ATTACH PARTITION (primary key)' => {
-		all_runs => 1,
 		catch_all => 'CREATE ... commands',
 		regexp => qr/^
 		\QALTER INDEX dump_test.measurement_pkey ATTACH PARTITION dump_test_second_schema.measurement_y2006m2_pkey\E
@@ -4905,9 +5010,10 @@ foreach my $run (sort keys %pgdump_runs)
 
 		# Check for proper test definitions
 		#
-		# There should be a "like" list, even if it is empty.  (This
-		# makes the test more self-documenting.)
-		if (!defined($tests{$test}->{like}))
+		# Either "all_runs" should be set or there should be a "like" list,
+		# even if it is empty.  (This makes the test more self-documenting.)
+		if (!defined($tests{$test}->{all_runs})
+			&& !defined($tests{$test}->{like}))
 		{
 			die "missing \"like\" in test \"$test\"";
 		}
@@ -4943,9 +5049,10 @@ foreach my $run (sort keys %pgdump_runs)
 			next;
 		}
 
-		# Run the test listed as a like, unless it is specifically noted
-		# as an unlike (generally due to an explicit exclusion or similar).
-		if ($tests{$test}->{like}->{$test_key}
+		# Run the test if all_runs is set or if listed as a like, unless it is
+		# specifically noted as an unlike (generally due to an explicit
+		# exclusion or similar).
+		if (($tests{$test}->{like}->{$test_key} || $tests{$test}->{all_runs})
 			&& !defined($tests{$test}->{unlike}->{$test_key}))
 		{
 			if (!ok($output_file =~ $tests{$test}->{regexp},

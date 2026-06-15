@@ -190,6 +190,14 @@ struct SnapBuild
 	bool		building_full_snapshot;
 
 	/*
+	 * Indicates if we are using the snapshot builder for the creation of a
+	 * logical replication slot. If it's true, the start point for decoding
+	 * changes is not determined yet. So we skip snapshot restores to properly
+	 * find the start point. See SnapBuildFindSnapshot() for details.
+	 */
+	bool		in_slot_creation;
+
+	/*
 	 * Snapshot that's valid to see the catalog state seen at this moment.
 	 */
 	Snapshot	snapshot;
@@ -292,7 +300,7 @@ static void SnapBuildFreeSnapshot(Snapshot snap);
 
 static void SnapBuildSnapIncRefcount(Snapshot snap);
 
-static void SnapBuildDistributeNewCatalogSnapshot(SnapBuild *builder, XLogRecPtr lsn);
+static void SnapBuildDistributeSnapshotAndInval(SnapBuild *builder, XLogRecPtr lsn, TransactionId xid);
 
 static inline bool SnapBuildXidHasCatalogChanges(SnapBuild *builder, TransactionId xid,
 												 uint32 xinfo);
@@ -317,6 +325,7 @@ AllocateSnapshotBuilder(ReorderBuffer *reorder,
 						TransactionId xmin_horizon,
 						XLogRecPtr start_lsn,
 						bool need_full_snapshot,
+						bool in_slot_creation,
 						XLogRecPtr two_phase_at)
 {
 	MemoryContext context;
@@ -347,6 +356,7 @@ AllocateSnapshotBuilder(ReorderBuffer *reorder,
 
 	builder->initial_xmin_horizon = xmin_horizon;
 	builder->start_decoding_at = start_lsn;
+	builder->in_slot_creation = in_slot_creation;
 	builder->building_full_snapshot = need_full_snapshot;
 	builder->two_phase_at = two_phase_at;
 
@@ -849,15 +859,15 @@ SnapBuildProcessNewCid(SnapBuild *builder, TransactionId xid,
 }
 
 /*
- * Add a new Snapshot to all transactions we're decoding that currently are
- * in-progress so they can see new catalog contents made by the transaction
- * that just committed. This is necessary because those in-progress
- * transactions will use the new catalog's contents from here on (at the very
- * least everything they do needs to be compatible with newer catalog
- * contents).
+ * Add a new Snapshot and invalidation messages to all transactions we're
+ * decoding that currently are in-progress so they can see new catalog contents
+ * made by the transaction that just committed. This is necessary because those
+ * in-progress transactions will use the new catalog's contents from here on
+ * (at the very least everything they do needs to be compatible with newer
+ * catalog contents).
  */
 static void
-SnapBuildDistributeNewCatalogSnapshot(SnapBuild *builder, XLogRecPtr lsn)
+SnapBuildDistributeSnapshotAndInval(SnapBuild *builder, XLogRecPtr lsn, TransactionId xid)
 {
 	dlist_iter	txn_i;
 	ReorderBufferTXN *txn;
@@ -865,7 +875,8 @@ SnapBuildDistributeNewCatalogSnapshot(SnapBuild *builder, XLogRecPtr lsn)
 	/*
 	 * Iterate through all toplevel transactions. This can include
 	 * subtransactions which we just don't yet know to be that, but that's
-	 * fine, they will just get an unnecessary snapshot queued.
+	 * fine, they will just get an unnecessary snapshot and invalidations
+	 * queued.
 	 */
 	dlist_foreach(txn_i, &builder->reorder->toplevel_by_lsn)
 	{
@@ -878,6 +889,14 @@ SnapBuildDistributeNewCatalogSnapshot(SnapBuild *builder, XLogRecPtr lsn)
 		 * transaction which in turn implies we don't yet need a snapshot at
 		 * all. We'll add a snapshot when the first change gets queued.
 		 *
+		 * Similarly, we don't need to add invalidations to a transaction whose
+		 * base snapshot is not yet set. Once a base snapshot is built, it will
+		 * include the xids of committed transactions that have modified the
+		 * catalog, thus reflecting the new catalog contents. The existing
+		 * catalog cache will have already been invalidated after processing
+		 * the invalidations in the transaction that modified catalogs,
+		 * ensuring that a fresh cache is constructed during decoding.
+		 *
 		 * NB: This works correctly even for subtransactions because
 		 * ReorderBufferAssignChild() takes care to transfer the base snapshot
 		 * to the top-level transaction, and while iterating the changequeue
@@ -887,13 +906,13 @@ SnapBuildDistributeNewCatalogSnapshot(SnapBuild *builder, XLogRecPtr lsn)
 			continue;
 
 		/*
-		 * We don't need to add snapshot to prepared transactions as they
-		 * should not see the new catalog contents.
+		 * We don't need to add snapshot or invalidations to prepared
+		 * transactions as they should not see the new catalog contents.
 		 */
 		if (rbtxn_prepared(txn) || rbtxn_skip_prepared(txn))
 			continue;
 
-		elog(DEBUG2, "adding a new snapshot to %u at %X/%X",
+		elog(DEBUG2, "adding a new snapshot and invalidations to %u at %X/%X",
 			 txn->xid, LSN_FORMAT_ARGS(lsn));
 
 		/*
@@ -903,6 +922,41 @@ SnapBuildDistributeNewCatalogSnapshot(SnapBuild *builder, XLogRecPtr lsn)
 		SnapBuildSnapIncRefcount(builder->snapshot);
 		ReorderBufferAddSnapshot(builder->reorder, txn->xid, lsn,
 								 builder->snapshot);
+
+		/*
+		 * Add invalidation messages to the reorder buffer of in-progress
+		 * transactions except the current committed transaction, for which we
+		 * will execute invalidations at the end.
+		 *
+		 * It is required, otherwise, we will end up using the stale catcache
+		 * contents built by the current transaction even after its decoding,
+		 * which should have been invalidated due to concurrent catalog
+		 * changing transaction.
+		 *
+		 * Distribute only the invalidation messages generated by the current
+		 * committed transaction. Invalidation messages received from other
+		 * transactions would have already been propagated to the relevant
+		 * in-progress transactions. This transaction would have processed
+		 * those invalidations, ensuring that subsequent transactions observe
+		 * a consistent cache state.
+		 */
+		if (txn->xid != xid)
+		{
+			uint32 ninvalidations;
+			SharedInvalidationMessage *msgs = NULL;
+
+			ninvalidations = ReorderBufferGetInvalidations(builder->reorder,
+														   xid, &msgs);
+
+			if (ninvalidations > 0)
+			{
+				Assert(msgs != NULL);
+
+				ReorderBufferAddDistributedInvalidations(builder->reorder,
+														 txn->xid, lsn,
+														 ninvalidations, msgs);
+			}
+		}
 	}
 }
 
@@ -1174,8 +1228,11 @@ SnapBuildCommitTxn(SnapBuild *builder, XLogRecPtr lsn, TransactionId xid,
 		/* refcount of the snapshot builder for the new snapshot */
 		SnapBuildSnapIncRefcount(builder->snapshot);
 
-		/* add a new catalog snapshot to all currently running transactions */
-		SnapBuildDistributeNewCatalogSnapshot(builder, lsn);
+		/*
+		 * Add a new catalog snapshot and invalidations messages to all
+		 * currently running transactions.
+		 */
+		SnapBuildDistributeSnapshotAndInval(builder, lsn, xid);
 	}
 }
 
@@ -1327,10 +1384,12 @@ SnapBuildFindSnapshot(SnapBuild *builder, XLogRecPtr lsn, xl_running_xacts *runn
 	 *	  state while waiting on c)'s sub-states.
 	 *
 	 * b) This (in a previous run) or another decoding slot serialized a
-	 *	  snapshot to disk that we can use.  Can't use this method for the
-	 *	  initial snapshot when slot is being created and needs full snapshot
-	 *	  for export or direct use, as that snapshot will only contain catalog
-	 *	  modifying transactions.
+	 *	  snapshot to disk that we can use. Can't use this method while finding
+	 *	  the start point for decoding changes as the restart LSN would be an
+	 *	  arbitrary LSN but we need to find the start point to extract changes
+	 *	  where we won't see the data for partial transactions. Also, we cannot
+	 *	  use this method when a slot needs a full snapshot for export or direct
+	 *	  use, as that snapshot will only contain catalog modifying transactions.
 	 *
 	 * c) First incrementally build a snapshot for catalog tuples
 	 *	  (BUILDING_SNAPSHOT), that requires all, already in-progress,
@@ -1395,8 +1454,13 @@ SnapBuildFindSnapshot(SnapBuild *builder, XLogRecPtr lsn, xl_running_xacts *runn
 
 		return false;
 	}
-	/* b) valid on disk state and not building full snapshot */
+
+	/*
+	 * b) valid on disk state and while neither building full snapshot nor
+	 * creating a slot.
+	 */
 	else if (!builder->building_full_snapshot &&
+			 !builder->in_slot_creation &&
 			 SnapBuildRestore(builder, lsn))
 	{
 		/* there won't be any state to cleanup */
@@ -1580,7 +1644,7 @@ typedef struct SnapBuildOnDisk
 	offsetof(SnapBuildOnDisk, version)
 
 #define SNAPBUILD_MAGIC 0x51A1E001
-#define SNAPBUILD_VERSION 5
+#define SNAPBUILD_VERSION 6
 
 /*
  * Store/Load a snapshot from disk, depending on the snapshot builder's state.

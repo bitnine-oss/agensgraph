@@ -2887,7 +2887,14 @@ array_set_slice(Datum arraydatum,
 						 errdetail("When assigning to a slice of an empty array value,"
 								   " slice boundaries must be fully specified.")));
 
-			dim[i] = 1 + upperIndx[i] - lowerIndx[i];
+			/* compute "upperIndx[i] - lowerIndx[i] + 1", detecting overflow */
+			if (pg_sub_s32_overflow(upperIndx[i], lowerIndx[i], &dim[i]) ||
+				pg_add_s32_overflow(dim[i], 1, &dim[i]))
+				ereport(ERROR,
+						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+						 errmsg("array size exceeds the maximum allowed (%d)",
+								(int) MaxArraySize)));
+
 			lb[i] = lowerIndx[i];
 		}
 
@@ -3707,6 +3714,12 @@ deconstruct_array_builtin(ArrayType *array,
 			elmlen = sizeof(int16);
 			elmbyval = true;
 			elmalign = TYPALIGN_SHORT;
+			break;
+
+		case INT4OID:
+			elmlen = sizeof(int32);
+			elmbyval = true;
+			elmalign = TYPALIGN_INT;
 			break;
 
 		case OIDOID:
@@ -5542,6 +5555,7 @@ accumArrayResultArr(ArrayBuildStateArr *astate,
 				ndatabytes;
 	char	   *data;
 	int			i;
+	int			newnitems;
 
 	/*
 	 * We disallow accumulating null subarrays.  Another plausible definition
@@ -5570,6 +5584,14 @@ accumArrayResultArr(ArrayBuildStateArr *astate,
 	data = ARR_DATA_PTR(arg);
 	nitems = ArrayGetNItems(ndims, dims);
 	ndatabytes = ARR_SIZE(arg) - ARR_DATA_OFFSET(arg);
+
+	/* Check that the array doesn't grow too large */
+	newnitems = astate->nitems + nitems;
+	if (newnitems > MaxArraySize)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("array size exceeds the maximum allowed (%zu)",
+						MaxArraySize)));
 
 	if (astate->ndims == 0)
 	{
@@ -5636,8 +5658,6 @@ accumArrayResultArr(ArrayBuildStateArr *astate,
 	/* Deal with null bitmap if needed */
 	if (astate->nullbitmap || ARR_HASNULL(arg))
 	{
-		int			newnitems = astate->nitems + nitems;
-
 		if (astate->nullbitmap == NULL)
 		{
 			/*
@@ -5661,7 +5681,7 @@ accumArrayResultArr(ArrayBuildStateArr *astate,
 						  nitems);
 	}
 
-	astate->nitems += nitems;
+	astate->nitems = newnitems;
 	astate->dims[0] += 1;
 
 	MemoryContextSwitchTo(oldcontext);
@@ -5763,9 +5783,14 @@ ArrayBuildStateAny *
 initArrayResultAny(Oid input_type, MemoryContext rcontext, bool subcontext)
 {
 	ArrayBuildStateAny *astate;
-	Oid			element_type = get_element_type(input_type);
 
-	if (OidIsValid(element_type))
+	/*
+	 * int2vector and oidvector will satisfy both get_element_type and
+	 * get_array_type.  We prefer to treat them as scalars, to be consistent
+	 * with get_promoted_array_type.  Hence, check get_array_type not
+	 * get_element_type.
+	 */
+	if (!OidIsValid(get_array_type(input_type)))
 	{
 		/* Array case */
 		ArrayBuildStateArr *arraystate;
@@ -5781,9 +5806,6 @@ initArrayResultAny(Oid input_type, MemoryContext rcontext, bool subcontext)
 	{
 		/* Scalar case */
 		ArrayBuildState *scalarstate;
-
-		/* Let's just check that we have a type that can be put into arrays */
-		Assert(OidIsValid(get_array_type(input_type)));
 
 		scalarstate = initArrayResult(input_type, rcontext, subcontext);
 		astate = (ArrayBuildStateAny *)

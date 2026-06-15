@@ -1999,7 +1999,7 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
        </para>
        <para>
         The special value <literal>system</literal> may be specified instead, in
-        which case the system's trusted CA roots will be loaded. The exact
+        which case the trusted CA roots from the SSL implementation will be loaded. The exact
         locations of these root certificates differ by SSL implementation and
         platform. For <productname>OpenSSL</productname> in particular, the
         locations may be further modified by the <envar>SSL_CERT_DIR</envar>
@@ -5070,7 +5070,7 @@ unsigned char *PQunescapeBytea(const unsigned char *from, size_t *to_length);
    <xref linkend="libpq-PQprepare"/>,
    <xref linkend="libpq-PQexecPrepared"/>,
    <xref linkend="libpq-PQdescribePrepared"/>,
-   <xref linkend="libpq-PQdescribePortal"/>
+   <xref linkend="libpq-PQdescribePortal"/>,
    <xref linkend="libpq-PQclosePrepared"/>, and
    <xref linkend="libpq-PQclosePortal"/>
    respectively.
@@ -5310,7 +5310,7 @@ PGresult *PQgetResult(PGconn *conn);
        <literal>PGRES_PIPELINE_SYNC</literal> will be returned.
        The result of the next query after the synchronization point follows
        immediately (that is, no null pointer is returned after
-       the synchronization point.)
+       the synchronization point).
       </para>
 
       <note>
@@ -6772,15 +6772,20 @@ int PQrequestCancel(PGconn *conn);
    to send simple function calls to the server.
   </para>
 
-  <tip>
+  <warning>
    <para>
-    This interface is somewhat obsolete, as one can achieve similar
+    This interface is unsafe and should not be used.  When
+    <parameter>result_is_int</parameter> is set to <literal>0</literal>,
+    <function>PQfn</function> may write data beyond the end of
+    <parameter>result_buf</parameter>, regardless of whether the buffer has
+    enough space for the requested number of bytes.  Furthermore, it is
+    obsolete, as one can achieve similar
     performance and greater functionality by setting up a prepared
     statement to define the function call.  Then, executing the statement
     with binary transmission of parameters and results substitutes for a
     fast-path function call.
    </para>
-  </tip>
+  </warning>
 
   <para>
    The function <function id="libpq-PQfn">PQfn</function><indexterm><primary>PQfn</primary></indexterm>

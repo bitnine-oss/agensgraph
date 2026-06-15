@@ -377,8 +377,9 @@ CREATE TABLE inhta ();
 CREATE TABLE inhtb () INHERITS (inhta);
 CREATE TABLE inhtc () INHERITS (inhtb);
 CREATE TABLE inhtd () INHERITS (inhta, inhtb, inhtc);
-ALTER TABLE inhta ADD COLUMN i int;
+ALTER TABLE inhta ADD COLUMN i int, ADD COLUMN j bigint DEFAULT 1;
 \d+ inhta
+\d+ inhtd
 DROP TABLE inhta, inhtb, inhtc, inhtd;
 
 -- Test for renaming in diamond inheritance
@@ -600,6 +601,14 @@ explain (verbose, costs off) select min(1-id) from matest0;
 select min(1-id) from matest0;
 reset enable_seqscan;
 reset enable_parallel_append;
+
+explain (verbose, costs off)  -- bug #18652
+select 1 - id as c from
+(select id from matest3 t1 union all select id * 2 from matest3 t2) ss
+order by c;
+select 1 - id as c from
+(select id from matest3 t1 union all select id * 2 from matest3 t2) ss
+order by c;
 
 drop table matest0 cascade;
 

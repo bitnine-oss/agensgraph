@@ -893,8 +893,6 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 
 	Assert(!BTScanPosIsValid(so->currPos));
 
-	pgstat_count_index_scan(rel);
-
 	/*
 	 * Examine the scan keys and eliminate any redundant keys; also mark the
 	 * keys that must be matched to continue the scan.
@@ -956,6 +954,12 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 		 */
 		_bt_start_array_keys(scan, dir);
 	}
+
+	/*
+	 * Count an indexscan for stats, now that we know that we'll call
+	 * _bt_search/_bt_endpoint below
+	 */
+	pgstat_count_index_scan(rel);
 
 	/*----------
 	 * Examine the scan keys to discover where we need to start the scan.
@@ -1624,6 +1628,7 @@ _bt_readpage(IndexScanDesc scan, ScanDirection dir, OffsetNumber offnum,
 	 * corresponding need for the left-link, since splits always go right.
 	 */
 	so->currPos.nextPage = opaque->btpo_next;
+	so->currPos.dir = dir;
 
 	/* initialize tuple workspace to empty */
 	so->currPos.nextTupleOffset = 0;
@@ -2079,15 +2084,23 @@ _bt_steppage(IndexScanDesc scan, ScanDirection dir)
 		 * In effect, btrestpos leaves advancing the arrays up to the first
 		 * _bt_readpage call (that takes place after it has restored markPos).
 		 */
-		Assert(so->markPos.dir == dir);
 		if (so->needPrimScan)
 		{
-			if (ScanDirectionIsForward(dir))
+			if (ScanDirectionIsForward(so->currPos.dir))
 				so->markPos.moreRight = true;
 			else
 				so->markPos.moreLeft = true;
 		}
 	}
+
+	/*
+	 * Cancel primitive index scans that were scheduled when the call to
+	 * _bt_readpage for currPos happened to use the opposite direction to the
+	 * one that we're stepping in now.  (It's okay to leave the scan's array
+	 * keys as-is, since the next _bt_readpage will advance them.)
+	 */
+	if (so->currPos.dir != dir)
+		so->needPrimScan = false;
 
 	if (ScanDirectionIsForward(dir))
 	{
@@ -2649,7 +2662,6 @@ _bt_endpoint(IndexScanDesc scan, ScanDirection dir)
 static inline void
 _bt_initialize_more_data(BTScanOpaque so, ScanDirection dir)
 {
-	so->currPos.dir = dir;
 	if (so->needPrimScan)
 	{
 		Assert(so->numArrayKeys);

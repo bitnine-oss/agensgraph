@@ -235,7 +235,7 @@ static void find_next_unskippable_block(LVRelState *vacrel, bool *skipsallvis);
 static bool lazy_scan_new_or_empty(LVRelState *vacrel, Buffer buf,
 								   BlockNumber blkno, Page page,
 								   bool sharelock, Buffer vmbuffer);
-static void lazy_scan_prune(LVRelState *vacrel, Buffer buf,
+static int	lazy_scan_prune(LVRelState *vacrel, Buffer buf,
 							BlockNumber blkno, Page page,
 							Buffer vmbuffer, bool all_visible_according_to_vm,
 							bool *has_lpdead_items);
@@ -438,13 +438,13 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 * as an upper bound on the XIDs stored in the pages we'll actually scan
 	 * (NewRelfrozenXid tracking must never be allowed to miss unfrozen XIDs).
 	 *
-	 * Next acquire vistest, a related cutoff that's used in pruning.  We
-	 * expect vistest will always make heap_page_prune_and_freeze() remove any
-	 * deleted tuple whose xmax is < OldestXmin.  lazy_scan_prune must never
-	 * become confused about whether a tuple should be frozen or removed.  (In
-	 * the future we might want to teach lazy_scan_prune to recompute vistest
-	 * from time to time, to increase the number of dead tuples it can prune
-	 * away.)
+	 * Next acquire vistest, a related cutoff that's used in pruning.  We use
+	 * vistest in combination with OldestXmin to ensure that
+	 * heap_page_prune_and_freeze() always removes any deleted tuple whose
+	 * xmax is < OldestXmin.  lazy_scan_prune must never become confused about
+	 * whether a tuple should be frozen or removed.  (In the future we might
+	 * want to teach lazy_scan_prune to recompute vistest from time to time,
+	 * to increase the number of dead tuples it can prune away.)
 	 */
 	vacrel->aggressive = vacuum_get_cutoffs(rel, params, &vacrel->cutoffs);
 	vacrel->rel_pages = orig_rel_pages = RelationGetNumberOfBlocks(rel);
@@ -820,8 +820,6 @@ lazy_scan_heap(LVRelState *vacrel)
 				next_fsm_block_to_vacuum = 0;
 	bool		all_visible_according_to_vm;
 
-	TidStore   *dead_items = vacrel->dead_items;
-	VacDeadItemsInfo *dead_items_info = vacrel->dead_items_info;
 	Buffer		vmbuffer = InvalidBuffer;
 	const int	initprog_index[] = {
 		PROGRESS_VACUUM_PHASE,
@@ -833,7 +831,7 @@ lazy_scan_heap(LVRelState *vacrel)
 	/* Report that we're scanning the heap, advertising total # of blocks */
 	initprog_val[0] = PROGRESS_VACUUM_PHASE_SCAN_HEAP;
 	initprog_val[1] = rel_pages;
-	initprog_val[2] = dead_items_info->max_bytes;
+	initprog_val[2] = vacrel->dead_items_info->max_bytes;
 	pgstat_progress_update_multi_param(3, initprog_index, initprog_val);
 
 	/* Initialize for the first heap_vac_scan_next_block() call */
@@ -846,6 +844,7 @@ lazy_scan_heap(LVRelState *vacrel)
 	{
 		Buffer		buf;
 		Page		page;
+		int			ndeleted = 0;
 		bool		has_lpdead_items;
 		bool		got_cleanup_lock = false;
 
@@ -874,9 +873,12 @@ lazy_scan_heap(LVRelState *vacrel)
 		 * Consider if we definitely have enough space to process TIDs on page
 		 * already.  If we are close to overrunning the available space for
 		 * dead_items TIDs, pause and do a cycle of vacuuming before we tackle
-		 * this page.
+		 * this page. However, let's force at least one page-worth of tuples
+		 * to be stored as to ensure we do at least some work when the memory
+		 * configured is so low that we run out before storing anything.
 		 */
-		if (TidStoreMemoryUsage(dead_items) > dead_items_info->max_bytes)
+		if (vacrel->dead_items_info->num_items > 0 &&
+			TidStoreMemoryUsage(vacrel->dead_items) > vacrel->dead_items_info->max_bytes)
 		{
 			/*
 			 * Before beginning index vacuuming, we release any pin we may
@@ -972,9 +974,9 @@ lazy_scan_heap(LVRelState *vacrel)
 		 * line pointers previously marked LP_DEAD.
 		 */
 		if (got_cleanup_lock)
-			lazy_scan_prune(vacrel, buf, blkno, page,
-							vmbuffer, all_visible_according_to_vm,
-							&has_lpdead_items);
+			ndeleted = lazy_scan_prune(vacrel, buf, blkno, page,
+									   vmbuffer, all_visible_according_to_vm,
+									   &has_lpdead_items);
 
 		/*
 		 * Now drop the buffer lock and, potentially, update the FSM.
@@ -1010,7 +1012,7 @@ lazy_scan_heap(LVRelState *vacrel)
 			 * table has indexes. There will only be newly-freed space if we
 			 * held the cleanup lock and lazy_scan_prune() was called.
 			 */
-			if (got_cleanup_lock && vacrel->nindexes == 0 && has_lpdead_items &&
+			if (got_cleanup_lock && vacrel->nindexes == 0 && ndeleted > 0 &&
 				blkno - next_fsm_block_to_vacuum >= VACUUM_FSM_EVERY_PAGES)
 			{
 				FreeSpaceMapVacuumRange(vacrel->rel, next_fsm_block_to_vacuum,
@@ -1046,7 +1048,7 @@ lazy_scan_heap(LVRelState *vacrel)
 	 * Do index vacuuming (call each index's ambulkdelete routine), then do
 	 * related heap vacuuming
 	 */
-	if (dead_items_info->num_items > 0)
+	if (vacrel->dead_items_info->num_items > 0)
 		lazy_vacuum(vacrel);
 
 	/*
@@ -1401,8 +1403,10 @@ cmpOffsetNumbers(const void *a, const void *b)
  *
  * *has_lpdead_items is set to true or false depending on whether, upon return
  * from this function, any LP_DEAD items are still present on the page.
+ *
+ * Returns the number of tuples deleted from the page during HOT pruning.
  */
-static void
+static int
 lazy_scan_prune(LVRelState *vacrel,
 				Buffer buf,
 				BlockNumber blkno,
@@ -1622,6 +1626,8 @@ lazy_scan_prune(LVRelState *vacrel,
 						  VISIBILITYMAP_ALL_VISIBLE |
 						  VISIBILITYMAP_ALL_FROZEN);
 	}
+
+	return presult.ndeleted;
 }
 
 /*
@@ -2882,19 +2888,18 @@ static void
 dead_items_add(LVRelState *vacrel, BlockNumber blkno, OffsetNumber *offsets,
 			   int num_offsets)
 {
-	TidStore   *dead_items = vacrel->dead_items;
 	const int	prog_index[2] = {
 		PROGRESS_VACUUM_NUM_DEAD_ITEM_IDS,
 		PROGRESS_VACUUM_DEAD_TUPLE_BYTES
 	};
 	int64		prog_val[2];
 
-	TidStoreSetBlockOffsets(dead_items, blkno, offsets, num_offsets);
+	TidStoreSetBlockOffsets(vacrel->dead_items, blkno, offsets, num_offsets);
 	vacrel->dead_items_info->num_items += num_offsets;
 
 	/* update the progress information */
 	prog_val[0] = vacrel->dead_items_info->num_items;
-	prog_val[1] = TidStoreMemoryUsage(dead_items);
+	prog_val[1] = TidStoreMemoryUsage(vacrel->dead_items);
 	pgstat_progress_update_multi_param(2, prog_index, prog_val);
 }
 
@@ -2904,16 +2909,16 @@ dead_items_add(LVRelState *vacrel, BlockNumber blkno, OffsetNumber *offsets,
 static void
 dead_items_reset(LVRelState *vacrel)
 {
-	TidStore   *dead_items = vacrel->dead_items;
-
 	if (ParallelVacuumIsActive(vacrel))
 	{
 		parallel_vacuum_reset_dead_items(vacrel->pvs);
+		vacrel->dead_items = parallel_vacuum_get_dead_items(vacrel->pvs,
+															&vacrel->dead_items_info);
 		return;
 	}
 
 	/* Recreate the tidstore with the same max_bytes limitation */
-	TidStoreDestroy(dead_items);
+	TidStoreDestroy(vacrel->dead_items);
 	vacrel->dead_items = TidStoreCreateLocal(vacrel->dead_items_info->max_bytes, true);
 
 	/* Reset the counter */

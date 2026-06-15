@@ -29,6 +29,7 @@
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_authid.h"
+#include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_inherits.h"
@@ -52,6 +53,7 @@
 #include "optimizer/optimizer.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_oper.h"
+#include "parser/parse_utilcmd.h"
 #include "partitioning/partdesc.h"
 #include "pgstat.h"
 #include "rewrite/rewriteManip.h"
@@ -63,6 +65,7 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
+#include "utils/injection_point.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
@@ -361,10 +364,12 @@ static bool
 CompareOpclassOptions(const Datum *opts1, const Datum *opts2, int natts)
 {
 	int			i;
+	FmgrInfo	fm;
 
 	if (!opts1 && !opts2)
 		return true;
 
+	fmgr_info(F_ARRAY_EQ, &fm);
 	for (i = 0; i < natts; i++)
 	{
 		Datum		opt1 = opts1 ? opts1[i] : (Datum) 0;
@@ -380,8 +385,12 @@ CompareOpclassOptions(const Datum *opts1, const Datum *opts2, int natts)
 		else if (opt2 == (Datum) 0)
 			return false;
 
-		/* Compare non-NULL text[] datums. */
-		if (!DatumGetBool(DirectFunctionCall2(array_eq, opt1, opt2)))
+		/*
+		 * Compare non-NULL text[] datums.  Use C collation to enforce binary
+		 * equivalence of texts, because we don't know anything about the
+		 * semantics of opclass options.
+		 */
+		if (!DatumGetBool(FunctionCall2Coll(&fm, C_COLLATION_OID, opt1, opt2)))
 			return false;
 	}
 
@@ -1234,6 +1243,7 @@ DefineIndex(Oid tableId,
 	 */
 	AtEOXact_GUC(false, root_save_nestlevel);
 	root_save_nestlevel = NewGUCNestLevel();
+	RestrictSearchPath();
 
 	/* Add any requested comment */
 	if (stmt->idxcomment != NULL)
@@ -1447,55 +1457,20 @@ DefineIndex(Oid tableId,
 				 */
 				if (!found)
 				{
-					IndexStmt  *childStmt = copyObject(stmt);
-					bool		found_whole_row;
-					ListCell   *lc;
+					IndexStmt  *childStmt;
 					ObjectAddress childAddr;
 
 					/*
-					 * We can't use the same index name for the child index,
-					 * so clear idxname to let the recursive invocation choose
-					 * a new name.  Likewise, the existing target relation
-					 * field is wrong, and if indexOid or oldNumber are set,
-					 * they mustn't be applied to the child either.
+					 * Build an IndexStmt describing the desired child index
+					 * in the same way that we do during ATTACH PARTITION.
+					 * Notably, we rely on generateClonedIndexStmt to produce
+					 * a search-path-independent representation, which the
+					 * original IndexStmt might not be.
 					 */
-					childStmt->idxname = NULL;
-					childStmt->relation = NULL;
-					childStmt->indexOid = InvalidOid;
-					childStmt->oldNumber = InvalidRelFileNumber;
-					childStmt->oldCreateSubid = InvalidSubTransactionId;
-					childStmt->oldFirstRelfilelocatorSubid = InvalidSubTransactionId;
-
-					/*
-					 * Adjust any Vars (both in expressions and in the index's
-					 * WHERE clause) to match the partition's column numbering
-					 * in case it's different from the parent's.
-					 */
-					foreach(lc, childStmt->indexParams)
-					{
-						IndexElem  *ielem = lfirst(lc);
-
-						/*
-						 * If the index parameter is an expression, we must
-						 * translate it to contain child Vars.
-						 */
-						if (ielem->expr)
-						{
-							ielem->expr =
-								map_variable_attnos((Node *) ielem->expr,
-													1, 0, attmap,
-													InvalidOid,
-													&found_whole_row);
-							if (found_whole_row)
-								elog(ERROR, "cannot convert whole-row table reference");
-						}
-					}
-					childStmt->whereClause =
-						map_variable_attnos(stmt->whereClause, 1, 0,
-											attmap,
-											InvalidOid, &found_whole_row);
-					if (found_whole_row)
-						elog(ERROR, "cannot convert whole-row table reference");
+					childStmt = generateClonedIndexStmt(NULL,
+														parentIndex,
+														attmap,
+														NULL);
 
 					/*
 					 * Recurse as the starting user ID.  Callee will use that
@@ -2031,6 +2006,7 @@ ComputeIndexAttrs(IndexInfo *indexInfo,
 			{
 				SetUserIdAndSecContext(save_userid, save_sec_context);
 				*ddl_save_nestlevel = NewGUCNestLevel();
+				RestrictSearchPath();
 			}
 		}
 
@@ -2078,6 +2054,7 @@ ComputeIndexAttrs(IndexInfo *indexInfo,
 		{
 			SetUserIdAndSecContext(save_userid, save_sec_context);
 			*ddl_save_nestlevel = NewGUCNestLevel();
+			RestrictSearchPath();
 		}
 
 		/*
@@ -2108,6 +2085,7 @@ ComputeIndexAttrs(IndexInfo *indexInfo,
 			{
 				SetUserIdAndSecContext(save_userid, save_sec_context);
 				*ddl_save_nestlevel = NewGUCNestLevel();
+				RestrictSearchPath();
 			}
 
 			/*
@@ -2487,7 +2465,9 @@ makeObjectName(const char *name1, const char *name2, const char *label)
  * constraint names.)
  *
  * Note: it is theoretically possible to get a collision anyway, if someone
- * else chooses the same name concurrently.  This is fairly unlikely to be
+ * else chooses the same name concurrently.  We shorten the race condition
+ * window by checking for conflicting relations using SnapshotDirty, but
+ * that doesn't close the window entirely.  This is fairly unlikely to be
  * a problem in practice, especially if one is holding an exclusive lock on
  * the relation identified by name1.  However, if choosing multiple names
  * within a single command, you'd better create the new object and do
@@ -2503,15 +2483,45 @@ ChooseRelationName(const char *name1, const char *name2,
 	int			pass = 0;
 	char	   *relname = NULL;
 	char		modlabel[NAMEDATALEN];
+	SnapshotData SnapshotDirty;
+	Relation	pgclassrel;
+
+	/* prepare to search pg_class with a dirty snapshot */
+	InitDirtySnapshot(SnapshotDirty);
+	pgclassrel = table_open(RelationRelationId, AccessShareLock);
 
 	/* try the unmodified label first */
 	strlcpy(modlabel, label, sizeof(modlabel));
 
 	for (;;)
 	{
+		ScanKeyData key[2];
+		SysScanDesc scan;
+		bool		collides;
+
 		relname = makeObjectName(name1, name2, modlabel);
 
-		if (!OidIsValid(get_relname_relid(relname, namespaceid)))
+		/* is there any conflicting relation name? */
+		ScanKeyInit(&key[0],
+					Anum_pg_class_relname,
+					BTEqualStrategyNumber, F_NAMEEQ,
+					CStringGetDatum(relname));
+		ScanKeyInit(&key[1],
+					Anum_pg_class_relnamespace,
+					BTEqualStrategyNumber, F_OIDEQ,
+					ObjectIdGetDatum(namespaceid));
+
+		scan = systable_beginscan(pgclassrel, ClassNameNspIndexId,
+								  true /* indexOK */ ,
+								  &SnapshotDirty,
+								  2, key);
+
+		collides = HeapTupleIsValid(systable_getnext(scan));
+
+		systable_endscan(scan);
+
+		/* break out of loop if no conflict */
+		if (!collides)
 		{
 			if (!isconstraint ||
 				!ConstraintNameExists(relname, namespaceid))
@@ -2522,6 +2532,8 @@ ChooseRelationName(const char *name1, const char *name2,
 		pfree(relname);
 		snprintf(modlabel, sizeof(modlabel), "%s%d", label, ++pass);
 	}
+
+	table_close(pgclassrel, AccessShareLock);
 
 	return relname;
 }
@@ -3815,8 +3827,16 @@ ReindexRelationConcurrently(const ReindexStmt *stmt, Oid relationOid, const Rein
 		RestrictSearchPath();
 
 		/* determine safety of this index for set_indexsafe_procflags */
-		idx->safe = (indexRel->rd_indexprs == NIL &&
-					 indexRel->rd_indpred == NIL);
+		idx->safe = (RelationGetIndexExpressions(indexRel) == NIL &&
+					 RelationGetIndexPredicate(indexRel) == NIL);
+
+#ifdef USE_INJECTION_POINTS
+		if (idx->safe)
+			INJECTION_POINT("reindex-conc-index-safe");
+		else
+			INJECTION_POINT("reindex-conc-index-not-safe");
+#endif
+
 		idx->tableId = RelationGetRelid(heapRel);
 		idx->amId = indexRel->rd_rel->relam;
 
@@ -4146,10 +4166,18 @@ ReindexRelationConcurrently(const ReindexStmt *stmt, Oid relationOid, const Rein
 									 false);
 
 		/*
+		 * Swapping the indexes might involve TOAST table access, so ensure we
+		 * have a valid snapshot.
+		 */
+		PushActiveSnapshot(GetTransactionSnapshot());
+
+		/*
 		 * Swap old index with the new one.  This also marks the new one as
 		 * valid and the old one as not valid.
 		 */
 		index_concurrently_swap(newidx->indexId, oldidx->indexId, oldName);
+
+		PopActiveSnapshot();
 
 		/*
 		 * Invalidate the relcache for the table, so that after this commit
@@ -4446,14 +4474,17 @@ update_relispartition(Oid relationId, bool newval)
 {
 	HeapTuple	tup;
 	Relation	classRel;
+	ItemPointerData otid;
 
 	classRel = table_open(RelationRelationId, RowExclusiveLock);
-	tup = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relationId));
+	tup = SearchSysCacheLockedCopy1(RELOID, ObjectIdGetDatum(relationId));
 	if (!HeapTupleIsValid(tup))
 		elog(ERROR, "cache lookup failed for relation %u", relationId);
+	otid = tup->t_self;
 	Assert(((Form_pg_class) GETSTRUCT(tup))->relispartition != newval);
 	((Form_pg_class) GETSTRUCT(tup))->relispartition = newval;
-	CatalogTupleUpdate(classRel, &tup->t_self, tup);
+	CatalogTupleUpdate(classRel, &otid, tup);
+	UnlockTuple(classRel, &otid, InplaceUpdateTupleLock);
 	heap_freetuple(tup);
 	table_close(classRel, RowExclusiveLock);
 }

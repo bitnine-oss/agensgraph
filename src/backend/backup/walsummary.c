@@ -214,7 +214,7 @@ OpenWalSummaryFile(WalSummaryFile *ws, bool missing_ok)
 			 LSN_FORMAT_ARGS(ws->end_lsn));
 
 	file = PathNameOpenFile(path, O_RDONLY);
-	if (file < 0 && (errno != EEXIST || !missing_ok))
+	if (file < 0 && (errno != ENOENT || !missing_ok))
 		ereport(ERROR,
 				(errcode_for_file_access(),
 				 errmsg("could not open file \"%s\": %m", path)));
@@ -251,7 +251,7 @@ RemoveWalSummaryIfOlderThan(WalSummaryFile *ws, time_t cutoff_time)
 	if (unlink(path) != 0)
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not stat file \"%s\": %m", path)));
+				 errmsg("could not remove file \"%s\": %m", path)));
 	ereport(DEBUG2,
 			(errmsg_internal("removing file \"%s\"", path)));
 }

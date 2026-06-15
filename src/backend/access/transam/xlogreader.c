@@ -722,11 +722,12 @@ restart:
 			/* Calculate pointer to beginning of next page */
 			targetPagePtr += XLOG_BLCKSZ;
 
-			/* Wait for the next page to become available */
-			readOff = ReadPageInternal(state, targetPagePtr,
-									   Min(total_len - gotlen + SizeOfXLogShortPHD,
-										   XLOG_BLCKSZ));
-
+			/*
+			 * Read the page header before processing the record data, so we
+			 * can handle the case where the previous record ended as being a
+			 * partial one.
+			 */
+			readOff = ReadPageInternal(state, targetPagePtr, SizeOfXLogShortPHD);
 			if (readOff == XLREAD_WOULDBLOCK)
 				return XLREAD_WOULDBLOCK;
 			else if (readOff < 0)
@@ -774,6 +775,15 @@ restart:
 									  LSN_FORMAT_ARGS(RecPtr));
 				goto err;
 			}
+
+			/* Wait for the next page to become available */
+			readOff = ReadPageInternal(state, targetPagePtr,
+									   Min(total_len - gotlen + SizeOfXLogShortPHD,
+										   XLOG_BLCKSZ));
+			if (readOff == XLREAD_WOULDBLOCK)
+				return XLREAD_WOULDBLOCK;
+			else if (readOff < 0)
+				goto err;
 
 			/* Append the continuation from this page to the buffer */
 			pageHeaderSize = XLogPageHeaderSize(pageHeader);
@@ -2166,28 +2176,14 @@ RestoreBlockImage(XLogReaderState *record, uint8 block_id, char *page)
 FullTransactionId
 XLogRecGetFullXid(XLogReaderState *record)
 {
-	TransactionId xid,
-				next_xid;
-	uint32		epoch;
-
 	/*
 	 * This function is only safe during replay, because it depends on the
 	 * replay state.  See AdvanceNextFullTransactionIdPastXid() for more.
 	 */
 	Assert(AmStartupProcess() || !IsUnderPostmaster);
 
-	xid = XLogRecGetXid(record);
-	next_xid = XidFromFullTransactionId(TransamVariables->nextXid);
-	epoch = EpochFromFullTransactionId(TransamVariables->nextXid);
-
-	/*
-	 * If xid is numerically greater than next_xid, it has to be from the last
-	 * epoch.
-	 */
-	if (unlikely(xid > next_xid))
-		--epoch;
-
-	return FullTransactionIdFromEpochAndXid(epoch, xid);
+	return FullTransactionIdFromAllowableAt(TransamVariables->nextXid,
+											XLogRecGetXid(record));
 }
 
 #endif

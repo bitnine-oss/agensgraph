@@ -24,6 +24,7 @@
 #include <unistd.h>
 #endif
 
+#include "common/int.h"
 #include "libpq-fe.h"
 #include "libpq-int.h"
 #include "mb/pg_wchar.h"
@@ -511,7 +512,7 @@ PQsetvalue(PGresult *res, int tup_num, int field_num, char *value, int len)
 	}
 	else
 	{
-		attval->value = (char *) pqResultAlloc(res, len + 1, true);
+		attval->value = (char *) pqResultAlloc(res, (size_t) len + 1, true);
 		if (!attval->value)
 			goto fail;
 		attval->len = len;
@@ -603,8 +604,13 @@ pqResultAlloc(PGresult *res, size_t nBytes, bool isBinary)
 	 */
 	if (nBytes >= PGRESULT_SEP_ALLOC_THRESHOLD)
 	{
-		size_t		alloc_size = nBytes + PGRESULT_BLOCK_OVERHEAD;
+		size_t		alloc_size;
 
+		/* Don't wrap around with overly large requests. */
+		if (nBytes > SIZE_MAX - PGRESULT_BLOCK_OVERHEAD)
+			return NULL;
+
+		alloc_size = nBytes + PGRESULT_BLOCK_OVERHEAD;
 		block = (PGresult_data *) malloc(alloc_size);
 		if (!block)
 			return NULL;
@@ -1286,7 +1292,7 @@ pqRowProcessor(PGconn *conn, const char **errmsgp)
 			bool		isbinary = (res->attDescs[i].format != 0);
 			char	   *val;
 
-			val = (char *) pqResultAlloc(res, clen + 1, isbinary);
+			val = (char *) pqResultAlloc(res, (size_t) clen + 1, isbinary);
 			if (val == NULL)
 				return 0;
 
@@ -3008,6 +3014,20 @@ PQfn(PGconn *conn,
 	 const PQArgBlock *args,
 	 int nargs)
 {
+	return PQnfn(conn, fnid, result_buf, -1, result_len,
+				 result_is_int, args, nargs);
+}
+
+/*
+ * PQnfn
+ *		Private version of PQfn() with verification that returned data fits in
+ *		result_buf when result_is_int == 0.  Setting buf_size to -1 disables
+ *		this verification.
+ */
+PGresult *
+PQnfn(PGconn *conn, int fnid, int *result_buf, int buf_size, int *result_len,
+	  int result_is_int, const PQArgBlock *args, int nargs)
+{
 	*result_len = 0;
 
 	if (!conn)
@@ -3035,7 +3055,7 @@ PQfn(PGconn *conn,
 	}
 
 	return pqFunctionCall3(conn, fnid,
-						   result_buf, result_len,
+						   result_buf, buf_size, result_len,
 						   result_is_int,
 						   args, nargs);
 }
@@ -4098,15 +4118,16 @@ PQescapeStringInternal(PGconn *conn,
 {
 	const char *source = from;
 	char	   *target = to;
-	size_t		remaining = length;
+	size_t		remaining = strnlen(from, length);
+	bool		already_complained = false;
 
 	if (error)
 		*error = 0;
 
-	while (remaining > 0 && *source != '\0')
+	while (remaining > 0)
 	{
 		char		c = *source;
-		int			len;
+		int			charlen;
 		int			i;
 
 		/* Fast path for plain ASCII */
@@ -4123,38 +4144,69 @@ PQescapeStringInternal(PGconn *conn,
 		}
 
 		/* Slow path for possible multibyte characters */
-		len = pg_encoding_mblen(encoding, source);
+		charlen = pg_encoding_mblen_or_incomplete(encoding,
+												  source, remaining);
 
-		/* Copy the character */
-		for (i = 0; i < len; i++)
+		if (remaining < charlen ||
+			pg_encoding_verifymbchar(encoding, source, charlen) == -1)
 		{
-			if (remaining == 0 || *source == '\0')
-				break;
-			*target++ = *source++;
-			remaining--;
-		}
-
-		/*
-		 * If we hit premature end of string (ie, incomplete multibyte
-		 * character), try to pad out to the correct length with spaces. We
-		 * may not be able to pad completely, but we will always be able to
-		 * insert at least one pad space (since we'd not have quoted a
-		 * multibyte character).  This should be enough to make a string that
-		 * the server will error out on.
-		 */
-		if (i < len)
-		{
+			/*
+			 * Multibyte character is invalid.  It's important to verify that
+			 * as invalid multibyte characters could e.g. be used to "skip"
+			 * over quote characters, e.g. when parsing
+			 * character-by-character.
+			 *
+			 * Report an error if possible, and replace the character's first
+			 * byte with an invalid sequence. The invalid sequence ensures
+			 * that the escaped string will trigger an error on the
+			 * server-side, even if we can't directly report an error here.
+			 *
+			 * This isn't *that* crucial when we can report an error to the
+			 * caller; but if we can't or the caller ignores it, the caller
+			 * will use this string unmodified and it needs to be safe for
+			 * parsing.
+			 *
+			 * We know there's enough space for the invalid sequence because
+			 * the "to" buffer needs to be at least 2 * length + 1 long, and
+			 * at worst we're replacing a single input byte with two invalid
+			 * bytes.
+			 *
+			 * It would be a bit faster to verify the whole string the first
+			 * time we encounter a set highbit, but this way we can replace
+			 * just the invalid data, which probably makes it easier for users
+			 * to find the invalidly encoded portion of a larger string.
+			 */
 			if (error)
 				*error = 1;
-			if (conn)
-				libpq_append_conn_error(conn, "incomplete multibyte character");
-			for (; i < len; i++)
+			if (conn && !already_complained)
 			{
-				if (((size_t) (target - to)) / 2 >= length)
-					break;
-				*target++ = ' ';
+				if (remaining < charlen)
+					libpq_append_conn_error(conn, "incomplete multibyte character");
+				else
+					libpq_append_conn_error(conn, "invalid multibyte character");
+				/* Issue a complaint only once per string */
+				already_complained = true;
 			}
-			break;
+
+			pg_encoding_set_invalid(encoding, target);
+			target += 2;
+
+			/*
+			 * Handle the following bytes as if this byte didn't exist. That's
+			 * safer in case the subsequent bytes contain important characters
+			 * for the caller (e.g. '>' in html).
+			 */
+			source++;
+			remaining--;
+		}
+		else
+		{
+			/* Copy the character */
+			for (i = 0; i < charlen; i++)
+			{
+				*target++ = *source++;
+				remaining--;
+			}
 		}
 	}
 
@@ -4207,11 +4259,12 @@ PQescapeInternal(PGconn *conn, const char *str, size_t len, bool as_ident)
 	const char *s;
 	char	   *result;
 	char	   *rp;
-	int			num_quotes = 0; /* single or double, depending on as_ident */
-	int			num_backslashes = 0;
-	int			input_len;
-	int			result_size;
+	size_t		num_quotes = 0; /* single or double, depending on as_ident */
+	size_t		num_backslashes = 0;
+	size_t		input_len = strnlen(str, len);
+	size_t		result_size;
 	char		quote_char = as_ident ? '"' : '\'';
+	bool		validated_mb = false;
 
 	/* We must have a connection, else fail immediately. */
 	if (!conn)
@@ -4220,8 +4273,12 @@ PQescapeInternal(PGconn *conn, const char *str, size_t len, bool as_ident)
 	if (conn->cmd_queue_head == NULL)
 		pqClearConnErrorState(conn);
 
-	/* Scan the string for characters that must be escaped. */
-	for (s = str; (s - str) < len && *s != '\0'; ++s)
+	/*
+	 * Scan the string for characters that must be escaped and for invalidly
+	 * encoded data.
+	 */
+	s = str;
+	for (size_t remaining = input_len; remaining > 0; remaining--, s++)
 	{
 		if (*s == quote_char)
 			++num_quotes;
@@ -4232,25 +4289,58 @@ PQescapeInternal(PGconn *conn, const char *str, size_t len, bool as_ident)
 			int			charlen;
 
 			/* Slow path for possible multibyte characters */
-			charlen = pg_encoding_mblen(conn->client_encoding, s);
+			charlen = pg_encoding_mblen_or_incomplete(conn->client_encoding,
+													  s, remaining);
 
-			/* Multibyte character overruns allowable length. */
-			if ((s - str) + charlen > len || memchr(s, 0, charlen) != NULL)
+			if (charlen > remaining)
 			{
+				/* Multibyte character overruns allowable length. */
 				libpq_append_conn_error(conn, "incomplete multibyte character");
 				return NULL;
 			}
 
+			/*
+			 * If we haven't already, check that multibyte characters are
+			 * valid. It's important to verify that as invalid multi-byte
+			 * characters could e.g. be used to "skip" over quote characters,
+			 * e.g. when parsing character-by-character.
+			 *
+			 * We check validity once, for the whole remainder of the string,
+			 * when we first encounter any multi-byte character. Some
+			 * encodings have optimized implementations for longer strings.
+			 */
+			if (!validated_mb)
+			{
+				if (pg_encoding_verifymbstr(conn->client_encoding, s, remaining)
+					!= remaining)
+				{
+					libpq_append_conn_error(conn, "invalid multibyte character");
+					return NULL;
+				}
+				validated_mb = true;
+			}
+
 			/* Adjust s, bearing in mind that for loop will increment it. */
 			s += charlen - 1;
+			remaining -= charlen - 1;
 		}
 	}
 
-	/* Allocate output buffer. */
-	input_len = s - str;
-	result_size = input_len + num_quotes + 3;	/* two quotes, plus a NUL */
+	/*
+	 * Allocate output buffer. Protect against overflow, in case the caller
+	 * has allocated a large fraction of the available size_t.
+	 */
+	if (pg_add_size_overflow(input_len, num_quotes, &result_size) ||
+		pg_add_size_overflow(result_size, 3, &result_size)) /* two quotes plus a NUL */
+		goto overflow;
+
 	if (!as_ident && num_backslashes > 0)
-		result_size += num_backslashes + 2;
+	{
+		if (pg_add_size_overflow(result_size, num_backslashes, &result_size) ||
+			pg_add_size_overflow(result_size, 2, &result_size)) /* for " E" prefix */
+			goto overflow;
+	}
+
 	result = rp = (char *) malloc(result_size);
 	if (rp == NULL)
 	{
@@ -4292,7 +4382,8 @@ PQescapeInternal(PGconn *conn, const char *str, size_t len, bool as_ident)
 	}
 	else
 	{
-		for (s = str; s - str < input_len; ++s)
+		s = str;
+		for (size_t remaining = input_len; remaining > 0; remaining--, s++)
 		{
 			if (*s == quote_char || (!as_ident && *s == '\\'))
 			{
@@ -4310,6 +4401,7 @@ PQescapeInternal(PGconn *conn, const char *str, size_t len, bool as_ident)
 					*rp++ = *s;
 					if (--i == 0)
 						break;
+					remaining--;
 					++s;		/* for loop will provide the final increment */
 				}
 			}
@@ -4321,6 +4413,12 @@ PQescapeInternal(PGconn *conn, const char *str, size_t len, bool as_ident)
 	*rp = '\0';
 
 	return result;
+
+overflow:
+	libpq_append_conn_error(conn,
+							"escaped string size exceeds the maximum allowed (%zu)",
+							SIZE_MAX);
+	return NULL;
 }
 
 char *
@@ -4386,16 +4484,25 @@ PQescapeByteaInternal(PGconn *conn,
 	unsigned char *result;
 	size_t		i;
 	size_t		len;
-	size_t		bslash_len = (std_strings ? 1 : 2);
+	const size_t bslash_len = (std_strings ? 1 : 2);
 
 	/*
-	 * empty string has 1 char ('\0')
+	 * Calculate the escaped length, watching for overflow as we do with
+	 * PQescapeInternal(). The following code relies on a small constant
+	 * bslash_len so that small additions and multiplications don't need their
+	 * own overflow checks.
+	 *
+	 * Start with the empty string, which has 1 char ('\0').
 	 */
 	len = 1;
 
 	if (use_hex)
 	{
-		len += bslash_len + 1 + 2 * from_length;
+		/* We prepend "\x" and double each input character. */
+		if (pg_add_size_overflow(len, bslash_len + 1, &len) ||
+			pg_add_size_overflow(len, from_length, &len) ||
+			pg_add_size_overflow(len, from_length, &len))
+			goto overflow;
 	}
 	else
 	{
@@ -4403,13 +4510,25 @@ PQescapeByteaInternal(PGconn *conn,
 		for (i = from_length; i > 0; i--, vp++)
 		{
 			if (*vp < 0x20 || *vp > 0x7e)
-				len += bslash_len + 3;
+			{
+				if (pg_add_size_overflow(len, bslash_len + 3, &len))	/* octal "\ooo" */
+					goto overflow;
+			}
 			else if (*vp == '\'')
-				len += 2;
+			{
+				if (pg_add_size_overflow(len, 2, &len)) /* double each quote */
+					goto overflow;
+			}
 			else if (*vp == '\\')
-				len += bslash_len + bslash_len;
+			{
+				if (pg_add_size_overflow(len, bslash_len * 2, &len))	/* double each backslash */
+					goto overflow;
+			}
 			else
-				len++;
+			{
+				if (pg_add_size_overflow(len, 1, &len))
+					goto overflow;
+			}
 		}
 	}
 
@@ -4470,6 +4589,13 @@ PQescapeByteaInternal(PGconn *conn,
 	*rp = '\0';
 
 	return result;
+
+overflow:
+	if (conn)
+		libpq_append_conn_error(conn,
+								"escaped bytea size exceeds the maximum allowed (%zu)",
+								SIZE_MAX);
+	return NULL;
 }
 
 unsigned char *

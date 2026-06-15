@@ -475,7 +475,7 @@ BeginCopyTo(ParseState *pstate,
 				if (q->querySource == QSRC_NON_INSTEAD_RULE)
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("DO ALSO rules are not supported for the COPY")));
+							 errmsg("DO ALSO rules are not supported for COPY")));
 			}
 
 			ereport(ERROR,
@@ -492,7 +492,11 @@ BeginCopyTo(ParseState *pstate,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					 errmsg("COPY (SELECT INTO) is not supported")));
 
-		Assert(query->utilityStmt == NULL);
+		/* The only other utility command we could see is NOTIFY */
+		if (query->utilityStmt != NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("COPY query must not be a utility command")));
 
 		/*
 		 * Similarly the grammar doesn't enforce the presence of a RETURNING
@@ -593,8 +597,9 @@ BeginCopyTo(ParseState *pstate,
 			if (!list_member_int(cstate->attnumlist, attnum))
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-						 errmsg("FORCE_QUOTE column \"%s\" not referenced by COPY",
-								NameStr(attr->attname))));
+				/*- translator: %s is the name of a COPY option, e.g. FORCE_NOT_NULL */
+						 errmsg("%s column \"%s\" not referenced by COPY",
+								"FORCE_QUOTE", NameStr(attr->attname))));
 			cstate->opts.force_quote_flags[attnum - 1] = true;
 		}
 	}

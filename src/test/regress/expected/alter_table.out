@@ -2215,7 +2215,6 @@ select conname, obj_description(oid, 'pg_constraint') as desc
 (3 rows)
 
 alter table at_partitioned alter column name type varchar(127);
--- Note: these tests currently show the wrong behavior for comments :-(
 select relname,
   c.oid = oldoid as orig_oid,
   case relfilenode
@@ -2232,9 +2231,9 @@ select relname,
 ------------------------------+----------+---------+--------------
  at_partitioned               | t        | none    | 
  at_partitioned_0             | t        | own     | 
- at_partitioned_0_id_name_key | f        | own     | parent index
+ at_partitioned_0_id_name_key | f        | own     | 
  at_partitioned_1             | t        | own     | 
- at_partitioned_1_id_name_key | f        | own     | parent index
+ at_partitioned_1_id_name_key | f        | own     | 
  at_partitioned_id_name_key   | f        | none    | parent index
 (6 rows)
 
@@ -3484,12 +3483,15 @@ SELECT conname as constraint, obj_description(oid, 'pg_constraint') as comment F
 -- filenode function call can return NULL for a relation dropped concurrently
 -- with the call's surrounding query, so ignore a NULL mapped_oid for
 -- relations that no longer exist after all calls finish.
+-- Temporary relations are ignored, as not supported by pg_filenode_relation().
 CREATE TEMP TABLE filenode_mapping AS
 SELECT
     oid, mapped_oid, reltablespace, relfilenode, relname
 FROM pg_class,
     pg_filenode_relation(reltablespace, pg_relation_filenode(oid)) AS mapped_oid
-WHERE relkind IN ('r', 'i', 'S', 't', 'm') AND mapped_oid IS DISTINCT FROM oid;
+WHERE relkind IN ('r', 'i', 'S', 't', 'm')
+  AND relpersistence != 't'
+  AND mapped_oid IS DISTINCT FROM oid;
 SELECT m.* FROM filenode_mapping m LEFT JOIN pg_class c ON c.oid = m.oid
 WHERE c.oid IS NOT NULL OR m.mapped_oid IS NOT NULL;
  oid | mapped_oid | reltablespace | relfilenode | relname 
@@ -3758,6 +3760,16 @@ Referenced by:
 ALTER TABLE test_add_column
 	ADD COLUMN IF NOT EXISTS c5 SERIAL CHECK (c5 > 10);
 NOTICE:  column "c5" of relation "test_add_column" already exists, skipping
+ALTER TABLE test_add_column
+	ADD c6 integer; -- omit COLUMN
+ALTER TABLE test_add_column
+	ADD IF NOT EXISTS c6 integer;
+NOTICE:  column "c6" of relation "test_add_column" already exists, skipping
+ALTER TABLE test_add_column
+	DROP c6; -- omit COLUMN
+ALTER TABLE test_add_column
+	DROP IF EXISTS c6;
+NOTICE:  column "c6" of relation "test_add_column" does not exist, skipping
 \d test_add_column*
                             Table "public.test_add_column"
  Column |  Type   | Collation | Nullable |                   Default                   
@@ -3950,8 +3962,16 @@ ALTER TABLE list_parted ATTACH PARTITION child FOR VALUES IN (1);
 ERROR:  cannot attach inheritance child as partition
 ALTER TABLE list_parted ATTACH PARTITION parent FOR VALUES IN (1);
 ERROR:  cannot attach inheritance parent as partition
+DROP TABLE child;
+-- now it should work, with a little tweak
+ALTER TABLE parent ADD CONSTRAINT check_a CHECK (a > 0);
+ALTER TABLE list_parted ATTACH PARTITION parent FOR VALUES IN (1);
+-- test insert/update, per bug #18550
+INSERT INTO parent VALUES (1);
+UPDATE parent SET a = 2 WHERE a = 1;
+ERROR:  new row for relation "parent" violates partition constraint
+DETAIL:  Failing row contains (2, null).
 DROP TABLE parent CASCADE;
-NOTICE:  drop cascades to table child
 -- check any TEMP-ness
 CREATE TEMP TABLE temp_parted (a int) PARTITION BY LIST (a);
 CREATE TABLE perm_part (a int);
@@ -4368,6 +4388,14 @@ Check constraints:
     "part_rp100_a_check" CHECK (a >= 123 AND a < 133 AND a IS NOT NULL)
 
 DROP TABLE range_parted2;
+-- Test that hash partitions continue to work after they're concurrently
+-- detached (bugs #18371, #19070)
+CREATE TABLE hash_parted2 (a int) PARTITION BY HASH(a);
+CREATE TABLE part_hp PARTITION OF hash_parted2 FOR VALUES WITH (MODULUS 2, REMAINDER 0);
+ALTER TABLE hash_parted2 DETACH PARTITION part_hp CONCURRENTLY;
+DROP TABLE hash_parted2;
+INSERT INTO part_hp VALUES (1);
+DROP TABLE part_hp;
 -- Check ALTER TABLE commands for partitioned tables and partitions
 -- cannot add/drop column to/from *only* the parent
 ALTER TABLE ONLY list_parted2 ADD COLUMN c int;
@@ -4608,6 +4636,21 @@ alter table attbl alter column p1 set data type bigint;
 alter table atref alter column c1 set data type bigint;
 drop table attbl, atref;
 /* End test case for bug #17409 */
+/* Test case for bug #18970 */
+create table attbl(a int);
+create table atref(b attbl check ((b).a is not null));
+alter table attbl alter column a type numeric;  -- someday this should work
+ERROR:  cannot alter table "attbl" because column "atref.b" uses its row type
+alter table atref drop constraint atref_b_check;
+create statistics atref_stat on ((b).a is not null) from atref;
+alter table attbl alter column a type numeric;  -- someday this should work
+ERROR:  cannot alter table "attbl" because column "atref.b" uses its row type
+drop statistics atref_stat;
+create index atref_idx on atref (((b).a));
+alter table attbl alter column a type numeric;  -- someday this should work
+ERROR:  cannot alter table "attbl" because column "atref.b" uses its row type
+drop table attbl, atref;
+/* End test case for bug #18970 */
 -- Test that ALTER TABLE rewrite preserves a clustered index
 -- for normal indexes and indexes on constraints.
 create table alttype_cluster (a int);

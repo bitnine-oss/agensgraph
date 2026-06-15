@@ -511,6 +511,7 @@ my @_unused_view_qualifiers = (
 	{ obj => 'VIEW public.limit_thousand_v_2', qual => 'onek' },
 	{ obj => 'VIEW public.limit_thousand_v_3', qual => 'onek' },
 	{ obj => 'VIEW public.limit_thousand_v_4', qual => 'onek' },
+	{ obj => 'VIEW public.limit_thousand_v_5', qual => 'onek' },
 	# Since 14
 	{ obj => 'MATERIALIZED VIEW public.compressmv', qual => 'cmdata1' });
 
@@ -626,6 +627,12 @@ sub adjust_new_dumpfile
 
 	# Version comments will certainly not match.
 	$dump =~ s/^-- Dumped from database version.*\n//mg;
+
+	# pre-v16 dumps do not know about XMLSERIALIZE(NO INDENT).
+	if ($old_version < 16)
+	{
+		$dump =~ s/XMLSERIALIZE\((.*)? NO INDENT\)/XMLSERIALIZE\($1\)/mg;
+	}
 
 	if ($old_version < 14)
 	{

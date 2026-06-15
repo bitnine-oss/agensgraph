@@ -449,6 +449,47 @@ ALTER TABLE parted_fk_naming ATTACH PARTITION parted_fk_naming_1 FOR VALUES IN (
 SELECT conname FROM pg_constraint WHERE conrelid = 'parted_fk_naming_1'::regclass AND contype = 'f';
 DROP TABLE parted_fk_naming;
 
+--
+-- Test various ways to create primary keys on partitions, linked to unique
+-- indexes (without constraints) on the partitioned table.  Ideally these should
+-- fail, but we don't dare change released behavior, so instead cope with it at
+-- DETACH time.
+CREATE TEMP TABLE t (a integer, b integer) PARTITION BY HASH (a, b);
+CREATE TEMP TABLE tp (a integer, b integer, PRIMARY KEY (a, b), UNIQUE (b, a));
+ALTER TABLE t ATTACH PARTITION tp FOR VALUES WITH (MODULUS 1, REMAINDER 0);
+CREATE UNIQUE INDEX t_a_idx ON t (a, b);
+CREATE UNIQUE INDEX t_b_idx ON t (b, a);
+ALTER INDEX t_a_idx ATTACH PARTITION tp_pkey;
+ALTER INDEX t_b_idx ATTACH PARTITION tp_b_a_key;
+SELECT conname, conparentid, conislocal, coninhcount
+  FROM pg_constraint WHERE conname IN ('tp_pkey', 'tp_b_a_key')
+  ORDER BY conname DESC;
+ALTER TABLE t DETACH PARTITION tp;
+DROP TABLE t, tp;
+
+CREATE TEMP TABLE t (a integer) PARTITION BY LIST (a);
+CREATE TEMP TABLE tp (a integer PRIMARY KEY);
+CREATE UNIQUE INDEX t_a_idx ON t (a);
+ALTER TABLE t ATTACH PARTITION tp FOR VALUES IN (1);
+ALTER TABLE t DETACH PARTITION tp;
+DROP TABLE t, tp;
+
+CREATE TEMP TABLE t (a integer) PARTITION BY LIST (a);
+CREATE TEMP TABLE tp (a integer PRIMARY KEY);
+CREATE UNIQUE INDEX t_a_idx ON ONLY t (a);
+ALTER TABLE t ATTACH PARTITION tp FOR VALUES IN (1);
+ALTER TABLE t DETACH PARTITION tp;
+DROP TABLE t, tp;
+
+CREATE TABLE regress_constr_partitioned (a integer) PARTITION BY LIST (a);
+CREATE TABLE regress_constr_partition1 PARTITION OF regress_constr_partitioned FOR VALUES IN (1);
+ALTER TABLE regress_constr_partition1 ADD PRIMARY KEY (a);
+CREATE UNIQUE INDEX ON regress_constr_partitioned (a);
+BEGIN;
+ALTER TABLE regress_constr_partitioned DETACH PARTITION regress_constr_partition1;
+ROLLBACK;
+--  Leave this one in funny state for pg_upgrade testing
+
 -- test a HOT update that invalidates the conflicting tuple.
 -- the trigger should still fire and catch the violation
 
@@ -591,3 +632,14 @@ DROP DOMAIN constraint_comments_dom;
 
 DROP ROLE regress_constraint_comments;
 DROP ROLE regress_constraint_comments_noaccess;
+
+-- Leave some constraints for the pg_upgrade test to pick up
+CREATE DOMAIN constraint_comments_dom AS int;
+
+ALTER DOMAIN constraint_comments_dom ADD CONSTRAINT inv_ck CHECK (value > 0) NOT VALID;
+COMMENT ON CONSTRAINT inv_ck ON DOMAIN constraint_comments_dom IS 'comment on invalid constraint';
+
+-- Create a table that exercises pg_upgrade
+CREATE TABLE regress_notnull1 (a integer);
+CREATE TABLE regress_notnull2 () INHERITS (regress_notnull1);
+ALTER TABLE ONLY regress_notnull2 ALTER COLUMN a SET NOT NULL;

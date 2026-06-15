@@ -2372,6 +2372,9 @@ ERROR:  value 2025 out of bounds for option "siglen"
 DETAIL:  Valid values are between "1" and "2024".
 create index trgm_idx on test_trgm using gist (t gist_trgm_ops(siglen=2024));
 set enable_seqscan=off;
+-- check index compatibility handling when opclass option is specified
+alter table test_trgm alter column t type varchar(768);
+alter table test_trgm alter column t type text;
 select t,similarity(t,'qwertyu0988') as sml from test_trgm where t % 'qwertyu0988' order by sml desc, t;
       t      |   sml    
 -------------+----------
@@ -4690,6 +4693,23 @@ select count(*) from test_trgm where t like '%99%' and t like '%qw%';
     19
 (1 row)
 
+explain (costs off)
+select count(*) from test_trgm where t %> '' and t %> '%qwerty%';
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Aggregate
+   ->  Bitmap Heap Scan on test_trgm
+         Recheck Cond: ((t %> ''::text) AND (t %> '%qwerty%'::text))
+         ->  Bitmap Index Scan on trgm_idx
+               Index Cond: ((t %> ''::text) AND (t %> '%qwerty%'::text))
+(5 rows)
+
+select count(*) from test_trgm where t %> '' and t %> '%qwerty%';
+ count 
+-------
+     0
+(1 row)
+
 -- ensure that pending-list items are handled correctly, too
 create temp table t_test_trgm(t text COLLATE "C");
 create index t_trgm_idx on t_test_trgm using gin (t gin_trgm_ops);
@@ -4728,6 +4748,23 @@ select count(*) from t_test_trgm where t like '%99%' and t like '%qw%';
      1
 (1 row)
 
+explain (costs off)
+select count(*) from t_test_trgm where t %> '' and t %> '%qwerty%';
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Aggregate
+   ->  Bitmap Heap Scan on t_test_trgm
+         Recheck Cond: ((t %> ''::text) AND (t %> '%qwerty%'::text))
+         ->  Bitmap Index Scan on t_trgm_idx
+               Index Cond: ((t %> ''::text) AND (t %> '%qwerty%'::text))
+(5 rows)
+
+select count(*) from t_test_trgm where t %> '' and t %> '%qwerty%';
+ count 
+-------
+     0
+(1 row)
+
 -- run the same queries with sequential scan to check the results
 set enable_bitmapscan=off;
 set enable_seqscan=on;
@@ -4743,6 +4780,12 @@ select count(*) from test_trgm where t like '%99%' and t like '%qw%';
     19
 (1 row)
 
+select count(*) from test_trgm where t %> '' and t %> '%qwerty%';
+ count 
+-------
+     0
+(1 row)
+
 select count(*) from t_test_trgm where t like '%99%' and t like '%qwerty%';
  count 
 -------
@@ -4753,6 +4796,12 @@ select count(*) from t_test_trgm where t like '%99%' and t like '%qw%';
  count 
 -------
      1
+(1 row)
+
+select count(*) from t_test_trgm where t %> '' and t %> '%qwerty%';
+ count 
+-------
+     0
 (1 row)
 
 reset enable_bitmapscan;

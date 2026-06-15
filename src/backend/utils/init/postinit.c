@@ -341,13 +341,13 @@ CheckMyDatabase(const char *name, bool am_superuser, bool override_allow_connect
 	 * These checks are not enforced when in standalone mode, so that there is
 	 * a way to recover from disabling all access to all databases, for
 	 * example "UPDATE pg_database SET datallowconn = false;".
-	 *
-	 * We do not enforce them for autovacuum worker processes either.
 	 */
-	if (IsUnderPostmaster && !AmAutoVacuumWorkerProcess())
+	if (IsUnderPostmaster)
 	{
 		/*
 		 * Check that the database is currently allowing connections.
+		 * (Background processes can override this test and the next one by
+		 * setting override_allow_connections.)
 		 */
 		if (!dbform->datallowconn && !override_allow_connections)
 			ereport(FATAL,
@@ -360,7 +360,7 @@ CheckMyDatabase(const char *name, bool am_superuser, bool override_allow_connect
 		 * is redundant, but since we have the flag, might as well check it
 		 * and save a few cycles.)
 		 */
-		if (!am_superuser &&
+		if (!am_superuser && !override_allow_connections &&
 			object_aclcheck(DatabaseRelationId, MyDatabaseId, GetUserId(),
 							ACL_CONNECT) != ACLCHECK_OK)
 			ereport(FATAL,
@@ -369,7 +369,9 @@ CheckMyDatabase(const char *name, bool am_superuser, bool override_allow_connect
 					 errdetail("User does not have CONNECT privilege.")));
 
 		/*
-		 * Check connection limit for this database.
+		 * Check connection limit for this database.  We enforce the limit
+		 * only for regular backends, since other process types have their own
+		 * PGPROC pools.
 		 *
 		 * There is a race condition here --- we create our PGPROC before
 		 * checking for other PGPROCs.  If two backends did this at about the
@@ -379,6 +381,7 @@ CheckMyDatabase(const char *name, bool am_superuser, bool override_allow_connect
 		 * just document that the connection limit is approximate.
 		 */
 		if (dbform->datconnlimit >= 0 &&
+			AmRegularBackendProcess() &&
 			!am_superuser &&
 			CountDBConnections(MyDatabaseId) > dbform->datconnlimit)
 			ereport(FATAL,
@@ -430,8 +433,7 @@ CheckMyDatabase(const char *name, bool am_superuser, bool override_allow_connect
 
 		builtin_validate_locale(dbform->encoding, datlocale);
 
-		default_locale.info.builtin.locale = MemoryContextStrdup(
-																 TopMemoryContext, datlocale);
+		default_locale.info.builtin.locale = MemoryContextStrdup(TopMemoryContext, datlocale);
 	}
 	else if (dbform->datlocprovider == COLLPROVIDER_ICU)
 	{
@@ -576,9 +578,9 @@ InitializeMaxBackends(void)
 {
 	Assert(MaxBackends == 0);
 
-	/* the extra unit accounts for the autovacuum launcher */
-	MaxBackends = MaxConnections + autovacuum_max_workers + 1 +
-		max_worker_processes + max_wal_senders;
+	/* Note that this does not include "auxiliary" processes */
+	MaxBackends = MaxConnections + autovacuum_max_workers +
+		max_worker_processes + max_wal_senders + NUM_SPECIAL_WORKER_PROCS;
 
 	/* internal error because the values were all checked previously */
 	if (MaxBackends > MAX_BACKENDS)
@@ -941,17 +943,16 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	}
 
 	/*
-	 * The last few connection slots are reserved for superusers and roles
-	 * with privileges of pg_use_reserved_connections.  Replication
-	 * connections are drawn from slots reserved with max_wal_senders and are
-	 * not limited by max_connections, superuser_reserved_connections, or
-	 * reserved_connections.
+	 * The last few regular connection slots are reserved for superusers and
+	 * roles with privileges of pg_use_reserved_connections.  We do not apply
+	 * these limits to background processes, since they all have their own
+	 * pools of PGPROC slots.
 	 *
 	 * Note: At this point, the new backend has already claimed a proc struct,
 	 * so we must check whether the number of free slots is strictly less than
 	 * the reserved connection limits.
 	 */
-	if (!am_superuser && !am_walsender &&
+	if (AmRegularBackendProcess() && !am_superuser &&
 		(SuperuserReservedConnections + ReservedConnections) > 0 &&
 		!HaveNFreeProcs(SuperuserReservedConnections + ReservedConnections, &nfree))
 	{

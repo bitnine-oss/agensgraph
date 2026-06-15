@@ -2779,7 +2779,7 @@ GetRunningTransactionData(void)
 		 * Also, update the oldest running xid within the current database.
 		 */
 		if (proc->databaseId == MyDatabaseId &&
-			TransactionIdPrecedes(xid, oldestRunningXid))
+			TransactionIdPrecedes(xid, oldestDatabaseRunningXid))
 			oldestDatabaseRunningXid = xid;
 
 		if (ProcGlobal->subxidStates[index].overflowed)
@@ -3621,8 +3621,7 @@ CountDBBackends(Oid databaseid)
 }
 
 /*
- * CountDBConnections --- counts database backends ignoring any background
- *		worker processes
+ * CountDBConnections --- counts database backends (only regular backends)
  */
 int
 CountDBConnections(Oid databaseid)
@@ -3694,6 +3693,7 @@ CancelDBBackends(Oid databaseid, ProcSignalReason sigmode, bool conflictPending)
 
 /*
  * CountUserBackends --- count backends that are used by specified user
+ * (only regular backends, not any type of background worker)
  */
 int
 CountUserBackends(Oid roleid)
@@ -4496,8 +4496,22 @@ ExpireTreeKnownAssignedTransactionIds(TransactionId xid, int nsubxids,
 void
 ExpireAllKnownAssignedTransactionIds(void)
 {
+	FullTransactionId latestXid;
+
 	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
 	KnownAssignedXidsRemovePreceding(InvalidTransactionId);
+
+	/* Reset latestCompletedXid to nextXid - 1 */
+	Assert(FullTransactionIdIsValid(TransamVariables->nextXid));
+	latestXid = TransamVariables->nextXid;
+	FullTransactionIdRetreat(&latestXid);
+	TransamVariables->latestCompletedXid = latestXid;
+
+	/*
+	 * Any transactions that were in-progress were effectively aborted, so
+	 * advance xactCompletionCount.
+	 */
+	TransamVariables->xactCompletionCount++;
 
 	/*
 	 * Reset lastOverflowedXid.  Currently, lastOverflowedXid has no use after
@@ -4516,7 +4530,17 @@ ExpireAllKnownAssignedTransactionIds(void)
 void
 ExpireOldKnownAssignedTransactionIds(TransactionId xid)
 {
+	TransactionId latestXid;
+
 	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
+
+	/* As in ProcArrayEndTransaction, advance latestCompletedXid */
+	latestXid = xid;
+	TransactionIdRetreat(latestXid);
+	MaintainLatestCompletedXidRecovery(latestXid);
+
+	/* ... and xactCompletionCount */
+	TransamVariables->xactCompletionCount++;
 
 	/*
 	 * Reset lastOverflowedXid if we know all transactions that have been

@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: pg_archivecleanup (PostgreSQL 17)\n"
 "Report-Msgid-Bugs-To: pgsql-bugs@lists.postgresql.org\n"
-"POT-Creation-Date: 2024-01-09 10:22+0900\n"
-"PO-Revision-Date: 2024-01-09 11:54+0900\n"
+"POT-Creation-Date: 2025-02-28 10:05+0900\n"
+"PO-Revision-Date: 2025-03-03 17:28+0900\n"
 "Last-Translator: Kyotaro Horiguchi <horikyota.ntt@gmail.com>\n"
 "Language-Team: Japan PostgreSQL Users Group <jpug-doc@ml.postgresql.jp>\n"
 "Language: ja\n"
@@ -36,6 +36,17 @@ msgstr "詳細: "
 #, c-format
 msgid "hint: "
 msgstr "ヒント: "
+
+#: ../../common/fe_memutils.c:35 ../../common/fe_memutils.c:75
+#: ../../common/fe_memutils.c:98 ../../common/fe_memutils.c:161
+#, c-format
+msgid "out of memory\n"
+msgstr "メモリ不足です\n"
+
+#: ../../common/fe_memutils.c:92 ../../common/fe_memutils.c:153
+#, c-format
+msgid "cannot duplicate null pointer (internal error)\n"
+msgstr "nullポインタは複製できません(内部エラー)\n"
 
 #: pg_archivecleanup.c:68
 #, c-format
@@ -145,8 +156,8 @@ msgid ""
 "  archive_cleanup_command = 'pg_archivecleanup /mnt/server/archiverdir %%r'\n"
 msgstr ""
 "\n"
-"postgresql.confでarchive_cleanup_commandとして使用する場合は以下のようにします:\n"
-"  archive_cleanup_command = 'pg_archivecleanup [オプション]... アーカイブの場所 %%r'\n"
+"postgresql.conf で archive_cleanup_command として使用する場合は以下のようにします:\n"
+"  archive_cleanup_command = 'pg_archivecleanup [オプション]... <アーカイブの場所> %%r'\n"
 "例としては:\n"
 "  archive_cleanup_command = 'pg_archivecleanup /mnt/server/archiverdir %%r'\n"
 

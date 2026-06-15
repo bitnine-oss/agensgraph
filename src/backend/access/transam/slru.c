@@ -72,6 +72,21 @@
 #include "storage/shmem.h"
 #include "utils/guc_hooks.h"
 
+/*
+ * Converts segment number to the filename of the segment.
+ *
+ * "path" should point to a buffer at least MAXPGPATH characters long.
+ *
+ * If ctl->long_segment_names is true, segno can be in the range [0, 2^60-1].
+ * The resulting file name is made of 15 characters, e.g. dir/123456789ABCDEF.
+ *
+ * If ctl->long_segment_names is false, segno can be in the range [0, 2^24-1].
+ * The resulting file name is made of 4 to 6 characters, as of:
+ *
+ *  dir/1234   for [0, 2^16-1]
+ *  dir/12345  for [2^16, 2^20-1]
+ *  dir/123456 for [2^20, 2^24-1]
+ */
 static inline int
 SlruFileName(SlruCtl ctl, char *path, int64 segno)
 {
@@ -232,6 +247,7 @@ SimpleLruAutotuneBuffers(int divisor, int max)
  * buffer_tranche_id: tranche ID to use for the SLRU's per-buffer LWLocks.
  * bank_tranche_id: tranche ID to use for the bank LWLocks.
  * sync_handler: which set of functions to use to handle sync requests
+ * long_segment_names: use short or long segment names
  */
 void
 SimpleLruInit(SlruCtl ctl, const char *name, int nslots, int nlsns,
@@ -328,7 +344,7 @@ SimpleLruInit(SlruCtl ctl, const char *name, int nslots, int nlsns,
 	ctl->shared = shared;
 	ctl->sync_handler = sync_handler;
 	ctl->long_segment_names = long_segment_names;
-	ctl->bank_mask = (nslots / SLRU_BANK_SIZE) - 1;
+	ctl->nbanks = nbanks;
 	strlcpy(ctl->Dir, subdir, sizeof(ctl->Dir));
 }
 
@@ -386,10 +402,10 @@ SimpleLruZeroPage(SlruCtl ctl, int64 pageno)
 	/*
 	 * Assume this page is now the latest active page.
 	 *
-	 * Note that because both this routine and SlruSelectLRUPage run with
-	 * ControlLock held, it is not possible for this to be zeroing a page that
-	 * SlruSelectLRUPage is going to evict simultaneously.  Therefore, there's
-	 * no memory barrier here.
+	 * Note that because both this routine and SlruSelectLRUPage run with a
+	 * SLRU bank lock held, it is not possible for this to be zeroing a page
+	 * that SlruSelectLRUPage is going to evict simultaneously.  Therefore,
+	 * there's no memory barrier here.
 	 */
 	pg_atomic_write_u64(&shared->latest_page_number, pageno);
 
@@ -591,7 +607,7 @@ SimpleLruReadPage_ReadOnly(SlruCtl ctl, int64 pageno, TransactionId xid)
 {
 	SlruShared	shared = ctl->shared;
 	LWLock	   *banklock = SimpleLruGetBankLock(ctl, pageno);
-	int			bankno = pageno & ctl->bank_mask;
+	int			bankno = pageno % ctl->nbanks;
 	int			bankstart = bankno * SLRU_BANK_SIZE;
 	int			bankend = bankstart + SLRU_BANK_SIZE;
 
@@ -605,7 +621,7 @@ SimpleLruReadPage_ReadOnly(SlruCtl ctl, int64 pageno, TransactionId xid)
 			shared->page_number[slotno] == pageno &&
 			shared->page_status[slotno] != SLRU_PAGE_READ_IN_PROGRESS)
 		{
-			/* See comments for SlruRecentlyUsed macro */
+			/* See comments for SlruRecentlyUsed() */
 			SlruRecentlyUsed(shared, slotno);
 
 			/* update the stats counter of pages found in the SLRU */
@@ -1162,14 +1178,14 @@ SlruSelectLRUPage(SlruCtl ctl, int64 pageno)
 		int			bestinvalidslot = 0;	/* keep compiler quiet */
 		int			best_invalid_delta = -1;
 		int64		best_invalid_page_number = 0;	/* keep compiler quiet */
-		int			bankno = pageno & ctl->bank_mask;
+		int			bankno = pageno % ctl->nbanks;
 		int			bankstart = bankno * SLRU_BANK_SIZE;
 		int			bankend = bankstart + SLRU_BANK_SIZE;
 
 		Assert(LWLockHeldByMe(SimpleLruGetBankLock(ctl, pageno)));
 
 		/* See if page already has a buffer assigned */
-		for (int slotno = 0; slotno < shared->num_slots; slotno++)
+		for (int slotno = bankstart; slotno < bankend; slotno++)
 		{
 			if (shared->page_status[slotno] != SLRU_PAGE_EMPTY &&
 				shared->page_number[slotno] == pageno)
@@ -1517,7 +1533,7 @@ restart:
 	did_write = false;
 	for (int slotno = 0; slotno < shared->num_slots; slotno++)
 	{
-		int			pagesegno;
+		int64		pagesegno;
 		int			curbank = SlotGetBankNumber(slotno);
 
 		/*

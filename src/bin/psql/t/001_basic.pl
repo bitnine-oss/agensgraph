@@ -352,8 +352,14 @@ psql_like(
 
 # Check \watch
 # Note: the interval value is parsed with locale-aware strtod()
-psql_like($node, sprintf('SELECT 1 \watch c=3 i=%g', 0.01),
-	qr/1\n1\n1/, '\watch with 3 iterations');
+psql_like(
+	$node, sprintf('SELECT 1 \watch c=3 i=%g', 0.01),
+	qr/1\n1\n1/, '\watch with 3 iterations, interval of 0.01');
+
+# Sub-millisecond wait works, equivalent to 0.
+psql_like(
+	$node, sprintf('SELECT 1 \watch c=3 i=%g', 0.0001),
+	qr/1\n1\n1/, '\watch with 3 iterations, interval of 0.0001');
 
 # Check \watch minimum row count
 psql_fails_like(
@@ -436,5 +442,12 @@ psql_like($node, "copy (values ('foo'),('bar')) to stdout \\g | $pipe_cmd",
 	qr//, "copy output passed to \\g pipe");
 my $c4 = slurp_file($g_file);
 like($c4, qr/foo.*bar/s);
+
+psql_fails_like(
+	$node,
+	qq{\\restrict test
+\\! should_fail},
+	qr/backslash commands are restricted; only \\unrestrict is allowed/,
+	'meta-command in restrict mode fails');
 
 done_testing();

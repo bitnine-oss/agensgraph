@@ -457,6 +457,7 @@ ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done)
 	ProtocolVersion proto;
 	MemoryContext oldcontext;
 
+retry:
 	pq_startmsgread();
 
 	/*
@@ -608,7 +609,16 @@ ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done)
 		 * another SSL negotiation request, and a GSS request should only
 		 * follow if SSL was rejected (client may negotiate in either order)
 		 */
-		return ProcessStartupPacket(port, true, SSLok == 'S');
+		ssl_done = true;
+		if (SSLok == 'S')
+		{
+			/*
+			 * We are done with SSL and negotiated correctly, so consider the
+			 * same for GSS.
+			 */
+			gss_done = true;
+		}
+		goto retry;
 	}
 	else if (proto == NEGOTIATE_GSS_CODE && !gss_done)
 	{
@@ -662,7 +672,16 @@ ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done)
 		 * another GSS negotiation request, and an SSL request should only
 		 * follow if GSS was rejected (client may negotiate in either order)
 		 */
-		return ProcessStartupPacket(port, GSSok == 'G', true);
+		gss_done = true;
+		if (GSSok == 'G')
+		{
+			/*
+			 * We are done with GSS and negotiated correctly, so consider the
+			 * same for SSL.
+			 */
+			ssl_done = true;
+		}
+		goto retry;
 	}
 
 	/* Could add additional special packet types here */
@@ -804,6 +823,15 @@ ProcessStartupPacket(Port *port, bool ssl_done, bool gss_done)
 	/* The database defaults to the user name. */
 	if (port->database_name == NULL || port->database_name[0] == '\0')
 		port->database_name = pstrdup(port->user_name);
+
+	/*
+	 * Truncate given database and user names to length of a Postgres name.
+	 * This avoids lookup failures when overlength names are given.
+	 */
+	if (strlen(port->database_name) >= NAMEDATALEN)
+		port->database_name[NAMEDATALEN - 1] = '\0';
+	if (strlen(port->user_name) >= NAMEDATALEN)
+		port->user_name[NAMEDATALEN - 1] = '\0';
 
 	if (am_walsender)
 		MyBackendType = B_WAL_SENDER;

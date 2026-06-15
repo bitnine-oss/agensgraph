@@ -466,7 +466,7 @@ MarkAsPreparingGuts(GlobalTransaction gxact, TransactionId xid, const char *gid,
 	proc->databaseId = databaseid;
 	proc->roleId = owner;
 	proc->tempNamespaceId = InvalidOid;
-	proc->isBackgroundWorker = false;
+	proc->isBackgroundWorker = true;
 	proc->lwWaiting = LW_WS_NOT_WAITING;
 	proc->lwWaitMode = 0;
 	proc->waitLock = NULL;
@@ -895,9 +895,10 @@ TwoPhaseGetXidByVirtualXID(VirtualTransactionId vxid,
  *		Get the dummy proc number for prepared transaction specified by XID
  *
  * Dummy proc numbers are similar to proc numbers of real backends.  They
- * start at MaxBackends, and are unique across all currently active real
- * backends and prepared transactions.  If lock_held is set to true,
- * TwoPhaseStateLock will not be taken, so the caller had better hold it.
+ * start at FIRST_PREPARED_XACT_PROC_NUMBER, and are unique across all
+ * currently active real backends and prepared transactions.  If lock_held is
+ * set to true, TwoPhaseStateLock will not be taken, so the caller had better
+ * hold it.
  */
 ProcNumber
 TwoPhaseGetDummyProcNumber(TransactionId xid, bool lock_held)
@@ -929,32 +930,16 @@ TwoPhaseGetDummyProc(TransactionId xid, bool lock_held)
 /*
  * Compute the FullTransactionId for the given TransactionId.
  *
- * The wrap logic is safe here because the span of active xids cannot exceed one
- * epoch at any given time.
+ * This is safe if the xid has not yet reached COMMIT PREPARED or ROLLBACK
+ * PREPARED.  After those commands, concurrent vac_truncate_clog() may make
+ * the xid cease to qualify as allowable.  XXX Not all callers limit their
+ * calls accordingly.
  */
 static inline FullTransactionId
 AdjustToFullTransactionId(TransactionId xid)
 {
-	FullTransactionId nextFullXid;
-	TransactionId nextXid;
-	uint32		epoch;
-
 	Assert(TransactionIdIsValid(xid));
-
-	LWLockAcquire(XidGenLock, LW_SHARED);
-	nextFullXid = TransamVariables->nextXid;
-	LWLockRelease(XidGenLock);
-
-	nextXid = XidFromFullTransactionId(nextFullXid);
-	epoch = EpochFromFullTransactionId(nextFullXid);
-	if (unlikely(xid > nextXid))
-	{
-		/* Wraparound occurred, must be from a prev epoch. */
-		Assert(epoch > 0);
-		epoch--;
-	}
-
-	return FullTransactionIdFromEpochAndXid(epoch, xid);
+	return FullTransactionIdFromAllowableAt(ReadNextFullTransactionId(), xid);
 }
 
 static inline int
@@ -1505,6 +1490,7 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
 	GlobalTransaction gxact;
 	PGPROC	   *proc;
 	TransactionId xid;
+	bool		ondisk;
 	char	   *buf;
 	char	   *bufptr;
 	TwoPhaseFileHeader *hdr;
@@ -1657,6 +1643,12 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
 
 	PredicateLockTwoPhaseFinish(xid, isCommit);
 
+	/*
+	 * Read this value while holding the two-phase lock, as the on-disk 2PC
+	 * file is physically removed after the lock is released.
+	 */
+	ondisk = gxact->ondisk;
+
 	/* Clear shared memory state */
 	RemoveGXact(gxact);
 
@@ -1672,7 +1664,7 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
 	/*
 	 * And now we can clean up any files we may have left.
 	 */
-	if (gxact->ondisk)
+	if (ondisk)
 		RemoveTwoPhaseFile(xid, true);
 
 	MyLockedGxact = NULL;

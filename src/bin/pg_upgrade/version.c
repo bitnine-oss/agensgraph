@@ -29,6 +29,37 @@ jsonb_9_4_check_applicable(ClusterInfo *cluster)
 }
 
 /*
+ * Older servers can't support newer protocol versions, so their connection
+ * strings will need to lock max_protocol_version to 3.0.
+ */
+bool
+protocol_negotiation_supported(const ClusterInfo *cluster)
+{
+	/*
+	 * Back-branch-specific complication: in libpq versions prior to PG18,
+	 * max_protocol_version isn't supported. But we also don't need to worry
+	 * about newer protocol versions being used in that case, so just lie and
+	 * return true.
+	 *
+	 * (Checking for a libpq version that's newer than this branch looks very
+	 * strange, but distributions are allowed to link older pg_upgrade
+	 * binaries against the newest release of libpq.)
+	 */
+	if (PQlibVersion() < 180000)
+		return true;
+
+	/*
+	 * The February 2018 patch release (9.3.21, 9.4.16, 9.5.11, 9.6.7, and
+	 * 10.2) added support for NegotiateProtocolVersion. But ClusterInfo only
+	 * has information about the major version number. To ensure we can still
+	 * upgrade older unpatched servers, just assume anything prior to PG11
+	 * can't negotiate. It's not possible for those servers to make use of
+	 * newer protocols anyway, so nothing is lost.
+	 */
+	return (GET_MAJOR_VERSION(cluster->major_version) >= 1100);
+}
+
+/*
  * old_9_6_invalidate_hash_indexes()
  *	9.6 -> 10
  *	Hash index binary format has changed from 9.6->10.0

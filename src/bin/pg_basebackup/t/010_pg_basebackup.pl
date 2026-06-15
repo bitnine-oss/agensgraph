@@ -359,13 +359,13 @@ chmod_recursive("$pgdata", 0750, 0640);
 # Create a temporary directory in the system location.
 my $sys_tempdir = PostgreSQL::Test::Utils::tempdir_short;
 
-# On Windows use the short location to avoid path length issues.
-# Elsewhere use $tempdir to avoid file system boundary issues with moving.
-my $tmploc = $windows_os ? $sys_tempdir : $tempdir;
-
-rename("$pgdata/pg_replslot", "$tmploc/pg_replslot")
-  or BAIL_OUT "could not move $pgdata/pg_replslot";
-dir_symlink("$tmploc/pg_replslot", "$pgdata/pg_replslot")
+# pg_replslot should be empty. We remove it and recreate it in $sys_tempdir
+# before symlinking, in order to avoid possibly trying to move things across
+# drives.
+rmdir("$pgdata/pg_replslot")
+  or BAIL_OUT "could not remove $pgdata/pg_replslot";
+mkdir("$sys_tempdir/pg_replslot"); # if this fails the symlink will fail
+dir_symlink("$sys_tempdir/pg_replslot", "$pgdata/pg_replslot")
   or BAIL_OUT "could not symlink to $pgdata/pg_replslot";
 
 $node->start;
@@ -981,7 +981,7 @@ $node2->command_fails_like(
 		"$tempdir" . '/diff_sysid', '--incremental',
 		"$backupdir" . '/backup_manifest'
 	],
-	qr/manifest system identifier is .*, but database system identifier is/,
+	qr/system identifier in backup manifest is .*, but database system identifier is/,
 	"pg_basebackup fails with different database system manifest");
 
 done_testing();

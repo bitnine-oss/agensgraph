@@ -185,6 +185,10 @@ slashUsage(unsigned short int pager)
 	HELP0("  \\gset [PREFIX]         execute query and store result in psql variables\n");
 	HELP0("  \\gx [(OPTIONS)] [FILE] as \\g, but forces expanded output mode\n");
 	HELP0("  \\q                     quit psql\n");
+	HELP0("  \\restrict RESTRICT_KEY\n"
+		  "                         enter restricted mode with provided key\n");
+	HELP0("  \\unrestrict RESTRICT_KEY\n"
+		  "                         exit restricted mode if key matches\n");
 	HELP0("  \\watch [[i=]SEC] [c=N] [m=MIN]\n"
 		  "                         execute query every SEC seconds, up to N times,\n"
 		  "                         stop if less than MIN rows are returned\n");
@@ -304,7 +308,7 @@ slashUsage(unsigned short int pager)
 		  "                         numericlocale|pager|pager_min_lines|recordsep|\n"
 		  "                         recordsep_zero|tableattr|title|tuples_only|\n"
 		  "                         unicode_border_linestyle|unicode_column_linestyle|\n"
-		  "                         unicode_header_linestyle)\n");
+		  "                         unicode_header_linestyle|xheader_width)\n");
 	HELPN("  \\t [on|off]            show only rows (currently %s)\n",
 		  ON(pset.popt.topt.tuples_only));
 	HELP0("  \\T [STRING]            set HTML <table> tag attributes, or unset if none\n");
@@ -470,6 +474,9 @@ helpVariables(unsigned short int pager)
 		  "    border style (number)\n");
 	HELP0("  columns\n"
 		  "    target width for the wrapped format\n");
+	HELPN("  csv_fieldsep\n"
+		  "    field separator for CSV output format (default \"%c\")\n",
+		  DEFAULT_CSV_FIELD_SEP);
 	HELP0("  expanded (or x)\n"
 		  "    expanded output [on, off, auto]\n");
 	HELPN("  fieldsep\n"
@@ -504,6 +511,9 @@ helpVariables(unsigned short int pager)
 		  "  unicode_column_linestyle\n"
 		  "  unicode_header_linestyle\n"
 		  "    set the style of Unicode line drawing [single, double]\n");
+	HELP0("  xheader_width\n"
+		  "    set the maximum width of the header for expanded output\n"
+		  "    [full, column, page, integer value]\n");
 
 	HELP0("\nEnvironment variables:\n");
 	HELP0("Usage:\n");
@@ -739,7 +749,7 @@ void
 print_copyright(void)
 {
 	puts("PostgreSQL Database Management System\n"
-		 "(formerly known as Postgres, then as Postgres95)\n\n"
+		 "(also known as Postgres, formerly known as Postgres95)\n\n"
 		 "Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group\n\n"
 		 "Portions Copyright (c) 1994, The Regents of the University of California\n\n"
 		 "Permission to use, copy, modify, and distribute this software and its\n"

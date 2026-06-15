@@ -1496,8 +1496,6 @@ select conname, obj_description(oid, 'pg_constraint') as desc
 
 alter table at_partitioned alter column name type varchar(127);
 
--- Note: these tests currently show the wrong behavior for comments :-(
-
 select relname,
   c.oid = oldoid as orig_oid,
   case relfilenode
@@ -2182,13 +2180,15 @@ SELECT conname as constraint, obj_description(oid, 'pg_constraint') as comment F
 -- filenode function call can return NULL for a relation dropped concurrently
 -- with the call's surrounding query, so ignore a NULL mapped_oid for
 -- relations that no longer exist after all calls finish.
+-- Temporary relations are ignored, as not supported by pg_filenode_relation().
 CREATE TEMP TABLE filenode_mapping AS
 SELECT
     oid, mapped_oid, reltablespace, relfilenode, relname
 FROM pg_class,
     pg_filenode_relation(reltablespace, pg_relation_filenode(oid)) AS mapped_oid
-WHERE relkind IN ('r', 'i', 'S', 't', 'm') AND mapped_oid IS DISTINCT FROM oid;
-
+WHERE relkind IN ('r', 'i', 'S', 't', 'm')
+  AND relpersistence != 't'
+  AND mapped_oid IS DISTINCT FROM oid;
 SELECT m.* FROM filenode_mapping m LEFT JOIN pg_class c ON c.oid = m.oid
 WHERE c.oid IS NOT NULL OR m.mapped_oid IS NOT NULL;
 
@@ -2309,6 +2309,14 @@ ALTER TABLE test_add_column
 \d test_add_column
 ALTER TABLE test_add_column
 	ADD COLUMN IF NOT EXISTS c5 SERIAL CHECK (c5 > 10);
+ALTER TABLE test_add_column
+	ADD c6 integer; -- omit COLUMN
+ALTER TABLE test_add_column
+	ADD IF NOT EXISTS c6 integer;
+ALTER TABLE test_add_column
+	DROP c6; -- omit COLUMN
+ALTER TABLE test_add_column
+	DROP IF EXISTS c6;
 \d test_add_column*
 DROP TABLE test_add_column;
 \d test_add_column*
@@ -2425,6 +2433,13 @@ CREATE TABLE parent (LIKE list_parted);
 CREATE TABLE child () INHERITS (parent);
 ALTER TABLE list_parted ATTACH PARTITION child FOR VALUES IN (1);
 ALTER TABLE list_parted ATTACH PARTITION parent FOR VALUES IN (1);
+DROP TABLE child;
+-- now it should work, with a little tweak
+ALTER TABLE parent ADD CONSTRAINT check_a CHECK (a > 0);
+ALTER TABLE list_parted ATTACH PARTITION parent FOR VALUES IN (1);
+-- test insert/update, per bug #18550
+INSERT INTO parent VALUES (1);
+UPDATE parent SET a = 2 WHERE a = 1;
 DROP TABLE parent CASCADE;
 
 -- check any TEMP-ness
@@ -2792,6 +2807,15 @@ ALTER TABLE range_parted2 DETACH PARTITION part_rp100 CONCURRENTLY;
 \d part_rp100
 DROP TABLE range_parted2;
 
+-- Test that hash partitions continue to work after they're concurrently
+-- detached (bugs #18371, #19070)
+CREATE TABLE hash_parted2 (a int) PARTITION BY HASH(a);
+CREATE TABLE part_hp PARTITION OF hash_parted2 FOR VALUES WITH (MODULUS 2, REMAINDER 0);
+ALTER TABLE hash_parted2 DETACH PARTITION part_hp CONCURRENTLY;
+DROP TABLE hash_parted2;
+INSERT INTO part_hp VALUES (1);
+DROP TABLE part_hp;
+
 -- Check ALTER TABLE commands for partitioned tables and partitions
 
 -- cannot add/drop column to/from *only* the parent
@@ -3021,6 +3045,23 @@ alter table atref alter column c1 set data type bigint;
 drop table attbl, atref;
 
 /* End test case for bug #17409 */
+
+/* Test case for bug #18970 */
+
+create table attbl(a int);
+create table atref(b attbl check ((b).a is not null));
+alter table attbl alter column a type numeric;  -- someday this should work
+alter table atref drop constraint atref_b_check;
+
+create statistics atref_stat on ((b).a is not null) from atref;
+alter table attbl alter column a type numeric;  -- someday this should work
+drop statistics atref_stat;
+
+create index atref_idx on atref (((b).a));
+alter table attbl alter column a type numeric;  -- someday this should work
+drop table attbl, atref;
+
+/* End test case for bug #18970 */
 
 -- Test that ALTER TABLE rewrite preserves a clustered index
 -- for normal indexes and indexes on constraints.

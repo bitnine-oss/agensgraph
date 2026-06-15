@@ -800,6 +800,16 @@ SELCT 1/0;<!-- this typo is intentional -->
      Errors detected at semantic analysis or later, such as a misspelled
      table or column name, do not have this effect.
     </para>
+
+    <para>
+     Lastly, note that all the statements within the Query message will
+     observe the same value of <function>statement_timestamp()</function>,
+     since that timestamp is updated only upon receipt of the Query
+     message.  This will result in them all observing the same
+     value of <function>transaction_timestamp()</function> as well,
+     except in cases where the query string ends a previously-started
+     transaction and begins a new one.
+    </para>
    </sect3>
   </sect2>
 
@@ -1506,10 +1516,10 @@ SELCT 1/0;<!-- this typo is intentional -->
 
    <para>
     The frontend should also be prepared to handle an ErrorMessage
-    response to SSLRequest from the server.  This would only occur if
-    the server predates the addition of <acronym>SSL</acronym> support
-    to <productname>PostgreSQL</productname>.  (Such servers are now very ancient,
-    and likely do not exist in the wild anymore.)
+    response to SSLRequest from the server. The frontend should not display
+    this error message to the user/application, since the server has not been
+    authenticated
+    (<ulink url="https://www.postgresql.org/support/security/CVE-2024-10977/">CVE-2024-10977</ulink>).
     In this case the connection must
     be closed, but the frontend might choose to open a fresh connection
     and proceed without requesting <acronym>SSL</acronym>.
@@ -1619,12 +1629,13 @@ SELCT 1/0;<!-- this typo is intentional -->
 
    <para>
     The frontend should also be prepared to handle an ErrorMessage
-    response to GSSENCRequest from the server.  This would only occur if
-    the server predates the addition of <acronym>GSSAPI</acronym> encryption
-    support to <productname>PostgreSQL</productname>.  In this case the
-    connection must be closed, but the frontend might choose to open a fresh
-    connection and proceed without requesting <acronym>GSSAPI</acronym>
-    encryption.
+    response to GSSENCRequest from the server.  The frontend should not display
+    this error message to the user/application, since the server has not been
+    authenticated
+    (<ulink url="https://www.postgresql.org/support/security/CVE-2024-10977/">CVE-2024-10977</ulink>).
+    In this case the connection must be closed, but the frontend might choose
+    to open a fresh connection and proceed without requesting
+    <acronym>GSSAPI</acronym> encryption.
    </para>
 
    <para>
@@ -2659,8 +2670,6 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
      <listitem>
       <para>
        Drops a replication slot, freeing any reserved server-side resources.
-       If the slot is a logical slot that was created in a database other than
-       the database the walsender is connected to, this command fails.
       </para>
 
       <variablelist>
@@ -3285,11 +3294,13 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
      </term>
      <listitem>
       <para>
-       Boolean option to enable streaming of in-progress transactions.
-       It accepts an additional value "parallel" to enable sending extra
-       information with some messages to be used for parallelisation.
-       Minimum protocol version 2 is required to turn it on.  Minimum protocol
-       version 4 is required for the "parallel" option.
+       Option to enable streaming of in-progress transactions. Valid values are
+       <literal>off</literal> (the default), <literal>on</literal> and
+       <literal>parallel</literal>. The setting <literal>parallel</literal>
+       enables sending extra information with some messages to be used for
+       parallelization. Minimum protocol version 2 is required to turn it
+       <literal>on</literal>.  Minimum protocol version 4 is required for the
+       <literal>parallel</literal> value.
       </para>
      </listitem>
     </varlistentry>
@@ -7053,8 +7064,8 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
        <term>Int64 (XLogRecPtr)</term>
        <listitem>
         <para>
-         The LSN of the abort. This field is available since protocol version
-         4.
+         The LSN of the abort operation, present only when streaming is set to parallel.
+         This field is available since protocol version 4.
         </para>
        </listitem>
       </varlistentry>
@@ -7063,9 +7074,9 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
        <term>Int64 (TimestampTz)</term>
        <listitem>
         <para>
-         Abort timestamp of the transaction. The value is in number
-         of microseconds since PostgreSQL epoch (2000-01-01). This field is
-         available since protocol version 4.
+         Abort timestamp of the transaction, present only when streaming is set to
+         parallel. The value is in number of microseconds since PostgreSQL epoch (2000-01-01).
+         This field is available since protocol version 4.
         </para>
        </listitem>
       </varlistentry>

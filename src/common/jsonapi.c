@@ -514,7 +514,7 @@ freeJsonLexContext(JsonLexContext *lex)
  *
  * If FORCE_JSON_PSTACK is defined then the routine will call the non-recursive
  * JSON parser. This is a useful way to validate that it's doing the right
- * think at least for non-incremental cases. If this is on we expect to see
+ * thing at least for non-incremental cases. If this is on we expect to see
  * regression diffs relating to error messages about stack depth, but no
  * other differences.
  */
@@ -1378,9 +1378,31 @@ json_lex(JsonLexContext *lex)
 
 			if (c == '-' || (c >= '0' && c <= '9'))
 			{
-				/* for numbers look for possible numeric continuations */
-
+				/*
+				 * Accumulate numeric continuations, respecting JSON number
+				 * grammar: -? int [frac] [exp]
+				 *
+				 * We must track what parts of the number we've already seen
+				 * so we don't over-consume.  '.' is valid only once and not
+				 * after 'e'/'E'; 'e'/'E' is valid only once; '+'/'-' are
+				 * valid only immediately after 'e'/'E'.
+				 */
 				bool		numend = false;
+				bool		seen_dot = false;
+				bool		seen_exp = false;
+				char		prev;
+
+				/* Scan existing partial token for state */
+				for (int j = 0; j < ptok->len; j++)
+				{
+					char		pc = ptok->data[j];
+
+					if (pc == '.')
+						seen_dot = true;
+					else if (pc == 'e' || pc == 'E')
+						seen_exp = true;
+				}
+				prev = ptok->data[ptok->len - 1];
 
 				for (size_t i = 0; i < lex->input_length && !numend; i++)
 				{
@@ -1390,8 +1412,35 @@ json_lex(JsonLexContext *lex)
 					{
 						case '+':
 						case '-':
+							if (prev != 'e' && prev != 'E')
+							{
+								numend = true;
+								break;
+							}
+							appendStringInfoCharMacro(ptok, cc);
+							added++;
+							break;
+						case '.':
+							if (seen_dot || seen_exp)
+							{
+								numend = true;
+								break;
+							}
+							seen_dot = true;
+							appendStringInfoCharMacro(ptok, cc);
+							added++;
+							break;
 						case 'e':
 						case 'E':
+							if (seen_exp)
+							{
+								numend = true;
+								break;
+							}
+							seen_exp = true;
+							appendStringInfoCharMacro(ptok, cc);
+							added++;
+							break;
 						case '0':
 						case '1':
 						case '2':
@@ -1410,6 +1459,8 @@ json_lex(JsonLexContext *lex)
 						default:
 							numend = true;
 					}
+					if (!numend)
+						prev = cc;
 				}
 			}
 
@@ -1689,8 +1740,11 @@ json_lex_string(JsonLexContext *lex)
 	} while (0)
 #define FAIL_AT_CHAR_END(code) \
 	do { \
-		const char	   *term = s + pg_encoding_mblen(lex->input_encoding, s); \
-		lex->token_terminator = (term <= end) ? term : end; \
+		ptrdiff_t	remaining = end - s; \
+		int			charlen; \
+		charlen = pg_encoding_mblen_or_incomplete(lex->input_encoding, \
+												  s, remaining); \
+		lex->token_terminator = (charlen <= remaining) ? s + charlen : end; \
 		return code; \
 	} while (0)
 

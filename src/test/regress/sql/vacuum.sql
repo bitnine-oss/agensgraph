@@ -67,6 +67,35 @@ DELETE FROM vactst WHERE i % 5 <> 0; -- delete a few rows inside
 ANALYZE vactst;
 COMMIT;
 
+-- Test ANALYZE setting relhassubclass=f for non-partitioning inheritance
+BEGIN;
+CREATE TABLE past_inh_parent ();
+CREATE TABLE past_inh_child () INHERITS (past_inh_parent);
+INSERT INTO past_inh_child DEFAULT VALUES;
+INSERT INTO past_inh_child DEFAULT VALUES;
+ANALYZE past_inh_parent;
+SELECT reltuples, relhassubclass
+  FROM pg_class WHERE oid = 'past_inh_parent'::regclass;
+DROP TABLE past_inh_child;
+ANALYZE past_inh_parent;
+SELECT reltuples, relhassubclass
+  FROM pg_class WHERE oid = 'past_inh_parent'::regclass;
+COMMIT;
+
+-- Test ANALYZE setting relhassubclass=f for partitioning
+BEGIN;
+CREATE TABLE past_parted (i int) PARTITION BY LIST(i);
+CREATE TABLE past_part PARTITION OF past_parted FOR VALUES IN (1);
+INSERT INTO past_parted VALUES (1),(1);
+ANALYZE past_parted;
+DROP TABLE past_part;
+SELECT reltuples, relhassubclass
+  FROM pg_class WHERE oid = 'past_parted'::regclass;
+ANALYZE past_parted;
+SELECT reltuples, relhassubclass
+  FROM pg_class WHERE oid = 'past_parted'::regclass;
+COMMIT;
+
 VACUUM FULL pg_am;
 VACUUM FULL pg_class;
 VACUUM FULL pg_database;
@@ -84,6 +113,10 @@ CREATE INDEX brin_pvactst ON pvactst USING brin (i);
 CREATE INDEX gin_pvactst ON pvactst USING gin (a);
 CREATE INDEX gist_pvactst ON pvactst USING gist (p);
 CREATE INDEX spgist_pvactst ON pvactst USING spgist (p);
+CREATE TABLE pvactst2 (i INT) WITH (autovacuum_enabled = off);
+INSERT INTO pvactst2 SELECT generate_series(1, 1000);
+CREATE INDEX ON pvactst2 (i);
+CREATE INDEX ON pvactst2 (i);
 
 -- VACUUM invokes parallel index cleanup
 SET min_parallel_index_scan_size to 0;
@@ -101,6 +134,14 @@ VACUUM (PARALLEL 2, INDEX_CLEANUP FALSE) pvactst;
 VACUUM (PARALLEL 2, FULL TRUE) pvactst; -- error, cannot use both PARALLEL and FULL
 VACUUM (PARALLEL) pvactst; -- error, cannot use PARALLEL option without parallel degree
 
+-- Test parallel vacuum using the minimum maintenance_work_mem with and without
+-- dead tuples.
+SET maintenance_work_mem TO 64;
+VACUUM (PARALLEL 2) pvactst2;
+DELETE FROM pvactst2 WHERE i < 1000;
+VACUUM (PARALLEL 2) pvactst2;
+RESET maintenance_work_mem;
+
 -- Test different combinations of parallel and full options for temporary tables
 CREATE TEMPORARY TABLE tmp (a int PRIMARY KEY);
 CREATE INDEX tmp_idx1 ON tmp (a);
@@ -108,6 +149,7 @@ VACUUM (PARALLEL 1, FULL FALSE) tmp; -- parallel vacuum disabled for temp tables
 VACUUM (PARALLEL 0, FULL TRUE) tmp; -- can specify parallel disabled (even though that's implied by FULL)
 RESET min_parallel_index_scan_size;
 DROP TABLE pvactst;
+DROP TABLE pvactst2;
 
 -- INDEX_CLEANUP option
 CREATE TABLE no_index_cleanup (i INT PRIMARY KEY, t TEXT);

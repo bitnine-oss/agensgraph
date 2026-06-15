@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: plpython (PostgreSQL current)\n"
 "Report-Msgid-Bugs-To: pgsql-bugs@lists.postgresql.org\n"
-"POT-Creation-Date: 2024-05-04 10:36+0300\n"
+"POT-Creation-Date: 2025-08-02 11:37+0300\n"
 "PO-Revision-Date: 2019-08-29 15:42+0300\n"
 "Last-Translator: Alexander Lakhin <exclusion@gmail.com>\n"
 "Language-Team: Russian <pgsql-ru-general@postgresql.org>\n"
@@ -22,17 +22,17 @@ msgstr ""
 msgid "plpy.cursor expected a query or a plan"
 msgstr "plpy.cursor ожидает запрос или план"
 
-#: plpy_cursorobject.c:155
+#: plpy_cursorobject.c:154
 #, c-format
 msgid "plpy.cursor takes a sequence as its second argument"
 msgstr "plpy.cursor принимает в качестве второго аргумента последовательность"
 
-#: plpy_cursorobject.c:171 plpy_spi.c:205
+#: plpy_cursorobject.c:170 plpy_spi.c:204
 #, c-format
 msgid "could not execute plan"
 msgstr "нельзя выполнить план"
 
-#: plpy_cursorobject.c:174 plpy_spi.c:208
+#: plpy_cursorobject.c:173 plpy_spi.c:207
 #, c-format
 msgid "Expected sequence of %d argument, got %d: %s"
 msgid_plural "Expected sequence of %d arguments, got %d: %s"
@@ -40,33 +40,33 @@ msgstr[0] "Ожидалась последовательность из %d ар�
 msgstr[1] "Ожидалась последовательность из %d аргументов, получено %d: %s"
 msgstr[2] "Ожидалась последовательность из %d аргументов, получено %d: %s"
 
-#: plpy_cursorobject.c:321
+#: plpy_cursorobject.c:317
 #, c-format
 msgid "iterating a closed cursor"
 msgstr "перемещение закрытого курсора"
 
-#: plpy_cursorobject.c:329 plpy_cursorobject.c:395
+#: plpy_cursorobject.c:325 plpy_cursorobject.c:391
 #, c-format
 msgid "iterating a cursor in an aborted subtransaction"
 msgstr "перемещение курсора в прерванной подтранзакции"
 
-#: plpy_cursorobject.c:387
+#: plpy_cursorobject.c:383
 #, c-format
 msgid "fetch from a closed cursor"
 msgstr "выборка из закрытого курсора"
 
-#: plpy_cursorobject.c:430 plpy_spi.c:401
+#: plpy_cursorobject.c:426 plpy_spi.c:393
 #, c-format
 msgid "query result has too many rows to fit in a Python list"
 msgstr ""
 "результат запроса содержит слишком много строк для передачи в списке Python"
 
-#: plpy_cursorobject.c:482
+#: plpy_cursorobject.c:478
 #, c-format
 msgid "closing a cursor in an aborted subtransaction"
 msgstr "закрытие курсора в прерванной подтранзакции"
 
-#: plpy_elog.c:122 plpy_elog.c:123 plpy_plpymodule.c:530
+#: plpy_elog.c:127 plpy_elog.c:128 plpy_plpymodule.c:530
 #, c-format
 msgid "%s"
 msgstr "%s"
@@ -111,17 +111,24 @@ msgstr "процедура PL/Python вернула не None"
 msgid "PL/Python function with return type \"void\" did not return None"
 msgstr "функция PL/Python с типом результата \"void\" вернула не None"
 
-#: plpy_exec.c:369 plpy_exec.c:393
+#: plpy_exec.c:246
+#, c-format
+msgid ""
+"function returning record called in context that cannot accept type record"
+msgstr ""
+"функция, возвращающая запись, вызвана в контексте, не допускающем этот тип"
+
+#: plpy_exec.c:392 plpy_exec.c:416
 #, c-format
 msgid "unexpected return value from trigger procedure"
 msgstr "триггерная процедура вернула недопустимое значение"
 
-#: plpy_exec.c:370
+#: plpy_exec.c:393
 #, c-format
 msgid "Expected None or a string."
 msgstr "Ожидалось None или строка."
 
-#: plpy_exec.c:383
+#: plpy_exec.c:406
 #, c-format
 msgid ""
 "PL/Python trigger function returned \"MODIFY\" in a DELETE trigger -- ignored"
@@ -129,49 +136,42 @@ msgstr ""
 "триггерная функция PL/Python вернула \"MODIFY\" в триггере DELETE -- "
 "игнорируется"
 
-#: plpy_exec.c:394
+#: plpy_exec.c:417
 #, c-format
 msgid "Expected None, \"OK\", \"SKIP\", or \"MODIFY\"."
 msgstr "Ожидалось None, \"OK\", \"SKIP\" или \"MODIFY\"."
 
-#: plpy_exec.c:444
+#: plpy_exec.c:468
 #, c-format
 msgid "PyList_SetItem() failed, while setting up arguments"
 msgstr "ошибка в PyList_SetItem() при настройке аргументов"
 
-#: plpy_exec.c:448
+#: plpy_exec.c:472
 #, c-format
 msgid "PyDict_SetItemString() failed, while setting up arguments"
 msgstr "ошибка в PyDict_SetItemString() при настройке аргументов"
 
-#: plpy_exec.c:460
-#, c-format
-msgid ""
-"function returning record called in context that cannot accept type record"
-msgstr ""
-"функция, возвращающая запись, вызвана в контексте, не допускающем этот тип"
-
-#: plpy_exec.c:677
+#: plpy_exec.c:701
 #, c-format
 msgid "while creating return value"
 msgstr "при создании возвращаемого значения"
 
-#: plpy_exec.c:928
+#: plpy_exec.c:952
 #, c-format
 msgid "TD[\"new\"] deleted, cannot modify row"
 msgstr "элемент TD[\"new\"] удалён -- изменить строку нельзя"
 
-#: plpy_exec.c:933
+#: plpy_exec.c:957
 #, c-format
 msgid "TD[\"new\"] is not a dictionary"
 msgstr "TD[\"new\"] - не словарь"
 
-#: plpy_exec.c:958
+#: plpy_exec.c:982
 #, c-format
 msgid "TD[\"new\"] dictionary key at ordinal position %d is not a string"
 msgstr "ключ словаря TD[\"new\"] с порядковым номером %d не является строкой"
 
-#: plpy_exec.c:965
+#: plpy_exec.c:989
 #, c-format
 msgid ""
 "key \"%s\" found in TD[\"new\"] does not exist as a column in the triggering "
@@ -180,22 +180,22 @@ msgstr ""
 "ключу \"%s\", найденному в TD[\"new\"], не соответствует столбец в строке, "
 "обрабатываемой триггером"
 
-#: plpy_exec.c:970
+#: plpy_exec.c:994
 #, c-format
 msgid "cannot set system attribute \"%s\""
 msgstr "присвоить значение системному атрибуту \"%s\" нельзя"
 
-#: plpy_exec.c:975
+#: plpy_exec.c:999
 #, c-format
 msgid "cannot set generated column \"%s\""
 msgstr "присвоить значение генерируемому столбцу \"%s\" нельзя"
 
-#: plpy_exec.c:1033
+#: plpy_exec.c:1057
 #, c-format
 msgid "while modifying trigger row"
 msgstr "при изменении строки в триггере"
 
-#: plpy_exec.c:1091
+#: plpy_exec.c:1115
 #, c-format
 msgid "forcibly aborting a subtransaction that has not been exited"
 msgstr "принудительное прерывание незавершённой подтранзакции"
@@ -284,27 +284,27 @@ msgstr "'%s' - недопустимое ключевое слово (аргум�
 msgid "invalid SQLSTATE code"
 msgstr "неверный код SQLSTATE"
 
-#: plpy_procedure.c:225
+#: plpy_procedure.c:226
 #, c-format
 msgid "trigger functions can only be called as triggers"
 msgstr "триггерные функции могут вызываться только в триггерах"
 
-#: plpy_procedure.c:229
+#: plpy_procedure.c:230
 #, c-format
 msgid "PL/Python functions cannot return type %s"
 msgstr "функции PL/Python не могут возвращать тип %s"
 
-#: plpy_procedure.c:307
+#: plpy_procedure.c:308
 #, c-format
 msgid "PL/Python functions cannot accept type %s"
 msgstr "функции PL/Python не могут принимать тип %s"
 
-#: plpy_procedure.c:395
+#: plpy_procedure.c:396
 #, c-format
 msgid "could not compile PL/Python function \"%s\""
 msgstr "не удалось скомпилировать функцию PL/Python \"%s\""
 
-#: plpy_procedure.c:398
+#: plpy_procedure.c:399
 #, c-format
 msgid "could not compile anonymous PL/Python code block"
 msgstr "не удалось скомпилировать анонимный блок кода PL/Python"
@@ -329,17 +329,17 @@ msgstr "plpy.prepare: имя типа с порядковым номером %d 
 msgid "plpy.execute expected a query or a plan"
 msgstr "plpy.execute ожидает запрос или план"
 
-#: plpy_spi.c:189
+#: plpy_spi.c:188
 #, c-format
 msgid "plpy.execute takes a sequence as its second argument"
 msgstr "plpy.execute принимает в качестве второго аргумента последовательность"
 
-#: plpy_spi.c:297
+#: plpy_spi.c:289
 #, c-format
 msgid "SPI_execute_plan failed: %s"
 msgstr "ошибка в SPI_execute_plan: %s"
 
-#: plpy_spi.c:339
+#: plpy_spi.c:331
 #, c-format
 msgid "SPI_execute failed: %s"
 msgstr "ошибка в SPI_execute: %s"

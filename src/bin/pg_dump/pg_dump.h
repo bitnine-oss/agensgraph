@@ -89,8 +89,16 @@ typedef enum
 /*
  * DumpComponents is a bitmask of the potentially dumpable components of
  * a database object: its core definition, plus optional attributes such
- * as ACL, comments, etc.  The NONE and ALL symbols are convenient
- * shorthands.
+ * as ACL, comments, etc.
+ *
+ * The NONE and ALL symbols are convenient shorthands for assigning values,
+ * but be careful about using them in tests.  For example, a test like
+ * "if (dobj->dump == DUMP_COMPONENT_NONE)" is probably wrong; you likely want
+ * "if (!(dobj->dump & DUMP_COMPONENT_DEFINITION))" instead.  This is because
+ * we aren't too careful about the values of irrelevant bits, as indeed can be
+ * seen in the definition of DUMP_COMPONENT_ALL.  It's also possible that an
+ * object has only subsidiary bits such as DUMP_COMPONENT_ACL set, leading to
+ * unexpected behavior of a test against NONE.
  */
 typedef uint32 DumpComponents;
 #define DUMP_COMPONENT_NONE			(0)
@@ -209,7 +217,9 @@ typedef struct _typeInfo
 	bool		isDefined;		/* true if typisdefined */
 	/* If needed, we'll create a "shell type" entry for it; link that here: */
 	struct _shellTypeInfo *shellType;	/* shell-type entry, or NULL */
-	/* If it's a domain, we store links to its constraints here: */
+	/* If it's a domain, its not-null constraint is here: */
+	struct _constraintInfo *notnull;
+	/* If it's a domain, we store links to its CHECK constraints here: */
 	int			nDomChecks;
 	struct _constraintInfo *domChecks;
 } TypeInfo;
@@ -245,6 +255,8 @@ typedef struct _oprInfo
 	DumpableObject dobj;
 	const char *rolname;
 	char		oprkind;
+	Oid			oprleft;
+	Oid			oprright;
 	Oid			oprcode;
 } OprInfo;
 
@@ -258,12 +270,14 @@ typedef struct _accessMethodInfo
 typedef struct _opclassInfo
 {
 	DumpableObject dobj;
+	Oid			opcmethod;
 	const char *rolname;
 } OpclassInfo;
 
 typedef struct _opfamilyInfo
 {
 	DumpableObject dobj;
+	Oid			opfmethod;
 	const char *rolname;
 } OpfamilyInfo;
 
@@ -271,6 +285,7 @@ typedef struct _collInfo
 {
 	DumpableObject dobj;
 	const char *rolname;
+	int			collencoding;
 } CollInfo;
 
 typedef struct _convInfo
@@ -719,6 +734,7 @@ extern TableInfo *findTableByOid(Oid oid);
 extern TypeInfo *findTypeByOid(Oid oid);
 extern FuncInfo *findFuncByOid(Oid oid);
 extern OprInfo *findOprByOid(Oid oid);
+extern AccessMethodInfo *findAccessMethodByOid(Oid oid);
 extern CollInfo *findCollationByOid(Oid oid);
 extern NamespaceInfo *findNamespaceByOid(Oid oid);
 extern ExtensionInfo *findExtensionByOid(Oid oid);

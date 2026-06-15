@@ -1,0 +1,85 @@
+# Reference point for ABI compliance checks
+#
+# This file lists commits on the current branch that break ABI compatibility in
+# ways that have been deemed acceptable (e.g., removing an extern function with
+# no third-party uses).  The primary intent of this file is to control the ABI
+# compliance checks on the buildfarm, but it also serves as a central location
+# to document the justification for each.
+#
+# In general, entries should be added reactively after an abi-compliance-check
+# buildfarm failure.  It is important to verify the details of the breakage
+# match expectations, as the first entry listed will become the updated ABI
+# baseline point.
+#
+# Add new entries by adding the output of the following to the top of the file:
+#
+# $ git log --pretty=format:"%H%n#%n# %s%n# %cd%n#%n# <ADD JUSTIFICATION HERE>" $ABIBREAKGITHASH -1 --date=iso
+#
+# Be sure to replace "<ADD JUSTIFICATION HERE>" with details of your change and
+# why it is deemed acceptable.
+
+586f4266fb4945f6ea3564b9c1bab093eb74bee4
+#
+# Fix ABI break by moving PROCSIG_SLOTSYNC_MESSAGE in ProcSignalReason
+# 2026-04-09 15:30:59 +0900
+#
+# This commit added PROCSIG_SLOTSYNC_MESSAGE just before the final entry,
+# NUM_PROCSIGNALS, in enum ProcSignalReason. This increased the value of
+# NUM_PROCSIGNALS, but no affected third-party code is known.
+
+4dac22aa10d2882c2e6fb465d7c314cc2d8fb754
+#
+# Add file_extend_method=posix_fallocate,write_zeros.
+# 2026-02-06 17:41:42 +1300
+#
+# Modifying GUC tables isn't really an ABI break: the relevant object has
+# incomplete type so its layout is inaccessible from other C translation units.
+#
+# Discussion: https://www.postgresql.org/message-id/flat/e1f0cd3b-0164-45f5-9705-e922e59df90f%40dunslane.net#8a350b54012c0042f9869d288e978cfe
+
+c5fc17ddaccff14bc22217df2b06ed43a5af16ba
+#
+# Fix trigger transition table capture for MERGE in CTE queries.
+# 2026-01-24 11:30:49 +0000
+#
+# This commit changed the TransitionCaptureState structure, replacing
+# the "tcs_private" field with 3 separate fields. This structure can
+# only be built using MakeTransitionCaptureState(), and PGXN contained
+# no calls to MakeTransitionCaptureState() or uses of the
+# TransitionCaptureState structure.
+
+0f69beddea113dd1d6c5b6f6d82df577ef3c21f2
+#
+# For inplace update, send nontransactional invalidations.
+# 2025-12-16 16:13:54 -0800
+#
+# This changed PrepareToInvalidateCacheTuple() parameters.  PGXN contained no
+# calls to that function.
+
+e2fb3dfa817fbe89494a62c100e9cb442f4d6b15
+#
+# Check for CREATE privilege on the schema in CREATE STATISTICS.
+# 2025-11-10 09:00:00 -0600
+#
+# This commit added a parameter to CreateStatistics().  We are unaware of any
+# impacted third-party code.
+
+24f6c1bd41d0631a04cc956cc8cafa0b117ab625
+#
+# Fix the handling of two GUCs during upgrade.
+# 2025-07-11 09:53:34 +0530
+#
+# GUC check function check_max_slot_wal_keep_size() was removed since it was
+# no longer needed. It seems highly improbable that any extension would be
+# calling it.
+
+45c357e0e85d2dffe7af5440806150124a725a01
+#
+# Fix re-distributing previously distributed invalidation messages during logical decoding.
+# 2025-06-16 17:35:58 -0700
+#
+# This is the original ABI baseline point for REL_17_STABLE.  The first entry
+# would ordinarily point to something just before the .0 release, but this file
+# was first added in October 2025, and we're unlikely to act upon ABI breaks in
+# released minor versions, so we've chosen to truncate the ABI history to start
+# with the most recent ABI break documented in the git commit history.

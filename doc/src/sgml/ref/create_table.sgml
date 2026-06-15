@@ -443,11 +443,6 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      </para>
 
      <para>
-      Partitioned tables do not support <literal>EXCLUDE</literal> constraints;
-      however, you can define these constraints on individual partitions.
-     </para>
-
-     <para>
       See <xref linkend="ddl-partitioning"/> for more discussion on table
       partitioning.
      </para>
@@ -672,9 +667,10 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
         <term><literal>INCLUDING COMMENTS</literal></term>
         <listitem>
          <para>
-          Comments for the copied columns, constraints, and indexes will be
+          Comments for the copied columns, check constraints,
+          indexes, and extended statistics will be
           copied.  The default behavior is to exclude comments, resulting in
-          the copied columns and constraints in the new table having no
+          the corresponding objects in the new table having no
           comments.
          </para>
         </listitem>
@@ -924,8 +920,8 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      <para>
       This clause creates the column as an <firstterm>identity
       column</firstterm>.  It will have an implicit sequence attached to it
-      and the column in new rows will automatically have values from the
-      sequence assigned to it.
+      and in newly-inserted rows the column will automatically have values
+      from the sequence assigned to it.
       Such a column is implicitly <literal>NOT NULL</literal>.
      </para>
 
@@ -955,9 +951,16 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      </para>
 
      <para>
-      The optional <replaceable>sequence_options</replaceable> clause can be
-      used to override the options of the sequence.
-      See <xref linkend="sql-createsequence"/> for details.
+      The optional <replaceable>sequence_options</replaceable> clause can
+      be used to override the parameters of the sequence.  The available
+      options include those shown for <xref linkend="sql-createsequence"/>,
+      plus <literal>SEQUENCE NAME <replaceable>name</replaceable></literal>,
+      <literal>LOGGED</literal>, and <literal>UNLOGGED</literal>, which
+      allow selection of the name and persistence level of the
+      sequence.  Without <literal>SEQUENCE NAME</literal>, the system
+      chooses an unused name for the sequence.
+      Without <literal>LOGGED</literal> or <literal>UNLOGGED</literal>,
+      the sequence will have the same persistence level as the table.
      </para>
     </listitem>
    </varlistentry>
@@ -1118,6 +1121,18 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       exclusion constraint on a subset of the table; internally this creates a
       partial index. Note that parentheses are required around the predicate.
      </para>
+
+     <para>
+      When establishing an exclusion constraint for a multi-level partition
+      hierarchy, all the columns in the partition key of the target
+      partitioned table, as well as those of all its descendant partitioned
+      tables, must be included in the constraint definition.  Additionally,
+      those columns must be compared using the equality operator.  These
+      restrictions ensure that potentially-conflicting rows will exist in the
+      same partition.  The constraint may also refer to other columns which
+      are not a part of any partition key, which can be compared using any
+      appropriate operator.
+     </para>
     </listitem>
    </varlistentry>
 
@@ -1269,8 +1284,8 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       <literal>REFERENCES</literal> (foreign key) constraints accept this
       clause.  <literal>NOT NULL</literal> and <literal>CHECK</literal> constraints are not
       deferrable.  Note that deferrable constraints cannot be used as
-      conflict arbitrators in an <command>INSERT</command> statement that
-      includes an <literal>ON CONFLICT DO UPDATE</literal> clause.
+      conflict arbiters in an <command>INSERT</command> statement that
+      includes an <literal>ON CONFLICT</literal> clause.
      </para>
     </listitem>
    </varlistentry>

@@ -67,7 +67,7 @@
    <listitem>
     <para>
      Replicating between PostgreSQL instances on different platforms (for
-     example Linux to Windows)
+     example Linux to Windows).
     </para>
    </listitem>
 
@@ -88,7 +88,7 @@
  <para>
   The subscriber database behaves in the same way as any other PostgreSQL
   instance and can be used as a publisher for other databases by defining its
-  own publications.  When the subscriber is treated as read-only by
+  own publications.  When the subscriber is treated as read-only by an
   application, there will be no conflicts from a single subscription.  On the
   other hand, if there are other writes done either by an application or by other
   subscribers to the same set of tables, conflicts can arise.
@@ -177,8 +177,8 @@
    A <firstterm>subscription</firstterm> is the downstream side of logical
    replication.  The node where a subscription is defined is referred to as
    the <firstterm>subscriber</firstterm>.  A subscription defines the connection
-   to another database and set of publications (one or more) to which it wants
-   to subscribe.
+   to another database and the set of publications (one or more) to which it
+   wants to subscribe.
   </para>
 
   <para>
@@ -701,10 +701,7 @@ ALTER SUBSCRIPTION
    <link linkend="sql-createsubscription-params-with-failover"><literal>failover</literal></link>
    parameter ensures a seamless transition of those subscriptions after the
    standby is promoted. They can continue subscribing to publications on the
-   new primary server without losing data. Note that in the case of
-   asynchronous replication, there remains a risk of data loss for transactions
-   committed on the former primary server but have yet to be replicated to the new
-   primary server.
+   new primary server.
   </para>
 
   <para>
@@ -713,44 +710,57 @@ ALTER SUBSCRIPTION
    server before the failover happens. To ensure a successful failover, the
    standby server must be ahead of the subscriber. This can be achieved by
    configuring
-   <link linkend="guc-standby-slot-names"><varname>standby_slot_names</varname></link>.
+   <link linkend="guc-synchronized-standby-slots"><varname>synchronized_standby_slots</varname></link>.
   </para>
 
   <para>
-   To confirm that the standby server is indeed ready for failover, follow these
-   steps to verify that all necessary logical replication slots have been
+   To confirm that the standby server is indeed ready for failover for a given subscriber, follow these
+   steps to verify that all the logical replication slots required by that subscriber have been
    synchronized to the standby server:
   </para>
 
   <procedure>
    <step performance="required">
     <para>
-     On the subscriber node, use the following SQL to identify which slots
-     should be synced to the standby that we plan to promote. This query will
-     return the relevant replication slots, including the main slots and table
-     synchronization slots associated with the failover-enabled subscriptions.
-     Note that the table sync slot should be synced to the standby server only
-     if the table copy is finished (See <xref linkend="catalog-pg-subscription-rel"/>).
+     On the subscriber node, use the following SQL to identify which replication
+     slots should be synced to the standby that we plan to promote. This query
+     will return the relevant replication slots associated with the
+     failover-enabled subscriptions.
+<programlisting>
+test_sub=# SELECT
+               array_agg(quote_literal(s.subslotname)) AS slots
+           FROM  pg_subscription s
+           WHERE s.subfailover AND
+                 s.subslotname IS NOT NULL;
+ slots
+-------
+ {'sub1','sub2','sub3'}
+(1 row)
+</programlisting></para>
+   </step>
+   <step performance="required">
+    <para>
+     On the subscriber node, use the following SQL to identify which table
+     synchronization slots should be synced to the standby that we plan to promote.
+     This query needs to be run on each database that includes the failover-enabled
+     subscription(s). Note that the table sync slot should be synced to the standby
+     server only if the table copy is finished
+     (See <xref linkend="catalog-pg-subscription-rel"/>).
      We don't need to ensure that the table sync slots are synced in other scenarios
      as they will either be dropped or re-created on the new primary server in those
      cases.
 <programlisting>
 test_sub=# SELECT
-               array_agg(slot_name) AS slots
+               array_agg(quote_literal(slot_name)) AS slots
            FROM
-           ((
-               SELECT r.srsubid AS subid, CONCAT('pg_', srsubid, '_sync_', srrelid, '_', ctl.system_identifier) AS slot_name
+           (
+               SELECT CONCAT('pg_', srsubid, '_sync_', srrelid, '_', ctl.system_identifier) AS slot_name
                FROM pg_control_system() ctl, pg_subscription_rel r, pg_subscription s
                WHERE r.srsubstate = 'f' AND s.oid = r.srsubid AND s.subfailover
-           ) UNION (
-               SELECT s.oid AS subid, s.subslotname as slot_name
-               FROM pg_subscription s
-               WHERE s.subfailover
-           ))
-           WHERE slot_name IS NOT NULL;
+           );
  slots
 -------
- {sub1,sub2,sub3}
+ {'pg_16394_sync_16385_7394666715149055164'}
 (1 row)
 </programlisting></para>
    </step>
@@ -759,15 +769,17 @@ test_sub=# SELECT
      Check that the logical replication slots identified above exist on
      the standby server and are ready for failover.
 <programlisting>
-test_standby=# SELECT slot_name, (synced AND NOT temporary AND NOT conflicting) AS failover_ready
+test_standby=# SELECT slot_name, (synced AND NOT temporary AND invalidation_reason IS NULL) AS failover_ready
                FROM pg_replication_slots
-               WHERE slot_name IN ('sub1','sub2','sub3');
-  slot_name  | failover_ready
--------------+----------------
-  sub1       | t
-  sub2       | t
-  sub3       | t
-(3 rows)
+               WHERE slot_name IN
+                   ('sub1','sub2','sub3', 'pg_16394_sync_16385_7394666715149055164');
+  slot_name                                 | failover_ready
+--------------------------------------------+----------------
+  sub1                                      | t
+  sub2                                      | t
+  sub3                                      | t
+  pg_16394_sync_16385_7394666715149055164   | t
+(4 rows)
 </programlisting></para>
     </step>
   </procedure>
@@ -775,10 +787,42 @@ test_standby=# SELECT slot_name, (synced AND NOT temporary AND NOT conflicting) 
   <para>
    If all the slots are present on the standby server and the result
    (<literal>failover_ready</literal>) of the above SQL query is true, then
-   existing subscriptions can continue subscribing to publications now on the
-   new primary server without losing data.
+   existing subscriptions can continue subscribing to publications on the new
+   primary server.
   </para>
 
+  <para>
+   The first two steps in the above procedure are meant for a
+   <productname>PostgreSQL</productname> subscriber. It is recommended to run
+   these steps on each subscriber node, that will be served by the designated
+   standby after failover, to obtain the complete list of replication
+   slots. This list can then be verified in Step 3 to ensure failover readiness.
+   Non-<productname>PostgreSQL</productname> subscribers, on the other hand, may
+   use their own methods to identify the replication slots used by their
+   respective subscriptions.
+  </para>
+
+  <para>
+   In some cases, such as during a planned failover, it is necessary to confirm
+   that all subscribers, whether <productname>PostgreSQL</productname> or
+   non-<productname>PostgreSQL</productname>, will be able to continue
+   replication after failover to a given standby server. In such cases, use the
+   following SQL, instead of performing the first two steps above, to identify
+   which replication slots on the primary need to be synced to the standby that
+   is intended for promotion. This query returns the relevant replication slots
+   associated with all the failover-enabled subscriptions.
+  </para>
+
+   <para>
+<programlisting>
+/* primary # */ SELECT array_agg(quote_literal(r.slot_name)) AS slots
+               FROM pg_replication_slots r
+               WHERE r.failover AND NOT r.temporary;
+ slots
+-------
+ {'sub1','sub2','sub3', 'pg_16394_sync_16385_7394666715149055164'}
+(1 row)
+</programlisting></para>
  </sect1>
 
  <sect1 id="logical-replication-row-filter">
@@ -938,7 +982,7 @@ test_standby=# SELECT slot_name, (synced AND NOT temporary AND NOT conflicting) 
 
    <note>
     <para>
-     If the subscriber is in a release prior to 15, copy pre-existing data
+     If the subscriber is in a release prior to 15, copying pre-existing data
      doesn't use row filters even if they are defined in the publication.
      This is because old releases can only copy the entire table data.
     </para>
@@ -1787,7 +1831,7 @@ CONTEXT:  processing remote data for replication origin "pg_16395" during "INSER
   <sect2 id="logical-replication-snapshot">
     <title>Initial Snapshot</title>
     <para>
-     The initial data in existing subscribed tables are snapshotted and
+     The initial data in existing subscribed tables is snapshotted and
      copied in a parallel instance of a special kind of apply process.
      This process will create its own replication slot and copy the existing
      data.  As soon as the copy is finished the table contents will become

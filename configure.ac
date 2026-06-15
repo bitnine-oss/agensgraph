@@ -17,7 +17,7 @@ dnl Read the Autoconf manual for details.
 dnl
 m4_pattern_forbid(^PGAC_)dnl to catch undefined macros
 
-AC_INIT([PostgreSQL], [17beta2], [pgsql-bugs@lists.postgresql.org], [], [https://www.postgresql.org/])
+AC_INIT([PostgreSQL], [17.10], [pgsql-bugs@lists.postgresql.org], [], [https://www.postgresql.org/])
 
 m4_if(m4_defn([m4_PACKAGE_VERSION]), [2.69], [], [m4_fatal([Autoconf version 2.69 is required.
 Untested combinations of 'autoconf' and PostgreSQL versions are not
@@ -42,7 +42,7 @@ PGAC_ARG_REQ(with, extra-version, [STRING], [append STRING to version],
              [PG_VERSION="$PACKAGE_VERSION"])
 AC_DEFINE_UNQUOTED(PG_VERSION, "$PG_VERSION", [PostgreSQL version as a string])
 
-[AG_VERSION=2.17-devel]
+[AG_VERSION=2.17]
 AC_DEFINE_UNQUOTED(AG_VERSION, "$AG_VERSION", [AgensGraph version as a string])
 
 [AG_COMP_VERSION=2.17]
@@ -646,6 +646,13 @@ if test "$with_llvm" = yes ; then
   PGAC_PROG_VARCC_VARFLAGS_OPT(CLANG, BITCODE_CFLAGS, [-Xclang -no-opaque-pointers])
   PGAC_PROG_VARCXX_VARFLAGS_OPT(CLANGXX, BITCODE_CXXFLAGS, [-Xclang -no-opaque-pointers])
 
+  # Ideally bitcode should perhaps match $CC's use, or not, of outline atomic
+  # functions, but for now we err on the side of suppressing them in bitcode,
+  # because we can't assume they're available at runtime.  This affects aarch64
+  # builds using the basic armv8-a ISA without LSE support.
+  PGAC_PROG_VARCXX_VARFLAGS_OPT(CLANG, BITCODE_CFLAGS, [-mno-outline-atomics])
+  PGAC_PROG_VARCXX_VARFLAGS_OPT(CLANG, BITCODE_CXXFLAGS, [-mno-outline-atomics])
+
   NOT_THE_CFLAGS=""
   PGAC_PROG_VARCC_VARFLAGS_OPT(CLANG, NOT_THE_CFLAGS, [-Wunused-command-line-argument])
   if test -n "$NOT_THE_CFLAGS"; then
@@ -1046,12 +1053,12 @@ if test "$with_libxml" = yes ; then
   # Note the user could also set XML2_CFLAGS/XML2_LIBS directly
   for pgac_option in $XML2_CFLAGS; do
     case $pgac_option in
-      -I*|-D*) CPPFLAGS="$CPPFLAGS $pgac_option";;
+      -I*|-D*) INCLUDES="$INCLUDES $pgac_option";;
     esac
   done
   for pgac_option in $XML2_LIBS; do
     case $pgac_option in
-      -L*) LDFLAGS="$LDFLAGS $pgac_option";;
+      -L*) LIBDIRS="$LIBDIRS $pgac_option";;
     esac
   done
 fi
@@ -1095,12 +1102,12 @@ if test "$with_lz4" = yes; then
   # note that -llz4 will be added by AC_CHECK_LIB below.
   for pgac_option in $LZ4_CFLAGS; do
     case $pgac_option in
-      -I*|-D*) CPPFLAGS="$CPPFLAGS $pgac_option";;
+      -I*|-D*) INCLUDES="$INCLUDES $pgac_option";;
     esac
   done
   for pgac_option in $LZ4_LIBS; do
     case $pgac_option in
-      -L*) LDFLAGS="$LDFLAGS $pgac_option";;
+      -L*) LIBDIRS="$LIBDIRS $pgac_option";;
     esac
   done
 fi
@@ -1120,12 +1127,12 @@ if test "$with_zstd" = yes; then
   # note that -lzstd will be added by AC_CHECK_LIB below.
   for pgac_option in $ZSTD_CFLAGS; do
     case $pgac_option in
-      -I*|-D*) CPPFLAGS="$CPPFLAGS $pgac_option";;
+      -I*|-D*) INCLUDES="$INCLUDES $pgac_option";;
     esac
   done
   for pgac_option in $ZSTD_LIBS; do
     case $pgac_option in
-      -L*) LDFLAGS="$LDFLAGS $pgac_option";;
+      -L*) LIBDIRS="$LIBDIRS $pgac_option";;
     esac
   done
 fi
@@ -1367,7 +1374,7 @@ if test "$with_ssl" = openssl ; then
   # function was removed.
   AC_CHECK_FUNCS([CRYPTO_lock])
   # Function introduced in OpenSSL 1.1.1.
-  AC_CHECK_FUNCS([X509_get_signature_info])
+  AC_CHECK_FUNCS([X509_get_signature_info SSL_CTX_set_num_tickets])
   AC_DEFINE([USE_OPENSSL], 1, [Define to 1 to build with OpenSSL support. (--with-ssl=openssl)])
 elif test "$with_ssl" != no ; then
   AC_MSG_ERROR([--with-ssl must specify openssl])
@@ -1464,8 +1471,6 @@ AC_SUBST(UUID_LIBS)
 ##
 ## Header files
 ##
-
-AC_HEADER_STDBOOL
 
 AC_CHECK_HEADERS(m4_normalize([
 	atomic.h
@@ -1635,6 +1640,7 @@ m4_defun([AC_PROG_CC_STDC], []) dnl We don't want that.
 AC_C_BIGENDIAN
 AC_C_INLINE
 PGAC_PRINTF_ARCHETYPE
+PGAC_CXX_PRINTF_ARCHETYPE
 PGAC_C_STATIC_ASSERT
 PGAC_C_TYPEOF
 PGAC_C_TYPES_COMPATIBLE
@@ -1728,14 +1734,11 @@ if test "$ac_cv_sizeof_off_t" -lt 8; then
   fi
 fi
 
-AC_CHECK_SIZEOF([bool], [],
-[#ifdef HAVE_STDBOOL_H
-#include <stdbool.h>
-#endif])
+AC_CHECK_SIZEOF([bool], [], [#include <stdbool.h>])
 
-dnl We use <stdbool.h> if we have it and it declares type bool as having
-dnl size 1.  Otherwise, c.h will fall back to declaring bool as unsigned char.
-if test "$ac_cv_header_stdbool_h" = yes -a "$ac_cv_sizeof_bool" = 1; then
+dnl We use <stdbool.h> if bool has size 1 after including it.  Otherwise, c.h
+dnl will fall back to declaring bool as unsigned char.
+if test "$ac_cv_sizeof_bool" = 1; then
   AC_DEFINE([PG_USE_STDBOOL], 1,
             [Define to 1 to use <stdbool.h> to define type bool.])
 fi
@@ -1764,13 +1767,11 @@ AC_CHECK_FUNCS(m4_normalize([
 	inet_pton
 	kqueue
 	mbstowcs_l
-	memset_s
 	posix_fallocate
 	ppoll
 	pthread_is_threaded_np
 	setproctitle
 	setproctitle_fast
-	strchrnul
 	strsignal
 	syncfs
 	sync_file_range
@@ -1804,12 +1805,15 @@ AC_CHECK_DECLS(posix_fadvise, [], [], [#include <fcntl.h>])
 ]) # fi
 
 AC_CHECK_DECLS(fdatasync, [], [], [#include <unistd.h>])
-AC_CHECK_DECLS([strlcat, strlcpy, strnlen])
+AC_CHECK_DECLS([strlcat, strlcpy, strnlen, timingsafe_bcmp])
 
 # We can't use AC_CHECK_FUNCS to detect these functions, because it
 # won't handle deployment target restrictions on macOS
 AC_CHECK_DECLS([preadv], [], [], [#include <sys/uio.h>])
 AC_CHECK_DECLS([pwritev], [], [], [#include <sys/uio.h>])
+AC_CHECK_DECLS([strchrnul], [], [], [#include <string.h>])
+AC_CHECK_DECLS([memset_s], [], [], [#define __STDC_WANT_LIB_EXT1__ 1
+#include <string.h>])
 
 # This is probably only present on macOS, but may as well check always
 AC_CHECK_DECLS(F_FULLFSYNC, [], [], [#include <fcntl.h>])
@@ -1823,6 +1827,7 @@ AC_REPLACE_FUNCS(m4_normalize([
 	strlcat
 	strlcpy
 	strnlen
+	timingsafe_bcmp
 ]))
 
 AC_REPLACE_FUNCS(pthread_barrier_wait)
@@ -1907,7 +1912,7 @@ fi
 
 if test "$with_icu" = yes; then
   ac_save_CPPFLAGS=$CPPFLAGS
-  CPPFLAGS="$ICU_CFLAGS $CPPFLAGS"
+  CPPFLAGS="$CPPFLAGS $ICU_CFLAGS"
 
   # Verify we have ICU's header files
   AC_CHECK_HEADER(unicode/ucol.h, [],
@@ -2049,7 +2054,7 @@ PGAC_HAVE_GCC__ATOMIC_INT32_CAS
 PGAC_HAVE_GCC__ATOMIC_INT64_CAS
 
 
-# Check for x86 cpuid instruction
+# Check for __get_cpuid() and __cpuid()
 AC_CACHE_CHECK([for __get_cpuid], [pgac_cv__get_cpuid],
 [AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <cpuid.h>],
   [[unsigned int exx[4] = {0, 0, 0, 0};
@@ -2059,8 +2064,21 @@ AC_CACHE_CHECK([for __get_cpuid], [pgac_cv__get_cpuid],
   [pgac_cv__get_cpuid="no"])])
 if test x"$pgac_cv__get_cpuid" = x"yes"; then
   AC_DEFINE(HAVE__GET_CPUID, 1, [Define to 1 if you have __get_cpuid.])
+else
+  # __cpuid()
+  AC_CACHE_CHECK([for __cpuid], [pgac_cv__cpuid],
+  [AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <intrin.h>],
+    [[unsigned int exx[4] = {0, 0, 0, 0};
+    __cpuid(exx, 1);
+    ]])],
+    [pgac_cv__cpuid="yes"],
+    [pgac_cv__cpuid="no"])])
+  if test x"$pgac_cv__cpuid" = x"yes"; then
+    AC_DEFINE(HAVE__CPUID, 1, [Define to 1 if you have __cpuid.])
+  fi
 fi
 
+# Check for __get_cpuid_count() and __cpuidex() in a similar fashion.
 AC_CACHE_CHECK([for __get_cpuid_count], [pgac_cv__get_cpuid_count],
 [AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <cpuid.h>],
   [[unsigned int exx[4] = {0, 0, 0, 0};
@@ -2070,28 +2088,18 @@ AC_CACHE_CHECK([for __get_cpuid_count], [pgac_cv__get_cpuid_count],
   [pgac_cv__get_cpuid_count="no"])])
 if test x"$pgac_cv__get_cpuid_count" = x"yes"; then
   AC_DEFINE(HAVE__GET_CPUID_COUNT, 1, [Define to 1 if you have __get_cpuid_count.])
-fi
-
-AC_CACHE_CHECK([for __cpuid], [pgac_cv__cpuid],
-[AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <intrin.h>],
-  [[unsigned int exx[4] = {0, 0, 0, 0};
-  __get_cpuid(exx[0], 1);
-  ]])],
-  [pgac_cv__cpuid="yes"],
-  [pgac_cv__cpuid="no"])])
-if test x"$pgac_cv__cpuid" = x"yes"; then
-  AC_DEFINE(HAVE__CPUID, 1, [Define to 1 if you have __cpuid.])
-fi
-
-AC_CACHE_CHECK([for __cpuidex], [pgac_cv__cpuidex],
-[AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <intrin.h>],
-  [[unsigned int exx[4] = {0, 0, 0, 0};
-  __get_cpuidex(exx[0], 7, 0);
-  ]])],
-  [pgac_cv__cpuidex="yes"],
-  [pgac_cv__cpuidex="no"])])
-if test x"$pgac_cv__cpuidex" = x"yes"; then
-  AC_DEFINE(HAVE__CPUIDEX, 1, [Define to 1 if you have __cpuidex.])
+else
+  # __cpuidex()
+  AC_CACHE_CHECK([for __cpuidex], [pgac_cv__cpuidex],
+  [AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <intrin.h>],
+    [[unsigned int exx[4] = {0, 0, 0, 0};
+    __cpuidex(exx, 7, 0);
+    ]])],
+    [pgac_cv__cpuidex="yes"],
+    [pgac_cv__cpuidex="no"])])
+  if test x"$pgac_cv__cpuidex" = x"yes"; then
+    AC_DEFINE(HAVE__CPUIDEX, 1, [Define to 1 if you have __cpuidex.])
+  fi
 fi
 
 # Check for XSAVE intrinsics
@@ -2144,11 +2152,15 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM([], [
 # Check for ARMv8 CRC Extension intrinsics to do CRC calculations.
 #
 # First check if __crc32c* intrinsics can be used with the default compiler
-# flags. If not, check if adding -march=armv8-a+crc flag helps.
+# flags. If not, check if adding "-march=armv8-a+crc+simd" flag helps.
+# On systems using soft-float ABI, "-march=armv8-a+crc" is required instead.
 # CFLAGS_CRC is set if the extra flag is required.
 PGAC_ARMV8_CRC32C_INTRINSICS([])
 if test x"$pgac_armv8_crc32c_intrinsics" != x"yes"; then
-  PGAC_ARMV8_CRC32C_INTRINSICS([-march=armv8-a+crc])
+  PGAC_ARMV8_CRC32C_INTRINSICS([-march=armv8-a+crc+simd])
+  if test x"$pgac_armv8_crc32c_intrinsics" != x"yes"; then
+    PGAC_ARMV8_CRC32C_INTRINSICS([-march=armv8-a+crc])
+  fi
 fi
 
 # Check for LoongArch CRC intrinsics to do CRC calculations.
@@ -2333,7 +2345,7 @@ Use --without-tcl to disable building PL/Tcl.])
     fi
     # now that we have TCL_INCLUDE_SPEC, we can check for <tcl.h>
     ac_save_CPPFLAGS=$CPPFLAGS
-    CPPFLAGS="$TCL_INCLUDE_SPEC $CPPFLAGS"
+    CPPFLAGS="$CPPFLAGS $TCL_INCLUDE_SPEC"
     AC_CHECK_HEADER(tcl.h, [], [AC_MSG_ERROR([header file <tcl.h> is required for Tcl])])
     CPPFLAGS=$ac_save_CPPFLAGS
 fi
@@ -2370,7 +2382,7 @@ fi
 # check for <Python.h>
 if test "$with_python" = yes; then
   ac_save_CPPFLAGS=$CPPFLAGS
-  CPPFLAGS="$python_includespec $CPPFLAGS"
+  CPPFLAGS="$CPPFLAGS $python_includespec"
   AC_CHECK_HEADER(Python.h, [], [AC_MSG_ERROR([header file <Python.h> is required for Python])])
   CPPFLAGS=$ac_save_CPPFLAGS
 fi

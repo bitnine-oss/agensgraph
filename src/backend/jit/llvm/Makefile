@@ -22,8 +22,10 @@ endif
 PGFILEDESC = "llvmjit - JIT using LLVM"
 NAME = llvmjit
 
-# LLVM 14 produces deprecation warnings.  We'll need to make some changes
-# before the relevant functions are removed, but for now silence the warnings.
+# Some functions called in LLVM 14 and LLVM 15 are marked with GCC deprecation
+# attributes.  For LLVM 16 and later, we use the newer replacement functions
+# instead, but warnings are suppressed unconditionally.  (Note that this is
+# only done in branches before REL_18_STABLE.)
 ifeq ($(GCC), yes)
 LLVM_CFLAGS += -Wno-deprecated-declarations
 endif
@@ -31,13 +33,13 @@ endif
 # All files in this directory use LLVM.
 CFLAGS += $(LLVM_CFLAGS)
 CXXFLAGS += $(LLVM_CXXFLAGS)
-override CPPFLAGS := $(LLVM_CPPFLAGS) $(CPPFLAGS)
+override CPPFLAGS += $(LLVM_CPPFLAGS)
 SHLIB_LINK += $(LLVM_LIBS)
 
 # Because this module includes C++ files, we need to use a C++
 # compiler for linking. Makefile.shlib uses $(COMPILER) to build
 # loadable modules.
-override COMPILER = $(CXX) $(CFLAGS)
+override COMPILER = $(CXX) $(CXXFLAGS)
 
 OBJS = \
 	$(WIN32RES)
@@ -47,7 +49,8 @@ OBJS += \
 	llvmjit.o \
 	llvmjit_error.o \
 	llvmjit_inline.o \
-	llvmjit_wrap.o
+	llvmjit_wrap.o \
+	SectionMemoryManager.o
 
 # Code generation
 OBJS += \

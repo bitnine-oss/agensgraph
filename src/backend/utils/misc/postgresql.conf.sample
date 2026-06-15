@@ -139,8 +139,8 @@
 # you actively intend to use prepared transactions.
 #work_mem = 4MB				# min 64kB
 #hash_mem_multiplier = 2.0		# 1-1000.0 multiplier on hash table work_mem
-#maintenance_work_mem = 64MB		# min 1MB
-#autovacuum_work_mem = -1		# min 1MB, or -1 to use maintenance_work_mem
+#maintenance_work_mem = 64MB		# min 64kB
+#autovacuum_work_mem = -1		# min 64kB, or -1 to use maintenance_work_mem
 #logical_decoding_work_mem = 64MB	# min 64kB
 #max_stack_depth = 2MB			# min 100kB
 #shared_memory_type = mmap		# the default is the first option
@@ -174,6 +174,11 @@
 
 #temp_file_limit = -1			# limits per-process temp file space
 					# in kilobytes, or -1 for no limit
+
+#file_extend_method = posix_fallocate   # the default is the first option supported
+					# by the operating system:
+					#   posix_fallocate (most Unix-like systems)
+					#   write_zeros
 
 #max_notify_queue_pages = 1048576	# limits the number of SLRU pages allocated
 					# for NOTIFY / LISTEN queue
@@ -246,7 +251,7 @@
 #wal_skip_threshold = 2MB
 
 #commit_delay = 0			# range 0-100000, in microseconds
-#commit_siblings = 5			# range 1-1000
+#commit_siblings = 5			# range 0-1000
 
 # - Checkpoints -
 
@@ -344,8 +349,8 @@
 				# method to choose sync standbys, number of sync standbys,
 				# and comma-separated list of application_name
 				# from standby(s); '*' = all
-#standby_slot_names = ''	# streaming replication standby server slot names that
-				# logical walsender processes will wait for
+#synchronized_standby_slots = ''	# streaming replication standby server slot
+				# names that logical walsender processes will wait for
 
 # - Standby Servers -
 

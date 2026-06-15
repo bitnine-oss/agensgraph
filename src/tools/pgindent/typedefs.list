@@ -380,6 +380,7 @@ CaseTestExpr
 CaseWhen
 Cash
 CastInfo
+CatCInProgress
 CatCList
 CatCTup
 CatCache
@@ -616,6 +617,7 @@ DisableTimeoutParams
 DiscardMode
 DiscardStmt
 DistanceValue
+DistinctColInfo
 DistinctExpr
 DoState
 DoStmt
@@ -751,6 +753,7 @@ ExtensibleNodeEntry
 ExtensibleNodeMethods
 ExtensionControlFile
 ExtensionInfo
+ExtensionSiblingCache
 ExtensionVersionInfo
 FDWCollateState
 FD_SET
@@ -1237,6 +1240,7 @@ InjectionPointCallback
 InjectionPointCondition
 InjectionPointConditionType
 InjectionPointEntry
+InjectionPointsCtl
 InjectionPointSharedState
 InlineCodeBlock
 InsertStmt
@@ -1252,6 +1256,7 @@ Interval
 IntervalAggState
 IntoClause
 InvalMessageArray
+InvalidationInfo
 InvalidationMsgsGroup
 IpcMemoryId
 IpcMemoryKey
@@ -2647,7 +2652,6 @@ SimpleStats
 SimpleStringList
 SimpleStringListCell
 SingleBoundSortItem
-SinglePartitionSpec
 Size
 SkipPages
 SlabBlock
@@ -2712,12 +2716,10 @@ SpinDelayStatus
 SplitInterval
 SplitLR
 SplitPageLayout
-SplitPartitionContext
 SplitPoint
 SplitTextOutputData
 SplitVar
 StackElem
-StandbySlotNamesConfigData
 StartDataPtrType
 StartLOPtrType
 StartLOsPtrType
@@ -2782,6 +2784,7 @@ SyncRepConfigData
 SyncRepStandbyData
 SyncRequestHandler
 SyncRequestType
+SyncStandbySlotsConfigData
 SyncingTablesState
 SysFKRelationship
 SysScanDesc
@@ -3251,6 +3254,7 @@ _stringlist
 access_vector_t
 acquireLocksOnSubLinks_context
 add_nulling_relids_context
+addFkConstraintSides
 adjust_appendrel_attrs_context
 allocfunc
 amadjustmembers_function
@@ -3451,6 +3455,7 @@ fill_string_relopt
 finalize_primnode_context
 find_dependent_phvs_context
 find_expr_references_context
+fireRIRonSubLink_context
 fix_join_expr_context
 fix_scan_expr_context
 fix_upper_expr_context
@@ -3571,6 +3576,8 @@ json_manifest_version_callback
 json_ofield_action
 json_scalar_action
 json_struct_action
+keepwal_entry
+keepwal_hash
 keyEntryData
 key_t
 lclContext
@@ -3636,6 +3643,7 @@ nodeitem
 normal_rand_fctx
 nsphash_hash
 ntile_context
+nullingrel_info
 numeric
 object_access_hook_type
 object_access_hook_type_str
@@ -3657,6 +3665,9 @@ pam_handle_t
 parallel_worker_main_type
 parse_error_callback_arg
 partition_method_t
+pe_test_config
+pe_test_escape_func
+pe_test_vector
 pendingPosition
 pending_label
 pgParameterStatus
@@ -3696,6 +3707,9 @@ pg_md5_ctx
 pg_on_exit_callback
 pg_prng_state
 pg_re_flags
+pg_regex_t
+pg_regmatch_t
+pg_regoff_t
 pg_saslprep_rc
 pg_sha1_ctx
 pg_sha224_ctx

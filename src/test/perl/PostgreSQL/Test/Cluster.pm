@@ -125,6 +125,14 @@ our $min_compat = 12;
 # list of file reservations made by get_free_port
 my @port_reservation_files;
 
+# We want to choose a server port above the range that servers typically use
+# on Unix systems and below the range those systems typically use for ephemeral
+# client ports.
+# That way we minimize the risk of getting a port collision. These two values
+# are chosen to reflect that. We will always choose a port in this range.
+my $port_lower_bound = 10200;
+my $port_upper_bound = 32767;
+
 INIT
 {
 
@@ -149,7 +157,8 @@ INIT
 	$ENV{PGDATABASE} = 'postgres';
 
 	# Tracking of last port value assigned to accelerate free port lookup.
-	$last_port_assigned = int(rand() * 16384) + 49152;
+	my $num_ports = $port_upper_bound - $port_lower_bound;
+	$last_port_assigned = int(rand() * $num_ports) + $port_lower_bound;
 
 	# Set the port lock directory
 
@@ -158,9 +167,7 @@ INIT
 	$portdir = $ENV{PG_TEST_PORT_DIR};
 	# Otherwise, try to use a directory at the top of the build tree
 	# or as a last resort use the tmp_check directory
-	my $build_dir =
-		 $ENV{MESON_BUILD_ROOT}
-	  || $ENV{top_builddir}
+	my $build_dir = $ENV{top_builddir}
 	  || $PostgreSQL::Test::Utils::tmp_check;
 	$portdir ||= "$build_dir/portlock";
 	$portdir =~ s!\\!/!g;
@@ -273,6 +280,82 @@ sub connstr
 	$dbname =~ s#\'#\\\'#g;
 
 	return "port=$pgport host=$pghost dbname='$dbname'";
+}
+
+=pod
+
+=item $node->raw_connect()
+
+Open a raw TCP or Unix domain socket connection to the server. This is
+used by low-level protocol and connection limit tests.
+
+=cut
+
+sub raw_connect
+{
+	my ($self) = @_;
+	my $pgport = $self->port;
+	my $pghost = $self->host;
+
+	my $socket;
+	if ($PostgreSQL::Test::Utils::use_unix_sockets)
+	{
+		require IO::Socket::UNIX;
+		my $path = "$pghost/.s.PGSQL.$pgport";
+
+		$socket = IO::Socket::UNIX->new(
+			Type => SOCK_STREAM(),
+			Peer => $path,
+		) or die "Cannot create socket - $IO::Socket::errstr\n";
+	}
+	else
+	{
+		$socket = IO::Socket::INET->new(
+			PeerHost => $pghost,
+			PeerPort => $pgport,
+			Proto => 'tcp'
+		) or die "Cannot create socket - $IO::Socket::errstr\n";
+	}
+	return $socket;
+}
+
+=pod
+
+=item $node->raw_connect_works()
+
+Check if raw_connect() function works on this platform. This should
+be called to SKIP any tests that require raw_connect().
+
+This tries to connect to the server, to test whether it works or not,,
+so the server is up and running. Otherwise this can return 0 even if
+there's nothing wrong with raw_connect() itself.
+
+Notably, raw_connect() does not work on Unix domain sockets on
+Strawberry perl 5.26.3.1 on Windows, which we use in Cirrus CI images
+as of this writing. It dies with "not implemented on this
+architecture".
+
+=cut
+
+sub raw_connect_works
+{
+	my ($self) = @_;
+
+	# If we're using Unix domain sockets, we need a working
+	# IO::Socket::UNIX implementation.
+	if ($PostgreSQL::Test::Utils::use_unix_sockets)
+	{
+		eval {
+			my $sock = $self->raw_connect();
+			$sock->close();
+		};
+		if ($@ =~ /not implemented/)
+		{
+			diag "IO::Socket::UNIX does not work: $@";
+			return 0;
+		}
+	}
+	return 1;
 }
 
 =pod
@@ -1496,9 +1579,9 @@ sub new
 	  or
 	  BAIL_OUT("could not create data directory \"$node->{_basedir}\": $!");
 
-	$node->dump_info;
-
 	$node->_set_pg_version;
+
+	$node->dump_info;
 
 	my $ver = $node->{_pg_version};
 
@@ -1692,7 +1775,7 @@ sub get_free_port
 	{
 
 		# advance $port, wrapping correctly around range end
-		$port = 49152 if ++$port >= 65536;
+		$port = $port_lower_bound if ++$port > $port_upper_bound;
 		print "# Checking port $port\n";
 
 		# Check first that candidate port number is not included in
@@ -2182,6 +2265,12 @@ connection.
 
 If given, it must be an array reference containing additional parameters to B<psql>.
 
+=item wait => 1
+
+By default, this method will not return until connection has completed (or
+failed). Set B<wait> to 0 to return immediately instead. (Clients can call the
+session's C<wait_connect> method manually when needed.)
+
 =back
 
 =cut
@@ -2205,13 +2294,15 @@ sub background_psql
 		'-');
 
 	$params{on_error_stop} = 1 unless defined $params{on_error_stop};
+	$params{wait} = 1 unless defined $params{wait};
 	$timeout = $params{timeout} if defined $params{timeout};
 
 	push @psql_params, '-v', 'ON_ERROR_STOP=1' if $params{on_error_stop};
 	push @psql_params, @{ $params{extra_params} }
 	  if defined $params{extra_params};
 
-	return PostgreSQL::Test::BackgroundPsql->new(0, \@psql_params, $timeout);
+	return PostgreSQL::Test::BackgroundPsql->new(0, \@psql_params, $timeout,
+		$params{wait});
 }
 
 =pod
@@ -2689,7 +2780,7 @@ sub log_content
 
 =pod
 
-=item $node->log_check($offset, $test_name, %parameters)
+=item $node->log_check($test_name, $offset, %params)
 
 Check contents of server logs.
 
@@ -2828,7 +2919,155 @@ sub lsn
 
 =pod
 
-=item $node->wait_for_event(wait_event_name, backend_type)
+=item $node->write_wal($tli, $lsn, $segment_size, $data)
+
+Write some arbitrary data in WAL for the given segment at $lsn (in bytes).
+This should be called while the cluster is not running.
+
+Returns the path of the WAL segment written to.
+
+=cut
+
+sub write_wal
+{
+	my ($self, $tli, $lsn, $segment_size, $data) = @_;
+
+	# Calculate segment number and offset position in segment based on the
+	# input LSN.
+	my $segment = $lsn / $segment_size;
+	my $offset = $lsn % $segment_size;
+	my $path =
+	  sprintf("%s/pg_wal/%08X%08X%08X", $self->data_dir, $tli, 0, $segment);
+
+	open my $fh, "+<:raw", $path or die "could not open WAL segment $path";
+	seek($fh, $offset, SEEK_SET) or die "could not seek WAL segment $path";
+	print $fh $data;
+	close $fh;
+
+	return $path;
+}
+
+=pod
+
+=item $node->emit_wal($size)
+
+Emit a WAL record of arbitrary size, using pg_logical_emit_message().
+
+Returns the end LSN of the record inserted, in bytes.
+
+=cut
+
+sub emit_wal
+{
+	my ($self, $size) = @_;
+
+	return int(
+		$self->safe_psql(
+			'postgres',
+			"SELECT pg_logical_emit_message(true, '', repeat('a', $size)) - '0/0'"
+		));
+}
+
+
+# Private routine returning the current insert LSN of a node, in bytes.
+# Used by the routines below in charge of advancing WAL to arbitrary
+# positions.  The insert LSN is returned in bytes.
+sub _get_insert_lsn
+{
+	my ($self) = @_;
+	return int(
+		$self->safe_psql(
+			'postgres', "SELECT pg_current_wal_insert_lsn() - '0/0'"));
+}
+
+=pod
+
+=item $node->advance_wal_out_of_record_splitting_zone($wal_block_size)
+
+Advance WAL at the end of a page, making sure that we are far away enough
+from the end of a page that we could insert a couple of small records.
+
+This inserts a few records of a fixed size, until the threshold gets close
+enough to the end of the WAL page inserting records to.
+
+Returns the end LSN up to which WAL has advanced, in bytes.
+
+=cut
+
+sub advance_wal_out_of_record_splitting_zone
+{
+	my ($self, $wal_block_size) = @_;
+
+	my $page_threshold = $wal_block_size / 4;
+	my $end_lsn = $self->_get_insert_lsn();
+	my $page_offset = $end_lsn % $wal_block_size;
+	while ($page_offset >= $wal_block_size - $page_threshold)
+	{
+		$self->emit_wal($page_threshold);
+		$end_lsn = $self->_get_insert_lsn();
+		$page_offset = $end_lsn % $wal_block_size;
+	}
+	return $end_lsn;
+}
+
+=pod
+
+=item $node->advance_wal_to_record_splitting_zone($wal_block_size)
+
+Advance WAL so close to the end of a page that an XLogRecordHeader would not
+fit on it.
+
+Returns the end LSN up to which WAL has advanced, in bytes.
+
+=cut
+
+sub advance_wal_to_record_splitting_zone
+{
+	my ($self, $wal_block_size) = @_;
+
+	# Size of record header.
+	my $RECORD_HEADER_SIZE = 24;
+
+	my $end_lsn = $self->_get_insert_lsn();
+	my $page_offset = $end_lsn % $wal_block_size;
+
+	# Get fairly close to the end of a page in big steps
+	while ($page_offset <= $wal_block_size - 512)
+	{
+		$self->emit_wal($wal_block_size - $page_offset - 256);
+		$end_lsn = $self->_get_insert_lsn();
+		$page_offset = $end_lsn % $wal_block_size;
+	}
+
+	# Calibrate our message size so that we can get closer 8 bytes at
+	# a time.
+	my $message_size = $wal_block_size - 80;
+	while ($page_offset <= $wal_block_size - $RECORD_HEADER_SIZE)
+	{
+		$self->emit_wal($message_size);
+		$end_lsn = $self->_get_insert_lsn();
+
+		my $old_offset = $page_offset;
+		$page_offset = $end_lsn % $wal_block_size;
+
+		# Adjust the message size until it causes 8 bytes changes in
+		# offset, enough to be able to split a record header.
+		my $delta = $page_offset - $old_offset;
+		if ($delta > 8)
+		{
+			$message_size -= 8;
+		}
+		elsif ($delta <= 0)
+		{
+			$message_size += 8;
+		}
+	}
+	return $end_lsn;
+}
+
+=pod
+
+=item $node->wait_for_event(backend_type, wait_event_name)
 
 Poll pg_stat_activity until backend_type reaches wait_event_name.
 
@@ -2939,6 +3178,11 @@ sub wait_for_catchup
 		}
 		else
 		{
+			# Fetch additional detail for debugging purposes
+			$query = qq[SELECT * FROM pg_catalog.pg_stat_replication];
+			my $details = $self->safe_psql('postgres', $query);
+			diag qq(Last pg_stat_replication contents:
+${details});
 			croak "timed out waiting for catchup";
 		}
 	}
@@ -3006,8 +3250,15 @@ sub wait_for_slot_catchup
 	  . $self->name . "\n";
 	my $query =
 	  qq[SELECT '$target_lsn' <= ${mode}_lsn FROM pg_catalog.pg_replication_slots WHERE slot_name = '$slot_name';];
-	$self->poll_query_until('postgres', $query)
-	  or croak "timed out waiting for catchup";
+	if (!$self->poll_query_until('postgres', $query))
+	{
+		# Fetch additional detail for debugging purposes
+		$query = qq[SELECT * FROM pg_catalog.pg_replication_slots];
+		my $details = $self->safe_psql('postgres', $query);
+		diag qq(Last pg_replication_slots contents:
+${details});
+		croak "timed out waiting for catchup";
+	}
 	print "done\n";
 	return;
 }
@@ -3042,8 +3293,15 @@ sub wait_for_subscription_sync
 	print "Waiting for all subscriptions in \"$name\" to synchronize data\n";
 	my $query =
 	  qq[SELECT count(1) = 0 FROM pg_subscription_rel WHERE srsubstate NOT IN ('r', 's');];
-	$self->poll_query_until($dbname, $query)
-	  or croak "timed out waiting for subscriber to synchronize data";
+	if (!$self->poll_query_until($dbname, $query))
+	{
+		# Fetch additional detail for debugging purposes
+		$query = qq[SELECT * FROM pg_subscription_rel];
+		my $details = $self->safe_psql($dbname, $query);
+		diag qq(Last pg_subscription_rel contents:
+${details});
+		croak "timed out waiting for subscriber to synchronize data";
+	}
 
 	# Then, wait for the replication to catchup if required.
 	if (defined($publisher))

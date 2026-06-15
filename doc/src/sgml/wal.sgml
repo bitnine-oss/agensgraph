@@ -186,7 +186,7 @@
    <itemizedlist>
     <listitem>
      <para>
-      Each individual record in a WAL file is protected by a CRC-32 (32-bit) check
+      Each individual record in a WAL file is protected by a CRC-32C (32-bit) check
       that allows us to tell if record contents are correct. The CRC value
       is set when we write each WAL record and checked during crash recovery,
       archive recovery and replication.
@@ -212,7 +212,7 @@
     </listitem>
     <listitem>
      <para>
-      Individual state files in <filename>pg_twophase</filename> are protected by CRC-32.
+      Individual state files in <filename>pg_twophase</filename> are protected by CRC-32C.
      </para>
     </listitem>
     <listitem>
@@ -246,7 +246,7 @@
   </para>
 
   <para>
-   Checksums are normally enabled when the cluster is initialized using <link
+   Checksums can be enabled when the cluster is initialized using <link
    linkend="app-initdb-data-checksums"><application>initdb</application></link>.
    They can also be enabled or disabled at a later time as an offline
    operation. Data checksums are enabled or disabled at the full cluster
@@ -643,6 +643,9 @@
    until the situation is resolved. A slow or failed standby server that
    uses a replication slot will have the same effect (see
    <xref linkend="streaming-replication-slots"/>).
+   Similarly, if <link linkend="runtime-config-wal-summarization">
+   WAL summarization</link> is enabled, old segments are kept
+   until they are summarized.
   </para>
 
   <para>

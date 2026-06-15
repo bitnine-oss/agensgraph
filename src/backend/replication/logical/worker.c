@@ -416,6 +416,8 @@ static inline void reset_apply_error_context_info(void);
 static TransApplyAction get_transaction_apply_action(TransactionId xid,
 													 ParallelApplyWorkerInfo **winfo);
 
+static void replorigin_reset(int code, Datum arg);
+
 /*
  * Form the origin name for the subscription.
  *
@@ -2432,8 +2434,13 @@ apply_handle_insert(StringInfo s)
 		apply_handle_tuple_routing(edata,
 								   remoteslot, NULL, CMD_INSERT);
 	else
-		apply_handle_insert_internal(edata, edata->targetRelInfo,
-									 remoteslot);
+	{
+		ResultRelInfo *relinfo = edata->targetRelInfo;
+
+		ExecOpenIndices(relinfo, false);
+		apply_handle_insert_internal(edata, relinfo, remoteslot);
+		ExecCloseIndices(relinfo);
+	}
 
 	finish_edata(edata);
 
@@ -2460,15 +2467,14 @@ apply_handle_insert_internal(ApplyExecutionData *edata,
 {
 	EState	   *estate = edata->estate;
 
-	/* We must open indexes here. */
-	ExecOpenIndices(relinfo, false);
+	/* Caller should have opened indexes already. */
+	Assert(relinfo->ri_IndexRelationDescs != NULL ||
+		   !relinfo->ri_RelationDesc->rd_rel->relhasindex ||
+		   RelationGetIndexList(relinfo->ri_RelationDesc) == NIL);
 
 	/* Do the insert. */
 	TargetPrivilegesCheck(relinfo->ri_RelationDesc, ACL_INSERT);
 	ExecSimpleRelationInsert(relinfo, estate, remoteslot);
-
-	/* Cleanup. */
-	ExecCloseIndices(relinfo);
 }
 
 /*
@@ -2767,8 +2773,14 @@ apply_handle_delete(StringInfo s)
 		apply_handle_tuple_routing(edata,
 								   remoteslot, NULL, CMD_DELETE);
 	else
-		apply_handle_delete_internal(edata, edata->targetRelInfo,
+	{
+		ResultRelInfo *relinfo = edata->targetRelInfo;
+
+		ExecOpenIndices(relinfo, false);
+		apply_handle_delete_internal(edata, relinfo,
 									 remoteslot, rel->localindexoid);
+		ExecCloseIndices(relinfo);
+	}
 
 	finish_edata(edata);
 
@@ -2802,7 +2814,11 @@ apply_handle_delete_internal(ApplyExecutionData *edata,
 	bool		found;
 
 	EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1, NIL);
-	ExecOpenIndices(relinfo, false);
+
+	/* Caller should have opened indexes already. */
+	Assert(relinfo->ri_IndexRelationDescs != NULL ||
+		   !localrel->rd_rel->relhasindex ||
+		   RelationGetIndexList(localrel) == NIL);
 
 	found = FindReplTupleInLocalRel(edata, localrel, remoterel, localindexoid,
 									remoteslot, &localslot);
@@ -2831,7 +2847,6 @@ apply_handle_delete_internal(ApplyExecutionData *edata,
 	}
 
 	/* Cleanup. */
-	ExecCloseIndices(relinfo);
 	EvalPlanQualEnd(&epqstate);
 }
 
@@ -3042,14 +3057,12 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 					EPQState	epqstate;
 
 					EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1, NIL);
-					ExecOpenIndices(partrelinfo, false);
 
 					EvalPlanQualSetSlot(&epqstate, remoteslot_part);
 					TargetPrivilegesCheck(partrelinfo->ri_RelationDesc,
 										  ACL_UPDATE);
 					ExecSimpleRelationUpdate(partrelinfo, estate, &epqstate,
 											 localslot, remoteslot_part);
-					ExecCloseIndices(partrelinfo);
 					EvalPlanQualEnd(&epqstate);
 				}
 				else
@@ -4430,6 +4443,14 @@ start_apply(XLogRecPtr origin_startpos)
 	}
 	PG_CATCH();
 	{
+		/*
+		 * Reset the origin state to prevent the advancement of origin
+		 * progress if we fail to apply. Otherwise, this will result in
+		 * transaction loss as that transaction won't be sent again by the
+		 * server.
+		 */
+		replorigin_reset(0, (Datum) 0);
+
 		if (MySubscription->disableonerr)
 			DisableSubscriptionAndExit();
 		else
@@ -4529,8 +4550,16 @@ run_apply_worker()
 		walrcv_startstreaming(LogRepWorkerWalRcvConn, &options);
 
 		StartTransactionCommand();
+
+		/*
+		 * Updating pg_subscription might involve TOAST table access, so
+		 * ensure we have a valid snapshot.
+		 */
+		PushActiveSnapshot(GetTransactionSnapshot());
+
 		UpdateTwoPhaseState(MySubscription->oid, LOGICALREP_TWOPHASE_STATE_ENABLED);
 		MySubscription->twophasestate = LOGICALREP_TWOPHASE_STATE_ENABLED;
+		PopActiveSnapshot();
 		CommitTransactionCommand();
 	}
 	else
@@ -4584,6 +4613,13 @@ InitializeLogRepWorker(void)
 	StartTransactionCommand();
 	oldctx = MemoryContextSwitchTo(ApplyContext);
 
+	/*
+	 * Lock the subscription to prevent it from being concurrently dropped,
+	 * then re-verify its existence. After the initialization, the worker will
+	 * be terminated gracefully if the subscription is dropped.
+	 */
+	LockSharedObject(SubscriptionRelationId, MyLogicalRepWorker->subid, 0,
+					 AccessShareLock);
 	MySubscription = GetSubscription(MyLogicalRepWorker->subid, true);
 	if (!MySubscription)
 	{
@@ -4637,6 +4673,34 @@ InitializeLogRepWorker(void)
 						MySubscription->name)));
 
 	CommitTransactionCommand();
+
+	/*
+	 * Register a callback to reset the origin state before aborting any
+	 * pending transaction during shutdown (see ShutdownPostgres()). This will
+	 * avoid origin advancement for an incomplete transaction which could
+	 * otherwise lead to its loss as such a transaction won't be sent by the
+	 * server again.
+	 *
+	 * Note that even a LOG or DEBUG statement placed after setting the origin
+	 * state may process a shutdown signal before committing the current apply
+	 * operation. So, it is important to register such a callback here.
+	 *
+	 * Register this callback here to ensure that all types of logical
+	 * replication workers that set up origins and apply remote transactions
+	 * are protected.
+	 */
+	before_shmem_exit(replorigin_reset, (Datum) 0);
+}
+
+/*
+ * Reset the origin state.
+ */
+static void
+replorigin_reset(int code, Datum arg)
+{
+	replorigin_session_origin = InvalidRepOriginId;
+	replorigin_session_origin_lsn = InvalidXLogRecPtr;
+	replorigin_session_origin_timestamp = 0;
 }
 
 /* Common function to setup the leader apply or tablesync worker. */
@@ -4722,7 +4786,15 @@ DisableSubscriptionAndExit(void)
 
 	/* Disable the subscription */
 	StartTransactionCommand();
+
+	/*
+	 * Updating pg_subscription might involve TOAST table access, so ensure we
+	 * have a valid snapshot.
+	 */
+	PushActiveSnapshot(GetTransactionSnapshot());
+
 	DisableSubscription(MySubscription->oid);
+	PopActiveSnapshot();
 	CommitTransactionCommand();
 
 	/* Ensure we remove no-longer-useful entry for worker's start time */
@@ -4827,6 +4899,12 @@ clear_subscription_skip_lsn(XLogRecPtr finish_lsn)
 	}
 
 	/*
+	 * Updating pg_subscription might involve TOAST table access, so ensure we
+	 * have a valid snapshot.
+	 */
+	PushActiveSnapshot(GetTransactionSnapshot());
+
+	/*
 	 * Protect subskiplsn of pg_subscription from being concurrently updated
 	 * while clearing it.
 	 */
@@ -4883,6 +4961,8 @@ clear_subscription_skip_lsn(XLogRecPtr finish_lsn)
 
 	heap_freetuple(tup);
 	table_close(rel, NoLock);
+
+	PopActiveSnapshot();
 
 	if (started_tx)
 		CommitTransactionCommand();

@@ -81,6 +81,13 @@ static void pgoutput_stream_prepare_txn(LogicalDecodingContext *ctx,
 
 static bool publications_valid;
 
+/*
+ * Private memory context for publication data, created in
+ * PGOutputData->context when starting pgoutput, and set to NULL when its
+ * parent context is reset via a dedicated MemoryContextCallback.
+ */
+static MemoryContext pubctx = NULL;
+
 static List *LoadPublications(List *pubnames);
 static void publication_invalidation_cb(Datum arg, int cacheid,
 										uint32 hashvalue);
@@ -222,6 +229,7 @@ static bool get_schema_sent_in_streamed_txn(RelationSyncEntry *entry,
 											TransactionId xid);
 static void init_tuple_slot(PGOutputData *data, Relation relation,
 							RelationSyncEntry *entry);
+static void pgoutput_memory_context_reset(void *arg);
 
 /* row filter routines */
 static EState *create_estate_for_relation(Relation rel);
@@ -330,7 +338,11 @@ parse_output_parameters(List *options, PGOutputData *data)
 						 errmsg("conflicting or redundant options")));
 			publication_names_given = true;
 
-			if (!SplitIdentifierString(strVal(defel->arg), ',',
+			/*
+			 * Pass a copy of the DefElem->arg since SplitIdentifierString
+			 * modifies its input.
+			 */
+			if (!SplitIdentifierString(pstrdup(strVal(defel->arg)), ',',
 									   &data->publication_names))
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_NAME),
@@ -404,11 +416,27 @@ parse_output_parameters(List *options, PGOutputData *data)
 	if (!protocol_version_given)
 		ereport(ERROR,
 				errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("proto_version option missing"));
+				errmsg("option \"%s\" missing", "proto_version"));
 	if (!publication_names_given)
 		ereport(ERROR,
 				errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("publication_names option missing"));
+				errmsg("option \"%s\" missing", "publication_names"));
+}
+
+/*
+ * Memory context reset callback of PGOutputData->context.
+ */
+static void
+pgoutput_memory_context_reset(void *arg)
+{
+	if (RelationSyncCache)
+	{
+		hash_destroy(RelationSyncCache);
+		RelationSyncCache = NULL;
+	}
+
+	/* Better safe than sorry */
+	pubctx = NULL;
 }
 
 /*
@@ -420,6 +448,7 @@ pgoutput_startup(LogicalDecodingContext *ctx, OutputPluginOptions *opt,
 {
 	PGOutputData *data = palloc0(sizeof(PGOutputData));
 	static bool publication_callback_registered = false;
+	MemoryContextCallback *mcallback;
 
 	/* Create our memory context for private allocations. */
 	data->context = AllocSetContextCreate(ctx->context,
@@ -429,6 +458,19 @@ pgoutput_startup(LogicalDecodingContext *ctx, OutputPluginOptions *opt,
 	data->cachectx = AllocSetContextCreate(ctx->context,
 										   "logical replication cache context",
 										   ALLOCSET_DEFAULT_SIZES);
+
+	Assert(pubctx == NULL);
+	pubctx = AllocSetContextCreate(ctx->context,
+								   "logical replication publication list context",
+								   ALLOCSET_SMALL_SIZES);
+
+	/*
+	 * Ensure to cleanup RelationSyncCache even when logical decoding invoked
+	 * via SQL interface ends up with an error.
+	 */
+	mcallback = palloc0(sizeof(MemoryContextCallback));
+	mcallback->func = pgoutput_memory_context_reset;
+	MemoryContextRegisterResetCallback(ctx->context, mcallback);
 
 	ctx->output_plugin_private = data;
 
@@ -1158,8 +1200,8 @@ init_tuple_slot(PGOutputData *data, Relation relation,
 		TupleDesc	indesc = RelationGetDescr(relation);
 		TupleDesc	outdesc = RelationGetDescr(ancestor);
 
-		/* Map must live as long as the session does. */
-		oldctx = MemoryContextSwitchTo(CacheMemoryContext);
+		/* Map must live as long as the logical decoding context. */
+		oldctx = MemoryContextSwitchTo(data->cachectx);
 
 		entry->attrmap = build_attrmap_by_name_if_req(indesc, outdesc, false);
 
@@ -1696,18 +1738,14 @@ pgoutput_origin_filter(LogicalDecodingContext *ctx,
 /*
  * Shutdown the output plugin.
  *
- * Note, we don't need to clean the data->context and data->cachectx as
- * they are child contexts of the ctx->context so they will be cleaned up by
- * logical decoding machinery.
+ * Note, we don't need to clean the data->context, data->cachectx and pubctx
+ * as they are child contexts of the ctx->context so they will be cleaned up
+ * by logical decoding machinery.
  */
 static void
 pgoutput_shutdown(LogicalDecodingContext *ctx)
 {
-	if (RelationSyncCache)
-	{
-		hash_destroy(RelationSyncCache);
-		RelationSyncCache = NULL;
-	}
+	pgoutput_memory_context_reset(NULL);
 }
 
 /*
@@ -2024,12 +2062,11 @@ get_rel_sync_entry(PGOutputData *data, Relation relation)
 		/* Reload publications if needed before use. */
 		if (!publications_valid)
 		{
-			oldctx = MemoryContextSwitchTo(CacheMemoryContext);
-			if (data->publications)
-			{
-				list_free_deep(data->publications);
-				data->publications = NIL;
-			}
+			Assert(pubctx);
+
+			MemoryContextReset(pubctx);
+			oldctx = MemoryContextSwitchTo(pubctx);
+
 			data->publications = LoadPublications(data->publication_names);
 			MemoryContextSwitchTo(oldctx);
 			publications_valid = true;
@@ -2055,9 +2092,33 @@ get_rel_sync_entry(PGOutputData *data, Relation relation)
 		 * Tuple slots cleanups. (Will be rebuilt later if needed).
 		 */
 		if (entry->old_slot)
+		{
+			TupleDesc	desc = entry->old_slot->tts_tupleDescriptor;
+
+			Assert(desc->tdrefcount == -1);
+
 			ExecDropSingleTupleTableSlot(entry->old_slot);
+
+			/*
+			 * ExecDropSingleTupleTableSlot() would not free the TupleDesc, so
+			 * do it now to avoid any leaks.
+			 */
+			FreeTupleDesc(desc);
+		}
 		if (entry->new_slot)
+		{
+			TupleDesc	desc = entry->new_slot->tts_tupleDescriptor;
+
+			Assert(desc->tdrefcount == -1);
+
 			ExecDropSingleTupleTableSlot(entry->new_slot);
+
+			/*
+			 * ExecDropSingleTupleTableSlot() would not free the TupleDesc, so
+			 * do it now to avoid any leaks.
+			 */
+			FreeTupleDesc(desc);
+		}
 
 		entry->old_slot = NULL;
 		entry->new_slot = NULL;

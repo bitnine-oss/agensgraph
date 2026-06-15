@@ -344,7 +344,7 @@ static SlruCtlData SerialSlruCtlData;
 
 typedef struct SerialControlData
 {
-	int			headPage;		/* newest initialized page */
+	int64		headPage;		/* newest initialized page */
 	TransactionId headXid;		/* newest valid Xid in the SLRU */
 	TransactionId tailXid;		/* oldest xmin we might be interested in */
 }			SerialControlData;
@@ -877,12 +877,17 @@ SerialAdd(TransactionId xid, SerCommitSeqNo minConflictCommitSeqNo)
 	LWLockAcquire(SerialControlLock, LW_EXCLUSIVE);
 
 	/*
-	 * If no serializable transactions are active, there shouldn't be anything
-	 * to push out to the SLRU.  Hitting this assert would mean there's
-	 * something wrong with the earlier cleanup logic.
+	 * If 'xid' is older than the global xmin (== tailXid), there's no need to
+	 * store it, after all. This can happen if the oldest transaction holding
+	 * back the global xmin just finished, making 'xid' uninteresting, but
+	 * ClearOldPredicateLocks() has not yet run.
 	 */
 	tailXid = serialControl->tailXid;
-	Assert(TransactionIdIsValid(tailXid));
+	if (!TransactionIdIsValid(tailXid) || TransactionIdPrecedes(xid, tailXid))
+	{
+		LWLockRelease(SerialControlLock);
+		return;
+	}
 
 	/*
 	 * If the SLRU is currently unused, zero out the whole active region from
@@ -1035,7 +1040,7 @@ SerialSetActiveSerXmin(TransactionId xid)
 void
 CheckPointPredicate(void)
 {
-	int			truncateCutoffPage;
+	int64		truncateCutoffPage;
 
 	LWLockAcquire(SerialControlLock, LW_EXCLUSIVE);
 
@@ -1048,7 +1053,7 @@ CheckPointPredicate(void)
 
 	if (TransactionIdIsValid(serialControl->tailXid))
 	{
-		int			tailPage;
+		int64		tailPage;
 
 		tailPage = SerialPage(serialControl->tailXid);
 

@@ -104,10 +104,10 @@ struct XidCache
  * is inserted prior to the new redo point, the corresponding data changes will
  * also be flushed to disk before the checkpoint can complete. (In the
  * extremely common case where the data being modified is in shared buffers
- * and we acquire an exclusive content lock on the relevant buffers before
- * writing WAL, this mechanism is not needed, because phase 2 will block
- * until we release the content lock and then flush the modified data to
- * disk.)
+ * and we acquire an exclusive content lock and MarkBufferDirty() on the
+ * relevant buffers before writing WAL, this mechanism is not needed, because
+ * phase 2 will block until we release the content lock and then flush the
+ * modified data to disk.  See transam/README and SyncOneBuffer().)
  *
  * Setting DELAY_CHKPT_COMPLETE prevents the system from moving from phase 2
  * to phase 3. This is useful if we are performing a WAL-logged operation that
@@ -212,7 +212,7 @@ struct PGPROC
 	Oid			tempNamespaceId;	/* OID of temp schema this backend is
 									 * using */
 
-	bool		isBackgroundWorker; /* true if background worker. */
+	bool		isBackgroundWorker; /* true if not a regular backend. */
 
 	/*
 	 * While in hot standby mode, shows that a conflict signal has been sent
@@ -313,19 +313,6 @@ struct PGPROC
 
 extern PGDLLIMPORT PGPROC *MyProc;
 
-/* Proc number of this backend. Equal to GetNumberFromPGProc(MyProc). */
-extern PGDLLIMPORT ProcNumber MyProcNumber;
-
-/* Our parallel session leader, or INVALID_PROC_NUMBER if none */
-extern PGDLLIMPORT ProcNumber ParallelLeaderProcNumber;
-
-/*
- * The proc number to use for our session's temp relations is normally our own,
- * but parallel workers should use their leader's ID.
- */
-#define ProcNumberForTempRelations() \
-	(ParallelLeaderProcNumber == INVALID_PROC_NUMBER ? MyProcNumber : ParallelLeaderProcNumber)
-
 /*
  * There is one ProcGlobal struct for the whole database cluster.
  *
@@ -404,7 +391,7 @@ typedef struct PROC_HDR
 	uint32		allProcCount;
 	/* Head of list of free PGPROC structures */
 	dlist_head	freeProcs;
-	/* Head of list of autovacuum's free PGPROC structures */
+	/* Head of list of autovacuum & special worker free PGPROC structures */
 	dlist_head	autovacFreeProcs;
 	/* Head of list of bgworker free PGPROC structures */
 	dlist_head	bgworkerFreeProcs;
@@ -435,8 +422,18 @@ extern PGDLLIMPORT PGPROC *PreparedXactProcs;
 #define GetNumberFromPGProc(proc) ((proc) - &ProcGlobal->allProcs[0])
 
 /*
+ * We set aside some extra PGPROC structures for "special worker" processes,
+ * which are full-fledged backends (they can run transactions)
+ * but are unique animals that there's never more than one of.
+ * Currently there are two such processes: the autovacuum launcher
+ * and the slotsync worker.
+ */
+#define NUM_SPECIAL_WORKER_PROCS	2
+
+/*
  * We set aside some extra PGPROC structures for auxiliary processes,
- * ie things that aren't full-fledged backends but need shmem access.
+ * ie things that aren't full-fledged backends (they cannot run transactions
+ * or take heavyweight locks) but need shmem access.
  *
  * Background writer, checkpointer, WAL writer, WAL summarizer, and archiver
  * run during normal operation.  Startup process and WAL receiver also consume
@@ -444,6 +441,8 @@ extern PGDLLIMPORT PGPROC *PreparedXactProcs;
  * only need 6 slots.
  */
 #define NUM_AUXILIARY_PROCS		6
+
+#define FIRST_PREPARED_XACT_PROC_NUMBER	(MaxBackends + NUM_AUXILIARY_PROCS)
 
 /* configurable options */
 extern PGDLLIMPORT int DeadlockTimeout;

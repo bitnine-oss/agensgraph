@@ -182,9 +182,8 @@ json_parse_manifest_incremental_shutdown(JsonManifestParseIncrementalState *incs
  */
 
 void
-json_parse_manifest_incremental_chunk(
-									  JsonManifestParseIncrementalState *incstate, const char *chunk, size_t size,
-									  bool is_last)
+json_parse_manifest_incremental_chunk(JsonManifestParseIncrementalState *incstate,
+									  const char *chunk, size_t size, bool is_last)
 {
 	JsonParseErrorType res,
 				expected;
@@ -634,7 +633,7 @@ json_manifest_finalize_system_identifier(JsonManifestParseState *parse)
 	system_identifier = strtou64(parse->manifest_system_identifier, &ep, 10);
 	if (*ep)
 		json_manifest_parse_failure(parse->context,
-									"manifest system identifier not an integer");
+									"system identifier in manifest not an integer");
 
 	/* Invoke the callback for system identifier */
 	context->system_identifier_cb(context, system_identifier);

@@ -66,6 +66,16 @@ PostgreSQL documentation
   linkend="libpq-pgpass"/> for more information.
   </para>
 
+  <warning>
+   <para>
+    Restoring a dump causes the destination to execute arbitrary code of the
+    source superusers' choice.  Partial dumps and partial restores do not limit
+    that.  If the source superusers are not trusted, the dumped SQL statements
+    must be inspected before restoring.  Note that the client running the dump
+    and restore need not trust the source or destination superusers.
+   </para>
+  </warning>
+
  </refsect1>
 
  <refsect1>
@@ -556,6 +566,26 @@ exclude database <replaceable class="parameter">PATTERN</replaceable>
      </varlistentry>
 
      <varlistentry>
+      <term><option>--restrict-key=<replaceable class="parameter">restrict_key</replaceable></option></term>
+      <listitem>
+       <para>
+        Use the provided string as the <application>psql</application>
+        <command>\restrict</command> key in the dump output.  If no restrict
+        key is specified, <application>pg_dumpall</application> will generate a
+        random one as needed.  Keys may contain only alphanumeric characters.
+       </para>
+       <para>
+        This option is primarily intended for testing purposes and other
+        scenarios that require repeatable output (e.g., comparing dump files).
+        It is not recommended for general use, as a malicious server with
+        advance knowledge of the key may be able to inject arbitrary code that
+        will be executed on the machine that runs
+        <application>psql</application> with the dump output.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>--rows-per-insert=<replaceable class="parameter">nrows</replaceable></option></term>
       <listitem>
        <para>
@@ -817,6 +847,17 @@ exclude database <replaceable class="parameter">PATTERN</replaceable>
    database creation will fail for databases in non-default
    locations.
   </para>
+
+  <para>
+   It is generally recommended to use the <option>-X</option>
+   (<option>--no-psqlrc</option>) option when restoring a database from a
+   <application>pg_dumpall</application> script to ensure a clean restore
+   process and prevent potential conflicts with non-default
+   <application>psql</application> configurations. Additionally, because
+   the <application>pg_dumpall</application> script may
+   include <application>psql</application> meta-commands, it may be
+   incompatible with clients other than <application>psql</application>.
+  </para>
  </refsect1>
 
 
@@ -833,9 +874,9 @@ exclude database <replaceable class="parameter">PATTERN</replaceable>
   <para>
    To restore database(s) from this file, you can use:
 <screen>
-<prompt>$</prompt> <userinput>psql -f db.out postgres</userinput>
+<prompt>$</prompt> <userinput>psql -X -f db.out -d postgres</userinput>
 </screen>
-   It is not important to which database you connect here since the
+   It is not important which database you connect to here since the
    script file created by <application>pg_dumpall</application> will
    contain the appropriate commands to create and connect to the saved
    databases.  An exception is that if you specified <option>--clean</option>,

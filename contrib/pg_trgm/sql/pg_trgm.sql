@@ -52,6 +52,10 @@ create index trgm_idx on test_trgm using gist (t gist_trgm_ops(siglen=2025));
 create index trgm_idx on test_trgm using gist (t gist_trgm_ops(siglen=2024));
 set enable_seqscan=off;
 
+-- check index compatibility handling when opclass option is specified
+alter table test_trgm alter column t type varchar(768);
+alter table test_trgm alter column t type text;
+
 select t,similarity(t,'qwertyu0988') as sml from test_trgm where t % 'qwertyu0988' order by sml desc, t;
 select t,similarity(t,'gwertyu0988') as sml from test_trgm where t % 'gwertyu0988' order by sml desc, t;
 select t,similarity(t,'gwertyu1988') as sml from test_trgm where t % 'gwertyu1988' order by sml desc, t;
@@ -76,6 +80,9 @@ select count(*) from test_trgm where t like '%99%' and t like '%qwerty%';
 explain (costs off)
 select count(*) from test_trgm where t like '%99%' and t like '%qw%';
 select count(*) from test_trgm where t like '%99%' and t like '%qw%';
+explain (costs off)
+select count(*) from test_trgm where t %> '' and t %> '%qwerty%';
+select count(*) from test_trgm where t %> '' and t %> '%qwerty%';
 -- ensure that pending-list items are handled correctly, too
 create temp table t_test_trgm(t text COLLATE "C");
 create index t_trgm_idx on t_test_trgm using gin (t gin_trgm_ops);
@@ -86,14 +93,19 @@ select count(*) from t_test_trgm where t like '%99%' and t like '%qwerty%';
 explain (costs off)
 select count(*) from t_test_trgm where t like '%99%' and t like '%qw%';
 select count(*) from t_test_trgm where t like '%99%' and t like '%qw%';
+explain (costs off)
+select count(*) from t_test_trgm where t %> '' and t %> '%qwerty%';
+select count(*) from t_test_trgm where t %> '' and t %> '%qwerty%';
 
 -- run the same queries with sequential scan to check the results
 set enable_bitmapscan=off;
 set enable_seqscan=on;
 select count(*) from test_trgm where t like '%99%' and t like '%qwerty%';
 select count(*) from test_trgm where t like '%99%' and t like '%qw%';
+select count(*) from test_trgm where t %> '' and t %> '%qwerty%';
 select count(*) from t_test_trgm where t like '%99%' and t like '%qwerty%';
 select count(*) from t_test_trgm where t like '%99%' and t like '%qw%';
+select count(*) from t_test_trgm where t %> '' and t %> '%qwerty%';
 reset enable_bitmapscan;
 
 create table test2(t text COLLATE "C");

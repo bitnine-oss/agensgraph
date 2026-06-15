@@ -37,13 +37,6 @@ ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
     ATTACH PARTITION <replaceable class="parameter">partition_name</replaceable> { FOR VALUES <replaceable class="parameter">partition_bound_spec</replaceable> | DEFAULT }
 ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
     DETACH PARTITION <replaceable class="parameter">partition_name</replaceable> [ CONCURRENTLY | FINALIZE ]
-ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
-    SPLIT PARTITION <replaceable class="parameter">partition_name</replaceable> INTO
-        (PARTITION <replaceable class="parameter">partition_name1</replaceable> { FOR VALUES <replaceable class="parameter">partition_bound_spec</replaceable> | DEFAULT },
-         PARTITION <replaceable class="parameter">partition_name2</replaceable> { FOR VALUES <replaceable class="parameter">partition_bound_spec</replaceable> | DEFAULT } [, ...])
-ALTER TABLE [ IF EXISTS ] <replaceable class="parameter">name</replaceable>
-    MERGE PARTITIONS (<replaceable class="parameter">partition_name1</replaceable>, <replaceable class="parameter">partition_name2</replaceable> [, ...])
-        INTO <replaceable class="parameter">partition_name</replaceable>
 
 <phrase>where <replaceable class="parameter">action</replaceable> is one of:</phrase>
 
@@ -162,7 +155,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
 
   <variablelist>
    <varlistentry id="sql-altertable-desc-add-column">
-    <term><literal>ADD COLUMN [ IF NOT EXISTS ]</literal></term>
+    <term><literal>ADD [ COLUMN ] [ IF NOT EXISTS ]</literal></term>
     <listitem>
      <para>
       This form adds a new column to the table, using the same syntax as
@@ -174,7 +167,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
    </varlistentry>
 
    <varlistentry id="sql-altertable-desc-drop-column">
-    <term><literal>DROP COLUMN [ IF EXISTS ]</literal></term>
+    <term><literal>DROP [ COLUMN ] [ IF EXISTS ]</literal></term>
     <listitem>
      <para>
       This form drops a column from a table.  Indexes and
@@ -245,9 +238,10 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       provided none of the records in the table contain a
       <literal>NULL</literal> value for the column.  Ordinarily this is
       checked during the <literal>ALTER TABLE</literal> by scanning the
-      entire table; however, if a valid <literal>CHECK</literal> constraint is
-      found which proves no <literal>NULL</literal> can exist, then the
-      table scan is skipped.
+      entire table;
+      however, if a valid <literal>CHECK</literal> constraint exists
+      (and is not dropped in the same command) which proves no
+      <literal>NULL</literal> can exist, then the table scan is skipped.
      </para>
 
      <para>
@@ -270,6 +264,12 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       This form replaces the expression of a generated column.  Existing data
       in the column is rewritten and all the future changes will apply the new
       generation expression.
+     </para>
+
+     <para>
+      When this form is used, the column's statistics are removed,
+      so running <link linkend="sql-analyze"><command>ANALYZE</command></link>
+      on the table afterwards is recommended.
      </para>
     </listitem>
    </varlistentry>
@@ -360,24 +360,22 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       <literal>n_distinct_inherited</literal>, which override the
       number-of-distinct-values estimates made by subsequent
       <link linkend="sql-analyze"><command>ANALYZE</command></link>
-      operations.  <literal>n_distinct</literal> affects the statistics for the table
-      itself, while <literal>n_distinct_inherited</literal> affects the statistics
-      gathered for the table plus its inheritance children.  When set to a
-      positive value, <command>ANALYZE</command> will assume that the column contains
-      exactly the specified number of distinct nonnull values.  When set to a
-      negative value, which must be greater
-      than or equal to -1, <command>ANALYZE</command> will assume that the number of
-      distinct nonnull values in the column is linear in the size of the
-      table; the exact count is to be computed by multiplying the estimated
-      table size by the absolute value of the given number.  For example,
-      a value of -1 implies that all values in the column are distinct, while
-      a value of -0.5 implies that each value appears twice on the average.
-      This can be useful when the size of the table changes over time, since
-      the multiplication by the number of rows in the table is not performed
-      until query planning time.  Specify a value of 0 to revert to estimating
-      the number of distinct values normally.  For more information on the use
-      of statistics by the <productname>PostgreSQL</productname> query
-      planner, refer to <xref linkend="planner-stats"/>.
+      operations. <literal>n_distinct</literal> affects the statistics for the
+      table itself, while <literal>n_distinct_inherited</literal> affects the
+      statistics gathered for the table plus its inheritance children, and for
+      the statistics gathered for partitioned tables.  When the value
+      specified is a positive value, the query planner will assume that the
+      column contains exactly the specified number of distinct nonnull values.
+      Fractional values may also be specified by using values below 0 and
+      above or equal to -1.  This instructs the query planner to estimate the
+      number of distinct values by multiplying the absolute value of the
+      specified number by the estimated number of rows in the table.  For
+      example, a value of -1 implies that all values in the column are
+      distinct, while a value of -0.5 implies that each value appears twice on
+      average.  This can be useful when the size of the table changes over
+      time.  For more information on the use of statistics by the
+      <productname>PostgreSQL</productname> query planner, refer to
+      <xref linkend="planner-stats"/>.
      </para>
      <para>
       Changing per-attribute options acquires a
@@ -1017,20 +1015,18 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
      <para>
       A partition using <literal>FOR VALUES</literal> uses same syntax for
       <replaceable class="parameter">partition_bound_spec</replaceable> as
-      <link linkend="sql-createtable"><command>CREATE TABLE</command></link>.  The partition bound specification
+      <link linkend="sql-createtable"><command>CREATE TABLE</command></link>.
+      The partition bound specification
       must correspond to the partitioning strategy and partition key of the
       target table.  The table to be attached must have all the same columns
       as the target table and no more; moreover, the column types must also
       match.  Also, it must have all the <literal>NOT NULL</literal> and
-      <literal>CHECK</literal> constraints of the target table.  Currently
+      <literal>CHECK</literal> constraints of the target table, not marked
+      <literal>NO INHERIT</literal>.  Currently
       <literal>FOREIGN KEY</literal> constraints are not considered.
       <literal>UNIQUE</literal> and <literal>PRIMARY KEY</literal> constraints
       from the parent table will be created in the partition, if they don't
       already exist.
-      If any of the <literal>CHECK</literal> constraints of the table being
-      attached are marked <literal>NO INHERIT</literal>, the command will fail;
-      such constraints must be recreated without the
-      <literal>NO INHERIT</literal> clause.
      </para>
 
      <para>
@@ -1124,138 +1120,14 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     </listitem>
    </varlistentry>
 
-   <varlistentry id="sql-altertable-split-partition">
-    <term><literal>SPLIT PARTITION <replaceable class="parameter">partition_name</replaceable> INTO (PARTITION <replaceable class="parameter">partition_name1</replaceable> { FOR VALUES <replaceable class="parameter">partition_bound_spec</replaceable> | DEFAULT }, PARTITION <replaceable class="parameter">partition_name2</replaceable> { FOR VALUES <replaceable class="parameter">partition_bound_spec</replaceable> | DEFAULT } [, ...])</literal></term>
-
-    <listitem>
-     <para>
-      This form splits a single partition of the target table. Hash-partitioning
-      is not supported. Bounds of new partitions should not overlap with new and
-      existing partitions (except <replaceable class="parameter">partition_name</replaceable>).
-      If the split partition is a DEFAULT partition, one of the new partitions must be DEFAULT.
-      In case one of the new partitions or one of existing partitions is DEFAULT,
-      new partitions <replaceable class="parameter">partition_name1</replaceable>,
-      <replaceable class="parameter">partition_name2</replaceable>, ... can have spaces
-      between partitions bounds.  If the partitioned table does not have a DEFAULT
-      partition, the DEFAULT partition can be defined as one of the new partitions.
-     </para>
-     <para>
-      In case new partitions do not contain a DEFAULT partition and the partitioned table
-      does not have a DEFAULT partition, the following must be true: sum bounds of
-      new partitions <replaceable class="parameter">partition_name1</replaceable>,
-      <replaceable class="parameter">partition_name2</replaceable>, ... should be
-      equal to bound of split partition <replaceable class="parameter">partition_name</replaceable>.
-      One of the new partitions <replaceable class="parameter">partition_name1</replaceable>,
-      <replaceable class="parameter">partition_name2</replaceable>, ... can have
-      the same name as split partition <replaceable class="parameter">partition_name</replaceable>
-      (this is suitable in case of splitting a DEFAULT partition: we split it, but after
-      splitting we have a partition with the same name).
-      Only simple, non-partitioned partition can be split.
-     </para>
-     <para>
-      The new partitions will be created the same as tables created with the
-      SQL command <literal>CREATE TABLE <replaceable class="parameter">partition_nameN</replaceable> (LIKE <replaceable class="parameter">name</replaceable> INCLUDING ALL EXCLUDING INDEXES EXCLUDING IDENTITY EXCLUDING STATISTICS)</literal>.
-      The indexes and identity are created later, after moving the data
-      into the new partitions.
-      Extended statistics aren't copied from the parent table, for consistency with
-      <command>CREATE TABLE PARTITION OF</command>.
-
-      New partitions will have the same table access method as the parent.
-      If the parent table is persistent then new partitions are created
-      persistent.  If the parent table is temporary then new partitions
-      are also created temporary.
-     </para>
-     <note>
-      <para>
-       This command acquires an <literal>ACCESS EXCLUSIVE</literal> lock.
-       This is a significant limitation, which limits the usage of this
-       command with large partitioned tables under a high load.
-      </para>
-     </note>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry id="sql-altertable-merge-partitions">
-    <term><literal>MERGE PARTITIONS (<replaceable class="parameter">partition_name1</replaceable>, <replaceable class="parameter">partition_name2</replaceable> [, ...]) INTO <replaceable class="parameter">partition_name</replaceable></literal></term>
-
-    <listitem>
-     <para>
-      This form merges several partitions into the one partition of the target table.
-      Hash-partitioning is not supported.  If DEFAULT partition is not in the
-      list of partitions <replaceable class="parameter">partition_name1</replaceable>,
-      <replaceable class="parameter">partition_name2</replaceable> [, ...]:
-      <itemizedlist>
-       <listitem>
-        <para>
-         For range-partitioned tables it is necessary that the ranges
-         of the partitions <replaceable class="parameter">partition_name1</replaceable>,
-         <replaceable class="parameter">partition_name2</replaceable> [, ...] can
-         be merged into one range without spaces and overlaps (otherwise an error
-         will be generated).  The combined range will be the range for the partition
-         <replaceable class="parameter">partition_name</replaceable>.
-        </para>
-       </listitem>
-       <listitem>
-        <para>
-         For list-partitioned tables the value lists of all partitions
-         <replaceable class="parameter">partition_name1</replaceable>,
-         <replaceable class="parameter">partition_name2</replaceable> [, ...] are
-         combined and form the list of values of partition
-         <replaceable class="parameter">partition_name</replaceable>.
-        </para>
-       </listitem>
-      </itemizedlist>
-      If DEFAULT partition is in the list of partitions <replaceable class="parameter">partition_name1</replaceable>,
-      <replaceable class="parameter">partition_name2</replaceable> [, ...]:
-      <itemizedlist>
-       <listitem>
-        <para>
-         The partition <replaceable class="parameter">partition_name</replaceable>
-         will be the DEFAULT partition.
-        </para>
-       </listitem>
-       <listitem>
-        <para>
-         For range- and list-partitioned tables the ranges and lists of values
-         of the merged partitions can be any.
-        </para>
-       </listitem>
-      </itemizedlist>
-      The new partition <replaceable class="parameter">partition_name</replaceable>
-      can have the same name as one of the merged partitions.  Only simple,
-      non-partitioned partitions can be merged.
-     </para>
-     <para>
-      The new partition will be created the same as a table created with the
-      SQL command <literal>CREATE TABLE <replaceable class="parameter">partition_name</replaceable> (LIKE <replaceable class="parameter">name</replaceable> INCLUDING ALL EXCLUDING INDEXES EXCLUDING IDENTITY EXCLUDING STATISTICS)</literal>.
-      The indexes and identity are created later, after moving the data
-      into the new partition.
-      Extended statistics aren't copied from the parent table, for consistency with
-      <command>CREATE TABLE PARTITION OF</command>.
-      The new partition will have the same table access method as the parent.
-      If the parent table is persistent then the new partition is created
-      persistent.  If the parent table is temporary then the new partition
-      is also created temporary.
-     </para>
-     <note>
-      <para>
-       This command acquires an <literal>ACCESS EXCLUSIVE</literal> lock.
-       This is a significant limitation, which limits the usage of this
-       command with large partitioned tables under a high load.
-      </para>
-     </note>
-    </listitem>
-   </varlistentry>
-
   </variablelist>
   </para>
 
   <para>
    All the forms of ALTER TABLE that act on a single table, except
    <literal>RENAME</literal>, <literal>SET SCHEMA</literal>,
-   <literal>ATTACH PARTITION</literal>, <literal>DETACH PARTITION</literal>,
-   <literal>SPLIT PARTITION</literal>, and <literal>MERGE PARTITIONS</literal>
-   can be combined into
+   <literal>ATTACH PARTITION</literal>, and
+   <literal>DETACH PARTITION</literal> can be combined into
    a list of multiple alterations to be applied together.  For example, it
    is possible to add several columns and/or alter the type of several
    columns in a single command.  This is particularly useful with large
@@ -1498,8 +1370,7 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       <term><replaceable class="parameter">partition_name</replaceable></term>
       <listitem>
        <para>
-        The name of the table to attach as a new partition or to detach from this table,
-        or the name of split partition, or the name of the new merged partition.
+        The name of the table to attach as a new partition or to detach from this table.
        </para>
       </listitem>
      </varlistentry>
@@ -1913,31 +1784,6 @@ ALTER TABLE cities
 <programlisting>
 ALTER TABLE measurement
     DETACH PARTITION measurement_y2015m12;
-</programlisting></para>
-
-  <para>
-   To split a single partition of the range-partitioned table:
-<programlisting>
-ALTER TABLE sales_range SPLIT PARTITION sales_feb_mar_apr2023 INTO
-   (PARTITION sales_feb2023 FOR VALUES FROM ('2023-02-01') TO ('2023-03-01'),
-    PARTITION sales_mar2023 FOR VALUES FROM ('2023-03-01') TO ('2023-04-01'),
-    PARTITION sales_apr2023 FOR VALUES FROM ('2023-04-01') TO ('2023-05-01'));
-</programlisting></para>
-
-  <para>
-   To split a single partition of the list-partitioned table:
-<programlisting>
-ALTER TABLE sales_list SPLIT PARTITION sales_all INTO
-   (PARTITION sales_west FOR VALUES IN ('Lisbon', 'New York', 'Madrid'),
-    PARTITION sales_east FOR VALUES IN ('Bejing', 'Delhi', 'Vladivostok'),
-    PARTITION sales_central FOR VALUES IN ('Warsaw', 'Berlin', 'Kyiv'));
-</programlisting></para>
-
-  <para>
-   To merge several partitions into one partition of the target table:
-<programlisting>
-ALTER TABLE sales_list MERGE PARTITIONS (sales_west, sales_east, sales_central)
-    INTO sales_all;
 </programlisting></para>
 
  </refsect1>

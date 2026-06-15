@@ -36,6 +36,7 @@
 #endif
 
 
+extern char *sanitize_line(const char *str, bool want_hyphen);
 extern bool buildACLCommands(const char *name, const char *subname, const char *nspname,
 							 const char *type, const char *acls, const char *baseacls,
 							 const char *owner, const char *prefix, int remoteVersion,
@@ -62,5 +63,8 @@ extern void makeAlterConfigCommand(PGconn *conn, const char *configitem,
 								   const char *type, const char *name,
 								   const char *type2, const char *name2,
 								   PQExpBuffer buf);
+
+extern char *generate_restrict_key(void);
+extern bool valid_restrict_key(const char *restrict_key);
 
 #endif							/* DUMPUTILS_H */

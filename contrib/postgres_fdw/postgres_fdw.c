@@ -239,6 +239,7 @@ typedef struct PgFdwDirectModifyState
 	PGresult   *result;			/* result for query */
 	int			num_tuples;		/* # of result tuples */
 	int			next_tuple;		/* index of next one to return */
+	MemoryContextCallback result_cb;	/* ensures result will get freed */
 	Relation	resultRel;		/* relcache entry for the target relation */
 	AttrNumber *attnoMap;		/* array of attnums of input user columns */
 	AttrNumber	ctidAttno;		/* attnum of input ctid column */
@@ -1662,9 +1663,12 @@ postgresReScanForeignScan(ForeignScanState *node)
 
 	/*
 	 * If any internal parameters affecting this node have changed, we'd
-	 * better destroy and recreate the cursor.  Otherwise, rewinding it should
-	 * be good enough.  If we've only fetched zero or one batch, we needn't
-	 * even rewind the cursor, just rescan what we have.
+	 * better destroy and recreate the cursor.  Otherwise, if the remote
+	 * server is v14 or older, rewinding it should be good enough; if not,
+	 * rewind is only allowed for scrollable cursors, but we don't have a way
+	 * to check the scrollability of it, so destroy and recreate it in any
+	 * case.  If we've only fetched zero or one batch, we needn't even rewind
+	 * the cursor, just rescan what we have.
 	 */
 	if (node->ss.ps.chgParam != NULL)
 	{
@@ -1674,8 +1678,15 @@ postgresReScanForeignScan(ForeignScanState *node)
 	}
 	else if (fsstate->fetch_ct_2 > 1)
 	{
-		snprintf(sql, sizeof(sql), "MOVE BACKWARD ALL IN c%u",
-				 fsstate->cursor_number);
+		if (PQserverVersion(fsstate->conn) < 150000)
+			snprintf(sql, sizeof(sql), "MOVE BACKWARD ALL IN c%u",
+					 fsstate->cursor_number);
+		else
+		{
+			fsstate->cursor_exists = false;
+			snprintf(sql, sizeof(sql), "CLOSE c%u",
+					 fsstate->cursor_number);
+		}
 	}
 	else
 	{
@@ -2653,6 +2664,17 @@ postgresBeginDirectModify(ForeignScanState *node, int eflags)
 	node->fdw_state = (void *) dmstate;
 
 	/*
+	 * We use a memory context callback to ensure that the dmstate's PGresult
+	 * (if any) will be released, even if the query fails somewhere that's
+	 * outside our control.  The callback is always armed for the duration of
+	 * the query; this relies on PQclear(NULL) being a no-op.
+	 */
+	dmstate->result_cb.func = (MemoryContextCallbackFunction) PQclear;
+	dmstate->result_cb.arg = NULL;
+	MemoryContextRegisterResetCallback(CurrentMemoryContext,
+									   &dmstate->result_cb);
+
+	/*
 	 * Identify which user to do the remote access as.  This should match what
 	 * ExecCheckPermissions() does.
 	 */
@@ -2799,7 +2821,13 @@ postgresEndDirectModify(ForeignScanState *node)
 		return;
 
 	/* Release PGresult */
-	PQclear(dmstate->result);
+	if (dmstate->result)
+	{
+		PQclear(dmstate->result);
+		dmstate->result = NULL;
+		/* ... and don't forget to disable the callback */
+		dmstate->result_cb.arg = NULL;
+	}
 
 	/* Release remote connection */
 	ReleaseConnection(dmstate->conn);
@@ -4568,13 +4596,17 @@ execute_dml_stmt(ForeignScanState *node)
 	/*
 	 * Get the result, and check for success.
 	 *
-	 * We don't use a PG_TRY block here, so be careful not to throw error
-	 * without releasing the PGresult.
+	 * We use a memory context callback to ensure that the PGresult will be
+	 * released, even if the query fails somewhere that's outside our control.
+	 * The callback is already registered, just need to fill in its arg.
 	 */
+	Assert(dmstate->result == NULL);
 	dmstate->result = pgfdw_get_result(dmstate->conn);
+	dmstate->result_cb.arg = dmstate->result;
+
 	if (PQresultStatus(dmstate->result) !=
 		(dmstate->has_returning ? PGRES_TUPLES_OK : PGRES_COMMAND_OK))
-		pgfdw_report_error(ERROR, dmstate->result, dmstate->conn, true,
+		pgfdw_report_error(ERROR, dmstate->result, dmstate->conn, false,
 						   dmstate->query);
 
 	/* Get the number of rows affected. */
@@ -4618,30 +4650,16 @@ get_returning_data(ForeignScanState *node)
 	}
 	else
 	{
-		/*
-		 * On error, be sure to release the PGresult on the way out.  Callers
-		 * do not have PG_TRY blocks to ensure this happens.
-		 */
-		PG_TRY();
-		{
-			HeapTuple	newtup;
+		HeapTuple	newtup;
 
-			newtup = make_tuple_from_result_row(dmstate->result,
-												dmstate->next_tuple,
-												dmstate->rel,
-												dmstate->attinmeta,
-												dmstate->retrieved_attrs,
-												node,
-												dmstate->temp_cxt);
-			ExecStoreHeapTuple(newtup, slot, false);
-		}
-		PG_CATCH();
-		{
-			PQclear(dmstate->result);
-			PG_RE_THROW();
-		}
-		PG_END_TRY();
-
+		newtup = make_tuple_from_result_row(dmstate->result,
+											dmstate->next_tuple,
+											dmstate->rel,
+											dmstate->attinmeta,
+											dmstate->retrieved_attrs,
+											node,
+											dmstate->temp_cxt);
+		ExecStoreHeapTuple(newtup, slot, false);
 		/* Get the updated/deleted tuple. */
 		if (dmstate->rel)
 			resultSlot = slot;
@@ -5748,8 +5766,7 @@ semijoin_target_ok(PlannerInfo *root, RelOptInfo *joinrel, RelOptInfo *outerrel,
 		if (!IsA(var, Var))
 			continue;
 
-		if (bms_is_member(var->varno, innerrel->relids) &&
-			!bms_is_member(var->varno, outerrel->relids))
+		if (bms_is_member(var->varno, innerrel->relids))
 		{
 			/*
 			 * The planner can create semi-join, which refers to inner rel
@@ -5757,6 +5774,7 @@ semijoin_target_ok(PlannerInfo *root, RelOptInfo *joinrel, RelOptInfo *outerrel,
 			 * exists() subquery, so can't handle references to inner rel in
 			 * the target list.
 			 */
+			Assert(!bms_is_member(var->varno, outerrel->relids));
 			ok = false;
 			break;
 		}
@@ -5943,17 +5961,33 @@ foreign_join_ok(PlannerInfo *root, RelOptInfo *joinrel, JoinType jointype,
 			break;
 
 		case JOIN_LEFT:
-			fpinfo->joinclauses = list_concat(fpinfo->joinclauses,
-											  fpinfo_i->remote_conds);
-			fpinfo->remote_conds = list_concat(fpinfo->remote_conds,
-											   fpinfo_o->remote_conds);
+
+			/*
+			 * When semi-join is involved in the inner or outer part of the
+			 * left join, it's deparsed as a subquery, and we can't refer to
+			 * its vars on the upper level.
+			 */
+			if (bms_is_empty(fpinfo_i->hidden_subquery_rels))
+				fpinfo->joinclauses = list_concat(fpinfo->joinclauses,
+												  fpinfo_i->remote_conds);
+			if (bms_is_empty(fpinfo_o->hidden_subquery_rels))
+				fpinfo->remote_conds = list_concat(fpinfo->remote_conds,
+												   fpinfo_o->remote_conds);
 			break;
 
 		case JOIN_RIGHT:
-			fpinfo->joinclauses = list_concat(fpinfo->joinclauses,
-											  fpinfo_o->remote_conds);
-			fpinfo->remote_conds = list_concat(fpinfo->remote_conds,
-											   fpinfo_i->remote_conds);
+
+			/*
+			 * When semi-join is involved in the inner or outer part of the
+			 * right join, it's deparsed as a subquery, and we can't refer to
+			 * its vars on the upper level.
+			 */
+			if (bms_is_empty(fpinfo_o->hidden_subquery_rels))
+				fpinfo->joinclauses = list_concat(fpinfo->joinclauses,
+												  fpinfo_o->remote_conds);
+			if (bms_is_empty(fpinfo_i->hidden_subquery_rels))
+				fpinfo->remote_conds = list_concat(fpinfo->remote_conds,
+												   fpinfo_i->remote_conds);
 			break;
 
 		case JOIN_SEMI:

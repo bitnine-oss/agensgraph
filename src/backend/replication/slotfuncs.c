@@ -681,6 +681,13 @@ copy_replication_slot(FunctionCallInfo fcinfo, bool logical_slot)
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("cannot copy a replication slot that doesn't reserve WAL")));
 
+	/* Cannot copy an invalidated replication slot */
+	if (first_slot_contents.data.invalidated != RS_INVAL_NONE)
+		ereport(ERROR,
+				errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				errmsg("cannot copy invalidated replication slot \"%s\"",
+					   NameStr(*src_name)));
+
 	/* Overwrite params from optional arguments */
 	if (PG_NARGS() >= 3)
 		temporary = PG_GETARG_BOOL(2);
@@ -698,13 +705,18 @@ copy_replication_slot(FunctionCallInfo fcinfo, bool logical_slot)
 		 * hence pass find_startpoint false.  confirmed_flush will be set
 		 * below, by copying from the source slot.
 		 *
-		 * To avoid potential issues with the slot synchronization where the
-		 * restart_lsn of a replication slot can go backward, we set the
-		 * failover option to false here.  This situation occurs when a slot
-		 * on the primary server is dropped and immediately replaced with a
-		 * new slot of the same name, created by copying from another existing
-		 * slot.  However, the slot synchronization will only observe the
-		 * restart_lsn of the same slot going backward.
+		 * We don't copy the failover option to prevent potential issues with
+		 * slot synchronization. For instance, if a slot was synchronized to
+		 * the standby, then dropped on the primary, and immediately recreated
+		 * by copying from another existing slot with much earlier restart_lsn
+		 * and confirmed_flush_lsn, the slot synchronization would only
+		 * observe the LSN of the same slot moving backward. As slot
+		 * synchronization does not copy the restart_lsn and
+		 * confirmed_flush_lsn backward (see update_local_synced_slot() for
+		 * details), if a failover happens before the primary's slot catches
+		 * up, logical replication cannot continue using the synchronized slot
+		 * on the promoted standby because the slot retains the restart_lsn
+		 * and confirmed_flush_lsn that are much later than expected.
 		 */
 		create_logical_replication_slot(NameStr(*dst_name),
 										plugin,
@@ -776,6 +788,20 @@ copy_replication_slot(FunctionCallInfo fcinfo, bool logical_slot)
 					 errmsg("cannot copy unfinished logical replication slot \"%s\"",
 							NameStr(*src_name)),
 					 errhint("Retry when the source replication slot's confirmed_flush_lsn is valid.")));
+
+		/*
+		 * Copying an invalid slot doesn't make sense. Note that the source
+		 * slot can become invalid after we create the new slot and copy the
+		 * data of source slot. This is possible because the operations in
+		 * InvalidateObsoleteReplicationSlots() are not serialized with this
+		 * function. Even though we can't detect such a case here, the copied
+		 * slot will become invalid in the next checkpoint cycle.
+		 */
+		if (second_slot_contents.data.invalidated != RS_INVAL_NONE)
+			ereport(ERROR,
+					errmsg("cannot copy replication slot \"%s\"",
+						   NameStr(*src_name)),
+					errdetail("The source replication slot was invalidated during the copy operation."));
 
 		/* Install copied values again */
 		SpinLockAcquire(&MyReplicationSlot->mutex);

@@ -374,6 +374,7 @@ typedef struct ExprEvalStep
 			/* faster to access without additional indirection: */
 			PGFunction	fn_addr;	/* actual call address */
 			int			nargs;	/* number of arguments */
+			bool		make_ro;	/* make arg0 R/O (used only for NULLIF) */
 		}			func;
 
 		/* for EEOP_BOOL_*_STEP */
@@ -605,6 +606,10 @@ typedef struct ExprEvalStep
 		{
 			bool		has_nulls;
 			bool		inclause;	/* true for IN and false for NOT IN */
+			bool		null_lhs_result;	/* for non-strict lookups, we
+											 * cache what looking up NULL
+											 * returns. */
+			bool		null_lhs_isnull;
 			struct ScalarArrayOpExprHashTable *elements_tab;
 			FmgrInfo   *finfo;	/* function's lookup data */
 			FunctionCallInfo fcinfo_data;	/* arguments etc */
@@ -726,7 +731,11 @@ typedef struct ExprEvalStep
 			Oid			targettype;
 			int32		targettypmod;
 			bool		omit_quotes;
-			void	   *json_populate_type_cache;
+			/* exists_* fields only relevant for JSON_EXISTS_OP. */
+			bool		exists_coerce;
+			bool		exists_cast_to_int;
+			bool		exists_check_domain;
+			void	   *json_coercion_cache;
 			ErrorSaveContext *escontext;
 		}			jsonexpr_coercion;
 

@@ -791,7 +791,7 @@ pgss_shmem_shutdown(int code, Datum arg)
 	if (fwrite(&pgss->stats, sizeof(pgssGlobalStats), 1, file) != 1)
 		goto error;
 
-	free(qbuffer);
+	pfree(qbuffer);
 	qbuffer = NULL;
 
 	if (FreeFile(file))
@@ -815,7 +815,8 @@ error:
 			(errcode_for_file_access(),
 			 errmsg("could not write file \"%s\": %m",
 					PGSS_DUMP_FILE ".tmp")));
-	free(qbuffer);
+	if (qbuffer)
+		pfree(qbuffer);
 	if (file)
 		FreeFile(file);
 	unlink(PGSS_DUMP_FILE ".tmp");
@@ -887,13 +888,6 @@ pgss_planner(Query *parse,
 	 * We can't process the query if no query_string is provided, as
 	 * pgss_store needs it.  We also ignore query without queryid, as it would
 	 * be treated as a utility statement, which may not be the case.
-	 *
-	 * Note that planner_hook can be called from the planner itself, so we
-	 * have a specific nesting level for the planner.  However, utility
-	 * commands containing optimizable statements can also call the planner,
-	 * same for regular DML (for instance for underlying foreign key queries).
-	 * So testing the planner nesting level only is not enough to detect real
-	 * top level planner call.
 	 */
 	if (pgss_enabled(nesting_level)
 		&& pgss_track_planning && query_string
@@ -1768,7 +1762,8 @@ pg_stat_statements_internal(FunctionCallInfo fcinfo,
 			pgss->extent != extent ||
 			pgss->gc_count != gc_count)
 		{
-			free(qbuffer);
+			if (qbuffer)
+				pfree(qbuffer);
 			qbuffer = qtext_load_file(&qbuffer_size);
 		}
 	}
@@ -1969,7 +1964,8 @@ pg_stat_statements_internal(FunctionCallInfo fcinfo,
 
 	LWLockRelease(pgss->lock);
 
-	free(qbuffer);
+	if (qbuffer)
+		pfree(qbuffer);
 }
 
 /* Number of output arguments (columns) for pg_stat_statements_info */
@@ -2276,7 +2272,7 @@ error:
 }
 
 /*
- * Read the external query text file into a malloc'd buffer.
+ * Read the external query text file into a palloc'd buffer.
  *
  * Returns NULL (without throwing an error) if unable to read, eg
  * file not there or insufficient memory.
@@ -2318,7 +2314,7 @@ qtext_load_file(Size *buffer_size)
 
 	/* Allocate buffer; beware that off_t might be wider than size_t */
 	if (stat.st_size <= MaxAllocHugeSize)
-		buf = (char *) malloc(stat.st_size);
+		buf = (char *) palloc_extended(stat.st_size, MCXT_ALLOC_HUGE | MCXT_ALLOC_NO_OOM);
 	else
 		buf = NULL;
 	if (buf == NULL)
@@ -2357,7 +2353,7 @@ qtext_load_file(Size *buffer_size)
 						(errcode_for_file_access(),
 						 errmsg("could not read file \"%s\": %m",
 								PGSS_TEXT_FILE)));
-			free(buf);
+			pfree(buf);
 			CloseTransientFile(fd);
 			return NULL;
 		}
@@ -2572,7 +2568,7 @@ gc_qtexts(void)
 	else
 		pgss->mean_query_len = ASSUMED_LENGTH_INIT;
 
-	free(qbuffer);
+	pfree(qbuffer);
 
 	/*
 	 * OK, count a garbage collection cycle.  (Note: even though we have
@@ -2589,7 +2585,8 @@ gc_fail:
 	/* clean up resources */
 	if (qfile)
 		FreeFile(qfile);
-	free(qbuffer);
+	if (qbuffer)
+		pfree(qbuffer);
 
 	/*
 	 * Since the contents of the external file are now uncertain, mark all
@@ -2808,6 +2805,7 @@ generate_normalized_query(JumbleState *jstate, const char *query,
 				n_quer_loc = 0, /* Normalized query byte location */
 				last_off = 0,	/* Offset from start for previous tok */
 				last_tok_len = 0;	/* Length (in bytes) of that tok */
+	int			num_constants_replaced = 0;
 
 	/*
 	 * Get constants' lengths (core system only gives us locations).  Note
@@ -2851,7 +2849,8 @@ generate_normalized_query(JumbleState *jstate, const char *query,
 
 		/* And insert a param symbol in place of the constant token */
 		n_quer_loc += sprintf(norm_query + n_quer_loc, "$%d",
-							  i + 1 + jstate->highest_extern_param_id);
+							  num_constants_replaced + 1 + jstate->highest_extern_param_id);
+		num_constants_replaced++;
 
 		quer_loc = off + tok_len;
 		last_off = off;

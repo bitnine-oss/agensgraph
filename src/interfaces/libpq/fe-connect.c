@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <ctype.h>
+#include <limits.h>
 #include <netdb.h>
 #include <time.h>
 #include <unistd.h>
@@ -1060,7 +1061,7 @@ parse_comma_separated_list(char **startptr, bool *more)
 	char	   *p;
 	char	   *s = *startptr;
 	char	   *e;
-	int			len;
+	size_t		len;
 
 	/*
 	 * Search for the end of the current element; a comma or end-of-string
@@ -2168,14 +2169,14 @@ connectFailureMessage(PGconn *conn, int errorno)
 static int
 useKeepalives(PGconn *conn)
 {
-	char	   *ep;
 	int			val;
 
 	if (conn->keepalives == NULL)
 		return 1;
-	val = strtol(conn->keepalives, &ep, 10);
-	if (*ep)
+
+	if (!pqParseIntParam(conn->keepalives, &val, conn, "keepalives"))
 		return -1;
+
 	return val != 0 ? 1 : 0;
 }
 
@@ -3083,7 +3084,7 @@ keep_going:						/* We will come back to here until there is
 
 						if (usekeepalives < 0)
 						{
-							libpq_append_conn_error(conn, "keepalives parameter must be an integer");
+							/* error is already reported */
 							err = 1;
 						}
 						else if (usekeepalives == 0)
@@ -3512,16 +3513,12 @@ keep_going:						/* We will come back to here until there is
 					{
 						/*
 						 * Server failure of some sort, such as failure to
-						 * fork a backend process.  We need to process and
-						 * report the error message, which might be formatted
-						 * according to either protocol 2 or protocol 3.
-						 * Rather than duplicate the code for that, we flip
-						 * into AWAITING_RESPONSE state and let the code there
-						 * deal with it.  Note we have *not* consumed the "E"
-						 * byte here.
+						 * fork a backend process.  Don't bother retrieving
+						 * the error message; we should not trust it as the
+						 * server has not been authenticated yet.
 						 */
-						conn->status = CONNECTION_AWAITING_RESPONSE;
-						goto keep_going;
+						libpq_append_conn_error(conn, "server sent an error response during SSL exchange");
+						goto error_return;
 					}
 					else
 					{
@@ -3564,8 +3561,8 @@ keep_going:						/* We will come back to here until there is
 				if (pollres == PGRES_POLLING_FAILED)
 				{
 					/*
-					 * Failed direct ssl connection, possibly try a new
-					 * connection with postgres negotiation
+					 * SSL handshake failed.  We will retry with a plaintext
+					 * connection, if permitted by sslmode.
 					 */
 					CONNECTION_FAILED();
 				}
@@ -3605,16 +3602,19 @@ keep_going:						/* We will come back to here until there is
 					{
 						/*
 						 * Server failure of some sort, possibly protocol
-						 * version support failure.  We need to process and
-						 * report the error message, which might be formatted
-						 * according to either protocol 2 or protocol 3.
-						 * Rather than duplicate the code for that, we flip
-						 * into AWAITING_RESPONSE state and let the code there
-						 * deal with it.  Note we have *not* consumed the "E"
-						 * byte here.
+						 * version support failure.  Don't bother retrieving
+						 * the error message; we should not trust it anyway as
+						 * the server has not authenticated yet.
+						 *
+						 * Note that unlike on an error response to
+						 * SSLRequest, we allow falling back to SSL or
+						 * plaintext connection here.  GSS support was
+						 * introduced in PostgreSQL version 12, so an error
+						 * response might mean that we are connecting to a
+						 * pre-v12 server.
 						 */
-						conn->status = CONNECTION_AWAITING_RESPONSE;
-						goto keep_going;
+						libpq_append_conn_error(conn, "server sent an error response during GSS encryption exchange");
+						CONNECTION_FAILED();
 					}
 
 					/* mark byte consumed */
@@ -3659,6 +3659,10 @@ keep_going:						/* We will come back to here until there is
 				}
 				else if (pollres == PGRES_POLLING_FAILED)
 				{
+					/*
+					 * GSS handshake failed.  We will retry with an SSL or
+					 * plaintext connection, if permitted by the options.
+					 */
 					CONNECTION_FAILED();
 				}
 				/* Else, return POLLING_READING or POLLING_WRITING status */
@@ -5319,7 +5323,21 @@ ldapServiceLookup(const char *purl, PQconninfoOption *options,
 	/* concatenate values into a single string with newline terminators */
 	size = 1;					/* for the trailing null */
 	for (i = 0; values[i] != NULL; i++)
+	{
+		if (values[i]->bv_len >= INT_MAX ||
+			size > (INT_MAX - (values[i]->bv_len + 1)))
+		{
+			libpq_append_error(errorMessage,
+							   "connection info string size exceeds the maximum allowed (%d)",
+							   INT_MAX);
+			ldap_value_free_len(values);
+			ldap_unbind(ld);
+			return 3;
+		}
+
 		size += values[i]->bv_len + 1;
+	}
+
 	if ((result = malloc(size)) == NULL)
 	{
 		libpq_append_error(errorMessage, "out of memory");
@@ -7071,7 +7089,9 @@ PQport(const PGconn *conn)
 	if (!conn)
 		return NULL;
 
-	if (conn->connhost != NULL)
+	if (conn->connhost != NULL &&
+		conn->connhost[conn->whichhost].port != NULL &&
+		conn->connhost[conn->whichhost].port[0] != '\0')
 		return conn->connhost[conn->whichhost].port;
 
 	return "";

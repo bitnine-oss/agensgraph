@@ -733,6 +733,11 @@ GenerationFree(void *pointer)
 	}
 
 #ifdef MEMORY_CONTEXT_CHECKING
+	/* See comments in AllocSetFree about uses of ERROR and WARNING here */
+	/* Test for previously-freed chunk */
+	if (unlikely(chunk->requested_size == InvalidAllocSize))
+		elog(ERROR, "detected double pfree in %s %p",
+			 ((MemoryContext) block->context)->name, chunk);
 	/* Test for someone scribbling on unused space in chunk */
 	Assert(chunk->requested_size < chunksize);
 	if (!sentinel_ok(pointer, chunk->requested_size))
@@ -838,6 +843,11 @@ GenerationRealloc(void *pointer, Size size, int flags)
 	set = block->context;
 
 #ifdef MEMORY_CONTEXT_CHECKING
+	/* See comments in AllocSetFree about uses of ERROR and WARNING here */
+	/* Test for previously-freed chunk */
+	if (unlikely(chunk->requested_size == InvalidAllocSize))
+		elog(ERROR, "detected realloc of freed chunk in %s %p",
+			 ((MemoryContext) set)->name, chunk);
 	/* Test for someone scribbling on unused space in chunk */
 	Assert(chunk->requested_size < oldsize);
 	if (!sentinel_ok(pointer, chunk->requested_size))
@@ -846,8 +856,8 @@ GenerationRealloc(void *pointer, Size size, int flags)
 #endif
 
 	/*
-	 * Maybe the allocated area already is >= the new size.  (In particular,
-	 * we always fall out here if the requested size is a decrease.)
+	 * Maybe the allocated area already big enough.  (In particular, we always
+	 * fall out here if the requested size is a decrease.)
 	 *
 	 * This memory context does not use power-of-2 chunk sizing and instead
 	 * carves the chunks to be as small as possible, so most repalloc() calls
@@ -855,7 +865,12 @@ GenerationRealloc(void *pointer, Size size, int flags)
 	 *
 	 * XXX Perhaps we should annotate this condition with unlikely()?
 	 */
+#ifdef MEMORY_CONTEXT_CHECKING
+	/* With MEMORY_CONTEXT_CHECKING, we need an extra byte for the sentinel */
+	if (oldsize > size)
+#else
 	if (oldsize >= size)
+#endif
 	{
 #ifdef MEMORY_CONTEXT_CHECKING
 		Size		oldrequest = chunk->requested_size;

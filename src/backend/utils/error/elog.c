@@ -1569,6 +1569,23 @@ geterrcode(void)
 }
 
 /*
+ * geterrlevel --- return the currently set error level
+ *
+ * This is only intended for use in error callback subroutines, since there
+ * is no other place outside elog.c where the concept is meaningful.
+ */
+int
+geterrlevel(void)
+{
+	ErrorData  *edata = &errordata[errordata_stack_depth];
+
+	/* we don't bother incrementing recursion_depth */
+	CHECK_STACK_DEPTH();
+
+	return edata->elevel;
+}
+
+/*
  * geterrposition --- return the currently set error position (0 if none)
  *
  * This is only intended for use in error callback subroutines, since there
@@ -2927,12 +2944,12 @@ log_status_format(StringInfo buf, const char *format, ErrorData *edata)
 				{
 					char		strfbuf[128];
 
-					snprintf(strfbuf, sizeof(strfbuf) - 1, "%lx.%x",
-							 (long) (MyStartTime), MyProcPid);
+					snprintf(strfbuf, sizeof(strfbuf) - 1, "%" INT64_MODIFIER "x.%x",
+							 MyStartTime, MyProcPid);
 					appendStringInfo(buf, "%*s", padding, strfbuf);
 				}
 				else
-					appendStringInfo(buf, "%lx.%x", (long) (MyStartTime), MyProcPid);
+					appendStringInfo(buf, "%" INT64_MODIFIER "x.%x", MyStartTime, MyProcPid);
 				break;
 			case 'p':
 				if (padding != 0)
@@ -3722,13 +3739,24 @@ write_stderr(const char *fmt,...)
 {
 	va_list		ap;
 
+	va_start(ap, fmt);
+	vwrite_stderr(fmt, ap);
+	va_end(ap);
+}
+
+
+/*
+ * Write errors to stderr (or by equal means when stderr is
+ * not available) - va_list version
+ */
+void
+vwrite_stderr(const char *fmt, va_list ap)
+{
 #ifdef WIN32
 	char		errbuf[2048];	/* Arbitrary size? */
 #endif
 
 	fmt = _(fmt);
-
-	va_start(ap, fmt);
 #ifndef WIN32
 	/* On Unix, we just fprintf to stderr */
 	vfprintf(stderr, fmt, ap);
@@ -3751,5 +3779,4 @@ write_stderr(const char *fmt,...)
 		fflush(stderr);
 	}
 #endif
-	va_end(ap);
 }

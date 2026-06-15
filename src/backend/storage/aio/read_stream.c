@@ -109,6 +109,7 @@ typedef struct InProgressIO
 struct ReadStream
 {
 	int16		max_ios;
+	int16		io_combine_limit;
 	int16		ios_in_progress;
 	int16		queue_size;
 	int16		max_pinned_buffers;
@@ -117,13 +118,10 @@ struct ReadStream
 	bool		advice_enabled;
 
 	/*
-	 * Small buffer of block numbers, useful for 'ungetting' to resolve flow
-	 * control problems when I/Os are split.  Also useful for batch-loading
-	 * block numbers in the fast path.
+	 * One-block buffer to support 'ungetting' a block number, to resolve flow
+	 * control problems when I/Os are split.
 	 */
-	BlockNumber blocknums[16];
-	int16		blocknums_count;
-	int16		blocknums_next;
+	BlockNumber buffered_blocknum;
 
 	/*
 	 * The callback that will tell us which block numbers to read, and an
@@ -167,23 +165,34 @@ get_per_buffer_data(ReadStream *stream, int16 buffer_index)
 }
 
 /*
- * Ask the callback which block it would like us to read next, with a small
- * buffer in front to allow read_stream_unget_block() to work and to allow the
- * fast path to skip this function and work directly from the array.
+ * Ask the callback which block it would like us to read next, with a one block
+ * buffer in front to allow read_stream_unget_block() to work.
  */
 static inline BlockNumber
 read_stream_get_block(ReadStream *stream, void *per_buffer_data)
 {
-	if (stream->blocknums_next < stream->blocknums_count)
-		return stream->blocknums[stream->blocknums_next++];
+	BlockNumber blocknum;
 
-	/*
-	 * We only bother to fetch one at a time here (but see the fast path which
-	 * uses more).
-	 */
-	return stream->callback(stream,
-							stream->callback_private_data,
-							per_buffer_data);
+	blocknum = stream->buffered_blocknum;
+	if (blocknum != InvalidBlockNumber)
+		stream->buffered_blocknum = InvalidBlockNumber;
+	else
+	{
+		/*
+		 * Tell Valgrind that the per-buffer data is undefined.  That replaces
+		 * the "noaccess" state that was set when the consumer moved past this
+		 * entry last time around the queue, and should also catch callbacks
+		 * that fail to initialize data that the buffer consumer later
+		 * accesses.  On the first go around, it is undefined already.
+		 */
+		VALGRIND_MAKE_MEM_UNDEFINED(per_buffer_data,
+									stream->per_buffer_data_size);
+		blocknum = stream->callback(stream,
+									stream->callback_private_data,
+									per_buffer_data);
+	}
+
+	return blocknum;
 }
 
 /*
@@ -193,41 +202,11 @@ read_stream_get_block(ReadStream *stream, void *per_buffer_data)
 static inline void
 read_stream_unget_block(ReadStream *stream, BlockNumber blocknum)
 {
-	if (stream->blocknums_next == stream->blocknums_count)
-	{
-		/* Never initialized or entirely consumed.  Re-initialize. */
-		stream->blocknums[0] = blocknum;
-		stream->blocknums_count = 1;
-		stream->blocknums_next = 0;
-	}
-	else
-	{
-		/* Must be the last value return from blocknums array. */
-		Assert(stream->blocknums_next > 0);
-		stream->blocknums_next--;
-		Assert(stream->blocknums[stream->blocknums_next] == blocknum);
-	}
+	/* We shouldn't ever unget more than one block. */
+	Assert(stream->buffered_blocknum == InvalidBlockNumber);
+	Assert(blocknum != InvalidBlockNumber);
+	stream->buffered_blocknum = blocknum;
 }
-
-#ifndef READ_STREAM_DISABLE_FAST_PATH
-static void
-read_stream_fill_blocknums(ReadStream *stream)
-{
-	BlockNumber blocknum;
-	int			i = 0;
-
-	do
-	{
-		blocknum = stream->callback(stream,
-									stream->callback_private_data,
-									NULL);
-		stream->blocknums[i++] = blocknum;
-	} while (i < lengthof(stream->blocknums) &&
-			 blocknum != InvalidBlockNumber);
-	stream->blocknums_count = i;
-	stream->blocknums_next = 0;
-}
-#endif
 
 static void
 read_stream_start_pending_read(ReadStream *stream, bool suppress_advice)
@@ -241,7 +220,7 @@ read_stream_start_pending_read(ReadStream *stream, bool suppress_advice)
 
 	/* This should only be called with a pending read. */
 	Assert(stream->pending_read_nblocks > 0);
-	Assert(stream->pending_read_nblocks <= io_combine_limit);
+	Assert(stream->pending_read_nblocks <= stream->io_combine_limit);
 
 	/* We had better not exceed the pin limit by starting this read. */
 	Assert(stream->pinned_buffers + stream->pending_read_nblocks <=
@@ -329,7 +308,7 @@ read_stream_look_ahead(ReadStream *stream, bool suppress_advice)
 		int16		buffer_index;
 		void	   *per_buffer_data;
 
-		if (stream->pending_read_nblocks == io_combine_limit)
+		if (stream->pending_read_nblocks == stream->io_combine_limit)
 		{
 			read_stream_start_pending_read(stream, suppress_advice);
 			suppress_advice = false;
@@ -389,7 +368,7 @@ read_stream_look_ahead(ReadStream *stream, bool suppress_advice)
 	 * signaled end-of-stream, we start the read immediately.
 	 */
 	if (stream->pending_read_nblocks > 0 &&
-		(stream->pending_read_nblocks == io_combine_limit ||
+		(stream->pending_read_nblocks == stream->io_combine_limit ||
 		 (stream->pending_read_nblocks == stream->distance &&
 		  stream->pinned_buffers == 0) ||
 		 stream->distance == 0) &&
@@ -418,6 +397,7 @@ read_stream_begin_relation(int flags,
 	ReadStream *stream;
 	size_t		size;
 	int16		queue_size;
+	int16		queue_overflow;
 	int			max_ios;
 	int			strategy_pin_limit;
 	uint32		max_pinned_buffers;
@@ -452,6 +432,14 @@ read_stream_begin_relation(int flags,
 	max_ios = Min(max_ios, PG_INT16_MAX);
 
 	/*
+	 * If starting a multi-block I/O near the end of the queue, we might
+	 * temporarily need extra space for overflowing buffers before they are
+	 * moved to regular circular position.  This is the maximum extra space we
+	 * could need.
+	 */
+	queue_overflow = io_combine_limit - 1;
+
+	/*
 	 * Choose the maximum number of buffers we're prepared to pin.  We try to
 	 * pin fewer if we can, though.  We clamp it to at least io_combine_limit
 	 * so that we can have a chance to build up a full io_combine_limit sized
@@ -461,7 +449,7 @@ read_stream_begin_relation(int flags,
 	 */
 	max_pinned_buffers = Max(max_ios * 4, io_combine_limit);
 	max_pinned_buffers = Min(max_pinned_buffers,
-							 PG_INT16_MAX - io_combine_limit - 1);
+							 PG_INT16_MAX - queue_overflow - 1);
 
 	/* Give the strategy a chance to limit the number of buffers we pin. */
 	strategy_pin_limit = GetAccessStrategyPinLimit(strategy);
@@ -487,18 +475,17 @@ read_stream_begin_relation(int flags,
 	 * one big chunk.  Though we have queue_size buffers, we want to be able
 	 * to assume that all the buffers for a single read are contiguous (i.e.
 	 * don't wrap around halfway through), so we allow temporary overflows of
-	 * up to the maximum possible read size by allocating an extra
-	 * io_combine_limit - 1 elements.
+	 * up to the maximum possible overflow size.
 	 */
 	size = offsetof(ReadStream, buffers);
-	size += sizeof(Buffer) * (queue_size + io_combine_limit - 1);
+	size += sizeof(Buffer) * (queue_size + queue_overflow);
 	size += sizeof(InProgressIO) * Max(1, max_ios);
 	size += per_buffer_data_size * queue_size;
 	size += MAXIMUM_ALIGNOF * 2;
 	stream = (ReadStream *) palloc(size);
 	memset(stream, 0, offsetof(ReadStream, buffers));
 	stream->ios = (InProgressIO *)
-		MAXALIGN(&stream->buffers[queue_size + io_combine_limit - 1]);
+		MAXALIGN(&stream->buffers[queue_size + queue_overflow]);
 	if (per_buffer_data_size > 0)
 		stream->per_buffer_data = (void *)
 			MAXALIGN(&stream->ios[Max(1, max_ios)]);
@@ -525,12 +512,20 @@ read_stream_begin_relation(int flags,
 	if (max_ios == 0)
 		max_ios = 1;
 
+	/*
+	 * Capture stable values for these two GUC-derived numbers for the
+	 * lifetime of this stream, so we don't have to worry about the GUCs
+	 * changing underneath us beyond this point.
+	 */
 	stream->max_ios = max_ios;
+	stream->io_combine_limit = io_combine_limit;
+
 	stream->per_buffer_data_size = per_buffer_data_size;
 	stream->max_pinned_buffers = max_pinned_buffers;
 	stream->queue_size = queue_size;
 	stream->callback = callback;
 	stream->callback_private_data = callback_private_data;
+	stream->buffered_blocknum = InvalidBlockNumber;
 
 	/*
 	 * Skip the initial ramp-up phase if the caller says we're going to be
@@ -538,7 +533,7 @@ read_stream_begin_relation(int flags,
 	 * doing full io_combine_limit sized reads (behavior B).
 	 */
 	if (flags & READ_STREAM_FULL)
-		stream->distance = Min(max_pinned_buffers, io_combine_limit);
+		stream->distance = Min(max_pinned_buffers, stream->io_combine_limit);
 	else
 		stream->distance = 1;
 
@@ -601,9 +596,7 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 		Assert(buffer != InvalidBuffer);
 
 		/* Choose the next block to pin. */
-		if (unlikely(stream->blocknums_next == stream->blocknums_count))
-			read_stream_fill_blocknums(stream);
-		next_blocknum = stream->blocknums[stream->blocknums_next++];
+		next_blocknum = read_stream_get_block(stream, NULL);
 
 		if (likely(next_blocknum != InvalidBlockNumber))
 		{
@@ -706,14 +699,14 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 		else
 		{
 			/* No advice; move towards io_combine_limit (behavior B). */
-			if (stream->distance > io_combine_limit)
+			if (stream->distance > stream->io_combine_limit)
 			{
 				stream->distance--;
 			}
 			else
 			{
 				distance = stream->distance * 2;
-				distance = Min(distance, io_combine_limit);
+				distance = Min(distance, stream->io_combine_limit);
 				distance = Min(distance, stream->max_pinned_buffers);
 				stream->distance = distance;
 			}
@@ -721,8 +714,11 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 	}
 
 #ifdef CLOBBER_FREED_MEMORY
-	/* Clobber old buffer and per-buffer data for debugging purposes. */
+	/* Clobber old buffer for debugging purposes. */
 	stream->buffers[oldest_buffer_index] = InvalidBuffer;
+#endif
+
+#if defined(CLOBBER_FREED_MEMORY) || defined(USE_VALGRIND)
 
 	/*
 	 * The caller will get access to the per-buffer data, until the next call.
@@ -731,11 +727,23 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 	 * that is holding a dangling pointer to it.
 	 */
 	if (stream->per_buffer_data)
-		wipe_mem(get_per_buffer_data(stream,
-									 oldest_buffer_index == 0 ?
-									 stream->queue_size - 1 :
-									 oldest_buffer_index - 1),
-				 stream->per_buffer_data_size);
+	{
+		void	   *per_buffer_data;
+
+		per_buffer_data = get_per_buffer_data(stream,
+											  oldest_buffer_index == 0 ?
+											  stream->queue_size - 1 :
+											  oldest_buffer_index - 1);
+
+#if defined(CLOBBER_FREED_MEMORY)
+		/* This also tells Valgrind the memory is "noaccess". */
+		wipe_mem(per_buffer_data, stream->per_buffer_data_size);
+#elif defined(USE_VALGRIND)
+		/* Tell it ourselves. */
+		VALGRIND_MAKE_MEM_NOACCESS(per_buffer_data,
+								   stream->per_buffer_data_size);
+#endif
+	}
 #endif
 
 	/* Pin transferred to caller. */
@@ -766,6 +774,20 @@ read_stream_next_buffer(ReadStream *stream, void **per_buffer_data)
 }
 
 /*
+ * Transitional support for code that would like to perform or skip reads
+ * itself, without using the stream.  Returns, and consumes, the next block
+ * number that would be read by the stream's look-ahead algorithm, or
+ * InvalidBlockNumber if the end of the stream is reached.  Also reports the
+ * strategy that would be used to read it.
+ */
+BlockNumber
+read_stream_next_block(ReadStream *stream, BufferAccessStrategy *strategy)
+{
+	*strategy = stream->ios[0].op.strategy;
+	return read_stream_get_block(stream, NULL);
+}
+
+/*
  * Reset a read stream by releasing any queued up buffers, allowing the stream
  * to be used again for different blocks.  This can be used to clear an
  * end-of-stream condition and start again, or to throw away blocks that were
@@ -779,9 +801,8 @@ read_stream_reset(ReadStream *stream)
 	/* Stop looking ahead. */
 	stream->distance = 0;
 
-	/* Forget buffered block numbers and fast path state. */
-	stream->blocknums_next = 0;
-	stream->blocknums_count = 0;
+	/* Forget buffered block number and fast path state. */
+	stream->buffered_blocknum = InvalidBlockNumber;
 	stream->fast_path = false;
 
 	/* Unpin anything that wasn't consumed. */

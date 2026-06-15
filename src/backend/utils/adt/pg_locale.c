@@ -56,6 +56,7 @@
 
 #include "access/htup_details.h"
 #include "catalog/pg_collation.h"
+#include "common/string.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
@@ -65,6 +66,7 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/pg_locale.h"
+#include "utils/relcache.h"
 #include "utils/syscache.h"
 
 #ifdef USE_ICU
@@ -148,8 +150,8 @@ static UConverter *icu_converter = NULL;
 
 static UCollator *pg_ucol_open(const char *loc_str);
 static void init_icu_converter(void);
-static size_t uchar_length(UConverter *converter,
-						   const char *str, int32_t len);
+static int32_t uchar_length(UConverter *converter,
+							const char *str, int32_t len);
 static int32_t uchar_convert(UConverter *converter,
 							 UChar *dest, int32_t destlen,
 							 const char *src, int32_t srclen);
@@ -317,6 +319,16 @@ check_locale(int category, const char *locale, char **canonname)
 	char	   *save;
 	char	   *res;
 
+	/* Don't let Windows' non-ASCII locale names in. */
+	if (!pg_is_ascii(locale))
+	{
+		ereport(WARNING,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("locale name \"%s\" contains non-ASCII characters",
+						locale)));
+		return false;
+	}
+
 	if (canonname)
 		*canonname = NULL;		/* in case of failure */
 
@@ -338,6 +350,18 @@ check_locale(int category, const char *locale, char **canonname)
 	if (!setlocale(category, save))
 		elog(WARNING, "failed to restore old locale \"%s\"", save);
 	pfree(save);
+
+	/* Don't let Windows' non-ASCII locale names out. */
+	if (canonname && *canonname && !pg_is_ascii(*canonname))
+	{
+		ereport(WARNING,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("locale name \"%s\" contains non-ASCII characters",
+						*canonname)));
+		pfree(*canonname);
+		*canonname = NULL;
+		return false;
+	}
 
 	return (res != NULL);
 }
@@ -1105,7 +1129,7 @@ get_iso_localename(const char *winlocname)
 	wchar_t		wc_locale_name[LOCALE_NAME_MAX_LENGTH];
 	wchar_t		buffer[LOCALE_NAME_MAX_LENGTH];
 	static char iso_lc_messages[LOCALE_NAME_MAX_LENGTH];
-	char	   *period;
+	const char *period;
 	int			len;
 	int			ret_val;
 
@@ -1235,6 +1259,8 @@ lookup_collation_cache(Oid collation, bool set_flags)
 	Assert(OidIsValid(collation));
 	Assert(collation != DEFAULT_COLLATION_OID);
 
+	AssertCouldGetRelation();
+
 	if (collation_cache == NULL)
 	{
 		/* First time through, initialize the hash table */
@@ -1347,9 +1373,9 @@ lc_collate_is_c(Oid collation)
 		}
 		else if (default_locale.provider == COLLPROVIDER_LIBC)
 		{
-			localeptr = setlocale(LC_CTYPE, NULL);
+			localeptr = setlocale(LC_COLLATE, NULL);
 			if (!localeptr)
-				elog(ERROR, "invalid LC_CTYPE setting");
+				elog(ERROR, "invalid LC_COLLATE setting");
 		}
 		else
 			elog(ERROR, "unexpected collation provider '%c'",
@@ -1483,6 +1509,9 @@ make_icu_collator(const char *iculocstr,
 			ereport(ERROR,
 					(errmsg("could not open collator for locale \"%s\" with rules \"%s\": %s",
 							iculocstr, icurules, u_errorName(status))));
+
+		pfree(my_rules);
+		pfree(agg_rules);
 	}
 
 	/* We will leak this string if the caller errors later :-( */
@@ -1779,7 +1808,7 @@ get_collation_actual_version(char collprovider, const char *collcollate)
 		locale_t	loc;
 
 		/* Look up FreeBSD collation version. */
-		loc = newlocale(LC_COLLATE, collcollate, NULL);
+		loc = newlocale(LC_COLLATE_MASK, collcollate, NULL);
 		if (loc)
 		{
 			collversion =
@@ -1843,8 +1872,9 @@ pg_strncoll_libc_win32_utf8(const char *arg1, size_t len1, const char *arg2,
 	char	   *buf = sbuf;
 	char	   *a1p,
 			   *a2p;
-	int			a1len = len1 * 2 + 2;
-	int			a2len = len2 * 2 + 2;
+	size_t		a1len,
+				a2len,
+				buflen;
 	int			r;
 	int			result;
 
@@ -1854,8 +1884,16 @@ pg_strncoll_libc_win32_utf8(const char *arg1, size_t len1, const char *arg2,
 	Assert(false);
 #endif
 
-	if (a1len + a2len > TEXTBUFLEN)
-		buf = palloc(a1len + a2len);
+	/*
+	 * In a 32-bit build, twice the input length can overflow size_t, so we
+	 * must be careful.
+	 */
+	a1len = add_size(add_size(len1, len1), 2);
+	a2len = add_size(add_size(len2, len2), 2);
+	buflen = add_size(a1len, a2len);
+
+	if (buflen > TEXTBUFLEN)
+		buf = palloc(buflen);
 
 	a1p = buf;
 	a2p = buf + a1len;
@@ -1997,12 +2035,11 @@ static int
 pg_strncoll_icu_no_utf8(const char *arg1, int32_t len1,
 						const char *arg2, int32_t len2, pg_locale_t locale)
 {
-	char		sbuf[TEXTBUFLEN];
-	char	   *buf = sbuf;
+	UChar		sbuf[TEXTBUFLEN / sizeof(UChar)];
+	UChar	   *buf = sbuf;
 	int32_t		ulen1;
 	int32_t		ulen2;
-	size_t		bufsize1;
-	size_t		bufsize2;
+	size_t		bufsize;
 	UChar	   *uchar1,
 			   *uchar2;
 	int			result;
@@ -2017,14 +2054,13 @@ pg_strncoll_icu_no_utf8(const char *arg1, int32_t len1,
 	ulen1 = uchar_length(icu_converter, arg1, len1);
 	ulen2 = uchar_length(icu_converter, arg2, len2);
 
-	bufsize1 = (ulen1 + 1) * sizeof(UChar);
-	bufsize2 = (ulen2 + 1) * sizeof(UChar);
+	/* ulen1+1 or ulen2+1 doesn't risk overflow, but summing them might */
+	bufsize = add_size(ulen1 + 1, ulen2 + 1);
+	if (bufsize > lengthof(sbuf))
+		buf = palloc_array(UChar, bufsize);
 
-	if (bufsize1 + bufsize2 > TEXTBUFLEN)
-		buf = palloc(bufsize1 + bufsize2);
-
-	uchar1 = (UChar *) buf;
-	uchar2 = (UChar *) (buf + bufsize1);
+	uchar1 = buf;
+	uchar2 = buf + ulen1 + 1;
 
 	ulen1 = uchar_convert(icu_converter, uchar1, ulen1 + 1, arg1, len1);
 	ulen2 = uchar_convert(icu_converter, uchar2, ulen2 + 1, arg2, len2);
@@ -2203,11 +2239,9 @@ static size_t
 pg_strnxfrm_icu(char *dest, const char *src, int32_t srclen, int32_t destsize,
 				pg_locale_t locale)
 {
-	char		sbuf[TEXTBUFLEN];
-	char	   *buf = sbuf;
-	UChar	   *uchar;
+	UChar		sbuf[TEXTBUFLEN / sizeof(UChar)];
+	UChar	   *uchar = sbuf;
 	int32_t		ulen;
-	size_t		uchar_bsize;
 	Size		result_bsize;
 
 	Assert(locale->provider == COLLPROVIDER_ICU);
@@ -2216,12 +2250,8 @@ pg_strnxfrm_icu(char *dest, const char *src, int32_t srclen, int32_t destsize,
 
 	ulen = uchar_length(icu_converter, src, srclen);
 
-	uchar_bsize = (ulen + 1) * sizeof(UChar);
-
-	if (uchar_bsize > TEXTBUFLEN)
-		buf = palloc(uchar_bsize);
-
-	uchar = (UChar *) buf;
+	if (ulen >= lengthof(sbuf))
+		uchar = palloc_array(UChar, ulen + 1);
 
 	ulen = uchar_convert(icu_converter, uchar, ulen + 1, src, srclen);
 
@@ -2236,8 +2266,8 @@ pg_strnxfrm_icu(char *dest, const char *src, int32_t srclen, int32_t destsize,
 	Assert(result_bsize > 0);
 	result_bsize--;
 
-	if (buf != sbuf)
-		pfree(buf);
+	if (uchar != sbuf)
+		pfree(uchar);
 
 	/* if dest is defined, it should be nul-terminated */
 	Assert(result_bsize >= destsize || dest[result_bsize] == '\0');
@@ -2250,14 +2280,12 @@ static size_t
 pg_strnxfrm_prefix_icu_no_utf8(char *dest, const char *src, int32_t srclen,
 							   int32_t destsize, pg_locale_t locale)
 {
-	char		sbuf[TEXTBUFLEN];
-	char	   *buf = sbuf;
+	UChar		sbuf[TEXTBUFLEN / sizeof(UChar)];
+	UChar	   *uchar = sbuf;
 	UCharIterator iter;
 	uint32_t	state[2];
 	UErrorCode	status;
-	int32_t		ulen = -1;
-	UChar	   *uchar = NULL;
-	size_t		uchar_bsize;
+	int32_t		ulen;
 	Size		result_bsize;
 
 	Assert(locale->provider == COLLPROVIDER_ICU);
@@ -2267,12 +2295,8 @@ pg_strnxfrm_prefix_icu_no_utf8(char *dest, const char *src, int32_t srclen,
 
 	ulen = uchar_length(icu_converter, src, srclen);
 
-	uchar_bsize = (ulen + 1) * sizeof(UChar);
-
-	if (uchar_bsize > TEXTBUFLEN)
-		buf = palloc(uchar_bsize);
-
-	uchar = (UChar *) buf;
+	if (ulen >= lengthof(sbuf))
+		uchar = palloc_array(UChar, ulen + 1);
 
 	ulen = uchar_convert(icu_converter, uchar, ulen + 1, src, srclen);
 
@@ -2289,6 +2313,9 @@ pg_strnxfrm_prefix_icu_no_utf8(char *dest, const char *src, int32_t srclen,
 		ereport(ERROR,
 				(errmsg("sort key generation failed: %s",
 						u_errorName(status))));
+
+	if (uchar != sbuf)
+		pfree(uchar);
 
 	return result_bsize;
 }
@@ -2373,9 +2400,9 @@ pg_strxfrm_enabled(pg_locale_t locale)
  * The provided 'src' must be nul-terminated. If 'destsize' is zero, 'dest'
  * may be NULL.
  *
- * Returns the number of bytes needed to store the transformed string,
- * excluding the terminating nul byte. If the value returned is 'destsize' or
- * greater, the resulting contents of 'dest' are undefined.
+ * Returns the number of bytes needed (or more) to store the transformed
+ * string, excluding the terminating nul byte. If the value returned is
+ * 'destsize' or greater, the resulting contents of 'dest' are undefined.
  */
 size_t
 pg_strxfrm(char *dest, const char *src, size_t destsize, pg_locale_t locale)
@@ -2405,9 +2432,9 @@ pg_strxfrm(char *dest, const char *src, size_t destsize, pg_locale_t locale)
  * 'src' does not need to be nul-terminated. If 'destsize' is zero, 'dest' may
  * be NULL.
  *
- * Returns the number of bytes needed to store the transformed string,
- * excluding the terminating nul byte. If the value returned is 'destsize' or
- * greater, the resulting contents of 'dest' are undefined.
+ * Returns the number of bytes needed (or more) to store the transformed
+ * string, excluding the terminating nul byte. If the value returned is
+ * 'destsize' or greater, the resulting contents of 'dest' are undefined.
  *
  * This function may need to nul-terminate the argument for libc functions;
  * so if the caller already has a nul-terminated string, it should call
@@ -2686,8 +2713,12 @@ init_icu_converter(void)
 
 /*
  * Find length, in UChars, of given string if converted to UChar string.
+ *
+ * Note: given the assumption that the input string fits in MaxAllocSize,
+ * the result cannot overflow int32_t.  But callers must be careful about
+ * multiplying the result by sizeof(UChar).
  */
-static size_t
+static int32_t
 uchar_length(UConverter *converter, const char *str, int32_t len)
 {
 	UErrorCode	status = U_ZERO_ERROR;
@@ -2711,7 +2742,6 @@ uchar_convert(UConverter *converter, UChar *dest, int32_t destlen,
 	UErrorCode	status = U_ZERO_ERROR;
 	int32_t		ulen;
 
-	status = U_ZERO_ERROR;
 	ulen = ucnv_toUChars(converter, dest, destlen, src, srclen, &status);
 	if (U_FAILURE(status))
 		ereport(ERROR,
@@ -2740,7 +2770,7 @@ icu_to_uchar(UChar **buff_uchar, const char *buff, size_t nbytes)
 
 	len_uchar = uchar_length(icu_converter, buff, nbytes);
 
-	*buff_uchar = palloc((len_uchar + 1) * sizeof(**buff_uchar));
+	*buff_uchar = palloc_array(UChar, len_uchar + 1);
 	len_uchar = uchar_convert(icu_converter,
 							  *buff_uchar, len_uchar + 1, buff, nbytes);
 

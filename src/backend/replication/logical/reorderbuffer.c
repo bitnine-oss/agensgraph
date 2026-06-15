@@ -108,9 +108,21 @@
 #include "storage/fd.h"
 #include "storage/sinval.h"
 #include "utils/builtins.h"
+#include "utils/inval.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/relfilenumbermap.h"
+
+/*
+ * Each transaction has an 8MB limit for invalidation messages distributed from
+ * other transactions. This limit is set considering scenarios with many
+ * concurrent logical decoding operations. When the distributed invalidation
+ * messages reach this threshold, the transaction is marked as
+ * RBTXN_DISTR_INVAL_OVERFLOWED to invalidate the complete cache as we have lost
+ * some inval messages and hence don't know what needs to be invalidated.
+ */
+#define MAX_DISTR_INVAL_MSG_PER_TXN \
+	((8 * 1024 * 1024) / sizeof(SharedInvalidationMessage))
 
 /* entry for a hash table we use to map from xid to our transaction state */
 typedef struct ReorderBufferTXNByIdEnt
@@ -337,15 +349,20 @@ ReorderBufferAllocate(void)
 											sizeof(ReorderBufferTXN));
 
 	/*
-	 * XXX the allocation sizes used below pre-date generation context's block
-	 * growing code.  These values should likely be benchmarked and set to
-	 * more suitable values.
+	 * To minimize memory fragmentation caused by long-running transactions
+	 * with changes spanning multiple memory blocks, we use a single
+	 * fixed-size memory block for decoded tuple storage. The performance
+	 * testing showed that the default memory block size maintains logical
+	 * decoding performance without causing fragmentation due to concurrent
+	 * transactions. One might think that we can use the max size as
+	 * SLAB_LARGE_BLOCK_SIZE but the test also showed it doesn't help resolve
+	 * the memory fragmentation.
 	 */
 	buffer->tup_context = GenerationContextCreate(new_ctx,
 												  "Tuples",
-												  SLAB_LARGE_BLOCK_SIZE,
-												  SLAB_LARGE_BLOCK_SIZE,
-												  SLAB_LARGE_BLOCK_SIZE);
+												  SLAB_DEFAULT_BLOCK_SIZE,
+												  SLAB_DEFAULT_BLOCK_SIZE,
+												  SLAB_DEFAULT_BLOCK_SIZE);
 
 	hash_ctl.keysize = sizeof(TransactionId);
 	hash_ctl.entrysize = sizeof(ReorderBufferTXNByIdEnt);
@@ -464,8 +481,17 @@ ReorderBufferReturnTXN(ReorderBuffer *rb, ReorderBufferTXN *txn)
 		txn->invalidations = NULL;
 	}
 
+	if (txn->invalidations_distributed)
+	{
+		pfree(txn->invalidations_distributed);
+		txn->invalidations_distributed = NULL;
+	}
+
 	/* Reset the toast hash */
 	ReorderBufferToastReset(rb, txn);
+
+	/* All changes must be deallocated */
+	Assert(txn->size == 0);
 
 	pfree(txn);
 }
@@ -1506,6 +1532,7 @@ ReorderBufferCleanupTXN(ReorderBuffer *rb, ReorderBufferTXN *txn)
 {
 	bool		found;
 	dlist_mutable_iter iter;
+	Size		mem_freed = 0;
 
 	/* cleanup subtransactions & their changes */
 	dlist_foreach_modify(iter, &txn->subtxns)
@@ -1535,8 +1562,19 @@ ReorderBufferCleanupTXN(ReorderBuffer *rb, ReorderBufferTXN *txn)
 		/* Check we're not mixing changes from different transactions. */
 		Assert(change->txn == txn);
 
+		/*
+		 * Instead of updating the memory counter for individual changes, we
+		 * sum up the size of memory to free so we can update the memory
+		 * counter all together below. This saves costs of maintaining the
+		 * max-heap.
+		 */
+		mem_freed += ReorderBufferChangeSize(change);
+
 		ReorderBufferReturnChange(rb, change, false);
 	}
+
+	/* Update the memory counter */
+	ReorderBufferChangeMemoryUpdate(rb, NULL, txn, false, mem_freed);
 
 	/*
 	 * Cleanup the tuplecids we stored for decoding catalog snapshot access.
@@ -1594,9 +1632,6 @@ ReorderBufferCleanupTXN(ReorderBuffer *rb, ReorderBufferTXN *txn)
 	if (rbtxn_is_serialized(txn))
 		ReorderBufferRestoreCleanup(rb, txn);
 
-	/* Update the memory counter */
-	ReorderBufferChangeMemoryUpdate(rb, NULL, txn, false, txn->size);
-
 	/* deallocate */
 	ReorderBufferReturnTXN(rb, txn);
 }
@@ -1616,6 +1651,7 @@ static void
 ReorderBufferTruncateTXN(ReorderBuffer *rb, ReorderBufferTXN *txn, bool txn_prepared)
 {
 	dlist_mutable_iter iter;
+	Size		mem_freed = 0;
 
 	/* cleanup subtransactions & their changes */
 	dlist_foreach_modify(iter, &txn->subtxns)
@@ -1648,11 +1684,19 @@ ReorderBufferTruncateTXN(ReorderBuffer *rb, ReorderBufferTXN *txn, bool txn_prep
 		/* remove the change from it's containing list */
 		dlist_delete(&change->node);
 
+		/*
+		 * Instead of updating the memory counter for individual changes, we
+		 * sum up the size of memory to free so we can update the memory
+		 * counter all together below. This saves costs of maintaining the
+		 * max-heap.
+		 */
+		mem_freed += ReorderBufferChangeSize(change);
+
 		ReorderBufferReturnChange(rb, change, false);
 	}
 
 	/* Update the memory counter */
-	ReorderBufferChangeMemoryUpdate(rb, NULL, txn, false, txn->size);
+	ReorderBufferChangeMemoryUpdate(rb, NULL, txn, false, mem_freed);
 
 	/*
 	 * Mark the transaction as streamed.
@@ -2062,6 +2106,9 @@ ReorderBufferResetTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		rb->stream_stop(rb, txn, last_lsn);
 		ReorderBufferSaveTXNSnapshot(rb, txn, snapshot_now, command_id);
 	}
+
+	/* All changes must be deallocated */
+	Assert(txn->size == 0);
 }
 
 /*
@@ -2469,7 +2516,7 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 			if (++changes_count >= CHANGES_THRESHOLD)
 			{
-				rb->update_progress_txn(rb, txn, change->lsn);
+				rb->update_progress_txn(rb, txn, prev_lsn);
 				changes_count = 0;
 			}
 		}
@@ -2545,7 +2592,17 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		AbortCurrentTransaction();
 
 		/* make sure there's no cache pollution */
-		ReorderBufferExecuteInvalidations(txn->ninvalidations, txn->invalidations);
+		if (rbtxn_distr_inval_overflowed(txn))
+		{
+			Assert(txn->ninvalidations_distributed == 0);
+			InvalidateSystemCaches();
+		}
+		else
+		{
+			ReorderBufferExecuteInvalidations(txn->ninvalidations, txn->invalidations);
+			ReorderBufferExecuteInvalidations(txn->ninvalidations_distributed,
+											  txn->invalidations_distributed);
+		}
 
 		if (using_subtxn)
 			RollbackAndReleaseCurrentSubTransaction();
@@ -2591,8 +2648,17 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		AbortCurrentTransaction();
 
 		/* make sure there's no cache pollution */
-		ReorderBufferExecuteInvalidations(txn->ninvalidations,
-										  txn->invalidations);
+		if (rbtxn_distr_inval_overflowed(txn))
+		{
+			Assert(txn->ninvalidations_distributed == 0);
+			InvalidateSystemCaches();
+		}
+		else
+		{
+			ReorderBufferExecuteInvalidations(txn->ninvalidations, txn->invalidations);
+			ReorderBufferExecuteInvalidations(txn->ninvalidations_distributed,
+											  txn->invalidations_distributed);
+		}
 
 		if (using_subtxn)
 			RollbackAndReleaseCurrentSubTransaction();
@@ -2922,7 +2988,8 @@ ReorderBufferAbort(ReorderBuffer *rb, TransactionId xid, XLogRecPtr lsn,
 		 * We might have decoded changes for this transaction that could load
 		 * the cache as per the current transaction's view (consider DDL's
 		 * happened in this transaction). We don't want the decoding of future
-		 * transactions to use those cache entries so execute invalidations.
+		 * transactions to use those cache entries so execute only the inval
+		 * messages in this transaction.
 		 */
 		if (txn->ninvalidations > 0)
 			ReorderBufferImmediateInvalidation(rb, txn->ninvalidations,
@@ -3009,9 +3076,10 @@ ReorderBufferForget(ReorderBuffer *rb, TransactionId xid, XLogRecPtr lsn)
 	txn->final_lsn = lsn;
 
 	/*
-	 * Process cache invalidation messages if there are any. Even if we're not
-	 * interested in the transaction's contents, it could have manipulated the
-	 * catalog and we need to update the caches according to that.
+	 * Process only cache invalidation messages in this transaction if there
+	 * are any. Even if we're not interested in the transaction's contents, it
+	 * could have manipulated the catalog and we need to update the caches
+	 * according to that.
 	 */
 	if (txn->base_snapshot != NULL && txn->ninvalidations > 0)
 		ReorderBufferImmediateInvalidation(rb, txn->ninvalidations,
@@ -3284,6 +3352,57 @@ ReorderBufferAddNewTupleCids(ReorderBuffer *rb, TransactionId xid,
 }
 
 /*
+ * Add new invalidation messages to the reorder buffer queue.
+ */
+static void
+ReorderBufferQueueInvalidations(ReorderBuffer *rb, TransactionId xid,
+								XLogRecPtr lsn, Size nmsgs,
+								SharedInvalidationMessage *msgs)
+{
+	ReorderBufferChange *change;
+
+	change = ReorderBufferGetChange(rb);
+	change->action = REORDER_BUFFER_CHANGE_INVALIDATION;
+	change->data.inval.ninvalidations = nmsgs;
+	change->data.inval.invalidations = (SharedInvalidationMessage *)
+		palloc(sizeof(SharedInvalidationMessage) * nmsgs);
+	memcpy(change->data.inval.invalidations, msgs,
+		   sizeof(SharedInvalidationMessage) * nmsgs);
+
+	ReorderBufferQueueChange(rb, xid, lsn, change, false);
+}
+
+/*
+ * A helper function for ReorderBufferAddInvalidations() and
+ * ReorderBufferAddDistributedInvalidations() to accumulate the invalidation
+ * messages to the **invals_out.
+ */
+static void
+ReorderBufferAccumulateInvalidations(SharedInvalidationMessage **invals_out,
+									 uint32 *ninvals_out,
+									 SharedInvalidationMessage *msgs_new,
+									 Size nmsgs_new)
+{
+	if (*ninvals_out == 0)
+	{
+		*ninvals_out = nmsgs_new;
+		*invals_out = (SharedInvalidationMessage *)
+			palloc(sizeof(SharedInvalidationMessage) * nmsgs_new);
+		memcpy(*invals_out, msgs_new, sizeof(SharedInvalidationMessage) * nmsgs_new);
+	}
+	else
+	{
+		/* Enlarge the array of inval messages */
+		*invals_out = (SharedInvalidationMessage *)
+			repalloc(*invals_out, sizeof(SharedInvalidationMessage) *
+					 (*ninvals_out + nmsgs_new));
+		memcpy(*invals_out + *ninvals_out, msgs_new,
+			   nmsgs_new * sizeof(SharedInvalidationMessage));
+		*ninvals_out += nmsgs_new;
+	}
+}
+
+/*
  * Accumulate the invalidations for executing them later.
  *
  * This needs to be called for each XLOG_XACT_INVALIDATIONS message and
@@ -3303,7 +3422,6 @@ ReorderBufferAddInvalidations(ReorderBuffer *rb, TransactionId xid,
 {
 	ReorderBufferTXN *txn;
 	MemoryContext oldcontext;
-	ReorderBufferChange *change;
 
 	txn = ReorderBufferTXNByXid(rb, xid, true, NULL, lsn, true);
 
@@ -3318,35 +3436,76 @@ ReorderBufferAddInvalidations(ReorderBuffer *rb, TransactionId xid,
 
 	Assert(nmsgs > 0);
 
-	/* Accumulate invalidations. */
-	if (txn->ninvalidations == 0)
+	ReorderBufferAccumulateInvalidations(&txn->invalidations,
+										 &txn->ninvalidations,
+										 msgs, nmsgs);
+
+	ReorderBufferQueueInvalidations(rb, xid, lsn, nmsgs, msgs);
+
+	MemoryContextSwitchTo(oldcontext);
+}
+
+/*
+ * Accumulate the invalidations distributed by other committed transactions
+ * for executing them later.
+ *
+ * This function is similar to ReorderBufferAddInvalidations() but stores
+ * the given inval messages to the txn->invalidations_distributed with the
+ * overflow check.
+ *
+ * This needs to be called by committed transactions to distribute their
+ * inval messages to in-progress transactions.
+ */
+void
+ReorderBufferAddDistributedInvalidations(ReorderBuffer *rb, TransactionId xid,
+										 XLogRecPtr lsn, Size nmsgs,
+										 SharedInvalidationMessage *msgs)
+{
+	ReorderBufferTXN *txn;
+	MemoryContext oldcontext;
+
+	txn = ReorderBufferTXNByXid(rb, xid, true, NULL, lsn, true);
+
+	oldcontext = MemoryContextSwitchTo(rb->context);
+
+	/*
+	 * Collect all the invalidations under the top transaction, if available,
+	 * so that we can execute them all together.  See comments
+	 * ReorderBufferAddInvalidations.
+	 */
+	txn = rbtxn_get_toptxn(txn);
+
+	Assert(nmsgs > 0);
+
+	if (!rbtxn_distr_inval_overflowed(txn))
 	{
-		txn->ninvalidations = nmsgs;
-		txn->invalidations = (SharedInvalidationMessage *)
-			palloc(sizeof(SharedInvalidationMessage) * nmsgs);
-		memcpy(txn->invalidations, msgs,
-			   sizeof(SharedInvalidationMessage) * nmsgs);
+		/*
+		 * Check the transaction has enough space for storing distributed
+		 * invalidation messages.
+		 */
+		if (txn->ninvalidations_distributed + nmsgs >= MAX_DISTR_INVAL_MSG_PER_TXN)
+		{
+			/*
+			 * Mark the invalidation message as overflowed and free up the
+			 * messages accumulated so far.
+			 */
+			txn->txn_flags |= RBTXN_DISTR_INVAL_OVERFLOWED;
+
+			if (txn->invalidations_distributed)
+			{
+				pfree(txn->invalidations_distributed);
+				txn->invalidations_distributed = NULL;
+				txn->ninvalidations_distributed = 0;
+			}
+		}
+		else
+			ReorderBufferAccumulateInvalidations(&txn->invalidations_distributed,
+												 &txn->ninvalidations_distributed,
+												 msgs, nmsgs);
 	}
-	else
-	{
-		txn->invalidations = (SharedInvalidationMessage *)
-			repalloc(txn->invalidations, sizeof(SharedInvalidationMessage) *
-					 (txn->ninvalidations + nmsgs));
 
-		memcpy(txn->invalidations + txn->ninvalidations, msgs,
-			   nmsgs * sizeof(SharedInvalidationMessage));
-		txn->ninvalidations += nmsgs;
-	}
-
-	change = ReorderBufferGetChange(rb);
-	change->action = REORDER_BUFFER_CHANGE_INVALIDATION;
-	change->data.inval.ninvalidations = nmsgs;
-	change->data.inval.invalidations = (SharedInvalidationMessage *)
-		palloc(sizeof(SharedInvalidationMessage) * nmsgs);
-	memcpy(change->data.inval.invalidations, msgs,
-		   sizeof(SharedInvalidationMessage) * nmsgs);
-
-	ReorderBufferQueueChange(rb, xid, lsn, change, false);
+	/* Queue the invalidation messages into the transaction */
+	ReorderBufferQueueInvalidations(rb, xid, lsn, nmsgs, msgs);
 
 	MemoryContextSwitchTo(oldcontext);
 }
@@ -5307,4 +5466,27 @@ restart:
 	if (cmax)
 		*cmax = ent->cmax;
 	return true;
+}
+
+/*
+ * Count invalidation messages of specified transaction.
+ *
+ * Returns number of messages, and msgs is set to the pointer of the linked
+ * list for the messages.
+ */
+uint32
+ReorderBufferGetInvalidations(ReorderBuffer *rb, TransactionId xid,
+							  SharedInvalidationMessage **msgs)
+{
+	ReorderBufferTXN *txn;
+
+	txn = ReorderBufferTXNByXid(rb, xid, false, NULL, InvalidXLogRecPtr,
+								false);
+
+	if (txn == NULL)
+		return 0;
+
+	*msgs = txn->invalidations;
+
+	return txn->ninvalidations;
 }

@@ -596,6 +596,25 @@ select sum(two order by two) from tenk1;
 reset enable_presorted_aggregate;
 
 --
+-- Test cases with FILTER clause
+--
+
+-- Ensure we presort when the aggregate contains plain Vars
+explain (costs off)
+select sum(two order by two) filter (where two > 1) from tenk1;
+
+-- Ensure we presort for RelabelType'd Vars
+explain (costs off)
+select string_agg(distinct f1, ',') filter (where length(f1) > 1)
+from varchar_tbl;
+
+-- Ensure we don't presort when the aggregate's argument contains an
+-- explicit cast.
+explain (costs off)
+select string_agg(distinct f1::varchar(2), ',') filter (where length(f1) > 1)
+from varchar_tbl;
+
+--
 -- Test combinations of DISTINCT and/or ORDER BY
 --
 
@@ -805,10 +824,15 @@ select * from v_pagg_test order by y;
 -- Ensure parallel aggregation is actually being used.
 explain (costs off) select * from v_pagg_test order by y;
 
-set max_parallel_workers_per_gather = 0;
-
 -- Ensure results are the same without parallel aggregation.
+set max_parallel_workers_per_gather = 0;
 select * from v_pagg_test order by y;
+
+-- Check that we don't fail on anonymous record types.
+set max_parallel_workers_per_gather = 2;
+explain (costs off)
+select array_dims(array_agg(s)) from (select * from pagg_test) s;
+select array_dims(array_agg(s)) from (select * from pagg_test) s;
 
 -- Clean up
 reset max_parallel_workers_per_gather;

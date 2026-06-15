@@ -357,8 +357,12 @@ ExecFindPartition(ModifyTableState *mtstate,
 											   true, false);
 				if (rri)
 				{
+					ModifyTable *node = (ModifyTable *) mtstate->ps.plan;
+
 					/* Verify this ResultRelInfo allows INSERTs */
-					CheckValidResultRel(rri, CMD_INSERT, NIL);
+					CheckValidResultRelNew(rri, CMD_INSERT,
+										   node ? node->onConflictAction : ONCONFLICT_NONE,
+										   NIL);
 
 					/*
 					 * Initialize information needed to insert this and
@@ -524,7 +528,8 @@ ExecInitPartitionInfo(ModifyTableState *mtstate, EState *estate,
 	 * partition-key becomes a DELETE+INSERT operation, so this check is still
 	 * required when the operation is CMD_UPDATE.
 	 */
-	CheckValidResultRel(leaf_part_rri, CMD_INSERT, NIL);
+	CheckValidResultRelNew(leaf_part_rri, CMD_INSERT,
+						   node ? node->onConflictAction : ONCONFLICT_NONE, NIL);
 
 	/*
 	 * Open partition indices.  The user may have asked to check for conflicts
@@ -872,7 +877,7 @@ ExecInitPartitionInfo(ModifyTableState *mtstate, EState *estate,
 	 * reference and make copy for this relation, converting stuff that
 	 * references attribute numbers to match this relation's.
 	 *
-	 * This duplicates much of the logic in ExecInitMerge(), so something
+	 * This duplicates much of the logic in ExecInitMerge(), so if something
 	 * changes there, look here too.
 	 */
 	if (node && node->operation == CMD_MERGE)
@@ -952,6 +957,8 @@ ExecInitPartitionInfo(ModifyTableState *mtstate, EState *estate,
 												  NULL);
 					break;
 				case CMD_DELETE:
+				case CMD_NOTHING:
+					/* Nothing to do */
 					break;
 
 				default:

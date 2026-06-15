@@ -327,6 +327,14 @@ DELETE FROM loct_empty;
 ANALYZE ft_empty;
 EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft_empty ORDER BY c1;
 
+-- test restriction on non-system foreign tables.
+SET restrict_nonsystem_relation_kind TO 'foreign-table';
+SELECT * from ft1 where c1 < 1; -- ERROR
+INSERT INTO ft1 (c1) VALUES (1); -- ERROR
+DELETE FROM ft1 WHERE c1 = 1; -- ERROR
+TRUNCATE ft1; -- ERROR
+RESET restrict_nonsystem_relation_kind;
+
 -- ===================================================================
 -- WHERE with remotely-executable conditions
 -- ===================================================================
@@ -741,14 +749,6 @@ EXPLAIN (VERBOSE, COSTS OFF)
 SELECT t1.c1, t2.c2 FROM v4 t1 LEFT JOIN ft5 t2 ON (t1.c1 = t2.c1) ORDER BY t1.c1, t2.c1 OFFSET 10 LIMIT 10;  -- can be pushed down
 SELECT t1.c1, t2.c2 FROM v4 t1 LEFT JOIN ft5 t2 ON (t1.c1 = t2.c1) ORDER BY t1.c1, t2.c1 OFFSET 10 LIMIT 10;
 ALTER VIEW v4 OWNER TO regress_view_owner;
-
--- Make sure this big CROSS JOIN query is pushed down
-EXPLAIN (VERBOSE, COSTS OFF) SELECT count(*) FROM ft1 CROSS JOIN ft2 CROSS JOIN ft4 CROSS JOIN ft5;
--- Make sure query cancellation works
-BEGIN;
-SET LOCAL statement_timeout = '10ms';
-select count(*) from ft1 CROSS JOIN ft2 CROSS JOIN ft4 CROSS JOIN ft5; -- this takes very long
-COMMIT;
 
 -- ====================================================================
 -- Check that userid to use when querying the remote table is correctly
@@ -1455,6 +1455,23 @@ SELECT ft2.*, ft4.* FROM ft2 INNER JOIN
 	WHERE ft2.c1 > 900
 	ORDER BY ft2.c1 LIMIT 10;
 
+-- Semi-join conditions shouldn't pop up as left/right join clauses.
+SET enable_material TO off;
+EXPLAIN (verbose, costs off)
+SELECT x1.c1 FROM
+		(SELECT * FROM ft2 WHERE EXISTS (SELECT 1 FROM ft4 WHERE ft4.c1 = ft2.c1 AND ft2.c2 < 10)) x1
+	RIGHT JOIN
+		(SELECT * FROM ft2 WHERE EXISTS (SELECT 1 FROM ft4 WHERE ft4.c1 = ft2.c1 AND ft2.c2 < 10)) x2
+	ON (x1.c1 = x2.c1)
+ORDER BY x1.c1 LIMIT 10;
+SELECT x1.c1 FROM
+		(SELECT * FROM ft2 WHERE EXISTS (SELECT 1 FROM ft4 WHERE ft4.c1 = ft2.c1 AND ft2.c2 < 10)) x1
+	RIGHT JOIN
+		(SELECT * FROM ft2 WHERE EXISTS (SELECT 1 FROM ft4 WHERE ft4.c1 = ft2.c1 AND ft2.c2 < 10)) x2
+	ON (x1.c1 = x2.c1)
+ORDER BY x1.c1 LIMIT 10;
+RESET enable_material;
+
 -- Can't push down semi-join with inner rel vars in targetlist
 EXPLAIN (verbose, costs off)
 SELECT ft1.c1 FROM ft1 JOIN ft2 on ft1.c1 = ft2.c1 WHERE
@@ -1555,9 +1572,16 @@ UPDATE ft2 d SET c2 = CASE WHEN random() >= 0 THEN d.c2 ELSE 0 END
 ALTER SERVER loopback OPTIONS (DROP extensions);
 INSERT INTO ft2 (c1,c2,c3)
   SELECT id, id % 10, to_char(id, 'FM00000') FROM generate_series(2001, 2010) id;
+
+-- this will do a remote seqscan, causing unstable result order, so sort
 EXPLAIN (verbose, costs off)
-UPDATE ft2 SET c3 = 'bar' WHERE postgres_fdw_abs(c1) > 2000 RETURNING *;            -- can't be pushed down
-UPDATE ft2 SET c3 = 'bar' WHERE postgres_fdw_abs(c1) > 2000 RETURNING *;
+WITH cte AS (
+  UPDATE ft2 SET c3 = 'bar' WHERE postgres_fdw_abs(c1) > 2000 RETURNING *
+) SELECT * FROM cte ORDER BY c1;          -- can't be pushed down
+WITH cte AS (
+  UPDATE ft2 SET c3 = 'bar' WHERE postgres_fdw_abs(c1) > 2000 RETURNING *
+) SELECT * FROM cte ORDER BY c1;
+
 EXPLAIN (verbose, costs off)
 UPDATE ft2 SET c3 = 'baz'
   FROM ft4 INNER JOIN ft5 ON (ft4.c1 = ft5.c1)
@@ -1646,6 +1670,31 @@ SELECT * FROM ft1 ORDER BY c6 DESC NULLS FIRST, c1 OFFSET 15 LIMIT 10;
 -- ORDER BY ASC NULLS FIRST options
 EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft1 ORDER BY c6 ASC NULLS FIRST, c1 OFFSET 15 LIMIT 10;
 SELECT * FROM ft1 ORDER BY c6 ASC NULLS FIRST, c1 OFFSET 15 LIMIT 10;
+
+-- Test ReScan code path that recreates the cursor even when no parameters
+-- change (bug #17889)
+CREATE TABLE loct1 (c1 int);
+CREATE TABLE loct2 (c1 int, c2 text);
+INSERT INTO loct1 VALUES (1001);
+INSERT INTO loct1 VALUES (1002);
+INSERT INTO loct2 SELECT id, to_char(id, 'FM0000') FROM generate_series(1, 1000) id;
+INSERT INTO loct2 VALUES (1001, 'foo');
+INSERT INTO loct2 VALUES (1002, 'bar');
+CREATE FOREIGN TABLE remt2 (c1 int, c2 text) SERVER loopback OPTIONS (table_name 'loct2');
+ANALYZE loct1;
+ANALYZE remt2;
+SET enable_mergejoin TO false;
+SET enable_hashjoin TO false;
+SET enable_material TO false;
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE remt2 SET c2 = remt2.c2 || remt2.c2 FROM loct1 WHERE loct1.c1 = remt2.c1 RETURNING remt2.*;
+UPDATE remt2 SET c2 = remt2.c2 || remt2.c2 FROM loct1 WHERE loct1.c1 = remt2.c1 RETURNING remt2.*;
+RESET enable_mergejoin;
+RESET enable_hashjoin;
+RESET enable_material;
+DROP FOREIGN TABLE remt2;
+DROP TABLE loct1;
+DROP TABLE loct2;
 
 -- ===================================================================
 -- test check constraints
@@ -2190,6 +2239,84 @@ UPDATE rem1 set f2 = '';          -- can be pushed down
 EXPLAIN (verbose, costs off)
 DELETE FROM rem1;                 -- can't be pushed down
 DROP TRIGGER trig_row_after_delete ON rem1;
+
+
+-- We are allowed to create transition-table triggers on both kinds of
+-- inheritance even if they contain foreign tables as children, but currently
+-- collecting transition tuples from such foreign tables is not supported.
+
+CREATE TABLE local_tbl (a text, b int);
+CREATE FOREIGN TABLE foreign_tbl (a text, b int)
+  SERVER loopback OPTIONS (table_name 'local_tbl');
+
+INSERT INTO foreign_tbl VALUES ('AAA', 42);
+
+-- Test case for partition hierarchy
+CREATE TABLE parent_tbl (a text, b int) PARTITION BY LIST (a);
+ALTER TABLE parent_tbl ATTACH PARTITION foreign_tbl FOR VALUES IN ('AAA');
+
+CREATE TRIGGER parent_tbl_insert_trig
+  AFTER INSERT ON parent_tbl REFERENCING NEW TABLE AS new_table
+  FOR EACH STATEMENT EXECUTE PROCEDURE trigger_func();
+CREATE TRIGGER parent_tbl_update_trig
+  AFTER UPDATE ON parent_tbl REFERENCING OLD TABLE AS old_table NEW TABLE AS new_table
+  FOR EACH STATEMENT EXECUTE PROCEDURE trigger_func();
+CREATE TRIGGER parent_tbl_delete_trig
+  AFTER DELETE ON parent_tbl REFERENCING OLD TABLE AS old_table
+  FOR EACH STATEMENT EXECUTE PROCEDURE trigger_func();
+
+INSERT INTO parent_tbl VALUES ('AAA', 42);
+
+COPY parent_tbl (a, b) FROM stdin;
+AAA	42
+\.
+
+ALTER SERVER loopback OPTIONS (ADD batch_size '10');
+
+INSERT INTO parent_tbl VALUES ('AAA', 42);
+
+COPY parent_tbl (a, b) FROM stdin;
+AAA	42
+\.
+
+ALTER SERVER loopback OPTIONS (DROP batch_size);
+
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE parent_tbl SET b = b + 1;
+UPDATE parent_tbl SET b = b + 1;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+DELETE FROM parent_tbl;
+DELETE FROM parent_tbl;
+
+ALTER TABLE parent_tbl DETACH PARTITION foreign_tbl;
+DROP TABLE parent_tbl;
+
+-- Test case for non-partition hierarchy
+CREATE TABLE parent_tbl (a text, b int);
+ALTER FOREIGN TABLE foreign_tbl INHERIT parent_tbl;
+
+CREATE TRIGGER parent_tbl_update_trig
+  AFTER UPDATE ON parent_tbl REFERENCING OLD TABLE AS old_table NEW TABLE AS new_table
+  FOR EACH STATEMENT EXECUTE PROCEDURE trigger_func();
+CREATE TRIGGER parent_tbl_delete_trig
+  AFTER DELETE ON parent_tbl REFERENCING OLD TABLE AS old_table
+  FOR EACH STATEMENT EXECUTE PROCEDURE trigger_func();
+
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE parent_tbl SET b = b + 1;
+UPDATE parent_tbl SET b = b + 1;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+DELETE FROM parent_tbl;
+DELETE FROM parent_tbl;
+
+ALTER FOREIGN TABLE foreign_tbl NO INHERIT parent_tbl;
+DROP TABLE parent_tbl;
+
+-- Cleanup
+DROP FOREIGN TABLE foreign_tbl;
+DROP TABLE local_tbl;
 
 -- ===================================================================
 -- test inheritance features
@@ -4190,7 +4317,7 @@ ALTER SERVER loopback2 OPTIONS (DROP parallel_abort);
 CREATE TABLE analyze_table (id int, a text, b bigint);
 
 CREATE FOREIGN TABLE analyze_ftable (id int, a text, b bigint)
-       SERVER loopback OPTIONS (table_name 'analyze_rtable1');
+       SERVER loopback OPTIONS (table_name 'analyze_table');
 
 INSERT INTO analyze_table (SELECT x FROM generate_series(1,1000) x);
 ANALYZE analyze_table;
@@ -4201,20 +4328,71 @@ ANALYZE analyze_table;
 ALTER SERVER loopback OPTIONS (analyze_sampling 'invalid');
 
 ALTER SERVER loopback OPTIONS (analyze_sampling 'auto');
-ANALYZE analyze_table;
+ANALYZE analyze_ftable;
 
 ALTER SERVER loopback OPTIONS (SET analyze_sampling 'system');
-ANALYZE analyze_table;
+ANALYZE analyze_ftable;
 
 ALTER SERVER loopback OPTIONS (SET analyze_sampling 'bernoulli');
-ANALYZE analyze_table;
+ANALYZE analyze_ftable;
 
 ALTER SERVER loopback OPTIONS (SET analyze_sampling 'random');
-ANALYZE analyze_table;
+ANALYZE analyze_ftable;
 
 ALTER SERVER loopback OPTIONS (SET analyze_sampling 'off');
-ANALYZE analyze_table;
+ANALYZE analyze_ftable;
 
 -- cleanup
 DROP FOREIGN TABLE analyze_ftable;
 DROP TABLE analyze_table;
+
+-- ===================================================================
+-- test cleanup of failed connections on abort
+-- ===================================================================
+
+CREATE VIEW my_backend_pid (pid) AS SELECT pg_backend_pid();
+CREATE FOREIGN TABLE remote_backend_pid (pid int)
+  SERVER loopback OPTIONS (table_name 'my_backend_pid');
+CREATE FUNCTION wait_for_backend_termination(int) RETURNS void AS $$
+  BEGIN
+    WHILE (SELECT count(*) FROM pg_stat_activity WHERE pid = $1) > 0
+    LOOP
+      PERFORM pg_stat_clear_snapshot();
+    END LOOP;
+  END
+$$ LANGUAGE plpgsql;
+
+SET client_min_messages = 'ERROR';
+
+BEGIN;
+DECLARE c CURSOR FOR SELECT * FROM ft1 ORDER BY c1;
+SAVEPOINT s;
+SELECT pid AS remote_pid FROM remote_backend_pid \gset
+SELECT pg_terminate_backend(:remote_pid);
+SELECT wait_for_backend_termination(:remote_pid);
+ROLLBACK TO SAVEPOINT s;
+SELECT pid FROM remote_backend_pid;
+ROLLBACK TO SAVEPOINT s;
+RELEASE SAVEPOINT s;
+FETCH c;
+ABORT;
+
+BEGIN;
+DECLARE c CURSOR FOR SELECT * FROM ft1 ORDER BY c1;
+FETCH c;
+SAVEPOINT s;
+SELECT pid AS remote_pid FROM remote_backend_pid \gset
+SELECT pg_terminate_backend(:remote_pid);
+SELECT wait_for_backend_termination(:remote_pid);
+ROLLBACK TO SAVEPOINT s;
+SELECT pid FROM remote_backend_pid;
+ROLLBACK TO SAVEPOINT s;
+RELEASE SAVEPOINT s;
+CLOSE c;
+ABORT;
+
+RESET client_min_messages;
+
+DROP FUNCTION wait_for_backend_termination(int);
+DROP FOREIGN TABLE remote_backend_pid;
+DROP VIEW my_backend_pid;
