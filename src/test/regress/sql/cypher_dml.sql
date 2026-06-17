@@ -1690,8 +1690,40 @@ MATCH (t:test)
 SET t += row.id
 RETURN t;
 
+--
+-- AGV2-324: ORDER BY may reference variables/expressions not in RETURN
+--
+CREATE GRAPH ag324;
+SET graph_path = ag324;
+CREATE (:person {name: 'Alice', age: 30}),
+       (:person {name: 'Bob', age: 5}),
+       (:person {name: 'Charlie', age: 100}),
+       (:person {name: 'Dave', age: 30});
+
+-- order by a property that is not in the RETURN list (numeric, not lexical)
+MATCH (p:person) RETURN p.name AS name ORDER BY p.age;
+MATCH (p:person) RETURN p.name AS name ORDER BY p.age DESC;
+
+-- order by a RETURN alias
+MATCH (p:person) RETURN p.name AS name ORDER BY name;
+
+-- mix of alias and non-returned expression
+MATCH (p:person) RETURN p.name AS name ORDER BY p.age, name;
+MATCH (p:person) RETURN p.name AS name ORDER BY name, p.age DESC;
+
+-- a returned key keeps jsonb (numeric) ordering after coercion
+MATCH (p:person) RETURN p.name AS name, p.age AS age ORDER BY age;
+
+-- DISTINCT together with ORDER BY
+MATCH (p:person) RETURN DISTINCT p.age AS age ORDER BY age DESC;
+
+-- ORDER BY an aggregate: count() is bigint and is coerced to jsonb in the
+-- target list, so the sort operator must follow the final (jsonb) type
+MATCH (p:person) RETURN p.age AS age, count(*) AS cnt ORDER BY cnt, age;
+
 -- cleanup
 
+DROP GRAPH ag324 CASCADE;
 DROP GRAPH agv2_308 CASCADE;
 DROP GRAPH srf CASCADE;
 DROP GRAPH impload CASCADE;
