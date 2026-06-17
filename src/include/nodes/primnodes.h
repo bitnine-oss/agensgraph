@@ -2345,21 +2345,21 @@ typedef struct CypherTypeCast
 	CoercionForm cform;
 	char		typcategory;
 	Expr	   *arg;
-	int			location;
+	ParseLoc	location;
 } CypherTypeCast;
 
 typedef struct CypherMapExpr
 {
 	Expr		xpr;
 	List	   *keyvals;		/* key, value, key, value, ... */
-	int			location;
+	ParseLoc	location;
 } CypherMapExpr;
 
 typedef struct CypherListExpr
 {
 	Expr		xpr;
 	List	   *elems;
-	int			location;
+	ParseLoc	location;
 } CypherListExpr;
 
 typedef struct CypherListCompExpr
@@ -2369,7 +2369,7 @@ typedef struct CypherListCompExpr
 	char	   *varname;
 	Expr	   *cond;
 	Expr	   *elem;
-	int			location;
+	ParseLoc	location;
 } CypherListCompExpr;
 
 typedef struct CypherListCompVar
@@ -2377,7 +2377,7 @@ typedef struct CypherListCompVar
 	Expr		xpr;
 	char	   *varname;
 	Oid			elem_type;
-	int			location;
+	ParseLoc	location;
 } CypherListCompVar;
 
 typedef struct CypherAccessExpr
