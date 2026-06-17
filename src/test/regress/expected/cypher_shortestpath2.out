@@ -15378,79 +15378,82 @@ match p = shortestpath( (o1:o)<-[:e*1..2]->(o2:o) ) where o1.id = 1 and o1.id = 
 
 explain ( analyze false, verbose true, costs false, buffers false, timing false )
 match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, ids(nodes(shortestpath((s1)-[:e]->(s2)))) order by s1id, s2id;
-                                                  QUERY PLAN                                                  
---------------------------------------------------------------------------------------------------------------
- Sort
-   Output: (s1.properties.'id'::text), (s2.properties.'id'::text), (ids(nodes((SubPlan 5))))
-   Sort Key: (s1.properties.'id'::text), (s2.properties.'id'::text)
-   ->  Nested Loop
-         Output: s1.properties.'id'::text, s2.properties.'id'::text, ids(nodes((SubPlan 5)))
-         ->  Seq Scan on shortestpath.s s1
-               Output: s1.id, s1.properties
-         ->  Seq Scan on shortestpath.s s2
-               Output: s2.id, s2.properties
-         SubPlan 5
-           ->  Subquery Scan on _d
-                 Output: ROW((SubPlan 2), COALESCE((SubPlan 4), '[]'::edge[]))::graphpath
-                 ->  Shortestpath VLE [1..1]
-                       Output: shortestpath_graphids(), shortestpath_rowids()
-                       Hash Cond: (e_1."end" = e_2.start)
-                       ->  Hash2Side
+                                               QUERY PLAN                                               
+--------------------------------------------------------------------------------------------------------
+ Result
+   Output: (s1.properties.'id'::text), (s2.properties.'id'::text), ids(nodes((SubPlan 5)))
+   ->  Incremental Sort
+         Output: (s1.properties.'id'::text), (s2.properties.'id'::text), s1.id, s2.id
+         Sort Key: (s1.properties.'id'::text), (s2.properties.'id'::text)
+         Presorted Key: (s1.properties.'id'::text)
+         ->  Nested Loop
+               Output: s1.properties.'id'::text, s2.properties.'id'::text, s1.id, s2.id
+               ->  Index Scan using s_id_idx on shortestpath.s s1
+                     Output: s1.id, s1.properties
+               ->  Seq Scan on shortestpath.s s2
+                     Output: s2.id, s2.properties
+   SubPlan 5
+     ->  Subquery Scan on _d
+           Output: ROW((SubPlan 2), COALESCE((SubPlan 4), '[]'::edge[]))::graphpath
+           ->  Shortestpath VLE [1..1]
+                 Output: shortestpath_graphids(), shortestpath_rowids()
+                 Hash Cond: (e_1."end" = e_2.start)
+                 ->  Hash2Side
+                       Output: e_1."end", e_1.tableoid, e_1.ctid
+                       ->  Index Scan using e_start_idx on shortestpath.e e_1
                              Output: e_1."end", e_1.tableoid, e_1.ctid
-                             ->  Index Scan using e_start_idx on shortestpath.e e_1
-                                   Output: e_1."end", e_1.tableoid, e_1.ctid
-                                   Index Cond: (e_1.start = s1.id)
-                       ->  Hash2Side
+                             Index Cond: (e_1.start = s1.id)
+                 ->  Hash2Side
+                       Output: e_2.start, e_2.tableoid, e_2.ctid
+                       ->  Index Scan using e_end_idx on shortestpath.e e_2
                              Output: e_2.start, e_2.tableoid, e_2.ctid
-                             ->  Index Scan using e_end_idx on shortestpath.e e_2
-                                   Output: e_2.start, e_2.tableoid, e_2.ctid
-                                   Index Cond: (e_2."end" = s2.id)
-                 SubPlan 2
-                   ->  Aggregate
-                         Output: array_agg((SubPlan 1))
-                         ->  Function Scan on pg_catalog.unnest vid
-                               Output: vid.vid
-                               Function Call: unnest(_d.vids)
-                         SubPlan 1
-                           ->  Result
-                                 Output: ROW(ag_vertex.id, ag_vertex.properties, ag_vertex.ctid)::vertex
-                                 ->  Append
-                                       ->  Seq Scan on shortestpath.ag_vertex ag_vertex_1
-                                             Output: ag_vertex_1.id, ag_vertex_1.properties, ag_vertex_1.ctid
-                                             Filter: (ag_vertex_1.id = vid.vid)
-                                       ->  Seq Scan on shortestpath.vp ag_vertex_2
-                                             Output: ag_vertex_2.id, ag_vertex_2.properties, ag_vertex_2.ctid
-                                             Filter: (ag_vertex_2.id = vid.vid)
-                                       ->  Seq Scan on shortestpath.o ag_vertex_3
-                                             Output: ag_vertex_3.id, ag_vertex_3.properties, ag_vertex_3.ctid
-                                             Filter: (ag_vertex_3.id = vid.vid)
-                                       ->  Seq Scan on shortestpath.s ag_vertex_4
-                                             Output: ag_vertex_4.id, ag_vertex_4.properties, ag_vertex_4.ctid
-                                             Filter: (ag_vertex_4.id = vid.vid)
-                                       ->  Seq Scan on shortestpath.c ag_vertex_5
-                                             Output: ag_vertex_5.id, ag_vertex_5.properties, ag_vertex_5.ctid
-                                             Filter: (ag_vertex_5.id = vid.vid)
-                                       ->  Index Scan using l_pkey on shortestpath.l ag_vertex_6
-                                             Output: ag_vertex_6.id, ag_vertex_6.properties, ag_vertex_6.ctid
-                                             Index Cond: (ag_vertex_6.id = vid.vid)
-                                       ->  Index Scan using r_pkey on shortestpath.r ag_vertex_7
-                                             Output: ag_vertex_7.id, ag_vertex_7.properties, ag_vertex_7.ctid
-                                             Index Cond: (ag_vertex_7.id = vid.vid)
-                                       ->  Seq Scan on shortestpath.vc ag_vertex_8
-                                             Output: ag_vertex_8.id, ag_vertex_8.properties, ag_vertex_8.ctid
-                                             Filter: (ag_vertex_8.id = vid.vid)
-                 SubPlan 4
-                   ->  Aggregate
-                         Output: array_agg((SubPlan 3))
-                         ->  Function Scan on pg_catalog.unnest eid
-                               Output: eid.eid
-                               Function Call: unnest(_d.eids)
-                         SubPlan 3
-                           ->  Tid Scan on shortestpath.e
-                                 Output: ROW(e.id, e.start, e."end", e.properties, e.ctid)::edge
-                                 TID Cond: (e.ctid = rowid_ctid(eid.eid))
-                                 Filter: (e.tableoid = rowid_tableoid(eid.eid))
-(70 rows)
+                             Index Cond: (e_2."end" = s2.id)
+           SubPlan 2
+             ->  Aggregate
+                   Output: array_agg((SubPlan 1))
+                   ->  Function Scan on pg_catalog.unnest vid
+                         Output: vid.vid
+                         Function Call: unnest(_d.vids)
+                   SubPlan 1
+                     ->  Result
+                           Output: ROW(ag_vertex.id, ag_vertex.properties, ag_vertex.ctid)::vertex
+                           ->  Append
+                                 ->  Seq Scan on shortestpath.ag_vertex ag_vertex_1
+                                       Output: ag_vertex_1.id, ag_vertex_1.properties, ag_vertex_1.ctid
+                                       Filter: (ag_vertex_1.id = vid.vid)
+                                 ->  Seq Scan on shortestpath.vp ag_vertex_2
+                                       Output: ag_vertex_2.id, ag_vertex_2.properties, ag_vertex_2.ctid
+                                       Filter: (ag_vertex_2.id = vid.vid)
+                                 ->  Seq Scan on shortestpath.o ag_vertex_3
+                                       Output: ag_vertex_3.id, ag_vertex_3.properties, ag_vertex_3.ctid
+                                       Filter: (ag_vertex_3.id = vid.vid)
+                                 ->  Seq Scan on shortestpath.s ag_vertex_4
+                                       Output: ag_vertex_4.id, ag_vertex_4.properties, ag_vertex_4.ctid
+                                       Filter: (ag_vertex_4.id = vid.vid)
+                                 ->  Seq Scan on shortestpath.c ag_vertex_5
+                                       Output: ag_vertex_5.id, ag_vertex_5.properties, ag_vertex_5.ctid
+                                       Filter: (ag_vertex_5.id = vid.vid)
+                                 ->  Index Scan using l_pkey on shortestpath.l ag_vertex_6
+                                       Output: ag_vertex_6.id, ag_vertex_6.properties, ag_vertex_6.ctid
+                                       Index Cond: (ag_vertex_6.id = vid.vid)
+                                 ->  Index Scan using r_pkey on shortestpath.r ag_vertex_7
+                                       Output: ag_vertex_7.id, ag_vertex_7.properties, ag_vertex_7.ctid
+                                       Index Cond: (ag_vertex_7.id = vid.vid)
+                                 ->  Seq Scan on shortestpath.vc ag_vertex_8
+                                       Output: ag_vertex_8.id, ag_vertex_8.properties, ag_vertex_8.ctid
+                                       Filter: (ag_vertex_8.id = vid.vid)
+           SubPlan 4
+             ->  Aggregate
+                   Output: array_agg((SubPlan 3))
+                   ->  Function Scan on pg_catalog.unnest eid
+                         Output: eid.eid
+                         Function Call: unnest(_d.eids)
+                   SubPlan 3
+                     ->  Tid Scan on shortestpath.e
+                           Output: ROW(e.id, e.start, e."end", e.properties, e.ctid)::edge
+                           TID Cond: (e.ctid = rowid_ctid(eid.eid))
+                           Filter: (e.tableoid = rowid_tableoid(eid.eid))
+(73 rows)
 
 explain ( analyze false, verbose true, costs false, buffers false, timing false )
 match (c1:c), (c2:c) where c1.id >= 11 and c1.id <= 19 and c2.id >= 11 and c2.id <= 19 return c1.id as c1id, c2.id as c2id, allshortestpaths((c1)-[:e*]->(c2)) order by c1id, c2id;
