@@ -3709,6 +3709,7 @@ eval_const_expressions_mutator(Node *node,
 														context);
 				newtc = makeNode(CypherTypeCast);
 				newtc->type = tc->type;
+				newtc->typmod = tc->typmod;
 				/* add cctx and typcategory for runtime type casting */
 				newtc->cctx = tc->cctx;
 				newtc->cform = tc->cform;
@@ -3718,7 +3719,7 @@ eval_const_expressions_mutator(Node *node,
 
 				if (IsA(newarg, Const))
 					return (Node *) evaluate_expr((Expr *) newtc, newtc->type,
-												  -1, InvalidOid);
+												  newtc->typmod, InvalidOid);
 
 				return (Node *) newtc;
 			}

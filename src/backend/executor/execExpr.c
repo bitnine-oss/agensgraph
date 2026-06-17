@@ -4591,7 +4591,7 @@ ExecInitCypherTypeCast(ExprEvalStep *scratch, CypherTypeCast *tc,
 	 */
 	fcinfo_data_in->args[1].value = ObjectIdGetDatum(typinparam);
 	fcinfo_data_in->args[1].isnull = false;
-	fcinfo_data_in->args[2].value = Int32GetDatum(-1);
+	fcinfo_data_in->args[2].value = Int32GetDatum(tc->typmod);
 	fcinfo_data_in->args[2].isnull = false;
 
 	scratch->opcode = EEOP_CYPHERTYPECAST;
