@@ -4582,7 +4582,99 @@ RETURN t;
  test[3.1]{}
 (1 row)
 
+--
+-- AGV2-324: ORDER BY may reference variables/expressions not in RETURN
+--
+CREATE GRAPH ag324;
+SET graph_path = ag324;
+CREATE (:person {name: 'Alice', age: 30}),
+       (:person {name: 'Bob', age: 5}),
+       (:person {name: 'Charlie', age: 100}),
+       (:person {name: 'Dave', age: 30});
+-- order by a property that is not in the RETURN list (numeric, not lexical)
+MATCH (p:person) RETURN p.name AS name ORDER BY p.age;
+   name    
+-----------
+ "Bob"
+ "Alice"
+ "Dave"
+ "Charlie"
+(4 rows)
+
+MATCH (p:person) RETURN p.name AS name ORDER BY p.age DESC;
+   name    
+-----------
+ "Charlie"
+ "Alice"
+ "Dave"
+ "Bob"
+(4 rows)
+
+-- order by a RETURN alias
+MATCH (p:person) RETURN p.name AS name ORDER BY name;
+   name    
+-----------
+ "Alice"
+ "Bob"
+ "Charlie"
+ "Dave"
+(4 rows)
+
+-- mix of alias and non-returned expression
+MATCH (p:person) RETURN p.name AS name ORDER BY p.age, name;
+   name    
+-----------
+ "Bob"
+ "Alice"
+ "Dave"
+ "Charlie"
+(4 rows)
+
+MATCH (p:person) RETURN p.name AS name ORDER BY name, p.age DESC;
+   name    
+-----------
+ "Alice"
+ "Bob"
+ "Charlie"
+ "Dave"
+(4 rows)
+
+-- a returned key keeps jsonb (numeric) ordering after coercion
+MATCH (p:person) RETURN p.name AS name, p.age AS age ORDER BY age;
+   name    | age 
+-----------+-----
+ "Bob"     | 5
+ "Alice"   | 30
+ "Dave"    | 30
+ "Charlie" | 100
+(4 rows)
+
+-- DISTINCT together with ORDER BY
+MATCH (p:person) RETURN DISTINCT p.age AS age ORDER BY age DESC;
+ age 
+-----
+ 100
+ 30
+ 5
+(3 rows)
+
+-- ORDER BY an aggregate: count() is bigint and is coerced to jsonb in the
+-- target list, so the sort operator must follow the final (jsonb) type
+MATCH (p:person) RETURN p.age AS age, count(*) AS cnt ORDER BY cnt, age;
+ age | cnt 
+-----+-----
+ 5   | 1
+ 100 | 1
+ 30  | 2
+(3 rows)
+
 -- cleanup
+DROP GRAPH ag324 CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence ag324.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
 DROP GRAPH agv2_308 CASCADE;
 NOTICE:  drop cascades to 4 other objects
 DETAIL:  drop cascades to sequence agv2_308.ag_label_seq
