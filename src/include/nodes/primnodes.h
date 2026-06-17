@@ -2343,6 +2343,7 @@ typedef struct CypherTypeCast
 {
 	Expr		xpr;
 	Oid			type;
+	int32		typmod;			/* target type modifier, or -1 if none */
 	/* add coercion context and type category for runtime type casting */
 	CoercionContext cctx;
 	CoercionForm cform;

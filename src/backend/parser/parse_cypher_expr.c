@@ -101,7 +101,7 @@ static bool is_graph_type(Oid type);
 static Node *coerce_all_to_jsonb(ParseState *pstate, Node *expr);
 
 static List *transformA_Star(ParseState *pstate, int location);
-static Node *build_cypher_cast_expr(Node *expr, Oid otyp,
+static Node *build_cypher_cast_expr(Node *expr, Oid otyp, int32 otypmod,
 									CoercionContext cctx,
 									CoercionForm cform, int loc);
 static Node *coerce_cypher_arg_to_boolean(ParseState *pstate, Node *node,
@@ -2108,8 +2108,8 @@ transformBoolExpr(ParseState *pstate, BoolExpr *b)
  * type casting.
  */
 static Node *
-build_cypher_cast_expr(Node *expr, Oid otyp, CoercionContext cctx,
-					   CoercionForm cform, int loc)
+build_cypher_cast_expr(Node *expr, Oid otyp, int32 otypmod,
+					   CoercionContext cctx, CoercionForm cform, int loc)
 {
 	CypherTypeCast *tc;
 	Oid			obtyp;
@@ -2120,6 +2120,7 @@ build_cypher_cast_expr(Node *expr, Oid otyp, CoercionContext cctx,
 	obtyp = getBaseType(otyp);
 	tc = makeNode(CypherTypeCast);
 	tc->type = obtyp;
+	tc->typmod = otypmod;
 	tc->cctx = cctx;
 	tc->cform = cform;
 	tc->typcategory = TypeCategory(obtyp);
@@ -2175,7 +2176,13 @@ coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp, int32 otypmod,
 			 * phase of the cypher type cast.
 			 */
 
-			return build_cypher_cast_expr(expr, otyp, cctx, cform, loc);
+			/*
+			 * Carry the requested typmod (e.g. "embedding::vector(4)") into the
+			 * cast so the result has the correct length/dimension; otherwise
+			 * expressions such as a pgvector HNSW property index fail with
+			 * "column does not have dimensions".
+			 */
+			return build_cypher_cast_expr(expr, otyp, otypmod, cctx, cform, loc);
 		}
 
 		/* Catch cypher to_jsonb casts here */

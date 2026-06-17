@@ -595,7 +595,7 @@ exprTypmod(const Node *expr)
 
 			/* Agengraph cases below */
 		case T_CypherTypeCast:
-			return -1;
+			return ((const CypherTypeCast *) expr)->typmod;
 		case T_CypherMapExpr:
 			return -1;
 		case T_CypherListExpr:
