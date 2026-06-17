@@ -10353,7 +10353,7 @@ get_rule_expr(Node *node, deparse_context *context,
 
 					case COERCE_EXPLICIT_CAST:
 						get_coercion_expr((Node *) tc->arg, context, tc->type,
-										  -1, node);
+										  tc->typmod, node);
 						break;
 
 					case COERCE_EXPLICIT_CALL:
