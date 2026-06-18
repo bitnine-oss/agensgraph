@@ -2,7 +2,7 @@
 ![Build Status](https://github.com/skaiworldwide-oss/agensgraph/actions/workflows/regression.yml/badge.svg)
 &nbsp;
 <a href="https://github.com/skaiworldwide-oss/agensgraph/releases">
-<img src="https://img.shields.io/badge/Release-v2.16.0-FFA500?labelColor=gray&style=flat&link=https://github.com/skaiworldwide-oss/agensgraph/releases"/>
+<img src="https://img.shields.io/badge/Release-v2.17.0-FFA500?labelColor=gray&style=flat&link=https://github.com/skaiworldwide-oss/agensgraph/releases"/>
 </a>
 &nbsp;
 <a href="https://github.com/skaiworldwide-oss/agensgraph/issues">
