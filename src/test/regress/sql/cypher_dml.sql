@@ -103,6 +103,71 @@ CREATE (a {name:'agens'}), (b {name:a.name});
 DROP GRAPH g_create CASCADE;
 
 --
+-- INSERT
+--
+CREATE GRAPH test_insert;
+SET graph_path = test_insert;
+
+CREATE VLABEL repo;
+CREATE ELABEL lib;
+CREATE ELABEL doc;
+
+INSERT (g:repo {name: 'agens-graph',
+                year: (SELECT year FROM history WHERE event = 'Graph')})
+RETURN properties(g) AS g;
+
+MATCH (g:repo)
+INSERT (j:repo {name: 'agens-graph-jdbc', year: 2016}),
+       (d:repo {name: 'agens-graph-docs', year: 2016})
+INSERT (g)-[l:lib {lang: 'java'}]->(j),
+       p=(g)
+         -[:lib {lang: 'c'}]->
+         (:repo {name: 'agens-graph-odbc', year: 2016}),
+       (g)-[e:doc {lang: 'en'}]->(d)
+RETURN properties(l) AS lj, properties(j) AS j,
+       properties((edges(p))[0]) AS lc, properties((vertices(p))[1]) AS c,
+       properties(e) AS e, properties(d) AS d;
+
+INSERT ()-[a:lib]->(a);
+INSERT a=(), (a);
+INSERT (a), (a {});
+INSERT (a), (a);
+INSERT (=0);
+INSERT ()-[]-();
+INSERT ()-[]->();
+INSERT ()-[:lib|doc]->();
+INSERT (a)-[a:lib]->();
+INSERT ()-[a:lib]->()-[a:doc]->();
+INSERT a=(), ()-[a:doc]->();
+INSERT ()-[:lib =0]->();
+INSERT (a), a=();
+INSERT ()-[a:lib]->(), a=();
+INSERT a=(), a=();
+INSERT (:lib);
+INSERT ()-[:repo]->();
+INSERT (:ag_vertex);
+INSERT ()-[:ag_edge]->();
+
+INSERT (=null)-[:lib =null]->();
+CREATE TABLE t1 (prop jsonb);
+INSERT (=(SELECT prop FROM t1))-[:lib =(SELECT prop FROM t1)]->();
+
+MATCH (a) WHERE a.name IS NULL DETACH DELETE a;
+DROP TABLE t1;
+
+CREATE GRAPH g_insert;
+SET GRAPH_PATH = g_insert;
+
+CREATE ELABEL e1;
+
+INSERT p=()-[:e1]->() RETURN p;
+
+INSERT (a {name:'agens'}), (b {name:a.name});
+
+DROP GRAPH g_insert CASCADE;
+DROP GRAPH test_insert CASCADE;
+
+--
 -- MATCH
 --
 

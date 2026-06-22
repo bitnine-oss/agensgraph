@@ -7829,6 +7829,14 @@ privilege:	SELECT opt_column_list
 				n->cols = NIL;
 				$$ = n;
 			}
+		| INSERT opt_column_list
+			{
+				AccessPriv *n = makeNode(AccessPriv);
+
+				n->priv_name = pstrdup($1);
+				n->cols = $2;
+				$$ = n;
+			}
 		| ColId opt_column_list
 			{
 				AccessPriv *n = makeNode(AccessPriv);
@@ -12384,7 +12392,7 @@ DeallocateStmt: DEALLOCATE name
  *****************************************************************************/
 
 InsertStmt:
-			opt_with_clause INSERT INTO insert_target insert_rest
+			with_clause INSERT INTO insert_target insert_rest
 			opt_on_conflict returning_clause
 				{
 					$5->relation = $4;
@@ -12392,6 +12400,15 @@ InsertStmt:
 					$5->returningList = $7;
 					$5->withClause = $1;
 					$$ = (Node *) $5;
+				}
+			| INSERT INTO insert_target insert_rest
+				opt_on_conflict returning_clause
+				{
+					$4->relation = $3;
+					$4->onConflictClause = $5;
+					$4->returningList = $6;
+					$4->withClause = NULL;
+					$$ = (Node *) $4;
 				}
 		;
 
@@ -17982,7 +17999,6 @@ unreserved_keyword:
 			| INLINE_P
 			| INPUT_P
 			| INSENSITIVE
-			| INSERT
 			| INSTEAD
 			| INVOKER
 			| ISOLATION
@@ -18348,6 +18364,7 @@ reserved_keyword:
 			| HAVING
 			| IN_P
 			| INITIALLY
+			| INSERT
 			| INTERSECT
 			| INTO
 			| LATERAL_P
@@ -21326,6 +21343,14 @@ cypher_optional_opt:
 
 cypher_create:
 			CREATE cypher_pattern
+				{
+					CypherCreateClause *n;
+
+					n = makeNode(CypherCreateClause);
+					n->pattern = $2;
+					$$ = (Node *) n;
+				}
+			| INSERT cypher_pattern
 				{
 					CypherCreateClause *n;
 
