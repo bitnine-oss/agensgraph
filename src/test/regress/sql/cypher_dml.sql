@@ -767,6 +767,12 @@ SELECT max();
 --
 
 MATCH (a:repo) WHERE exists((a)-[]->()) RETURN a.name AS a;
+MATCH (a:repo) WHERE exists(a.name) RETURN a;
+MATCH (a:repo) WHERE NOT exists(a.name) RETURN a;
+MATCH (a:repo) RETURN a, exists(a.name) AS b;
+-- exists() is false for an absent property
+MATCH (a:repo) WHERE NOT exists(a.stars) RETURN a.name AS name ORDER BY name;
+MATCH (a:repo) RETURN a.name AS name, exists(a.year) AS has_year, exists(a.stars) AS has_stars ORDER BY name;
 
 --
 -- SIZE

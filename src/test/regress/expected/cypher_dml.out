@@ -2477,6 +2477,48 @@ MATCH (a:repo) WHERE exists((a)-[]->()) RETURN a.name AS a;
  "agens-graph"
 (1 row)
 
+MATCH (a:repo) WHERE exists(a.name) RETURN a;
+                          a                          
+-----------------------------------------------------
+ repo[3.1]{"name": "agens-graph", "year": 2016}
+ repo[3.2]{"name": "agens-graph-jdbc", "year": 2016}
+ repo[3.3]{"name": "agens-graph-docs", "year": 2016}
+ repo[3.4]{"name": "agens-graph-odbc", "year": 2016}
+(4 rows)
+
+MATCH (a:repo) WHERE NOT exists(a.name) RETURN a;
+ a 
+---
+(0 rows)
+
+MATCH (a:repo) RETURN a, exists(a.name) AS b;
+                          a                          | b 
+-----------------------------------------------------+---
+ repo[3.1]{"name": "agens-graph", "year": 2016}      | t
+ repo[3.2]{"name": "agens-graph-jdbc", "year": 2016} | t
+ repo[3.3]{"name": "agens-graph-docs", "year": 2016} | t
+ repo[3.4]{"name": "agens-graph-odbc", "year": 2016} | t
+(4 rows)
+
+-- exists() is false for an absent property
+MATCH (a:repo) WHERE NOT exists(a.stars) RETURN a.name AS name ORDER BY name;
+        name        
+--------------------
+ "agens-graph"
+ "agens-graph-docs"
+ "agens-graph-jdbc"
+ "agens-graph-odbc"
+(4 rows)
+
+MATCH (a:repo) RETURN a.name AS name, exists(a.year) AS has_year, exists(a.stars) AS has_stars ORDER BY name;
+        name        | has_year | has_stars 
+--------------------+----------+-----------
+ "agens-graph"      | t        | f
+ "agens-graph-docs" | t        | f
+ "agens-graph-jdbc" | t        | f
+ "agens-graph-odbc" | t        | f
+(4 rows)
+
 --
 -- SIZE
 --

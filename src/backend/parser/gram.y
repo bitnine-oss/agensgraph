@@ -730,8 +730,8 @@ static bool has_internal_default_prefix(char *str);
 %type <node>	cypher_expr_func cypher_expr_func_norm cypher_expr_func_subexpr
 				cypher_expr_shortestpath
 
-%type <node>	cypher_expr_propref cypher_expr_indir_elem
-%type <list>	cypher_expr_indir_opt
+%type <node>	cypher_expr_propref cypher_expr_propref_strict cypher_expr_indir_elem
+%type <list>	cypher_expr_indir cypher_expr_indir_opt
 
 %type <list>	cypher_pattern cypher_anon_pattern
 				cypher_path cypher_path_chain
@@ -20561,6 +20561,16 @@ cypher_expr_func_subexpr:
 					n->location = @1;
 					$$ = (Node *) n;
 				}
+			| EXISTS '(' cypher_expr_propref_strict ')'
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $3;
+					n->nulltesttype = IS_NOT_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
 			| NONE '(' cypher_expr_varname IN_P cypher_expr cypher_where ')'
 				{
 					CypherListComp *clc;
@@ -20665,6 +20675,18 @@ cypher_expr_varname:
 			}
 		;
 
+cypher_expr_propref_strict:
+			cypher_expr_var cypher_expr_indir
+				{
+					A_Indirection *n;
+
+					n = makeNode(A_Indirection);
+					n->arg = $1;
+					n->indirection = $2;
+					$$ = (Node *) n;
+				}
+		;
+
 cypher_expr_propref:
 			cypher_expr_var cypher_expr_indir_opt
 				{
@@ -20684,9 +20706,15 @@ cypher_expr_propref:
 				}
 		;
 
-cypher_expr_indir_opt:
-			cypher_expr_indir_opt cypher_expr_indir_elem
+cypher_expr_indir:
+			cypher_expr_indir_elem
+					{ $$ = list_make1($1); }
+			| cypher_expr_indir cypher_expr_indir_elem
 					{ $$ = lappend($1, $2); }
+		;
+
+cypher_expr_indir_opt:
+			cypher_expr_indir
 			| /* EMPTY */
 					{ $$ = NIL; }
 		;
