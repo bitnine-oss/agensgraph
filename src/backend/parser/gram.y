@@ -197,6 +197,7 @@ static void doNegateFloat(Float *v);
 static Node *makeAndExpr(Node *lexpr, Node *rexpr, int location);
 static Node *makeOrExpr(Node *lexpr, Node *rexpr, int location);
 static Node *makeNotExpr(Node *expr, int location);
+static Node *makeXorExpr(Node *lexpr, Node *rexpr, int location);
 static Node *makeAArrayExpr(List *elements, int location);
 static Node *makeSQLValueFunction(SQLValueFunctionOp op, int32 typmod,
 								  int location);
@@ -887,7 +888,7 @@ static bool has_internal_default_prefix(char *str);
 	WHEN WHERE WHITESPACE_P WINDOW WITH WITHIN WITHOUT WORK WRAPPER WRITE
 
 	XML_P XMLATTRIBUTES XMLCONCAT XMLELEMENT XMLEXISTS XMLFOREST XMLNAMESPACES
-	XMLPARSE XMLPI XMLROOT XMLSERIALIZE XMLTABLE
+	XMLPARSE XMLPI XMLROOT XMLSERIALIZE XMLTABLE XOR
 
 	YEAR_P YES_P
 
@@ -927,7 +928,7 @@ static bool has_internal_default_prefix(char *str);
 /* Precedence: lowest to highest */
 %left		UNION EXCEPT
 %left		INTERSECT
-%left		OR
+%left		OR XOR
 %left		AND
 %right		NOT
 %nonassoc	IS ISNULL NOTNULL	/* IS sets precedence for IS NULL, etc */
@@ -18388,6 +18389,7 @@ reserved_keyword:
 			| WHERE
 			| WINDOW
 			| WITH
+			| XOR
 		;
 
 /*
@@ -18867,6 +18869,7 @@ bare_label_keyword:
 			| XMLROOT
 			| XMLSERIALIZE
 			| XMLTABLE
+			| XOR
 			| YES_P
 			| ZONE
 		;
@@ -19443,6 +19446,8 @@ cypher_expr:
 					{ $$ = makeOrExpr($1, $3, @2); }
 			| cypher_expr AND cypher_expr
 					{ $$ = makeAndExpr($1, $3, @2); }
+			| cypher_expr XOR cypher_expr
+					{ $$ = makeXorExpr($1, $3, @2); }
 			| NOT cypher_expr
 					{ $$ = makeNotExpr($2, @1); }
 			| cypher_expr '=' cypher_expr
@@ -19723,6 +19728,8 @@ cypher_i_expr:
 					{ $$ = makeOrExpr($1, $3, @2); }
 			| cypher_i_expr AND cypher_i_expr
 					{ $$ = makeAndExpr($1, $3, @2); }
+			| cypher_i_expr XOR cypher_i_expr
+					{ $$ = makeXorExpr($1, $3, @2); }
 			| NOT cypher_i_expr
 					{ $$ = makeNotExpr($2, @1); }
 			| cypher_i_expr '=' cypher_i_expr
@@ -19976,6 +19983,8 @@ cypher_w_expr:
 					{ $$ = makeOrExpr($1, $3, @2); }
 			| cypher_w_expr AND cypher_w_expr
 					{ $$ = makeAndExpr($1, $3, @2); }
+			| cypher_w_expr XOR cypher_w_expr
+					{ $$ = makeXorExpr($1, $3, @2); }
 			| NOT cypher_w_expr
 					{ $$ = makeNotExpr($2, @1); }
 			| cypher_w_expr '=' cypher_w_expr
@@ -22014,6 +22023,18 @@ static Node *
 makeNotExpr(Node *expr, int location)
 {
 	return (Node *) makeBoolExpr(NOT_EXPR, list_make1(expr), location);
+}
+
+static Node *
+makeXorExpr(Node *lexpr, Node *rexpr, int location)
+{
+	/*
+	 * Cypher XOR is boolean inequality.  Emit it as an internal "`XOR`"
+	 * operator that transformAExprOp() turns into a strict boolean "<>"
+	 * (boolne) over both operands coerced to boolean, so the result is
+	 * NULL when either side is NULL (three-valued logic).
+	 */
+	return (Node *) makeSimpleA_Expr(AEXPR_OP, "`XOR`", lexpr, rexpr, location);
 }
 
 static Node *

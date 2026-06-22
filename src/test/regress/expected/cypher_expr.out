@@ -1033,6 +1033,69 @@ drop cascades to elabel ag_edge
 drop cascades to vlabel item
 drop cascades to elabel knows
 drop cascades to elabel likes
+-- XOR (boolean inequality; NULL-propagating; same precedence as OR, below AND)
+RETURN true XOR true;
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN true XOR false;
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN false XOR true;
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN false XOR false;
+ ?column? 
+----------
+ f
+(1 row)
+
+-- NULL propagation (three-valued logic)
+RETURN true XOR NULL;
+ ?column? 
+----------
+ 
+(1 row)
+
+RETURN NULL XOR false;
+ ?column? 
+----------
+ 
+(1 row)
+
+RETURN NULL XOR NULL;
+ ?column? 
+----------
+ 
+(1 row)
+
+-- precedence: OR and XOR share one left-assoc level; AND binds tighter
+RETURN true OR false XOR true;
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN true XOR true AND false;
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN true XOR false XOR true;
+ ?column? 
+----------
+ f
+(1 row)
+
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;

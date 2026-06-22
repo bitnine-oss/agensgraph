@@ -382,6 +382,20 @@ RETURN 'a' IN [];
 
 DROP GRAPH agv2_437 CASCADE;
 
+-- XOR (boolean inequality; NULL-propagating; same precedence as OR, below AND)
+RETURN true XOR true;
+RETURN true XOR false;
+RETURN false XOR true;
+RETURN false XOR false;
+-- NULL propagation (three-valued logic)
+RETURN true XOR NULL;
+RETURN NULL XOR false;
+RETURN NULL XOR NULL;
+-- precedence: OR and XOR share one left-assoc level; AND binds tighter
+RETURN true OR false XOR true;
+RETURN true XOR true AND false;
+RETURN true XOR false XOR true;
+
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;

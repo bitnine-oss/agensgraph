@@ -1834,6 +1834,20 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 		Oid			ltype = exprType(l);
 		Oid			rtype = exprType(r);
 
+		if (strcmp(opname, "`XOR`") == 0)
+		{
+			/*
+			 * Cypher XOR is boolean inequality: coerce both operands to
+			 * boolean (like AND/OR/NOT) and emit a strict boolean "<>"
+			 * (boolne), which is NULL when either side is NULL.
+			 */
+			l = coerce_cypher_arg_to_boolean(pstate, l, "XOR");
+			r = coerce_cypher_arg_to_boolean(pstate, r, "XOR");
+
+			return (Node *) make_op(pstate, list_make1(makeString("<>")),
+									l, r, last_srf, a->location);
+		}
+
 		if (strcmp(opname, "`+`") == 0 ||
 			strcmp(opname, "`-`") == 0 ||
 			strcmp(opname, "`*`") == 0 ||
