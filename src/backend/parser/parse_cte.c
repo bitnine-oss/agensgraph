@@ -22,6 +22,7 @@
 #include "parser/parse_collate.h"
 #include "parser/parse_cte.h"
 #include "parser/parse_expr.h"
+#include "parser/parse_graph.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
@@ -1204,29 +1205,11 @@ static bool
 cypherHasModifyingClause(CypherStmt *stmt)
 {
 	CypherClause *clause = (CypherClause *) stmt->last;
-	NodeTag		type;
 
 	while (clause != NULL)
 	{
-		type = cypherClauseTag(clause);
-		switch (type)
-		{
-			case T_CypherMatchClause:
-			case T_CypherUnwindClause:
-			case T_CypherProjection:
-			case T_CypherLoadClause:
-				/* do nothing. */
-				break;
-			case T_CypherCreateClause:
-			case T_CypherDeleteClause:
-			case T_CypherSetClause:
-			case T_CypherMergeClause:
-				/* found a modifying clause */
-				return true;
-			default:
-				elog(ERROR, "unrecognized Cypher clause type: %d", type);
-				break;
-		}
+		if (IsGraphWriteClause((Node *) clause))
+			return true;
 
 		clause = (CypherClause *) clause->prev;
 	}

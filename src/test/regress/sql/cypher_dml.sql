@@ -168,6 +168,41 @@ DROP GRAPH g_insert CASCADE;
 DROP GRAPH test_insert CASCADE;
 
 --
+-- FINISH
+--
+CREATE GRAPH finish_test;
+SET graph_path = finish_test;
+
+CREATE VLABEL person;
+CREATE ELABEL knows;
+CREATE (:person {name: 'A'}), (:person {name: 'B'}), (:person {name: 'C'});
+
+-- a read-only query ending in FINISH returns no rows
+MATCH (n) FINISH;
+MATCH (n) WHERE n.name = 'A' FINISH;
+MATCH (n)-[r]->(m) FINISH;
+MATCH p=(n)-[r]->(m) FINISH;
+
+-- a query whose last clause is a graph write still performs the write,
+-- and FINISH returns no rows
+CREATE (:person {name: 'D'}) FINISH;
+MERGE (:person {name: 'E'}) FINISH;
+MATCH (n:person {name: 'A'}) CREATE (n)-[:knows]->(:person {name: 'F'}) FINISH;
+
+-- the writes above must have taken effect
+MATCH (n:person) RETURN count(n) AS persons;
+MATCH (:person)-[r:knows]->(:person) RETURN count(r) AS knows;
+
+-- FINISH must be the last clause
+MATCH (n) FINISH RETURN n;
+
+-- plan structure: a read + FINISH applies LIMIT 0; a write + FINISH runs the write
+EXPLAIN (COSTS OFF) MATCH (n) FINISH;
+EXPLAIN (COSTS OFF) CREATE (:person {name: 'G'}) FINISH;
+
+DROP GRAPH finish_test CASCADE;
+
+--
 -- MATCH
 --
 

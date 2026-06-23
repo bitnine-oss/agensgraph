@@ -40,4 +40,6 @@ extern Query *transformCypherLoadClause(ParseState *pstate,
 extern Query *transformCypherUnwindClause(ParseState *pstate,
 										  CypherClause *clause);
 
+extern bool IsGraphWriteClause(Node *clause);
+
 #endif							/* PARSE_GRAPH_H */

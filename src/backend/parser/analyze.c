@@ -3647,7 +3647,8 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 	switch (type)
 	{
 		case T_CypherProjection:
-			if (cypherProjectionKind(clause->detail) != CP_RETURN)
+			if (cypherProjectionKind(clause->detail) != CP_RETURN &&
+				cypherProjectionKind(clause->detail) != CP_FINISH)
 				valid = false;
 			break;
 		case T_CypherCreateClause:
@@ -3663,7 +3664,7 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 	if (!valid)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("Cypher query must end with RETURN or update clause")));
+				 errmsg("Cypher query must end with RETURN, FINISH or update clause")));
 
 	clause = (CypherClause *) clause->prev;
 	while (clause != NULL)
@@ -3686,6 +3687,12 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),
 							 errmsg("RETURN must be at the end of the query")));
+				}
+				else if (cypherProjectionKind(clause->detail) == CP_FINISH)
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("FINISH must be at the end of the query")));
 				}
 				break;
 			default:

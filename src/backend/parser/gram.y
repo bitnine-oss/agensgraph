@@ -745,7 +745,7 @@ static bool has_internal_default_prefix(char *str);
 %type <str>		cypher_pattern_varname cypher_labelname
 %type <boolean>	cypher_rel_left cypher_rel_right
 
-%type <node>	cypher_return cypher_with
+%type <node>	cypher_return cypher_with cypher_finish
 				cypher_skip_opt cypher_limit_opt cypher_where cypher_where_opt
 				cypher_unwind
 %type <list>	cypher_return_items cypher_distinct_opt
@@ -822,7 +822,7 @@ static bool has_internal_default_prefix(char *str);
 	EVENT EXCEPT EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN EXPRESSION
 	EXTENSION EXTERNAL EXTRACT
 
-	FALSE_P FAMILY FETCH FILTER FINALIZE FIRST_P FLOAT_P FOLLOWING FOR
+	FALSE_P FAMILY FETCH FILTER FINALIZE FINISH FIRST_P FLOAT_P FOLLOWING FOR
 	FORCE FOREIGN FORMAT FORWARD FREEZE FROM FULL FUNCTION FUNCTIONS
 
 	GENERATED GLOBAL GRANT GRANTED GRAPH GREATEST GROUP_P GROUPING GROUPS
@@ -18356,6 +18356,7 @@ reserved_keyword:
 			| EXCEPT
 			| FALSE_P
 			| FETCH
+			| FINISH
 			| FOR
 			| FOREIGN
 			| FROM
@@ -19365,6 +19366,7 @@ cypher_clause_head:
 			| cypher_merge
 			| cypher_load
 			| cypher_unwind
+			| cypher_finish
 		;
 
 cypher_clause:
@@ -19387,6 +19389,19 @@ cypher_read_with_parens:
 
 cypher_read_stmt:
 			cypher_read_opt cypher_return
+				{
+					CypherClause *clause;
+					CypherStmt *n;
+
+					clause = makeNode(CypherClause);
+					clause->detail = $2;
+					clause->prev = $1;
+
+					n = makeNode(CypherStmt);
+					n->last = (Node *) clause;
+					$$ = (Node *) n;
+				}
+			| cypher_read_opt cypher_finish
 				{
 					CypherClause *clause;
 					CypherStmt *n;
@@ -21201,6 +21216,18 @@ cypher_prop_map_opt:
 			| cypher_expr_param
 			| '=' cypher_expr		{ $$ = $2; }
 			| /* EMPTY */			{ $$ = NULL; }
+		;
+
+cypher_finish:
+			FINISH
+				{
+					CypherProjection *n;
+
+					n = makeNode(CypherProjection);
+					n->kind = CP_FINISH;
+
+					$$ = (Node *) n;
+				}
 		;
 
 cypher_return:

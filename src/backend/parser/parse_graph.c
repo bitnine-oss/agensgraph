@@ -379,6 +379,7 @@ static Node *qualAndExpr(Node *qual, Node *expr);
 /* parse node */
 static A_Const *makeBoolAConst(bool state, int location);
 static A_Const *makeNullAConst(void);
+static Node *makeIntConst(int val, int location);
 static bool IsNullAConst(Node *arg);
 
 /* utils */
@@ -511,6 +512,28 @@ updateSortOperatorsForJsonb(List *sortClause, List *targetList)
 	}
 }
 
+/*
+ * IsGraphWriteClause
+ *		Is this Cypher clause a graph-write clause (CREATE/DELETE/SET/MERGE)?
+ */
+bool
+IsGraphWriteClause(Node *clause)
+{
+	if (clause == NULL)
+		return false;
+
+	switch (cypherClauseTag(clause))
+	{
+		case T_CypherCreateClause:
+		case T_CypherDeleteClause:
+		case T_CypherSetClause:
+		case T_CypherMergeClause:
+			return true;
+		default:
+			return false;
+	}
+}
+
 Query *
 transformCypherProjection(ParseState *pstate, CypherClause *clause)
 {
@@ -523,7 +546,31 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
-	if (detail->where != NULL)
+	if (detail->kind == CP_FINISH)
+	{
+		ParseNamespaceItem *prev_nsitem = NULL;
+
+		if (clause->prev != NULL)
+			prev_nsitem = transformClause(pstate, clause->prev);
+
+		/*
+		 * FINISH terminates a query and returns no rows.  When the preceding
+		 * clause is a graph write, return its subquery so the write still
+		 * executes; such a query produces no rows of its own.
+		 */
+		if (IsGraphWriteClause(clause->prev))
+			return prev_nsitem->p_rte->subquery;
+
+		/*
+		 * Otherwise the query is read-only: keep the read for planning but
+		 * return nothing by applying LIMIT 0.  FINISH has no projection items,
+		 * so the target list is left empty.
+		 */
+		if (!pstate->p_hasGraphwriteClause)
+			qry->limitCount = transformCypherLimit(pstate, makeIntConst(0, -1),
+												   EXPR_KIND_LIMIT, "LIMIT");
+	}
+	else if (detail->where != NULL)
 	{
 		Node	   *where = detail->where;
 
@@ -6592,6 +6639,18 @@ makeNullAConst(void)
 	nullconst->location = -1;
 
 	return nullconst;
+}
+
+static Node *
+makeIntConst(int val, int location)
+{
+	A_Const    *n = makeNode(A_Const);
+
+	n->val.ival.type = T_Integer;
+	n->val.ival.ival = val;
+	n->location = location;
+
+	return (Node *) n;
 }
 
 static bool

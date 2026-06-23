@@ -4443,7 +4443,8 @@ typedef struct CypherMatchClause
 typedef enum CPKind
 {
 	CP_RETURN,
-	CP_WITH
+	CP_WITH,
+	CP_FINISH
 } CPKind;
 
 /* Cypher RETURN and WITH clauses use this */

@@ -324,6 +324,76 @@ drop cascades to vlabel repo
 drop cascades to elabel lib
 drop cascades to elabel doc
 --
+-- FINISH
+--
+CREATE GRAPH finish_test;
+SET graph_path = finish_test;
+CREATE VLABEL person;
+CREATE ELABEL knows;
+CREATE (:person {name: 'A'}), (:person {name: 'B'}), (:person {name: 'C'});
+-- a read-only query ending in FINISH returns no rows
+MATCH (n) FINISH;
+--
+(0 rows)
+
+MATCH (n) WHERE n.name = 'A' FINISH;
+--
+(0 rows)
+
+MATCH (n)-[r]->(m) FINISH;
+--
+(0 rows)
+
+MATCH p=(n)-[r]->(m) FINISH;
+--
+(0 rows)
+
+-- a query whose last clause is a graph write still performs the write,
+-- and FINISH returns no rows
+CREATE (:person {name: 'D'}) FINISH;
+MERGE (:person {name: 'E'}) FINISH;
+MATCH (n:person {name: 'A'}) CREATE (n)-[:knows]->(:person {name: 'F'}) FINISH;
+-- the writes above must have taken effect
+MATCH (n:person) RETURN count(n) AS persons;
+ persons 
+---------
+ 6
+(1 row)
+
+MATCH (:person)-[r:knows]->(:person) RETURN count(r) AS knows;
+ knows 
+-------
+ 1
+(1 row)
+
+-- FINISH must be the last clause
+MATCH (n) FINISH RETURN n;
+ERROR:  FINISH must be at the end of the query
+-- plan structure: a read + FINISH applies LIMIT 0; a write + FINISH runs the write
+EXPLAIN (COSTS OFF) MATCH (n) FINISH;
+              QUERY PLAN               
+---------------------------------------
+ Limit
+   ->  Append
+         ->  Seq Scan on ag_vertex n_1
+         ->  Seq Scan on person n_2
+(4 rows)
+
+EXPLAIN (COSTS OFF) CREATE (:person {name: 'G'}) FINISH;
+  QUERY PLAN  
+--------------
+ Graph Create
+   ->  Result
+(2 rows)
+
+DROP GRAPH finish_test CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence finish_test.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
+drop cascades to elabel knows
+--
 -- MATCH
 --
 SET GRAPH_PATH = agens;
@@ -489,7 +559,7 @@ MATCH p=({name: 'agens-graph'})-[{lang: 'java'}]->(m) RETURN *;
 (1 row)
 
 MATCH ();
-ERROR:  Cypher query must end with RETURN or update clause
+ERROR:  Cypher query must end with RETURN, FINISH or update clause
 MATCH ()-[a]-(), (a) RETURN *;
 ERROR:  duplicate variable "a"
 LINE 1: MATCH ()-[a]-(), (a) RETURN *;
