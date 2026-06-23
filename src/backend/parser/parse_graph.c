@@ -1412,6 +1412,45 @@ transformCypherModifier(ParseState *pstate, CypherClause *clause)
 	return qry;
 }
 
+/*
+ * transformCypherFilterClause
+ *		Transform a standalone FILTER [WHERE] <expr> clause.  Unlike a WHERE
+ *		that is part of its containing statement, FILTER is evaluated as a
+ *		separate stage: it passes through the previous clause's variables and
+ *		applies the condition as this query's WHERE qualification.
+ */
+Query *
+transformCypherFilterClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherFilterClause *detail = (CypherFilterClause *) clause->detail;
+	Query	   *qry;
+	Node	   *qual;
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	if (clause->prev != NULL)
+	{
+		ParseNamespaceItem *nsitem;
+
+		nsitem = transformClause(pstate, clause->prev);
+		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
+	}
+
+	qual = transformCypherWhere(pstate, detail->expr, EXPR_KIND_WHERE);
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
+	qry->rteperminfos = pstate->p_rteperminfos;
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
+
 /* check whether resulting columns have a name or not */
 static void
 checkNameInItems(ParseState *pstate, List *items, List *targetList)

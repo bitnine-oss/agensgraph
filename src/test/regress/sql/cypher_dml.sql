@@ -282,6 +282,58 @@ MATCH (a) RETURN a.name AS name LIMIT 1 ORDER BY a.name;
 DROP GRAPH modifiers CASCADE;
 
 --
+-- FILTER clause
+--
+CREATE GRAPH test_filter;
+SET graph_path = test_filter;
+
+CREATE ({name: 'foo', age: 13});
+CREATE ({name: 'bar', age: 14});
+CREATE ({name: 'baz', age: 15});
+CREATE ({age: 16});
+
+-- FILTER keeps rows satisfying the condition; FILTER WHERE is equivalent
+MATCH (n) FILTER n.age > 13 RETURN n.age AS age ORDER BY age;
+MATCH (n) FILTER WHERE n.age > 13 RETURN n.age AS age ORDER BY age;
+
+-- boolean expressions
+MATCH (n) FILTER n.age >= 14 AND n.age <= 15 RETURN n.age AS age ORDER BY age;
+MATCH (n) FILTER n.age = 13 OR n.age = 16 RETURN n.age AS age ORDER BY age;
+MATCH (n) FILTER NOT (n.age > 14) RETURN n.age AS age ORDER BY age;
+MATCH (n) FILTER n.name IS NOT NULL RETURN n.name AS name ORDER BY name;
+
+-- a FILTER predicate may use a property/subquery predicate
+MATCH (n) FILTER exists(n.name) RETURN n.age AS age ORDER BY age;
+
+-- chained FILTERs apply as successive stages
+MATCH (n) FILTER n.age > 13 FILTER n.age < 16 RETURN n.age AS age ORDER BY age;
+
+-- filtering everything out, and keeping everything
+MATCH (n) FILTER n.age > 100 RETURN n.age AS age;
+MATCH (n) FILTER n.age > 0 RETURN n.age AS age ORDER BY age;
+
+-- FILTER after WITH
+MATCH (n) WITH n FILTER n.age > 14 RETURN n.age AS age ORDER BY age;
+
+-- FILTER in the middle of a chain (after UNWIND, before MATCH)
+UNWIND [13, 14, 15] AS age FILTER age < 15
+MATCH (n {age: age}) RETURN n.name AS name ORDER BY name;
+UNWIND [13, 14, 15] AS age FILTER WHERE age < 15
+MATCH (n {age: age}) RETURN n.name AS name ORDER BY name;
+
+-- FILTER after a write clause (the write runs, then rows are filtered)
+MERGE (n {age: 14}) FILTER n.name IS NOT NULL RETURN n.name AS name;
+MERGE (n {age: 14}) FILTER WHERE n.name IS NOT NULL RETURN n.name AS name;
+
+-- a bare FILTER with no preceding clause is not a valid query
+FILTER true;
+
+-- a query may not end with FILTER
+MATCH (n) FILTER n.age > 13;
+
+DROP GRAPH test_filter CASCADE;
+
+--
 -- MATCH
 --
 

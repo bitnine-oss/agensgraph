@@ -747,7 +747,7 @@ static bool has_internal_default_prefix(char *str);
 
 %type <node>	cypher_return cypher_with cypher_finish
 				cypher_order_by cypher_skip cypher_limit
-				cypher_where cypher_where_opt cypher_unwind
+				cypher_where cypher_where_opt cypher_unwind cypher_filter
 %type <list>	cypher_return_items cypher_distinct_opt
 				cypher_sort_items
 %type <target>	cypher_return_item
@@ -19378,6 +19378,7 @@ cypher_clause:
 			| cypher_order_by
 			| cypher_skip
 			| cypher_limit
+			| cypher_filter
 		;
 
 cypher_read_opt_parens:
@@ -21375,6 +21376,25 @@ cypher_where:
 cypher_where_opt:
 			cypher_where
 			| /*EMPTY*/			{ $$ = NULL; }
+		;
+
+cypher_filter:
+			FILTER cypher_expr
+				{
+					CypherFilterClause *n;
+
+					n = makeNode(CypherFilterClause);
+					n->expr = $2;
+					$$ = (Node *) n;
+				}
+			| FILTER cypher_where
+				{
+					CypherFilterClause *n;
+
+					n = makeNode(CypherFilterClause);
+					n->expr = $2;
+					$$ = (Node *) n;
+				}
 		;
 
 cypher_match:

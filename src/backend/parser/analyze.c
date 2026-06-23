@@ -3694,6 +3694,7 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 			case T_CypherLoadClause:
 			case T_CypherUnwindClause:
 			case T_CypherModifier:
+			case T_CypherFilterClause:
 				/* do nothing. */
 				break;
 			case T_CypherProjection:
@@ -3754,6 +3755,9 @@ transformCypherClause(ParseState *pstate, CypherClause *clause)
 			break;
 		case T_CypherModifier:
 			qry = transformCypherModifier(pstate, clause);
+			break;
+		case T_CypherFilterClause:
+			qry = transformCypherFilterClause(pstate, clause);
 			break;
 		default:
 			elog(ERROR, "unrecognized Cypher clause type: %d",

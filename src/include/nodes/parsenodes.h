@@ -4540,6 +4540,12 @@ typedef struct CypherUnwindClause
 	ResTarget  *target;
 } CypherUnwindClause;
 
+typedef struct CypherFilterClause
+{
+	NodeTag		type;
+	Node	   *expr;			/* filter condition (evaluates to boolean) */
+} CypherFilterClause;
+
 typedef enum CPathKind
 {
 	CPATH_NORMAL,
