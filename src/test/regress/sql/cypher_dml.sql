@@ -203,6 +203,85 @@ EXPLAIN (COSTS OFF) CREATE (:person {name: 'G'}) FINISH;
 DROP GRAPH finish_test CASCADE;
 
 --
+-- ORDER BY / SKIP / OFFSET / LIMIT as standalone clauses
+--
+CREATE GRAPH modifiers;
+SET graph_path = modifiers;
+
+CREATE ({name: 'A', id: 1, grp: 1});
+CREATE ({name: 'B', id: 2, grp: 2});
+CREATE ({name: 'C', id: 3, grp: 1});
+CREATE ({name: 'D', id: 4, grp: 2});
+CREATE ({name: 'E', id: 5, grp: 1});
+
+-- ORDER BY: ASC (default/explicit), DESC, multi-key with mixed direction,
+-- and an expression sort key
+MATCH (a) ORDER BY a.name RETURN a.name AS name;
+MATCH (a) ORDER BY a.name ASC RETURN a.name AS name;
+MATCH (a) ORDER BY a.name DESC RETURN a.name AS name;
+MATCH (a) ORDER BY a.grp, a.name DESC RETURN a.grp AS grp, a.name AS name;
+MATCH (a) ORDER BY a.id % 2, a.id RETURN a.id AS id;
+
+-- SKIP, OFFSET (synonym), LIMIT; alone and combined; expression arguments
+MATCH (a) ORDER BY a.name SKIP 1 RETURN a.name AS name;
+MATCH (a) ORDER BY a.name OFFSET 1 RETURN a.name AS name;
+MATCH (a) ORDER BY a.name LIMIT 2 RETURN a.name AS name;
+MATCH (a) ORDER BY a.name SKIP 1 LIMIT 2 RETURN a.name AS name;
+MATCH (a) ORDER BY a.name OFFSET 1 LIMIT 2 RETURN a.name AS name;
+MATCH (a) ORDER BY a.name SKIP 1 + 1 LIMIT 5 - 3 RETURN a.name AS name;
+
+-- boundaries: LIMIT 0, and SKIP/LIMIT past the row count
+MATCH (a) ORDER BY a.name LIMIT 0 RETURN a.name AS name;
+MATCH (a) ORDER BY a.name SKIP 10 RETURN a.name AS name;
+MATCH (a) ORDER BY a.name LIMIT 10 RETURN a.name AS name;
+
+-- standalone modifiers compose as a pipeline: "LIMIT 2 SKIP 1" (take 2,
+-- then skip 1) differs from the canonical "SKIP 1 LIMIT 2"
+MATCH (a) ORDER BY a.name LIMIT 2 SKIP 1 RETURN a.name AS name;
+MATCH (a) ORDER BY a.name SKIP 1 LIMIT 2 RETURN a.name AS name;
+
+-- modifiers in the middle of a chain (no projection beneath -> CypherModifier)
+MATCH (a) ORDER BY a.id DESC LIMIT 3 WITH a RETURN a.id AS id ORDER BY id;
+MATCH (a) ORDER BY a.id LIMIT 2 WITH a ORDER BY a.id DESC RETURN a.id AS id;
+
+-- after WITH (re-attached to the WITH projection)
+MATCH (a) WITH a ORDER BY a.id DESC LIMIT 2 SKIP 1 RETURN a.id AS id;
+MATCH (a) WITH a ORDER BY a.id DESC SKIP 1 LIMIT 2 RETURN a.id AS id;
+
+-- with DISTINCT
+MATCH (a) RETURN DISTINCT a.grp AS grp ORDER BY a.grp DESC;
+
+-- ORDER BY a RETURN alias; and a value not in the RETURN list (with paging)
+MATCH (a) RETURN a.id AS x ORDER BY x DESC;
+MATCH (a) RETURN a.name AS name ORDER BY a.id DESC;
+MATCH (a) RETURN a.name AS name ORDER BY a.id DESC SKIP 1 LIMIT 2;
+
+-- UNWIND followed by standalone ORDER BY / LIMIT
+UNWIND [3, 1, 2, 5, 4] AS x ORDER BY x LIMIT 3 RETURN x ORDER BY x;
+
+-- as trailing RETURN clauses, canonical order ORDER BY -> OFFSET/SKIP -> LIMIT
+MATCH (a) RETURN a.name AS name ORDER BY a.name OFFSET 1 LIMIT 1;
+MATCH (a) RETURN a.name AS name ORDER BY a.name OFFSET 1;
+
+-- NULLS FIRST / NULLS LAST (one vertex has no name -> NULL)
+CREATE ({id: 6});
+MATCH (a) ORDER BY a.name NULLS FIRST RETURN a.name AS name;
+MATCH (a) ORDER BY a.name DESC NULLS LAST RETURN a.name AS name;
+
+-- a bare modifier with no preceding clause is not a valid query
+ORDER BY 1;
+SKIP 1;
+OFFSET 1;
+LIMIT 1;
+
+-- non-canonical order as RETURN trailing clauses is rejected
+MATCH (a) RETURN a.name AS name ORDER BY a.name LIMIT 1 SKIP 1;
+MATCH (a) RETURN a.name AS name OFFSET 1 SKIP 1;
+MATCH (a) RETURN a.name AS name LIMIT 1 ORDER BY a.name;
+
+DROP GRAPH modifiers CASCADE;
+
+--
 -- MATCH
 --
 

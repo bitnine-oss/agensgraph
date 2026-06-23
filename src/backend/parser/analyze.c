@@ -97,6 +97,13 @@ static bool test_raw_expression_coverage(Node *node, void *context);
 static Query *transformCypherStmt(ParseState *pstate, CypherStmt *stmt);
 static Query *transformCypherClause(ParseState *pstate, CypherClause *clause);
 
+static void preprocess_modifiers(CypherStmt *stmt);
+static bool is_modifier(CypherClause *clause);
+static bool parent_is_projection(CypherClause *clause);
+static void attach_modifier(CypherClause *clause, CypherClause *modifier);
+static void attach_modifiers_to_projection(CypherClause **clause);
+static CypherClause *create_modifier_clause(CypherClause *clause);
+
 
 /*
  * parse_analyze_fixedparams
@@ -3642,6 +3649,13 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 	NodeTag		type;
 	bool		valid = true;
 
+	/*
+	 * Standalone ORDER BY / SKIP|OFFSET / LIMIT clauses are folded back into
+	 * the projection they modify, or into a CypherModifier clause, before the
+	 * statement is validated and transformed.
+	 */
+	preprocess_modifiers(stmt);
+
 	clause = (CypherClause *) stmt->last;
 	type = cypherClauseTag(clause);
 	switch (type)
@@ -3679,6 +3693,7 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 			case T_CypherMergeClause:
 			case T_CypherLoadClause:
 			case T_CypherUnwindClause:
+			case T_CypherModifier:
 				/* do nothing. */
 				break;
 			case T_CypherProjection:
@@ -3737,10 +3752,225 @@ transformCypherClause(ParseState *pstate, CypherClause *clause)
 		case T_CypherUnwindClause:
 			qry = transformCypherUnwindClause(pstate, clause);
 			break;
+		case T_CypherModifier:
+			qry = transformCypherModifier(pstate, clause);
+			break;
 		default:
 			elog(ERROR, "unrecognized Cypher clause type: %d",
 				 cypherClauseTag(clause));
 	}
 
 	return qry;
+}
+
+/*
+ * is_modifier
+ *		Is this clause a standalone ORDER BY / SKIP|OFFSET / LIMIT modifier?
+ */
+static bool
+is_modifier(CypherClause *clause)
+{
+	switch (cypherClauseTag(clause))
+	{
+		case T_CypherOrderBy:
+		case T_CypherSkip:
+		case T_CypherLimit:
+			return true;
+		default:
+			return false;
+	}
+}
+
+/*
+ * parent_is_projection
+ *		Does the canonical modifier run ending at this clause (ORDER BY, then
+ *		SKIP/OFFSET, then LIMIT) sit directly on top of a projection
+ *		(RETURN/WITH)?  If so the run can be folded back into that projection.
+ */
+static bool
+parent_is_projection(CypherClause *clause)
+{
+	CypherClause *prev;
+
+	if (clause->prev == NULL)
+		return false;
+
+	prev = (CypherClause *) clause->prev;
+
+	switch (cypherClauseTag(clause))
+	{
+		case T_CypherOrderBy:
+			return cypherClauseTag(prev) == T_CypherProjection;
+		case T_CypherSkip:
+			if (cypherClauseTag(prev) == T_CypherProjection)
+				return true;
+			if (cypherClauseTag(prev) == T_CypherOrderBy)
+				return parent_is_projection(prev);
+			return false;
+		case T_CypherLimit:
+			if (cypherClauseTag(prev) == T_CypherProjection)
+				return true;
+			if (cypherClauseTag(prev) == T_CypherOrderBy ||
+				cypherClauseTag(prev) == T_CypherSkip)
+				return parent_is_projection(prev);
+			return false;
+		default:
+			return false;
+	}
+}
+
+/*
+ * attach_modifier
+ *		Copy one modifier's ORDER BY / SKIP / LIMIT onto a projection.
+ */
+static void
+attach_modifier(CypherClause *clause, CypherClause *modifier)
+{
+	CypherProjection *proj = (CypherProjection *) clause->detail;
+
+	switch (cypherClauseTag(modifier))
+	{
+		case T_CypherOrderBy:
+			proj->order = ((CypherOrderBy *) modifier->detail)->order;
+			break;
+		case T_CypherSkip:
+			proj->skip = ((CypherSkip *) modifier->detail)->skip;
+			break;
+		case T_CypherLimit:
+			proj->limit = ((CypherLimit *) modifier->detail)->limit;
+			break;
+		default:
+			elog(ERROR, "unexpected Cypher modifier type: %d",
+				 cypherClauseTag(modifier));
+	}
+}
+
+/*
+ * attach_modifiers_to_projection
+ *		Re-attach a canonical run of modifiers onto the projection beneath it,
+ *		so RETURN/WITH apply them inline (matching SQL ORDER BY/OFFSET/LIMIT).
+ *		Walks the run down to the projection, attaching each modifier; *clause
+ *		is left pointing at the projection.
+ */
+static void
+attach_modifiers_to_projection(CypherClause **clause)
+{
+	CypherClause *prev;
+
+	if ((*clause)->prev == NULL)
+		return;
+
+	prev = (CypherClause *) (*clause)->prev;
+
+	switch (cypherClauseTag(*clause))
+	{
+		case T_CypherOrderBy:
+			break;
+		case T_CypherSkip:
+			if (cypherClauseTag(prev) == T_CypherOrderBy)
+				attach_modifiers_to_projection(&prev);
+			break;
+		case T_CypherLimit:
+			if (cypherClauseTag(prev) == T_CypherSkip ||
+				cypherClauseTag(prev) == T_CypherOrderBy)
+				attach_modifiers_to_projection(&prev);
+			break;
+		default:
+			elog(ERROR, "unexpected Cypher modifier type: %d",
+				 cypherClauseTag(*clause));
+	}
+
+	attach_modifier(prev, *clause);
+	*clause = prev;
+}
+
+/*
+ * create_modifier_clause
+ *		Fold a standalone run of modifiers (with no projection beneath) into a
+ *		single CypherModifier clause.  A consecutive ORDER BY -> SKIP -> LIMIT
+ *		run in canonical order is combined into one modifier; the returned
+ *		clause's prev points past the folded modifiers.
+ */
+static CypherClause *
+create_modifier_clause(CypherClause *clause)
+{
+	CypherClause *new_clause;
+	CypherClause *prev;
+	CypherModifier *modifier = makeNode(CypherModifier);
+
+	switch (cypherClauseTag(clause))
+	{
+		case T_CypherOrderBy:
+			modifier->order = ((CypherOrderBy *) clause->detail)->order;
+			break;
+		case T_CypherSkip:
+			modifier->skip = ((CypherSkip *) clause->detail)->skip;
+
+			prev = (CypherClause *) clause->prev;
+			if (prev != NULL && cypherClauseTag(prev) == T_CypherOrderBy)
+			{
+				modifier->order = ((CypherOrderBy *) prev->detail)->order;
+				clause = prev;
+			}
+			break;
+		case T_CypherLimit:
+			modifier->limit = ((CypherLimit *) clause->detail)->limit;
+
+			prev = (CypherClause *) clause->prev;
+			if (prev != NULL && cypherClauseTag(prev) == T_CypherSkip)
+			{
+				modifier->skip = ((CypherSkip *) prev->detail)->skip;
+				clause = prev;
+				prev = (CypherClause *) clause->prev;
+			}
+			if (prev != NULL && cypherClauseTag(prev) == T_CypherOrderBy)
+			{
+				modifier->order = ((CypherOrderBy *) prev->detail)->order;
+				clause = prev;
+			}
+			break;
+		default:
+			elog(ERROR, "unexpected Cypher modifier type: %d",
+				 cypherClauseTag(clause));
+	}
+
+	new_clause = makeNode(CypherClause);
+	new_clause->detail = (Node *) modifier;
+	new_clause->prev = clause->prev;
+
+	return new_clause;
+}
+
+/*
+ * preprocess_modifiers
+ *		Standalone ORDER BY / SKIP|OFFSET / LIMIT clauses are parsed as their
+ *		own clauses.  Walk the clause chain and rewrite each modifier run: a
+ *		run sitting on a projection is folded back into that projection;
+ *		otherwise it becomes a single CypherModifier clause.  Only
+ *		CypherModifier (never the per-keyword nodes) survives into transform.
+ */
+static void
+preprocess_modifiers(CypherStmt *stmt)
+{
+	CypherClause *clause = (CypherClause *) stmt->last;
+	CypherClause *next = NULL;
+
+	while (clause != NULL)
+	{
+		if (is_modifier(clause))
+		{
+			if (parent_is_projection(clause))
+				attach_modifiers_to_projection(&clause);
+			else
+				clause = create_modifier_clause(clause);
+
+			if (next != NULL)
+				next->prev = (Node *) clause;
+			else
+				stmt->last = (Node *) clause;
+		}
+
+		next = clause;
+		clause = (CypherClause *) clause->prev;
+	}
 }

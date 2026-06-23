@@ -39,6 +39,8 @@ extern Query *transformCypherLoadClause(ParseState *pstate,
 										CypherClause *clause);
 extern Query *transformCypherUnwindClause(ParseState *pstate,
 										  CypherClause *clause);
+extern Query *transformCypherModifier(ParseState *pstate,
+									  CypherClause *clause);
 
 extern bool IsGraphWriteClause(Node *clause);
 

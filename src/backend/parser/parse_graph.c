@@ -623,7 +623,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		qry->limitCount = resolve_future_vertex(pstate, qry->limitCount, 0);
 
 		qry->limitOffset = transformCypherLimit(pstate, detail->skip,
-												EXPR_KIND_OFFSET, "SKIP");
+												EXPR_KIND_OFFSET, "SKIP/OFFSET");
 		qry->limitOffset = resolve_future_vertex(pstate, qry->limitOffset, 0);
 
 		qry->groupClause = generateGroupClause(pstate, &qry->targetList,
@@ -1358,6 +1358,53 @@ transformCypherUnwindClause(ParseState *pstate, CypherClause *clause)
 	qry->rteperminfos = pstate->p_rteperminfos;
 	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
 
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
+
+/*
+ * transformCypherModifier
+ *		Transform a standalone ORDER BY / SKIP|OFFSET / LIMIT run (folded into a
+ *		CypherModifier by preprocess_modifiers()).  All variables from the
+ *		previous clause are passed through unchanged; the modifier only orders
+ *		and pages the rows.
+ */
+Query *
+transformCypherModifier(ParseState *pstate, CypherClause *clause)
+{
+	CypherModifier *detail = (CypherModifier *) clause->detail;
+	Query	   *qry;
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	if (clause->prev != NULL)
+	{
+		ParseNamespaceItem *nsitem;
+
+		nsitem = transformClause(pstate, clause->prev);
+		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
+	}
+
+	qry->sortClause = transformCypherOrderBy(pstate, detail->order,
+											 &qry->targetList);
+
+	qry->limitOffset = transformCypherLimit(pstate, detail->skip,
+											EXPR_KIND_OFFSET, "SKIP/OFFSET");
+	qry->limitOffset = resolve_future_vertex(pstate, qry->limitOffset, 0);
+
+	qry->limitCount = transformCypherLimit(pstate, detail->limit,
+										   EXPR_KIND_LIMIT, "LIMIT");
+	qry->limitCount = resolve_future_vertex(pstate, qry->limitCount, 0);
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+	qry->rteperminfos = pstate->p_rteperminfos;
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 
 	assign_query_collations(pstate, qry);

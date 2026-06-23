@@ -746,10 +746,10 @@ static bool has_internal_default_prefix(char *str);
 %type <boolean>	cypher_rel_left cypher_rel_right
 
 %type <node>	cypher_return cypher_with cypher_finish
-				cypher_skip_opt cypher_limit_opt cypher_where cypher_where_opt
-				cypher_unwind
+				cypher_order_by cypher_skip cypher_limit
+				cypher_where cypher_where_opt cypher_unwind
 %type <list>	cypher_return_items cypher_distinct_opt
-				cypher_order_by_opt cypher_sort_items
+				cypher_sort_items
 %type <target>	cypher_return_item
 %type <sortby>	cypher_sort_item
 
@@ -19375,6 +19375,9 @@ cypher_clause:
 			| cypher_delete
 			| cypher_set
 			| cypher_remove
+			| cypher_order_by
+			| cypher_skip
+			| cypher_limit
 		;
 
 cypher_read_opt_parens:
@@ -21232,7 +21235,6 @@ cypher_finish:
 
 cypher_return:
 			RETURN cypher_distinct_opt cypher_return_items
-			cypher_order_by_opt cypher_skip_opt cypher_limit_opt
 				{
 					CypherProjection *n;
 
@@ -21240,9 +21242,9 @@ cypher_return:
 					n->kind = CP_RETURN;
 					n->distinct = $2;
 					n->items = $3;
-					n->order = $4;
-					n->skip = $5;
-					n->limit = $6;
+					n->order = NIL;
+					n->skip = NULL;
+					n->limit = NULL;
 					n->where = NULL;
 					$$ = (Node *) n;
 				}
@@ -21250,7 +21252,6 @@ cypher_return:
 
 cypher_with:
 			WITH cypher_distinct_opt cypher_return_items
-			cypher_order_by_opt cypher_skip_opt cypher_limit_opt
 			cypher_where_opt
 				{
 					CypherProjection *n;
@@ -21259,10 +21260,10 @@ cypher_with:
 					n->kind = CP_WITH;
 					n->distinct = $2;
 					n->items = $3;
-					n->order = $4;
-					n->skip = $5;
-					n->limit = $6;
-					n->where = $7;
+					n->order = NIL;
+					n->skip = NULL;
+					n->limit = NULL;
+					n->where = $4;
 					$$ = (Node *) n;
 				}
 		;
@@ -21307,9 +21308,15 @@ cypher_distinct_opt:
 			| /* EMPTY */		{ $$ = NIL; }
 		;
 
-cypher_order_by_opt:
-			ORDER BY cypher_sort_items		{ $$ = $3; }
-			| /* EMPTY */					{ $$ = NIL; }
+cypher_order_by:
+			ORDER BY cypher_sort_items
+				{
+					CypherOrderBy *n;
+
+					n = makeNode(CypherOrderBy);
+					n->order = $3;
+					$$ = (Node *) n;
+				}
 		;
 
 cypher_sort_items:
@@ -21331,14 +21338,34 @@ cypher_sort_item:
 				}
 		;
 
-cypher_skip_opt:
-			SKIP cypher_expr		{ $$ = $2; }
-			| /* EMPTY */			{ $$ = NULL; }
+cypher_skip:
+			SKIP cypher_expr
+				{
+					CypherSkip *n;
+
+					n = makeNode(CypherSkip);
+					n->skip = $2;
+					$$ = (Node *) n;
+				}
+			| OFFSET cypher_expr
+				{
+					CypherSkip *n;
+
+					n = makeNode(CypherSkip);
+					n->skip = $2;
+					$$ = (Node *) n;
+				}
 		;
 
-cypher_limit_opt:
-			LIMIT cypher_expr		{ $$ = $2; }
-			| /* EMPTY */			{ $$ = NULL; }
+cypher_limit:
+			LIMIT cypher_expr
+				{
+					CypherLimit *n;
+
+					n = makeNode(CypherLimit);
+					n->limit = $2;
+					$$ = (Node *) n;
+				}
 		;
 
 cypher_where:

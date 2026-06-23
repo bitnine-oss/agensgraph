@@ -4439,6 +4439,37 @@ typedef struct CypherMatchClause
 	bool		optional;		/* OPTIONAL MATCH */
 } CypherMatchClause;
 
+/*
+ * Standalone ORDER BY / SKIP / LIMIT clauses.  preprocess_modifiers() either
+ * re-attaches them to the preceding projection or folds a consecutive run of
+ * them into a single CypherModifier (see analyze.c).
+ */
+typedef struct CypherOrderBy
+{
+	NodeTag		type;
+	List	   *order;			/* a list of SortBy's */
+} CypherOrderBy;
+
+typedef struct CypherSkip
+{
+	NodeTag		type;
+	Node	   *skip;			/* the number of result tuples to skip */
+} CypherSkip;
+
+typedef struct CypherLimit
+{
+	NodeTag		type;
+	Node	   *limit;			/* the number of result tuples to return */
+} CypherLimit;
+
+typedef struct CypherModifier
+{
+	NodeTag		type;
+	List	   *order;			/* a list of SortBy's */
+	Node	   *skip;			/* the number of result tuples to skip */
+	Node	   *limit;			/* the number of result tuples to return */
+} CypherModifier;
+
 /* which clause is parsed as a CypherProjection */
 typedef enum CPKind
 {

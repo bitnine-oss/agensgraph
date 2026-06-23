@@ -394,6 +394,295 @@ drop cascades to elabel ag_edge
 drop cascades to vlabel person
 drop cascades to elabel knows
 --
+-- ORDER BY / SKIP / OFFSET / LIMIT as standalone clauses
+--
+CREATE GRAPH modifiers;
+SET graph_path = modifiers;
+CREATE ({name: 'A', id: 1, grp: 1});
+CREATE ({name: 'B', id: 2, grp: 2});
+CREATE ({name: 'C', id: 3, grp: 1});
+CREATE ({name: 'D', id: 4, grp: 2});
+CREATE ({name: 'E', id: 5, grp: 1});
+-- ORDER BY: ASC (default/explicit), DESC, multi-key with mixed direction,
+-- and an expression sort key
+MATCH (a) ORDER BY a.name RETURN a.name AS name;
+ name 
+------
+ "A"
+ "B"
+ "C"
+ "D"
+ "E"
+(5 rows)
+
+MATCH (a) ORDER BY a.name ASC RETURN a.name AS name;
+ name 
+------
+ "A"
+ "B"
+ "C"
+ "D"
+ "E"
+(5 rows)
+
+MATCH (a) ORDER BY a.name DESC RETURN a.name AS name;
+ name 
+------
+ "E"
+ "D"
+ "C"
+ "B"
+ "A"
+(5 rows)
+
+MATCH (a) ORDER BY a.grp, a.name DESC RETURN a.grp AS grp, a.name AS name;
+ grp | name 
+-----+------
+ 1   | "E"
+ 1   | "C"
+ 1   | "A"
+ 2   | "D"
+ 2   | "B"
+(5 rows)
+
+MATCH (a) ORDER BY a.id % 2, a.id RETURN a.id AS id;
+ id 
+----
+ 2
+ 4
+ 1
+ 3
+ 5
+(5 rows)
+
+-- SKIP, OFFSET (synonym), LIMIT; alone and combined; expression arguments
+MATCH (a) ORDER BY a.name SKIP 1 RETURN a.name AS name;
+ name 
+------
+ "B"
+ "C"
+ "D"
+ "E"
+(4 rows)
+
+MATCH (a) ORDER BY a.name OFFSET 1 RETURN a.name AS name;
+ name 
+------
+ "B"
+ "C"
+ "D"
+ "E"
+(4 rows)
+
+MATCH (a) ORDER BY a.name LIMIT 2 RETURN a.name AS name;
+ name 
+------
+ "A"
+ "B"
+(2 rows)
+
+MATCH (a) ORDER BY a.name SKIP 1 LIMIT 2 RETURN a.name AS name;
+ name 
+------
+ "B"
+ "C"
+(2 rows)
+
+MATCH (a) ORDER BY a.name OFFSET 1 LIMIT 2 RETURN a.name AS name;
+ name 
+------
+ "B"
+ "C"
+(2 rows)
+
+MATCH (a) ORDER BY a.name SKIP 1 + 1 LIMIT 5 - 3 RETURN a.name AS name;
+ name 
+------
+ "C"
+ "D"
+(2 rows)
+
+-- boundaries: LIMIT 0, and SKIP/LIMIT past the row count
+MATCH (a) ORDER BY a.name LIMIT 0 RETURN a.name AS name;
+ name 
+------
+(0 rows)
+
+MATCH (a) ORDER BY a.name SKIP 10 RETURN a.name AS name;
+ name 
+------
+(0 rows)
+
+MATCH (a) ORDER BY a.name LIMIT 10 RETURN a.name AS name;
+ name 
+------
+ "A"
+ "B"
+ "C"
+ "D"
+ "E"
+(5 rows)
+
+-- standalone modifiers compose as a pipeline: "LIMIT 2 SKIP 1" (take 2,
+-- then skip 1) differs from the canonical "SKIP 1 LIMIT 2"
+MATCH (a) ORDER BY a.name LIMIT 2 SKIP 1 RETURN a.name AS name;
+ name 
+------
+ "B"
+(1 row)
+
+MATCH (a) ORDER BY a.name SKIP 1 LIMIT 2 RETURN a.name AS name;
+ name 
+------
+ "B"
+ "C"
+(2 rows)
+
+-- modifiers in the middle of a chain (no projection beneath -> CypherModifier)
+MATCH (a) ORDER BY a.id DESC LIMIT 3 WITH a RETURN a.id AS id ORDER BY id;
+ id 
+----
+ 3
+ 4
+ 5
+(3 rows)
+
+MATCH (a) ORDER BY a.id LIMIT 2 WITH a ORDER BY a.id DESC RETURN a.id AS id;
+ id 
+----
+ 2
+ 1
+(2 rows)
+
+-- after WITH (re-attached to the WITH projection)
+MATCH (a) WITH a ORDER BY a.id DESC LIMIT 2 SKIP 1 RETURN a.id AS id;
+ id 
+----
+ 4
+(1 row)
+
+MATCH (a) WITH a ORDER BY a.id DESC SKIP 1 LIMIT 2 RETURN a.id AS id;
+ id 
+----
+ 4
+ 3
+(2 rows)
+
+-- with DISTINCT
+MATCH (a) RETURN DISTINCT a.grp AS grp ORDER BY a.grp DESC;
+ grp 
+-----
+ 2
+ 1
+(2 rows)
+
+-- ORDER BY a RETURN alias; and a value not in the RETURN list (with paging)
+MATCH (a) RETURN a.id AS x ORDER BY x DESC;
+ x 
+---
+ 5
+ 4
+ 3
+ 2
+ 1
+(5 rows)
+
+MATCH (a) RETURN a.name AS name ORDER BY a.id DESC;
+ name 
+------
+ "E"
+ "D"
+ "C"
+ "B"
+ "A"
+(5 rows)
+
+MATCH (a) RETURN a.name AS name ORDER BY a.id DESC SKIP 1 LIMIT 2;
+ name 
+------
+ "D"
+ "C"
+(2 rows)
+
+-- UNWIND followed by standalone ORDER BY / LIMIT
+UNWIND [3, 1, 2, 5, 4] AS x ORDER BY x LIMIT 3 RETURN x ORDER BY x;
+ x 
+---
+ 1
+ 2
+ 3
+(3 rows)
+
+-- as trailing RETURN clauses, canonical order ORDER BY -> OFFSET/SKIP -> LIMIT
+MATCH (a) RETURN a.name AS name ORDER BY a.name OFFSET 1 LIMIT 1;
+ name 
+------
+ "B"
+(1 row)
+
+MATCH (a) RETURN a.name AS name ORDER BY a.name OFFSET 1;
+ name 
+------
+ "B"
+ "C"
+ "D"
+ "E"
+(4 rows)
+
+-- NULLS FIRST / NULLS LAST (one vertex has no name -> NULL)
+CREATE ({id: 6});
+MATCH (a) ORDER BY a.name NULLS FIRST RETURN a.name AS name;
+ name 
+------
+ 
+ "A"
+ "B"
+ "C"
+ "D"
+ "E"
+(6 rows)
+
+MATCH (a) ORDER BY a.name DESC NULLS LAST RETURN a.name AS name;
+ name 
+------
+ "E"
+ "D"
+ "C"
+ "B"
+ "A"
+ 
+(6 rows)
+
+-- a bare modifier with no preceding clause is not a valid query
+ORDER BY 1;
+ERROR:  syntax error at or near "ORDER"
+LINE 1: ORDER BY 1;
+        ^
+SKIP 1;
+ERROR:  syntax error at or near "SKIP"
+LINE 1: SKIP 1;
+        ^
+OFFSET 1;
+ERROR:  syntax error at or near "OFFSET"
+LINE 1: OFFSET 1;
+        ^
+LIMIT 1;
+ERROR:  syntax error at or near "LIMIT"
+LINE 1: LIMIT 1;
+        ^
+-- non-canonical order as RETURN trailing clauses is rejected
+MATCH (a) RETURN a.name AS name ORDER BY a.name LIMIT 1 SKIP 1;
+ERROR:  Cypher query must end with RETURN, FINISH or update clause
+MATCH (a) RETURN a.name AS name OFFSET 1 SKIP 1;
+ERROR:  Cypher query must end with RETURN, FINISH or update clause
+MATCH (a) RETURN a.name AS name LIMIT 1 ORDER BY a.name;
+ERROR:  Cypher query must end with RETURN, FINISH or update clause
+DROP GRAPH modifiers CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to sequence modifiers.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+--
 -- MATCH
 --
 SET GRAPH_PATH = agens;

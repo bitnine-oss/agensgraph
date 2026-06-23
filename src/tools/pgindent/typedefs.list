@@ -4199,6 +4199,10 @@ CypherSetClause
 CypherMergeClause
 CypherLoadClause
 CypherUnwindClause
+CypherModifier
+CypherOrderBy
+CypherSkip
+CypherLimit
 CypherPath
 CypherNode
 CypherRel
