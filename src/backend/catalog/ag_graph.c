@@ -96,6 +96,24 @@ get_graph_path(bool lookup_cache)
 	return graph_path;
 }
 
+/*
+ * get_graph_path_or_null
+ *		Like get_graph_path(true), but returns NULL instead of raising an error
+ *		when graph_path is unset or names a graph that no longer exists.  Used
+ *		by CURRENT_GRAPH / CURRENT_PROPERTY_GRAPH.
+ */
+char *
+get_graph_path_or_null(void)
+{
+	if (graph_path == NULL || strlen(graph_path) == 0)
+		return NULL;
+
+	if (!OidIsValid(get_graphname_oid(graph_path)))
+		return NULL;
+
+	return graph_path;
+}
+
 Oid
 get_graph_path_oid(void)
 {

@@ -334,6 +334,57 @@ MATCH (n) FILTER n.age > 13;
 DROP GRAPH test_filter CASCADE;
 
 --
+-- Graph reference values: CURRENT_GRAPH / CURRENT_PROPERTY_GRAPH
+--
+CREATE GRAPH graphref;
+SET graph_path = graphref;
+
+-- the current graph, in SQL and in Cypher; CURRENT_PROPERTY_GRAPH is a synonym
+SELECT CURRENT_GRAPH, CURRENT_PROPERTY_GRAPH;
+RETURN CURRENT_GRAPH AS g, CURRENT_PROPERTY_GRAPH AS pg;
+
+-- follows graph_path
+CREATE GRAPH graphref2;
+SET graph_path = graphref2;
+SELECT CURRENT_GRAPH;
+DROP GRAPH graphref2 CASCADE;
+SET graph_path = graphref;
+
+-- SQL reference values may be used inside a Cypher query (the values are
+-- non-deterministic, so assert only that they are produced)
+RETURN CURRENT_GRAPH AS g,
+       (CURRENT_DATE IS NOT NULL) AS has_date,
+       (CURRENT_TIMESTAMP IS NOT NULL) AS has_timestamp,
+       (LOCALTIMESTAMP IS NOT NULL) AS has_localts,
+       (CURRENT_USER IS NOT NULL) AS has_user,
+       (SESSION_USER IS NOT NULL) AS has_session_user,
+       (CURRENT_CATALOG IS NOT NULL) AS has_catalog,
+       (CURRENT_SCHEMA IS NOT NULL) AS has_schema;
+
+-- result type is name, and the two spellings are synonyms
+SELECT pg_typeof(CURRENT_GRAPH) AS typ,
+       (CURRENT_GRAPH = CURRENT_PROPERTY_GRAPH) AS same;
+
+-- usable in ordinary SQL expressions and predicates
+SELECT CURRENT_GRAPH::text || '_x' AS concat;
+SELECT 1 AS ok WHERE CURRENT_GRAPH = 'graphref';
+
+-- precision variants of the SQL time functions inside Cypher
+RETURN (CURRENT_TIME(2) IS NOT NULL) AS has_time2,
+       (CURRENT_TIMESTAMP(0) IS NOT NULL) AS has_ts0,
+       (LOCALTIME IS NOT NULL) AS has_localtime;
+
+-- deparses back to CURRENT_GRAPH / CURRENT_PROPERTY_GRAPH (ruleutils)
+CREATE VIEW graphref_view AS
+	SELECT CURRENT_GRAPH AS g, CURRENT_PROPERTY_GRAPH AS pg;
+SELECT pg_get_viewdef('graphref_view'::regclass, true);
+DROP VIEW graphref_view;
+
+-- CURRENT_GRAPH is NULL (not an error) when graph_path is invalid
+DROP GRAPH graphref CASCADE;
+SELECT CURRENT_GRAPH IS NULL AS is_null;
+
+--
 -- MATCH
 --
 

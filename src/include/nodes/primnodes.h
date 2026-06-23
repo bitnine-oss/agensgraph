@@ -1548,6 +1548,10 @@ typedef enum SQLValueFunctionOp
 	SVFOP_SESSION_USER,
 	SVFOP_CURRENT_CATALOG,
 	SVFOP_CURRENT_SCHEMA,
+
+	/* AgensGraph: current graph name */
+	SVFOP_CURRENT_GRAPH,
+	SVFOP_CURRENT_PROPERTY_GRAPH,
 } SQLValueFunctionOp;
 
 typedef struct SQLValueFunction

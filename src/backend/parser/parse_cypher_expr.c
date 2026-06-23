@@ -203,6 +203,8 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 		case T_Const:
 			/* Already transformed */
 			return expr;
+		case T_SQLValueFunction:
+			return transformExpr(pstate, expr, pstate->p_expr_kind);
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));
 			return NULL;

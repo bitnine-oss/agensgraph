@@ -57,6 +57,7 @@
 #include "postgres.h"
 
 #include "access/heaptoast.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/pg_type.h"
 #include "commands/sequence.h"
 #include "executor/execExpr.h"
@@ -2771,6 +2772,19 @@ ExecEvalSQLValueFunction(ExprState *state, ExprEvalStep *op)
 			*op->resvalue = current_schema(fcinfo);
 			*op->resnull = fcinfo->isnull;
 			break;
+
+		/* AgensGraph: current graph name, or NULL when none is set */
+		case SVFOP_CURRENT_GRAPH:
+		case SVFOP_CURRENT_PROPERTY_GRAPH:
+			{
+				char	   *graphname = get_graph_path_or_null();
+
+				if (graphname != NULL)
+					*op->resvalue = DirectFunctionCall1(namein,
+														CStringGetDatum(graphname));
+				*op->resnull = (graphname == NULL);
+				break;
+			}
 	}
 }
 

@@ -9701,6 +9701,12 @@ get_rule_expr(Node *node, deparse_context *context,
 					case SVFOP_CURRENT_SCHEMA:
 						appendStringInfoString(buf, "CURRENT_SCHEMA");
 						break;
+					case SVFOP_CURRENT_GRAPH:
+						appendStringInfoString(buf, "CURRENT_GRAPH");
+						break;
+					case SVFOP_CURRENT_PROPERTY_GRAPH:
+						appendStringInfoString(buf, "CURRENT_PROPERTY_GRAPH");
+						break;
 				}
 			}
 			break;
