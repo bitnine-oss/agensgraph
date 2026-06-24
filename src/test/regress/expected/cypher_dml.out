@@ -7192,9 +7192,453 @@ RETURN VALUE { CREATE (:Foo) RETURN 1 };
 ERROR:  syntax error at or near "CREATE"
 LINE 1: RETURN VALUE { CREATE (:Foo) RETURN 1 };
                        ^
+--
+-- ARRAY subquery -- the SQL/GQL-standard spelling of COLLECT: gathers a
+-- one-column read subquery's values into a cypher list (a jsonb array) with the
+-- same semantics (order-preserving, NULL-preserving, empty -> []).  Reuses the
+-- EXISTS-subquery graph (Person/Dog/Cat/Toy).
+--
+-- ARRAY is identical to COLLECT for the same subquery
+RETURN ARRAY { MATCH (d:Dog) RETURN d.name ORDER BY d.name }
+       = COLLECT { MATCH (d:Dog) RETURN d.name ORDER BY d.name } AS same;
+ same 
+------
+ t
+(1 row)
+
+MATCH (p:Person)
+RETURN p.name AS name,
+       ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name }
+       = COLLECT { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS same
+ORDER BY name;
+   name    | same 
+-----------+------
+ "Andy"    | t
+ "Peter"   | t
+ "Timothy" | t
+(3 rows)
+
+-- correlated ARRAY in RETURN (one list per person; [] for Timothy)
+MATCH (p:Person)
+RETURN p.name AS name,
+       ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs
+ORDER BY name;
+   name    |       dogs       
+-----------+------------------
+ "Andy"    | ["Andy"]
+ "Peter"   | ["Fido", "Ozzy"]
+ "Timothy" | []
+(3 rows)
+
+-- uncorrelated; empty -> []; order DESC
+RETURN ARRAY { MATCH (d:Dog) RETURN d.name ORDER BY d.name } AS all_dogs;
+         all_dogs         
+--------------------------
+ ["Andy", "Fido", "Ozzy"]
+(1 row)
+
+RETURN ARRAY { MATCH (x:NoSuchLabel) RETURN x.name } AS empty;
+ empty 
+-------
+ []
+(1 row)
+
+RETURN ARRAY { MATCH (d:Dog) RETURN d.name ORDER BY d.name DESC } AS dogs_desc;
+        dogs_desc         
+--------------------------
+ ["Ozzy", "Fido", "Andy"]
+(1 row)
+
+-- NULLs are preserved
+RETURN ARRAY { MATCH (d:Dog) RETURN d.nickname ORDER BY d.name } AS nicknames;
+     nicknames      
+--------------------
+ [null, null, null]
+(1 row)
+
+-- element types: numbers, maps, graph-derived maps
+RETURN ARRAY { MATCH (p:Person) RETURN p.age ORDER BY p.age } AS ages;
+     ages     
+--------------
+ [25, 35, 36]
+(1 row)
+
+RETURN ARRAY { MATCH (p:Person) RETURN {name: p.name, age: p.age} ORDER BY p.name } AS people;
+                                           people                                            
+---------------------------------------------------------------------------------------------
+ [{"age": 36, "name": "Andy"}, {"age": 35, "name": "Peter"}, {"age": 25, "name": "Timothy"}]
+(1 row)
+
+RETURN ARRAY { MATCH (d:Dog) RETURN properties(d) ORDER BY d.name } AS props;
+                         props                          
+--------------------------------------------------------
+ [{"name": "Andy"}, {"name": "Fido"}, {"name": "Ozzy"}]
+(1 row)
+
+-- subquery clauses: DISTINCT, ORDER BY ... LIMIT, ... SKIP
+RETURN ARRAY { MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN DISTINCT d.name ORDER BY d.name } AS distinct_dogs;
+      distinct_dogs       
+--------------------------
+ ["Andy", "Fido", "Ozzy"]
+(1 row)
+
+RETURN ARRAY { MATCH (d:Dog) RETURN d.name ORDER BY d.name LIMIT 2 } AS first_two;
+    first_two     
+------------------
+ ["Andy", "Fido"]
+(1 row)
+
+RETURN ARRAY { MATCH (d:Dog) RETURN d.name ORDER BY d.name SKIP 1 } AS after_first;
+   after_first    
+------------------
+ ["Fido", "Ozzy"]
+(1 row)
+
+-- SQL SELECT forms
+RETURN ARRAY { SELECT i FROM generate_series(1, 3) AS i ORDER BY i } AS nums;
+   nums    
+-----------
+ [1, 2, 3]
+(1 row)
+
+RETURN ARRAY { SELECT t.name FROM (MATCH (d:Dog) RETURN d.name AS name) t ORDER BY t.name } AS dogs;
+           dogs           
+--------------------------
+ ["Andy", "Fido", "Ozzy"]
+(1 row)
+
+-- membership and equality
+MATCH (p:Person)
+WHERE 'Fido' IN ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name }
+RETURN p.name AS name ORDER BY name;
+  name   
+---------
+ "Peter"
+(1 row)
+
+MATCH (p:Person)
+WHERE NOT ('Fido' IN ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name })
+RETURN p.name AS name ORDER BY name;
+   name    
+-----------
+ "Andy"
+ "Timothy"
+(2 rows)
+
+MATCH (p:Person {name: 'Peter'})
+RETURN ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } = ['Fido', 'Ozzy'] AS eq;
+ eq 
+----
+ t
+(1 row)
+
+-- length / indexing / slicing / concatenation (bound via WITH) and UNWIND
+MATCH (p:Person {name: 'Peter'})
+WITH ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs
+RETURN length(dogs) AS n, dogs[0] AS first, dogs[1..] AS rest, dogs + ['Rex'] AS appended;
+ n | first  |   rest   |        appended         
+---+--------+----------+-------------------------
+ 2 | "Fido" | ["Ozzy"] | ["Fido", "Ozzy", "Rex"]
+(1 row)
+
+MATCH (p:Person {name: 'Peter'})
+WITH ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs
+UNWIND dogs AS dogname
+RETURN dogname ORDER BY dogname;
+ dogname 
+---------
+ "Fido"
+ "Ozzy"
+(2 rows)
+
+-- contexts: WHERE (WITH-bound length), CASE, ORDER BY
+MATCH (p:Person)
+WITH p, ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS dogs
+WHERE length(dogs) > 1
+RETURN p.name AS name ORDER BY name;
+  name   
+---------
+ "Peter"
+(1 row)
+
+MATCH (p:Person)
+WITH p, ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS dogs
+RETURN p.name AS name, CASE WHEN length(dogs) > 1 THEN 'pack' ELSE 'few' END AS kind
+ORDER BY name;
+   name    |  kind  
+-----------+--------
+ "Andy"    | "few"
+ "Peter"   | "pack"
+ "Timothy" | "few"
+(3 rows)
+
+MATCH (p:Person)
+WITH p, ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS dogs
+RETURN p.name AS name ORDER BY length(dogs) DESC, name;
+   name    
+-----------
+ "Peter"
+ "Andy"
+ "Timothy"
+(3 rows)
+
+-- nested ARRAY-in-ARRAY (a list of each person's dog-name list)
+RETURN ARRAY {
+    MATCH (p:Person)
+    RETURN ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name }
+    ORDER BY p.name
+} AS nested;
+              nested              
+----------------------------------
+ [["Andy"], ["Fido", "Ozzy"], []]
+(1 row)
+
+-- ARRAY mixed with COLLECT / COUNT / EXISTS / VALUE in one projection
+MATCH (p:Person)
+RETURN p.name AS name,
+       ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS arr,
+       COUNT { MATCH (p)-[:HAS_DOG]->(:Dog) } AS cnt,
+       EXISTS { MATCH (p)-[:HAS_DOG]->(:Dog) } AS has,
+       VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) } AS val
+ORDER BY name;
+   name    |       arr        | cnt | has | val 
+-----------+------------------+-----+-----+-----
+ "Andy"    | ["Andy"]         | 1   | t   | 1
+ "Peter"   | ["Fido", "Ozzy"] | 2   | t   | 2
+ "Timothy" | []               | 0   | f   | 0
+(3 rows)
+
+-- SQL + Cypher hybrid: SQL projecting a Cypher query that uses ARRAY
+SELECT t.name, t.dogs
+FROM (MATCH (p:Person)
+      RETURN p.name AS name,
+             ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs) t
+ORDER BY t.name;
+   name    |       dogs       
+-----------+------------------
+ "Andy"    | ["Andy"]
+ "Peter"   | ["Fido", "Ozzy"]
+ "Timothy" | []
+(3 rows)
+
+-- SQL + Cypher hybrid: a SQL jsonb function consuming an ARRAY result
+SELECT jsonb_array_length(t.dogs) AS n
+FROM (MATCH (p:Person {name: 'Peter'})
+      RETURN ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS dogs) t;
+ n 
+---
+ 2
+(1 row)
+
+-- SQL + Cypher hybrid: ARRAY wrapping a SQL SELECT over Cypher rows
+RETURN ARRAY {
+    SELECT t.name FROM (MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name AS name) t
+    WHERE t.name <> '"Andy"'::jsonb
+    ORDER BY t.name
+} AS non_andy_dogs;
+  non_andy_dogs   
+------------------
+ ["Fido", "Ozzy"]
+(1 row)
+
+-- order by a key other than the collected value (by age, return name)
+RETURN ARRAY { MATCH (p:Person) RETURN p.name ORDER BY p.age } AS names_by_age;
+         names_by_age         
+------------------------------
+ ["Timothy", "Peter", "Andy"]
+(1 row)
+
+-- a computed expression
+RETURN ARRAY { MATCH (p:Person) RETURN p.age * 2 ORDER BY p.age } AS doubled;
+   doubled    
+--------------
+ [50, 70, 72]
+(1 row)
+
+-- a list of lists
+RETURN ARRAY { MATCH (p:Person) RETURN [p.name, p.age] ORDER BY p.name } AS pairs;
+                     pairs                      
+------------------------------------------------
+ [["Andy", 36], ["Peter", 35], ["Timothy", 25]]
+(1 row)
+
+-- a literal NULL per row is preserved
+RETURN ARRAY { MATCH (d:Dog) RETURN NULL ORDER BY d.name } AS nulls;
+       nulls        
+--------------------
+ [null, null, null]
+(1 row)
+
+-- an aggregate inside the subquery (one row -> single-element list)
+RETURN ARRAY { MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN count(*) } AS total;
+ total 
+-------
+ [3]
+(1 row)
+
+-- OPTIONAL MATCH keeps a NULL row (Timothy -> [null]; plain MATCH gives [])
+MATCH (p:Person)
+RETURN p.name AS name,
+       ARRAY { OPTIONAL MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs
+ORDER BY name;
+   name    |       dogs       
+-----------+------------------
+ "Andy"    | ["Andy"]
+ "Peter"   | ["Fido", "Ozzy"]
+ "Timothy" | [null]
+(3 rows)
+
+-- a multi-hop pattern (toys reachable through a dog)
+RETURN ARRAY { MATCH (:Person)-[:HAS_DOG]->(:Dog)-[:HAS_TOY]->(t:Toy) RETURN t.name ORDER BY t.name } AS toys;
+    toys    
+------------
+ ["Banana"]
+(1 row)
+
+-- correlated inner WHERE referencing both outer and inner variables
+MATCH (p:Person)
+RETURN p.name AS name,
+       ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) WHERE d.name <> p.name RETURN d.name ORDER BY d.name } AS others
+ORDER BY name;
+   name    |      others      
+-----------+------------------
+ "Andy"    | []
+ "Peter"   | ["Fido", "Ozzy"]
+ "Timothy" | []
+(3 rows)
+
+-- ARRAY as an element of a list / map literal
+RETURN [ARRAY { MATCH (d:Dog) RETURN d.name ORDER BY d.name }, ['x']] AS lol;
+                lol                
+-----------------------------------
+ [["Andy", "Fido", "Ozzy"], ["x"]]
+(1 row)
+
+RETURN {dogs: ARRAY { MATCH (d:Dog) RETURN d.name ORDER BY d.name }} AS m;
+                 m                  
+------------------------------------
+ {"dogs": ["Andy", "Fido", "Ozzy"]}
+(1 row)
+
+-- ARRAY directly as a function argument
+RETURN length(ARRAY { MATCH (d:Dog) RETURN d.name }) AS n;
+ n 
+---
+ 3
+(1 row)
+
+-- nested with VALUE: an ARRAY of a per-row VALUE, and a VALUE returning an ARRAY
+RETURN ARRAY {
+    MATCH (p:Person)
+    RETURN VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) }
+    ORDER BY p.name
+} AS counts;
+  counts   
+-----------
+ [1, 2, 0]
+(1 row)
+
+RETURN VALUE {
+    MATCH (p:Person {name: 'Peter'})
+    RETURN ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name }
+} AS peters_dogs;
+   peters_dogs    
+------------------
+ ["Fido", "Ozzy"]
+(1 row)
+
+-- SQL + Cypher hybrid: a SQL CTE wrapping a Cypher query that uses ARRAY
+WITH per AS (
+    MATCH (p:Person)
+    RETURN p.name AS name, ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs
+)
+SELECT name, dogs FROM per WHERE jsonb_array_length(dogs) > 0 ORDER BY name;
+  name   |       dogs       
+---------+------------------
+ "Andy"  | ["Andy"]
+ "Peter" | ["Fido", "Ozzy"]
+(2 rows)
+
+-- SQL + Cypher hybrid: unnest an ARRAY result with jsonb_array_elements
+SELECT v AS dog
+FROM (MATCH (p:Person {name: 'Peter'})
+      RETURN ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs) t,
+     jsonb_array_elements(t.dogs) AS v
+ORDER BY v;
+  dog   
+--------
+ "Fido"
+ "Ozzy"
+(2 rows)
+
+-- SQL + Cypher hybrid: a SQL WHERE filtering rows by an ARRAY result
+SELECT t.name
+FROM (MATCH (p:Person)
+      RETURN p.name AS name, ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS dogs) t
+WHERE jsonb_array_length(t.dogs) > 1
+ORDER BY t.name;
+  name   
+---------
+ "Peter"
+(1 row)
+
+-- SQL + Cypher hybrid: ARRAY wrapping a SQL UNION over Cypher rows
+RETURN ARRAY {
+    SELECT n FROM (MATCH (d:Dog) RETURN d.name AS n
+                   UNION
+                   MATCH (c:Cat) RETURN c.name AS n) u
+    ORDER BY n
+} AS dog_or_cat;
+             dog_or_cat              
+-------------------------------------
+ ["Andy", "Fido", "Mittens", "Ozzy"]
+(1 row)
+
+-- SQL + Cypher hybrid: ARRAY wrapping a SQL aggregate over Cypher rows
+RETURN ARRAY { SELECT count(*) FROM (MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name) t } AS dog_count;
+ dog_count 
+-----------
+ [3]
+(1 row)
+
+-- as the value of a SET (graph-write context)
+MATCH (p:Person {name: 'Peter'})
+SET p.dogNamesArr = ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name }
+RETURN p.dogNamesArr AS dogNamesArr;
+   dognamesarr    
+------------------
+ ["Fido", "Ozzy"]
+(1 row)
+
+-- as a property value in CREATE (graph-write context)
+CREATE (s:ArrSummary {dogs: ARRAY { MATCH (d:Dog) RETURN d.name ORDER BY d.name }})
+RETURN s.dogs AS dogs;
+           dogs           
+--------------------------
+ ["Andy", "Fido", "Ozzy"]
+(1 row)
+
+-- error: the subquery must return only one column
+RETURN ARRAY { MATCH (p:Person)-[:HAS_DOG]->(d:Dog) RETURN p.name, d.name };
+ERROR:  subquery must return only one column
+LINE 1: RETURN ARRAY { MATCH (p:Person)-[:HAS_DOG]->(d:Dog) RETURN p...
+               ^
+-- error: writes are not allowed inside an ARRAY subquery
+RETURN ARRAY { CREATE (:Foo) RETURN 1 };
+ERROR:  syntax error at or near "CREATE"
+LINE 1: RETURN ARRAY { CREATE (:Foo) RETURN 1 };
+                       ^
+RETURN ARRAY { MATCH (a:Person) SET a.x = 1 RETURN a.x };
+ERROR:  syntax error at or near "SET"
+LINE 1: RETURN ARRAY { MATCH (a:Person) SET a.x = 1 RETURN a.x };
+                                        ^
+RETURN ARRAY { MATCH (a:Person) DETACH DELETE a RETURN a };
+ERROR:  syntax error at or near "DETACH"
+LINE 1: RETURN ARRAY { MATCH (a:Person) DETACH DELETE a RETURN a };
+                                        ^
 -- cleanup
 DROP GRAPH exists_subquery CASCADE;
-NOTICE:  drop cascades to 11 other objects
+NOTICE:  drop cascades to 12 other objects
 DETAIL:  drop cascades to sequence exists_subquery.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -7206,6 +7650,7 @@ drop cascades to vlabel cat
 drop cascades to elabel has_toy
 drop cascades to vlabel toy
 drop cascades to vlabel summary
+drop cascades to vlabel arrsummary
 DROP GRAPH agv2_394 CASCADE;
 NOTICE:  drop cascades to 7 other objects
 DETAIL:  drop cascades to sequence agv2_394.ag_label_seq

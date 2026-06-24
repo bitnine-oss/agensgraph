@@ -730,7 +730,7 @@ static bool has_internal_default_prefix(char *str);
 %type <node>	cypher_expr_func cypher_expr_func_norm cypher_expr_func_subexpr
 				cypher_expr_shortestpath
 %type <node>	cypher_expr_subquery cypher_exists_subquery cypher_count_subquery
-%type <node>	cypher_collect_subquery cypher_value_subquery
+%type <node>	cypher_collect_subquery cypher_value_subquery cypher_array_subquery
 
 %type <node>	cypher_expr_propref cypher_expr_propref_strict cypher_expr_indir_elem
 %type <list>	cypher_expr_indir cypher_expr_indir_opt
@@ -21745,6 +21745,7 @@ cypher_expr_subquery:
 			| cypher_count_subquery
 			| cypher_collect_subquery
 			| cypher_value_subquery
+			| cypher_array_subquery
 		;
 
 /*
@@ -21929,6 +21930,41 @@ cypher_collect_subquery:
 					$$ = makeTypeCast((Node *) n, SystemTypeName("jsonb"), @1);
 				}
 			| COLLECT '{' select_no_parens '}'
+				{
+					SubLink	   *n;
+
+					n = makeNode(SubLink);
+					n->subLinkType = ARRAY_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = $3;
+					n->location = @1;
+					$$ = makeTypeCast((Node *) n, SystemTypeName("jsonb"), @1);
+				}
+		;
+
+/*
+ * ARRAY subquery: the SQL/GQL-standard spelling of COLLECT -- every value the
+ * single-column read subquery yields, gathered into a cypher list (a jsonb
+ * array): order-preserving, NULL-preserving, and [] (never NULL) when empty.
+ * Built, like COLLECT, as a native ARRAY_SUBLINK coerced to jsonb.
+ */
+cypher_array_subquery:
+			ARRAY '{' cypher_read_stmt '}'
+				{
+					SubLink	   *n;
+
+					n = makeNode(SubLink);
+					n->subLinkType = ARRAY_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = $3;
+					n->location = @1;
+					$$ = makeTypeCast((Node *) n, SystemTypeName("jsonb"), @1);
+				}
+			| ARRAY '{' select_no_parens '}'
 				{
 					SubLink	   *n;
 
