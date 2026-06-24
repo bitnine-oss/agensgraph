@@ -2114,8 +2114,151 @@ FOR x in [1,2] WITH OFFSET AS x RETURN x;
 -- the offset variable must not collide with an existing variable
 MATCH (p:Person) FOR x in [1] WITH OFFSET AS p RETURN x;
 
+--
+-- EXISTS subquery -- true iff the subquery yields at least one row (never NULL)
+--
+CREATE GRAPH exists_subquery;
+SET graph_path = exists_subquery;
+CREATE (andy:Person {name: 'Andy', age: 36}),
+       (timothy:Person {name: 'Timothy', age: 25}),
+       (peter:Person {name: 'Peter', age: 35}),
+       (andy)-[:HAS_DOG]->(:Dog {name: 'Andy'}),
+       (timothy)-[:HAS_CAT]->(:Cat {name: 'Mittens'}),
+       (fido:Dog {name: 'Fido'})<-[:HAS_DOG]-(peter)-[:HAS_DOG]->(:Dog {name: 'Ozzy'}),
+       (fido)-[:HAS_TOY]->(:Toy {name: 'Banana'});
+
+-- bare pattern, correlated to the outer row
+MATCH (person:Person)
+WHERE EXISTS { (person)-[:HAS_DOG]->(:Dog) }
+RETURN person.name AS name ORDER BY name;
+
+-- pattern with an inner WHERE referencing both outer and inner variables
+MATCH (person:Person)
+WHERE EXISTS { (person)-[:HAS_DOG]->(dog:Dog) WHERE person.name = dog.name }
+RETURN person.name AS name ORDER BY name;
+
+-- explicit MATCH form
+MATCH (person:Person)
+WHERE EXISTS { MATCH (person)-[:HAS_DOG]->(dog:Dog) WHERE person.name = dog.name }
+RETURN person.name AS name ORDER BY name;
+
+-- nested EXISTS
+MATCH (person:Person)
+WHERE EXISTS {
+    MATCH (person)-[:HAS_DOG]->(dog:Dog)
+    WHERE EXISTS { MATCH (dog)-[:HAS_TOY]->(toy:Toy) WHERE toy.name = 'Banana' }
+}
+RETURN person.name AS name ORDER BY name;
+
+-- SQL SELECT wrapping a Cypher read
+MATCH (person:Person)
+WHERE EXISTS { SELECT * FROM (MATCH (person)-[:HAS_DOG]->(dog:Dog) RETURN person.name) t }
+RETURN person.name AS name ORDER BY name;
+
+-- a trailing RETURN inside the subquery is ignored (only row existence matters)
+MATCH (person:Person)
+WHERE EXISTS { MATCH (person)-[:HAS_DOG]->(:Dog) RETURN person.name }
+RETURN person.name AS name ORDER BY name;
+
+-- EXISTS as a returned boolean value (never NULL)
+MATCH (person:Person)
+RETURN person.name AS name, EXISTS { (person)-[:HAS_DOG]->(:Dog) } AS hasDog
+ORDER BY name;
+
+-- NOT EXISTS
+MATCH (person:Person)
+WHERE NOT EXISTS { (person)-[:HAS_DOG]->(:Dog) }
+RETURN person.name AS name ORDER BY name;
+
+-- combined with AND / OR
+MATCH (person:Person)
+WHERE EXISTS { (person)-[:HAS_DOG]->(:Dog) }
+  AND EXISTS { (person)-[:HAS_CAT]->(:Cat) }
+RETURN person.name AS name ORDER BY name;
+
+MATCH (person:Person)
+WHERE EXISTS { (person)-[:HAS_DOG]->(:Dog) }
+   OR EXISTS { (person)-[:HAS_CAT]->(:Cat) }
+RETURN person.name AS name ORDER BY name;
+
+-- OPTIONAL MATCH always yields a row, so EXISTS is always true
+MATCH (person:Person)
+WHERE EXISTS { OPTIONAL MATCH (person)-[:HAS_CAT]->(:Cat) }
+RETURN person.name AS name ORDER BY name;
+
+-- uncorrelated: any dog exists at all
+MATCH (person:Person)
+WHERE EXISTS { (:Dog) }
+RETURN person.name AS name ORDER BY name;
+
+-- a multi-hop pattern
+MATCH (person:Person)
+WHERE EXISTS { (person)-[:HAS_DOG]->(:Dog)-[:HAS_TOY]->(:Toy) }
+RETURN person.name AS name ORDER BY name;
+
+-- several comma-separated patterns must all match
+MATCH (person:Person)
+WHERE EXISTS { (person)-[:HAS_DOG]->(:Dog), (person)-[:HAS_CAT]->(:Cat) }
+RETURN person.name AS name ORDER BY name;
+
+-- an inline property constraint in the pattern
+MATCH (person:Person)
+WHERE EXISTS { (person)-[:HAS_DOG]->(:Dog {name: 'Fido'}) }
+RETURN person.name AS name ORDER BY name;
+
+-- a multi-clause GQL read statement inside the subquery
+MATCH (person:Person)
+WHERE EXISTS {
+    MATCH (person)-[:HAS_DOG]->(dog:Dog) WITH dog WHERE dog.name = 'Fido' RETURN dog
+}
+RETURN person.name AS name ORDER BY name;
+
+-- a UNION inside the subquery (has a dog or a cat)
+MATCH (person:Person)
+WHERE EXISTS {
+    MATCH (person)-[:HAS_DOG]->(:Dog) RETURN 1
+    UNION
+    MATCH (person)-[:HAS_CAT]->(:Cat) RETURN 1
+}
+RETURN person.name AS name ORDER BY name;
+
+-- EXISTS in a WITH ... WHERE stage
+MATCH (person:Person)
+WITH person
+WHERE EXISTS { (person)-[:HAS_DOG]->(:Dog) }
+RETURN person.name AS name ORDER BY name;
+
+-- combined with a scalar predicate
+MATCH (person:Person)
+WHERE person.age > 30 AND EXISTS { (person)-[:HAS_DOG]->(:Dog) }
+RETURN person.name AS name ORDER BY name;
+
+-- the older parenthesized EXISTS ( pattern ) form still works alongside
+MATCH (person:Person)
+WHERE EXISTS ( (person)-[:HAS_DOG]->(:Dog) )
+RETURN person.name AS name ORDER BY name;
+
+-- a nested NOT EXISTS (a dog that has no toy)
+MATCH (person:Person)
+WHERE EXISTS {
+    MATCH (person)-[:HAS_DOG]->(dog:Dog)
+    WHERE NOT EXISTS { (dog)-[:HAS_TOY]->(:Toy) }
+}
+RETURN person.name AS name ORDER BY name;
+
+-- correlated inner WHERE with inequality
+MATCH (person:Person)
+WHERE EXISTS { (person)-[:HAS_DOG]->(dog:Dog) WHERE dog.name <> person.name }
+RETURN person.name AS name ORDER BY name;
+
+-- an update is not allowed inside an EXISTS subquery
+MATCH (person:Person)
+WHERE EXISTS { CREATE (:Foo) }
+RETURN person.name AS name;
+
 -- cleanup
 
+DROP GRAPH exists_subquery CASCADE;
 DROP GRAPH agv2_394 CASCADE;
 DROP GRAPH ag324 CASCADE;
 DROP GRAPH agv2_308 CASCADE;

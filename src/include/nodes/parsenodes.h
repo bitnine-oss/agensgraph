@@ -4409,6 +4409,8 @@ typedef struct CypherSubPattern
 	NodeTag		type;
 	CSPKind		kind;
 	List	   *pattern;
+	bool		optional;		/* OPTIONAL MATCH */
+	Node	   *where;			/* WHERE qualification, or NULL */
 } CypherSubPattern;
 
 /*

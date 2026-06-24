@@ -413,8 +413,8 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 
 	match = makeNode(CypherMatchClause);
 	match->pattern = subpat->pattern;
-	match->where = NULL;
-	match->optional = false;
+	match->where = subpat->where;
+	match->optional = subpat->optional;
 
 	clause = makeNode(CypherClause);
 	clause->detail = (Node *) match;

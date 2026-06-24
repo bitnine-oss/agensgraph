@@ -729,6 +729,7 @@ static bool has_internal_default_prefix(char *str);
 
 %type <node>	cypher_expr_func cypher_expr_func_norm cypher_expr_func_subexpr
 				cypher_expr_shortestpath
+%type <node>	cypher_expr_subquery cypher_exists_subquery
 
 %type <node>	cypher_expr_propref cypher_expr_propref_strict cypher_expr_indir_elem
 %type <list>	cypher_expr_indir cypher_expr_indir_opt
@@ -20353,6 +20354,7 @@ cypher_expr_atom:
 			| cypher_expr_case
 			| cypher_expr_func
 			| cypher_expr_var
+			| cypher_expr_subquery
 		;
 
 cypher_expr_literal:
@@ -21684,6 +21686,85 @@ cypher_for_offset_opt:
 cypher_for_offset:
 			WITH_LA OFFSET							{ $$ = (Node *) makeString("offset"); }
 			| WITH_LA OFFSET AS cypher_expr_name	{ $$ = $4; }
+		;
+
+cypher_expr_subquery:
+			cypher_exists_subquery
+		;
+
+/*
+ * EXISTS subquery: true if the subquery yields at least one row, false
+ * otherwise (never NULL).  Built as a native EXISTS SubLink so the planner
+ * produces a short-circuiting (semi-join / EXISTS SubPlan) evaluation.
+ */
+cypher_exists_subquery:
+			EXISTS '{' cypher_anon_pattern cypher_where_opt '}'
+				{
+					CypherSubPattern *sub;
+					SubLink	   *n;
+
+					sub = makeNode(CypherSubPattern);
+					sub->kind = CSP_EXISTS;
+					sub->pattern = $3;
+					sub->where = $4;
+					sub->optional = false;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXISTS_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) sub;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| EXISTS '{' cypher_match '}'
+				{
+					CypherMatchClause *match = (CypherMatchClause *) $3;
+					CypherSubPattern *sub;
+					SubLink	   *n;
+
+					sub = makeNode(CypherSubPattern);
+					sub->kind = CSP_EXISTS;
+					sub->pattern = match->pattern;
+					sub->where = match->where;
+					sub->optional = match->optional;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXISTS_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) sub;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| EXISTS '{' cypher_read_stmt '}'
+				{
+					SubLink	   *n;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXISTS_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = $3;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| EXISTS '{' select_no_parens '}'
+				{
+					SubLink	   *n;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXISTS_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = $3;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
 		;
 
 %%
