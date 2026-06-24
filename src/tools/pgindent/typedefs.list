@@ -4199,6 +4199,7 @@ CypherSetClause
 CypherMergeClause
 CypherLoadClause
 CypherUnwindClause
+CypherCountClause
 CypherFilterClause
 CypherForClause
 CypherModifier

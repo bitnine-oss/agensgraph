@@ -729,7 +729,7 @@ static bool has_internal_default_prefix(char *str);
 
 %type <node>	cypher_expr_func cypher_expr_func_norm cypher_expr_func_subexpr
 				cypher_expr_shortestpath
-%type <node>	cypher_expr_subquery cypher_exists_subquery
+%type <node>	cypher_expr_subquery cypher_exists_subquery cypher_count_subquery
 
 %type <node>	cypher_expr_propref cypher_expr_propref_strict cypher_expr_indir_elem
 %type <list>	cypher_expr_indir cypher_expr_indir_opt
@@ -897,7 +897,7 @@ static bool has_internal_default_prefix(char *str);
 	ZONE
 
 /* Agensgraph ordinary key words in alphabetical order */
-%token <keyword> ALLSHORTESTPATHS CONTAINS ELABEL ENDS OPTIONAL_P REMOVE
+%token <keyword> ALLSHORTESTPATHS CONTAINS COUNT ELABEL ENDS OPTIONAL_P REMOVE
 	SHORTESTPATH SINGLE SIZE_P STARTS UNWIND
 
 /*
@@ -17927,6 +17927,7 @@ unreserved_keyword:
 			| CONVERSION_P
 			| COPY
 			| COST
+			| COUNT
 			| CSV
 			| CUBE
 			| CURRENT_P
@@ -18510,6 +18511,7 @@ bare_label_keyword:
 			| CONVERSION_P
 			| COPY
 			| COST
+			| COUNT
 			| CROSS
 			| CSV
 			| CUBE
@@ -21690,6 +21692,7 @@ cypher_for_offset:
 
 cypher_expr_subquery:
 			cypher_exists_subquery
+			| cypher_count_subquery
 		;
 
 /*
@@ -21762,6 +21765,91 @@ cypher_exists_subquery:
 					n->testexpr = NULL;
 					n->operName = NIL;
 					n->subselect = $3;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+		;
+
+/*
+ * COUNT subquery: the number of rows the subquery yields (a bigint, never
+ * NULL -- 0 when empty).  Built as an EXPR_SUBLINK count(*).  The pattern and
+ * MATCH forms reuse CSP_SIZE (count over the pattern); the read-statement and
+ * SQL SELECT forms wrap an arbitrary read subquery in a CypherCountClause so
+ * its rows are counted with the subquery's own DISTINCT/LIMIT/GROUP/UNION kept.
+ */
+cypher_count_subquery:
+			COUNT '{' cypher_anon_pattern cypher_where_opt '}'
+				{
+					CypherSubPattern *sub;
+					SubLink	   *n;
+
+					sub = makeNode(CypherSubPattern);
+					sub->kind = CSP_SIZE;
+					sub->pattern = $3;
+					sub->where = $4;
+					sub->optional = false;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) sub;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| COUNT '{' cypher_match '}'
+				{
+					CypherMatchClause *match = (CypherMatchClause *) $3;
+					CypherSubPattern *sub;
+					SubLink	   *n;
+
+					sub = makeNode(CypherSubPattern);
+					sub->kind = CSP_SIZE;
+					sub->pattern = match->pattern;
+					sub->where = match->where;
+					sub->optional = match->optional;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) sub;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| COUNT '{' cypher_read_stmt '}'
+				{
+					CypherCountClause *cc;
+					SubLink	   *n;
+
+					cc = makeNode(CypherCountClause);
+					cc->subquery = $3;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) cc;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| COUNT '{' select_no_parens '}'
+				{
+					CypherCountClause *cc;
+					SubLink	   *n;
+
+					cc = makeNode(CypherCountClause);
+					cc->subquery = $3;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) cc;
 					n->location = @1;
 					$$ = (Node *) n;
 				}

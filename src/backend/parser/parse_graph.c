@@ -427,20 +427,7 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 
 	qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 	if (subpat->kind == CSP_SIZE)
-	{
-		FuncCall   *count;
-		TargetEntry *te;
-
-		count = makeFuncCall(list_make1(makeString("count")), NIL,
-							 COERCE_EXPLICIT_CALL, -1);
-		count->agg_star = true;
-
-		pstate->p_next_resno = 1;
-		te = transformTargetEntry(pstate, (Node *) count, NULL,
-								  EXPR_KIND_SELECT_TARGET, NULL, false);
-
-		qry->targetList = list_make1(te);
-	}
+		qry->targetList = list_make1(makeCountTargetEntry(pstate));
 	markTargetListOrigins(pstate, qry->targetList);
 
 	qry->rtable = pstate->p_rtable;
@@ -1472,6 +1459,73 @@ transformCypherForClause(ParseState *pstate, CypherClause *clause)
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
+
+/*
+ * makeCountTargetEntry
+ *		Build a "count(*)" target entry (resno 1) in pstate.  Shared by the
+ *		CSP_SIZE subpattern path and the COUNT subquery.
+ */
+TargetEntry *
+makeCountTargetEntry(ParseState *pstate)
+{
+	FuncCall   *count;
+
+	count = makeFuncCall(list_make1(makeString("count")), NIL,
+						 COERCE_EXPLICIT_CALL, -1);
+	count->agg_star = true;
+
+	pstate->p_next_resno = 1;
+	return transformTargetEntry(pstate, (Node *) count, NULL,
+								EXPR_KIND_SELECT_TARGET, NULL, false);
+}
+
+/*
+ * transformCypherCountClause
+ *		Transform a COUNT subquery over an arbitrary read statement: count how
+ *		many rows it yields.  The statement is analyzed into a self-contained
+ *		Query and joined in as a (non-lateral) subquery RTE, then count(*) is
+ *		taken over it -- so the statement's own DISTINCT / LIMIT / GROUP BY /
+ *		UNION are honored.  Outer variables resolve through the parent ParseState
+ *		chain (ordinary correlated-sublink resolution), so the RTE is not lateral.
+ */
+Query *
+transformCypherCountClause(ParseState *pstate, CypherCountClause *clause)
+{
+	Query	   *qry;
+	Query	   *subqry;
+	ParseNamespaceItem *nsitem;
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
+	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
+	subqry = parse_sub_analyze(clause->subquery, pstate, NULL, false, true);
+	pstate->p_expr_kind = EXPR_KIND_NONE;
+
+	if (!IsA(subqry, Query) || subqry->commandType != CMD_SELECT)
+		elog(ERROR, "unexpected non-SELECT command in COUNT subquery");
+
+	nsitem = addRangeTableEntryForSubquery(pstate, subqry,
+										   makeAliasNoDup(CYPHER_COUNT_ALIAS, NIL),
+										   false, true);
+	addNSItemToJoinlist(pstate, nsitem, false);
+
+	qry->targetList = list_make1(makeCountTargetEntry(pstate));
+	markTargetListOrigins(pstate, qry->targetList);
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+	qry->rteperminfos = pstate->p_rteperminfos;
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+	qry->hasAggs = pstate->p_hasAggs;
+	if (qry->hasAggs)
+		parseCheckAggregates(pstate, qry);
 
 	assign_query_collations(pstate, qry);
 

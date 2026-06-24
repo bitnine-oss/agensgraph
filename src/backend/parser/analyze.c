@@ -403,6 +403,10 @@ transformStmt(ParseState *pstate, Node *parseTree)
 			result = transformCypherSubPattern(pstate,
 											   (CypherSubPattern *) parseTree);
 			break;
+		case T_CypherCountClause:
+			result = transformCypherCountClause(pstate,
+												(CypherCountClause *) parseTree);
+			break;
 		case T_CypherClause:
 			/* Cypher clauses are transformed into a Query recursively */
 			result = transformCypherClause(pstate, (CypherClause *) parseTree);

@@ -4556,6 +4556,12 @@ typedef struct CypherForClause
 	Node	   *offset;			/* WITH OFFSET variable name (String), or NULL */
 } CypherForClause;
 
+typedef struct CypherCountClause
+{
+	NodeTag		type;
+	Node	   *subquery;		/* read-only sub-statement whose rows are counted */
+} CypherCountClause;
+
 typedef enum CPathKind
 {
 	CPATH_NORMAL,

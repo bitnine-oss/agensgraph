@@ -2256,6 +2256,156 @@ MATCH (person:Person)
 WHERE EXISTS { CREATE (:Foo) }
 RETURN person.name AS name;
 
+--
+-- COUNT subquery -- the number of rows the subquery yields (bigint, never NULL).
+-- Reuses the EXISTS-subquery graph (Person/Dog/Cat/Toy).
+--
+
+-- correlated count in RETURN (Andy has 1 dog, Peter 2, Timothy 0)
+MATCH (person:Person)
+RETURN person.name AS name, COUNT { (person)-[:HAS_DOG]->(:Dog) } AS dogs
+ORDER BY name;
+
+-- correlated count in WHERE
+MATCH (person:Person)
+WHERE COUNT { (person)-[:HAS_DOG]->(:Dog) } > 1
+RETURN person.name AS name ORDER BY name;
+
+-- inner WHERE referencing both outer and inner variables
+MATCH (person:Person)
+RETURN person.name AS name,
+       COUNT { (person)-[:HAS_DOG]->(dog:Dog) WHERE person.name = dog.name } AS c
+ORDER BY name;
+
+-- explicit MATCH form
+MATCH (person:Person)
+RETURN person.name AS name, COUNT { MATCH (person)-[:HAS_DOG]->(:Dog) } AS c
+ORDER BY name;
+
+-- OPTIONAL MATCH always yields a row, so the count is at least 1
+MATCH (person:Person)
+RETURN person.name AS name, COUNT { OPTIONAL MATCH (person)-[:HAS_CAT]->(:Cat) } AS c
+ORDER BY name;
+
+-- uncorrelated: how many dogs exist at all
+RETURN COUNT { (:Dog) } AS dogs;
+
+-- never NULL: zero when nothing matches
+MATCH (person:Person)
+RETURN person.name AS name, COUNT { (person)-[:NO_SUCH_REL]->() } AS c
+ORDER BY name;
+
+-- the subquery's own DISTINCT / UNION are honored (counted, not over-counted)
+RETURN COUNT { MATCH (:Person)-[:HAS_DOG]->() RETURN DISTINCT 1 } AS distinct_rows;
+RETURN COUNT { MATCH (d:Dog) RETURN d.name UNION MATCH (c:Cat) RETURN c.name } AS names;
+-- LIMIT / OFFSET are honored via the SQL SELECT form (3 dogs)
+RETURN COUNT { SELECT * FROM (MATCH (d:Dog) RETURN d) t LIMIT 1 } AS limited;
+RETURN COUNT { SELECT * FROM (MATCH (d:Dog) RETURN d) t OFFSET 2 } AS offset_2;
+
+-- a multi-column RETURN inside (rows are counted, not columns)
+RETURN COUNT { MATCH (p:Person)-[:HAS_DOG]->(d:Dog) RETURN p, d } AS edges;
+
+-- a correlated full read statement with a trailing RETURN
+MATCH (person:Person)
+RETURN person.name AS name, COUNT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d } AS c
+ORDER BY name;
+
+-- SQL SELECT wrapping a Cypher read
+MATCH (person:Person)
+RETURN person.name AS name,
+       COUNT { SELECT * FROM (MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d) t } AS c
+ORDER BY name;
+
+-- in an arithmetic expression
+MATCH (person:Person)
+RETURN person.name AS name, COUNT { (person)-[:HAS_DOG]->(:Dog) } + 1 AS c
+ORDER BY name;
+
+-- in a WITH ... WHERE stage
+MATCH (person:Person)
+WITH person
+WHERE COUNT { (person)-[:HAS_DOG]->(:Dog) } >= 1
+RETURN person.name AS name ORDER BY name;
+
+-- nested COUNT inside COUNT (dogs that own at least one toy)
+MATCH (person:Person)
+RETURN person.name AS name,
+       COUNT { MATCH (person)-[:HAS_DOG]->(dog:Dog)
+               WHERE COUNT { (dog)-[:HAS_TOY]->(:Toy) } > 0 } AS c
+ORDER BY name;
+
+-- a multi-hop pattern (dogs that have a toy)
+MATCH (person:Person)
+RETURN person.name AS name,
+       COUNT { (person)-[:HAS_DOG]->(:Dog)-[:HAS_TOY]->(:Toy) } AS c
+ORDER BY name;
+
+-- several comma-separated patterns (joined: dogs x cats per person)
+MATCH (person:Person)
+RETURN person.name AS name,
+       COUNT { (person)-[:HAS_DOG]->(:Dog), (person)-[:HAS_CAT]->(:Cat) } AS c
+ORDER BY name;
+
+-- an inline property constraint in the pattern
+MATCH (person:Person)
+RETURN person.name AS name,
+       COUNT { (person)-[:HAS_DOG]->(:Dog {name: 'Fido'}) } AS c
+ORDER BY name;
+
+-- inner WHERE on the inner variable only
+MATCH (person:Person)
+RETURN person.name AS name,
+       COUNT { (person)-[:HAS_DOG]->(dog:Dog) WHERE dog.name = 'Fido' } AS c
+ORDER BY name;
+
+-- a subquery that aggregates: counts the produced groups
+RETURN COUNT { MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name, count(*) } AS c;
+
+-- in a CASE expression
+MATCH (person:Person)
+RETURN person.name AS name,
+       CASE WHEN COUNT { (person)-[:HAS_DOG]->(:Dog) } > 1 THEN 'pack' ELSE 'few' END AS k
+ORDER BY name;
+
+-- comparing two COUNT subqueries
+MATCH (person:Person)
+WHERE COUNT { (person)-[:HAS_DOG]->(:Dog) } > COUNT { (person)-[:HAS_CAT]->(:Cat) }
+RETURN person.name AS name ORDER BY name;
+
+-- difference of two COUNT subqueries
+MATCH (person:Person)
+RETURN person.name AS name,
+       COUNT { (person)-[:HAS_DOG]->(:Dog) } - COUNT { (person)-[:HAS_CAT]->(:Cat) } AS diff
+ORDER BY name;
+
+-- COUNT = 0 to find the absence of a relationship
+MATCH (person:Person)
+WHERE COUNT { (person)-[:HAS_DOG]->(:Dog) } = 0
+RETURN person.name AS name ORDER BY name;
+
+-- in ORDER BY
+MATCH (person:Person)
+RETURN person.name AS name
+ORDER BY COUNT { (person)-[:HAS_DOG]->(:Dog) } DESC, name;
+
+-- in a WITH projection
+MATCH (person:Person)
+WITH person.name AS name, COUNT { (person)-[:HAS_DOG]->(:Dog) } AS c
+RETURN name, c ORDER BY name;
+
+-- the count() aggregate function still works alongside COUNT { }
+MATCH (person:Person) RETURN count(*) AS n;
+
+-- as the value of a SET
+MATCH (person:Person {name: 'Andy'})
+SET person.howManyDogs = COUNT { (person)-[:HAS_DOG]->(:Dog) }
+RETURN person.howManyDogs AS dogs;
+
+-- a write is not allowed inside a COUNT subquery
+MATCH (person:Person)
+WHERE COUNT { CREATE (:Foo) } > 0
+RETURN person.name AS name;
+
 -- cleanup
 
 DROP GRAPH exists_subquery CASCADE;
