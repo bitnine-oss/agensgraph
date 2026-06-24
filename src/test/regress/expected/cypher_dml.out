@@ -6868,6 +6868,330 @@ RETURN COLLECT { MATCH (a:Person) DETACH DELETE a RETURN a };
 ERROR:  syntax error at or near "DETACH"
 LINE 1: RETURN COLLECT { MATCH (a:Person) DETACH DELETE a RETURN a }...
                                           ^
+--
+-- VALUE subquery -- the single value a one-column read subquery yields.
+-- EXPR_SUBLINK semantics: one row -> that value, zero rows -> NULL, more than
+-- one row -> runtime error; exactly one column required.  The result keeps the
+-- produced column's type (no jsonb cast).  Reuses the EXISTS-subquery graph:
+-- Andy(age 36)->[Dog Andy], Peter(35)->[Fido,Ozzy], Timothy(25)->[] (->[Cat]).
+--
+-- core: a scalar from a uniquely-matched node
+RETURN VALUE { MATCH (p:Person {name: 'Andy'}) RETURN p.age } AS age;
+ age 
+-----
+ 36
+(1 row)
+
+RETURN VALUE { MATCH (p:Person {name: 'Andy'}) RETURN p.name } AS name;
+  name  
+--------
+ "Andy"
+(1 row)
+
+-- zero rows -> NULL
+RETURN VALUE { MATCH (x:NoSuchLabel) RETURN x.name } AS missing;
+ missing 
+---------
+ 
+(1 row)
+
+-- a single row selected with ORDER BY ... LIMIT 1
+RETURN VALUE { MATCH (d:Dog) RETURN d.name ORDER BY d.name LIMIT 1 } AS first_dog;
+ first_dog 
+-----------
+ "Andy"
+(1 row)
+
+-- correlated scalar aggregate (one value per person)
+MATCH (p:Person)
+RETURN p.name AS name, VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) } AS num_dogs
+ORDER BY name;
+   name    | num_dogs 
+-----------+----------
+ "Andy"    | 1
+ "Peter"   | 2
+ "Timothy" | 0
+(3 rows)
+
+-- correlated single value with ORDER BY ... LIMIT 1 (NULL when none)
+MATCH (p:Person)
+RETURN p.name AS name,
+       VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name LIMIT 1 } AS a_dog
+ORDER BY name;
+   name    | a_dog  
+-----------+--------
+ "Andy"    | "Andy"
+ "Peter"   | "Fido"
+ "Timothy" | 
+(3 rows)
+
+-- comparison and arithmetic
+RETURN 36 = VALUE { MATCH (p:Person {name: 'Andy'}) RETURN p.age } AS eq;
+ eq 
+----
+ t
+(1 row)
+
+RETURN VALUE { MATCH (p:Person {name: 'Andy'}) RETURN p.age } + 1 AS next_age;
+ next_age 
+----------
+ 37
+(1 row)
+
+-- in WHERE (people as old as Andy)
+MATCH (p:Person)
+WHERE p.age = VALUE { MATCH (q:Person {name: 'Andy'}) RETURN q.age }
+RETURN p.name AS name ORDER BY name;
+  name  
+--------
+ "Andy"
+(1 row)
+
+-- in a CASE expression
+MATCH (p:Person)
+RETURN p.name AS name,
+       CASE WHEN VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) } > 1
+            THEN 'many' ELSE 'few' END AS dogs
+ORDER BY name;
+   name    |  dogs  
+-----------+--------
+ "Andy"    | "few"
+ "Peter"   | "many"
+ "Timothy" | "few"
+(3 rows)
+
+-- in a WITH ... WHERE stage
+MATCH (p:Person)
+WITH p.name AS name, VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) } AS n
+WHERE n > 0
+RETURN name, n ORDER BY name;
+  name   | n 
+---------+---
+ "Andy"  | 1
+ "Peter" | 2
+(2 rows)
+
+-- the result keeps its type: a graph-derived map survives (no jsonb cast forced)
+RETURN VALUE { MATCH (d:Dog {name: 'Fido'}) RETURN properties(d) } AS props;
+      props       
+------------------
+ {"name": "Fido"}
+(1 row)
+
+-- SQL SELECT form: a literal scalar
+RETURN VALUE { SELECT 42 } AS answer;
+ answer 
+--------
+ 42
+(1 row)
+
+-- SQL SELECT form: an aggregate over Cypher-produced rows
+RETURN VALUE { SELECT count(*) FROM (MATCH (d:Dog) RETURN d) t } AS dog_count;
+ dog_count 
+-----------
+ 3
+(1 row)
+
+-- nested: VALUE inside VALUE
+RETURN VALUE { MATCH (p:Person {name: 'Andy'})
+               RETURN VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) } } AS n;
+ n 
+---
+ 1
+(1 row)
+
+-- nested: COLLECT of a per-row VALUE
+RETURN COLLECT {
+    MATCH (p:Person)
+    RETURN VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) }
+    ORDER BY p.name
+} AS counts;
+  counts   
+-----------
+ [1, 2, 0]
+(1 row)
+
+-- nested: VALUE returning a COLLECT list
+RETURN VALUE {
+    MATCH (p:Person {name: 'Peter'})
+    RETURN COLLECT { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name }
+} AS peters_dogs;
+   peters_dogs    
+------------------
+ ["Fido", "Ozzy"]
+(1 row)
+
+-- SQL + Cypher hybrid: SQL projecting a Cypher query that uses VALUE
+SELECT t.name, t.n
+FROM (MATCH (p:Person)
+      RETURN p.name AS name, VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) } AS n) t
+ORDER BY t.name;
+   name    | n 
+-----------+---
+ "Andy"    | 1
+ "Peter"   | 2
+ "Timothy" | 0
+(3 rows)
+
+-- SQL + Cypher hybrid: SQL WHERE on the Cypher VALUE result (a jsonb, so the
+-- SQL-side comparison uses a jsonb literal)
+SELECT t.name
+FROM (MATCH (p:Person)
+      RETURN p.name AS name, VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) } AS n) t
+WHERE t.n > '1'::jsonb
+ORDER BY t.name;
+  name   
+---------
+ "Peter"
+(1 row)
+
+-- VALUE result types: boolean, list and map values all flow through
+RETURN VALUE { MATCH (p:Person {name: 'Andy'}) RETURN p.age > 30 } AS is_old;
+ is_old 
+--------
+ t
+(1 row)
+
+RETURN VALUE { MATCH (p:Person {name: 'Andy'}) RETURN [p.name, p.age] } AS pair;
+     pair     
+--------------
+ ["Andy", 36]
+(1 row)
+
+-- property access on a map returned by VALUE (no jsonb cast forced)
+RETURN (VALUE { MATCH (d:Dog {name: 'Fido'}) RETURN properties(d) }).name AS dogname;
+ dogname 
+---------
+ "Fido"
+(1 row)
+
+-- VALUE as an element of a list / map literal
+RETURN [VALUE { MATCH (p:Person {name: 'Andy'}) RETURN p.age },
+        VALUE { MATCH (p:Person {name: 'Peter'}) RETURN p.age }] AS ages;
+   ages   
+----------
+ [36, 35]
+(1 row)
+
+RETURN {oldest: VALUE { MATCH (p:Person {name: 'Andy'}) RETURN p.name }} AS m;
+         m          
+--------------------
+ {"oldest": "Andy"}
+(1 row)
+
+-- arithmetic mixing a VALUE and a COUNT subquery
+MATCH (p:Person {name: 'Peter'})
+RETURN VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) }
+       - COUNT { (p)-[:HAS_CAT]->(:Cat) } AS dogs_minus_cats;
+ dogs_minus_cats 
+-----------------
+ 2
+(1 row)
+
+-- comparing two VALUE subqueries
+RETURN VALUE { MATCH (p:Person {name: 'Andy'}) RETURN p.age }
+       > VALUE { MATCH (p:Person {name: 'Peter'}) RETURN p.age } AS andy_older;
+ andy_older 
+------------
+ t
+(1 row)
+
+-- a NULL VALUE (zero rows) feeding coalesce
+RETURN coalesce(VALUE { MATCH (x:NoSuchLabel) RETURN x.name }, 'none') AS v;
+   v    
+--------
+ "none"
+(1 row)
+
+-- VALUE as an element of an IN list
+MATCH (p:Person)
+WHERE p.name IN [VALUE { MATCH (q:Person {name: 'Andy'}) RETURN q.name }]
+RETURN p.name AS name ORDER BY name;
+  name  
+--------
+ "Andy"
+(1 row)
+
+-- a correlated VALUE in ORDER BY (most dogs first)
+MATCH (p:Person)
+RETURN p.name AS name
+ORDER BY VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) } DESC, name;
+   name    
+-----------
+ "Peter"
+ "Andy"
+ "Timothy"
+(3 rows)
+
+-- ORDER BY ... SKIP ... LIMIT picks a specific row
+RETURN VALUE { MATCH (d:Dog) RETURN d.name ORDER BY d.name SKIP 1 LIMIT 1 } AS second_dog;
+ second_dog 
+------------
+ "Fido"
+(1 row)
+
+-- SQL + Cypher hybrid: a SQL CTE wrapping a Cypher query that uses VALUE
+WITH per AS (
+    MATCH (p:Person)
+    RETURN p.name AS name, VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) } AS n
+)
+SELECT name, n FROM per WHERE n > '0'::jsonb ORDER BY name;
+  name   | n 
+---------+---
+ "Andy"  | 1
+ "Peter" | 2
+(2 rows)
+
+-- SQL + Cypher hybrid: VALUE wrapping a SQL aggregate (WHERE) over Cypher rows
+RETURN VALUE {
+    SELECT count(*) FROM (MATCH (p:Person) RETURN p.age AS age) t WHERE t.age > '30'::jsonb
+} AS over_30;
+ over_30 
+---------
+ 2
+(1 row)
+
+-- SQL + Cypher hybrid: VALUE wrapping a SQL DISTINCT count over Cypher rows
+RETURN VALUE {
+    SELECT count(DISTINCT t.name)
+    FROM (MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name AS name) t
+} AS distinct_dogs;
+ distinct_dogs 
+---------------
+ 3
+(1 row)
+
+-- SQL + Cypher hybrid: a SQL jsonb function on a Cypher VALUE result
+SELECT jsonb_typeof(t.n) AS typ
+FROM (MATCH (p:Person {name: 'Andy'})
+      RETURN VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) } AS n) t;
+  typ   
+--------
+ number
+(1 row)
+
+-- as the value of a SET (graph-write context)
+MATCH (p:Person {name: 'Andy'})
+SET p.dogCount = VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) }
+RETURN p.dogCount AS dogCount;
+ dogcount 
+----------
+ 1
+(1 row)
+
+-- error: the subquery returns more than one row
+RETURN VALUE { MATCH (d:Dog) RETURN d.name };
+ERROR:  more than one row returned by a subquery used as an expression
+-- error: the subquery must return only one column
+RETURN VALUE { MATCH (p:Person) RETURN p.name, p.age };
+ERROR:  subquery must return only one column
+LINE 1: RETURN VALUE { MATCH (p:Person) RETURN p.name, p.age };
+               ^
+-- error: a write is not allowed inside a VALUE subquery
+RETURN VALUE { CREATE (:Foo) RETURN 1 };
+ERROR:  syntax error at or near "CREATE"
+LINE 1: RETURN VALUE { CREATE (:Foo) RETURN 1 };
+                       ^
 -- cleanup
 DROP GRAPH exists_subquery CASCADE;
 NOTICE:  drop cascades to 11 other objects

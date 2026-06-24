@@ -730,7 +730,7 @@ static bool has_internal_default_prefix(char *str);
 %type <node>	cypher_expr_func cypher_expr_func_norm cypher_expr_func_subexpr
 				cypher_expr_shortestpath
 %type <node>	cypher_expr_subquery cypher_exists_subquery cypher_count_subquery
-%type <node>	cypher_collect_subquery
+%type <node>	cypher_collect_subquery cypher_value_subquery
 
 %type <node>	cypher_expr_propref cypher_expr_propref_strict cypher_expr_indir_elem
 %type <list>	cypher_expr_indir cypher_expr_indir_opt
@@ -21744,6 +21744,7 @@ cypher_expr_subquery:
 			cypher_exists_subquery
 			| cypher_count_subquery
 			| cypher_collect_subquery
+			| cypher_value_subquery
 		;
 
 /*
@@ -21939,6 +21940,43 @@ cypher_collect_subquery:
 					n->subselect = $3;
 					n->location = @1;
 					$$ = makeTypeCast((Node *) n, SystemTypeName("jsonb"), @1);
+				}
+		;
+
+/*
+ * VALUE subquery: the single value produced by a one-column read subquery.
+ * Built as a native EXPR_SUBLINK and returned as-is (no jsonb cast) -- the
+ * result type is the produced column's type, so a graph value (e.g. a vertex)
+ * survives and cypher coerces to jsonb at the use site only when needed.  The
+ * subquery must yield exactly one row: zero rows -> NULL, more than one row ->
+ * a runtime error.
+ */
+cypher_value_subquery:
+			VALUE_P '{' cypher_read_stmt '}'
+				{
+					SubLink	   *n;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = $3;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| VALUE_P '{' select_no_parens '}'
+				{
+					SubLink	   *n;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = $3;
+					n->location = @1;
+					$$ = (Node *) n;
 				}
 		;
 
