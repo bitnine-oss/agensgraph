@@ -6342,6 +6342,53 @@ RETURN person.name AS name;
 ERROR:  syntax error at or near "CREATE"
 LINE 2: WHERE COUNT { CREATE (:Foo) } > 0
                       ^
+--
+-- ORDER BY / SKIP / LIMIT inside a cypher read subquery -- a trailing
+-- projection tail (sort / skip / limit) after RETURN is accepted in the
+-- read-statement form of EXISTS / COUNT / COLLECT subqueries, just like a
+-- top-level read query.  Reuses the EXISTS-subquery graph (3 dogs).
+--
+-- LIMIT caps the rows the subquery yields (COUNT counts the kept rows)
+RETURN COUNT { MATCH (d:Dog) RETURN d.name LIMIT 2 } AS limited;
+ limited 
+---------
+ 2
+(1 row)
+
+-- SKIP drops leading rows
+RETURN COUNT { MATCH (d:Dog) RETURN d.name SKIP 1 } AS skipped;
+ skipped 
+---------
+ 2
+(1 row)
+
+-- ORDER BY then SKIP + LIMIT slice a window
+RETURN COUNT { MATCH (d:Dog) RETURN d.name ORDER BY d.name SKIP 1 LIMIT 1 } AS sliced;
+ sliced 
+--------
+ 1
+(1 row)
+
+-- ORDER BY alone is accepted (and harmless) in a counted subquery
+RETURN COUNT { MATCH (d:Dog) RETURN d.name ORDER BY d.name DESC } AS ordered;
+ ordered 
+---------
+ 3
+(1 row)
+
+-- LIMIT 0 makes an EXISTS subquery false; LIMIT 1 keeps it true
+RETURN EXISTS { MATCH (d:Dog) RETURN d.name LIMIT 0 } AS none;
+ none 
+------
+ f
+(1 row)
+
+RETURN EXISTS { MATCH (d:Dog) RETURN d.name LIMIT 1 } AS some;
+ some 
+------
+ t
+(1 row)
+
 -- cleanup
 DROP GRAPH exists_subquery CASCADE;
 NOTICE:  drop cascades to 10 other objects

@@ -2406,6 +2406,25 @@ MATCH (person:Person)
 WHERE COUNT { CREATE (:Foo) } > 0
 RETURN person.name AS name;
 
+--
+-- ORDER BY / SKIP / LIMIT inside a cypher read subquery -- a trailing
+-- projection tail (sort / skip / limit) after RETURN is accepted in the
+-- read-statement form of EXISTS / COUNT / COLLECT subqueries, just like a
+-- top-level read query.  Reuses the EXISTS-subquery graph (3 dogs).
+--
+
+-- LIMIT caps the rows the subquery yields (COUNT counts the kept rows)
+RETURN COUNT { MATCH (d:Dog) RETURN d.name LIMIT 2 } AS limited;
+-- SKIP drops leading rows
+RETURN COUNT { MATCH (d:Dog) RETURN d.name SKIP 1 } AS skipped;
+-- ORDER BY then SKIP + LIMIT slice a window
+RETURN COUNT { MATCH (d:Dog) RETURN d.name ORDER BY d.name SKIP 1 LIMIT 1 } AS sliced;
+-- ORDER BY alone is accepted (and harmless) in a counted subquery
+RETURN COUNT { MATCH (d:Dog) RETURN d.name ORDER BY d.name DESC } AS ordered;
+-- LIMIT 0 makes an EXISTS subquery false; LIMIT 1 keeps it true
+RETURN EXISTS { MATCH (d:Dog) RETURN d.name LIMIT 0 } AS none;
+RETURN EXISTS { MATCH (d:Dog) RETURN d.name LIMIT 1 } AS some;
+
 -- cleanup
 
 DROP GRAPH exists_subquery CASCADE;

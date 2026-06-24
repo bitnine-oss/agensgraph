@@ -750,8 +750,9 @@ static bool has_internal_default_prefix(char *str);
 				cypher_order_by cypher_skip cypher_limit
 				cypher_where cypher_where_opt cypher_unwind cypher_filter
 				cypher_for cypher_for_offset cypher_for_offset_opt
+				cypher_proj_tail_item
 %type <list>	cypher_return_items cypher_distinct_opt
-				cypher_sort_items
+				cypher_sort_items cypher_proj_tail
 %type <target>	cypher_return_item
 %type <sortby>	cypher_sort_item
 
@@ -19422,6 +19423,35 @@ cypher_read_stmt:
 					n->last = (Node *) clause;
 					$$ = (Node *) n;
 				}
+			| cypher_read_opt cypher_return cypher_proj_tail
+				{
+					CypherClause *clause;
+					CypherStmt *n;
+					ListCell   *lc;
+
+					clause = makeNode(CypherClause);
+					clause->detail = $2;
+					clause->prev = $1;
+
+					/*
+					 * A trailing ORDER BY / SKIP / LIMIT is chained as
+					 * standalone clauses on top of the RETURN, so a read
+					 * subquery can be sorted and sliced just like a top-level
+					 * read query.  ARRAY_SUBLINK then preserves this order.
+					 */
+					foreach(lc, $3)
+					{
+						CypherClause *tc = makeNode(CypherClause);
+
+						tc->detail = (Node *) lfirst(lc);
+						tc->prev = (Node *) clause;
+						clause = tc;
+					}
+
+					n = makeNode(CypherStmt);
+					n->last = (Node *) clause;
+					$$ = (Node *) n;
+				}
 			| cypher_read_opt cypher_finish
 				{
 					CypherClause *clause;
@@ -21428,6 +21458,23 @@ cypher_limit:
 					n->limit = $2;
 					$$ = (Node *) n;
 				}
+		;
+
+/*
+ * Trailing read-only projection clauses that may follow a RETURN inside a read
+ * subquery (e.g. COLLECT { MATCH ... RETURN x ORDER BY x SKIP m LIMIT n }).
+ */
+cypher_proj_tail:
+			cypher_proj_tail_item
+					{ $$ = list_make1($1); }
+			| cypher_proj_tail cypher_proj_tail_item
+					{ $$ = lappend($1, $2); }
+		;
+
+cypher_proj_tail_item:
+			cypher_order_by
+			| cypher_skip
+			| cypher_limit
 		;
 
 cypher_where:
