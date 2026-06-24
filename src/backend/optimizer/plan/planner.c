@@ -1008,6 +1008,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	parse->g_exprs = (List *)
 		preprocess_expression(root, (Node *) parse->g_exprs,
 							  EXPRKIND_TARGET);
+	preprocess_graph_delete(root, parse->g_exprs);
 	preprocess_graph_sets(root, parse->g_sets);
 
 	/*
@@ -1030,12 +1031,6 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 			rte->joinaliasvars = NIL;
 		}
 	}
-
-	/* expressions for graph */
-	if (parse->g_writeOp == GWROP_MERGE)
-		preprocess_graph_pattern(root, parse->g_pattern);
-	preprocess_graph_delete(root, parse->g_exprs);
-	preprocess_graph_sets(root, parse->g_sets);
 
 	/*
 	 * In some cases we may want to transfer a HAVING clause into WHERE. We
