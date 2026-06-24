@@ -303,7 +303,8 @@ static Node *makeSelectEdgesVertices(Node *vertices,
 									 CypherDeleteClause *delete,
 									 char **edges_resname);
 static Node *makeEdgesForDetach(void);
-static RangeFunction *makeUnnestVertices(Node *vertices);
+static RangeFunction *makeRangeFunction(List *func, Node *expr, Alias *alias,
+										bool ordinality);
 static BoolExpr *makeEdgesVertexQual(void);
 static List *extractVerticesExpr(ParseState *pstate, List *exprlist,
 								 ParseExprKind exprKind);
@@ -1358,6 +1359,118 @@ transformCypherUnwindClause(ParseState *pstate, CypherClause *clause)
 	qry->rteperminfos = pstate->p_rteperminfos;
 	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
 
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
+
+/*
+ * transformCypherForClause
+ *		Transform a GQL FOR clause: "FOR x IN array [WITH OFFSET [AS o]]".
+ *		The array expression is unnested as a LATERAL set-returning function
+ *		joined with the working table, optionally exposing each element's
+ *		0-based position via WITH OFFSET.  The expression is wrapped in a
+ *		CypherGenericExpr so it is transformed in Cypher context (yielding a
+ *		jsonb array) inside the SQL subquery.
+ */
+Query *
+transformCypherForClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherForClause *detail = (CypherForClause *) clause->detail;
+	Query	   *qry;
+	Query	   *subqry;
+	CypherGenericExpr *cge;
+	RangeFunction *rf;
+	SelectStmt *subquery;
+	List	   *colnames;
+	List	   *targetList;
+	ParseNamespaceItem *nsitem;
+	bool		with_offset = (detail->offset != NULL);
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	/* Pass through the previous clause's variables. */
+	if (clause->prev != NULL)
+	{
+		nsitem = transformClause(pstate, clause->prev);
+		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
+	}
+
+	/* The new variable(s) must not collide with previous ones. */
+	if (findTarget(qry->targetList, strVal(detail->resname)) != NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_DUPLICATE_ALIAS),
+				 errmsg("duplicate variable \"%s\"", strVal(detail->resname))));
+	if (with_offset &&
+		(strcmp(strVal(detail->resname), strVal(detail->offset)) == 0 ||
+		 findTarget(qry->targetList, strVal(detail->offset)) != NULL))
+		ereport(ERROR,
+				(errcode(ERRCODE_DUPLICATE_ALIAS),
+				 errmsg("duplicate variable \"%s\"", strVal(detail->offset))));
+
+	cge = makeNode(CypherGenericExpr);
+	cge->expr = detail->expr;
+
+	colnames = list_make1(detail->resname);
+	targetList = list_make1(makeResTarget(makeColumnRef(list_make1(detail->resname)),
+										  NULL));
+	if (with_offset)
+	{
+		Node	   *zero_based;
+
+		colnames = lappend(colnames, detail->offset);
+
+		/*
+		 * Per the GQL standard the offset is 0-based, but the ordinality
+		 * column produced by WITH ORDINALITY is 1-based.  Project
+		 * (ordinality - 1) under the offset variable's name.
+		 */
+		zero_based = (Node *) makeSimpleA_Expr(AEXPR_OP, "-",
+											   makeColumnRef(list_make1(detail->offset)),
+											   makeIntConst(1, -1), -1);
+		targetList = lappend(targetList,
+							 makeResTarget(zero_based, strVal(detail->offset)));
+	}
+
+	rf = makeRangeFunction(list_make1(makeString("unnest")), (Node *) cge,
+						   makeAliasNoDup(AGENS_DEFAULT_PREFIX "for", colnames),
+						   with_offset);
+
+	subquery = makeNode(SelectStmt);
+	subquery->targetList = targetList;
+	subquery->fromClause = list_make1(rf);
+
+	/*
+	 * Analyze the unnest sub-SELECT and join it with the working table.  When
+	 * there is a previous clause the subquery is LATERAL, since the array
+	 * expression may reference the previous clause's columns.
+	 */
+	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
+	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
+	pstate->p_lateral_active = (clause->prev != NULL);
+
+	subqry = parse_sub_analyze((Node *) subquery, pstate, NULL, false, true);
+
+	nsitem = addRangeTableEntryForSubquery(pstate, subqry,
+										   makeAliasNoDup(CYPHER_FOR_ALIAS, NIL),
+										   pstate->p_lateral_active, true);
+
+	pstate->p_lateral_active = false;
+	pstate->p_expr_kind = EXPR_KIND_NONE;
+
+	addNSItemToJoinlist(pstate, nsitem, true);
+
+	qry->targetList = list_concat(qry->targetList,
+								  makeTargetListFromNSItem(pstate, nsitem));
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+	qry->rteperminfos = pstate->p_rteperminfos;
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 
 	assign_query_collations(pstate, qry);
@@ -5606,7 +5719,8 @@ makeSelectEdgesVertices(Node *vertices, CypherDeleteClause *delete,
 	ag_edge->inh = true;
 	ag_edge->alias = makeAliasNoDup(DELETE_EDGE_ALIAS, NIL);
 
-	unnest = makeUnnestVertices(vertices);
+	unnest = makeRangeFunction(list_make1(makeString("unnest")), vertices,
+							   makeAliasNoDup(DELETE_VERTEX_ALIAS, NIL), false);
 
 	sel = makeNode(SelectStmt);
 	sel->targetList = targetlist;
@@ -5640,21 +5754,19 @@ makeEdgesForDetach(void)
 }
 
 static RangeFunction *
-makeUnnestVertices(Node *vertices)
+makeRangeFunction(List *func, Node *expr, Alias *alias, bool ordinality)
 {
-	FuncCall   *unnest;
+	FuncCall   *fc;
 	RangeFunction *rf;
 
-	unnest = makeFuncCall(list_make1(makeString("unnest")),
-						  list_make1(vertices),
-						  COERCE_EXPLICIT_CALL, -1);
+	fc = makeFuncCall(func, list_make1(expr), COERCE_EXPLICIT_CALL, -1);
 
 	rf = makeNode(RangeFunction);
 	rf->lateral = false;
-	rf->ordinality = false;
+	rf->ordinality = ordinality;
 	rf->is_rowsfrom = false;
-	rf->functions = list_make1(list_make2(unnest, NIL));
-	rf->alias = makeAliasNoDup(DELETE_VERTEX_ALIAS, NIL);
+	rf->functions = list_make1(list_make2(fc, NIL));
+	rf->alias = alias;
 	rf->coldeflist = NIL;
 
 	return rf;

@@ -2009,8 +2009,114 @@ MATCH (p:person) RETURN DISTINCT p.age AS age ORDER BY age DESC;
 -- target list, so the sort operator must follow the final (jsonb) type
 MATCH (p:person) RETURN p.age AS age, count(*) AS cnt ORDER BY cnt, age;
 
+--
+-- AGV2-394: FOR clause -- unnest an array expression and join it with the
+-- working table, optionally exposing the element ordinality via WITH OFFSET.
+--
+CREATE GRAPH agv2_394;
+SET graph_path = agv2_394;
+CREATE (:Person {Id: 1, name: 'Alice', tags: ['x','y']})-[:Owns]->(:Account {no: 100}),
+       (:Person {Id: 2, name: 'Bob',   tags: ['z']})-[:Owns]->(:Account {no: 200}),
+       (:Person {Id: 3, name: 'Carol', tags: []})-[:Owns]->(:Account {no: 300});
+
+-- == element variety ==
+-- integers
+FOR x in [1,2,3] RETURN x ORDER BY x;
+-- strings
+FOR x in ['a','b','c'] RETURN x ORDER BY x;
+-- a single element
+FOR x in [42] RETURN x;
+-- an empty array -> no rows
+FOR x in [] RETURN x;
+-- elements that are themselves arrays
+FOR x in [[1,2],[3]] RETURN x ORDER BY x;
+-- elements that are maps
+FOR x in [{a: 1},{a: 2}] RETURN x.a AS a ORDER BY a;
+
+-- == the array from an expression ==
+-- range() with and without a step, ascending and descending
+FOR x in range(1,5) RETURN x ORDER BY x;
+FOR x in range(0,10,2) RETURN x ORDER BY x;
+FOR x in range(5,1,-1) RETURN x ORDER BY x;
+-- a variable bound to an array (UNWIND binds lst, then FOR unnests it)
+UNWIND [[10,20,30]] AS lst FOR x in lst RETURN x ORDER BY x;
+-- array concatenation
+FOR x in [1,2] + [3,4] RETURN x ORDER BY x;
+-- a list-valued property (LATERAL: depends on the matched row)
+MATCH (p:Person) FOR t in p.tags RETURN p.name AS name, t ORDER BY name, t;
+-- range() whose bound comes from the matched row (LATERAL)
+MATCH (p:Person) WHERE p.Id <> 1
+FOR x in range(1, p.Id) RETURN p.Id, x ORDER BY Id, x;
+
+-- == WITH OFFSET ==
+-- default offset variable name "offset", 0-based per the GQL standard
+FOR x in ['a','b','c'] WITH OFFSET RETURN x, "offset" ORDER BY "offset";
+-- a named offset variable
+FOR x in ['a','b','c'] WITH OFFSET AS i RETURN x, i ORDER BY i;
+-- offset over an empty array -> no rows
+FOR x in [] WITH OFFSET AS i RETURN x, i;
+-- offset over a typed NULL array -> no rows
+FOR x in NULL::_text WITH OFFSET RETURN x, "offset";
+FOR x in NULL::jsonb WITH OFFSET AS i RETURN x, i;
+-- offset after MATCH (LATERAL)
+MATCH (p:Person)-[:Owns]->(a:Account)
+FOR alert in ['all','some'] WITH OFFSET
+RETURN p.Id, alert AS alert_type, "offset"
+ORDER BY Id, alert_type, "offset";
+
+-- == composition / chaining ==
+-- standalone FOR, then WITH, then RETURN
+FOR x in [1,2,3] WITH x AS col RETURN col ORDER BY col;
+-- FOR, then WITH ... WHERE to filter the rows
+FOR x in [1,2,3,4] WITH x WHERE x > 2 RETURN x ORDER BY x;
+-- FOR, then a standalone ORDER BY / LIMIT and ORDER BY / SKIP
+FOR x in [5,3,1,4,2] RETURN x ORDER BY x DESC LIMIT 2;
+FOR x in [1,2,3,4,5] RETURN x ORDER BY x SKIP 3;
+-- FOR, then aggregation
+FOR x in [1,2,3,4] RETURN count(*) AS c, sum(x) AS s, collect(x) AS xs;
+-- a WITH-projected list feeding FOR
+MATCH (p:Person) WITH collect(p.Id) AS ids FOR x in ids RETURN x ORDER BY x;
+-- WITH OFFSET immediately followed by a regular WITH (WITH must not be
+-- swallowed as WITH OFFSET)
+FOR x in [1,2,3] WITH OFFSET WITH x AS col RETURN col ORDER BY col;
+-- FOR over the elements produced by a previous FOR (nested unnest)
+FOR x in [[1,2],[3,4,5]] FOR y in x RETURN y ORDER BY y;
+-- two independent FORs -> cartesian product
+FOR a in [1,2] FOR b in [10,20] RETURN a, b ORDER BY a, b;
+-- UNWIND then FOR (the FOR array depends on the unwound value)
+UNWIND [1,2] AS u FOR x in [u, u * 10] RETURN u, x ORDER BY u, x;
+-- FOR then UNWIND
+FOR x in [1,2] UNWIND [x, x + 100] AS u RETURN x, u ORDER BY x, u;
+-- FOR feeds the keys of a following MATCH
+FOR id in [1,3] MATCH (p:Person {Id: id}) RETURN p.name AS name ORDER BY name;
+
+-- == FOR drives write clauses ==
+FOR x in [10,20,30] CREATE (:item {v: x});
+MATCH (n:item) RETURN n.v AS v ORDER BY v;
+FOR x in [10,20,40] MERGE (:item {v: x});
+MATCH (n:item) RETURN n.v AS v ORDER BY v;
+FOR x in [10,20] MATCH (n:item {v: x}) DELETE n;
+MATCH (n:item) RETURN n.v AS v ORDER BY v;
+MATCH (p:Person {Id: 1}) FOR x in [99] SET p.score = x RETURN p.name AS name, p.score AS score;
+
+-- == FOR in the read path (both branches of a UNION) ==
+FOR x in [1,2] RETURN x UNION ALL FOR x in [3,4] RETURN x;
+
+-- == errors and edge cases ==
+-- a scalar integer is not an array
+FOR x in 1 RETURN x;
+-- a scalar jsonb (property) is not an array
+MATCH (p:Person) FOR x in p.Id RETURN x;
+-- the element variable must not collide with an existing variable
+MATCH (p:Person) FOR p in [1,2] RETURN p;
+-- the offset variable must not collide with the element variable
+FOR x in [1,2] WITH OFFSET AS x RETURN x;
+-- the offset variable must not collide with an existing variable
+MATCH (p:Person) FOR x in [1] WITH OFFSET AS p RETURN x;
+
 -- cleanup
 
+DROP GRAPH agv2_394 CASCADE;
 DROP GRAPH ag324 CASCADE;
 DROP GRAPH agv2_308 CASCADE;
 DROP GRAPH srf CASCADE;

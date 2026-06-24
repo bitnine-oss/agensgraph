@@ -4546,6 +4546,14 @@ typedef struct CypherFilterClause
 	Node	   *expr;			/* filter condition (evaluates to boolean) */
 } CypherFilterClause;
 
+typedef struct CypherForClause
+{
+	NodeTag		type;
+	Node	   *resname;		/* element variable name (String) */
+	Node	   *expr;			/* the array expression to unnest */
+	Node	   *offset;			/* WITH OFFSET variable name (String), or NULL */
+} CypherForClause;
+
 typedef enum CPathKind
 {
 	CPATH_NORMAL,

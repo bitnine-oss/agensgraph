@@ -4200,6 +4200,7 @@ CypherMergeClause
 CypherLoadClause
 CypherUnwindClause
 CypherFilterClause
+CypherForClause
 CypherModifier
 CypherOrderBy
 CypherSkip

@@ -1678,52 +1678,40 @@ datum_tobooleanornull(PG_FUNCTION_ARGS)
 Datum
 range(int32 start, int32 end, int32 step)
 {
-	int32		len = (int32) floor((end - start + step) / step),
-				counter = 0;
-	ArrayType  *arr;
+	JsonbParseState *state = NULL;
+	JsonbValue	val;
+	JsonbValue *jbv;
 
-	/* sanity checks */
-	if (len <= 0)
+	/* an empty range (bad step, or a step pointing away from end) yields [] */
+	if (step == 0 ||
+		((start <= end) && step < 0) ||
+		((start >= end) && step > 0))
+		PG_RETURN_JSONB_P(JsonbMakeEmptyArray());
+
+	pushJsonbValue(&state, WJB_BEGIN_ARRAY, NULL);
+
+	if (step > 0)
 	{
-		arr = construct_array(NULL, 0, INT4OID, sizeof(int32), true, 'i');
-	}
-
-	else if (((start <= end) && step < 0) || ((start >= end) && step > 0))
-	{
-		arr = construct_array(NULL, 0, INT4OID, sizeof(int32), true, 'i');
-	}
-
-	else						/* all sanity checks have passed, the series
-								 * has to be generated and an array has to be
-								 * created */
-	{
-		Datum	   *elements = (Datum *) palloc(sizeof(Datum) * len);
-
-		if (step < 0)
+		for (int32 i = start; i <= end; i += step)
 		{
-			while (start >= end)
-			{
-				elements[counter++] = start;
-				start += step;
-			}
+			val.type = jbvNumeric;
+			val.val.numeric = int64_to_numeric(i);
+			pushJsonbValue(&state, WJB_ELEM, &val);
 		}
-		else
+	}
+	else
+	{
+		for (int32 i = start; i >= end; i += step)
 		{
-			while (start <= end)
-			{
-				elements[counter++] = start;
-				start += step;
-			}
+			val.type = jbvNumeric;
+			val.val.numeric = int64_to_numeric(i);
+			pushJsonbValue(&state, WJB_ELEM, &val);
 		}
-
-		arr = construct_array(elements, len, INT4OID, sizeof(int32), true, 'i');
-
-		/* free pointers */
-		pfree(elements);
 	}
 
+	jbv = pushJsonbValue(&state, WJB_END_ARRAY, NULL);
 
-	PG_RETURN_POINTER(arr);
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(jbv));
 }
 
 /* wrapper function which is used to map two integer inputs (start and end) with the range function. Default step value is created */

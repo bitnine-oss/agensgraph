@@ -1039,6 +1039,10 @@ preprocess_func_args(ParseState *pstate, FuncCall *fn)
 	if (named)
 		return args;
 
+	/* unnest() takes its argument as-is, not as a column projection */
+	if (strcmp(strVal(llast(fn->funcname)), "unnest") == 0)
+		return args;
+
 	/* column projection */
 	if (nargs == 1 &&
 		fn->agg_order == NIL &&

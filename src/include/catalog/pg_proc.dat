@@ -12656,10 +12656,10 @@
 
 # array cypher functions
 { oid => '8008', descr => 'generates a range between limits',
-  proname => 'range', proisstrict => 'f', prorettype => 'anyarray',
+  proname => 'range', proisstrict => 'f', prorettype => 'jsonb',
   proargtypes => 'int4 int4', prosrc => 'range_2_args' },
 { oid => '8009', descr => 'generates a range between limits',
-  proname => 'range', proisstrict => 'f', prorettype => 'anyarray',
+  proname => 'range', proisstrict => 'f', prorettype => 'jsonb',
   proargtypes => 'int4 int4 int4', prosrc => 'range_3_args' },
 { oid => '8010', descr => 'returns the string or null equivalent of a datum',
   proname => 'tostringornull', prorettype => 'text', proargtypes => 'any',
@@ -12745,5 +12745,10 @@
   proname => 'collect', prokind => 'a', proisstrict => 'f', provolatile => 's',
   prorettype => 'jsonb', proargtypes => 'anyelement',
   prosrc => 'aggregate_dummy' },
+{ oid => '8037', descr => 'elements of a jsonb array',
+  proname => 'unnest', prorows => '100', proretset => 't',
+  prorettype => 'jsonb', proargtypes => 'jsonb',
+  proallargtypes => '{jsonb,jsonb}', proargmodes => '{i,o}',
+  proargnames => '{from_json,value}', prosrc => 'jsonb_array_elements' },
 
 ]

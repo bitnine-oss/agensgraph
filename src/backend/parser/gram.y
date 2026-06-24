@@ -748,6 +748,7 @@ static bool has_internal_default_prefix(char *str);
 %type <node>	cypher_return cypher_with cypher_finish
 				cypher_order_by cypher_skip cypher_limit
 				cypher_where cypher_where_opt cypher_unwind cypher_filter
+				cypher_for cypher_for_offset cypher_for_offset_opt
 %type <list>	cypher_return_items cypher_distinct_opt
 				cypher_sort_items
 %type <target>	cypher_return_item
@@ -19378,6 +19379,7 @@ cypher_clause_head:
 			| cypher_merge
 			| cypher_load
 			| cypher_unwind
+			| cypher_for
 			| cypher_finish
 		;
 
@@ -19471,6 +19473,14 @@ cypher_read:
 					n->detail = $1;
 					$$ = (Node *) n;
 				}
+			| cypher_for
+				{
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
+					n->detail = $1;
+					$$ = (Node *) n;
+				}
 			| cypher_read cypher_read_clauses
 				{
 					CypherClause *n;
@@ -19487,6 +19497,7 @@ cypher_read_clauses:
 			| cypher_with
 			| cypher_load
 			| cypher_unwind
+			| cypher_for
 		;
 
 cypher_expr:
@@ -21650,6 +21661,29 @@ cypher_unwind:
 					n->target = res;
 					$$ = (Node *) n;
 				}
+		;
+
+cypher_for:
+			FOR cypher_expr_name IN_P cypher_expr cypher_for_offset_opt
+				{
+					CypherForClause *n;
+
+					n = makeNode(CypherForClause);
+					n->resname = $2;
+					n->expr = $4;
+					n->offset = $5;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_for_offset_opt:
+			cypher_for_offset
+			| /* EMPTY */							{ $$ = NULL; }
+		;
+
+cypher_for_offset:
+			WITH_LA OFFSET							{ $$ = (Node *) makeString("offset"); }
+			| WITH_LA OFFSET AS cypher_expr_name	{ $$ = $4; }
 		;
 
 %%

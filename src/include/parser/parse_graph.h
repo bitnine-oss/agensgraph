@@ -18,6 +18,7 @@
 #define CYPHER_OPTMATCH_ALIAS	AGENS_DEFAULT_PREFIX"o"
 #define CYPHER_MERGEMATCH_ALIAS	AGENS_DEFAULT_PREFIX"m"
 #define CYPHER_DELETEJOIN_ALIAS	AGENS_DEFAULT_PREFIX"d"
+#define CYPHER_FOR_ALIAS		AGENS_DEFAULT_PREFIX"f"
 
 extern bool enable_eager;
 
@@ -43,6 +44,8 @@ extern Query *transformCypherModifier(ParseState *pstate,
 									  CypherClause *clause);
 extern Query *transformCypherFilterClause(ParseState *pstate,
 										  CypherClause *clause);
+extern Query *transformCypherForClause(ParseState *pstate,
+									   CypherClause *clause);
 
 extern bool IsGraphWriteClause(Node *clause);
 
