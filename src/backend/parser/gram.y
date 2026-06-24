@@ -730,6 +730,7 @@ static bool has_internal_default_prefix(char *str);
 %type <node>	cypher_expr_func cypher_expr_func_norm cypher_expr_func_subexpr
 				cypher_expr_shortestpath
 %type <node>	cypher_expr_subquery cypher_exists_subquery cypher_count_subquery
+%type <node>	cypher_collect_subquery
 
 %type <node>	cypher_expr_propref cypher_expr_propref_strict cypher_expr_indir_elem
 %type <list>	cypher_expr_indir cypher_expr_indir_opt
@@ -898,7 +899,7 @@ static bool has_internal_default_prefix(char *str);
 	ZONE
 
 /* Agensgraph ordinary key words in alphabetical order */
-%token <keyword> ALLSHORTESTPATHS CONTAINS COUNT ELABEL ENDS OPTIONAL_P REMOVE
+%token <keyword> ALLSHORTESTPATHS COLLECT CONTAINS COUNT ELABEL ENDS OPTIONAL_P REMOVE
 	SHORTESTPATH SINGLE SIZE_P STARTS UNWIND
 
 /*
@@ -17911,6 +17912,7 @@ unreserved_keyword:
 			| CLASS
 			| CLOSE
 			| CLUSTER
+			| COLLECT
 			| COLUMNS
 			| COMMENT
 			| COMMENTS
@@ -18492,6 +18494,7 @@ bare_label_keyword:
 			| COALESCE
 			| COLLATE
 			| COLLATION
+			| COLLECT
 			| COLUMN
 			| COLUMNS
 			| COMMENT
@@ -21740,6 +21743,7 @@ cypher_for_offset:
 cypher_expr_subquery:
 			cypher_exists_subquery
 			| cypher_count_subquery
+			| cypher_collect_subquery
 		;
 
 /*
@@ -21899,6 +21903,42 @@ cypher_count_subquery:
 					n->subselect = (Node *) cc;
 					n->location = @1;
 					$$ = (Node *) n;
+				}
+		;
+
+/*
+ * COLLECT subquery: every value the single-column read subquery yields,
+ * gathered into a cypher list (a jsonb array) -- order-preserving and
+ * NULL-preserving, and [] (never NULL) when the subquery is empty.  Built as
+ * a native ARRAY_SUBLINK whose SQL array is coerced to jsonb through the
+ * standard cypher_to_jsonb path, yielding a first-class cypher list.
+ */
+cypher_collect_subquery:
+			COLLECT '{' cypher_read_stmt '}'
+				{
+					SubLink	   *n;
+
+					n = makeNode(SubLink);
+					n->subLinkType = ARRAY_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = $3;
+					n->location = @1;
+					$$ = makeTypeCast((Node *) n, SystemTypeName("jsonb"), @1);
+				}
+			| COLLECT '{' select_no_parens '}'
+				{
+					SubLink	   *n;
+
+					n = makeNode(SubLink);
+					n->subLinkType = ARRAY_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = $3;
+					n->location = @1;
+					$$ = makeTypeCast((Node *) n, SystemTypeName("jsonb"), @1);
 				}
 		;
 

@@ -2425,6 +2425,261 @@ RETURN COUNT { MATCH (d:Dog) RETURN d.name ORDER BY d.name DESC } AS ordered;
 RETURN EXISTS { MATCH (d:Dog) RETURN d.name LIMIT 0 } AS none;
 RETURN EXISTS { MATCH (d:Dog) RETURN d.name LIMIT 1 } AS some;
 
+--
+-- COLLECT subquery -- every value the single-column read subquery yields,
+-- gathered into a cypher list (a jsonb array): order-preserving, NULL-preserving,
+-- and [] (never NULL) when empty.  Reuses the EXISTS-subquery graph
+-- (Person/Dog/Cat/Toy): Andy -> [Dog Andy], Peter -> [Dog Fido, Dog Ozzy],
+-- Timothy -> [] (Timothy -> [Cat Mittens]); Fido -> [Toy Banana].
+--
+
+-- correlated COLLECT in RETURN (one list per person; [] for Timothy)
+MATCH (person:Person)
+RETURN person.name AS name,
+       COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs
+ORDER BY name;
+
+-- uncorrelated COLLECT (all dog names)
+RETURN COLLECT { MATCH (d:Dog) RETURN d.name ORDER BY d.name } AS dogs;
+
+-- empty subquery yields [] (never NULL)
+RETURN COLLECT { MATCH (x:NoSuchLabel) RETURN x.name } AS empty;
+
+-- a correlated empty list is [] too (Timothy has no dog)
+MATCH (person:Person {name: 'Timothy'})
+RETURN COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS dogs;
+
+-- the list order comes from the subquery: DESC
+RETURN COLLECT { MATCH (d:Dog) RETURN d.name ORDER BY d.name DESC } AS dogs_desc;
+
+-- ordering by a key other than the collected value (order by age, return name)
+RETURN COLLECT { MATCH (p:Person) RETURN p.name ORDER BY p.age } AS names_by_age;
+
+-- NULLs are preserved: a property absent on every dog -> [null, null, null]
+RETURN COLLECT { MATCH (d:Dog) RETURN d.nickname ORDER BY d.name } AS nicknames;
+
+-- a literal NULL per row is preserved
+RETURN COLLECT { MATCH (d:Dog) RETURN NULL ORDER BY d.name } AS nulls;
+
+-- OPTIONAL MATCH keeps a NULL row (contrast: plain MATCH gives [] for Timothy)
+MATCH (person:Person)
+RETURN person.name AS name,
+       COLLECT { OPTIONAL MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs
+ORDER BY name;
+
+-- collecting numbers
+RETURN COLLECT { MATCH (p:Person) RETURN p.age ORDER BY p.age } AS ages;
+
+-- collecting a computed expression
+RETURN COLLECT { MATCH (p:Person) RETURN p.age * 2 ORDER BY p.age } AS doubled;
+
+-- collecting map values
+RETURN COLLECT { MATCH (p:Person) RETURN {name: p.name, age: p.age} ORDER BY p.name } AS people;
+
+-- collecting list values (a list of lists)
+RETURN COLLECT { MATCH (p:Person) RETURN [p.name, p.age] ORDER BY p.name } AS pairs;
+
+-- collecting graph-derived maps via properties()
+RETURN COLLECT { MATCH (d:Dog) RETURN properties(d) ORDER BY d.name } AS dog_props;
+
+-- the subquery's own DISTINCT is honored
+RETURN COLLECT { MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN DISTINCT d.name ORDER BY d.name } AS distinct_dogs;
+
+-- the subquery's own LIMIT is honored
+RETURN COLLECT { MATCH (d:Dog) RETURN d.name ORDER BY d.name LIMIT 2 } AS first_two;
+
+-- the subquery's own SKIP is honored
+RETURN COLLECT { MATCH (d:Dog) RETURN d.name ORDER BY d.name SKIP 1 } AS after_first;
+
+-- an aggregate inside the subquery (one row -> single-element list)
+RETURN COLLECT { MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN count(*) } AS total;
+
+-- SQL SELECT form over generate_series
+RETURN COLLECT { SELECT i FROM generate_series(1, 3) AS i ORDER BY i } AS nums;
+
+-- SQL SELECT wrapping a Cypher read
+RETURN COLLECT { SELECT t.name FROM (MATCH (d:Dog) RETURN d.name AS name) t ORDER BY t.name } AS dogs;
+
+-- SQL SELECT form: DISTINCT + UNION honored (sorted for determinism)
+RETURN COLLECT {
+    SELECT n FROM (MATCH (d:Dog) RETURN d.name AS n
+                   UNION
+                   MATCH (c:Cat) RETURN c.name AS n) u
+    ORDER BY n
+} AS dog_or_cat;
+
+-- membership: x IN COLLECT { ... }
+MATCH (person:Person)
+WHERE 'Fido' IN COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name }
+RETURN person.name AS name ORDER BY name;
+
+-- negated membership
+MATCH (person:Person)
+WHERE NOT ('Fido' IN COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name })
+RETURN person.name AS name ORDER BY name;
+
+-- list equality against a literal
+MATCH (person:Person {name: 'Peter'})
+RETURN COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } = ['Fido', 'Ozzy'] AS eq;
+
+-- a COLLECT subquery directly as a function argument
+RETURN length(COLLECT { MATCH (d:Dog) RETURN d.name }) AS num_dogs;
+
+-- length(), indexing, slicing and concatenation on the result (bound via WITH)
+MATCH (person:Person {name: 'Peter'})
+WITH COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs
+RETURN length(dogs) AS n, dogs[0] AS first, dogs[1..] AS rest, dogs + ['Rex'] AS appended;
+
+-- length() of a COLLECT in WHERE (bind via WITH first)
+MATCH (person:Person)
+WITH person, COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS dogs
+WHERE length(dogs) > 1
+RETURN person.name AS name ORDER BY name;
+
+-- UNWIND the collected list
+MATCH (person:Person {name: 'Peter'})
+WITH COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs
+UNWIND dogs AS dogname
+RETURN dogname ORDER BY dogname;
+
+-- in a CASE expression (bind via WITH first)
+MATCH (person:Person)
+WITH person, COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS dogs
+RETURN person.name AS name,
+       CASE WHEN length(dogs) > 1 THEN 'pack' ELSE 'few' END AS kind
+ORDER BY name;
+
+-- in a WITH ... WHERE stage (keep only people with at least one dog)
+MATCH (person:Person)
+WITH person.name AS name,
+     COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs
+WHERE length(dogs) > 0
+RETURN name, dogs ORDER BY name;
+
+-- in ORDER BY (most dogs first; bind via WITH)
+MATCH (person:Person)
+WITH person, COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS dogs
+RETURN person.name AS name
+ORDER BY length(dogs) DESC, name;
+
+-- correlated inner WHERE referencing both outer and inner variables
+MATCH (person:Person)
+RETURN person.name AS name,
+       COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) WHERE d.name <> person.name
+                 RETURN d.name ORDER BY d.name } AS others
+ORDER BY name;
+
+-- a multi-hop pattern (toys reachable through a dog)
+RETURN COLLECT { MATCH (:Person)-[:HAS_DOG]->(:Dog)-[:HAS_TOY]->(t:Toy) RETURN t.name ORDER BY t.name } AS toys;
+
+-- nested COLLECT inside COLLECT (a list of each person's dog-name list)
+RETURN COLLECT {
+    MATCH (person:Person)
+    RETURN COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name }
+    ORDER BY person.name
+} AS nested;
+
+-- hybrid: COLLECT alongside COUNT and EXISTS in one projection
+MATCH (person:Person)
+RETURN person.name AS name,
+       COUNT { MATCH (person)-[:HAS_DOG]->(:Dog) } AS num,
+       EXISTS { MATCH (person)-[:HAS_DOG]->(:Dog) } AS has_dog,
+       COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS names
+ORDER BY name;
+
+-- hybrid: gate with EXISTS, gather with COLLECT
+MATCH (person:Person)
+WHERE EXISTS { MATCH (person)-[:HAS_DOG]->(:Dog) }
+RETURN person.name AS name,
+       COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS names
+ORDER BY name;
+
+-- COLLECT list length agrees with COUNT (bind via WITH)
+MATCH (person:Person)
+WITH person, COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS dogs
+WHERE length(dogs) = COUNT { MATCH (person)-[:HAS_DOG]->(:Dog) }
+RETURN person.name AS name ORDER BY name;
+
+-- "collect" is unreserved, so it still works as a variable name
+RETURN COLLECT { MATCH (collect:Dog) RETURN collect.name ORDER BY collect.name } AS dogs;
+
+-- the collect() aggregate still works alongside COLLECT { } (ordered for determinism)
+MATCH (d:Dog) WITH d ORDER BY d.name RETURN collect(d.name) AS names;
+
+--
+-- SQL + Cypher hybrid -- COLLECT returns jsonb, so it bridges the two
+-- languages: a Cypher subquery's COLLECT can be projected/filtered by an
+-- enclosing SQL query, and COLLECT can wrap a SQL SELECT over Cypher rows.
+--
+
+-- a SQL SELECT projecting a Cypher query that builds lists with COLLECT
+SELECT t.name, t.dogs
+FROM (MATCH (p:Person)
+      RETURN p.name AS name,
+             COLLECT { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs) t
+ORDER BY t.name;
+
+-- a SQL jsonb function consuming a Cypher COLLECT result
+SELECT jsonb_array_length(t.dogs) AS n
+FROM (MATCH (p:Person {name: 'Peter'})
+      RETURN COLLECT { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS dogs) t;
+
+-- SQL unnesting a Cypher COLLECT list with jsonb_array_elements
+SELECT v AS dog
+FROM (MATCH (p:Person {name: 'Peter'})
+      RETURN COLLECT { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs) t,
+     jsonb_array_elements(t.dogs) AS v
+ORDER BY v;
+
+-- a SQL WHERE filtering rows by a Cypher COLLECT result
+SELECT t.name
+FROM (MATCH (p:Person)
+      RETURN p.name AS name,
+             COLLECT { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS dogs) t
+WHERE jsonb_array_length(t.dogs) > 0
+ORDER BY t.name;
+
+-- COLLECT over a SQL SELECT that filters Cypher-produced rows (a Cypher value
+-- is jsonb, so the SQL-side comparison uses a jsonb literal)
+RETURN COLLECT {
+    SELECT t.name FROM (MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name AS name) t
+    WHERE t.name <> '"Andy"'::jsonb
+    ORDER BY t.name
+} AS non_andy_dogs;
+
+-- COLLECT over a SQL aggregate computed on Cypher-produced rows
+RETURN COLLECT {
+    SELECT count(*) AS c FROM (MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name) t
+} AS dog_count;
+
+-- a SQL CTE wrapping a Cypher query that uses COLLECT
+WITH per_person AS (
+    MATCH (p:Person)
+    RETURN p.name AS name,
+           COLLECT { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs
+)
+SELECT name, dogs FROM per_person WHERE jsonb_array_length(dogs) > 1 ORDER BY name;
+
+-- as the value of a SET (graph-write context)
+MATCH (person:Person {name: 'Peter'})
+SET person.dogNames = COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name }
+RETURN person.dogNames AS dogNames;
+
+-- as a property value in CREATE (graph-write context)
+CREATE (s:Summary {dogs: COLLECT { MATCH (d:Dog) RETURN d.name ORDER BY d.name }})
+RETURN s.dogs AS dogs;
+
+-- error: the subquery must return exactly one column (Cypher form)
+RETURN COLLECT { MATCH (p:Person)-[:HAS_DOG]->(d:Dog) RETURN p.name, d.name };
+
+-- error: the subquery must return exactly one column (SQL form)
+RETURN COLLECT { SELECT 1, 2 };
+
+-- error: writes are not allowed inside a COLLECT subquery
+RETURN COLLECT { CREATE (:Foo) RETURN 1 };
+RETURN COLLECT { MATCH (a:Person) SET a.x = 1 RETURN a.x };
+RETURN COLLECT { MATCH (a:Person) DETACH DELETE a RETURN a };
+
 -- cleanup
 
 DROP GRAPH exists_subquery CASCADE;
