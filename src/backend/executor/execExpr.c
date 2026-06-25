@@ -168,6 +168,19 @@ ExecInitExpr(Expr *node, PlanState *parent)
 	state->parent = parent;
 	state->ext_params = NULL;
 
+	/*
+	 * AgensGraph: inherit any active list-comprehension iteration slot from
+	 * the parent plan node, so a SubPlan's lefthand/test expression can
+	 * resolve a CypherListCompVar (see ExecInitExprRec's T_SubPlan case).
+	 */
+	if (parent != NULL)
+	{
+		state->innermost_cypherlistcomp_iterval =
+			parent->innermost_cypherlistcomp_iterval;
+		state->innermost_cypherlistcomp_iternull =
+			parent->innermost_cypherlistcomp_iternull;
+	}
+
 	/* Insert setup steps as needed */
 	ExecCreateExprSetupSteps(state, (Node *) node);
 
@@ -398,6 +411,15 @@ ExecBuildProjectionInfo(List *targetList,
 	state->expr = (Expr *) targetList;
 	state->parent = parent;
 	state->ext_params = NULL;
+
+	/* AgensGraph: inherit list-comprehension iteration slot (see ExecInitExpr) */
+	if (parent != NULL)
+	{
+		state->innermost_cypherlistcomp_iterval =
+			parent->innermost_cypherlistcomp_iterval;
+		state->innermost_cypherlistcomp_iternull =
+			parent->innermost_cypherlistcomp_iternull;
+	}
 
 	state->resultslot = slot;
 
@@ -1428,6 +1450,8 @@ ExecInitExprRec(Expr *node, ExprState *state,
 			{
 				SubPlan    *subplan = (SubPlan *) node;
 				SubPlanState *sstate;
+				Datum	   *save_iterval;
+				bool	   *save_iternull;
 
 				/*
 				 * Real execution of a MULTIEXPR SubPlan has already been
@@ -1447,7 +1471,24 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				if (!state->parent)
 					elog(ERROR, "SubPlan found with no parent plan");
 
+				/*
+				 * AgensGraph: if we are compiling a cypher list comprehension's
+				 * filter or result expression, the SubPlan's lefthand/test
+				 * expression may reference the iteration variable.  Hand the
+				 * current iteration slot to the parent plan node so the
+				 * ExprStates ExecInitSubPlan builds inherit it.
+				 */
+				save_iterval = state->parent->innermost_cypherlistcomp_iterval;
+				save_iternull = state->parent->innermost_cypherlistcomp_iternull;
+				state->parent->innermost_cypherlistcomp_iterval =
+					state->innermost_cypherlistcomp_iterval;
+				state->parent->innermost_cypherlistcomp_iternull =
+					state->innermost_cypherlistcomp_iternull;
+
 				sstate = ExecInitSubPlan(subplan, state->parent);
+
+				state->parent->innermost_cypherlistcomp_iterval = save_iterval;
+				state->parent->innermost_cypherlistcomp_iternull = save_iternull;
 
 				/* add SubPlanState nodes to state->parent->subPlan */
 				state->parent->subPlan = lappend(state->parent->subPlan,
@@ -2863,6 +2904,8 @@ ExecPushExprSetupSteps(ExprState *state, ExprSetupInfo *info)
 	{
 		SubPlan    *subplan = (SubPlan *) lfirst(lc);
 		SubPlanState *sstate;
+		Datum	   *save_iterval;
+		bool	   *save_iternull;
 
 		Assert(subplan->subLinkType == MULTIEXPR_SUBLINK);
 
@@ -2871,7 +2914,18 @@ ExecPushExprSetupSteps(ExprState *state, ExprSetupInfo *info)
 		if (!state->parent)
 			elog(ERROR, "SubPlan found with no parent plan");
 
+		/* AgensGraph: see the matching code in ExecInitExprRec's T_SubPlan case */
+		save_iterval = state->parent->innermost_cypherlistcomp_iterval;
+		save_iternull = state->parent->innermost_cypherlistcomp_iternull;
+		state->parent->innermost_cypherlistcomp_iterval =
+			state->innermost_cypherlistcomp_iterval;
+		state->parent->innermost_cypherlistcomp_iternull =
+			state->innermost_cypherlistcomp_iternull;
+
 		sstate = ExecInitSubPlan(subplan, state->parent);
+
+		state->parent->innermost_cypherlistcomp_iterval = save_iterval;
+		state->parent->innermost_cypherlistcomp_iternull = save_iternull;
 
 		/* add SubPlanState nodes to state->parent->subPlan */
 		state->parent->subPlan = lappend(state->parent->subPlan,

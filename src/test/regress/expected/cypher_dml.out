@@ -7636,6 +7636,618 @@ RETURN ARRAY { MATCH (a:Person) DETACH DELETE a RETURN a };
 ERROR:  syntax error at or near "DETACH"
 LINE 1: RETURN ARRAY { MATCH (a:Person) DETACH DELETE a RETURN a };
                                         ^
+--
+-- IN subquery -- "x IN { subquery }" is a membership predicate: true if x
+-- matches a row the subquery yields, false if none, NULL under SQL three-valued
+-- logic.  It is built as a native ANY_SUBLINK ("x = ANY (subquery)") so the
+-- planner can use a semi-join or hashed subplan rather than materializing the
+-- whole result set the way "x IN COLLECT { ... }" does.  It accepts a GQL read
+-- subquery or a SQL SELECT, with or without NOT.
+--
+-- core membership: a value that appears, and one that does not
+RETURN 'Fido' IN { MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+RETURN 'Rex' IN { MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS no;
+ no 
+----
+ f
+(1 row)
+
+-- numeric membership (the left operand is coerced to jsonb to match the jsonb
+-- column a cypher RETURN produces)
+RETURN 35 IN { MATCH (p:Person) RETURN p.age } AS has35;
+ has35 
+-------
+ t
+(1 row)
+
+RETURN 99 IN { MATCH (p:Person) RETURN p.age } AS has99;
+ has99 
+-------
+ f
+(1 row)
+
+-- the membership value may be a list, and the left operand may itself be an
+-- expression rather than a literal
+RETURN [1, 2] IN { MATCH (p:Person) RETURN [1, 2] LIMIT 1 } AS list_member;
+ list_member 
+-------------
+ t
+(1 row)
+
+MATCH (p:Person {name: 'Andy'})
+RETURN p.age + 0 IN { MATCH (q:Person) RETURN q.age } AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+RETURN toUpper('fido') IN { MATCH (d:Dog) RETURN toUpper(d.name) } AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+-- whole-vertex membership (node equality)
+MATCH (p:Person {name: 'Peter'})
+RETURN p IN { MATCH (q:Person) RETURN q } AS present;
+ present 
+---------
+ t
+(1 row)
+
+-- correlated to the outer row: who owns a dog named 'Fido'
+MATCH (person:Person)
+WHERE 'Fido' IN { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name }
+RETURN person.name AS name ORDER BY name;
+  name   
+---------
+ "Peter"
+(1 row)
+
+-- NOT IN: who does not own a dog named 'Fido'
+MATCH (person:Person)
+WHERE 'Fido' NOT IN { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name }
+RETURN person.name AS name ORDER BY name;
+   name    
+-----------
+ "Andy"
+ "Timothy"
+(2 rows)
+
+-- "NOT (x IN {...})" is equivalent to "x NOT IN {...}"
+MATCH (person:Person)
+WHERE NOT ('Fido' IN { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name })
+RETURN person.name AS name ORDER BY name;
+   name    
+-----------
+ "Andy"
+ "Timothy"
+(2 rows)
+
+-- NOT IN as a boolean projection
+RETURN 'Mittens' NOT IN { MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS t;
+ t 
+---
+ t
+(1 row)
+
+-- two IN tests combined with AND
+MATCH (person:Person)
+WHERE 'Fido' IN { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name }
+  AND 'Ozzy' IN { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name }
+RETURN person.name AS name;
+  name   
+---------
+ "Peter"
+(1 row)
+
+-- the subquery may use WHERE / DISTINCT / ORDER BY / LIMIT internally
+RETURN 'Ozzy' IN {
+    MATCH (:Person)-[:HAS_DOG]->(d:Dog) WHERE d.name <> 'Fido' RETURN d.name
+} AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+RETURN 'Fido' IN {
+    MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN DISTINCT d.name ORDER BY d.name LIMIT 1
+} AS first_only;
+ first_only 
+------------
+ f
+(1 row)
+
+-- UNION, WITH + aggregate, and OPTIONAL MATCH inside the subquery
+RETURN 'Mittens' IN { MATCH (d:Dog) RETURN d.name UNION MATCH (c:Cat) RETURN c.name } AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+RETURN 2 IN { MATCH (p:Person)-[:HAS_DOG]->(d:Dog) WITH p, count(d) AS c RETURN c } AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+RETURN 'Andy' IN { MATCH (p:Person) OPTIONAL MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+-- empty subquery: IN -> false, NOT IN -> true
+RETURN 'x' IN { MATCH (d:Dog) WHERE false RETURN d.name } AS f;
+ f 
+---
+ f
+(1 row)
+
+RETURN 'x' NOT IN { MATCH (d:Dog) WHERE false RETURN d.name } AS t;
+ t 
+---
+ t
+(1 row)
+
+-- three-valued logic: a NULL on either side yields NULL, not false
+RETURN (NULL IN { MATCH (d:Dog) RETURN d.name }) IS NULL AS lhs_null;
+ lhs_null 
+----------
+ t
+(1 row)
+
+RETURN ('Rex' IN { MATCH (d:Dog) RETURN NULL }) IS NULL AS rhs_null;
+ rhs_null 
+----------
+ t
+(1 row)
+
+RETURN ('Rex' NOT IN { MATCH (d:Dog) RETURN NULL }) IS NULL AS rhs_null_not;
+ rhs_null_not 
+--------------
+ t
+(1 row)
+
+-- the classic NOT-IN-with-a-NULL-in-the-set trap: a non-member is NULL, not true
+RETURN ('Spot' NOT IN { SELECT 'Fido' UNION ALL SELECT NULL }) IS NULL AS notin_null_trap;
+ notin_null_trap 
+-----------------
+ t
+(1 row)
+
+-- contexts: CASE, OR of two subqueries, WITH ... WHERE
+RETURN CASE WHEN 'Fido' IN { MATCH (d:Dog) RETURN d.name }
+            THEN 'known' ELSE 'unknown' END AS label;
+  label  
+---------
+ "known"
+(1 row)
+
+MATCH (person:Person)
+WHERE 'Fido' IN { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name }
+   OR 'Mittens' IN { MATCH (person)-[:HAS_CAT]->(c:Cat) RETURN c.name }
+RETURN person.name AS name ORDER BY name;
+   name    
+-----------
+ "Peter"
+ "Timothy"
+(2 rows)
+
+MATCH (person:Person)
+WITH person
+WHERE person.name IN { MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name }
+RETURN person.name AS name ORDER BY name;
+  name  
+--------
+ "Andy"
+(1 row)
+
+-- nested: owners of a dog that itself has a toy, matched via IN
+MATCH (person:Person)-[:HAS_DOG]->(dog:Dog)
+WHERE dog.name IN { MATCH (d:Dog)-[:HAS_TOY]->(:Toy) RETURN d.name }
+RETURN person.name AS owner, dog.name AS dog ORDER BY owner, dog;
+  owner  |  dog   
+---------+--------
+ "Peter" | "Fido"
+(1 row)
+
+-- inside a list comprehension's WHERE filter: keep the elements that the
+-- subquery yields (the iteration variable is the membership value)
+RETURN [n IN ['Fido', 'Rex', 'Ozzy'] WHERE n IN { MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name }] AS dogs;
+       dogs       
+------------------
+ ["Fido", "Ozzy"]
+(1 row)
+
+RETURN [n IN ['Fido', 'Rex', 'Mittens'] WHERE n NOT IN { MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name }] AS not_dogs;
+      not_dogs      
+--------------------
+ ["Rex", "Mittens"]
+(1 row)
+
+-- the same, correlated to the outer row (per-person dog filtering)
+MATCH (person:Person)
+WITH person, ['Fido', 'Ozzy', 'Andy'] AS cand
+RETURN person.name AS name,
+       [c IN cand WHERE c IN { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name }] AS owned
+ORDER BY name;
+   name    |      owned       
+-----------+------------------
+ "Andy"    | ["Andy"]
+ "Peter"   | ["Fido", "Ozzy"]
+ "Timothy" | []
+(3 rows)
+
+-- a SQL subquery as the list comprehension's membership source
+RETURN [x IN [1, 2, 3, 4] WHERE x IN { SELECT to_jsonb(g) FROM generate_series(2, 3) g }] AS kept;
+  kept  
+--------
+ [2, 3]
+(1 row)
+
+-- IN { ... } alongside the other subquery forms in one projection
+MATCH (person:Person)
+RETURN person.name AS name,
+       'Fido' IN { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS has_fido,
+       EXISTS { MATCH (person)-[:HAS_DOG]->(:Dog) } AS has_dog,
+       COUNT { MATCH (person)-[:HAS_DOG]->(:Dog) } AS num_dogs
+ORDER BY name;
+   name    | has_fido | has_dog | num_dogs 
+-----------+----------+---------+----------
+ "Andy"    | f        | t       | 1
+ "Peter"   | t        | t       | 2
+ "Timothy" | f        | f       | 0
+(3 rows)
+
+-- SQL subquery on the right-hand side (no jsonb cast; the column keeps its type)
+RETURN 42 IN { SELECT 42 } AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+RETURN 1 IN { SELECT g FROM generate_series(2, 4) g } AS no;
+ no 
+----
+ f
+(1 row)
+
+RETURN 3 IN { SELECT g FROM generate_series(2, 4) g } AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+RETURN 5 NOT IN { SELECT g FROM generate_series(2, 4) g } AS t;
+ t 
+---
+ t
+(1 row)
+
+RETURN 2 IN { VALUES (1), (2), (3) } AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+RETURN 9 NOT IN { VALUES (1), (2), (3) } AS t;
+ t 
+---
+ t
+(1 row)
+
+RETURN 3 IN { SELECT a FROM (VALUES (1), (2), (3)) v(a) GROUP BY a HAVING count(*) >= 1 } AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+-- coexistence: IN over a list literal, a bound list, an indexed list, a map
+-- field, COLLECT { ... } and a parenthesised SELECT must all still work
+RETURN 20 IN [10, 20, 30] AS list_lit;
+ list_lit 
+----------
+ t
+(1 row)
+
+MATCH (p:Person {name: 'Peter'}) WITH [10, 20, 30] AS lst RETURN 20 IN lst AS list_var;
+ list_var 
+----------
+ t
+(1 row)
+
+RETURN 3 IN ([[1, 2], [3, 4]])[1] AS indexed;
+ indexed 
+---------
+ t
+(1 row)
+
+RETURN 2 IN ({x: [1, 2, 3]}).x AS map_field;
+ map_field 
+-----------
+ t
+(1 row)
+
+RETURN 'Fido' IN COLLECT { MATCH (d:Dog) RETURN d.name } AS via_collect;
+ via_collect 
+-------------
+ t
+(1 row)
+
+RETURN 7 IN (SELECT 7) AS via_paren_select;
+ via_paren_select 
+------------------
+ t
+(1 row)
+
+-- map literals still parse everywhere (the IN right-hand side excludes only a
+-- bare leading map; map keys may even be reserved words)
+RETURN {name: 'Andy', age: 36} AS m;
+              m              
+-----------------------------
+ {"age": 36, "name": "Andy"}
+(1 row)
+
+RETURN {MATCH: 1, RETURN: 2} AS reserved_keys;
+       reserved_keys       
+---------------------------
+ {"match": 1, "return": 2}
+(1 row)
+
+RETURN ({a: 1}).a AS field;
+ field 
+-------
+ 1
+(1 row)
+
+-- SQL + Cypher hybrid: a SQL SELECT over cypher rows filtered by IN { ... }
+SELECT t.name
+FROM (MATCH (person:Person)
+      WHERE 'Fido' IN { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name }
+      RETURN person.name AS name) t
+ORDER BY t.name;
+  name   
+---------
+ "Peter"
+(1 row)
+
+-- SQL + Cypher hybrid: a SQL aggregate counting cypher rows that pass IN { ... }
+SELECT count(*) AS dog_owners
+FROM (MATCH (person:Person)
+      WHERE 'Fido' IN { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name }
+         OR 'Andy' IN { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name }
+      RETURN person.name AS name) t;
+ dog_owners 
+------------
+          2
+(1 row)
+
+-- SQL + Cypher hybrid: a SQL CTE wrapping a cypher query that uses IN { ... }
+WITH owners AS (
+    MATCH (person:Person)
+    WHERE person.name IN { MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name }
+    RETURN person.name AS name
+)
+SELECT name FROM owners ORDER BY name;
+  name  
+--------
+ "Andy"
+(1 row)
+
+-- SQL + Cypher hybrid: IN over a SQL subquery that itself wraps cypher rows
+-- (the left operand is cast to jsonb so it matches the cypher column type)
+RETURN 'Fido'::jsonb IN {
+    SELECT t.name FROM (MATCH (:Person)-[:HAS_DOG]->(d:Dog) RETURN d.name AS name) t
+} AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+-- SQL + Cypher hybrid: IN over a SQL UNION of cypher dog and cat names
+RETURN 'Mittens'::jsonb IN {
+    SELECT n FROM (MATCH (d:Dog) RETURN d.name AS n
+                   UNION
+                   MATCH (c:Cat) RETURN c.name AS n) u
+} AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+-- SQL + Cypher hybrid: IN over a subquery on a plain SQL table
+CREATE TABLE in_names (nm text);
+INSERT INTO in_names VALUES ('Fido'), ('Rex'), ('Spot');
+RETURN 'Fido'::jsonb IN { SELECT to_jsonb(nm) FROM in_names } AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+RETURN 'Ozzy' NOT IN { TABLE in_names } AS t;
+ t 
+---
+ t
+(1 row)
+
+DROP TABLE in_names;
+-- nested: another subquery inside the IN subquery's body
+-- ... a WHERE that uses EXISTS
+RETURN 'Fido' IN {
+    MATCH (:Person)-[:HAS_DOG]->(d:Dog) WHERE EXISTS { MATCH (d)-[:HAS_TOY]->(:Toy) }
+    RETURN d.name
+} AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+-- ... a RETURN that is a COUNT
+RETURN 2 IN { MATCH (p:Person) RETURN COUNT { (p)-[:HAS_DOG]->(:Dog) } } AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+-- ... a RETURN that is a VALUE (which yields NULL for the no-match rows)
+RETURN 'Fido' IN {
+    MATCH (p:Person) RETURN VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog {name: 'Fido'}) RETURN d.name }
+} AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+-- ... three levels deep: IN over (IN over (EXISTS))
+RETURN 'Fido' IN {
+    MATCH (d:Dog)
+    WHERE d.name IN {
+        MATCH (x:Dog) WHERE EXISTS { MATCH (x)-[:HAS_TOY]->(:Toy) } RETURN x.name
+    }
+    RETURN d.name
+} AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+-- the IN predicate nested inside the other subquery kinds
+-- ... inside an EXISTS body
+MATCH (p:Person)
+WHERE EXISTS {
+    MATCH (p)-[:HAS_DOG]->(d:Dog)
+    WHERE d.name IN { MATCH (x:Dog)-[:HAS_TOY]->(:Toy) RETURN x.name }
+}
+RETURN p.name AS name ORDER BY name;
+  name   
+---------
+ "Peter"
+(1 row)
+
+-- ... inside a COUNT body
+MATCH (p:Person)
+RETURN p.name AS name,
+       COUNT {
+           MATCH (p)-[:HAS_DOG]->(d:Dog)
+           WHERE d.name IN { MATCH (x:Dog)-[:HAS_TOY]->(:Toy) RETURN x.name }
+       } AS toy_dogs
+ORDER BY name;
+   name    | toy_dogs 
+-----------+----------
+ "Andy"    | 0
+ "Peter"   | 1
+ "Timothy" | 0
+(3 rows)
+
+-- ... inside a CASE inside a subquery
+RETURN 'has' IN {
+    MATCH (p:Person)
+    RETURN CASE WHEN 'Fido' IN { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name }
+                THEN 'has' ELSE 'no' END
+} AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+-- "x IN COLLECT { ... }" and "x IN { ... }" agree on the same set
+MATCH (p:Person {name: 'Peter'})
+RETURN ('Fido' IN COLLECT { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name })
+     = ('Fido' IN { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name }) AS same;
+ same 
+------
+ t
+(1 row)
+
+-- IN over an ARRAY { ... } subquery (membership against the gathered list)
+MATCH (p:Person {name: 'Peter'})
+RETURN 'Ozzy' IN ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+-- all six subquery kinds combined in one projection
+MATCH (p:Person {name: 'Peter'})
+RETURN EXISTS { MATCH (p)-[:HAS_DOG]->(:Dog) } AS ex,
+       COUNT { MATCH (p)-[:HAS_DOG]->(:Dog) } AS cnt,
+       COLLECT { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS coll,
+       ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS arr,
+       VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog {name: 'Fido'}) RETURN d.name } AS val,
+       'Fido' IN { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name } AS inq;
+ ex | cnt |       coll       |       arr        |  val   | inq 
+----+-----+------------------+------------------+--------+-----
+ t  | 2   | ["Fido", "Ozzy"] | ["Fido", "Ozzy"] | "Fido" | t
+(1 row)
+
+-- a WHERE that mixes EXISTS, IN and a COUNT comparison
+MATCH (p:Person)
+WHERE EXISTS { MATCH (p)-[:HAS_DOG]->(:Dog) }
+  AND 'Fido' IN { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name }
+  AND COUNT { MATCH (p)-[:HAS_DOG]->(:Dog) } > 1
+RETURN p.name AS name ORDER BY name;
+  name   
+---------
+ "Peter"
+(1 row)
+
+-- NOT EXISTS combined with NOT IN
+MATCH (p:Person)
+WHERE NOT EXISTS { MATCH (p)-[:HAS_CAT]->(:Cat) }
+  AND 'Mittens' NOT IN { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name }
+RETURN p.name AS name ORDER BY name;
+  name   
+---------
+ "Andy"
+ "Peter"
+(2 rows)
+
+-- IN over a list literal built from COUNT subqueries
+MATCH (p:Person {name: 'Peter'})
+RETURN 2 IN [COUNT { (p)-[:HAS_DOG]->(:Dog) }, COUNT { (p)-[:HAS_CAT]->(:Cat) }] AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+-- a map literal whose values are several different subqueries
+MATCH (p:Person {name: 'Peter'})
+RETURN {dogs: COLLECT { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name },
+        n: COUNT { (p)-[:HAS_DOG]->(:Dog) },
+        hasFido: 'Fido' IN { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name }} AS m;
+                          m                          
+-----------------------------------------------------
+ {"n": 2, "dogs": ["Fido", "Ozzy"], "hasfido": true}
+(1 row)
+
+-- error: the subquery must return only one column
+RETURN 1 IN { MATCH (p:Person)-[:HAS_DOG]->(d:Dog) RETURN p.name, d.name };
+ERROR:  subquery has too many columns
+LINE 1: RETURN 1 IN { MATCH (p:Person)-[:HAS_DOG]->(d:Dog) RETURN p....
+                 ^
+RETURN 1 NOT IN { MATCH (p:Person)-[:HAS_DOG]->(d:Dog) RETURN p.name, d.name };
+ERROR:  subquery has too many columns
+LINE 1: RETURN 1 NOT IN { MATCH (p:Person)-[:HAS_DOG]->(d:Dog) RETUR...
+                 ^
+-- error: writes are not allowed inside an IN subquery
+RETURN 1 IN { CREATE (:Foo) RETURN 1 };
+ERROR:  syntax error at or near "CREATE"
+LINE 1: RETURN 1 IN { CREATE (:Foo) RETURN 1 };
+                      ^
+RETURN 1 IN { MATCH (a:Person) SET a.x = 1 RETURN a.x };
+ERROR:  syntax error at or near "SET"
+LINE 1: RETURN 1 IN { MATCH (a:Person) SET a.x = 1 RETURN a.x };
+                                       ^
+RETURN 1 IN { MATCH (a:Person) DETACH DELETE a RETURN a };
+ERROR:  syntax error at or near "DETACH"
+LINE 1: RETURN 1 IN { MATCH (a:Person) DETACH DELETE a RETURN a };
+                                       ^
 -- cleanup
 DROP GRAPH exists_subquery CASCADE;
 NOTICE:  drop cascades to 12 other objects

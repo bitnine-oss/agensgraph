@@ -710,6 +710,7 @@ static bool has_internal_default_prefix(char *str);
 				cypher_read_opt cypher_read cypher_read_clauses
 
 %type <node>	cypher_expr cypher_i_expr cypher_w_expr cypher_c_expr
+%type <node>	cypher_in_expr
 				cypher_expr_opt cypher_expr_filter
 				cypher_expr_atom cypher_expr_literal
 				cypher_expr_param cypher_expr_var
@@ -19679,23 +19680,103 @@ cypher_expr:
 						$$ = (Node *) n;
 					}
 				}
-			| cypher_expr IN_P cypher_expr
+			| cypher_expr IN_P cypher_in_expr
 				{
+					/*
+					 * "x IN <expr>".  The right-hand side is a map-free
+					 * expression (cypher_in_expr) so that a leading '{' is
+					 * never ambiguous with the braced subquery forms below.
+					 * A subquery right-hand side (e.g. "(SELECT ...)") is
+					 * turned into a native ANY_SUBLINK ("x = ANY (subquery)");
+					 * anything else is the ordinary IN test over a list value.
+					 */
 					if (IsA($3, SubLink))
 					{
-						SubLink	   *n;
+						SubLink	   *n = (SubLink *) $3;
 
-						n = (SubLink *) $3;
 						n->subLinkType = ANY_SUBLINK;
 						n->testexpr = $1;
 						n->location = @2;
 						$$ = (Node *) n;
 					}
 					else
+						$$ = (Node *) makeSimpleA_Expr(AEXPR_IN, "=",
+													   $1, $3, @2);
+				}
+			| cypher_expr NOT_LA IN_P cypher_in_expr		%prec NOT_LA
+				{
+					Node	   *n;
+
+					if (IsA($4, SubLink))
 					{
-						$$ = (Node *) makeSimpleA_Expr(AEXPR_IN, "=", $1, $3,
-													   @2);
+						SubLink	   *s = (SubLink *) $4;
+
+						s->subLinkType = ANY_SUBLINK;
+						s->testexpr = $1;
+						s->location = @2;
+						n = (Node *) s;
 					}
+					else
+						n = (Node *) makeSimpleA_Expr(AEXPR_IN, "=",
+													  $1, $4, @2);
+					/* "x NOT IN y" is "NOT (x IN y)" */
+					$$ = makeNotExpr(n, @2);
+				}
+			| cypher_expr IN_P '{' cypher_read_stmt '}'
+				{
+					SubLink	   *n = makeNode(SubLink);
+
+					/*
+					 * "x IN { <cypher read subquery> }".  Built as a native
+					 * ANY_SUBLINK so the planner can pull it up to a semi-join
+					 * or run it as a hashed subplan, rather than materializing
+					 * the whole result set.  A cypher RETURN column is jsonb,
+					 * so the left operand is cast to jsonb for the comparison.
+					 */
+					n->subLinkType = ANY_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = makeTypeCast($1, SystemTypeName("jsonb"), @1);
+					n->operName = NIL;
+					n->subselect = $4;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_expr NOT_LA IN_P '{' cypher_read_stmt '}'		%prec NOT_LA
+				{
+					SubLink	   *n = makeNode(SubLink);
+
+					n->subLinkType = ANY_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = makeTypeCast($1, SystemTypeName("jsonb"), @1);
+					n->operName = NIL;
+					n->subselect = $5;
+					n->location = @2;
+					$$ = makeNotExpr((Node *) n, @2);
+				}
+			| cypher_expr IN_P '{' select_no_parens '}'
+				{
+					SubLink	   *n = makeNode(SubLink);
+
+					/* a SQL subquery keeps its own column type (no cast) */
+					n->subLinkType = ANY_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = $1;
+					n->operName = NIL;
+					n->subselect = $4;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_expr NOT_LA IN_P '{' select_no_parens '}'		%prec NOT_LA
+				{
+					SubLink	   *n = makeNode(SubLink);
+
+					n->subLinkType = ANY_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = $1;
+					n->operName = NIL;
+					n->subselect = $5;
+					n->location = @2;
+					$$ = makeNotExpr((Node *) n, @2);
 				}
 			| cypher_expr STARTS WITH cypher_expr			%prec STARTS
 				{
@@ -19815,6 +19896,7 @@ cypher_expr:
 						$$ = (Node *) n;
 					}
 				}
+			| cypher_expr_map
 			| cypher_c_expr
 		;
 
@@ -20070,6 +20152,7 @@ cypher_i_expr:
 						$$ = (Node *) n;
 					}
 				}
+			| cypher_expr_map
 			| cypher_c_expr
 		;
 
@@ -20212,9 +20295,87 @@ cypher_w_expr:
 						$$ = (Node *) n;
 					}
 				}
-			| cypher_w_expr IN_P cypher_w_expr
+			| cypher_w_expr IN_P cypher_in_expr
 				{
-					$$ = (Node *) makeSimpleA_Expr(AEXPR_IN, "=", $1, $3, @2);
+					/* see the matching cypher_expr IN rules above */
+					if (IsA($3, SubLink))
+					{
+						SubLink	   *n = (SubLink *) $3;
+
+						n->subLinkType = ANY_SUBLINK;
+						n->testexpr = $1;
+						n->location = @2;
+						$$ = (Node *) n;
+					}
+					else
+						$$ = (Node *) makeSimpleA_Expr(AEXPR_IN, "=",
+													   $1, $3, @2);
+				}
+			| cypher_w_expr NOT_LA IN_P cypher_in_expr		%prec NOT_LA
+				{
+					Node	   *n;
+
+					if (IsA($4, SubLink))
+					{
+						SubLink	   *s = (SubLink *) $4;
+
+						s->subLinkType = ANY_SUBLINK;
+						s->testexpr = $1;
+						s->location = @2;
+						n = (Node *) s;
+					}
+					else
+						n = (Node *) makeSimpleA_Expr(AEXPR_IN, "=",
+													  $1, $4, @2);
+					$$ = makeNotExpr(n, @2);
+				}
+			| cypher_w_expr IN_P '{' cypher_read_stmt '}'
+				{
+					SubLink	   *n = makeNode(SubLink);
+
+					n->subLinkType = ANY_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = makeTypeCast($1, SystemTypeName("jsonb"), @1);
+					n->operName = NIL;
+					n->subselect = $4;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_w_expr NOT_LA IN_P '{' cypher_read_stmt '}'	%prec NOT_LA
+				{
+					SubLink	   *n = makeNode(SubLink);
+
+					n->subLinkType = ANY_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = makeTypeCast($1, SystemTypeName("jsonb"), @1);
+					n->operName = NIL;
+					n->subselect = $5;
+					n->location = @2;
+					$$ = makeNotExpr((Node *) n, @2);
+				}
+			| cypher_w_expr IN_P '{' select_no_parens '}'
+				{
+					SubLink	   *n = makeNode(SubLink);
+
+					n->subLinkType = ANY_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = $1;
+					n->operName = NIL;
+					n->subselect = $4;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_w_expr NOT_LA IN_P '{' select_no_parens '}'	%prec NOT_LA
+				{
+					SubLink	   *n = makeNode(SubLink);
+
+					n->subLinkType = ANY_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = $1;
+					n->operName = NIL;
+					n->subselect = $5;
+					n->location = @2;
+					$$ = makeNotExpr((Node *) n, @2);
 				}
 			| cypher_w_expr STARTS WITH cypher_expr			%prec STARTS
 				{
@@ -20325,6 +20486,7 @@ cypher_w_expr:
 						$$ = (Node *) n;
 					}
 				}
+			| cypher_expr_map
 			| cypher_c_expr
 		;
 
@@ -20345,6 +20507,265 @@ cypher_c_expr:
 					n->location = @1;
 					$$ = (Node *) n;
 				}
+		;
+
+/*
+ * The right-hand side of an "x IN <expr>" test.  This is a near-copy of the
+ * cypher_expr cascade that never starts with a bare map literal '{ ... }',
+ * which is what keeps the braced "x IN { subquery }" forms unambiguous (a map
+ * literal and a braced subquery both begin with '{').  Map literals are still
+ * reachable inside parentheses ("x IN ({a: 1})") because the cypher_c_expr
+ * bottom (shared with cypher_expr) keeps the '(' cypher_expr ')' production.
+ * The boolean OR/AND/XOR productions are intentionally omitted: IN binds
+ * tighter than them, so they could never reduce here.
+ */
+cypher_in_expr:
+			NOT cypher_in_expr
+					{ $$ = makeNotExpr($2, @1); }
+			| cypher_in_expr '=' cypher_in_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=", $1, $3, @2);
+				}
+			| cypher_in_expr NOT_EQUALS cypher_in_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<>", $1, $3, @2);
+				}
+			| cypher_in_expr '<' cypher_in_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<", $1, $3, @2);
+				}
+			| cypher_in_expr '>' cypher_in_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">", $1, $3, @2);
+				}
+			| cypher_in_expr LESS_EQUALS cypher_in_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<=", $1, $3, @2);
+				}
+			| cypher_in_expr GREATER_EQUALS cypher_in_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">=", $1, $3, @2);
+				}
+			| cypher_in_expr '+' cypher_in_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "+", $1, $3, @2);
+				}
+			| cypher_in_expr '-' cypher_in_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "-", $1, $3, @2);
+				}
+			| cypher_in_expr '*' cypher_in_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "*", $1, $3, @2);
+				}
+			| cypher_in_expr '/' cypher_in_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "/", $1, $3, @2);
+				}
+			| cypher_in_expr '%' cypher_in_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "%", $1, $3, @2);
+				}
+			| cypher_in_expr '^' cypher_in_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "^", $1, $3, @2);
+				}
+			| '+' cypher_in_expr								%prec UMINUS
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "+", NULL, $2, @1);
+				}
+			| '-' cypher_in_expr								%prec UMINUS
+				{
+					if (IsA($2, A_Const))
+					{
+						A_Const	   *con = (A_Const *) $2;
+
+						if (IsA(&con->val, Integer))
+						{
+							con->val.ival.ival = -con->val.ival.ival;
+							con->location = @1;
+							$$ = $2;
+						}
+						else if (IsA(&con->val, Float))
+						{
+							doNegateFloat(&con->val.fval);
+							con->location = @1;
+							$$ = $2;
+						}
+						else
+						{
+							$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "-",
+														   NULL, $2, @1);
+						}
+					}
+					else
+					{
+						$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "-",
+													   NULL, $2, @1);
+					}
+				}
+			| cypher_in_expr qual_Op cypher_in_expr			%prec Op
+					{ $$ = (Node *) makeA_Expr(AEXPR_OP, $2, $1, $3, @2); }
+			| qual_Op cypher_in_expr							%prec Op
+					{ $$ = (Node *) makeA_Expr(AEXPR_OP, $1, NULL, $2, @1); }
+			| cypher_in_expr '[' cypher_expr ']'
+				{
+					A_Indices  *ind;
+					A_Indirection *n;
+
+					ind = makeNode(A_Indices);
+					ind->is_slice = false;
+					ind->lidx = NULL;
+					ind->uidx = $3;
+
+					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, ind);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1(ind);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_in_expr '[' cypher_expr_opt DOT_DOT cypher_expr_opt ']'
+				{
+					A_Indices  *ind;
+					A_Indirection *n;
+
+					ind = makeNode(A_Indices);
+					ind->is_slice = true;
+					ind->lidx = $3;
+					ind->uidx = $5;
+
+					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, ind);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1(ind);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_in_expr STARTS WITH cypher_expr			%prec STARTS
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_starts_with"),
+										list_make2($1, $4),
+										COERCE_EXPLICIT_CALL, @2);
+				}
+			| cypher_in_expr ENDS WITH cypher_expr			%prec ENDS
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_ends_with"),
+										list_make2($1, $4),
+										COERCE_EXPLICIT_CALL, @2);
+				}
+			| cypher_in_expr CONTAINS cypher_expr
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_contains"),
+										list_make2($1, $3),
+										COERCE_EXPLICIT_CALL, @2);
+				}
+			| cypher_in_expr EQUALS_TILDE cypher_expr
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_regex"),
+										list_make2($1, $3),
+										COERCE_EXPLICIT_CALL, @2);
+				}
+			| cypher_in_expr IS NULL_P						%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_in_expr IS NOT NULL_P					%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NOT_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_in_expr TYPECAST type_function_name
+				{
+					TypeName   *n;
+
+					n = (TypeName *) makeTypeName($3);
+					n->location = @3;
+					$$ = makeTypeCast($1, n, @2);
+				}
+			| cypher_in_expr TYPECAST JSON
+				{
+					/* JSON is a col_name_keyword as of PG17, so it is not
+					 * covered by type_function_name; handle it explicitly. */
+					TypeName   *n;
+
+					n = SystemTypeName("json");
+					n->location = @3;
+					$$ = makeTypeCast($1, n, @2);
+				}
+			| cypher_in_expr '.' cypher_expr_escaped_name
+				{
+					A_Indirection *n;
+
+					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, $3);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1($3);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_in_expr '.' cypher_expr_name
+				{
+					A_Indirection *n;
+
+					if (IsA($1, ColumnRef))
+					{
+						ColumnRef  *cref = (ColumnRef *) $1;
+
+						cref->fields = lappend(cref->fields, $3);
+						$$ = $1;
+					}
+					else if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, $3);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1($3);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_c_expr
 		;
 
 cypher_expr_opt:
@@ -20399,10 +20820,15 @@ cypher_expr_literal:
 			| TRUE_P				{ $$ = makeBoolAConst(true, @1); }
 			| FALSE_P				{ $$ = makeBoolAConst(false, @1); }
 			| NULL_P				{ $$ = makeNullAConst(@1); }
-			| cypher_expr_map
 			| cypher_expr_list
 		;
 
+/*
+ * A map literal is attached at the top of each expression cascade rather than
+ * here in cypher_expr_literal so that the map-free "x IN <expr>" right-hand
+ * side (cypher_in_expr) can share the cypher_c_expr / cypher_expr_atom bottom
+ * while still excluding a leading bare map.  See cypher_in_expr.
+ */
 cypher_expr_map:
 			'{' cypher_expr_map_keyvals '}'
 				{

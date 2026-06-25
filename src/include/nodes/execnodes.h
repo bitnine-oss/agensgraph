@@ -1215,6 +1215,16 @@ typedef struct PlanState
 	bool		outeropsset;
 	bool		inneropsset;
 	bool		resultopsset;
+
+	/*
+	 * AgensGraph: transient channel used while ExecInitSubPlan builds the
+	 * lefthand/test ExprStates for a SubPlan that appears inside a cypher list
+	 * comprehension's filter or result expression.  It carries the current
+	 * iteration-variable slot so those freshly built ExprStates can resolve a
+	 * CypherListCompVar.  NULL except during that build.
+	 */
+	Datum	   *innermost_cypherlistcomp_iterval;
+	bool	   *innermost_cypherlistcomp_iternull;
 } PlanState;
 
 /* ----------------
