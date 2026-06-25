@@ -1,0 +1,1158 @@
+--
+-- Cypher CALL { subquery } clause
+--
+-- CALL runs a subquery as a clause in the query pipeline.  Outer variables are
+-- imported into the subquery either by a scope clause -- "CALL (x, y) { ... }"
+-- (correlated) / "CALL () { ... }" (uncorrelated) -- or by an equivalent
+-- leading importing WITH -- "CALL { WITH x, y ... }"; with no import the
+-- subquery is uncorrelated ("CALL { ... }").
+--
+-- The tests are grouped by the ways a CALL clause is supported:
+--   1. at the top level of a query
+--   2. nested inside another CALL body
+--   3. inside an expression subquery (EXISTS / COUNT / COLLECT / ARRAY / VALUE / IN)
+--   4. inside a cypher query embedded in a SQL FROM clause
+-- followed by mixed combinations and the CALL-as-identifier (CALL_LA) boundary.
+--
+CREATE GRAPH cypher_call;
+SET graph_path = cypher_call;
+-- Graph: three people.  Andy(36) has one dog; Timothy(25) has a cat and no dog;
+-- Peter(35) has two dogs, Fido (which has a toy) and Ozzy.  KNOWS edges:
+-- Andy -> Peter, Andy -> Timothy, Peter -> Timothy (Andy knows 2, Peter 1,
+-- Timothy 0), which gives a per-person correlated subquery to exercise.
+CREATE (andy:Person {name: 'Andy', age: 36}),
+       (timothy:Person {name: 'Timothy', age: 25}),
+       (peter:Person {name: 'Peter', age: 35}),
+       (andy)-[:HAS_DOG]->(:Dog {name: 'Andy'}),
+       (timothy)-[:HAS_CAT]->(:Cat {name: 'Mittens'}),
+       (fido:Dog {name: 'Fido'})<-[:HAS_DOG]-(peter)-[:HAS_DOG]->(:Dog {name: 'Ozzy'}),
+       (fido)-[:HAS_TOY]->(:Toy {name: 'Banana'}),
+       (andy)-[:KNOWS]->(peter),
+       (andy)-[:KNOWS]->(timothy),
+       (peter)-[:KNOWS]->(timothy);
+--
+-- 1. Top-level CALL
+--
+-- 1.1 the four import / correlation forms ----------------------------------
+-- (a) scope clause, correlated on the named variable
+MATCH (p:Person)
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN p.name AS name, dog ORDER BY name, dog;
+  name   |  dog   
+---------+--------
+ "Andy"  | "Andy"
+ "Peter" | "Fido"
+ "Peter" | "Ozzy"
+(3 rows)
+
+-- plan: the correlated body decorrelates to the very join an inline pattern
+-- match produces (the subquery is pulled up, not re-executed per outer row)
+EXPLAIN (COSTS OFF)
+MATCH (p:Person) CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN p.name AS name, dog;
+                    QUERY PLAN                    
+--------------------------------------------------
+ Hash Join
+   Hash Cond: ("<0000000001>"."end" = d.id)
+   ->  Hash Join
+         Hash Cond: ("<0000000001>".start = p.id)
+         ->  Seq Scan on has_dog "<0000000001>"
+         ->  Hash
+               ->  Seq Scan on person p
+   ->  Hash
+         ->  Seq Scan on dog d
+(9 rows)
+
+EXPLAIN (COSTS OFF)
+MATCH (p:Person)-[:HAS_DOG]->(d:Dog) RETURN p.name AS name, d.name AS dog;
+                    QUERY PLAN                    
+--------------------------------------------------
+ Hash Join
+   Hash Cond: ("<0000000002>"."end" = d.id)
+   ->  Hash Join
+         Hash Cond: ("<0000000002>".start = p.id)
+         ->  Seq Scan on has_dog "<0000000002>"
+         ->  Hash
+               ->  Seq Scan on person p
+   ->  Hash
+         ->  Seq Scan on dog d
+(9 rows)
+
+-- (b) empty scope clause, uncorrelated (runs once, cross-joined)
+MATCH (p:Person {name: 'Andy'})
+CALL () { MATCH (d:Dog) RETURN count(*) AS ndogs }
+RETURN p.name AS name, ndogs;
+  name  | ndogs 
+--------+-------
+ "Andy" | 3
+(1 row)
+
+-- plan: the uncorrelated body runs once (an Aggregate evaluated a single time),
+-- then is cross-joined with the outer
+EXPLAIN (COSTS OFF)
+MATCH (p:Person) CALL () { MATCH (:Toy) RETURN count(*) AS ntoys }
+RETURN p.name AS name, ntoys;
+                 QUERY PLAN                 
+--------------------------------------------
+ Nested Loop
+   ->  Aggregate
+         ->  Seq Scan on toy "<0000000003>"
+   ->  Seq Scan on person p
+(4 rows)
+
+-- (c) no scope clause, also uncorrelated
+MATCH (p:Person {name: 'Andy'})
+CALL { MATCH (:Toy) RETURN count(*) AS ntoys }
+RETURN p.name AS name, ntoys;
+  name  | ntoys 
+--------+-------
+ "Andy" | 1
+(1 row)
+
+-- (d) importing WITH, correlated -- equivalent to (a)
+MATCH (p:Person)
+CALL { WITH p MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN p.name AS name, dog ORDER BY name, dog;
+  name   |  dog   
+---------+--------
+ "Andy"  | "Andy"
+ "Peter" | "Fido"
+ "Peter" | "Ozzy"
+(3 rows)
+
+-- (a) and (d) are exactly equivalent
+MATCH (p:Person)
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN p.name AS name, dog
+EXCEPT
+MATCH (p:Person)
+CALL { WITH p MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN p.name AS name, dog;
+ name | dog 
+------+-----
+(0 rows)
+
+-- the scope clause is case-insensitive like any keyword (lower-case call)
+MATCH (p:Person {name: 'Peter'})
+call (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN p.name AS name, dog ORDER BY dog;
+  name   |  dog   
+---------+--------
+ "Peter" | "Fido"
+ "Peter" | "Ozzy"
+(2 rows)
+
+-- whitespace / newlines between CALL and its '(' or '{' do not matter
+MATCH (p:Person {name: 'Andy'})
+CALL
+  (p)
+  { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN p.name AS name, dog;
+  name  |  dog   
+--------+--------
+ "Andy" | "Andy"
+(1 row)
+
+-- 1.2 imported targets: vertex, several vars, edge, computed value ----------
+-- three imported variables
+MATCH (p:Person {name: 'Andy'}), (f:Person {name: 'Peter'}), (g:Person {name: 'Timothy'})
+CALL (p, f, g) { MATCH (p)-[:KNOWS]->(x:Person) WHERE x.name IN [f.name, g.name]
+                 RETURN count(x) AS known }
+RETURN p.name AS name, known;
+  name  | known 
+--------+-------
+ "Andy" | 2
+(1 row)
+
+-- import an edge variable and use it in the body
+MATCH (p:Person {name: 'Andy'})-[r:KNOWS]->(:Person)
+CALL (r) { RETURN type(r) AS rel_type }
+RETURN DISTINCT rel_type;
+ rel_type 
+----------
+ "knows"
+(1 row)
+
+-- import a value computed by a preceding WITH
+MATCH (p:Person)
+WITH p, p.age AS age
+CALL (age) { RETURN (age >= 35) AS is_senior }
+RETURN p.name AS name, is_senior ORDER BY name;
+   name    | is_senior 
+-----------+-----------
+ "Andy"    | t
+ "Peter"   | t
+ "Timothy" | f
+(3 rows)
+
+-- import a variable but use only some of the imported set
+MATCH (p:Person {name: 'Peter'}), (q:Person {name: 'Andy'})
+CALL (p, q) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN p.name AS name, dog ORDER BY dog;
+  name   |  dog   
+---------+--------
+ "Peter" | "Fido"
+ "Peter" | "Ozzy"
+(2 rows)
+
+-- 1.3 body shapes -----------------------------------------------------------
+-- aggregation: exactly one row per outer row, including zero
+MATCH (p:Person)
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) AS ndogs }
+RETURN p.name AS name, ndogs ORDER BY name;
+   name    | ndogs 
+-----------+-------
+ "Andy"    | 1
+ "Peter"   | 2
+ "Timothy" | 0
+(3 rows)
+
+-- plan: an aggregating body cannot be pulled up, so it stays a per-outer
+-- lateral join (an Aggregate under a Nested Loop), driven by the edge's
+-- start-key index.  Scans are forced here so the inner access does not flip
+-- between an index and a bitmap scan with table size.
+SET enable_seqscan = off;
+SET enable_bitmapscan = off;
+EXPLAIN (COSTS OFF)
+MATCH (p:Person) CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) AS ndogs }
+RETURN p.name AS name, ndogs;
+                                     QUERY PLAN                                      
+-------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Seq Scan on person p
+   ->  Aggregate
+         ->  Nested Loop
+               ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000014>"
+                     Index Cond: (start = p.id)
+               ->  Index Scan using dog_pkey on dog d
+                     Index Cond: (id = "<0000000014>"."end")
+(8 rows)
+
+RESET enable_bitmapscan;
+RESET enable_seqscan;
+-- several aggregates at once
+MATCH (p:Person)
+CALL (p) { MATCH (p)-[:KNOWS]->(f:Person) RETURN count(f) AS nfriends, min(f.age) AS youngest }
+RETURN p.name AS name, nfriends, youngest ORDER BY name;
+   name    | nfriends | youngest 
+-----------+----------+----------
+ "Andy"    | 2        | 25
+ "Peter"   | 1        | 25
+ "Timothy" | 0        | 
+(3 rows)
+
+-- DISTINCT over real duplicate-producing data
+MATCH (p:Person {name: 'Andy'})
+CALL (p) { MATCH (p)-[:KNOWS]->(:Person)-[:KNOWS]->(fof:Person) RETURN DISTINCT fof.name AS f }
+RETURN p.name AS name, f ORDER BY f;
+  name  |     f     
+--------+-----------
+ "Andy" | "Timothy"
+(1 row)
+
+-- multiple RETURN columns from the body
+MATCH (p:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog, d.name + '!' AS shout }
+RETURN dog, shout ORDER BY dog;
+  dog   |  shout  
+--------+---------
+ "Fido" | "Fido!"
+ "Ozzy" | "Ozzy!"
+(2 rows)
+
+-- ORDER BY DESC + LIMIT (per outer row)
+MATCH (p:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog ORDER BY d.name DESC LIMIT 1 }
+RETURN dog;
+  dog   
+--------
+ "Ozzy"
+(1 row)
+
+-- LIMIT 0 (drops every outer row)
+MATCH (p:Person)
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog LIMIT 0 }
+RETURN p.name AS name, dog;
+ name | dog 
+------+-----
+(0 rows)
+
+-- SKIP past the end (drops the outer row)
+MATCH (p:Person)
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog ORDER BY d.name SKIP 5 }
+RETURN p.name AS name, dog;
+ name | dog 
+------+-----
+(0 rows)
+
+-- UNION inside the body
+MATCH (p:Person {name: 'Timothy'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS x
+           UNION MATCH (p)-[:HAS_CAT]->(c:Cat) RETURN c.name AS x }
+RETURN p.name AS name, x ORDER BY x;
+   name    |     x     
+-----------+-----------
+ "Timothy" | "Mittens"
+(1 row)
+
+-- UNION ALL inside the body keeps duplicates
+MATCH (p:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN 1 AS one
+           UNION ALL MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN 1 AS one }
+RETURN count(one) AS c;
+ c 
+---
+ 4
+(1 row)
+
+-- EXCEPT inside the body
+MATCH (p:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS x
+           EXCEPT MATCH (:Dog {name: 'Ozzy'}) RETURN 'Ozzy' AS x }
+RETURN p.name AS name, x ORDER BY x;
+  name   |   x    
+---------+--------
+ "Peter" | "Fido"
+(1 row)
+
+-- OPTIONAL MATCH inside the body (keeps the row, yields null)
+MATCH (p:Person)
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) OPTIONAL MATCH (d)-[:HAS_TOY]->(t:Toy)
+           RETURN d.name AS dog, t.name AS toy }
+RETURN p.name AS name, dog, toy ORDER BY name, dog;
+  name   |  dog   |   toy    
+---------+--------+----------
+ "Andy"  | "Andy" | 
+ "Peter" | "Fido" | "Banana"
+ "Peter" | "Ozzy" | 
+(3 rows)
+
+-- UNWIND inside the body
+MATCH (p:Person {name: 'Andy'})
+CALL (p) { UNWIND [1, 2, 3] AS i RETURN i }
+RETURN p.name AS name, i ORDER BY i;
+  name  | i 
+--------+---
+ "Andy" | 1
+ "Andy" | 2
+ "Andy" | 3
+(3 rows)
+
+-- a multi-clause body (MATCH ... WITH ... WHERE ... RETURN)
+MATCH (p:Person)
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) WITH d WHERE d.name <> 'Ozzy' RETURN d.name AS dog }
+RETURN p.name AS name, dog ORDER BY name, dog;
+  name   |  dog   
+---------+--------
+ "Andy"  | "Andy"
+ "Peter" | "Fido"
+(2 rows)
+
+-- the body returns a whole vertex
+MATCH (p:Person {name: 'Andy'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d }
+RETURN p.name AS name, (d).name AS dog;
+  name  |  dog   
+--------+--------
+ "Andy" | "Andy"
+(1 row)
+
+-- 1.4 cardinality and dataflow ----------------------------------------------
+-- returning body: outer x inner; a zero-match outer row is dropped
+MATCH (p:Person)
+CALL (p) { MATCH (p)-[:KNOWS]->(f:Person) RETURN f.name AS friend }
+RETURN p.name AS name, friend ORDER BY name, friend;
+  name   |  friend   
+---------+-----------
+ "Andy"  | "Peter"
+ "Andy"  | "Timothy"
+ "Peter" | "Timothy"
+(3 rows)
+
+-- the RETURN columns flow to the clauses that follow the CALL
+MATCH (p:Person)
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+WITH p, dog WHERE dog STARTS WITH 'F'
+RETURN p.name AS name, dog;
+  name   |  dog   
+---------+--------
+ "Peter" | "Fido"
+(1 row)
+
+-- ... and can be aggregated by a later clause
+MATCH (p:Person)
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN count(dog) AS total_dogs;
+ total_dogs 
+------------
+ 3
+(1 row)
+
+-- ... and ordered / sliced by trailing standalone clauses
+MATCH (p:Person)
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN p.name AS name, dog ORDER BY dog DESC LIMIT 2;
+  name   |  dog   
+---------+--------
+ "Peter" | "Ozzy"
+ "Peter" | "Fido"
+(2 rows)
+
+-- a chain of three CALLs
+MATCH (p:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d AS dog }
+CALL (dog) { MATCH (dog)-[:HAS_TOY]->(t:Toy) RETURN t.name AS toy }
+CALL () { MATCH (:Person) RETURN count(*) AS npeople }
+RETURN (dog).name AS dog, toy, npeople ORDER BY dog;
+  dog   |   toy    | npeople 
+--------+----------+---------
+ "Fido" | "Banana" | 3
+(1 row)
+
+-- CALL at the head of the query (no preceding clause)
+CALL () { MATCH (d:Dog) RETURN d.name AS dog ORDER BY dog }
+RETURN dog;
+  dog   
+--------
+ "Andy"
+ "Fido"
+ "Ozzy"
+(3 rows)
+
+-- CALL at the head, then more clauses
+CALL () { MATCH (p:Person) RETURN p.name AS name }
+WITH name WHERE name <> 'Timothy'
+RETURN name ORDER BY name;
+  name   
+---------
+ "Andy"
+ "Peter"
+(2 rows)
+
+-- an empty outer (no rows) yields no CALL invocations
+MATCH (p:Person {name: 'Nobody'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN p.name AS name, dog;
+ name | dog 
+------+-----
+(0 rows)
+
+-- 1.5 scoping: only imported variables are visible inside the body ----------
+-- the imported variable is usable in the body's RETURN as well as its pattern
+MATCH (p:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN p.name AS owner, d.name AS dog }
+RETURN owner, dog ORDER BY dog;
+  owner  |  dog   
+---------+--------
+ "Peter" | "Fido"
+ "Peter" | "Ozzy"
+(2 rows)
+
+-- error: a non-imported outer variable referenced in the body
+MATCH (p:Person {name: 'Andy'}), (other:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) WHERE d.name <> other.name RETURN d.name AS dog }
+RETURN dog;
+ERROR:  variable does not exist
+LINE 2: ...) { MATCH (p)-[:HAS_DOG]->(d:Dog) WHERE d.name <> other.name...
+                                                             ^
+-- error: an uncorrelated CALL cannot see outer variables
+MATCH (p:Person {name: 'Andy'})
+CALL () { MATCH (d:Dog) WHERE d.name = p.name RETURN d.name AS dog }
+RETURN dog;
+ERROR:  variable does not exist
+LINE 2: CALL () { MATCH (d:Dog) WHERE d.name = p.name RETURN d.name ...
+                                               ^
+-- error: a no-scope-clause CALL cannot see outer variables either
+MATCH (p:Person {name: 'Andy'})
+CALL { MATCH (d:Dog) WHERE d.name = p.name RETURN d.name AS dog }
+RETURN dog;
+ERROR:  variable does not exist
+LINE 2: CALL { MATCH (d:Dog) WHERE d.name = p.name RETURN d.name AS ...
+                                            ^
+-- error: importing a variable that does not exist
+MATCH (p:Person {name: 'Andy'})
+CALL (nosuchvar) { MATCH (d:Dog) RETURN d.name AS dog }
+RETURN dog;
+ERROR:  variable "nosuchvar" to import into CALL does not exist
+LINE 2: CALL (nosuchvar) { MATCH (d:Dog) RETURN d.name AS dog }
+        ^
+-- error: the importing-WITH form restricts scope the same way
+MATCH (p:Person {name: 'Andy'}), (other:Person {name: 'Peter'})
+CALL { WITH p MATCH (p)-[:HAS_DOG]->(d:Dog) WHERE d.name <> other.name RETURN d.name AS dog }
+RETURN dog;
+ERROR:  variable does not exist
+LINE 2: ...H p MATCH (p)-[:HAS_DOG]->(d:Dog) WHERE d.name <> other.name...
+                                                             ^
+-- a variable reused inside the body shadows nothing of the outer (uncorrelated)
+MATCH (p:Person {name: 'Andy'})
+CALL () { MATCH (p:Person {name: 'Peter'})-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN p.name AS outer_name, dog ORDER BY dog;
+ outer_name |  dog   
+------------+--------
+ "Andy"     | "Fido"
+ "Andy"     | "Ozzy"
+(2 rows)
+
+-- 1.6 errors ----------------------------------------------------------------
+-- a write clause is not allowed in a CALL subquery (each write kind)
+MATCH (p:Person) CALL (p) { CREATE (:Foo {n: p.name}) RETURN 1 AS one } RETURN p.name;
+ERROR:  syntax error at or near "CREATE"
+LINE 1: MATCH (p:Person) CALL (p) { CREATE (:Foo {n: p.name}) RETURN...
+                                    ^
+MATCH (p:Person) CALL (p) { SET p.x = 1 RETURN p.name AS n } RETURN p.name;
+ERROR:  syntax error at or near "SET"
+LINE 1: MATCH (p:Person) CALL (p) { SET p.x = 1 RETURN p.name AS n }...
+                                    ^
+MATCH (p:Person) CALL (p) { DETACH DELETE p RETURN 1 AS one } RETURN p.name;
+ERROR:  syntax error at or near "DETACH"
+LINE 1: MATCH (p:Person) CALL (p) { DETACH DELETE p RETURN 1 AS one ...
+                                    ^
+MATCH (p:Person) CALL (p) { MERGE (:Foo {n: p.name}) RETURN 1 AS one } RETURN p.name;
+ERROR:  syntax error at or near "MERGE"
+LINE 1: MATCH (p:Person) CALL (p) { MERGE (:Foo {n: p.name}) RETURN ...
+                                    ^
+MATCH (p:Person) CALL (p) { REMOVE p.age RETURN p.name AS n } RETURN p.name;
+ERROR:  syntax error at or near "REMOVE"
+LINE 1: MATCH (p:Person) CALL (p) { REMOVE p.age RETURN p.name AS n ...
+                                    ^
+-- the subquery must return at least one variable
+MATCH (p:Person) CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) FINISH } RETURN p.name;
+ERROR:  CALL subquery must RETURN at least one variable
+LINE 1: MATCH (p:Person) CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) FI...
+                         ^
+-- a scope clause with no preceding clause to import from
+CALL (p) { MATCH (d:Dog) RETURN d.name AS dog } RETURN dog;
+ERROR:  CALL has no preceding clause to import variables from
+LINE 1: CALL (p) { MATCH (d:Dog) RETURN d.name AS dog } RETURN dog;
+        ^
+--
+-- 2. Nested CALL (a CALL inside another CALL's body)
+--
+-- scope-clause inner CALL
+MATCH (p:Person {name: 'Peter'})
+CALL (p) {
+  MATCH (p)-[:HAS_DOG]->(d:Dog)
+  CALL (d) { MATCH (d)-[:HAS_TOY]->(t:Toy) RETURN t.name AS toy }
+  RETURN d.name AS dog, toy
+}
+RETURN p.name AS name, dog, toy ORDER BY dog;
+  name   |  dog   |   toy    
+---------+--------+----------
+ "Peter" | "Fido" | "Banana"
+(1 row)
+
+-- plan: both CALL levels collapse into a single join tree -- no nested
+-- per-row subquery
+EXPLAIN (COSTS OFF)
+MATCH (p:Person {name: 'Peter'})
+CALL (p) {
+  MATCH (p)-[:HAS_DOG]->(d:Dog)
+  CALL (d) { MATCH (d)-[:HAS_TOY]->(t:Toy) RETURN t.name AS toy }
+  RETURN d.name AS dog, toy
+}
+RETURN p.name AS name, dog, toy;
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Nested Loop
+               ->  Hash Join
+                     Hash Cond: ("<0000000048>".start = p.id)
+                     ->  Seq Scan on has_dog "<0000000048>"
+                     ->  Hash
+                           ->  Seq Scan on person p
+                                 Filter: (properties.'name'::text = '"Peter"'::jsonb)
+               ->  Index Scan using dog_pkey on dog d
+                     Index Cond: (id = "<0000000048>"."end")
+         ->  Index Only Scan using has_toy_start_idx on has_toy "<0000000049>"
+               Index Cond: (start = d.id)
+   ->  Index Scan using toy_pkey on toy t
+         Index Cond: (id = "<0000000049>"."end")
+(15 rows)
+
+-- importing-WITH inner CALL
+MATCH (p:Person {name: 'Peter'})
+CALL (p) {
+  MATCH (p)-[:HAS_DOG]->(d:Dog)
+  CALL { WITH d MATCH (d)-[:HAS_TOY]->(t:Toy) RETURN t.name AS toy }
+  RETURN d.name AS dog, toy
+}
+RETURN p.name AS name, dog, toy ORDER BY dog;
+  name   |  dog   |   toy    
+---------+--------+----------
+ "Peter" | "Fido" | "Banana"
+(1 row)
+
+-- uncorrelated inner CALL
+MATCH (p:Person {name: 'Peter'})
+CALL (p) {
+  MATCH (p)-[:HAS_DOG]->(d:Dog)
+  CALL () { MATCH (:Toy) RETURN count(*) AS ntoys }
+  RETURN d.name AS dog, ntoys
+}
+RETURN p.name AS name, dog, ntoys ORDER BY dog;
+  name   |  dog   | ntoys 
+---------+--------+-------
+ "Peter" | "Fido" | 1
+ "Peter" | "Ozzy" | 1
+(2 rows)
+
+-- two correlated levels with an aggregating inner CALL (zero kept by aggregation)
+MATCH (p:Person {name: 'Peter'})
+CALL (p) {
+  MATCH (p)-[:HAS_DOG]->(d:Dog)
+  CALL (d) { MATCH (d)-[:HAS_TOY]->(t:Toy) RETURN count(t) AS ntoys }
+  RETURN d.name AS dog, ntoys
+}
+RETURN p.name AS name, dog, ntoys ORDER BY dog;
+  name   |  dog   | ntoys 
+---------+--------+-------
+ "Peter" | "Fido" | 1
+ "Peter" | "Ozzy" | 0
+(2 rows)
+
+-- three levels of nesting
+MATCH (p:Person {name: 'Peter'})
+CALL (p) {
+  MATCH (p)-[:HAS_DOG]->(d:Dog)
+  CALL (d) {
+    MATCH (d)-[:HAS_TOY]->(t:Toy)
+    CALL (t) { RETURN t.name AS tn }
+    RETURN tn
+  }
+  RETURN d.name AS dog, tn
+}
+RETURN dog, tn ORDER BY dog;
+  dog   |    tn    
+--------+----------
+ "Fido" | "Banana"
+(1 row)
+
+-- two sibling CALLs inside one body
+MATCH (p:Person {name: 'Peter'})
+CALL (p) {
+  MATCH (p)-[:HAS_DOG]->(d:Dog)
+  CALL (d) { MATCH (d)-[:HAS_TOY]->(t:Toy) RETURN count(t) AS ntoys }
+  CALL (p) { MATCH (p)-[:KNOWS]->(f:Person) RETURN count(f) AS nfriends }
+  RETURN d.name AS dog, ntoys, nfriends
+}
+RETURN dog, ntoys, nfriends ORDER BY dog;
+  dog   | ntoys | nfriends 
+--------+-------+----------
+ "Fido" | 1     | 1
+ "Ozzy" | 0     | 1
+(2 rows)
+
+-- nested CALL across all outer rows (only Peter's Fido reaches a toy)
+MATCH (p:Person)
+CALL (p) {
+  MATCH (p)-[:HAS_DOG]->(d:Dog)
+  CALL (d) { MATCH (d)-[:HAS_TOY]->(t:Toy) RETURN t.name AS toy }
+  RETURN d.name AS dog, toy
+}
+RETURN p.name AS name, dog, toy ORDER BY name, dog;
+  name   |  dog   |   toy    
+---------+--------+----------
+ "Peter" | "Fido" | "Banana"
+(1 row)
+
+-- the inner CALL imports an outer-outer variable (transitive correlation)
+MATCH (p:Person {name: 'Andy'})
+CALL (p) {
+  MATCH (p)-[:KNOWS]->(f:Person)
+  CALL (p, f) { MATCH (p)-[:KNOWS]->(f) RETURN 'knows' AS rel }
+  RETURN f.name AS friend, rel
+}
+RETURN friend, rel ORDER BY friend;
+  friend   |   rel   
+-----------+---------
+ "Peter"   | "knows"
+ "Timothy" | "knows"
+(2 rows)
+
+--
+-- 3. CALL inside an expression subquery
+--
+-- EXISTS / NOT EXISTS
+MATCH (p:Person)
+WHERE EXISTS { MATCH (p)-[:HAS_DOG]->(d:Dog)
+              CALL (d) { MATCH (d)-[:HAS_TOY]->(t:Toy) RETURN t } RETURN d }
+RETURN p.name AS name ORDER BY name;
+  name   
+---------
+ "Peter"
+(1 row)
+
+-- plan: the EXISTS becomes a SubPlan; the CALL inside it decorrelates into
+-- that subplan's join (no further per-row nesting for the CALL)
+EXPLAIN (COSTS OFF)
+MATCH (p:Person)
+WHERE EXISTS { MATCH (p)-[:HAS_DOG]->(d:Dog)
+              CALL (d) { MATCH (d)-[:HAS_TOY]->(t:Toy) RETURN t } RETURN d }
+RETURN p.name AS name;
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
+ Seq Scan on person p
+   Filter: EXISTS(SubPlan 1)
+   SubPlan 1
+     ->  Nested Loop
+           ->  Nested Loop
+                 ->  Nested Loop
+                       ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000067>"
+                             Index Cond: (start = p.id)
+                       ->  Index Only Scan using dog_pkey on dog d
+                             Index Cond: (id = "<0000000067>"."end")
+                 ->  Index Only Scan using has_toy_start_idx on has_toy "<0000000068>"
+                       Index Cond: (start = d.id)
+           ->  Index Only Scan using toy_pkey on toy t
+                 Index Cond: (id = "<0000000068>"."end")
+(14 rows)
+
+MATCH (p:Person)
+WHERE NOT EXISTS { MATCH (p)-[:HAS_DOG]->(d:Dog)
+                   CALL (d) { MATCH (d)-[:HAS_TOY]->(t:Toy) RETURN t } RETURN d }
+RETURN p.name AS name ORDER BY name;
+   name    
+-----------
+ "Andy"
+ "Timothy"
+(2 rows)
+
+-- EXISTS with a CALL, used in RETURN
+MATCH (p:Person)
+RETURN p.name AS name,
+       EXISTS { MATCH (p)-[:HAS_DOG]->(d:Dog)
+                CALL (d) { MATCH (d)-[:HAS_TOY]->(t:Toy) RETURN t } RETURN d } AS has_toy_dog
+ORDER BY name;
+   name    | has_toy_dog 
+-----------+-------------
+ "Andy"    | f
+ "Peter"   | t
+ "Timothy" | f
+(3 rows)
+
+-- COUNT with a CALL, plain and compared
+MATCH (p:Person {name: 'Peter'})
+RETURN COUNT { MATCH (p)-[:HAS_DOG]->(d:Dog)
+               CALL (d) { MATCH (d) RETURN d.name AS n } RETURN n } AS c;
+ c 
+---
+ 2
+(1 row)
+
+MATCH (p:Person)
+WHERE COUNT { MATCH (p)-[:HAS_DOG]->(d:Dog) CALL (d) { MATCH (d) RETURN d } RETURN d } > 1
+RETURN p.name AS name ORDER BY name;
+  name   
+---------
+ "Peter"
+(1 row)
+
+-- COLLECT / ARRAY with a CALL
+MATCH (p:Person {name: 'Peter'})
+RETURN COLLECT { MATCH (p)-[:HAS_DOG]->(d:Dog)
+                 CALL (d) { MATCH (d) RETURN d.name AS n } RETURN n ORDER BY n } AS dogs;
+       dogs       
+------------------
+ ["Fido", "Ozzy"]
+(1 row)
+
+MATCH (p:Person {name: 'Peter'})
+RETURN ARRAY { MATCH (p)-[:HAS_DOG]->(d:Dog)
+               CALL (d) { MATCH (d) RETURN d.name AS n } RETURN n ORDER BY n } AS dogs;
+       dogs       
+------------------
+ ["Fido", "Ozzy"]
+(1 row)
+
+-- VALUE with a CALL (match and no-match)
+MATCH (p:Person {name: 'Peter'})
+RETURN VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog {name: 'Fido'})
+               CALL (d) { MATCH (d)-[:HAS_TOY]->(t:Toy) RETURN t.name AS toy } RETURN toy } AS v;
+    v     
+----------
+ "Banana"
+(1 row)
+
+MATCH (p:Person {name: 'Andy'})
+RETURN VALUE { MATCH (p)-[:HAS_DOG]->(d:Dog)
+               CALL (d) { MATCH (d)-[:HAS_TOY]->(t:Toy) RETURN t.name AS toy } RETURN toy } AS v;
+ v 
+---
+ 
+(1 row)
+
+-- IN / NOT IN with a CALL
+MATCH (p:Person {name: 'Peter'})
+RETURN 'Banana' IN { MATCH (p)-[:HAS_DOG]->(d:Dog)
+                     CALL (d) { MATCH (d)-[:HAS_TOY]->(t:Toy) RETURN t.name AS toy } RETURN toy } AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+MATCH (p:Person {name: 'Peter'})
+RETURN 'Bone' NOT IN { MATCH (p)-[:HAS_DOG]->(d:Dog)
+                       CALL (d) { MATCH (d)-[:HAS_TOY]->(t:Toy) RETURN t.name AS toy } RETURN toy } AS yes;
+ yes 
+-----
+ t
+(1 row)
+
+-- the importing-WITH form also works inside an expression subquery
+MATCH (p:Person {name: 'Peter'})
+RETURN COLLECT { MATCH (p)-[:HAS_DOG]->(d:Dog)
+                 CALL { WITH d MATCH (d) RETURN d.name AS n } RETURN n ORDER BY n } AS dogs;
+       dogs       
+------------------
+ ["Fido", "Ozzy"]
+(1 row)
+
+-- a CALL whose body itself contains an expression subquery, all inside EXISTS
+MATCH (p:Person)
+WHERE EXISTS {
+  MATCH (p)-[:HAS_DOG]->(d:Dog)
+  CALL (d) { MATCH (d) WHERE EXISTS { MATCH (d)-[:HAS_TOY]->(:Toy) } RETURN d.name AS n }
+  RETURN n
+}
+RETURN p.name AS name ORDER BY name;
+  name   
+---------
+ "Peter"
+(1 row)
+
+--
+-- 4. CALL inside a cypher query embedded in a SQL FROM clause
+--
+-- scope-clause form
+SELECT t.name, t.dog FROM (
+  MATCH (p:Person) CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+  RETURN p.name AS name, dog
+) t ORDER BY t.name, t.dog;
+  name   |  dog   
+---------+--------
+ "Andy"  | "Andy"
+ "Peter" | "Fido"
+ "Peter" | "Ozzy"
+(3 rows)
+
+-- plan: the CALL inside the FROM-embedded cypher query decorrelates to a plain
+-- join, just as it does at the top level
+EXPLAIN (COSTS OFF)
+SELECT t.name, t.dog FROM (
+  MATCH (p:Person) CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+  RETURN p.name AS name, dog
+) t;
+                    QUERY PLAN                    
+--------------------------------------------------
+ Hash Join
+   Hash Cond: ("<0000000090>"."end" = d.id)
+   ->  Hash Join
+         Hash Cond: ("<0000000090>".start = p.id)
+         ->  Seq Scan on has_dog "<0000000090>"
+         ->  Hash
+               ->  Seq Scan on person p
+   ->  Hash
+         ->  Seq Scan on dog d
+(9 rows)
+
+-- importing-WITH form
+SELECT t.name, t.n FROM (
+  MATCH (p:Person) CALL { WITH p MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) AS n }
+  RETURN p.name AS name, n
+) t ORDER BY t.name;
+   name    | n 
+-----------+---
+ "Andy"    | 1
+ "Peter"   | 2
+ "Timothy" | 0
+(3 rows)
+
+-- a SQL aggregate over the CALL result
+SELECT count(*) AS rows FROM (
+  MATCH (p:Person) CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+  RETURN p.name AS name, dog
+) t;
+ rows 
+------
+    3
+(1 row)
+
+-- a SQL WHERE over the CALL result (cypher values surface as jsonb, so the
+-- string is compared against a jsonb literal)
+SELECT t.name, t.dog FROM (
+  MATCH (p:Person) CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+  RETURN p.name AS name, dog
+) t WHERE t.dog = '"Fido"';
+  name   |  dog   
+---------+--------
+ "Peter" | "Fido"
+(1 row)
+
+-- a SQL GROUP BY over the CALL result
+SELECT t.name, count(*) AS ndogs FROM (
+  MATCH (p:Person) CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+  RETURN p.name AS name, dog
+) t GROUP BY t.name ORDER BY t.name;
+  name   | ndogs 
+---------+-------
+ "Andy"  |     1
+ "Peter" |     2
+(2 rows)
+
+-- a SQL JOIN between two cypher CALL queries
+SELECT a.name, a.dog, b.nfriends FROM (
+  MATCH (p:Person) CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+  RETURN p.name AS name, dog
+) a JOIN (
+  MATCH (p:Person) CALL (p) { MATCH (p)-[:KNOWS]->(f:Person) RETURN count(f) AS nfriends }
+  RETURN p.name AS name, nfriends
+) b ON a.name = b.name
+ORDER BY a.name, a.dog;
+  name   |  dog   | nfriends 
+---------+--------+----------
+ "Andy"  | "Andy" | 2
+ "Peter" | "Fido" | 1
+ "Peter" | "Ozzy" | 1
+(3 rows)
+
+-- a CALL query inside a SQL CTE
+WITH cte AS (
+  MATCH (p:Person) CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+  RETURN p.name AS name, dog
+)
+SELECT name, dog FROM cte ORDER BY name, dog;
+  name   |  dog   
+---------+--------
+ "Andy"  | "Andy"
+ "Peter" | "Fido"
+ "Peter" | "Ozzy"
+(3 rows)
+
+-- a nested CALL inside a FROM-embedded cypher query
+SELECT t.name, t.dog, t.toy FROM (
+  MATCH (p:Person)
+  CALL (p) {
+    MATCH (p)-[:HAS_DOG]->(d:Dog)
+    CALL (d) { MATCH (d)-[:HAS_TOY]->(x:Toy) RETURN x.name AS toy }
+    RETURN d.name AS dog, toy
+  }
+  RETURN p.name AS name, dog, toy
+) t ORDER BY t.name, t.dog;
+  name   |  dog   |   toy    
+---------+--------+----------
+ "Peter" | "Fido" | "Banana"
+(1 row)
+
+--
+-- 5. Mixed / multiple subqueries / odd combinations
+--
+-- two CALL clauses in one pipeline (the second aggregates per surviving row)
+MATCH (p:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d2:Dog) RETURN count(d2) AS ndogs }
+RETURN p.name AS name, dog, ndogs ORDER BY dog;
+  name   |  dog   | ndogs 
+---------+--------+-------
+ "Peter" | "Fido" | 2
+ "Peter" | "Ozzy" | 2
+(2 rows)
+
+-- plan: the first (returning) CALL decorrelates into the join; the second
+-- (aggregating) CALL stays a per-outer lateral join on top.  Scans forced so
+-- the inner access does not vary with table size.
+SET enable_seqscan = off;
+SET enable_bitmapscan = off;
+EXPLAIN (COSTS OFF)
+MATCH (p:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d2:Dog) RETURN count(d2) AS ndogs }
+RETURN p.name AS name, dog, ndogs;
+                                     QUERY PLAN                                      
+-------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Nested Loop
+               ->  Index Scan using person_pkey on person p
+                     Filter: (properties.'name'::text = '"Peter"'::jsonb)
+               ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000102>"
+                     Index Cond: (start = p.id)
+         ->  Index Scan using dog_pkey on dog d
+               Index Cond: (id = "<0000000102>"."end")
+   ->  Aggregate
+         ->  Nested Loop
+               ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000103>"
+                     Index Cond: (start = p.id)
+               ->  Index Scan using dog_pkey on dog d2
+                     Index Cond: (id = "<0000000103>"."end")
+(15 rows)
+
+RESET enable_bitmapscan;
+RESET enable_seqscan;
+-- a CALL result alongside several other subquery kinds in one projection
+MATCH (p:Person)
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) AS ndogs }
+RETURN p.name AS name, ndogs,
+       EXISTS { MATCH (p)-[:HAS_CAT]->(:Cat) } AS has_cat,
+       COUNT { MATCH (p)-[:KNOWS]->(:Person) } AS nfriends,
+       COLLECT { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } AS dogs
+ORDER BY name;
+   name    | ndogs | has_cat | nfriends |       dogs       
+-----------+-------+---------+----------+------------------
+ "Andy"    | 1     | f       | 2        | ["Andy"]
+ "Peter"   | 2     | f       | 1        | ["Fido", "Ozzy"]
+ "Timothy" | 0     | t       | 0        | []
+(3 rows)
+
+-- a CALL combined with UNWIND and FOR
+MATCH (p:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+UNWIND [1, 2] AS n
+RETURN dog, n ORDER BY dog, n;
+  dog   | n 
+--------+---
+ "Fido" | 1
+ "Fido" | 2
+ "Ozzy" | 1
+ "Ozzy" | 2
+(4 rows)
+
+-- an EXISTS nested in a CALL nested in an EXISTS
+MATCH (p:Person)
+WHERE EXISTS {
+  MATCH (p)-[:HAS_DOG]->(d:Dog)
+  CALL (d) { MATCH (d) WHERE EXISTS { MATCH (d)-[:HAS_TOY]->(:Toy) } RETURN d.name AS n }
+  RETURN n
+}
+RETURN p.name AS name ORDER BY name;
+  name   
+---------
+ "Peter"
+(1 row)
+
+-- a cypher CALL query (aggregating body) consumed and ordered by SQL
+SELECT t.name, t.ndogs FROM (
+  MATCH (p:Person)
+  CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) AS ndogs }
+  RETURN p.name AS name, ndogs
+) t ORDER BY t.name;
+   name    | ndogs 
+-----------+-------
+ "Andy"    | 1
+ "Peter"   | 2
+ "Timothy" | 0
+(3 rows)
+
+-- a CALL feeding a CALL where the second imports the first's output column
+MATCH (p:Person)
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d AS dog }
+CALL (dog) { MATCH (dog)-[:HAS_TOY]->(t:Toy) RETURN t.name AS toy }
+RETURN p.name AS name, (dog).name AS dog, toy ORDER BY name, dog;
+  name   |  dog   |   toy    
+---------+--------+----------
+ "Peter" | "Fido" | "Banana"
+(1 row)
+
+--
+-- 6. CALL as a clause vs "call" as an identifier (the CALL_LA lookahead)
+--
+-- The lexer rewrites CALL to CALL_LA only when it is immediately followed by
+-- '(' or '{'.  Everywhere else "call" remains an ordinary identifier.
+-- a cypher variable named call (followed by a label, or used in an expression)
+MATCH (call:Person) WHERE call.age > 30 RETURN call.name AS n ORDER BY n;
+    n    
+---------
+ "Andy"
+ "Peter"
+(2 rows)
+
+-- "call" as a vertex label (a label is followed by ')' / whitespace, not '('
+-- or '{', so it is an ordinary identifier)
+CREATE (:call);
+MATCH (c:call) RETURN count(c) AS ncall;
+ ncall 
+-------
+ 1
+(1 row)
+
+-- "call" as a property key, and read back
+MATCH (p:Person {name: 'Andy'}) RETURN {call: p.name} AS m;
+        m         
+------------------
+ {"call": "Andy"}
+(1 row)
+
+-- "call" as a function argument (an ordinary identifier here)
+MATCH (call:Person {name: 'Andy'}) RETURN id(call) IS NOT NULL AS ok;
+ ok 
+----
+ t
+(1 row)
+
+-- a SQL column / alias named call
+SELECT 1 AS call;
+ call 
+------
+    1
+(1 row)
+
+SELECT call FROM (SELECT 1 AS call) s;
+ call 
+------
+    1
+(1 row)
+
+SELECT s.call FROM (SELECT 1 AS call) s WHERE s.call = 1;
+ call 
+------
+    1
+(1 row)
+
+-- the SQL "CALL procedure()" statement is unaffected (CALL followed by a name):
+-- the procedure does not exist, but that is name resolution, not a syntax error
+CALL no_such_procedure_xyz();
+ERROR:  procedure no_such_procedure_xyz() does not exist
+LINE 1: CALL no_such_procedure_xyz();
+             ^
+HINT:  No procedure matches the given name and argument types. You might need to add explicit type casts.
+-- accepted limitation: "call" immediately followed by '(' or '{' is taken as
+-- the start of a CALL clause, so these two spellings no longer parse -- quote
+-- the identifier (SQL "call", cypher `call`) to keep the old meaning.
+-- a function call literally named call(...)
+SELECT call(1);
+ERROR:  syntax error at or near "call"
+LINE 1: SELECT call(1);
+               ^
+-- a node variable named call carrying an inline property map and no label
+MATCH (call {name: 'Andy'}) RETURN call.name;
+ERROR:  syntax error at or near "call"
+LINE 1: MATCH (call {name: 'Andy'}) RETURN call.name;
+               ^
+-- the workarounds: a label after the cypher variable, or a quoted SQL identifier
+MATCH (call:Person {name: 'Andy'}) RETURN call.name AS n;
+   n    
+--------
+ "Andy"
+(1 row)
+
+SELECT "call" FROM (SELECT 1 AS "call") s;
+ call 
+------
+    1
+(1 row)
+
+-- cleanup
+DROP GRAPH cypher_call CASCADE;
+NOTICE:  drop cascades to 12 other objects
+DETAIL:  drop cascades to sequence cypher_call.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
+drop cascades to elabel has_dog
+drop cascades to vlabel dog
+drop cascades to elabel has_cat
+drop cascades to vlabel cat
+drop cascades to elabel has_toy
+drop cascades to vlabel toy
+drop cascades to elabel knows
+drop cascades to vlabel call

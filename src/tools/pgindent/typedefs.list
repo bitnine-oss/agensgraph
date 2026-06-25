@@ -4202,6 +4202,7 @@ CypherUnwindClause
 CypherCountClause
 CypherFilterClause
 CypherForClause
+CypherCallClause
 CypherModifier
 CypherOrderBy
 CypherSkip

@@ -4562,6 +4562,19 @@ typedef struct CypherCountClause
 	Node	   *subquery;		/* read-only sub-statement whose rows are counted */
 } CypherCountClause;
 
+/*
+ * CALL { subquery } -- run a subquery as a clause in the pipeline.  Only the
+ * variables named in importlist are visible inside the subquery (correlation);
+ * the subquery's RETURN columns surface to the clauses that follow.
+ */
+typedef struct CypherCallClause
+{
+	NodeTag		type;
+	Node	   *subquery;		/* the CALL body (a CypherStmt) */
+	List	   *importlist;		/* imported variable names (String); NIL = none */
+	int			location;
+} CypherCallClause;
+
 typedef enum CPathKind
 {
 	CPATH_NORMAL,

@@ -1466,6 +1466,219 @@ transformCypherForClause(ParseState *pstate, CypherClause *clause)
 }
 
 /*
+ * makeCallImportNSItem
+ *		Build a namespace item exposing ONLY the variables named in a CALL
+ *		(var, ...) scope clause, so the subquery body may reference the imported
+ *		outer variables but nothing else.
+ *
+ *		Column resolution finds a name by its position in the range-table
+ *		entry's column list and then reads the matching ParseNamespaceColumn; an
+ *		entry whose p_varno is 0 is treated as "does not exist".  So we copy the
+ *		previous clause's nsitem verbatim -- crucially keeping its p_rte, which
+ *		make_var/GetSubLevelsUpByNSItem matches by identity against the range
+ *		table to find the subquery level (a fresh copy would break that and a
+ *		body that merely RETURNs an imported value, with no MATCH, would fail
+ *		with "RTE not found") -- and merely invalidate the per-column entries of
+ *		the columns that were not imported.  A reference to a non-imported outer
+ *		variable then raises a "does not exist" error instead of silently
+ *		capturing it (or, for an uncorrelated CALL, reaching the planner as a
+ *		stray outer reference inside a non-lateral subquery -- a crash).
+ */
+static ParseNamespaceItem *
+makeCallImportNSItem(ParseState *pstate, ParseNamespaceItem *prev_nsitem,
+					 List *importlist, int location)
+{
+	ParseNamespaceItem *nsitem;
+	ParseNamespaceColumn *nscolumns;
+	List	   *erefcolnames = prev_nsitem->p_rte->eref->colnames;
+	int			ncols = list_length(erefcolnames);
+	int			idx;
+	ListCell   *lc;
+
+	/* Every imported variable must name an existing outer variable. */
+	foreach(lc, importlist)
+	{
+		char	   *varname = strVal(lfirst(lc));
+		ListCell   *cn;
+		bool		found = false;
+
+		foreach(cn, erefcolnames)
+		{
+			if (strcmp(strVal(lfirst(cn)), varname) == 0)
+			{
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_COLUMN),
+					 errmsg("variable \"%s\" to import into CALL does not exist",
+							varname),
+					 parser_errposition(pstate, location)));
+	}
+
+	/* Copy prev's per-column data, then invalidate the non-imported columns. */
+	nscolumns = (ParseNamespaceColumn *)
+		palloc(ncols * sizeof(ParseNamespaceColumn));
+	memcpy(nscolumns, prev_nsitem->p_nscolumns,
+		   ncols * sizeof(ParseNamespaceColumn));
+
+	idx = 0;
+	foreach(lc, erefcolnames)
+	{
+		char	   *cname = strVal(lfirst(lc));
+		bool		imported = false;
+		ListCell   *il;
+
+		if (cname[0] != '\0')
+		{
+			foreach(il, importlist)
+			{
+				if (strcmp(strVal(lfirst(il)), cname) == 0)
+				{
+					imported = true;
+					break;
+				}
+			}
+		}
+		if (!imported)
+			nscolumns[idx].p_varno = 0;
+		idx++;
+	}
+
+	nsitem = (ParseNamespaceItem *) palloc(sizeof(ParseNamespaceItem));
+	*nsitem = *prev_nsitem;
+	nsitem->p_nscolumns = nscolumns;
+	nsitem->p_rel_visible = false;
+	nsitem->p_cols_visible = true;
+	nsitem->p_lateral_only = false;
+	nsitem->p_lateral_ok = true;
+
+	return nsitem;
+}
+
+/*
+ * transformCypherCallClause
+ *		CALL { <read subquery> } -- run a subquery as a clause in the pipeline.
+ *
+ *		The subquery is analyzed into a self-contained Query and joined with the
+ *		working table as a subquery RTE.  It is LATERAL when the CALL imports
+ *		outer variables (correlated), so the planner can decorrelate it to a
+ *		hash/merge join when the body is a plain pattern match, or run it as a
+ *		per-row lateral join when the body cannot be decorrelated (aggregation,
+ *		ORDER BY/LIMIT, DISTINCT, UNION).  A returning subquery joins outer x
+ *		inner; an inner aggregation yields exactly one row per outer row.  The
+ *		subquery's RETURN columns surface to the clauses that follow.
+ *
+ *		Phase 1 is read-only: cypher_read_stmt already excludes write clauses,
+ *		and a graph-write body is rejected defensively below.
+ */
+Query *
+transformCypherCallClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherCallClause *detail = (CypherCallClause *) clause->detail;
+	Query	   *qry;
+	Query	   *subqry;
+	ParseNamespaceItem *nsitem;
+	ParseNamespaceItem *prev_nsitem = NULL;
+	List	   *saved_namespace;
+	bool		lateral;
+	bool		has_col;
+	ListCell   *lc;
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	/* Pass through the previous clause's variables. */
+	if (clause->prev != NULL)
+	{
+		prev_nsitem = transformClause(pstate, clause->prev);
+		qry->targetList = makeTargetListFromNSItem(pstate, prev_nsitem);
+	}
+	else if (detail->importlist != NIL)
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_COLUMN),
+				 errmsg("CALL has no preceding clause to import variables from"),
+				 parser_errposition(pstate, detail->location)));
+
+	/*
+	 * Analyze the subquery and join it in.  It is LATERAL exactly when it
+	 * imports outer variables; an uncorrelated CALL is an ordinary subquery the
+	 * planner may flatten.
+	 */
+	lateral = (detail->importlist != NIL);
+
+	/*
+	 * Restrict the outer variables visible inside the subquery to exactly the
+	 * imported ones: a correlated CALL (var, ...) sees only its imports, while
+	 * an uncorrelated CALL () / CALL sees no outer variables at all.  Without
+	 * this, a body referencing a non-imported outer variable would silently
+	 * capture it -- or, for an uncorrelated CALL, reach the planner as a
+	 * malformed outer reference inside a non-lateral subquery (a crash).
+	 */
+	saved_namespace = pstate->p_namespace;
+	if (lateral)
+		pstate->p_namespace =
+			list_make1(makeCallImportNSItem(pstate, prev_nsitem,
+											detail->importlist, detail->location));
+	else
+		pstate->p_namespace = NIL;
+
+	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
+	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
+	pstate->p_lateral_active = lateral;
+
+	subqry = parse_sub_analyze(detail->subquery, pstate, NULL, false, true);
+
+	pstate->p_lateral_active = false;
+	pstate->p_expr_kind = EXPR_KIND_NONE;
+	pstate->p_namespace = saved_namespace;
+
+	/* A read-only CALL: reject a write body (the grammar also excludes it). */
+	if (subqry->commandType != CMD_SELECT)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("a write clause is not allowed in a CALL subquery"),
+				 parser_errposition(pstate, detail->location)));
+
+	/* The subquery must RETURN something (a FINISH-terminated body yields none). */
+	has_col = false;
+	foreach(lc, subqry->targetList)
+	{
+		if (!((TargetEntry *) lfirst(lc))->resjunk)
+		{
+			has_col = true;
+			break;
+		}
+	}
+	if (!has_col)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("CALL subquery must RETURN at least one variable"),
+				 parser_errposition(pstate, detail->location)));
+
+	nsitem = addRangeTableEntryForSubquery(pstate, subqry,
+										   makeAliasNoDup(CYPHER_CALL_ALIAS, NIL),
+										   lateral, true);
+	addNSItemToJoinlist(pstate, nsitem, true);
+
+	qry->targetList = list_concat(qry->targetList,
+								  makeTargetListFromNSItem(pstate, nsitem));
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+	qry->rteperminfos = pstate->p_rteperminfos;
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
+
+/*
  * makeCountTargetEntry
  *		Build a "count(*)" target entry (resno 1) in pstate.  Shared by the
  *		CSP_SIZE subpattern path and the COUNT subquery.

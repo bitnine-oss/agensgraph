@@ -773,6 +773,8 @@ static bool has_internal_default_prefix(char *str);
 %type <list>	cypher_merge_sets_opt cypher_merge_set_list
 
 %type <node>	cypher_load
+%type <node>	cypher_call
+%type <list>	cypher_call_import_opt cypher_call_import_vars
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -914,7 +916,7 @@ static bool has_internal_default_prefix(char *str);
  * FORMAT_LA, NULLS_LA, WITH_LA, and WITHOUT_LA are needed to make the grammar
  * LALR(1).
  */
-%token		FORMAT_LA NOT_LA NULLS_LA WITH_LA WITHOUT_LA
+%token		CALL_LA FORMAT_LA NOT_LA NULLS_LA WITH_LA WITHOUT_LA
 
 /*
  * The grammar likewise thinks these tokens are keywords, but they are never
@@ -19388,6 +19390,7 @@ cypher_clause_head:
 			| cypher_load
 			| cypher_unwind
 			| cypher_for
+			| cypher_call
 			| cypher_finish
 		;
 
@@ -19518,6 +19521,14 @@ cypher_read:
 					n->detail = $1;
 					$$ = (Node *) n;
 				}
+			| cypher_call
+				{
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
+					n->detail = $1;
+					$$ = (Node *) n;
+				}
 			| cypher_read cypher_read_clauses
 				{
 					CypherClause *n;
@@ -19535,6 +19546,7 @@ cypher_read_clauses:
 			| cypher_load
 			| cypher_unwind
 			| cypher_for
+			| cypher_call
 		;
 
 cypher_expr:
@@ -22154,6 +22166,59 @@ cypher_for:
 					n->offset = $5;
 					$$ = (Node *) n;
 				}
+		;
+
+/*
+ * CALL { <read subquery> } -- a subquery run as a pipeline clause.  Outer
+ * variables are imported into the subquery in one of two equivalent ways: the
+ * GQL variable scope clause ("CALL (x, y) { ... }") or a leading importing
+ * WITH ("CALL { WITH x, y ... }").  An empty or absent scope clause with no
+ * leading WITH ("CALL () { ... }" / "CALL { ... }") makes the subquery
+ * uncorrelated.
+ *
+ * The clause keys off CALL_LA, the lookahead variant the lexer substitutes for
+ * CALL when it is immediately followed by '(' or '{' (see base_yylex).  Keeping
+ * it a distinct token from the CALL keyword is what lets a CALL clause appear
+ * inside the read subqueries (where an unqualified CALL could otherwise be an
+ * identifier and "CALL(...)" a function call) without a grammar ambiguity,
+ * while leaving "call" usable as an ordinary identifier and the SQL
+ * "CALL proc()" statement (CALL followed by a name) untouched.  A leading WITH
+ * inside the braces is unambiguous because a read subquery never otherwise
+ * begins with WITH.
+ */
+cypher_call:
+			CALL_LA cypher_call_import_opt '{' cypher_read_stmt '}'
+				{
+					CypherCallClause *n;
+
+					n = makeNode(CypherCallClause);
+					n->subquery = $4;
+					n->importlist = $2;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| CALL_LA cypher_call_import_opt '{' WITH cypher_call_import_vars
+			  cypher_read_stmt '}'
+				{
+					CypherCallClause *n;
+
+					n = makeNode(CypherCallClause);
+					n->subquery = $6;
+					n->importlist = list_concat($2, $5);
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_call_import_opt:
+			'(' ')'									{ $$ = NIL; }
+			| '(' cypher_call_import_vars ')'		{ $$ = $2; }
+			| /* EMPTY */							{ $$ = NIL; }
+		;
+
+cypher_call_import_vars:
+			ColId									{ $$ = list_make1(makeString($1)); }
+			| cypher_call_import_vars ',' ColId		{ $$ = lappend($1, makeString($3)); }
 		;
 
 cypher_for_offset_opt:

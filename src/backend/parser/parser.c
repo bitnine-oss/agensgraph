@@ -156,6 +156,9 @@ base_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner)
 		case WITHOUT:
 			cur_token_length = 7;
 			break;
+		case CALL:
+			cur_token_length = 4;
+			break;
 		default:
 			return cur_token;
 	}
@@ -247,6 +250,26 @@ base_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner)
 			{
 				case TIME:
 					cur_token = WITHOUT_LA;
+					break;
+			}
+			break;
+
+		case CALL:
+
+			/*
+			 * Replace CALL by CALL_LA when it is immediately followed by '(' or
+			 * '{', i.e. when it begins a cypher CALL clause ("CALL (vars) { ...
+			 * }" or "CALL { ... }").  Using a distinct token for the clause lets
+			 * it appear inside read subqueries -- where a bare CALL could be an
+			 * identifier and "CALL(...)" a function call -- without a grammar
+			 * ambiguity, while leaving "call" usable as an identifier and the
+			 * SQL "CALL proc()" statement (CALL followed by a name) untouched.
+			 */
+			switch (next_token)
+			{
+				case '(':
+				case '{':
+					cur_token = CALL_LA;
 					break;
 			}
 			break;

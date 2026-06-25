@@ -225,12 +225,17 @@ make_var(ParseState *pstate, ParseNamespaceItem *nsitem, AttrNumber attnum,
 		/* Get attribute data from the ParseNamespaceColumn array */
 		ParseNamespaceColumn *nscol = &nsitem->p_nscolumns[attnum - 1];
 
-		/* Complain if dropped column.  See notes in scanRTEForColumn. */
+		/*
+		 * A zero p_varno marks a column that is not resolvable here -- a
+		 * dropped column (see scanRTEForColumn), or one hidden by a CALL scope
+		 * clause (see makeCallImportNSItem).  Report it the same way an
+		 * unknown variable is reported elsewhere in cypher.
+		 */
 		if (nscol->p_varno == 0)
 			ereport(ERROR,
 					(errcode(ERRCODE_UNDEFINED_COLUMN),
-					 errmsg("column of relation \"%s\" does not exist",
-							nsitem->p_rte->eref->aliasname)));
+					 errmsg("variable does not exist"),
+					 parser_errposition(pstate, location)));
 
 		result = makeVar(nsitem->p_rtindex,
 						 attnum,
