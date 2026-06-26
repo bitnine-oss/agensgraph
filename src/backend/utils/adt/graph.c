@@ -982,6 +982,37 @@ tuple_getattr(HeapTupleHeader tuphdr, int attnum)
 	return attdat;
 }
 
+/*
+ * graphElementIdIsNull
+ *		A node or relationship bound by an OPTIONAL MATCH that did not match is
+ *		a row whose id attribute is NULL (the row itself is not NULL).  Report
+ *		whether that is the case, reading the id without asserting it is
+ *		non-NULL.  The argument must be a non-NULL VERTEX or EDGE datum.
+ */
+bool
+graphElementIdIsNull(Datum elem, Oid elemtype)
+{
+	HeapTupleHeader tuphdr = DatumGetHeapTupleHeader(elem);
+	HeapTupleData tuple;
+	TupleDesc	tupDesc;
+	AttrNumber	idattno;
+	bool		isnull = false;
+
+	idattno = (elemtype == EDGEOID) ? Anum_ag_edge_id : Anum_ag_vertex_id;
+
+	tupDesc = lookup_rowtype_tupdesc(HeapTupleHeaderGetTypeId(tuphdr), -1);
+
+	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
+	ItemPointerSetInvalid(&tuple.t_self);
+	tuple.t_tableOid = InvalidOid;
+	tuple.t_data = tuphdr;
+
+	(void) heap_getattr(&tuple, idattno, tupDesc, &isnull);
+	ReleaseTupleDesc(tupDesc);
+
+	return isnull;
+}
+
 Datum
 edge_start_vertex(PG_FUNCTION_ARGS)
 {

@@ -220,6 +220,15 @@ reflectTupleChanges(PlanState *pstate, TupleTableSlot *result)
 
 		orig_elem = result->tts_values[i];
 		type = TupleDescAttr(tupDesc, i)->atttypid;
+
+		/*
+		 * A node or relationship whose id is NULL was bound by an OPTIONAL
+		 * MATCH that did not match; it carries no modification to reflect.
+		 */
+		if ((type == VERTEXOID || type == EDGEOID) &&
+			graphElementIdIsNull(orig_elem, type))
+			continue;
+
 		if (type == VERTEXOID)
 		{
 			Datum		graphid;

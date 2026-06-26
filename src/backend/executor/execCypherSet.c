@@ -175,10 +175,25 @@ ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		{
 			Datum		cur_datum = slot->tts_values[i];
 			Oid			element_type = slot->tts_tupleDescriptor->attrs[i].atttypid;
-			Datum		affected_datum = GraphTableTupleUpdate(mgstate,
-															   element_type,
-															   cur_datum,
-															   i);
+			Datum		affected_datum;
+
+			/*
+			 * The element to update may have no value -- for instance one bound
+			 * by an OPTIONAL MATCH that did not match.  That shows up either as
+			 * a NULL column or as a node/relationship row whose id is NULL.
+			 * Either way there is nothing to update, and dereferencing it would
+			 * crash, so skip it.
+			 */
+			if (slot->tts_isnull[i])
+				continue;
+			if ((element_type == VERTEXOID || element_type == EDGEOID) &&
+				graphElementIdIsNull(cur_datum, element_type))
+				continue;
+
+			affected_datum = GraphTableTupleUpdate(mgstate,
+												   element_type,
+												   cur_datum,
+												   i);
 
 			if (affected_datum != (Datum) 0)
 			{
@@ -232,6 +247,15 @@ findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot)
 			continue;
 
 		type_oid = slot->tts_tupleDescriptor->attrs[i].atttypid;
+
+		/*
+		 * A node or relationship whose id is NULL was bound by an OPTIONAL
+		 * MATCH that did not match; it carries no modification to reflect.
+		 */
+		if ((type_oid == VERTEXOID || type_oid == EDGEOID) &&
+			graphElementIdIsNull(slot->tts_values[i], type_oid))
+			continue;
+
 		switch (type_oid)
 		{
 			case VERTEXOID:
