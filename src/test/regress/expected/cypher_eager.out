@@ -546,9 +546,35 @@ MERGE (=10);
 ERROR:  jsonb object is expected for property map
 MERGE ()-[:e1 =10]->();
 ERROR:  jsonb object is expected for property map
+-- an eager (non-last) write, a constant-projection WITH, then another write:
+-- when the first write's MATCH spans an edge pattern (a wide tuple), the eager
+-- ModifyGraph becomes the inner side of a NestLoop and is wrapped in Materialize.
+-- The Material must take its result descriptor from its child (whose real output
+-- shape is materialized at run time) rather than from the ModifyGraph node's own
+-- empty planner targetlist, else a zero-width result slot trips a slot-width
+-- assertion.  Distinct labels keep the second write off the first write's rows.
+CREATE VLABEL we_a;
+CREATE VLABEL we_b;
+CREATE VLABEL we_c;
+CREATE ELABEL we_rel;
+CREATE (:we_a)-[:we_rel]->(:we_b);
+CREATE (:we_c);
+MATCH (a:we_a)-[:we_rel]->(b:we_b) SET b.x = 1 WITH 1 AS one MATCH (c:we_c) SET c.y = 2;
+MATCH (n:we_b) RETURN n.x AS we_b_x;
+ we_b_x 
+--------
+ 1
+(1 row)
+
+MATCH (n:we_c) RETURN n.y AS we_c_y;
+ we_c_y 
+--------
+ 2
+(1 row)
+
 -- cleanup
 DROP GRAPH eager_graph CASCADE;
-NOTICE:  drop cascades to 9 other objects
+NOTICE:  drop cascades to 13 other objects
 DETAIL:  drop cascades to sequence eager_graph.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -558,3 +584,7 @@ drop cascades to vlabel v3
 drop cascades to vlabel v4
 drop cascades to elabel e1
 drop cascades to elabel e
+drop cascades to vlabel we_a
+drop cascades to vlabel we_b
+drop cascades to vlabel we_c
+drop cascades to elabel we_rel

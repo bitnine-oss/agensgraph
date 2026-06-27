@@ -405,6 +405,23 @@ MERGE (a)-[:e1]->(a:v1);
 MERGE (=10);
 MERGE ()-[:e1 =10]->();
 
+-- an eager (non-last) write, a constant-projection WITH, then another write:
+-- when the first write's MATCH spans an edge pattern (a wide tuple), the eager
+-- ModifyGraph becomes the inner side of a NestLoop and is wrapped in Materialize.
+-- The Material must take its result descriptor from its child (whose real output
+-- shape is materialized at run time) rather than from the ModifyGraph node's own
+-- empty planner targetlist, else a zero-width result slot trips a slot-width
+-- assertion.  Distinct labels keep the second write off the first write's rows.
+CREATE VLABEL we_a;
+CREATE VLABEL we_b;
+CREATE VLABEL we_c;
+CREATE ELABEL we_rel;
+CREATE (:we_a)-[:we_rel]->(:we_b);
+CREATE (:we_c);
+MATCH (a:we_a)-[:we_rel]->(b:we_b) SET b.x = 1 WITH 1 AS one MATCH (c:we_c) SET c.y = 2;
+MATCH (n:we_b) RETURN n.x AS we_b_x;
+MATCH (n:we_c) RETURN n.y AS we_c_y;
+
 -- cleanup
 
 DROP GRAPH eager_graph CASCADE;

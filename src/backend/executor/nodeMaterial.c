@@ -220,8 +220,18 @@ ExecInitMaterial(Material *node, EState *estate, int eflags)
 	 * because this node doesn't do projections.
 	 *
 	 * material nodes only return tuples from their materialized relation.
+	 *
+	 * A Material faithfully passes its child's tuples through, so its result
+	 * type is exactly the child's result type.  Derive it from the outer plan
+	 * rather than from this node's own targetlist: an AgensGraph ModifyGraph
+	 * child reports an empty planner targetlist (its real output shape lives in
+	 * its subplan and is materialized at execution time), which would otherwise
+	 * give this node a zero-attribute result descriptor and trip the slot-width
+	 * assertion in ExecCopySlot() below.
 	 */
-	ExecInitResultTupleSlotTL(&matstate->ss.ps, &TTSOpsMinimalTuple);
+	matstate->ss.ps.ps_ResultTupleDesc =
+		ExecGetResultType(outerPlanState(matstate));
+	ExecInitResultSlot(&matstate->ss.ps, &TTSOpsMinimalTuple);
 	matstate->ss.ps.ps_ProjInfo = NULL;
 
 	/*
