@@ -48,6 +48,10 @@ static List *ExecInitGraphDelExprs(List *exprs, ModifyGraphState *mgstate);
 
 /* eager */
 static void reflectModifiedProp(ModifyGraphState *mgstate);
+static TupleTableSlot *execModifyGraphReadSubplan(ModifyGraphState *mgstate);
+static void execModifyGraphChild(ModifyGraphState *mgstate);
+static bool predrainEagerWriterWalker(PlanState *node, void *context);
+static void predrainEagerWriters(PlanState *node);
 
 /* common */
 static bool isEdgeArrayOfPath(List *exprs, char *variable);
@@ -86,6 +90,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 	mgstate->done = false;
 	mgstate->child_done = false;
+	mgstate->predrained = false;
 	mgstate->eagerness = mgplan->eagerness;
 	mgstate->modify_cid = GetCurrentCommandId(false) +
 		(mgplan->nr_modify * MODIFY_CID_MAX);
@@ -288,72 +293,254 @@ reflectTupleChanges(PlanState *pstate, TupleTableSlot *result)
 	}
 }
 
+/*
+ * execModifyGraphReadSubplan
+ *
+ * Pull one tuple from this clause's input, reading at the clause's command-id
+ * window so the scan observes earlier clauses' writes but not its own.  Returns
+ * the input slot, or NULL when the input is exhausted.  Shared by the eager
+ * (execModifyGraphChild) and streaming (ExecModifyGraph) read paths so the
+ * command-id window arithmetic lives in exactly one place.
+ */
+static TupleTableSlot *
+execModifyGraphReadSubplan(ModifyGraphState *mgstate)
+{
+	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
+	EState	   *estate = mgstate->ps.state;
+	CommandId	svCid;
+	TupleTableSlot *slot;
+
+	/* ExecInsertIndexTuples() uses per-tuple context. Reset it here. */
+	ResetPerTupleExprContext(estate);
+
+	svCid = estate->es_snapshot->curcid;
+
+	switch (plan->operation)
+	{
+		case GWROP_MERGE:
+		case GWROP_DELETE:
+			estate->es_snapshot->curcid =
+				mgstate->modify_cid + MODIFY_CID_NLJOIN_MATCH;
+			break;
+		default:
+			estate->es_snapshot->curcid =
+				mgstate->modify_cid + MODIFY_CID_LOWER_BOUND;
+			break;
+	}
+
+	slot = ExecProcNode(mgstate->subplan);
+
+	estate->es_snapshot->curcid = svCid;
+
+	return slot;
+}
+
+/*
+ * execModifyGraphChild
+ *
+ * Pull every tuple from the subplan and apply this clause's graph
+ * modifications, leaving the results buffered in the tuplestore for an eager
+ * node.  This is the "child" (read+write) phase of ExecModifyGraph, factored
+ * out so that a later clause can force an earlier eager clause to run before
+ * the later clause reads the heap (see predrainEagerWriters).
+ *
+ * It is safe to call more than once: the second call is a no-op because
+ * child_done is set.  A non-eager node streams its rows out one at a time and
+ * therefore must not be drained ahead of time; this routine is only ever
+ * applied to eager nodes.
+ */
+static void
+execModifyGraphChild(ModifyGraphState *mgstate)
+{
+	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
+
+	if (mgstate->child_done)
+		return;
+
+	for (;;)
+	{
+		TupleTableSlot *slot = execModifyGraphReadSubplan(mgstate);
+
+		if (TupIsNull(slot))
+			break;
+
+		slot = mgstate->execProc(mgstate, slot);
+
+		Assert(mgstate->eagerness);
+		Assert(slot != NULL);
+
+		tuplestore_puttupleslot(mgstate->tuplestorestate, slot);
+	}
+
+	mgstate->child_done = true;
+
+	if (mgstate->elemTable != NULL
+		&& plan->operation != GWROP_DELETE
+		&& plan->operation != GWROP_SET)
+		reflectModifiedProp(mgstate);
+}
+
+/*
+ * predrainEagerWriters
+ *
+ * Before a ModifyGraph clause reads the graph, run any eager write clause that
+ * precedes it in the same statement so that the earlier clause's heap changes
+ * physically exist by the time this clause scans the target labels.
+ *
+ * AgensGraph chains write clauses by nesting the earlier clause as a subquery
+ * on one side of a join in the later clause's plan.  Cross-clause visibility
+ * relies on per-clause command-id windows (modify_cid): the later clause reads
+ * at a command id that already sees the earlier clause's writes.  That works
+ * only if the earlier write has actually happened when the later scan runs.
+ * Under a streaming join (e.g. nested loop) it has, because the inner side is
+ * re-read after the outer (earlier) clause produces a row.  But a hash or merge
+ * join materializes one input -- which may be the later clause's scan of a
+ * label the earlier clause writes -- before pulling the side that drives the
+ * earlier clause.  The materialized side then captures pre-write tuple versions
+ * (stale ctids and stale properties), and the subsequent update/delete targets
+ * a superseded tuple, which the heap reports as "attempted to update/delete
+ * invisible tuple".
+ *
+ * Draining the earlier eager clause up front is the same barrier openCypher
+ * implementations insert between a write and a following read (Neo4j's "Eager"
+ * operator).  It changes nothing about the chosen join methods, so set-based
+ * hash/merge plans are preserved; it only fixes the order in which the earlier
+ * writes and the later reads happen.
+ */
+static bool
+predrainEagerWriterWalker(PlanState *node, void *context)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, ModifyGraphState))
+	{
+		ModifyGraphState *child = (ModifyGraphState *) node;
+
+		/*
+		 * A ModifyGraphState keeps its input in its own "subplan" field rather
+		 * than as an ordinary left child, so planstate_tree_walker() does not
+		 * descend into it.  Recurse explicitly, and do so before draining this
+		 * node, so that in a chain of three or more write clauses the innermost
+		 * (earliest) eager clause is drained first.
+		 */
+		predrainEagerWriters(child->subplan);
+
+		if (child->eagerness && !child->child_done)
+		{
+			execModifyGraphChild(child);
+
+			/*
+			 * Mark the child drained so that when the parent later pulls it via
+			 * ExecProcNode() its own ExecModifyGraph() does not repeat the
+			 * now-redundant subplan walk.
+			 */
+			child->predrained = true;
+		}
+
+		return false;
+	}
+
+	if (IsA(node, GraphVLEState))
+	{
+		/*
+		 * A GraphVLE (variable-length path expansion) likewise holds its input
+		 * in a private "subplan" field that planstate_tree_walker() does not
+		 * descend, so recurse into it explicitly; otherwise a write clause
+		 * nested under a [*] expansion would escape the barrier.
+		 */
+		predrainEagerWriters(((GraphVLEState *) node)->subplan);
+		return false;
+	}
+
+	/*
+	 * Ordinary node: descend through its execution inputs.  The context
+	 * argument is unused -- the walk threads no state -- but is required by the
+	 * planstate_tree_walker() callback signature.  planstate_tree_walker() also
+	 * visits initPlan/subPlan expression subqueries; those can never contain a
+	 * graph write (the parser rejects writes inside expression subqueries), so
+	 * the walk drains exactly the writing clauses on this statement's input
+	 * spine and nothing extraneous.
+	 */
+	return planstate_tree_walker(node, predrainEagerWriterWalker, NULL);
+}
+
+static void
+predrainEagerWriters(PlanState *node)
+{
+	if (node == NULL)
+		return;
+
+	/*
+	 * The ModifyGraph/GraphVLE arms of the walker recurse back into this
+	 * function directly rather than through planstate_tree_walker(), so guard
+	 * the recursion depth here the way planstate_tree_walker() does internally.
+	 */
+	check_stack_depth();
+
+	/*
+	 * planstate_tree_walker() invokes the walker on the children of "node",
+	 * not on "node" itself, so handle the case where "node" is directly a
+	 * write clause before descending.
+	 */
+	(void) predrainEagerWriterWalker(node, NULL);
+}
+
 static TupleTableSlot *
 ExecModifyGraph(PlanState *pstate)
 {
 	ModifyGraphState *mgstate = castNode(ModifyGraphState, pstate);
 	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
-	EState	   *estate = mgstate->ps.state;
 
 	if (mgstate->done)
 		return NULL;
 
+	/*
+	 * Force any earlier eager write clause nested in our subplan to run before
+	 * we read the heap, so its modifications are already in place.  This is done
+	 * once, before the first read; for a streaming node we re-enter this
+	 * function per output row, so guard against repeating the tree walk.
+	 */
+	if (!mgstate->predrained)
+	{
+		mgstate->predrained = true;
+		predrainEagerWriters(mgstate->subplan);
+	}
+
 	if (!mgstate->child_done)
 	{
-		for (;;)
+		if (mgstate->eagerness)
 		{
-			CommandId	svCid;
-			TupleTableSlot *slot;
-
-			/* ExecInsertIndexTuples() uses per-tuple context. Reset it here. */
-			ResetPerTupleExprContext(estate);
-
-			svCid = estate->es_snapshot->curcid;
-
-			switch (plan->operation)
-			{
-				case GWROP_MERGE:
-				case GWROP_DELETE:
-					estate->es_snapshot->curcid =
-						mgstate->modify_cid + MODIFY_CID_NLJOIN_MATCH;
-					break;
-				default:
-					estate->es_snapshot->curcid =
-						mgstate->modify_cid + MODIFY_CID_LOWER_BOUND;
-					break;
-			}
-
-			slot = ExecProcNode(mgstate->subplan);
-
-			estate->es_snapshot->curcid = svCid;
-
-			if (TupIsNull(slot))
-				break;
-
-			slot = mgstate->execProc(mgstate, slot);
-
-			if (mgstate->eagerness)
-			{
-				Assert(slot != NULL);
-
-				tuplestore_puttupleslot(mgstate->tuplestorestate, slot);
-			}
-			else if (slot != NULL)
-			{
-				return slot;
-			}
-			else
-			{
-				Assert(plan->last == true);
-			}
+			execModifyGraphChild(mgstate);
 		}
+		else
+		{
+			for (;;)
+			{
+				TupleTableSlot *slot = execModifyGraphReadSubplan(mgstate);
 
-		mgstate->child_done = true;
+				if (TupIsNull(slot))
+					break;
 
-		if (mgstate->elemTable != NULL
-			&& plan->operation != GWROP_DELETE
-			&& plan->operation != GWROP_SET)
-			reflectModifiedProp(mgstate);
+				slot = mgstate->execProc(mgstate, slot);
+
+				if (slot != NULL)
+				{
+					return slot;
+				}
+				else
+				{
+					Assert(plan->last == true);
+				}
+			}
+
+			mgstate->child_done = true;
+
+			if (mgstate->elemTable != NULL
+				&& plan->operation != GWROP_DELETE
+				&& plan->operation != GWROP_SET)
+				reflectModifiedProp(mgstate);
+		}
 	}
 
 	if (mgstate->eagerness)

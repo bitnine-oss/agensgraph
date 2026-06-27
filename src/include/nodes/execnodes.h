@@ -2881,6 +2881,7 @@ typedef struct ModifyGraphState
 	PlanState	ps;
 	bool		done;
 	bool		child_done;
+	bool		predrained;		/* nested eager writers already drained? */
 	bool		eagerness;
 	CommandId	modify_cid;
 	PlanState  *subplan;

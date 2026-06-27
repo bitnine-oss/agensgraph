@@ -572,6 +572,70 @@ MATCH (n:we_c) RETURN n.y AS we_c_y;
  2
 (1 row)
 
+-- A write clause followed (via WITH) by another clause that re-reads and writes
+-- the same elements must observe the earlier writes regardless of the join the
+-- optimizer chooses between them.  Otherwise the later clause's target scan can
+-- be hash/merge-materialized before the earlier eager write runs, capture the
+-- pre-write tuple versions, and fail with "attempted to update/delete invisible
+-- tuple".  The earlier eager clause is now drained before the later read.
+MATCH (n) DETACH DELETE n;
+CREATE (a:v1 {k: 'a'}), (b:v1 {k: 'b'}),
+       (d1:v2 {k: 'd1'}), (d2:v2 {k: 'd2'}), (sh:v2 {k: 'shared'}),
+       (a)-[:e1]->(d1), (a)-[:e1]->(sh), (b)-[:e1]->(sh), (b)-[:e1]->(d2);
+-- chained SET on shared/overlapping targets
+MATCH (w:v1)-[:e1]->(d:v2) SET d.cc = 1
+WITH w
+MATCH (w)-[:e1]->(e:v2) SET e.dd = 1;
+MATCH (n:v2) RETURN n.k AS k, n.cc AS cc, n.dd AS dd ORDER BY k;
+    k     | cc | dd 
+----------+----+----
+ "d1"     | 1  | 1
+ "d2"     | 1  | 1
+ "shared" | 1  | 1
+(3 rows)
+
+-- same, with a hash join forced between the clauses
+SET enable_nestloop = off;
+SET enable_mergejoin = off;
+MATCH (w:v1)-[:e1]->(d:v2) SET d.cc = 2
+WITH w
+MATCH (w)-[:e1]->(e:v2) SET e.dd = 2;
+RESET enable_nestloop;
+RESET enable_mergejoin;
+MATCH (n:v2) RETURN n.k AS k, n.cc AS cc, n.dd AS dd ORDER BY k;
+    k     | cc | dd 
+----------+----+----
+ "d1"     | 2  | 2
+ "d2"     | 2  | 2
+ "shared" | 2  | 2
+(3 rows)
+
+-- three chained write clauses
+MATCH (w:v1)-[:e1]->(d:v2) SET d.p1 = 1
+WITH w
+MATCH (w)-[:e1]->(e:v2) SET e.p2 = 1
+WITH e
+MATCH (e) SET e.p3 = 1;
+MATCH (n:v2) RETURN n.k AS k, n.p1 AS p1, n.p2 AS p2, n.p3 AS p3 ORDER BY k;
+    k     | p1 | p2 | p3 
+----------+----+----+----
+ "d1"     | 1  | 1  | 1
+ "d2"     | 1  | 1  | 1
+ "shared" | 1  | 1  | 1
+(3 rows)
+
+-- SET then DELETE of the same edges (the "delete invisible tuple" variant)
+MATCH (w:v1)-[:e1]->(d:v2) SET d.gone = 1
+WITH d
+MATCH (d)<-[r:e1]-() DELETE r;
+MATCH (:v1)-[r:e1]->(:v2) RETURN count(r) AS remaining;
+ remaining 
+-----------
+ 0
+(1 row)
+
+MATCH (n:v1) DETACH DELETE n;
+MATCH (n:v2) DETACH DELETE n;
 -- cleanup
 DROP GRAPH eager_graph CASCADE;
 NOTICE:  drop cascades to 13 other objects
