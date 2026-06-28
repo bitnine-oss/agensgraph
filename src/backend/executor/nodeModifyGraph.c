@@ -49,6 +49,7 @@ static List *ExecInitGraphDelExprs(List *exprs, ModifyGraphState *mgstate);
 /* eager */
 static void reflectModifiedProp(ModifyGraphState *mgstate);
 static TupleTableSlot *execModifyGraphReadSubplan(ModifyGraphState *mgstate);
+static void publishModifiedCid(ModifyGraphState *mgstate);
 static void execModifyGraphChild(ModifyGraphState *mgstate);
 static bool predrainEagerWriterWalker(PlanState *node, void *context);
 static void predrainEagerWriters(PlanState *node);
@@ -336,6 +337,50 @@ execModifyGraphReadSubplan(ModifyGraphState *mgstate)
 }
 
 /*
+ * publishModifiedCid
+ *
+ * Make this clause's writes visible to a later *reading* clause in the same
+ * statement.
+ *
+ * Cross-clause visibility is approximated with per-clause command-id windows
+ * (modify_cid = base_cid + nr_modify * MODIFY_CID_MAX).  A write clause stamps
+ * the tuple versions it produces with a command id inside its own window
+ * (modify_cid + MODIFY_CID_OUTPUT for CREATE/MERGE/DELETE, modify_cid +
+ * MODIFY_CID_SET for SET).  Another *write* clause that follows reads through
+ * execModifyGraphReadSubplan(), which raises curcid to its own (higher) window
+ * for the duration of that read, so it observes those versions.
+ *
+ * A trailing read clause -- MATCH ... RETURN, or any non-write clause after a
+ * write, e.g. "... SET p.x = 1 WITH p MATCH (p) RETURN p.x" -- is not a
+ * ModifyGraph node and never sets a window: it scans the heap at the ambient
+ * snapshot command id, which was captured before this statement's writes ran
+ * and is therefore below the command id those writes were stamped with.  The
+ * read then misses them (stale property, or a freshly CREATEd element matching
+ * nothing).
+ *
+ * Once this clause's modifications are physically applied, advance the ambient
+ * snapshot command id past the top of this clause's window so that any later
+ * heap read in the statement observes them.  This mirrors the command-counter
+ * bump ExecEndModifyGraph() performs for the *next* statement, brought forward
+ * to the moment the writes land so it benefits a reader in *this* statement.
+ *
+ * The bump is monotonic (never lowers curcid) and is invisible to other write
+ * clauses, which always override curcid for their own reads regardless of the
+ * ambient value.  It changes no plan, adds no scan or join, and runs once per
+ * clause (eager) or once per produced row (streaming), so it preserves the
+ * set-based plans and is EXPLAIN-identical.
+ */
+static void
+publishModifiedCid(ModifyGraphState *mgstate)
+{
+	EState	   *estate = mgstate->ps.state;
+	CommandId	visible_cid = mgstate->modify_cid + MODIFY_CID_MAX;
+
+	if (estate->es_snapshot->curcid < visible_cid)
+		estate->es_snapshot->curcid = visible_cid;
+}
+
+/*
  * execModifyGraphChild
  *
  * Pull every tuple from the subplan and apply this clause's graph
@@ -373,6 +418,8 @@ execModifyGraphChild(ModifyGraphState *mgstate)
 	}
 
 	mgstate->child_done = true;
+
+	publishModifiedCid(mgstate);
 
 	if (mgstate->elemTable != NULL
 		&& plan->operation != GWROP_DELETE
@@ -523,6 +570,13 @@ ExecModifyGraph(PlanState *pstate)
 					break;
 
 				slot = mgstate->execProc(mgstate, slot);
+
+				/*
+				 * The write for this row is now applied; make it visible to a
+				 * later reading clause before we hand the row upward (the
+				 * consumer may read the heap as soon as it receives it).
+				 */
+				publishModifiedCid(mgstate);
 
 				if (slot != NULL)
 				{

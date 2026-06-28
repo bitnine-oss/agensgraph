@@ -26,6 +26,7 @@
 #include "catalog/pg_collation.h"
 #include "catalog/pg_operator.h"
 #include "executor/spi.h"
+#include "miscadmin.h"
 #include "nodes/graphnodes.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
@@ -168,7 +169,10 @@ static bool hasEntityPropConstr(Node *entity);
 static List *makeComponents(List *pattern);
 static bool isPathConnectedTo(CypherPath *path, List *component);
 static bool arePathsConnected(CypherPath *path1, CypherPath *path2);
-static bool validate_pattern_labels(ParseState *pstate, List *pattern);
+static bool validate_pattern_labels(ParseState *pstate,
+									 CypherClause *clause);
+static bool labelCreatedByPrevClause(Node *prev, char *labname,
+									 char labkind);
 
 /* MATCH - transform */
 static Node *transformComponents(ParseState *pstate, List *components,
@@ -732,9 +736,80 @@ repairTargetListCollations(List *targetList)
 	return targetList;
 }
 
+/*
+ * labelCreatedByPrevClause
+ *
+ * Return true if a write clause earlier in this statement (anywhere along the
+ * "prev" chain) creates the vertex/edge label named labname.  CREATE and MERGE
+ * auto-create a referenced label that does not exist yet (createLabelIfNotExist),
+ * so a label can be absent from the catalog when a later clause is parsed but
+ * present by the time that clause executes.
+ *
+ * Clauses are transformed prev-first, but a MATCH validates its own labels
+ * before its prev clause is transformed, so the auto-create has not happened
+ * yet at validation time.  Walking the still-untransformed prev chain lets the
+ * MATCH recognise such a label as one that will exist, instead of treating it
+ * as permanently absent and folding the scan to a constant-false One-Time
+ * Filter -- which would discard the side-effecting CREATE/MERGE that feeds it
+ * (e.g. "CREATE (:L) WITH 1 AS x MATCH (n:L) RETURN n" silently returning
+ * nothing).
+ */
 static bool
-validate_pattern_labels(ParseState *pstate, List *pattern)
+labelCreatedByPrevClause(Node *prev, char *labname, char labkind)
 {
+	CypherClause *clause;
+	List	   *pattern = NIL;
+	ListCell   *lp;
+
+	check_stack_depth();
+
+	if (prev == NULL || !IsA(prev, CypherClause))
+		return false;
+
+	clause = (CypherClause *) prev;
+
+	/* Only CREATE and MERGE auto-create a missing label. */
+	if (cypherClauseTag(clause) == T_CypherCreateClause)
+		pattern = ((CypherCreateClause *) clause->detail)->pattern;
+	else if (cypherClauseTag(clause) == T_CypherMergeClause)
+		pattern = ((CypherMergeClause *) clause->detail)->pattern;
+
+	foreach(lp, pattern)
+	{
+		CypherPath *path = lfirst(lp);
+		ListCell   *le;
+
+		foreach(le, path->chain)
+		{
+			Node	   *elem = lfirst(le);
+
+			if (labkind == LABEL_KIND_VERTEX && IsA(elem, CypherNode))
+			{
+				char	   *l = getCypherName(((CypherNode *) elem)->label);
+
+				if (l != NULL && strcmp(l, labname) == 0)
+					return true;
+			}
+			else if (labkind == LABEL_KIND_EDGE && IsA(elem, CypherRel))
+			{
+				CypherRel  *crel = (CypherRel *) elem;
+				Node	   *type = crel->types ? linitial(crel->types) : NULL;
+				char	   *t = getCypherName(type);
+
+				if (t != NULL && strcmp(t, labname) == 0)
+					return true;
+			}
+		}
+	}
+
+	/* Look further back along the chain of clauses. */
+	return labelCreatedByPrevClause(clause->prev, labname, labkind);
+}
+
+static bool
+validate_pattern_labels(ParseState *pstate, CypherClause *clause)
+{
+	List	   *pattern = ((CypherMatchClause *) clause->detail)->pattern;
 	ListCell   *lp = NULL;
 
 	foreach(lp, pattern)
@@ -755,7 +830,9 @@ validate_pattern_labels(ParseState *pstate, List *pattern)
 				if (labname == NULL)
 					continue;
 
-				if (!labelExist(pstate, labname, labloc, LABEL_KIND_VERTEX, false))
+				if (!labelExist(pstate, labname, labloc, LABEL_KIND_VERTEX, false) &&
+					!labelCreatedByPrevClause(clause->prev, labname,
+											 LABEL_KIND_VERTEX))
 					return false;
 			}
 			else
@@ -768,7 +845,9 @@ validate_pattern_labels(ParseState *pstate, List *pattern)
 				if (typname == NULL)
 					continue;
 
-				if (!labelExist(pstate, typname, typloc, LABEL_KIND_EDGE, false))
+				if (!labelExist(pstate, typname, typloc, LABEL_KIND_EDGE, false) &&
+					!labelCreatedByPrevClause(clause->prev, typname,
+											 LABEL_KIND_EDGE))
 					return false;
 			}
 		}
@@ -788,7 +867,7 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
-	pstate->p_valid_labels = validate_pattern_labels(pstate, detail->pattern);
+	pstate->p_valid_labels = validate_pattern_labels(pstate, clause);
 
 	if (!pstate->p_valid_labels)
 		detail->where = (Node *) makeBoolAConst(false, -1);

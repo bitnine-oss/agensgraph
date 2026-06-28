@@ -461,6 +461,46 @@ MATCH (:v1)-[r:e1]->(:v2) RETURN count(r) AS remaining;
 MATCH (n:v1) DETACH DELETE n;
 MATCH (n:v2) DETACH DELETE n;
 
+-- A read clause that follows a write in the same statement must observe that
+-- write.  The trailing MATCH is not a ModifyGraph node and reads the heap at
+-- the ambient snapshot command id, so without advancing that command id past
+-- the earlier clause's write window it would see the pre-write tuple.
+MATCH (n) DETACH DELETE n;
+CREATE (:v1 {name: 'a', age: 21});
+-- SET then re-MATCH the same vertex: the trailing read must see age = 99
+MATCH (p:v1 {name: 'a'}) SET p.age = 99
+WITH p
+MATCH (q:v1 {name: 'a'})
+RETURN q.age AS should_be_99;
+-- same, with a hash join forced between the write and the trailing read
+SET enable_nestloop = off;
+SET enable_mergejoin = off;
+MATCH (p:v1 {name: 'a'}) SET p.age = 100
+WITH p
+MATCH (q:v1 {name: 'a'})
+RETURN q.age AS should_be_100;
+RESET enable_nestloop;
+RESET enable_mergejoin;
+MATCH (n:v1) DETACH DELETE n;
+
+-- CREATE then re-MATCH in the same statement.  The CREATE auto-creates label
+-- read_after_create, which does not exist when the trailing MATCH is parsed;
+-- the MATCH must still recognise it as a label a preceding clause creates
+-- (otherwise the scan folds to a constant-false One-Time Filter and the
+-- side-effecting CREATE is discarded), and must then observe the new vertex.
+CREATE (:read_after_create {v: 1})
+WITH 1 AS dummy
+MATCH (x:read_after_create)
+RETURN count(x) AS should_be_1;
+-- the CREATE must have actually run
+MATCH (x:read_after_create) RETURN count(x) AS created_total;
+MATCH (n:read_after_create) DETACH DELETE n;
+
+
+-- a MATCH on a label that no preceding clause creates and that does not exist
+-- must still match nothing (the One-Time Filter optimisation is preserved).
+MATCH (x:never_created_label) RETURN count(x) AS should_be_0;
+
 -- cleanup
 
 DROP GRAPH eager_graph CASCADE;
