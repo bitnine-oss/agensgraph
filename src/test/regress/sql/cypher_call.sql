@@ -276,6 +276,13 @@ MATCH (p:Person) CALL (p) { REMOVE p.age RETURN p.name AS n } RETURN p.name;
 MATCH (p:Person) CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) FINISH } RETURN p.name;
 -- a scope clause with no preceding clause to import from
 CALL (p) { MATCH (d:Dog) RETURN d.name AS dog } RETURN dog;
+-- a CALL subquery may not return a name already bound in the outer query: it
+-- would shadow the outer variable for the clauses that follow (an uncorrelated
+-- body)
+MATCH (t:Person) CALL () { RETURN 1 AS t } RETURN t;
+-- the same for a correlated body returning a fresh value under an outer name
+MATCH (p:Person {name: 'Andy'}), (q:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS q } RETURN q;
 
 --
 -- 2. Nested CALL (a CALL inside another CALL's body)
@@ -392,7 +399,7 @@ MATCH (p:Person {name: 'Peter'})
 RETURN COUNT { MATCH (p)-[:HAS_DOG]->(d:Dog)
                CALL (d) { MATCH (d) RETURN d.name AS n } RETURN n } AS c;
 MATCH (p:Person)
-WHERE COUNT { MATCH (p)-[:HAS_DOG]->(d:Dog) CALL (d) { MATCH (d) RETURN d } RETURN d } > 1
+WHERE COUNT { MATCH (p)-[:HAS_DOG]->(d:Dog) CALL (d) { MATCH (d) RETURN d AS dd } RETURN d } > 1
 RETURN p.name AS name ORDER BY name;
 -- COLLECT / ARRAY with a CALL
 MATCH (p:Person {name: 'Peter'})

@@ -1762,8 +1762,34 @@ transformCypherCallClause(ParseState *pstate, CypherClause *clause)
 										   lateral, true);
 	addNSItemToJoinlist(pstate, nsitem, true);
 
-	qry->targetList = list_concat(qry->targetList,
-								  makeTargetListFromNSItem(pstate, nsitem));
+	/*
+	 * A CALL subquery may not return a variable already bound in the outer
+	 * query: it would shadow the outer one for the clauses that follow the
+	 * CALL.  Reject the collision -- without this an uncorrelated body silently
+	 * shadows the outer variable, while a correlated one fails later with a
+	 * confusing type error.  To return an imported variable the body must alias
+	 * it to a fresh name.
+	 */
+	{
+		List	   *body_tlist = makeTargetListFromNSItem(pstate, nsitem);
+		ListCell   *bl;
+
+		foreach(bl, body_tlist)
+		{
+			TargetEntry *bte = (TargetEntry *) lfirst(bl);
+
+			if (bte->resjunk || bte->resname == NULL || bte->resname[0] == '\0')
+				continue;
+			if (findTarget(qry->targetList, bte->resname) != NULL)
+				ereport(ERROR,
+						(errcode(ERRCODE_DUPLICATE_ALIAS),
+						 errmsg("variable \"%s\" returned by the CALL subquery is already bound in the outer query",
+								bte->resname),
+						 parser_errposition(pstate, detail->location)));
+		}
+
+		qry->targetList = list_concat(qry->targetList, body_tlist);
+	}
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);

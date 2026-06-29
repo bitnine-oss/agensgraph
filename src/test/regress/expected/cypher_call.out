@@ -568,6 +568,19 @@ CALL (p) { MATCH (d:Dog) RETURN d.name AS dog } RETURN dog;
 ERROR:  CALL has no preceding clause to import variables from
 LINE 1: CALL (p) { MATCH (d:Dog) RETURN d.name AS dog } RETURN dog;
         ^
+-- a CALL subquery may not return a name already bound in the outer query: it
+-- would shadow the outer variable for the clauses that follow (an uncorrelated
+-- body)
+MATCH (t:Person) CALL () { RETURN 1 AS t } RETURN t;
+ERROR:  variable "t" returned by the CALL subquery is already bound in the outer query
+LINE 1: MATCH (t:Person) CALL () { RETURN 1 AS t } RETURN t;
+                         ^
+-- the same for a correlated body returning a fresh value under an outer name
+MATCH (p:Person {name: 'Andy'}), (q:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS q } RETURN q;
+ERROR:  variable "q" returned by the CALL subquery is already bound in the outer query
+LINE 2: CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS q ...
+        ^
 --
 -- 2. Nested CALL (a CALL inside another CALL's body)
 --
@@ -600,17 +613,17 @@ RETURN p.name AS name, dog, toy;
    ->  Nested Loop
          ->  Nested Loop
                ->  Hash Join
-                     Hash Cond: ("<0000000051>".start = p.id)
-                     ->  Seq Scan on has_dog "<0000000051>"
+                     Hash Cond: ("<0000000052>".start = p.id)
+                     ->  Seq Scan on has_dog "<0000000052>"
                      ->  Hash
                            ->  Seq Scan on person p
                                  Filter: (properties.'name'::text = '"Peter"'::jsonb)
                ->  Index Scan using dog_pkey on dog d
-                     Index Cond: (id = "<0000000051>"."end")
-         ->  Index Only Scan using has_toy_start_idx on has_toy "<0000000052>"
+                     Index Cond: (id = "<0000000052>"."end")
+         ->  Index Only Scan using has_toy_start_idx on has_toy "<0000000053>"
                Index Cond: (start = d.id)
    ->  Index Scan using toy_pkey on toy t
-         Index Cond: (id = "<0000000052>"."end")
+         Index Cond: (id = "<0000000053>"."end")
 (15 rows)
 
 -- importing-WITH inner CALL
@@ -741,14 +754,14 @@ RETURN p.name AS name;
      ->  Nested Loop
            ->  Nested Loop
                  ->  Nested Loop
-                       ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000070>"
+                       ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000071>"
                              Index Cond: (start = p.id)
                        ->  Index Only Scan using dog_pkey on dog d
-                             Index Cond: (id = "<0000000070>"."end")
-                 ->  Index Only Scan using has_toy_start_idx on has_toy "<0000000071>"
+                             Index Cond: (id = "<0000000071>"."end")
+                 ->  Index Only Scan using has_toy_start_idx on has_toy "<0000000072>"
                        Index Cond: (start = d.id)
            ->  Index Only Scan using toy_pkey on toy t
-                 Index Cond: (id = "<0000000071>"."end")
+                 Index Cond: (id = "<0000000072>"."end")
 (14 rows)
 
 MATCH (p:Person)
@@ -784,7 +797,7 @@ RETURN COUNT { MATCH (p)-[:HAS_DOG]->(d:Dog)
 (1 row)
 
 MATCH (p:Person)
-WHERE COUNT { MATCH (p)-[:HAS_DOG]->(d:Dog) CALL (d) { MATCH (d) RETURN d } RETURN d } > 1
+WHERE COUNT { MATCH (p)-[:HAS_DOG]->(d:Dog) CALL (d) { MATCH (d) RETURN d AS dd } RETURN d } > 1
 RETURN p.name AS name ORDER BY name;
   name   
 ---------
@@ -889,10 +902,10 @@ SELECT t.name, t.dog FROM (
                     QUERY PLAN                    
 --------------------------------------------------
  Hash Join
-   Hash Cond: ("<0000000093>"."end" = d.id)
+   Hash Cond: ("<0000000094>"."end" = d.id)
    ->  Hash Join
-         Hash Cond: ("<0000000093>".start = p.id)
-         ->  Seq Scan on has_dog "<0000000093>"
+         Hash Cond: ("<0000000094>".start = p.id)
+         ->  Seq Scan on has_dog "<0000000094>"
          ->  Hash
                ->  Seq Scan on person p
    ->  Hash
@@ -1018,16 +1031,16 @@ RETURN p.name AS name, dog, ndogs;
          ->  Nested Loop
                ->  Index Scan using person_pkey on person p
                      Filter: (properties.'name'::text = '"Peter"'::jsonb)
-               ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000105>"
-                     Index Cond: (start = p.id)
-         ->  Index Scan using dog_pkey on dog d
-               Index Cond: (id = "<0000000105>"."end")
-   ->  Aggregate
-         ->  Nested Loop
                ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000106>"
                      Index Cond: (start = p.id)
+         ->  Index Scan using dog_pkey on dog d
+               Index Cond: (id = "<0000000106>"."end")
+   ->  Aggregate
+         ->  Nested Loop
+               ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000107>"
+                     Index Cond: (start = p.id)
                ->  Index Scan using dog_pkey on dog d2
-                     Index Cond: (id = "<0000000106>"."end")
+                     Index Cond: (id = "<0000000107>"."end")
 (15 rows)
 
 RESET enable_bitmapscan;
