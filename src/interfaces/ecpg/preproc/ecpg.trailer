@@ -1323,7 +1323,7 @@ IntConstVar: Iconst
 		}
 		;
 
-desc_header_item:	SQL_COUNT			{ $$ = ECPGd_count; }
+desc_header_item:	COUNT				{ $$ = ECPGd_count; }
 		;
 
 /*
@@ -1628,7 +1628,6 @@ ECPGKeywords: ECPGKeywords_vanames	{ $$ = $1; }
 
 ECPGKeywords_vanames:  SQL_BREAK		{ $$ = mm_strdup("break"); }
 		| SQL_CARDINALITY				{ $$ = mm_strdup("cardinality"); }
-		| SQL_COUNT						{ $$ = mm_strdup("count"); }
 		| SQL_DATETIME_INTERVAL_CODE	{ $$ = mm_strdup("datetime_interval_code"); }
 		| SQL_DATETIME_INTERVAL_PRECISION	{ $$ = mm_strdup("datetime_interval_precision"); }
 		| SQL_FOUND						{ $$ = mm_strdup("found"); }
