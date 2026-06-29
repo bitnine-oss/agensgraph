@@ -85,6 +85,21 @@ CALL
   (p)
   { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
 RETURN p.name AS name, dog;
+-- (e) star scope clause: import every outer variable -- here equivalent to (a)
+MATCH (p:Person)
+CALL (*) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN p.name AS name, dog ORDER BY name, dog;
+-- plan: CALL (*) imports the same outer variable as (a) and decorrelates to the
+-- identical join
+EXPLAIN (COSTS OFF)
+MATCH (p:Person) CALL (*) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN p.name AS name, dog;
+-- with several outer variables, CALL (*) makes all of them visible in the body
+MATCH (p:Person {name: 'Andy'}), (f:Person {name: 'Peter'})
+CALL (*) { MATCH (p)-[:KNOWS]->(f) RETURN 'knows' AS rel }
+RETURN p.name AS name, f.name AS friend, rel;
+-- error: CALL (*) with no preceding clause has nothing to import
+CALL (*) { MATCH (d:Dog) RETURN d.name AS dog } RETURN dog;
 
 -- 1.2 imported targets: vertex, several vars, edge, computed value ----------
 

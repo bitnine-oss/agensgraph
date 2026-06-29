@@ -4571,7 +4571,9 @@ typedef struct CypherCallClause
 {
 	NodeTag		type;
 	Node	   *subquery;		/* the CALL body (a CypherStmt) */
-	List	   *importlist;		/* imported variable names (String); NIL = none */
+	List	   *importlist;		/* imported variable names (String); NIL = none.
+								 * A single A_Star element is the CALL (*) sentinel:
+								 * import every outer variable. */
 	int			location;
 } CypherCallClause;
 

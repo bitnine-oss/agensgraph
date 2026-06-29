@@ -1545,10 +1545,23 @@ transformCypherForClause(ParseState *pstate, CypherClause *clause)
 }
 
 /*
+ * callImportIsStar
+ *		The CALL (*) sentinel: an import list that is the single A_Star node,
+ *		meaning "import every outer variable".  makeCallImportNSItem skips its
+ *		restriction for it so no outer column is hidden from the body.
+ */
+static bool
+callImportIsStar(List *importlist)
+{
+	return list_length(importlist) == 1 && IsA(linitial(importlist), A_Star);
+}
+
+/*
  * makeCallImportNSItem
  *		Build a namespace item exposing ONLY the variables named in a CALL
  *		(var, ...) scope clause, so the subquery body may reference the imported
- *		outer variables but nothing else.
+ *		outer variables but nothing else.  CALL (*) is the exception: it exposes
+ *		every outer variable, like an importing WITH that lists them all.
  *
  *		Column resolution finds a name by its position in the range-table
  *		entry's column list and then reads the matching ParseNamespaceColumn; an
@@ -1571,33 +1584,40 @@ makeCallImportNSItem(ParseState *pstate, ParseNamespaceItem *prev_nsitem,
 	ParseNamespaceColumn *nscolumns;
 	List	   *erefcolnames = prev_nsitem->p_rte->eref->colnames;
 	int			ncols = list_length(erefcolnames);
+	bool		import_all = callImportIsStar(importlist);
 	int			idx;
 	ListCell   *lc;
 
 	/* Every imported variable must name an existing outer variable. */
-	foreach(lc, importlist)
+	if (!import_all)
 	{
-		char	   *varname = strVal(lfirst(lc));
-		ListCell   *cn;
-		bool		found = false;
-
-		foreach(cn, erefcolnames)
+		foreach(lc, importlist)
 		{
-			if (strcmp(strVal(lfirst(cn)), varname) == 0)
+			char	   *varname = strVal(lfirst(lc));
+			ListCell   *cn;
+			bool		found = false;
+
+			foreach(cn, erefcolnames)
 			{
-				found = true;
-				break;
+				if (strcmp(strVal(lfirst(cn)), varname) == 0)
+				{
+					found = true;
+					break;
+				}
 			}
+			if (!found)
+				ereport(ERROR,
+						(errcode(ERRCODE_UNDEFINED_COLUMN),
+						 errmsg("variable \"%s\" to import into CALL does not exist",
+								varname),
+						 parser_errposition(pstate, location)));
 		}
-		if (!found)
-			ereport(ERROR,
-					(errcode(ERRCODE_UNDEFINED_COLUMN),
-					 errmsg("variable \"%s\" to import into CALL does not exist",
-							varname),
-					 parser_errposition(pstate, location)));
 	}
 
-	/* Copy prev's per-column data, then invalidate the non-imported columns. */
+	/*
+	 * Copy prev's per-column data, then invalidate the non-imported columns.
+	 * CALL (*) imports every column, so nothing is invalidated.
+	 */
 	nscolumns = (ParseNamespaceColumn *)
 		palloc(ncols * sizeof(ParseNamespaceColumn));
 	memcpy(nscolumns, prev_nsitem->p_nscolumns,
@@ -1607,10 +1627,10 @@ makeCallImportNSItem(ParseState *pstate, ParseNamespaceItem *prev_nsitem,
 	foreach(lc, erefcolnames)
 	{
 		char	   *cname = strVal(lfirst(lc));
-		bool		imported = false;
+		bool		imported = import_all;
 		ListCell   *il;
 
-		if (cname[0] != '\0')
+		if (!import_all && cname[0] != '\0')
 		{
 			foreach(il, importlist)
 			{

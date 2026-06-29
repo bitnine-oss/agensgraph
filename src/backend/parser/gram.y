@@ -22208,6 +22208,16 @@ cypher_call:
 					n->location = @1;
 					$$ = (Node *) n;
 				}
+			| CALL_LA '(' '*' ')' '{' cypher_read_stmt '}'
+				{
+					CypherCallClause *n;
+
+					n = makeNode(CypherCallClause);
+					n->subquery = $6;
+					n->importlist = list_make1(makeNode(A_Star));
+					n->location = @1;
+					$$ = (Node *) n;
+				}
 		;
 
 cypher_call_import_opt:
