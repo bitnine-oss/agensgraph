@@ -1928,14 +1928,60 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 {
 	Node	   *result = NULL;
 	Node	   *lexpr;
+	Node	   *containmentLhs;
 	Node	   *rexpr;
 	List	   *rexprs;
 	List	   *rvars;
 	List	   *rnonvars;
 	ListCell   *l;
+	bool		lexpr_is_graph;
 
 	lexpr = transformCypherExprRecurse(pstate, a->lexpr);
-	lexpr = coerce_to_jsonb(pstate, lexpr, "jsonb");
+	lexpr_is_graph = is_graph_type(exprType(lexpr));
+
+	/*
+	 * TODO(perf): membership is tested via jsonb `@>` containment, which
+	 * compares the full serialization (id + tid + properties) of every
+	 * collected element.  A dedicated id-only predicate -- scan the collected
+	 * jsonb array comparing just each element's ->'id' as a graphid, short-
+	 * circuiting on match -- would be faster (8-byte graphid compares, no
+	 * properties) and more correct: id-only identity matches the `=` operator,
+	 * removing the mutate-then-test divergence noted below.  Kept the
+	 * containment form for now as it reuses the existing IN machinery.
+	 */
+
+	/*
+	 * A vertex/edge on the left of IN is a membership test by identity, e.g.
+	 * `v IN collect(u)`.  coerce_to_jsonb() deliberately rejects graph types,
+	 * so serialize the graph element with to_jsonb() instead -- the very same
+	 * serialization collect() uses ({"id": <graphid>, ...}), so the jsonb `@>`
+	 * containment below matches the collected element exactly (identical vertex
+	 * -> identical jsonb).  Note the vertex_to_jsonb cast would NOT work here:
+	 * it yields only the properties.
+	 */
+	if (lexpr_is_graph)
+		lexpr = (Node *) makeFuncExpr(F_TO_JSONB, JSONBOID, list_make1(lexpr),
+									  InvalidOid, InvalidOid,
+									  COERCE_EXPLICIT_CALL);
+	else
+		lexpr = coerce_to_jsonb(pstate, lexpr, "jsonb");
+
+	/*
+	 * jsonb containment `arr @> x` only treats x as an array element when x is
+	 * a primitive; for an object (a serialized vertex/edge) it returns false.
+	 * So for a graph element wrap it in a one-element jsonb array: `arr @> [v]`
+	 * is array-vs-array containment, which does match the element.
+	 */
+	if (lexpr_is_graph)
+	{
+		CypherListExpr *wrap = makeNode(CypherListExpr);
+
+		wrap->elems = list_make1(lexpr);
+		wrap->location = -1;
+		containmentLhs = (Node *) wrap;
+	}
+	else
+		containmentLhs = lexpr;
 
 	rexpr = transformCypherExprRecurse(pstate, a->rexpr);
 
@@ -1958,7 +2004,7 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 		case T_CypherAccessExpr:
 		case T_Var:
 			result = (Node *) make_op(pstate, list_make1(makeString("@>")),
-									  rexpr, lexpr, pstate->p_last_srf,
+									  rexpr, containmentLhs, pstate->p_last_srf,
 									  a->location);
 			break;
 		default:
@@ -1976,7 +2022,7 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 						rexpr = coerce_to_jsonb(pstate, rexpr, "list");
 
 					result = (Node *) make_op(pstate, list_make1(makeString("@>")),
-											  rexpr, lexpr, pstate->p_last_srf,
+											  rexpr, containmentLhs, pstate->p_last_srf,
 											  a->location);
 				}
 				else
