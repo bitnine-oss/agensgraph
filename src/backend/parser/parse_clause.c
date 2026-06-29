@@ -3948,15 +3948,14 @@ generateGroupClause(ParseState *pstate, List **targetlist, List *sortClause)
 		factx.sublevels_up = 0;
 		if (find_agg_walker((Node *) te->expr, &factx))
 		{
-			if (!IsA(te->expr, Aggref))
-			{
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("aggregate must exist solely"),
-						 parser_errposition(pstate,
-											exprLocation((Node *) te->expr))));
-				return NIL;
-			}
+			/*
+			 * The target contains an aggregate (possibly nested inside another
+			 * expression, e.g. round(avg(x), 1), or sitting beside another
+			 * aggregate); it is an aggregated output, not a grouping key, so do
+			 * not add it to the implicit GROUP BY.  If such an expression also
+			 * references a plain column that is neither grouped nor aggregated,
+			 * the standard ungrouped-column check reports it later.
+			 */
 		}
 		else
 		{
