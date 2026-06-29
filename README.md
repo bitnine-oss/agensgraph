@@ -62,6 +62,32 @@ See more information on the [Docker Hub](https://hub.docker.com/r/skaiworldwide/
 To build, install and setup AgensGraph for source, follow instructions in [Installation Guide](INSTALL.md)
 
 
+## Performance Tuning for Graph Workloads
+
+PostgreSQL's defaults are tuned for small relational queries. Graph analytics — neighbourhood aggregation, top-degree, multi-hop traversals — run large hash/sort operations that spill to disk at the default `work_mem`, and benefit from parallelism. The settings below are a good starting point for an analytics or mixed graph workload on a multi-core server.
+
+Apply them with `ALTER SYSTEM SET ...;` followed by `SELECT pg_reload_conf();` (or by editing `postgresql.conf`), or `SET` them per session.
+
+```conf
+# Memory: avoid disk spills in graph aggregation/sort
+work_mem = 256MB                # per sort/hash node; raise for heavy GROUP BY / DISTINCT
+maintenance_work_mem = 1GB      # faster index builds and VACUUM on large edge labels
+
+# Planner: trust indexes and account for the cache
+effective_cache_size = <~70% of RAM>
+random_page_cost = 1.1          # for SSDs, where index scans are nearly as cheap as sequential
+
+# Parallelism: speeds up full-edge-scan analytics
+max_parallel_workers_per_gather = 4
+max_parallel_workers = <number of CPU cores>
+max_worker_processes = <number of CPU cores>
+```
+
+Notes:
+- `work_mem` is allocated **per sort/hash node, per connection**, so a large value combined with many concurrent clients can over-commit memory. Size it to roughly `RAM / expected_concurrency`, or raise it only per session for heavy analytic queries.
+- Parallelism helps large full-scan analytics but adds worker-startup overhead to small point or single-hop reads; lower `max_parallel_workers_per_gather` if your workload is mostly short, OLTP-style queries.
+- After bulk-loading a graph, run `ANALYZE` so the planner has accurate statistics for traversal joins.
+
 ## AgensGraph AI Integration
 [AgensGraph-AI Repository](https://github.com/skaiworldwide-oss/agensgraph-ai) provide collection of tools, integrations, and starter templates for building AI-powered applications that work with AgensGraph.
 
