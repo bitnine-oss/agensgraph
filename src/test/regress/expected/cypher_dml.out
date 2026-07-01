@@ -2184,7 +2184,12 @@ WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
                            Filter: (a.properties.'id'::text = '1'::jsonb)
                      ->  Subquery Scan on x
                            Output: x.start, x."end", x.ids, x.edges, x.vertices
-                           ->  Graph VLE [1..2]
+                           ->  Graph VLE on knows [1..2]
+                                 Direction: outgoing (->)
+                                 Edge Labels:
+                                   knows
+                                   friendships
+                                   familyship
                                  ->  Result
                                        Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
                ->  Memoize
@@ -2194,7 +2199,7 @@ WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
                      ->  Index Only Scan using person_pkey on t.person b
                            Output: b.id
                            Index Cond: (b.id = x."end")
-(25 rows)
+(30 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -2219,7 +2224,12 @@ WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
                                  Filter: (a.properties.'id'::text = '1'::jsonb)
                            ->  Subquery Scan on x
                                  Output: x.start, x."end", x.ids, x.edges, x.vertices
-                                 ->  Graph VLE [1..2]
+                                 ->  Graph VLE on knows [1..2]
+                                       Direction: outgoing (->)
+                                       Edge Labels:
+                                         knows
+                                         friendships
+                                         familyship
                                        ->  Result
                                              Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
                      ->  Memoize
@@ -2229,7 +2239,7 @@ WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
                            ->  Index Scan using person_pkey on t.person b
                                  Output: b.properties, b.id
                                  Index Cond: (b.id = x."end")
-(28 rows)
+(33 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -2252,7 +2262,12 @@ WITH max(b.id) AS id, x[0] AS x RETURN *;
                            Filter: (a.properties.'id'::text = '1'::jsonb)
                      ->  Subquery Scan on x
                            Output: x.start, x."end", x.ids, x.edges, x.vertices
-                           ->  Graph VLE [1..2]
+                           ->  Graph VLE on knows [1..2]
+                                 Direction: outgoing (->)
+                                 Edge Labels:
+                                   knows
+                                   friendships
+                                   familyship
                                  ->  Result
                                        Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
                ->  Memoize
@@ -2262,7 +2277,7 @@ WITH max(b.id) AS id, x[0] AS x RETURN *;
                      ->  Index Scan using person_pkey on t.person b
                            Output: b.properties, b.id
                            Index Cond: (b.id = x."end")
-(26 rows)
+(31 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -2284,7 +2299,12 @@ WITH DISTINCT x AS path RETURN *;
                            Filter: (a.properties.'id'::text = '1'::jsonb)
                      ->  Subquery Scan on x
                            Output: x.start, x."end", x.ids, x.edges, x.vertices
-                           ->  Graph VLE [1..2]
+                           ->  Graph VLE on knows [1..2]
+                                 Direction: outgoing (->)
+                                 Edge Labels:
+                                   knows
+                                   friendships
+                                   familyship
                                  ->  Result
                                        Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
                ->  Memoize
@@ -2294,7 +2314,7 @@ WITH DISTINCT x AS path RETURN *;
                      ->  Index Only Scan using person_pkey on t.person b
                            Output: b.id
                            Index Cond: (b.id = x."end")
-(25 rows)
+(30 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -2319,7 +2339,12 @@ WITH max(b.id::"numeric") AS id, x AS x RETURN *;
                                  Filter: (a.properties.'id'::text = '1'::jsonb)
                            ->  Subquery Scan on x
                                  Output: x.start, x."end", x.ids, x.edges, x.vertices
-                                 ->  Graph VLE [1..2]
+                                 ->  Graph VLE on knows [1..2]
+                                       Direction: outgoing (->)
+                                       Edge Labels:
+                                         knows
+                                         friendships
+                                         familyship
                                        ->  Result
                                              Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
                      ->  Memoize
@@ -2329,7 +2354,7 @@ WITH max(b.id::"numeric") AS id, x AS x RETURN *;
                            ->  Index Scan using person_pkey on t.person b
                                  Output: b.properties, b.id
                                  Index Cond: (b.id = x."end")
-(28 rows)
+(33 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -2352,7 +2377,12 @@ WITH max(b.id) AS id, x AS x RETURN *;
                            Filter: (a.properties.'id'::text = '1'::jsonb)
                      ->  Subquery Scan on x
                            Output: x.start, x."end", x.ids, x.edges, x.vertices
-                           ->  Graph VLE [1..2]
+                           ->  Graph VLE on knows [1..2]
+                                 Direction: outgoing (->)
+                                 Edge Labels:
+                                   knows
+                                   friendships
+                                   familyship
                                  ->  Result
                                        Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
                ->  Memoize
@@ -2362,7 +2392,7 @@ WITH max(b.id) AS id, x AS x RETURN *;
                      ->  Index Scan using person_pkey on t.person b
                            Output: b.properties, b.id
                            Index Cond: (b.id = x."end")
-(26 rows)
+(31 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -2387,7 +2417,12 @@ WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
                                  Filter: (a.properties.'id'::text = '1'::jsonb)
                            ->  Subquery Scan on x
                                  Output: x.start, x."end", x.ids, x.edges, x.vertices
-                                 ->  Graph VLE [1..2]
+                                 ->  Graph VLE on knows [1..2]
+                                       Direction: outgoing (->)
+                                       Edge Labels:
+                                         knows
+                                         friendships
+                                         familyship
                                        ->  Result
                                              Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
                      ->  Memoize
@@ -2397,7 +2432,7 @@ WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
                            ->  Index Scan using person_pkey on t.person b
                                  Output: b.properties, b.id
                                  Index Cond: (b.id = x."end")
-(28 rows)
+(33 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -2420,7 +2455,12 @@ WITH max(length(x)) AS x, b.id AS id RETURN *;
                            Filter: (a.properties.'id'::text = '1'::jsonb)
                      ->  Subquery Scan on x
                            Output: x.start, x."end", x.ids, x.edges, x.vertices
-                           ->  Graph VLE [1..2]
+                           ->  Graph VLE on knows [1..2]
+                                 Direction: outgoing (->)
+                                 Edge Labels:
+                                   knows
+                                   friendships
+                                   familyship
                                  ->  Result
                                        Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
                ->  Memoize
@@ -2430,7 +2470,7 @@ WITH max(length(x)) AS x, b.id AS id RETURN *;
                      ->  Index Scan using person_pkey on t.person b
                            Output: b.properties, b.id
                            Index Cond: (b.id = x."end")
-(26 rows)
+(31 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -2447,7 +2487,12 @@ RETURN x, x IS NOT NULL, x[0] IS NULL;
                Filter: (a.properties.'id'::text = '1'::jsonb)
          ->  Subquery Scan on x
                Output: x.start, x."end", x.ids, x.edges, x.vertices
-               ->  Graph VLE [1..2]
+               ->  Graph VLE on knows [1..2]
+                     Direction: outgoing (->)
+                     Edge Labels:
+                       knows
+                       friendships
+                       familyship
                      ->  Result
                            Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
    ->  Memoize
@@ -2457,7 +2502,7 @@ RETURN x, x IS NOT NULL, x[0] IS NULL;
          ->  Index Only Scan using person_pkey on t.person b
                Output: b.id
                Index Cond: (b.id = x."end")
-(20 rows)
+(25 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -2475,7 +2520,12 @@ WHERE x[0] IS NOT NULL RETURN x[0];
          ->  Subquery Scan on x
                Output: x.start, x."end", x.ids, x.edges, x.vertices
                Filter: (x.edges[1] IS DISTINCT FROM NULL)
-               ->  Graph VLE [1..2]
+               ->  Graph VLE on knows [1..2]
+                     Direction: outgoing (->)
+                     Edge Labels:
+                       knows
+                       friendships
+                       familyship
                      ->  Result
                            Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
    ->  Memoize
@@ -2485,7 +2535,7 @@ WHERE x[0] IS NOT NULL RETURN x[0];
          ->  Index Only Scan using person_pkey on t.person b
                Output: b.id
                Index Cond: (b.id = x."end")
-(21 rows)
+(26 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT * FROM (
@@ -2509,7 +2559,12 @@ SELECT * FROM (
                ->  Subquery Scan on x
                      Output: x.start, x."end", x.ids, x.edges, x.vertices
                      Filter: (x.edges[1] IS DISTINCT FROM NULL)
-                     ->  Graph VLE [1..2]
+                     ->  Graph VLE on knows [1..2]
+                           Direction: outgoing (->)
+                           Edge Labels:
+                             knows
+                             friendships
+                             familyship
                            ->  Result
                                  Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
          ->  Memoize
@@ -2529,7 +2584,12 @@ SELECT * FROM (
                      Filter: (a_1.properties.'id'::text = '1'::jsonb)
                ->  Subquery Scan on x_1
                      Output: x_1.start, x_1."end", x_1.ids, x_1.edges, x_1.vertices
-                     ->  Graph VLE [1..2]
+                     ->  Graph VLE on knows [1..2]
+                           Direction: outgoing (->)
+                           Edge Labels:
+                             knows
+                             friendships
+                             familyship
                            ->  Result
                                  Output: a_1.id, a_1.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
          ->  Memoize
@@ -2539,7 +2599,7 @@ SELECT * FROM (
                ->  Index Only Scan using person_pkey on t.person b_1
                      Output: b_1.id
                      Index Cond: (b_1.id = x_1."end")
-(42 rows)
+(52 rows)
 
 -- AG-154, CS-34 - VLE returns incoreect result with sequential scan
 CREATE GRAPH ag154;

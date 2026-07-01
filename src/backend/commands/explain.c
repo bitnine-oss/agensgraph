@@ -14,6 +14,9 @@
 #include "postgres.h"
 
 #include "access/xact.h"
+#include "ag_const.h"
+#include "catalog/ag_graph_fn.h"
+#include "catalog/pg_inherits.h"
 #include "catalog/pg_type.h"
 #include "commands/createas.h"
 #include "commands/defrem.h"
@@ -1365,6 +1368,33 @@ ExplainPreScanNode(PlanState *planstate, Bitmapset **rels_used)
  * to the nesting depth of logical output groups, and therefore is controlled
  * by ExplainOpenGroup/ExplainCloseGroup.
  */
+/*
+ * graphvle_label_relid
+ *		Resolve the edge label a GraphVLE traverses to its table OID, using the
+ *		session's current graph_path exactly as execGraphVle.c does.  Returns
+ *		InvalidOid when graph_path is unset or the label can't be resolved, so
+ *		EXPLAIN never errors while describing a VLE node.
+ */
+static Oid
+graphvle_label_relid(CypherRel *crel)
+{
+	char	   *typname;
+	char	   *gpath;
+	Oid			graphoid;
+
+	typname = (crel->types == NIL) ? AG_EDGE
+		: getCypherName(linitial(crel->types));
+
+	gpath = get_graph_path_or_null();
+	if (gpath == NULL)
+		return InvalidOid;
+	graphoid = get_graphname_oid(gpath);
+	if (!OidIsValid(graphoid))
+		return InvalidOid;
+
+	return get_laboid_relid(get_labname_laboid(typname, graphoid));
+}
+
 static void
 ExplainNode(PlanState *planstate, List *ancestors,
 			const char *relationship, const char *plan_name,
@@ -1884,6 +1914,18 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				CypherRel  *cypher_rel = (CypherRel *) graph_vle->vle_rel;
 				A_Indices  *rel_indices = (A_Indices *) cypher_rel->varlen;
 				A_Const    *lidx = (A_Const *) rel_indices->lidx;
+				char	   *typname;
+
+				/*
+				 * Show the edge label the VLE traverses each hop -- an
+				 * unlabelled VLE walks the whole ag_edge hierarchy, a labelled
+				 * one walks that label (its subtree, unless ONLY) -- so the plan
+				 * reveals what the node actually scans rather than just "VLE".
+				 */
+				typname = (cypher_rel->types == NIL) ? AG_EDGE
+					: getCypherName(linitial(cypher_rel->types));
+				appendStringInfo(es->str, " on %s%s",
+								 cypher_rel->only ? "ONLY " : "", typname);
 
 				appendStringInfo(es->str, " [%d..",
 								 intVal(&lidx->val));
@@ -2062,6 +2104,63 @@ ExplainNode(PlanState *planstate, List *ancestors,
 	/* quals, sort keys, etc */
 	switch (nodeTag(plan))
 	{
+		case T_GraphVLE:
+			if (es->verbose)
+			{
+				CypherRel  *crel = (CypherRel *) ((GraphVLE *) plan)->vle_rel;
+				Oid			labrelid = graphvle_label_relid(crel);
+				const char *dir;
+
+				if (crel->direction == CYPHER_REL_DIR_RIGHT)
+					dir = "outgoing (->)";
+				else if (crel->direction == CYPHER_REL_DIR_LEFT)
+					dir = "incoming (<-)";
+				else
+					dir = "either (-)";
+				ExplainPropertyText("Direction", dir, es);
+
+				/*
+				 * List the physical edge tables the traversal walks each hop
+				 * (the label subtree, unless ONLY).  This is the honest analogue
+				 * of a child Append -- the per-hop scan is internal to the node
+				 * and never a real subplan -- so render one label per line in
+				 * text (a comma list gets unreadable for large hierarchies), and
+				 * a proper array in the structured formats.
+				 */
+				if (OidIsValid(labrelid))
+				{
+					List	   *inh = crel->only
+						? list_make1_oid(labrelid)
+						: find_all_inheritors(labrelid, NoLock, NULL);
+					List	   *labelnames = NIL;
+					ListCell   *lc;
+
+					foreach(lc, inh)
+					{
+						char	   *relname = get_rel_name(lfirst_oid(lc));
+
+						if (relname != NULL)
+							labelnames = lappend(labelnames, relname);
+					}
+
+					if (es->format == EXPLAIN_FORMAT_TEXT)
+					{
+						ExplainIndentText(es);
+						appendStringInfoString(es->str, "Edge Labels:\n");
+						foreach(lc, labelnames)
+						{
+							appendStringInfoSpaces(es->str, es->indent * 2 + 2);
+							appendStringInfo(es->str, "%s\n", (char *) lfirst(lc));
+						}
+					}
+					else
+						ExplainPropertyList("Edge Labels", labelnames, es);
+
+					list_free(labelnames);
+					list_free(inh);
+				}
+			}
+			break;
 		case T_IndexScan:
 			show_scan_qual(((IndexScan *) plan)->indexqualorig,
 						   "Index Cond", planstate, ancestors, es);

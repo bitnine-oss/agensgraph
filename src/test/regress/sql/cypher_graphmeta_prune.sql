@@ -545,4 +545,12 @@ MATCH (a:dog)-[b]->(c) RETURN label(b) AS lb, label(c) AS lc ORDER BY lb, lc;
 MATCH (a)-[b:rel]->(c) RETURN label(a) AS la, label(b) AS lb, label(c) AS lc ORDER BY la, lb, lc;
 MATCH (a)-[b:subrel]->(c) RETURN label(a) AS la, label(c) AS lc ORDER BY la, lc;
 SET auto_gather_graphmeta = true;
+
+-- VLE EXPLAIN observability: the Graph VLE node names the edge label it walks
+-- and marks subtree expansion (rel has child subrel); VERBOSE lists the actual
+-- edge tables walked and the traversal direction (the per-hop edge scan is
+-- internal to the node, so this is the only view of what it scans).
+EXPLAIN (costs off) MATCH (a:animal)-[:rel*1..2]->(c) RETURN c;
+EXPLAIN (verbose, costs off) MATCH (a:animal)-[:rel*1..2]->(c) RETURN c;
+
 DROP GRAPH gmp10 CASCADE;

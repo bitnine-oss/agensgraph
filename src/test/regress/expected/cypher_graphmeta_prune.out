@@ -1076,7 +1076,7 @@ EXPLAIN (costs off) MATCH (a)-[:e1*]->(b) RETURN a, b;
                ->  Seq Scan on q2 a_8
                ->  Seq Scan on q3 a_9
          ->  Subquery Scan on "<0000000026>"
-               ->  Graph VLE [1..]
+               ->  Graph VLE on e1 [1..]
                      ->  Result
    ->  Memoize
          Cache Key: "<0000000026>"."end"
@@ -1118,7 +1118,7 @@ EXPLAIN (costs off) MATCH (a)-[:e1*2..5]->(b) RETURN a, b;
                ->  Seq Scan on q2 a_8
                ->  Seq Scan on q3 a_9
          ->  Subquery Scan on "<0000000027>"
-               ->  Graph VLE [2..5]
+               ->  Graph VLE on e1 [2..5]
                      ->  Result
    ->  Memoize
          Cache Key: "<0000000027>"."end"
@@ -1151,7 +1151,7 @@ EXPLAIN (costs off) MATCH (a:n1)-[:e1*1..2]->(c) RETURN c;
    ->  Nested Loop
          ->  Seq Scan on n1 a
          ->  Subquery Scan on "<0000000028>"
-               ->  Graph VLE [1..2]
+               ->  Graph VLE on e1 [1..2]
                      ->  Result
    ->  Memoize
          Cache Key: "<0000000028>"."end"
@@ -1184,7 +1184,7 @@ EXPLAIN (costs off) MATCH (a:n1)-[:e1*0..2]->(c) RETURN c;
    ->  Nested Loop
          ->  Seq Scan on n1 a
          ->  Subquery Scan on "<0000000029>"
-               ->  Graph VLE [0..2]
+               ->  Graph VLE on e1 [0..2]
                      ->  Result
    ->  Memoize
          Cache Key: "<0000000029>"."end"
@@ -1226,7 +1226,7 @@ EXPLAIN (costs off) MATCH (a)-[*]->(b) RETURN a, b;
                ->  Seq Scan on q2 a_8
                ->  Seq Scan on q3 a_9
          ->  Subquery Scan on "<0000000030>"
-               ->  Graph VLE [1..]
+               ->  Graph VLE on ag_edge [1..]
                      ->  Result
    ->  Memoize
          Cache Key: "<0000000030>"."end"
@@ -2070,6 +2070,78 @@ MATCH (a)-[b:subrel]->(c) RETURN label(a) AS la, label(c) AS lc ORDER BY la, lc;
 
 SET auto_gather_graphmeta = true;
 NOTICE:  regathering graphmeta...
+-- VLE EXPLAIN observability: the Graph VLE node names the edge label it walks
+-- and marks subtree expansion (rel has child subrel); VERBOSE lists the actual
+-- edge tables walked and the traversal direction (the per-hop edge scan is
+-- internal to the node, so this is the only view of what it scans).
+EXPLAIN (costs off) MATCH (a:animal)-[:rel*1..2]->(c) RETURN c;
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Append
+               ->  Seq Scan on animal a_1
+               ->  Seq Scan on dog a_2
+               ->  Seq Scan on cat a_3
+         ->  Subquery Scan on "<0000000031>"
+               ->  Graph VLE on rel [1..2]
+                     ->  Result
+   ->  Memoize
+         Cache Key: "<0000000031>"."end"
+         Cache Mode: logical
+         ->  Append
+               ->  Seq Scan on ag_vertex c_1
+                     Filter: (id = "<0000000031>"."end")
+               ->  Seq Scan on animal c_2
+                     Filter: (id = "<0000000031>"."end")
+               ->  Index Scan using dog_pkey on dog c_3
+                     Index Cond: (id = "<0000000031>"."end")
+               ->  Index Scan using cat_pkey on cat c_4
+                     Index Cond: (id = "<0000000031>"."end")
+(21 rows)
+
+EXPLAIN (verbose, costs off) MATCH (a:animal)-[:rel*1..2]->(c) RETURN c;
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   Output: ROW(c.id, c.properties, c.ctid)::vertex
+   ->  Nested Loop
+         Output: "<0000000032>"."end"
+         ->  Append
+               ->  Seq Scan on gmp10.animal a_1
+                     Output: a_1.id
+               ->  Seq Scan on gmp10.dog a_2
+                     Output: a_2.id
+               ->  Seq Scan on gmp10.cat a_3
+                     Output: a_3.id
+         ->  Subquery Scan on "<0000000032>"
+               Output: "<0000000032>".start, "<0000000032>"."end", "<0000000032>".ids, "<0000000032>".vertices
+               ->  Graph VLE on rel [1..2]
+                     Direction: outgoing (->)
+                     Edge Labels:
+                       rel
+                       subrel
+                     ->  Result
+                           Output: a.id, a.id, '{}'::graphid[], '[]'::vertex[]
+   ->  Memoize
+         Output: c.id, c.properties, c.ctid
+         Cache Key: "<0000000032>"."end"
+         Cache Mode: logical
+         ->  Append
+               ->  Seq Scan on gmp10.ag_vertex c_1
+                     Output: c_1.id, c_1.properties, c_1.ctid
+                     Filter: (c_1.id = "<0000000032>"."end")
+               ->  Seq Scan on gmp10.animal c_2
+                     Output: c_2.id, c_2.properties, c_2.ctid
+                     Filter: (c_2.id = "<0000000032>"."end")
+               ->  Index Scan using dog_pkey on gmp10.dog c_3
+                     Output: c_3.id, c_3.properties, c_3.ctid
+                     Index Cond: (c_3.id = "<0000000032>"."end")
+               ->  Index Scan using cat_pkey on gmp10.cat c_4
+                     Output: c_4.id, c_4.properties, c_4.ctid
+                     Index Cond: (c_4.id = "<0000000032>"."end")
+(37 rows)
+
 DROP GRAPH gmp10 CASCADE;
 NOTICE:  drop cascades to 8 other objects
 DETAIL:  drop cascades to sequence gmp10.ag_label_seq
