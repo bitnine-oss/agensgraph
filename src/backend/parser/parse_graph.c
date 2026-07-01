@@ -2524,7 +2524,19 @@ recordGraphmetaEdge(Node *edge, bool edge_is_nsitem, CypherRel *crel,
 	rte->graphPruneVleMin = -1;
 
 	if (crel->varlen != NULL)
+	{
+		A_Const    *lidx = (A_Const *) ((A_Indices *) crel->varlen)->lidx;
+
+		/*
+		 * Record the real lower hop bound (the grammar sets lidx to a constant,
+		 * defaulting to 1 when omitted).  The planner prunes a VLE's endpoints
+		 * only when this is >= 1; a *0.. VLE (which may match a zero-length path)
+		 * keeps the barrier behaviour via the -1 sentinel above if lidx is absent.
+		 */
+		if (lidx != NULL)
+			rte->graphPruneVleMin = intVal(&lidx->val);
 		rte->graphPruneRole = GRAPHPRUNE_ROLE_VLE;
+	}
 	else if (crel->direction == CYPHER_REL_DIR_NONE)
 		rte->graphPruneRole = GRAPHPRUNE_ROLE_UNDIR_EDGE;
 	else

@@ -109,6 +109,8 @@ typedef struct GMEdge
 	int			edge_rti;		/* edge's own rtindex (also a domain slot) */
 	bool		undirected;		/* match either orientation; don't narrow edge */
 	bool		reverse;		/* directed <- : pattern src is graphmeta END side */
+	bool		vle;			/* variable-length edge: bound endpoints only */
+	int			labid;			/* vle only: edge label id (edge_rti has no domain) */
 } GMEdge;
 
 /* relid -> labid (0 if the relation is not a graph label). */
@@ -197,6 +199,52 @@ gm_init_domain(Oid graph, int labid)
  * negative members with elog) or is compared against a positive domain labid.
  */
 #define GM_LABID(v)		((int) (uint16) (v))
+
+/*
+ * Collect startside(E) and endside(E) from ag_graphmeta: the vertex labids that
+ * begin, resp. end, some edge of E's subtree (the same subtree the VLE executor
+ * walks -- find_all_inheritors of E, since it is never scanned ONLY).  Caller
+ * owns the returned bitmapsets.  Used by gm_revise_vle to bound a VLE's endpoint
+ * nodes; a missing (edge,start,end) triple means no such edge exists, so an
+ * endpoint label with no supporting triple cannot begin/end the traversal.
+ */
+static void
+gm_vle_sides(Oid graph, int labid, Bitmapset **supStart, Bitmapset **supEnd)
+{
+	Oid			relid;
+	List	   *inh;
+	ListCell   *lc;
+
+	*supStart = NULL;
+	*supEnd = NULL;
+
+	relid = get_labid_relid(graph, (uint16) labid);
+	if (!OidIsValid(relid))
+		return;
+
+	inh = find_all_inheritors(relid, NoLock, NULL);
+	foreach(lc, inh)
+	{
+		int			e = gm_relid_labid(lfirst_oid(lc));
+		CatCList   *cl;
+		int			i;
+
+		if (e == 0)
+			continue;
+		cl = SearchSysCacheList2(GRAPHMETAFULL, ObjectIdGetDatum(graph),
+								 Int16GetDatum((int16) e));
+		for (i = 0; i < cl->n_members; i++)
+		{
+			Form_ag_graphmeta m =
+				(Form_ag_graphmeta) GETSTRUCT(&cl->members[i]->tuple);
+
+			GM_ADD(*supStart, GM_LABID(m->start));
+			GM_ADD(*supEnd, GM_LABID(m->end));
+		}
+		ReleaseCatCacheList(cl);
+	}
+	list_free(inh);
+}
 
 /*
  * Recompute a directed constraint's three domains from ag_graphmeta and narrow
@@ -397,6 +445,34 @@ gm_revise_undirected(Oid graph, GMEdge *e, GMDomain *dom, bool *empty)
 }
 
 /*
+ * VLE constraint: a labelled, directed, min>=1 variable-length edge.  Every hop
+ * is an edge of E's subtree, so the graphmeta-start-side endpoint begins the
+ * first hop (=> startside(E)) and the graphmeta-end-side endpoint ends the last
+ * (=> endside(E)); the two bounds are independent because the number of hops is
+ * unknown.  The edge itself is a subquery (no domain slot) and is not narrowed.
+ */
+static bool
+gm_revise_vle(Oid graph, GMEdge *e, GMDomain *dom, bool *empty)
+{
+	GMDomain   *adom = e->reverse ? &dom[e->dst_rti] : &dom[e->src_rti];	/* gm start side */
+	GMDomain   *bdom = e->reverse ? &dom[e->src_rti] : &dom[e->dst_rti];	/* gm end side */
+	Bitmapset  *supStart;
+	Bitmapset  *supEnd;
+	bool		changed = false;
+
+	gm_vle_sides(graph, e->labid, &supStart, &supEnd);
+
+	changed |= gm_narrow(adom, supStart);
+	changed |= gm_narrow(bdom, supEnd);
+
+	if ((!adom->universe && bms_is_empty(adom->set)) ||
+		(!bdom->universe && bms_is_empty(bdom->set)))
+		*empty = true;
+
+	return changed;
+}
+
+/*
  * propagate_graphmeta_constraints
  *		Plan-time pre-pass: solve the MATCH pattern's label constraints against
  *		ag_graphmeta and stash per-rtindex pruned child sets for
@@ -425,11 +501,23 @@ propagate_graphmeta_constraints(PlannerInfo *root)
 	{
 		RangeTblEntry *rte = root->simple_rte_array[rti];
 
-		if (rte == NULL || !OidIsValid(rte->graphPruneGraph) ||
-			rte->graphPruneRole == GRAPHPRUNE_ROLE_VLE)
+		if (rte == NULL || !OidIsValid(rte->graphPruneGraph))
 			continue;
 		graph = rte->graphPruneGraph;
-		if (rte->graphPruneLabid != 0)
+		if (rte->graphPruneRole == GRAPHPRUNE_ROLE_VLE)
+		{
+			/*
+			 * A labelled, directed, min>=1 VLE anchors too: it bounds its
+			 * endpoint nodes to startside/endside of its edge label (see
+			 * gm_revise_vle).  Unlabelled, undirected, or *0.. VLEs stay pure
+			 * barriers (the endpoint could match a label outside those sides).
+			 */
+			if (rte->graphPruneLabid != 0 &&
+				rte->graphPruneDir != CYPHER_REL_DIR_NONE &&
+				rte->graphPruneVleMin >= 1)
+				any_anchor = true;
+		}
+		else if (rte->graphPruneLabid != 0)
 			any_anchor = true;
 	}
 	if (!OidIsValid(graph) || !any_anchor)
@@ -477,6 +565,7 @@ propagate_graphmeta_constraints(PlannerInfo *root)
 	{
 		RangeTblEntry *rte = root->simple_rte_array[rti];
 		char		role;
+		bool		is_vle;
 		int			shift;
 		int			src;
 		int			dst;
@@ -484,7 +573,14 @@ propagate_graphmeta_constraints(PlannerInfo *root)
 		if (rte == NULL || !OidIsValid(rte->graphPruneGraph))
 			continue;
 		role = rte->graphPruneRole;
-		if (role != GRAPHPRUNE_ROLE_DIR_EDGE && role != GRAPHPRUNE_ROLE_UNDIR_EDGE)
+
+		/* a labelled, directed, min>=1 VLE bounds its endpoint nodes */
+		is_vle = (role == GRAPHPRUNE_ROLE_VLE &&
+				  rte->graphPruneLabid != 0 &&
+				  rte->graphPruneDir != CYPHER_REL_DIR_NONE &&
+				  rte->graphPruneVleMin >= 1);
+		if (role != GRAPHPRUNE_ROLE_DIR_EDGE &&
+			role != GRAPHPRUNE_ROLE_UNDIR_EDGE && !is_vle)
 			continue;
 
 		/* this clause's pull-up offset, derived from the edge itself */
@@ -509,6 +605,8 @@ propagate_graphmeta_constraints(PlannerInfo *root)
 			E->edge_rti = rti;
 			E->undirected = (role == GRAPHPRUNE_ROLE_UNDIR_EDGE);
 			E->reverse = (rte->graphPruneDir == CYPHER_REL_DIR_LEFT);
+			E->vle = is_vle;
+			E->labid = rte->graphPruneLabid;
 		}
 	}
 
@@ -526,7 +624,9 @@ propagate_graphmeta_constraints(PlannerInfo *root)
 			changed = false;
 			for (i = 0; i < nedges && !empty; i++)
 			{
-				if (edges[i].undirected)
+				if (edges[i].vle)
+					changed |= gm_revise_vle(graph, &edges[i], dom, &empty);
+				else if (edges[i].undirected)
 					changed |= gm_revise_undirected(graph, &edges[i], dom, &empty);
 				else
 					changed |= gm_revise_directed(graph, &edges[i], dom, &empty);

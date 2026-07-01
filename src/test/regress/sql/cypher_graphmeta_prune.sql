@@ -299,12 +299,36 @@ MATCH (a:n1)-[b]->(c:n3) RETURN c;
 EXPLAIN (costs off) MATCH (a:n5)-[b]->(c) RETURN c;
 MATCH (a:n5)-[b]->(c) RETURN c;
 
--- ---------- VLE must NOT be optimized (pure barrier), even with an anchor ----------
-EXPLAIN (costs off) MATCH (a)-[:e1*]->(b) RETURN a, b;
-EXPLAIN (costs off) MATCH (a)-[:e1*2..5]->(b) RETURN a, b;
+-- ---------- VLE endpoint pruning ----------
+-- A labelled, DIRECTED, min>=1 VLE bounds its endpoint NODES -- the start-side
+-- endpoint to startside(E), the end-side endpoint to endside(E) -- because every
+-- hop is an E-edge (its own subquery scan is never inheritance-pruned).  min=0,
+-- undirected, and unlabelled VLEs stay pure barriers.
+-- pruned: far endpoint c prunes to endside(e1) = {n2}
 EXPLAIN (costs off) MATCH (a:n1)-[:e1*1..2]->(c) RETURN c;
+-- pruned: both endpoints (a -> startside(e1)={n1}, c -> endside(e1)={n2})
+EXPLAIN (costs off) MATCH (a)-[:e1*2..5]->(c) RETURN c;
+-- pruned, LEFT: the near endpoint is the graphmeta end side (a->{n2}), far the start ({n1})
+EXPLAIN (costs off) MATCH (a)<-[:e1*1..2]-(c) RETURN c;
+-- barrier: min=0 (a zero-length path ends at the start node, outside endside(E))
 EXPLAIN (costs off) MATCH (a:n1)-[:e1*0..2]->(c) RETURN c;
-EXPLAIN (costs off) MATCH (a)-[*]->(b) RETURN a, b;
+-- barrier: undirected (a hop may run backwards)
+EXPLAIN (costs off) MATCH (a:n1)-[:e1*1..2]-(c) RETURN c;
+-- barrier: unlabelled
+EXPLAIN (costs off) MATCH (a)-[*1..2]->(c) RETURN c;
+-- result-equivalence (on then off): the barrier counterexamples below are rows a
+-- naive prune would drop -- min=0 keeps the zero-length n1, undirected keeps the
+-- reverse hop -- so on and off must be identical.
+MATCH (a:n1)-[:e1*1..2]->(c) RETURN label(c) AS c ORDER BY c;
+MATCH (a)<-[:e1*1..2]-(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
+MATCH (a:n1)-[:e1*0..2]->(c) RETURN label(c) AS c ORDER BY c;
+MATCH (a:n2)-[:e1*1..1]-(c) RETURN label(c) AS c ORDER BY c;
+SET auto_gather_graphmeta = false;
+MATCH (a:n1)-[:e1*1..2]->(c) RETURN label(c) AS c ORDER BY c;
+MATCH (a)<-[:e1*1..2]-(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
+MATCH (a:n1)-[:e1*0..2]->(c) RETURN label(c) AS c ORDER BY c;
+MATCH (a:n2)-[:e1*1..1]-(c) RETURN label(c) AS c ORDER BY c;
+SET auto_gather_graphmeta = true;
 
 -- ---------- multiple edge labels between the same node labels (disambiguation) ----------
 -- second, parallel chain: n1 -eA-> n2 -eB-> n3 -eC-> n4 -eD-> n5, plus na..ne chain

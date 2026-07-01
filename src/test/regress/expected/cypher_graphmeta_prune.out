@@ -1059,124 +1059,57 @@ MATCH (a:n5)-[b]->(c) RETURN c;
 ---
 (0 rows)
 
--- ---------- VLE must NOT be optimized (pure barrier), even with an anchor ----------
-EXPLAIN (costs off) MATCH (a)-[:e1*]->(b) RETURN a, b;
-                         QUERY PLAN                          
--------------------------------------------------------------
- Nested Loop
+-- ---------- VLE endpoint pruning ----------
+-- A labelled, DIRECTED, min>=1 VLE bounds its endpoint NODES -- the start-side
+-- endpoint to startside(E), the end-side endpoint to endside(E) -- because every
+-- hop is an E-edge (its own subquery scan is never inheritance-pruned).  min=0,
+-- undirected, and unlabelled VLEs stay pure barriers.
+-- pruned: far endpoint c prunes to endside(e1) = {n2}
+EXPLAIN (costs off) MATCH (a:n1)-[:e1*1..2]->(c) RETURN c;
+                 QUERY PLAN                  
+---------------------------------------------
+ Hash Join
+   Hash Cond: ("<0000000026>"."end" = c.id)
    ->  Nested Loop
-         ->  Append
-               ->  Seq Scan on ag_vertex a_1
-               ->  Seq Scan on n1 a_2
-               ->  Seq Scan on n2 a_3
-               ->  Seq Scan on n3 a_4
-               ->  Seq Scan on n4 a_5
-               ->  Seq Scan on n5 a_6
-               ->  Seq Scan on q1 a_7
-               ->  Seq Scan on q2 a_8
-               ->  Seq Scan on q3 a_9
+         ->  Seq Scan on n1 a
          ->  Subquery Scan on "<0000000026>"
-               ->  Graph VLE on e1 [1..]
+               ->  Graph VLE on e1 [1..2]
                      ->  Result
-   ->  Memoize
-         Cache Key: "<0000000026>"."end"
-         Cache Mode: logical
-         ->  Append
-               ->  Seq Scan on ag_vertex b_1
-                     Filter: (id = "<0000000026>"."end")
-               ->  Index Scan using n1_pkey on n1 b_2
-                     Index Cond: (id = "<0000000026>"."end")
-               ->  Index Scan using n2_pkey on n2 b_3
-                     Index Cond: (id = "<0000000026>"."end")
-               ->  Index Scan using n3_pkey on n3 b_4
-                     Index Cond: (id = "<0000000026>"."end")
-               ->  Index Scan using n4_pkey on n4 b_5
-                     Index Cond: (id = "<0000000026>"."end")
-               ->  Index Scan using n5_pkey on n5 b_6
-                     Index Cond: (id = "<0000000026>"."end")
-               ->  Index Scan using q1_pkey on q1 b_7
-                     Index Cond: (id = "<0000000026>"."end")
-               ->  Index Scan using q2_pkey on q2 b_8
-                     Index Cond: (id = "<0000000026>"."end")
-               ->  Index Scan using q3_pkey on q3 b_9
-                     Index Cond: (id = "<0000000026>"."end")
-(37 rows)
+   ->  Hash
+         ->  Seq Scan on n2 c
+(9 rows)
 
-EXPLAIN (costs off) MATCH (a)-[:e1*2..5]->(b) RETURN a, b;
-                         QUERY PLAN                          
--------------------------------------------------------------
- Nested Loop
+-- pruned: both endpoints (a -> startside(e1)={n1}, c -> endside(e1)={n2})
+EXPLAIN (costs off) MATCH (a)-[:e1*2..5]->(c) RETURN c;
+                 QUERY PLAN                  
+---------------------------------------------
+ Hash Join
+   Hash Cond: ("<0000000027>"."end" = c.id)
    ->  Nested Loop
-         ->  Append
-               ->  Seq Scan on ag_vertex a_1
-               ->  Seq Scan on n1 a_2
-               ->  Seq Scan on n2 a_3
-               ->  Seq Scan on n3 a_4
-               ->  Seq Scan on n4 a_5
-               ->  Seq Scan on n5 a_6
-               ->  Seq Scan on q1 a_7
-               ->  Seq Scan on q2 a_8
-               ->  Seq Scan on q3 a_9
+         ->  Seq Scan on n1 a
          ->  Subquery Scan on "<0000000027>"
                ->  Graph VLE on e1 [2..5]
                      ->  Result
-   ->  Memoize
-         Cache Key: "<0000000027>"."end"
-         Cache Mode: logical
-         ->  Append
-               ->  Seq Scan on ag_vertex b_1
-                     Filter: (id = "<0000000027>"."end")
-               ->  Index Scan using n1_pkey on n1 b_2
-                     Index Cond: (id = "<0000000027>"."end")
-               ->  Index Scan using n2_pkey on n2 b_3
-                     Index Cond: (id = "<0000000027>"."end")
-               ->  Index Scan using n3_pkey on n3 b_4
-                     Index Cond: (id = "<0000000027>"."end")
-               ->  Index Scan using n4_pkey on n4 b_5
-                     Index Cond: (id = "<0000000027>"."end")
-               ->  Index Scan using n5_pkey on n5 b_6
-                     Index Cond: (id = "<0000000027>"."end")
-               ->  Index Scan using q1_pkey on q1 b_7
-                     Index Cond: (id = "<0000000027>"."end")
-               ->  Index Scan using q2_pkey on q2 b_8
-                     Index Cond: (id = "<0000000027>"."end")
-               ->  Index Scan using q3_pkey on q3 b_9
-                     Index Cond: (id = "<0000000027>"."end")
-(37 rows)
+   ->  Hash
+         ->  Seq Scan on n2 c
+(9 rows)
 
-EXPLAIN (costs off) MATCH (a:n1)-[:e1*1..2]->(c) RETURN c;
-                         QUERY PLAN                          
--------------------------------------------------------------
- Nested Loop
+-- pruned, LEFT: the near endpoint is the graphmeta end side (a->{n2}), far the start ({n1})
+EXPLAIN (costs off) MATCH (a)<-[:e1*1..2]-(c) RETURN c;
+                 QUERY PLAN                  
+---------------------------------------------
+ Hash Join
+   Hash Cond: ("<0000000028>".start = c.id)
    ->  Nested Loop
-         ->  Seq Scan on n1 a
+         ->  Seq Scan on n2 a
          ->  Subquery Scan on "<0000000028>"
                ->  Graph VLE on e1 [1..2]
                      ->  Result
-   ->  Memoize
-         Cache Key: "<0000000028>"."end"
-         Cache Mode: logical
-         ->  Append
-               ->  Seq Scan on ag_vertex c_1
-                     Filter: (id = "<0000000028>"."end")
-               ->  Index Scan using n1_pkey on n1 c_2
-                     Index Cond: (id = "<0000000028>"."end")
-               ->  Index Scan using n2_pkey on n2 c_3
-                     Index Cond: (id = "<0000000028>"."end")
-               ->  Index Scan using n3_pkey on n3 c_4
-                     Index Cond: (id = "<0000000028>"."end")
-               ->  Index Scan using n4_pkey on n4 c_5
-                     Index Cond: (id = "<0000000028>"."end")
-               ->  Index Scan using n5_pkey on n5 c_6
-                     Index Cond: (id = "<0000000028>"."end")
-               ->  Index Scan using q1_pkey on q1 c_7
-                     Index Cond: (id = "<0000000028>"."end")
-               ->  Index Scan using q2_pkey on q2 c_8
-                     Index Cond: (id = "<0000000028>"."end")
-               ->  Index Scan using q3_pkey on q3 c_9
-                     Index Cond: (id = "<0000000028>"."end")
-(28 rows)
+   ->  Hash
+         ->  Seq Scan on n1 c
+(9 rows)
 
+-- barrier: min=0 (a zero-length path ends at the start node, outside endside(E))
 EXPLAIN (costs off) MATCH (a:n1)-[:e1*0..2]->(c) RETURN c;
                          QUERY PLAN                          
 -------------------------------------------------------------
@@ -1210,7 +1143,42 @@ EXPLAIN (costs off) MATCH (a:n1)-[:e1*0..2]->(c) RETURN c;
                      Index Cond: (id = "<0000000029>"."end")
 (28 rows)
 
-EXPLAIN (costs off) MATCH (a)-[*]->(b) RETURN a, b;
+-- barrier: undirected (a hop may run backwards)
+EXPLAIN (costs off) MATCH (a:n1)-[:e1*1..2]-(c) RETURN c;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Seq Scan on n1 a
+         ->  Subquery Scan on "<0000000030>"
+               ->  Graph VLE on e1 [1..2]
+                     ->  Result
+   ->  Memoize
+         Cache Key: "<0000000030>"._end
+         Cache Mode: logical
+         ->  Append
+               ->  Seq Scan on ag_vertex c_1
+                     Filter: (id = "<0000000030>"._end)
+               ->  Index Scan using n1_pkey on n1 c_2
+                     Index Cond: (id = "<0000000030>"._end)
+               ->  Index Scan using n2_pkey on n2 c_3
+                     Index Cond: (id = "<0000000030>"._end)
+               ->  Index Scan using n3_pkey on n3 c_4
+                     Index Cond: (id = "<0000000030>"._end)
+               ->  Index Scan using n4_pkey on n4 c_5
+                     Index Cond: (id = "<0000000030>"._end)
+               ->  Index Scan using n5_pkey on n5 c_6
+                     Index Cond: (id = "<0000000030>"._end)
+               ->  Index Scan using q1_pkey on q1 c_7
+                     Index Cond: (id = "<0000000030>"._end)
+               ->  Index Scan using q2_pkey on q2 c_8
+                     Index Cond: (id = "<0000000030>"._end)
+               ->  Index Scan using q3_pkey on q3 c_9
+                     Index Cond: (id = "<0000000030>"._end)
+(28 rows)
+
+-- barrier: unlabelled
+EXPLAIN (costs off) MATCH (a)-[*1..2]->(c) RETURN c;
                          QUERY PLAN                          
 -------------------------------------------------------------
  Nested Loop
@@ -1225,33 +1193,89 @@ EXPLAIN (costs off) MATCH (a)-[*]->(b) RETURN a, b;
                ->  Seq Scan on q1 a_7
                ->  Seq Scan on q2 a_8
                ->  Seq Scan on q3 a_9
-         ->  Subquery Scan on "<0000000030>"
-               ->  Graph VLE on ag_edge [1..]
+         ->  Subquery Scan on "<0000000031>"
+               ->  Graph VLE on ag_edge [1..2]
                      ->  Result
    ->  Memoize
-         Cache Key: "<0000000030>"."end"
+         Cache Key: "<0000000031>"."end"
          Cache Mode: logical
          ->  Append
-               ->  Seq Scan on ag_vertex b_1
-                     Filter: (id = "<0000000030>"."end")
-               ->  Index Scan using n1_pkey on n1 b_2
-                     Index Cond: (id = "<0000000030>"."end")
-               ->  Index Scan using n2_pkey on n2 b_3
-                     Index Cond: (id = "<0000000030>"."end")
-               ->  Index Scan using n3_pkey on n3 b_4
-                     Index Cond: (id = "<0000000030>"."end")
-               ->  Index Scan using n4_pkey on n4 b_5
-                     Index Cond: (id = "<0000000030>"."end")
-               ->  Index Scan using n5_pkey on n5 b_6
-                     Index Cond: (id = "<0000000030>"."end")
-               ->  Index Scan using q1_pkey on q1 b_7
-                     Index Cond: (id = "<0000000030>"."end")
-               ->  Index Scan using q2_pkey on q2 b_8
-                     Index Cond: (id = "<0000000030>"."end")
-               ->  Index Scan using q3_pkey on q3 b_9
-                     Index Cond: (id = "<0000000030>"."end")
+               ->  Seq Scan on ag_vertex c_1
+                     Filter: (id = "<0000000031>"."end")
+               ->  Index Scan using n1_pkey on n1 c_2
+                     Index Cond: (id = "<0000000031>"."end")
+               ->  Index Scan using n2_pkey on n2 c_3
+                     Index Cond: (id = "<0000000031>"."end")
+               ->  Index Scan using n3_pkey on n3 c_4
+                     Index Cond: (id = "<0000000031>"."end")
+               ->  Index Scan using n4_pkey on n4 c_5
+                     Index Cond: (id = "<0000000031>"."end")
+               ->  Index Scan using n5_pkey on n5 c_6
+                     Index Cond: (id = "<0000000031>"."end")
+               ->  Index Scan using q1_pkey on q1 c_7
+                     Index Cond: (id = "<0000000031>"."end")
+               ->  Index Scan using q2_pkey on q2 c_8
+                     Index Cond: (id = "<0000000031>"."end")
+               ->  Index Scan using q3_pkey on q3 c_9
+                     Index Cond: (id = "<0000000031>"."end")
 (37 rows)
 
+-- result-equivalence (on then off): the barrier counterexamples below are rows a
+-- naive prune would drop -- min=0 keeps the zero-length n1, undirected keeps the
+-- reverse hop -- so on and off must be identical.
+MATCH (a:n1)-[:e1*1..2]->(c) RETURN label(c) AS c ORDER BY c;
+  c   
+------
+ "n2"
+(1 row)
+
+MATCH (a)<-[:e1*1..2]-(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
+  a   |  c   
+------+------
+ "n2" | "n1"
+(1 row)
+
+MATCH (a:n1)-[:e1*0..2]->(c) RETURN label(c) AS c ORDER BY c;
+  c   
+------
+ "n1"
+ "n2"
+(2 rows)
+
+MATCH (a:n2)-[:e1*1..1]-(c) RETURN label(c) AS c ORDER BY c;
+  c   
+------
+ "n1"
+(1 row)
+
+SET auto_gather_graphmeta = false;
+MATCH (a:n1)-[:e1*1..2]->(c) RETURN label(c) AS c ORDER BY c;
+  c   
+------
+ "n2"
+(1 row)
+
+MATCH (a)<-[:e1*1..2]-(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
+  a   |  c   
+------+------
+ "n2" | "n1"
+(1 row)
+
+MATCH (a:n1)-[:e1*0..2]->(c) RETURN label(c) AS c ORDER BY c;
+  c   
+------
+ "n1"
+ "n2"
+(2 rows)
+
+MATCH (a:n2)-[:e1*1..1]-(c) RETURN label(c) AS c ORDER BY c;
+  c   
+------
+ "n1"
+(1 row)
+
+SET auto_gather_graphmeta = true;
+NOTICE:  regathering graphmeta...
 -- ---------- multiple edge labels between the same node labels (disambiguation) ----------
 -- second, parallel chain: n1 -eA-> n2 -eB-> n3 -eC-> n4 -eD-> n5, plus na..ne chain
 CREATE ELABEL eA; CREATE ELABEL eB; CREATE ELABEL eC; CREATE ELABEL eD;
@@ -2082,40 +2106,34 @@ EXPLAIN (costs off) MATCH (a:animal)-[:rel*1..2]->(c) RETURN c;
          ->  Append
                ->  Seq Scan on animal a_1
                ->  Seq Scan on dog a_2
-               ->  Seq Scan on cat a_3
-         ->  Subquery Scan on "<0000000031>"
+         ->  Subquery Scan on "<0000000040>"
                ->  Graph VLE on rel [1..2]
                      ->  Result
    ->  Memoize
-         Cache Key: "<0000000031>"."end"
+         Cache Key: "<0000000040>"."end"
          Cache Mode: logical
          ->  Append
-               ->  Seq Scan on ag_vertex c_1
-                     Filter: (id = "<0000000031>"."end")
-               ->  Seq Scan on animal c_2
-                     Filter: (id = "<0000000031>"."end")
-               ->  Index Scan using dog_pkey on dog c_3
-                     Index Cond: (id = "<0000000031>"."end")
-               ->  Index Scan using cat_pkey on cat c_4
-                     Index Cond: (id = "<0000000031>"."end")
-(21 rows)
+               ->  Index Scan using dog_pkey on dog c_1
+                     Index Cond: (id = "<0000000040>"."end")
+               ->  Index Scan using cat_pkey on cat c_2
+                     Index Cond: (id = "<0000000040>"."end")
+(16 rows)
 
 EXPLAIN (verbose, costs off) MATCH (a:animal)-[:rel*1..2]->(c) RETURN c;
                                                   QUERY PLAN                                                   
 ---------------------------------------------------------------------------------------------------------------
  Nested Loop
    Output: ROW(c.id, c.properties, c.ctid)::vertex
+   Inner Unique: true
    ->  Nested Loop
-         Output: "<0000000032>"."end"
+         Output: "<0000000041>"."end"
          ->  Append
                ->  Seq Scan on gmp10.animal a_1
                      Output: a_1.id
                ->  Seq Scan on gmp10.dog a_2
                      Output: a_2.id
-               ->  Seq Scan on gmp10.cat a_3
-                     Output: a_3.id
-         ->  Subquery Scan on "<0000000032>"
-               Output: "<0000000032>".start, "<0000000032>"."end", "<0000000032>".ids, "<0000000032>".vertices
+         ->  Subquery Scan on "<0000000041>"
+               Output: "<0000000041>".start, "<0000000041>"."end", "<0000000041>".ids, "<0000000041>".vertices
                ->  Graph VLE on rel [1..2]
                      Direction: outgoing (->)
                      Edge Labels:
@@ -2125,22 +2143,16 @@ EXPLAIN (verbose, costs off) MATCH (a:animal)-[:rel*1..2]->(c) RETURN c;
                            Output: a.id, a.id, '{}'::graphid[], '[]'::vertex[]
    ->  Memoize
          Output: c.id, c.properties, c.ctid
-         Cache Key: "<0000000032>"."end"
+         Cache Key: "<0000000041>"."end"
          Cache Mode: logical
          ->  Append
-               ->  Seq Scan on gmp10.ag_vertex c_1
+               ->  Index Scan using dog_pkey on gmp10.dog c_1
                      Output: c_1.id, c_1.properties, c_1.ctid
-                     Filter: (c_1.id = "<0000000032>"."end")
-               ->  Seq Scan on gmp10.animal c_2
+                     Index Cond: (c_1.id = "<0000000041>"."end")
+               ->  Index Scan using cat_pkey on gmp10.cat c_2
                      Output: c_2.id, c_2.properties, c_2.ctid
-                     Filter: (c_2.id = "<0000000032>"."end")
-               ->  Index Scan using dog_pkey on gmp10.dog c_3
-                     Output: c_3.id, c_3.properties, c_3.ctid
-                     Index Cond: (c_3.id = "<0000000032>"."end")
-               ->  Index Scan using cat_pkey on gmp10.cat c_4
-                     Output: c_4.id, c_4.properties, c_4.ctid
-                     Index Cond: (c_4.id = "<0000000032>"."end")
-(37 rows)
+                     Index Cond: (c_2.id = "<0000000041>"."end")
+(30 rows)
 
 DROP GRAPH gmp10 CASCADE;
 NOTICE:  drop cascades to 8 other objects
