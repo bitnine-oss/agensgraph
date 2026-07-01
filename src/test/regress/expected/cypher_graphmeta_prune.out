@@ -3491,3 +3491,214 @@ drop cascades to vlabel other
 drop cascades to elabel rel
 SET auto_gather_graphmeta = true;
 NOTICE:  regathering graphmeta...
+-- ============================================================
+-- id() constant scan pruning: a constant filter on id(entity) restricts the
+-- vertex/edge inheritance scan to the single label whose labid is encoded in the
+-- graphid's high bits (structural; independent of ag_graphmeta gathering).
+-- labids: ag_vertex=1, ag_edge=2, person=3, city=4, employee=5, knows=6.
+-- ============================================================
+CREATE GRAPH gmp20;
+SET graph_path = gmp20;
+CREATE VLABEL person;
+CREATE VLABEL city;
+CREATE VLABEL employee INHERITS (person);
+CREATE ELABEL knows;
+SET auto_gather_graphmeta = true;
+CREATE (:person);                    -- 3.1
+CREATE (:city);                      -- 4.1
+MATCH (p:person), (c:city) CREATE (p)-[:knows]->(c);   -- knows 6.1: person -> city
+CREATE (:employee);                  -- 5.1 (after the edge: not a knows source)
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start  | edge  | end  | edgecount 
+-----------+--------+-------+------+-----------
+ gmp20     | person | knows | city |         1
+(1 row)
+
+-- unlabelled node, id pins the label: scans only person
+EXPLAIN (costs off) MATCH (u) WHERE id(u) = '3.1'::graphid RETURN u;
+              QUERY PLAN               
+---------------------------------------
+ Result
+   ->  Seq Scan on person u
+         Filter: (id = '3.1'::graphid)
+(3 rows)
+
+MATCH (u) WHERE id(u) = '3.1'::graphid RETURN label(u) AS l, id(u) AS id;
+    l     | id  
+----------+-----
+ "person" | 3.1
+(1 row)
+
+-- labelled node, matching label
+EXPLAIN (costs off) MATCH (u:person) WHERE id(u) = '3.1'::graphid RETURN u;
+              QUERY PLAN               
+---------------------------------------
+ Result
+   ->  Seq Scan on person u
+         Filter: (id = '3.1'::graphid)
+(3 rows)
+
+-- labelled node, contradicting label (city vs a person id): 0 rows
+EXPLAIN (costs off) MATCH (u:city) WHERE id(u) = '3.1'::graphid RETURN u;
+              QUERY PLAN              
+--------------------------------------
+ Index Scan using city_pkey on city u
+   Index Cond: (id = '3.1'::graphid)
+(2 rows)
+
+MATCH (u:city) WHERE id(u) = '3.1'::graphid RETURN count(*) AS n;
+ n 
+---
+ 0
+(1 row)
+
+-- child-label id under a parent label: scans employee
+EXPLAIN (costs off) MATCH (u:person) WHERE id(u) = '5.1'::graphid RETURN u;
+                     QUERY PLAN                     
+----------------------------------------------------
+ Result
+   ->  Index Scan using employee_pkey on employee u
+         Index Cond: (id = '5.1'::graphid)
+(3 rows)
+
+MATCH (u:person) WHERE id(u) = '5.1'::graphid RETURN label(u) AS l;
+     l      
+------------
+ "employee"
+(1 row)
+
+-- IN/ANY: Cypher `id(u) IN [graphid,...]` is unsupported syntax (a graphid
+-- cannot be a Cypher list element), but a SQL `= ANY(graphid[])` on the scan
+-- prunes to exactly the listed labels: Append over person + city (employee and
+-- the abstract ag_vertex parent dropped).
+EXPLAIN (costs off) SELECT id FROM gmp20.ag_vertex WHERE id = ANY (ARRAY['3.1','4.1']::graphid[]);
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Append
+   ->  Seq Scan on person ag_vertex_1
+         Filter: (id = ANY ('{3.1,4.1}'::graphid[]))
+   ->  Bitmap Heap Scan on city ag_vertex_2
+         Recheck Cond: (id = ANY ('{3.1,4.1}'::graphid[]))
+         ->  Bitmap Index Scan on city_pkey
+               Index Cond: (id = ANY ('{3.1,4.1}'::graphid[]))
+(7 rows)
+
+-- combined with connectivity pruning: b pruned to {city} by knows, pinned to city by id
+EXPLAIN (costs off) MATCH (a:person)-[:knows]->(b) WHERE id(b) = '4.1'::graphid RETURN b;
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Nested Loop
+   ->  Index Scan using city_pkey on city b
+         Index Cond: (id = '4.1'::graphid)
+   ->  Hash Join
+         Hash Cond: (a.id = "<0000000107>".start)
+         ->  Seq Scan on person a
+         ->  Hash
+               ->  Bitmap Heap Scan on knows "<0000000107>"
+                     Recheck Cond: ("end" = '4.1'::graphid)
+                     ->  Bitmap Index Scan on knows_end_idx
+                           Index Cond: ("end" = '4.1'::graphid)
+(11 rows)
+
+MATCH (a:person)-[:knows]->(b) WHERE id(b) = '4.1'::graphid RETURN label(b) AS l;
+   l    
+--------
+ "city"
+(1 row)
+
+-- contradicting: connectivity {city} vs id {person} -> empty
+MATCH (a:person)-[:knows]->(b) WHERE id(b) = '3.1'::graphid RETURN count(*) AS n;
+ n 
+---
+ 0
+(1 row)
+
+-- non-existent labid -> empty
+MATCH (u) WHERE id(u) = '99.1'::graphid RETURN count(*) AS n;
+ n 
+---
+ 0
+(1 row)
+
+-- edge id: scans only knows
+EXPLAIN (costs off) MATCH ()-[e]->() WHERE id(e) = '6.1'::graphid RETURN e;
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Seq Scan on knows e
+               Filter: (id = '6.1'::graphid)
+         ->  Append
+               ->  Seq Scan on ag_vertex "<0000000110>_1"
+                     Filter: (id = e.start)
+               ->  Seq Scan on person "<0000000110>_2"
+                     Filter: (id = e.start)
+               ->  Index Only Scan using city_pkey on city "<0000000110>_3"
+                     Index Cond: (id = e.start)
+               ->  Index Only Scan using employee_pkey on employee "<0000000110>_4"
+                     Index Cond: (id = e.start)
+   ->  Memoize
+         Cache Key: e."end"
+         Cache Mode: logical
+         ->  Append
+               ->  Seq Scan on ag_vertex "<0000000111>_1"
+                     Filter: (id = e."end")
+               ->  Seq Scan on person "<0000000111>_2"
+                     Filter: (id = e."end")
+               ->  Index Only Scan using city_pkey on city "<0000000111>_3"
+                     Index Cond: (id = e."end")
+               ->  Index Only Scan using employee_pkey on employee "<0000000111>_4"
+                     Index Cond: (id = e."end")
+(25 rows)
+
+MATCH ()-[e]->() WHERE id(e) = '6.1'::graphid RETURN label(e) AS l;
+    l    
+---------
+ "knows"
+(1 row)
+
+-- contradictory AND: 0 rows
+MATCH (u) WHERE id(u) = '3.1'::graphid AND id(u) = '4.1'::graphid RETURN count(*) AS n;
+ n 
+---
+ 0
+(1 row)
+
+-- plain SQL scan of the abstract parent also prunes
+EXPLAIN (costs off) SELECT id FROM gmp20.ag_vertex WHERE id = '3.1'::graphid;
+           QUERY PLAN            
+---------------------------------
+ Seq Scan on person ag_vertex
+   Filter: (id = '3.1'::graphid)
+(2 rows)
+
+-- pruned == unpruned equivalence: a generic plan keeps id as a Param (unfolded),
+-- so the prune does not fire (full scan); results must match the pruned custom plan
+SET plan_cache_mode = force_generic_plan;
+PREPARE idq(graphid) AS MATCH (u) WHERE id(u) = $1 RETURN label(u) AS l;
+EXECUTE idq('3.1'::graphid);
+    l     
+----------
+ "person"
+(1 row)
+
+EXECUTE idq('4.1'::graphid);
+   l    
+--------
+ "city"
+(1 row)
+
+DEALLOCATE idq;
+SET plan_cache_mode = auto;
+SET auto_gather_graphmeta = false;
+DROP GRAPH gmp20 CASCADE;
+NOTICE:  drop cascades to 7 other objects
+DETAIL:  drop cascades to sequence gmp20.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
+drop cascades to vlabel city
+drop cascades to vlabel employee
+drop cascades to elabel knows
+SET auto_gather_graphmeta = true;
+NOTICE:  regathering graphmeta...

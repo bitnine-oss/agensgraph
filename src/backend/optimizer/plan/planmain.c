@@ -262,8 +262,12 @@ query_planner(PlannerInfo *root,
 	 * Agensgraph: Before expanding, run the graphmeta constraint-propagation
 	 * pre-pass so it can stash per-rtindex pruned child sets that
 	 * expand_inherited_rtentry() will consume to scan only connected labels.
+	 * Then prune vertex/edge scans that carry a constant id() filter down to the
+	 * one label the graphid identifies (intersecting into the above); this one
+	 * is structural and runs even when ag_graphmeta gathering is off.
 	 */
 	propagate_graphmeta_constraints(root);
+	prune_scans_by_id_const(root);
 
 	/*
 	 * Now expand appendrels by adding "otherrels" for their children.  We

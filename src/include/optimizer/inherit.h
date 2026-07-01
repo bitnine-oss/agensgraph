@@ -23,6 +23,9 @@ extern void expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 /* agensgraph: ag_graphmeta constraint-propagation scan-pruning pre-pass */
 extern void propagate_graphmeta_constraints(PlannerInfo *root);
 
+/* agensgraph: prune vertex/edge scans by a constant id() filter */
+extern void prune_scans_by_id_const(PlannerInfo *root);
+
 extern Bitmapset *get_rel_all_updated_cols(PlannerInfo *root, RelOptInfo *rel);
 
 extern bool apply_child_basequals(PlannerInfo *root, RelOptInfo *parentrel,

@@ -18,6 +18,7 @@
 #include "access/table.h"
 #include "catalog/partition.h"
 #include "catalog/pg_inherits.h"
+#include "catalog/pg_operator_d.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
@@ -46,7 +47,9 @@
 #include "catalog/ag_label_fn.h"
 #include "nodes/bitmapset.h"
 #include "pgstat.h"
+#include "utils/array.h"
 #include "utils/catcache.h"
+#include "utils/graph.h"
 #include "utils/lsyscache.h"
 
 
@@ -135,6 +138,19 @@ gm_relid_labid(Oid relid)
 		ReleaseSysCache(tup);
 	}
 	return labid;
+}
+
+/* relid -> owning graph oid; false if the relation is not a graph label. */
+static bool
+gm_relid_graph(Oid relid, Oid *graph)
+{
+	HeapTuple	tup = SearchSysCache1(LABELRELID, ObjectIdGetDatum(relid));
+
+	if (!HeapTupleIsValid(tup))
+		return false;
+	*graph = ((Form_ag_label) GETSTRUCT(tup))->graphid;
+	ReleaseSysCache(tup);
+	return true;
 }
 
 static bool
@@ -808,6 +824,296 @@ propagate_graphmeta_constraints(PlannerInfo *root)
 
 /* attno of the graphid "id" column on ag_vertex / ag_edge (and every label). */
 #define GRAPHMETA_ID_ATTNO 1
+
+/*
+ * id()-constant scan pruning
+ *
+ * A graphid encodes its storage label in the high 16 bits (GraphidGetLabid) and
+ * is an immutable primary key, so a constant "id = c" (or id IN / = ANY(...))
+ * restriction on a vertex/edge inheritance scan can only match rows in the label
+ * whose labid is GraphidGetLabid(c).  This prunes the inheritance scan to that
+ * one label table, reusing the graphmeta_pruned[] channel.  It is purely
+ * structural (no ag_graphmeta), so it runs regardless of auto_gather_graphmeta.
+ */
+
+/* Is `node` the graphid id column (attno 1) Var of baserel `rti`? */
+static bool
+gm_is_id_var(Node *node, Index rti)
+{
+	if (node && IsA(node, RelabelType))
+		node = (Node *) ((RelabelType *) node)->arg;
+	if (node && IsA(node, Var))
+	{
+		Var		   *v = (Var *) node;
+
+		return (v->varno == rti && v->varattno == GRAPHMETA_ID_ATTNO &&
+				v->vartype == GRAPHIDOID && v->varlevelsup == 0);
+	}
+	return false;
+}
+
+/*
+ * Classify the non-Var side of a graphid equality:
+ *   >= 0 : labid of a non-null graphid Const
+ *   -1   : a NULL graphid Const (matches no row)
+ *   -2   : not a usable graphid Const
+ */
+static int
+gm_const_labid(Node *node)
+{
+	Const	   *c;
+
+	if (node && IsA(node, RelabelType))
+		node = (Node *) ((RelabelType *) node)->arg;
+	if (!node || !IsA(node, Const))
+		return -2;
+	c = (Const *) node;
+	if (c->consttype != GRAPHIDOID)
+		return -2;
+	if (c->constisnull)
+		return -1;
+	return (int) GraphidGetLabid(DatumGetGraphid(c->constvalue));
+}
+
+/*
+ * If `clause` is a graphid id-column equality ("id = c") or IN/ANY
+ * ("id = ANY(array)") on baserel `rti`, set *matched=true and return the set of
+ * candidate labids (a NULL/empty bitmapset then means "matches nothing" ->
+ * provably empty).  Otherwise leave *matched=false and return NULL.  A
+ * disjunctive array containing a non-Const element is unbounded, so it is
+ * treated as no filter (*matched stays false).
+ */
+static Bitmapset *
+gm_id_clause_labids(Node *clause, Index rti, bool *matched)
+{
+	*matched = false;
+
+	if (IsA(clause, OpExpr))
+	{
+		OpExpr	   *op = (OpExpr *) clause;
+		Node	   *l,
+				   *r;
+		int			labid;
+
+		if (op->opno != OID_GRAPHID_EQ_OP || list_length(op->args) != 2)
+			return NULL;
+		l = (Node *) linitial(op->args);
+		r = (Node *) lsecond(op->args);
+
+		if (gm_is_id_var(l, rti))
+			labid = gm_const_labid(r);
+		else if (gm_is_id_var(r, rti))
+			labid = gm_const_labid(l);
+		else
+			return NULL;
+
+		if (labid == -2)
+			return NULL;			/* id compared to a non-constant */
+		*matched = true;
+		if (labid == -1)
+			return NULL;			/* NULL const -> matches nothing */
+		return bms_make_singleton(labid);
+	}
+
+	if (IsA(clause, ScalarArrayOpExpr))
+	{
+		ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *) clause;
+		Node	   *scalar,
+				   *arr;
+		Bitmapset  *set = NULL;
+
+		if (saop->opno != OID_GRAPHID_EQ_OP || !saop->useOr ||
+			list_length(saop->args) != 2)
+			return NULL;
+		scalar = (Node *) linitial(saop->args);
+		arr = (Node *) lsecond(saop->args);
+		if (!gm_is_id_var(scalar, rti))
+			return NULL;
+		if (IsA(arr, RelabelType))
+			arr = (Node *) ((RelabelType *) arr)->arg;
+
+		if (IsA(arr, Const))
+		{
+			Const	   *ac = (Const *) arr;
+			ArrayType  *at;
+			Datum	   *elems;
+			bool	   *nulls;
+			int			nelems,
+						i;
+			int16		elmlen;
+			bool		elmbyval;
+			char		elmalign;
+
+			if (ac->consttype != GRAPHIDARRAYOID)
+				return NULL;
+			*matched = true;
+			if (ac->constisnull)
+				return NULL;		/* = ANY(NULL) -> matches nothing */
+			at = DatumGetArrayTypeP(ac->constvalue);
+			get_typlenbyvalalign(GRAPHIDOID, &elmlen, &elmbyval, &elmalign);
+			deconstruct_array(at, GRAPHIDOID, elmlen, elmbyval, elmalign,
+							  &elems, &nulls, &nelems);
+			for (i = 0; i < nelems; i++)
+				if (!nulls[i])
+					set = bms_add_member(set,
+										 (int) GraphidGetLabid(DatumGetGraphid(elems[i])));
+			return set;				/* empty (NULL) => matches nothing */
+		}
+		else if (IsA(arr, ArrayExpr))
+		{
+			ArrayExpr  *ae = (ArrayExpr *) arr;
+			ListCell   *lc;
+
+			foreach(lc, ae->elements)
+			{
+				int			el = gm_const_labid((Node *) lfirst(lc));
+
+				if (el == -2)
+				{
+					bms_free(set);
+					return NULL;	/* non-Const element -> unbounded, no filter */
+				}
+				if (el >= 0)
+					set = bms_add_member(set, el);
+				/* el == -1 (NULL element): never-true disjunct, skip */
+			}
+			*matched = true;
+			return set;
+		}
+		return NULL;
+	}
+
+	return NULL;
+}
+
+/* Intersect two OID lists (small; preserves the order of `a`). */
+static List *
+gm_oid_list_intersect(List *a, List *b)
+{
+	List	   *out = NIL;
+	ListCell   *lc;
+
+	foreach(lc, a)
+	{
+		Oid			o = lfirst_oid(lc);
+
+		if (list_member_oid(b, o))
+			out = lappend_oid(out, o);
+	}
+	return out;
+}
+
+/* Write/intersect `survivors` into root->graphmeta_pruned[rti]. */
+static void
+gm_merge_id_prune(PlannerInfo *root, int n, Index rti, List *survivors)
+{
+	GraphmetaPrune *existing;
+
+	if (root->graphmeta_pruned == NULL)
+		root->graphmeta_pruned = (GraphmetaPrune **)
+			palloc0(n * sizeof(GraphmetaPrune *));
+
+	existing = root->graphmeta_pruned[rti];
+	if (existing == NULL)
+	{
+		GraphmetaPrune *gp = (GraphmetaPrune *) palloc(sizeof(GraphmetaPrune));
+
+		gp->relids = survivors;		/* NIL => parent-only / provably empty */
+		root->graphmeta_pruned[rti] = gp;
+	}
+	else if (existing->relids != NIL)
+	{
+		/* connectivity solver already pruned this rti: intersect */
+		existing->relids = gm_oid_list_intersect(existing->relids, survivors);
+	}
+	/* else existing->relids == NIL: already provably empty, leave as-is */
+}
+
+/*
+ * prune_scans_by_id_const
+ *		Plan-time pre-pass: for each vertex/edge inheritance-parent scan carrying
+ *		a constant id() equality / IN filter, prune the scan to the label
+ *		table(s) the graphid constant(s) identify, via root->graphmeta_pruned[].
+ *		Runs after propagate_graphmeta_constraints so it can intersect into
+ *		whatever the connectivity solver already produced.  Independent of
+ *		ag_graphmeta and its gating (labid is encoded structurally in the
+ *		constant), so it prunes even when gathering is off.
+ */
+void
+prune_scans_by_id_const(PlannerInfo *root)
+{
+	int			n = root->simple_rel_array_size;
+	Index		rti;
+
+	for (rti = 1; rti < n; rti++)
+	{
+		RelOptInfo *rel = root->simple_rel_array[rti];
+		RangeTblEntry *rte = root->simple_rte_array[rti];
+		Oid			graph;
+		Bitmapset  *labids = NULL;
+		bool		have_id = false;
+		List	   *survivors = NIL;
+		ListCell   *lc;
+
+		if (rel == NULL || rte == NULL ||
+			rte->rtekind != RTE_RELATION || !rte->inh ||
+			!OidIsValid(rte->relid))
+			continue;
+		if (!gm_relid_graph(rte->relid, &graph))
+			continue;				/* not a graph vertex/edge label parent */
+
+		/* AND-intersect the labid set across all id-equality restrictions */
+		foreach(lc, rel->baserestrictinfo)
+		{
+			RestrictInfo *ri = lfirst_node(RestrictInfo, lc);
+			bool		this_matched;
+			Bitmapset  *thisset = gm_id_clause_labids((Node *) ri->clause,
+													  rti, &this_matched);
+
+			if (!this_matched)
+			{
+				bms_free(thisset);
+				continue;
+			}
+			if (!have_id)
+			{
+				labids = thisset;
+				have_id = true;
+			}
+			else
+			{
+				Bitmapset  *tmp = bms_intersect(labids, thisset);
+
+				bms_free(labids);
+				bms_free(thisset);
+				labids = tmp;
+			}
+		}
+
+		if (!have_id)
+			continue;				/* no id filter on this scan */
+
+		/* map labids -> label relids that exist within this RTE's subtree */
+		if (!bms_is_empty(labids))
+		{
+			List	   *subtree = find_all_inheritors(rte->relid, NoLock, NULL);
+			int			labid = -1;
+
+			while ((labid = bms_next_member(labids, labid)) >= 0)
+			{
+				Oid			crelid = get_labid_relid(graph, (uint16) labid);
+
+				if (OidIsValid(crelid) && list_member_oid(subtree, crelid))
+					survivors = lappend_oid(survivors, crelid);
+			}
+			list_free(subtree);
+		}
+		bms_free(labids);
+
+		/* NIL survivors => provably empty (parent-only scan) */
+		gm_merge_id_prune(root, n, rti, survivors);
+	}
+}
 
 /*
  * graphmeta_propagate_id_unique

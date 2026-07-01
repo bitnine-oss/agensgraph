@@ -1076,3 +1076,75 @@ SELECT count(*) AS rel_rows FROM gmp19_off.rel;
 DROP GRAPH gmp19_off CASCADE;
 
 SET auto_gather_graphmeta = true;
+
+-- ============================================================
+-- id() constant scan pruning: a constant filter on id(entity) restricts the
+-- vertex/edge inheritance scan to the single label whose labid is encoded in the
+-- graphid's high bits (structural; independent of ag_graphmeta gathering).
+-- labids: ag_vertex=1, ag_edge=2, person=3, city=4, employee=5, knows=6.
+-- ============================================================
+CREATE GRAPH gmp20;
+SET graph_path = gmp20;
+CREATE VLABEL person;
+CREATE VLABEL city;
+CREATE VLABEL employee INHERITS (person);
+CREATE ELABEL knows;
+SET auto_gather_graphmeta = true;
+CREATE (:person);                    -- 3.1
+CREATE (:city);                      -- 4.1
+MATCH (p:person), (c:city) CREATE (p)-[:knows]->(c);   -- knows 6.1: person -> city
+CREATE (:employee);                  -- 5.1 (after the edge: not a knows source)
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+
+-- unlabelled node, id pins the label: scans only person
+EXPLAIN (costs off) MATCH (u) WHERE id(u) = '3.1'::graphid RETURN u;
+MATCH (u) WHERE id(u) = '3.1'::graphid RETURN label(u) AS l, id(u) AS id;
+
+-- labelled node, matching label
+EXPLAIN (costs off) MATCH (u:person) WHERE id(u) = '3.1'::graphid RETURN u;
+
+-- labelled node, contradicting label (city vs a person id): 0 rows
+EXPLAIN (costs off) MATCH (u:city) WHERE id(u) = '3.1'::graphid RETURN u;
+MATCH (u:city) WHERE id(u) = '3.1'::graphid RETURN count(*) AS n;
+
+-- child-label id under a parent label: scans employee
+EXPLAIN (costs off) MATCH (u:person) WHERE id(u) = '5.1'::graphid RETURN u;
+MATCH (u:person) WHERE id(u) = '5.1'::graphid RETURN label(u) AS l;
+
+-- IN/ANY: Cypher `id(u) IN [graphid,...]` is unsupported syntax (a graphid
+-- cannot be a Cypher list element), but a SQL `= ANY(graphid[])` on the scan
+-- prunes to exactly the listed labels: Append over person + city (employee and
+-- the abstract ag_vertex parent dropped).
+EXPLAIN (costs off) SELECT id FROM gmp20.ag_vertex WHERE id = ANY (ARRAY['3.1','4.1']::graphid[]);
+
+-- combined with connectivity pruning: b pruned to {city} by knows, pinned to city by id
+EXPLAIN (costs off) MATCH (a:person)-[:knows]->(b) WHERE id(b) = '4.1'::graphid RETURN b;
+MATCH (a:person)-[:knows]->(b) WHERE id(b) = '4.1'::graphid RETURN label(b) AS l;
+-- contradicting: connectivity {city} vs id {person} -> empty
+MATCH (a:person)-[:knows]->(b) WHERE id(b) = '3.1'::graphid RETURN count(*) AS n;
+
+-- non-existent labid -> empty
+MATCH (u) WHERE id(u) = '99.1'::graphid RETURN count(*) AS n;
+
+-- edge id: scans only knows
+EXPLAIN (costs off) MATCH ()-[e]->() WHERE id(e) = '6.1'::graphid RETURN e;
+MATCH ()-[e]->() WHERE id(e) = '6.1'::graphid RETURN label(e) AS l;
+
+-- contradictory AND: 0 rows
+MATCH (u) WHERE id(u) = '3.1'::graphid AND id(u) = '4.1'::graphid RETURN count(*) AS n;
+
+-- plain SQL scan of the abstract parent also prunes
+EXPLAIN (costs off) SELECT id FROM gmp20.ag_vertex WHERE id = '3.1'::graphid;
+
+-- pruned == unpruned equivalence: a generic plan keeps id as a Param (unfolded),
+-- so the prune does not fire (full scan); results must match the pruned custom plan
+SET plan_cache_mode = force_generic_plan;
+PREPARE idq(graphid) AS MATCH (u) WHERE id(u) = $1 RETURN label(u) AS l;
+EXECUTE idq('3.1'::graphid);
+EXECUTE idq('4.1'::graphid);
+DEALLOCATE idq;
+SET plan_cache_mode = auto;
+
+SET auto_gather_graphmeta = false;
+DROP GRAPH gmp20 CASCADE;
+SET auto_gather_graphmeta = true;
