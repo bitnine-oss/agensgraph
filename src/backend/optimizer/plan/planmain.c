@@ -27,6 +27,7 @@
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
 #include "optimizer/placeholder.h"
+#include "optimizer/inherit.h"
 #include "optimizer/planmain.h"
 
 
@@ -256,6 +257,13 @@ query_planner(PlannerInfo *root,
 	 * restriction OR clauses from.
 	 */
 	extract_restriction_or_clauses(root);
+
+	/*
+	 * Agensgraph: Before expanding, run the graphmeta constraint-propagation
+	 * pre-pass so it can stash per-rtindex pruned child sets that
+	 * expand_inherited_rtentry() will consume to scan only connected labels.
+	 */
+	propagate_graphmeta_constraints(root);
 
 	/*
 	 * Now expand appendrels by adding "otherrels" for their children.  We

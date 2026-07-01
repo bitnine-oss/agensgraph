@@ -33,7 +33,12 @@
 #include "executor/execCypherDelete.h"
 #include "executor/execCypherMerge.h"
 #include "catalog/ag_label_fn.h"
+#include "catalog/ag_label.h"
+#include "catalog/ag_edge_d.h"
+#include "executor/execGraphMeta.h"
 #include "tcop/tcopprot.h"
+#include "utils/graph.h"
+#include "utils/syscache.h"
 
 bool		enable_multiple_update = true;
 bool		auto_gather_graphmeta = false;
@@ -952,6 +957,61 @@ getResultRelInfo(ModifyGraphState *mgstate, Oid relid)
 	}
 
 	elog(ERROR, "invalid object ID %u for the target label", relid);
+}
+
+/*
+ * GraphmetaRecordEdgeInsertFromSlot
+ *		Record, in the transaction's ag_graphmeta deltas, that an edge described
+ *		by `slot` was created in `rel`.  No-op unless connectivity gathering is
+ *		on and `rel` is an edge label.  This is how non-Cypher write paths
+ *		(direct SQL DML, COPY, logical-replication apply) keep ag_graphmeta
+ *		complete, so graphmeta-based scan pruning stays sound.
+ *
+ * Only the connectivity-adding direction (inserts, and the new endpoint of a
+ * rewiring update) is recorded here, which is all that soundness requires:
+ * missing a new triple could make pruning drop rows, whereas a stale leftover
+ * triple only causes a harmless extra empty scan.  Deletions on these
+ * non-Cypher paths are therefore not decremented and may leave ag_graphmeta
+ * overstating connectivity until a regather() compacts it (never wrong, only an
+ * extra scan).  The graph and edge label are taken from `rel`, not the session
+ * graph_path, so this is correct regardless of the caller's graph_path.
+ */
+void
+GraphmetaRecordEdgeInsertFromSlot(Relation rel, TupleTableSlot *slot)
+{
+	HeapTuple	tup;
+	Form_ag_label lab;
+	Oid			graph;
+	Labid		edge_labid;
+	Datum		startd;
+	Datum		endd;
+	bool		startnull;
+	bool		endnull;
+
+	if (!auto_gather_graphmeta)
+		return;
+
+	tup = SearchSysCache1(LABELRELID, ObjectIdGetDatum(RelationGetRelid(rel)));
+	if (!HeapTupleIsValid(tup))
+		return;					/* not a graph label */
+	lab = (Form_ag_label) GETSTRUCT(tup);
+	if (lab->labkind != LABEL_KIND_EDGE)
+	{
+		ReleaseSysCache(tup);
+		return;
+	}
+	graph = lab->graphid;
+	edge_labid = (Labid) lab->labid;
+	ReleaseSysCache(tup);
+
+	startd = slot_getattr(slot, Anum_ag_edge_start, &startnull);
+	endd = slot_getattr(slot, Anum_ag_edge_end, &endnull);
+	if (startnull || endnull)
+		return;
+
+	agstat_count_edge_create_ext(graph, edge_labid,
+								 GraphidGetLabid(DatumGetGraphid(startd)),
+								 GraphidGetLabid(DatumGetGraphid(endd)));
 }
 
 Datum

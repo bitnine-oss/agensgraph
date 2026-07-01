@@ -43,22 +43,59 @@ static bool prev_auto_gather_graphmeta = false;
 void
 auto_gather_graphmeta_assign(bool newval, void *extra)
 {
-	/* Only trigger on false->true transition */
-	if (newval && !prev_auto_gather_graphmeta && !IsParallelWorker())
+	/* Turning gathering off: the next enable must regather a fresh baseline. */
+	if (!newval)
 	{
-		if (IsTransactionState())
-		{
-			regather_graphmeta_internal();
-		}
-		else
-		{
-			ereport(WARNING,
-					(errmsg("auto_gather_graphmeta: cannot gather metadata outside transaction"),
-					 errhint("Metadata will be gathered when set within a transaction.")));
-		}
+		prev_auto_gather_graphmeta = false;
+		return;
 	}
 
-	prev_auto_gather_graphmeta = newval;
+	/*
+	 * Already enabled (no transition), or a parallel worker inheriting the
+	 * leader's already-gathered state: nothing to do.
+	 */
+	if (prev_auto_gather_graphmeta || IsParallelWorker())
+	{
+		prev_auto_gather_graphmeta = true;
+		return;
+	}
+
+	/*
+	 * false->true transition: gather a complete baseline so that "gathering is
+	 * on" implies "ag_graphmeta is complete".  Only record the transition as
+	 * handled once the regather actually ran -- otherwise (e.g. enabled from
+	 * postgresql.conf, before any transaction) we must leave the flag unset so a
+	 * later in-transaction SET still regathers, rather than silently leaving
+	 * ag_graphmeta stale while reporting "on".
+	 */
+	if (IsTransactionState())
+	{
+		regather_graphmeta_internal();
+		prev_auto_gather_graphmeta = true;
+	}
+	else
+	{
+		ereport(WARNING,
+				(errmsg("auto_gather_graphmeta: cannot gather metadata outside transaction"),
+				 errhint("Metadata will be gathered when set within a transaction.")));
+	}
+}
+
+/*
+ * graphmeta_baseline_gathered
+ *		True iff this backend holds a complete, maintained ag_graphmeta baseline
+ *		-- i.e. auto_gather_graphmeta was turned on inside a transaction (or
+ *		inherited by a parallel worker), so the false->true regather actually
+ *		ran.  Graphmeta scan pruning must gate on this rather than the raw
+ *		auto_gather_graphmeta GUC: the GUC can read "on" while no baseline was
+ *		ever gathered -- enabled from postgresql.conf outside any transaction,
+ *		or restored by rolling back a "SET ... = off" -- and pruning against an
+ *		incomplete catalog would silently drop rows.
+ */
+bool
+graphmeta_baseline_gathered(void)
+{
+	return prev_auto_gather_graphmeta;
 }
 
 /* check_hook: validate new graph_path value */

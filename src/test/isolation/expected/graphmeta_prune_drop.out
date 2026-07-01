@@ -1,0 +1,14 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1_begin s1_scan s2_drop s1_commit
+s1: NOTICE:  regathering graphmeta...
+step s1_begin: BEGIN;
+step s1_scan: MATCH (a:n1)-[b]->(c) RETURN label(c) AS c;
+c   
+----
+"n2"
+(1 row)
+
+step s2_drop: DROP VLABEL n2 CASCADE; <waiting ...>
+step s1_commit: COMMIT;
+step s2_drop: <... completed>

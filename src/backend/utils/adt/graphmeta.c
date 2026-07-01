@@ -16,6 +16,7 @@
 #include "catalog/ag_label.h"
 #include "catalog/ag_edge_d.h"
 #include "catalog/indexing.h"
+#include "utils/inval.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 
@@ -200,4 +201,15 @@ regather_graphmeta_internal(void)
 	table_endscan(scan);
 	UnregisterSnapshot(snapshot);
 	table_close(rel, RowExclusiveLock);
+
+	/*
+	 * Rewriting ag_graphmeta's data rows emits only catcache invalidations,
+	 * which PlanCacheRelCallback does not observe.  Issue an explicit relcache
+	 * invalidation so already-cached, graphmeta-pruned plans (which record a
+	 * dependency on GraphMetaRelationId) are re-planned against the refreshed
+	 * connectivity -- otherwise a regather that adds triples would leave stale
+	 * plans scanning the old, narrower label set and drop rows.  Mirrors the
+	 * delta path in AtEOXact_AgStat.
+	 */
+	CacheInvalidateRelcacheByRelid(GraphMetaRelationId);
 }

@@ -19,6 +19,7 @@ extern bool cypher_allow_unsafe_ddl;
 extern char *get_graph_path(bool lookup_cache);
 extern char *get_graph_path_or_null(void);
 extern Oid	get_graph_path_oid(void);
+extern bool graphmeta_baseline_gathered(void);
 
 extern Oid	GraphCreate(CreateGraphStmt *stmt, const char *queryString,
 						int stmt_location, int stmt_len);

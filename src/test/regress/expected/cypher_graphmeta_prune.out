@@ -1,0 +1,2082 @@
+--
+-- ag_graphmeta-based scan pruning
+--
+-- Verifies that MATCH endpoints scan only the vertex labels ag_graphmeta says
+-- connect, without ever changing query results, that pruned plans are
+-- invalidated when connectivity changes, and that non-Cypher writes keep
+-- ag_graphmeta complete.
+--
+CREATE GRAPH gmp;
+SET graph_path = gmp;
+CREATE VLABEL person;
+CREATE VLABEL city;
+CREATE VLABEL company;
+CREATE ELABEL knows;
+CREATE ELABEL lives_in;
+CREATE ELABEL works_at;
+SET auto_gather_graphmeta = true;
+NOTICE:  regathering graphmeta...
+CREATE (:person {name:'alice'}), (:person {name:'bob'}),
+       (:city {name:'paris'}), (:company {name:'acme'});
+MATCH (a:person {name:'alice'}), (b:person {name:'bob'})   CREATE (a)-[:knows]->(b);
+MATCH (a:person {name:'alice'}), (c:city {name:'paris'})   CREATE (a)-[:lives_in]->(c);
+MATCH (a:person {name:'bob'}),   (k:company {name:'acme'}) CREATE (a)-[:works_at]->(k);
+-- connectivity: knows(person,person), lives_in(person,city), works_at(person,company)
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start  |   edge   |   end   | edgecount 
+-----------+--------+----------+---------+-----------
+ gmp       | person | knows    | person  |         1
+ gmp       | person | lives_in | city    |         1
+ gmp       | person | works_at | company |         1
+(3 rows)
+
+-- Pruning must NEVER change results: on vs off must match.
+SET auto_gather_graphmeta = true;
+MATCH (a)-[:lives_in]->(b) RETURN properties(b)->>'name' AS b ORDER BY b;
+    b    
+---------
+ "paris"
+(1 row)
+
+SET auto_gather_graphmeta = false;
+MATCH (a)-[:lives_in]->(b) RETURN properties(b)->>'name' AS b ORDER BY b;
+    b    
+---------
+ "paris"
+(1 row)
+
+SET auto_gather_graphmeta = true;
+NOTICE:  regathering graphmeta...
+-- labelled endpoint: end(knows) = person
+MATCH (a:person)-[:knows]->(b) RETURN properties(b)->>'name' AS b ORDER BY b;
+   b   
+-------
+ "bob"
+(1 row)
+
+-- empty-pattern proof: lives_in never ends at company
+MATCH (a)-[:lives_in]->(b:company) RETURN b;
+ b 
+---
+(0 rows)
+
+-- chain intersection: end(lives_in)=city INTERSECT start(knows)=person = empty
+MATCH (a)-[:lives_in]->(b)-[:knows]->(c) RETURN c;
+ c 
+---
+(0 rows)
+
+-- undirected unions both sides
+MATCH (a)-[:lives_in]-(b) RETURN properties(b)->>'name' AS b ORDER BY b;
+    b    
+---------
+ "alice"
+ "paris"
+(2 rows)
+
+-- variable-length edge falls back to full scan, still correct
+MATCH (a:person {name:'alice'})-[:knows*1..2]->(b) RETURN properties(b)->>'name' AS b ORDER BY b;
+   b   
+-------
+ "bob"
+(1 row)
+
+-- plan-cache invalidation: a prepared pruned plan must see new connectivity
+PREPARE lp AS MATCH (a)-[:lives_in]->(b) RETURN properties(b)->>'name' AS b ORDER BY b;
+EXECUTE lp;
+    b    
+---------
+ "paris"
+(1 row)
+
+MATCH (a:person {name:'alice'}), (k:company {name:'acme'}) CREATE (a)-[:lives_in]->(k);
+EXECUTE lp;
+    b    
+---------
+ "acme"
+ "paris"
+(2 rows)
+
+DEALLOCATE lp;
+-- bypass maintenance: a direct SQL INSERT of new connectivity is recorded
+SET enable_graph_dml = on;
+INSERT INTO gmp.knows (id, start, "end", properties)
+SELECT graphid(el.labid, 999), c.id, p.id, jsonb_build_object()
+FROM ag_label el,
+     (SELECT id FROM gmp.city   ORDER BY id LIMIT 1) c,
+     (SELECT id FROM gmp.person ORDER BY id LIMIT 1) p
+WHERE el.labname = 'knows'
+  AND el.graphid = (SELECT oid FROM ag_graph WHERE graphname = 'gmp');
+SET enable_graph_dml = off;
+-- now knows(city,person) is present in addition to knows(person,person)
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start  |   edge   |   end   | edgecount 
+-----------+--------+----------+---------+-----------
+ gmp       | city   | knows    | person  |         1
+ gmp       | person | knows    | person  |         1
+ gmp       | person | lives_in | city    |         1
+ gmp       | person | lives_in | company |         1
+ gmp       | person | works_at | company |         1
+(5 rows)
+
+DROP GRAPH gmp CASCADE;
+NOTICE:  drop cascades to 9 other objects
+DETAIL:  drop cascades to sequence gmp.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
+drop cascades to vlabel city
+drop cascades to vlabel company
+drop cascades to elabel knows
+drop cascades to elabel lives_in
+drop cascades to elabel works_at
+-- ============================================================
+-- node-label-driven propagation through UNLABELLED edges
+-- A labelled node must constrain adjacent unlabelled edges and far nodes,
+-- transitively -- the generalization over the labelled-edge-only case above.
+-- Chain n1 -e1-> n2 -e2-> n3, plus an unrelated x -ex-> y.
+-- ============================================================
+CREATE GRAPH gmp2;
+SET graph_path = gmp2;
+CREATE VLABEL n1; CREATE VLABEL n2; CREATE VLABEL n3;
+CREATE VLABEL x;  CREATE VLABEL y;
+CREATE ELABEL e1; CREATE ELABEL e2; CREATE ELABEL ex;
+SET auto_gather_graphmeta = true;
+CREATE (:n1)-[:e1]->(:n2)-[:e2]->(:n3);
+CREATE (:x)-[:ex]->(:y);
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start | edge | end | edgecount 
+-----------+-------+------+-----+-----------
+ gmp2      | n1    | e1   | n2  |         1
+ gmp2      | n2    | e2   | n3  |         1
+ gmp2      | x     | ex   | y   |         1
+(3 rows)
+
+-- headline: (a:n1)-[b]->(c) must scan only e1 for b and only n2 for c
+EXPLAIN (COSTS off) MATCH (a:n1)-[b]->(c) RETURN c;
+             QUERY PLAN              
+-------------------------------------
+ Hash Join
+   Hash Cond: (b."end" = c.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Seq Scan on e1 b
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n2 c
+(9 rows)
+
+MATCH (a:n1)-[b]->(c) RETURN label(b) AS edge, label(c) AS node;
+ edge | node 
+------+------
+ "e1" | "n2"
+(1 row)
+
+-- multi-hop node-driven propagation: a:n1 -[]-> () -[]-> (d) reaches only n3
+MATCH (a:n1)-[]->()-[]->(d) RETURN label(d) AS node;
+ node 
+------
+ "n3"
+(1 row)
+
+-- ONLY anchor still drives the adjacent edge / far node
+MATCH (a:n1 ONLY)-[b]->(c) RETURN label(b) AS edge, label(c) AS node;
+ edge | node 
+------+------
+ "e1" | "n2"
+(1 row)
+
+-- node-driven empty proof: n3 starts no edge => no rows
+MATCH (a:n3)-[b]->(c) RETURN c;
+ c 
+---
+(0 rows)
+
+-- self-referential start label is fine: x starts only ex into y
+MATCH (a:x)-[b]->(c) RETURN label(b) AS edge, label(c) AS node;
+ edge | node 
+------+------
+ "ex" | "y"
+(1 row)
+
+-- result-equivalence: node-driven prune must match the unpruned (GUC off) scan
+SET auto_gather_graphmeta = false;
+MATCH (a:n1)-[b]->(c) RETURN label(b) AS edge, label(c) AS node;
+ edge | node 
+------+------
+ "e1" | "n2"
+(1 row)
+
+SET auto_gather_graphmeta = true;
+NOTICE:  regathering graphmeta...
+DROP GRAPH gmp2 CASCADE;
+NOTICE:  drop cascades to 11 other objects
+DETAIL:  drop cascades to sequence gmp2.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel n1
+drop cascades to vlabel n2
+drop cascades to vlabel n3
+drop cascades to vlabel x
+drop cascades to vlabel y
+drop cascades to elabel e1
+drop cascades to elabel e2
+drop cascades to elabel ex
+-- ============================================================
+-- parent-self drop vs retention, multi-child Append, and Cypher
+-- writes under a pruned MATCH.
+-- ============================================================
+CREATE GRAPH gmp3;
+SET graph_path = gmp3;
+CREATE VLABEL human; CREATE VLABEL robot;
+CREATE ELABEL knows;
+SET auto_gather_graphmeta = true;
+-- knows ends at BOTH human and robot (two children, no unlabelled endpoint yet)
+CREATE (:human {n:'a'})-[:knows]->(:human {n:'b'});
+CREATE (:human {n:'a2'})-[:knows]->(:robot {n:'r'});
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start | edge  |  end  | edgecount 
+-----------+-------+-------+-------+-----------
+ gmp3      | human | knows | human |         1
+ gmp3      | human | knows | robot |         1
+(2 rows)
+
+-- multi-child, parent dropped: b scans {human, robot} with NO ag_vertex parent
+EXPLAIN (COSTS off) MATCH (a:human)-[:knows]->(b) RETURN b;
+                    QUERY PLAN                    
+--------------------------------------------------
+ Hash Join
+   Hash Cond: ("<0000000012>"."end" = b.id)
+   ->  Hash Join
+         Hash Cond: ("<0000000012>".start = a.id)
+         ->  Seq Scan on knows "<0000000012>"
+         ->  Hash
+               ->  Seq Scan on human a
+   ->  Hash
+         ->  Append
+               ->  Seq Scan on human b_1
+               ->  Seq Scan on robot b_2
+(11 rows)
+
+MATCH (a:human)-[:knows]->(b) RETURN label(b) AS l ORDER BY l;
+    l    
+---------
+ "human"
+ "robot"
+(2 rows)
+
+SET auto_gather_graphmeta = false;
+MATCH (a:human)-[:knows]->(b) RETURN label(b) AS l ORDER BY l;
+    l    
+---------
+ "human"
+ "robot"
+(2 rows)
+
+SET auto_gather_graphmeta = true;
+NOTICE:  regathering graphmeta...
+-- now add an UNLABELLED endpoint: CREATE (n) goes into ag_vertex, so knows now
+-- connects to ag_vertex's own label => the abstract parent MUST be retained.
+CREATE (:human {n:'c'})-[:knows]->();
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start | edge  |    end    | edgecount 
+-----------+-------+-------+-----------+-----------
+ gmp3      | human | knows | ag_vertex |         1
+ gmp3      | human | knows | human     |         1
+ gmp3      | human | knows | robot     |         1
+(3 rows)
+
+-- parent-self RETAINED: b's scan must now include ag_vertex, and the unlabelled
+-- vertex must be returned (proves the keep-condition fires).
+EXPLAIN (COSTS off) MATCH (a:human)-[:knows]->(b) RETURN b;
+                    QUERY PLAN                    
+--------------------------------------------------
+ Hash Join
+   Hash Cond: ("<0000000015>"."end" = b.id)
+   ->  Hash Join
+         Hash Cond: ("<0000000015>".start = a.id)
+         ->  Seq Scan on knows "<0000000015>"
+         ->  Hash
+               ->  Seq Scan on human a
+   ->  Hash
+         ->  Append
+               ->  Seq Scan on ag_vertex b_1
+               ->  Seq Scan on human b_2
+               ->  Seq Scan on robot b_3
+(12 rows)
+
+MATCH (a:human)-[:knows]->(b) RETURN label(b) AS l ORDER BY l;
+      l      
+-------------
+ "ag_vertex"
+ "human"
+ "robot"
+(3 rows)
+
+-- Cypher write under a pruned MATCH: routed by labid, independent of the scan.
+MATCH (a:human {n:'a'})-[r:knows]->(b) SET r.tag = 1;
+MATCH ()-[r:knows]->() WHERE (r).tag = 1 RETURN count(*);
+ count 
+-------
+ 1
+(1 row)
+
+MATCH (a:human {n:'a'})-[r:knows]->(b) DELETE r;
+MATCH (a:human {n:'a'})-[r:knows]->(b) RETURN count(*);
+ count 
+-------
+ 0
+(1 row)
+
+DROP GRAPH gmp3 CASCADE;
+NOTICE:  drop cascades to 6 other objects
+DETAIL:  drop cascades to sequence gmp3.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel human
+drop cascades to vlabel robot
+drop cascades to elabel knows
+-- ============================================================
+-- multi-clause MATCH and read-your-own-writes under a cached plan.
+-- Pattern-element ids are numbered per Cypher clause, so cross-clause endpoint
+-- resolution must be derived per-edge (not via a query-global id map, whose
+-- ids collide across clauses).  And a cached pruned plan must observe an
+-- uncommitted same-transaction edge write.  Both must match the unpruned scan.
+-- ============================================================
+CREATE GRAPH gmp4;
+SET graph_path = gmp4;
+CREATE VLABEL person; CREATE VLABEL company; CREATE VLABEL city;
+CREATE ELABEL knows; CREATE ELABEL works_at; CREATE ELABEL lives_in;
+SET auto_gather_graphmeta = true;
+CREATE (:person {n:'a'})-[:knows]->(:person {n:'b'});
+CREATE (p:person {n:'c'}) CREATE (k:company {n:'acme'}) CREATE (p)-[:works_at]->(k);
+CREATE (p:person {n:'d'}) CREATE (c:city {n:'paris'}) CREATE (p)-[:lives_in]->(c);
+-- connectivity: knows(person,person), works_at(person,company), lives_in(person,city)
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start  |   edge   |   end   | edgecount 
+-----------+--------+----------+---------+-----------
+ gmp4      | person | knows    | person  |         1
+ gmp4      | person | lives_in | city    |         1
+ gmp4      | person | works_at | company |         1
+(3 rows)
+
+-- two independent clauses: e1's endpoint q must be constrained by its OWN clause
+-- (knows => person), not by the second clause.  On must equal off.
+MATCH (p:person)-[e1:knows]->(q) MATCH (m)-[e2:works_at]->(n:company)
+  RETURN label(q) AS q, label(m) AS m ORDER BY q, m;
+    q     |    m     
+----------+----------
+ "person" | "person"
+(1 row)
+
+SET auto_gather_graphmeta = false;
+MATCH (p:person)-[e1:knows]->(q) MATCH (m)-[e2:works_at]->(n:company)
+  RETURN label(q) AS q, label(m) AS m ORDER BY q, m;
+    q     |    m     
+----------+----------
+ "person" | "person"
+(1 row)
+
+SET auto_gather_graphmeta = true;
+NOTICE:  regathering graphmeta...
+-- three clauses reusing the same labels (maximal clause-local id collisions)
+MATCH (a:person)-[:knows]->(b) MATCH (c:person)-[:works_at]->(d) MATCH (e:person)-[:lives_in]->(f)
+  RETURN label(b) AS b, label(d) AS d, label(f) AS f ORDER BY b, d, f;
+    b     |     d     |   f    
+----------+-----------+--------
+ "person" | "company" | "city"
+(1 row)
+
+SET auto_gather_graphmeta = false;
+MATCH (a:person)-[:knows]->(b) MATCH (c:person)-[:works_at]->(d) MATCH (e:person)-[:lives_in]->(f)
+  RETURN label(b) AS b, label(d) AS d, label(f) AS f ORDER BY b, d, f;
+    b     |     d     |   f    
+----------+-----------+--------
+ "person" | "company" | "city"
+(1 row)
+
+SET auto_gather_graphmeta = true;
+NOTICE:  regathering graphmeta...
+-- cached (generic) pruned plan must see an uncommitted same-transaction write:
+-- lives_in end is {city}; after creating lives_in(person,company) in the same txn,
+-- the re-EXECUTE must include company too.
+SET plan_cache_mode = force_generic_plan;
+PREPARE cp AS MATCH (a)-[:lives_in]->(b) RETURN label(b) AS b ORDER BY b;
+EXECUTE cp;
+   b    
+--------
+ "city"
+(1 row)
+
+BEGIN;
+  MATCH (p:person {n:'d'}), (k:company {n:'acme'}) CREATE (p)-[:lives_in]->(k);
+  EXECUTE cp;
+     b     
+-----------
+ "city"
+ "company"
+(2 rows)
+
+ROLLBACK;
+DEALLOCATE cp;
+SET plan_cache_mode = auto;
+DROP GRAPH gmp4 CASCADE;
+NOTICE:  drop cascades to 9 other objects
+DETAIL:  drop cascades to sequence gmp4.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
+drop cascades to vlabel company
+drop cascades to vlabel city
+drop cascades to elabel knows
+drop cascades to elabel works_at
+drop cascades to elabel lives_in
+-- ============================================================
+-- comprehensive MATCH scan-pruning coverage on a linear chain plus an
+-- unrelated component.  EXPLAIN (costs off) asserts the pruned plan shape; the
+-- accompanying query asserts the matched labels.  A result-equivalence sweep at
+-- the end re-runs the patterns with gathering OFF to prove pruning never
+-- changes rows.
+-- ============================================================
+CREATE GRAPH gmp5;
+SET graph_path = gmp5;
+CREATE VLABEL n1; CREATE VLABEL n2; CREATE VLABEL n3; CREATE VLABEL n4; CREATE VLABEL n5;
+CREATE VLABEL q1; CREATE VLABEL q2; CREATE VLABEL q3;
+CREATE ELABEL e1; CREATE ELABEL e2; CREATE ELABEL e3; CREATE ELABEL e4;
+CREATE ELABEL eX; CREATE ELABEL eY;
+SET auto_gather_graphmeta = true;
+-- main chain n1 -e1-> n2 -e2-> n3 -e3-> n4 -e4-> n5
+CREATE (:n1)-[:e1]->(:n2)-[:e2]->(:n3)-[:e3]->(:n4)-[:e4]->(:n5);
+-- unrelated component: must never appear in an anchored plan
+CREATE (:q1)-[:eX]->(:q2)-[:eY]->(:q3);
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start | edge | end | edgecount 
+-----------+-------+------+-----+-----------
+ gmp5      | n1    | e1   | n2  |         1
+ gmp5      | n2    | e2   | n3  |         1
+ gmp5      | n3    | e3   | n4  |         1
+ gmp5      | n4    | e4   | n5  |         1
+ gmp5      | q1    | ex   | q2  |         1
+ gmp5      | q2    | ey   | q3  |         1
+(6 rows)
+
+-- ---------- single hop ----------
+-- Case 1: first node labelled -> b={e1}, c={n2}
+EXPLAIN (costs off) MATCH (a:n1)-[b]->(c) RETURN c;
+             QUERY PLAN              
+-------------------------------------
+ Hash Join
+   Hash Cond: (b."end" = c.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Seq Scan on e1 b
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n2 c
+(9 rows)
+
+MATCH (a:n1)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
+  b   |  c   
+------+------
+ "e1" | "n2"
+(1 row)
+
+-- Case 2: far node labelled -> b={e1}, a={n1}
+EXPLAIN (costs off) MATCH (a)-[b]->(c:n2) RETURN c;
+             QUERY PLAN              
+-------------------------------------
+ Hash Join
+   Hash Cond: (b."end" = c.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Seq Scan on e1 b
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n2 c
+(9 rows)
+
+MATCH (a)-[b]->(c:n2) RETURN label(a) AS a, label(b) AS b ORDER BY a, b;
+  a   |  b   
+------+------
+ "n1" | "e1"
+(1 row)
+
+-- Case 3: both nodes labelled -> b={e1}
+EXPLAIN (costs off) MATCH (a:n1)-[b]->(c:n2) RETURN c;
+             QUERY PLAN              
+-------------------------------------
+ Hash Join
+   Hash Cond: (b."end" = c.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Seq Scan on e1 b
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n2 c
+(9 rows)
+
+MATCH (a:n1)-[b]->(c:n2) RETURN label(b) AS b ORDER BY b;
+  b   
+------
+ "e1"
+(1 row)
+
+-- Case 4: edge labelled -> a={n1}, c={n2}
+EXPLAIN (costs off) MATCH (a)-[b:e1]->(c) RETURN c;
+             QUERY PLAN              
+-------------------------------------
+ Hash Join
+   Hash Cond: (b."end" = c.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Seq Scan on e1 b
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n2 c
+(9 rows)
+
+MATCH (a)-[b:e1]->(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
+  a   |  c   
+------+------
+ "n1" | "n2"
+(1 row)
+
+-- ---------- multi hop ----------
+-- Case 5: first node labelled drives the whole chain
+EXPLAIN (costs off) MATCH (a:n1)-[b]->(c)-[d]->(e) RETURN e;
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Hash Join
+   Hash Cond: (d."end" = e.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Hash Join
+               Hash Cond: (d.start = c.id)
+               Join Filter: (b.id <> d.id)
+               ->  Seq Scan on e2 d
+               ->  Hash
+                     ->  Hash Join
+                           Hash Cond: (b."end" = c.id)
+                           ->  Seq Scan on e1 b
+                           ->  Hash
+                                 ->  Seq Scan on n2 c
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n3 e
+(18 rows)
+
+MATCH (a:n1)-[b]->(c)-[d]->(e) RETURN label(c) AS c, label(d) AS d, label(e) AS e ORDER BY c, d, e;
+  c   |  d   |  e   
+------+------+------
+ "n2" | "e2" | "n3"
+(1 row)
+
+-- Case 6: middle node labelled
+EXPLAIN (costs off) MATCH (a)-[b]->(c:n2)-[d]->(e) RETURN e;
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Hash Join
+   Hash Cond: (d."end" = e.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Hash Join
+               Hash Cond: (d.start = c.id)
+               Join Filter: (b.id <> d.id)
+               ->  Seq Scan on e2 d
+               ->  Hash
+                     ->  Hash Join
+                           Hash Cond: (b."end" = c.id)
+                           ->  Seq Scan on e1 b
+                           ->  Hash
+                                 ->  Seq Scan on n2 c
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n3 e
+(18 rows)
+
+MATCH (a)-[b]->(c:n2)-[d]->(e) RETURN label(a) AS a, label(b) AS b, label(e) AS e ORDER BY a, b, e;
+  a   |  b   |  e   
+------+------+------
+ "n1" | "e1" | "n3"
+(1 row)
+
+-- Case 7: last node labelled
+EXPLAIN (costs off) MATCH (a)-[b]->(c)-[d]->(e:n3) RETURN e;
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Hash Join
+   Hash Cond: (d."end" = e.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Hash Join
+               Hash Cond: (d.start = c.id)
+               Join Filter: (b.id <> d.id)
+               ->  Seq Scan on e2 d
+               ->  Hash
+                     ->  Hash Join
+                           Hash Cond: (b."end" = c.id)
+                           ->  Seq Scan on e1 b
+                           ->  Hash
+                                 ->  Seq Scan on n2 c
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n3 e
+(18 rows)
+
+MATCH (a)-[b]->(c)-[d]->(e:n3) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
+  a   |  c   
+------+------
+ "n1" | "n2"
+(1 row)
+
+-- Case 8: all nodes labelled
+EXPLAIN (costs off) MATCH (a:n1)-[b]->(c:n2)-[d]->(e:n3) RETURN e;
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Hash Join
+   Hash Cond: (d."end" = e.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Hash Join
+               Hash Cond: (d.start = c.id)
+               Join Filter: (b.id <> d.id)
+               ->  Seq Scan on e2 d
+               ->  Hash
+                     ->  Hash Join
+                           Hash Cond: (b."end" = c.id)
+                           ->  Seq Scan on e1 b
+                           ->  Hash
+                                 ->  Seq Scan on n2 c
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n3 e
+(18 rows)
+
+MATCH (a:n1)-[b]->(c:n2)-[d]->(e:n3) RETURN label(b) AS b, label(d) AS d ORDER BY b, d;
+  b   |  d   
+------+------
+ "e1" | "e2"
+(1 row)
+
+-- Case 9: first edge labelled drives the chain transitively
+EXPLAIN (costs off) MATCH (a)-[b:e1]->(c)-[d]->(e)-[f]->(g) RETURN g;
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Hash Join
+   Hash Cond: (f."end" = g.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Hash Join
+               Hash Cond: (f.start = e.id)
+               Join Filter: ((b.id <> f.id) AND (d.id <> f.id))
+               ->  Seq Scan on e3 f
+               ->  Hash
+                     ->  Hash Join
+                           Hash Cond: (d."end" = e.id)
+                           ->  Hash Join
+                                 Hash Cond: (d.start = c.id)
+                                 Join Filter: (b.id <> d.id)
+                                 ->  Seq Scan on e2 d
+                                 ->  Hash
+                                       ->  Hash Join
+                                             Hash Cond: (b."end" = c.id)
+                                             ->  Seq Scan on e1 b
+                                             ->  Hash
+                                                   ->  Seq Scan on n2 c
+                           ->  Hash
+                                 ->  Seq Scan on n3 e
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n4 g
+(27 rows)
+
+MATCH (a)-[b:e1]->(c)-[d]->(e)-[f]->(g) RETURN label(c) AS c, label(e) AS e, label(g) AS g ORDER BY c, e, g;
+  c   |  e   |  g   
+------+------+------
+ "n2" | "n3" | "n4"
+(1 row)
+
+-- Case 10: middle edge labelled
+EXPLAIN (costs off) MATCH (a)-[b]->(c)-[d:e2]->(e)-[f]->(g) RETURN g;
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Hash Join
+   Hash Cond: (f."end" = g.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Hash Join
+               Hash Cond: (f.start = e.id)
+               Join Filter: ((b.id <> f.id) AND (d.id <> f.id))
+               ->  Seq Scan on e3 f
+               ->  Hash
+                     ->  Hash Join
+                           Hash Cond: (d."end" = e.id)
+                           ->  Hash Join
+                                 Hash Cond: (d.start = c.id)
+                                 Join Filter: (b.id <> d.id)
+                                 ->  Seq Scan on e2 d
+                                 ->  Hash
+                                       ->  Hash Join
+                                             Hash Cond: (b."end" = c.id)
+                                             ->  Seq Scan on e1 b
+                                             ->  Hash
+                                                   ->  Seq Scan on n2 c
+                           ->  Hash
+                                 ->  Seq Scan on n3 e
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n4 g
+(27 rows)
+
+MATCH (a)-[b]->(c)-[d:e2]->(e)-[f]->(g) RETURN label(a) AS a, label(g) AS g ORDER BY a, g;
+  a   |  g   
+------+------
+ "n1" | "n4"
+(1 row)
+
+-- Case 11: last edge labelled
+EXPLAIN (costs off) MATCH (a)-[b]->(c)-[d]->(e)-[f:e4]->(g) RETURN g;
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Hash Join
+   Hash Cond: (f."end" = g.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Hash Join
+               Hash Cond: (f.start = e.id)
+               Join Filter: ((b.id <> f.id) AND (d.id <> f.id))
+               ->  Seq Scan on e4 f
+               ->  Hash
+                     ->  Hash Join
+                           Hash Cond: (d."end" = e.id)
+                           ->  Hash Join
+                                 Hash Cond: (d.start = c.id)
+                                 Join Filter: (b.id <> d.id)
+                                 ->  Seq Scan on e3 d
+                                 ->  Hash
+                                       ->  Hash Join
+                                             Hash Cond: (b."end" = c.id)
+                                             ->  Seq Scan on e2 b
+                                             ->  Hash
+                                                   ->  Seq Scan on n3 c
+                           ->  Hash
+                                 ->  Seq Scan on n4 e
+         ->  Hash
+               ->  Seq Scan on n2 a
+   ->  Hash
+         ->  Seq Scan on n5 g
+(27 rows)
+
+MATCH (a)-[b]->(c)-[d]->(e)-[f:e4]->(g) RETURN label(a) AS a, label(g) AS g ORDER BY a, g;
+  a   |  g   
+------+------
+ "n2" | "n5"
+(1 row)
+
+-- Case 12: all edges labelled
+EXPLAIN (costs off) MATCH (a)-[b:e1]->(c)-[d:e2]->(e)-[f:e3]->(g) RETURN g;
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Hash Join
+   Hash Cond: (f."end" = g.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Hash Join
+               Hash Cond: (f.start = e.id)
+               Join Filter: ((b.id <> f.id) AND (d.id <> f.id))
+               ->  Seq Scan on e3 f
+               ->  Hash
+                     ->  Hash Join
+                           Hash Cond: (d."end" = e.id)
+                           ->  Hash Join
+                                 Hash Cond: (d.start = c.id)
+                                 Join Filter: (b.id <> d.id)
+                                 ->  Seq Scan on e2 d
+                                 ->  Hash
+                                       ->  Hash Join
+                                             Hash Cond: (b."end" = c.id)
+                                             ->  Seq Scan on e1 b
+                                             ->  Hash
+                                                   ->  Seq Scan on n2 c
+                           ->  Hash
+                                 ->  Seq Scan on n3 e
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n4 g
+(27 rows)
+
+MATCH (a)-[b:e1]->(c)-[d:e2]->(e)-[f:e3]->(g) RETURN label(a) AS a, label(g) AS g ORDER BY a, g;
+  a   |  g   
+------+------
+ "n1" | "n4"
+(1 row)
+
+-- ---------- LEFT direction (edge maps to graphmeta end/start reversed) ----------
+-- (a)<-[b]-(c:n1): c=n1 is the start side, so a prunes to {n2}
+EXPLAIN (costs off) MATCH (a)<-[b]-(c:n1) RETURN a;
+             QUERY PLAN              
+-------------------------------------
+ Hash Join
+   Hash Cond: (b.start = c.id)
+   ->  Hash Join
+         Hash Cond: (b."end" = a.id)
+         ->  Seq Scan on e1 b
+         ->  Hash
+               ->  Seq Scan on n2 a
+   ->  Hash
+         ->  Seq Scan on n1 c
+(9 rows)
+
+MATCH (a)<-[b]-(c:n1) RETURN label(a) AS a, label(b) AS b ORDER BY a, b;
+  a   |  b   
+------+------
+ "n2" | "e1"
+(1 row)
+
+-- (a:n2)<-[b]-(c): a=n2 is the end side, so c prunes to {n1}
+EXPLAIN (costs off) MATCH (a:n2)<-[b]-(c) RETURN c;
+             QUERY PLAN              
+-------------------------------------
+ Hash Join
+   Hash Cond: (b.start = c.id)
+   ->  Hash Join
+         Hash Cond: (b."end" = a.id)
+         ->  Seq Scan on e1 b
+         ->  Hash
+               ->  Seq Scan on n2 a
+   ->  Hash
+         ->  Seq Scan on n1 c
+(9 rows)
+
+MATCH (a:n2)<-[b]-(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
+  b   |  c   
+------+------
+ "e1" | "n1"
+(1 row)
+
+-- ---------- undirected (node endpoints pruned; edge subquery not) ----------
+-- edge labelled: both endpoints prune to start(e1) UNION end(e1) = {n1,n2}
+EXPLAIN (costs off) MATCH (a)-[b:e1]-(c) RETURN c;
+                 QUERY PLAN                 
+--------------------------------------------
+ Hash Join
+   Hash Cond: (e1."end" = c.id)
+   ->  Hash Join
+         Hash Cond: (e1.start = a.id)
+         ->  Append
+               ->  Seq Scan on e1
+               ->  Seq Scan on e1 e1_1
+         ->  Hash
+               ->  Append
+                     ->  Seq Scan on n1 a_1
+                     ->  Seq Scan on n2 a_2
+   ->  Hash
+         ->  Append
+               ->  Seq Scan on n1 c_1
+               ->  Seq Scan on n2 c_2
+(15 rows)
+
+MATCH (a)-[b:e1]-(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
+  a   |  c   
+------+------
+ "n1" | "n2"
+ "n2" | "n1"
+(2 rows)
+
+-- node labelled: far endpoint prunes to n1's undirected neighbours = {n2}
+EXPLAIN (costs off) MATCH (a:n1)-[b]-(c) RETURN c;
+                   QUERY PLAN                    
+-------------------------------------------------
+ Hash Join
+   Hash Cond: (ag_edge."end" = c.id)
+   ->  Hash Join
+         Hash Cond: (ag_edge.start = a.id)
+         ->  Append
+               ->  Seq Scan on ag_edge
+               ->  Seq Scan on e1 ag_edge_1
+               ->  Seq Scan on e2 ag_edge_2
+               ->  Seq Scan on e3 ag_edge_3
+               ->  Seq Scan on e4 ag_edge_4
+               ->  Seq Scan on ex ag_edge_5
+               ->  Seq Scan on ey ag_edge_6
+               ->  Seq Scan on ag_edge ag_edge_7
+               ->  Seq Scan on e1 ag_edge_8
+               ->  Seq Scan on e2 ag_edge_9
+               ->  Seq Scan on e3 ag_edge_10
+               ->  Seq Scan on e4 ag_edge_11
+               ->  Seq Scan on ex ag_edge_12
+               ->  Seq Scan on ey ag_edge_13
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n2 c
+(23 rows)
+
+MATCH (a:n1)-[b]-(c) RETURN label(c) AS c ORDER BY c;
+  c   
+------
+ "n2"
+(1 row)
+
+-- far node labelled: near endpoint prunes to n2's undirected neighbours = {n1,n3}
+MATCH (a)-[b]-(c:n2) RETURN label(a) AS a ORDER BY a;
+  a   
+------
+ "n1"
+ "n3"
+(2 rows)
+
+-- ---------- ONLY anchor still drives adjacent elements ----------
+EXPLAIN (costs off) MATCH (a:n1 ONLY)-[b]->(c) RETURN c;
+             QUERY PLAN              
+-------------------------------------
+ Hash Join
+   Hash Cond: (b."end" = c.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Seq Scan on e1 b
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n2 c
+(9 rows)
+
+MATCH (a:n1 ONLY)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
+  b   |  c   
+------+------
+ "e1" | "n2"
+(1 row)
+
+-- ---------- multiple comma-separated components: no false cross-component arc ----------
+EXPLAIN (costs off) MATCH (a:n1)-[b]->(c), (x)-[y:eX]->(z) RETURN c, z;
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Hash Join
+   Hash Cond: (y."end" = z.id)
+   ->  Hash Join
+         Hash Cond: (y.start = x.id)
+         ->  Nested Loop
+               ->  Index Only Scan using ex_end_idx on ex y
+               ->  Materialize
+                     ->  Hash Join
+                           Hash Cond: (b."end" = c.id)
+                           ->  Hash Join
+                                 Hash Cond: (b.start = a.id)
+                                 ->  Seq Scan on e1 b
+                                 ->  Hash
+                                       ->  Seq Scan on n1 a
+                           ->  Hash
+                                 ->  Seq Scan on n2 c
+         ->  Hash
+               ->  Seq Scan on q1 x
+   ->  Hash
+         ->  Seq Scan on q2 z
+(20 rows)
+
+MATCH (a:n1)-[b]->(c), (x)-[y:eX]->(z)
+  RETURN label(c) AS c, label(x) AS x, label(z) AS z ORDER BY c, x, z;
+  c   |  x   |  z   
+------+------+------
+ "n2" | "q1" | "q2"
+(1 row)
+
+-- ---------- multi-anchor: middle node constrained from both sides ----------
+EXPLAIN (costs off) MATCH (a:n1)-[b]->(c:n2)-[d]->(e) RETURN e;
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Hash Join
+   Hash Cond: (d."end" = e.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Hash Join
+               Hash Cond: (d.start = c.id)
+               Join Filter: (b.id <> d.id)
+               ->  Seq Scan on e2 d
+               ->  Hash
+                     ->  Hash Join
+                           Hash Cond: (b."end" = c.id)
+                           ->  Seq Scan on e1 b
+                           ->  Hash
+                                 ->  Seq Scan on n2 c
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n3 e
+(18 rows)
+
+MATCH (a:n1)-[b]->(c:n2)-[d]->(e) RETURN label(e) AS e ORDER BY e;
+  e   
+------
+ "n3"
+(1 row)
+
+-- ---------- impossible patterns prune to an empty scan (0 rows) ----------
+-- n1 has no direct edge to n3
+EXPLAIN (costs off) MATCH (a:n1)-[b]->(c:n3) RETURN c;
+                    QUERY PLAN                     
+---------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Seq Scan on ag_edge b
+         ->  Index Only Scan using n1_pkey on n1 a
+               Index Cond: (id = b.start)
+   ->  Index Scan using n3_pkey on n3 c
+         Index Cond: (id = b."end")
+(7 rows)
+
+MATCH (a:n1)-[b]->(c:n3) RETURN c;
+ c 
+---
+(0 rows)
+
+-- n5 starts no edge
+EXPLAIN (costs off) MATCH (a:n5)-[b]->(c) RETURN c;
+                    QUERY PLAN                     
+---------------------------------------------------
+ Nested Loop
+   Join Filter: (b."end" = c.id)
+   ->  Nested Loop
+         ->  Seq Scan on ag_edge b
+         ->  Index Only Scan using n5_pkey on n5 a
+               Index Cond: (id = b.start)
+   ->  Seq Scan on ag_vertex c
+(7 rows)
+
+MATCH (a:n5)-[b]->(c) RETURN c;
+ c 
+---
+(0 rows)
+
+-- ---------- VLE must NOT be optimized (pure barrier), even with an anchor ----------
+EXPLAIN (costs off) MATCH (a)-[:e1*]->(b) RETURN a, b;
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Append
+               ->  Seq Scan on ag_vertex a_1
+               ->  Seq Scan on n1 a_2
+               ->  Seq Scan on n2 a_3
+               ->  Seq Scan on n3 a_4
+               ->  Seq Scan on n4 a_5
+               ->  Seq Scan on n5 a_6
+               ->  Seq Scan on q1 a_7
+               ->  Seq Scan on q2 a_8
+               ->  Seq Scan on q3 a_9
+         ->  Subquery Scan on "<0000000026>"
+               ->  Graph VLE [1..]
+                     ->  Result
+   ->  Memoize
+         Cache Key: "<0000000026>"."end"
+         Cache Mode: logical
+         ->  Append
+               ->  Seq Scan on ag_vertex b_1
+                     Filter: (id = "<0000000026>"."end")
+               ->  Index Scan using n1_pkey on n1 b_2
+                     Index Cond: (id = "<0000000026>"."end")
+               ->  Index Scan using n2_pkey on n2 b_3
+                     Index Cond: (id = "<0000000026>"."end")
+               ->  Index Scan using n3_pkey on n3 b_4
+                     Index Cond: (id = "<0000000026>"."end")
+               ->  Index Scan using n4_pkey on n4 b_5
+                     Index Cond: (id = "<0000000026>"."end")
+               ->  Index Scan using n5_pkey on n5 b_6
+                     Index Cond: (id = "<0000000026>"."end")
+               ->  Index Scan using q1_pkey on q1 b_7
+                     Index Cond: (id = "<0000000026>"."end")
+               ->  Index Scan using q2_pkey on q2 b_8
+                     Index Cond: (id = "<0000000026>"."end")
+               ->  Index Scan using q3_pkey on q3 b_9
+                     Index Cond: (id = "<0000000026>"."end")
+(37 rows)
+
+EXPLAIN (costs off) MATCH (a)-[:e1*2..5]->(b) RETURN a, b;
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Append
+               ->  Seq Scan on ag_vertex a_1
+               ->  Seq Scan on n1 a_2
+               ->  Seq Scan on n2 a_3
+               ->  Seq Scan on n3 a_4
+               ->  Seq Scan on n4 a_5
+               ->  Seq Scan on n5 a_6
+               ->  Seq Scan on q1 a_7
+               ->  Seq Scan on q2 a_8
+               ->  Seq Scan on q3 a_9
+         ->  Subquery Scan on "<0000000027>"
+               ->  Graph VLE [2..5]
+                     ->  Result
+   ->  Memoize
+         Cache Key: "<0000000027>"."end"
+         Cache Mode: logical
+         ->  Append
+               ->  Seq Scan on ag_vertex b_1
+                     Filter: (id = "<0000000027>"."end")
+               ->  Index Scan using n1_pkey on n1 b_2
+                     Index Cond: (id = "<0000000027>"."end")
+               ->  Index Scan using n2_pkey on n2 b_3
+                     Index Cond: (id = "<0000000027>"."end")
+               ->  Index Scan using n3_pkey on n3 b_4
+                     Index Cond: (id = "<0000000027>"."end")
+               ->  Index Scan using n4_pkey on n4 b_5
+                     Index Cond: (id = "<0000000027>"."end")
+               ->  Index Scan using n5_pkey on n5 b_6
+                     Index Cond: (id = "<0000000027>"."end")
+               ->  Index Scan using q1_pkey on q1 b_7
+                     Index Cond: (id = "<0000000027>"."end")
+               ->  Index Scan using q2_pkey on q2 b_8
+                     Index Cond: (id = "<0000000027>"."end")
+               ->  Index Scan using q3_pkey on q3 b_9
+                     Index Cond: (id = "<0000000027>"."end")
+(37 rows)
+
+EXPLAIN (costs off) MATCH (a:n1)-[:e1*1..2]->(c) RETURN c;
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Seq Scan on n1 a
+         ->  Subquery Scan on "<0000000028>"
+               ->  Graph VLE [1..2]
+                     ->  Result
+   ->  Memoize
+         Cache Key: "<0000000028>"."end"
+         Cache Mode: logical
+         ->  Append
+               ->  Seq Scan on ag_vertex c_1
+                     Filter: (id = "<0000000028>"."end")
+               ->  Index Scan using n1_pkey on n1 c_2
+                     Index Cond: (id = "<0000000028>"."end")
+               ->  Index Scan using n2_pkey on n2 c_3
+                     Index Cond: (id = "<0000000028>"."end")
+               ->  Index Scan using n3_pkey on n3 c_4
+                     Index Cond: (id = "<0000000028>"."end")
+               ->  Index Scan using n4_pkey on n4 c_5
+                     Index Cond: (id = "<0000000028>"."end")
+               ->  Index Scan using n5_pkey on n5 c_6
+                     Index Cond: (id = "<0000000028>"."end")
+               ->  Index Scan using q1_pkey on q1 c_7
+                     Index Cond: (id = "<0000000028>"."end")
+               ->  Index Scan using q2_pkey on q2 c_8
+                     Index Cond: (id = "<0000000028>"."end")
+               ->  Index Scan using q3_pkey on q3 c_9
+                     Index Cond: (id = "<0000000028>"."end")
+(28 rows)
+
+EXPLAIN (costs off) MATCH (a:n1)-[:e1*0..2]->(c) RETURN c;
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Seq Scan on n1 a
+         ->  Subquery Scan on "<0000000029>"
+               ->  Graph VLE [0..2]
+                     ->  Result
+   ->  Memoize
+         Cache Key: "<0000000029>"."end"
+         Cache Mode: logical
+         ->  Append
+               ->  Seq Scan on ag_vertex c_1
+                     Filter: (id = "<0000000029>"."end")
+               ->  Index Scan using n1_pkey on n1 c_2
+                     Index Cond: (id = "<0000000029>"."end")
+               ->  Index Scan using n2_pkey on n2 c_3
+                     Index Cond: (id = "<0000000029>"."end")
+               ->  Index Scan using n3_pkey on n3 c_4
+                     Index Cond: (id = "<0000000029>"."end")
+               ->  Index Scan using n4_pkey on n4 c_5
+                     Index Cond: (id = "<0000000029>"."end")
+               ->  Index Scan using n5_pkey on n5 c_6
+                     Index Cond: (id = "<0000000029>"."end")
+               ->  Index Scan using q1_pkey on q1 c_7
+                     Index Cond: (id = "<0000000029>"."end")
+               ->  Index Scan using q2_pkey on q2 c_8
+                     Index Cond: (id = "<0000000029>"."end")
+               ->  Index Scan using q3_pkey on q3 c_9
+                     Index Cond: (id = "<0000000029>"."end")
+(28 rows)
+
+EXPLAIN (costs off) MATCH (a)-[*]->(b) RETURN a, b;
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Append
+               ->  Seq Scan on ag_vertex a_1
+               ->  Seq Scan on n1 a_2
+               ->  Seq Scan on n2 a_3
+               ->  Seq Scan on n3 a_4
+               ->  Seq Scan on n4 a_5
+               ->  Seq Scan on n5 a_6
+               ->  Seq Scan on q1 a_7
+               ->  Seq Scan on q2 a_8
+               ->  Seq Scan on q3 a_9
+         ->  Subquery Scan on "<0000000030>"
+               ->  Graph VLE [1..]
+                     ->  Result
+   ->  Memoize
+         Cache Key: "<0000000030>"."end"
+         Cache Mode: logical
+         ->  Append
+               ->  Seq Scan on ag_vertex b_1
+                     Filter: (id = "<0000000030>"."end")
+               ->  Index Scan using n1_pkey on n1 b_2
+                     Index Cond: (id = "<0000000030>"."end")
+               ->  Index Scan using n2_pkey on n2 b_3
+                     Index Cond: (id = "<0000000030>"."end")
+               ->  Index Scan using n3_pkey on n3 b_4
+                     Index Cond: (id = "<0000000030>"."end")
+               ->  Index Scan using n4_pkey on n4 b_5
+                     Index Cond: (id = "<0000000030>"."end")
+               ->  Index Scan using n5_pkey on n5 b_6
+                     Index Cond: (id = "<0000000030>"."end")
+               ->  Index Scan using q1_pkey on q1 b_7
+                     Index Cond: (id = "<0000000030>"."end")
+               ->  Index Scan using q2_pkey on q2 b_8
+                     Index Cond: (id = "<0000000030>"."end")
+               ->  Index Scan using q3_pkey on q3 b_9
+                     Index Cond: (id = "<0000000030>"."end")
+(37 rows)
+
+-- ---------- multiple edge labels between the same node labels (disambiguation) ----------
+-- second, parallel chain: n1 -eA-> n2 -eB-> n3 -eC-> n4 -eD-> n5, plus na..ne chain
+CREATE ELABEL eA; CREATE ELABEL eB; CREATE ELABEL eC; CREATE ELABEL eD;
+CREATE VLABEL na; CREATE VLABEL nb; CREATE VLABEL nc; CREATE VLABEL nd; CREATE VLABEL ne;
+CREATE (:n1)-[:eA]->(:n2)-[:eB]->(:n3)-[:eC]->(:n4)-[:eD]->(:n5);
+CREATE (:na)-[:eA]->(:nb)-[:eB]->(:nc)-[:eC]->(:nd)-[:eD]->(:ne);
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start | edge | end | edgecount 
+-----------+-------+------+-----+-----------
+ gmp5      | n1    | e1   | n2  |         1
+ gmp5      | n1    | ea   | n2  |         1
+ gmp5      | n2    | e2   | n3  |         1
+ gmp5      | n2    | eb   | n3  |         1
+ gmp5      | n3    | e3   | n4  |         1
+ gmp5      | n3    | ec   | n4  |         1
+ gmp5      | n4    | e4   | n5  |         1
+ gmp5      | n4    | ed   | n5  |         1
+ gmp5      | na    | ea   | nb  |         1
+ gmp5      | nb    | eb   | nc  |         1
+ gmp5      | nc    | ec   | nd  |         1
+ gmp5      | nd    | ed   | ne  |         1
+ gmp5      | q1    | ex   | q2  |         1
+ gmp5      | q2    | ey   | q3  |         1
+(14 rows)
+
+-- n1 now starts BOTH e1 and eA into n2: b scans {e1,eA}, c still {n2}
+EXPLAIN (costs off) MATCH (a:n1)-[b]->(c) RETURN c;
+              QUERY PLAN              
+--------------------------------------
+ Hash Join
+   Hash Cond: (b."end" = c.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Append
+               ->  Seq Scan on e1 b_1
+               ->  Seq Scan on ea b_2
+         ->  Hash
+               ->  Seq Scan on n1 a
+   ->  Hash
+         ->  Seq Scan on n2 c
+(11 rows)
+
+MATCH (a:n1)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
+  b   |  c   
+------+------
+ "e1" | "n2"
+ "ea" | "n2"
+(2 rows)
+
+-- eA connects {n1,na}->{n2,nb}: both endpoints scan two labels each
+EXPLAIN (costs off) MATCH (a)-[b:eA]->(c) RETURN c;
+                 QUERY PLAN                 
+--------------------------------------------
+ Hash Join
+   Hash Cond: (b."end" = c.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Seq Scan on ea b
+         ->  Hash
+               ->  Append
+                     ->  Seq Scan on n1 a_1
+                     ->  Seq Scan on na a_2
+   ->  Hash
+         ->  Append
+               ->  Seq Scan on n2 c_1
+               ->  Seq Scan on nb c_2
+(13 rows)
+
+MATCH (a)-[b:eA]->(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
+  a   |  c   
+------+------
+ "n1" | "n2"
+ "na" | "nb"
+(2 rows)
+
+-- multi-hop across a parallel-labelled graph, edge-anchored
+MATCH (a)-[b:eA]->(c)-[d]->(e) RETURN label(c) AS c, label(e) AS e ORDER BY c, e;
+  c   |  e   
+------+------
+ "n2" | "n3"
+ "nb" | "nc"
+(2 rows)
+
+-- ---------- result-equivalence: pruning must never change rows ----------
+-- Re-run representative patterns with gathering ON then OFF on the SAME data;
+-- the two blocks must be row-identical.
+-- gathering ON:
+MATCH (a:n1)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
+  b   |  c   
+------+------
+ "e1" | "n2"
+ "ea" | "n2"
+(2 rows)
+
+MATCH (a)-[b:e1]->(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
+  a   |  c   
+------+------
+ "n1" | "n2"
+(1 row)
+
+MATCH (a:n1)-[b]->(c)-[d]->(e) RETURN label(c) AS c, label(d) AS d, label(e) AS e ORDER BY c, d, e;
+  c   |  d   |  e   
+------+------+------
+ "n2" | "e2" | "n3"
+ "n2" | "eb" | "n3"
+(2 rows)
+
+MATCH (a)<-[b]-(c:n1) RETURN label(a) AS a, label(b) AS b ORDER BY a, b;
+  a   |  b   
+------+------
+ "n2" | "e1"
+ "n2" | "ea"
+(2 rows)
+
+MATCH (a)-[b:e1]-(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
+  a   |  c   
+------+------
+ "n1" | "n2"
+ "n2" | "n1"
+(2 rows)
+
+MATCH (a:n1)-[b]->(c), (x)-[y:eX]->(z) RETURN label(c) AS c, label(x) AS x, label(z) AS z ORDER BY c, x, z;
+  c   |  x   |  z   
+------+------+------
+ "n2" | "q1" | "q2"
+ "n2" | "q1" | "q2"
+(2 rows)
+
+MATCH (a:n1)-[b]->(c:n3) RETURN c;
+ c 
+---
+(0 rows)
+
+MATCH (a)-[b:eA]->(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
+  a   |  c   
+------+------
+ "n1" | "n2"
+ "na" | "nb"
+(2 rows)
+
+-- gathering OFF (rows must match the ON block above):
+SET auto_gather_graphmeta = false;
+MATCH (a:n1)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
+  b   |  c   
+------+------
+ "e1" | "n2"
+ "ea" | "n2"
+(2 rows)
+
+MATCH (a)-[b:e1]->(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
+  a   |  c   
+------+------
+ "n1" | "n2"
+(1 row)
+
+MATCH (a:n1)-[b]->(c)-[d]->(e) RETURN label(c) AS c, label(d) AS d, label(e) AS e ORDER BY c, d, e;
+  c   |  d   |  e   
+------+------+------
+ "n2" | "e2" | "n3"
+ "n2" | "eb" | "n3"
+(2 rows)
+
+MATCH (a)<-[b]-(c:n1) RETURN label(a) AS a, label(b) AS b ORDER BY a, b;
+  a   |  b   
+------+------
+ "n2" | "e1"
+ "n2" | "ea"
+(2 rows)
+
+MATCH (a)-[b:e1]-(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
+  a   |  c   
+------+------
+ "n1" | "n2"
+ "n2" | "n1"
+(2 rows)
+
+MATCH (a:n1)-[b]->(c), (x)-[y:eX]->(z) RETURN label(c) AS c, label(x) AS x, label(z) AS z ORDER BY c, x, z;
+  c   |  x   |  z   
+------+------+------
+ "n2" | "q1" | "q2"
+ "n2" | "q1" | "q2"
+(2 rows)
+
+MATCH (a:n1)-[b]->(c:n3) RETURN c;
+ c 
+---
+(0 rows)
+
+MATCH (a)-[b:eA]->(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
+  a   |  c   
+------+------
+ "n1" | "n2"
+ "na" | "nb"
+(2 rows)
+
+SET auto_gather_graphmeta = true;
+NOTICE:  regathering graphmeta...
+DROP GRAPH gmp5 CASCADE;
+NOTICE:  drop cascades to 26 other objects
+DETAIL:  drop cascades to sequence gmp5.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel n1
+drop cascades to vlabel n2
+drop cascades to vlabel n3
+drop cascades to vlabel n4
+drop cascades to vlabel n5
+drop cascades to vlabel q1
+drop cascades to vlabel q2
+drop cascades to vlabel q3
+drop cascades to elabel e1
+drop cascades to elabel e2
+drop cascades to elabel e3
+drop cascades to elabel e4
+drop cascades to elabel ex
+drop cascades to elabel ey
+drop cascades to elabel ea
+drop cascades to elabel eb
+drop cascades to elabel ec
+drop cascades to elabel ed
+drop cascades to vlabel na
+drop cascades to vlabel nb
+drop cascades to vlabel nc
+drop cascades to vlabel nd
+drop cascades to vlabel ne
+-- ============================================================
+-- self-loops and cycles: the solver must terminate and prune correctly when a
+-- label reaches itself or the pattern forms a cycle.
+-- ============================================================
+CREATE GRAPH gmp6;
+SET graph_path = gmp6;
+CREATE VLABEL sl;
+CREATE VLABEL t1; CREATE VLABEL t2; CREATE VLABEL t3;
+CREATE ELABEL loop;
+CREATE ELABEL te;
+SET auto_gather_graphmeta = true;
+-- self-loop sl -loop-> sl
+CREATE (:sl);
+MATCH (s:sl) CREATE (s)-[:loop]->(s);
+-- triangle t1 -te-> t2 -te-> t3 -te-> t1
+CREATE (:t1)-[:te]->(:t2)-[:te]->(:t3);
+MATCH (a:t3), (b:t1) CREATE (a)-[:te]->(b);
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start | edge | end | edgecount 
+-----------+-------+------+-----+-----------
+ gmp6      | sl    | loop | sl  |         1
+ gmp6      | t1    | te   | t2  |         1
+ gmp6      | t2    | te   | t3  |         1
+ gmp6      | t3    | te   | t1  |         1
+(4 rows)
+
+-- self-loop: far node is the same label
+EXPLAIN (costs off) MATCH (a:sl)-[b]->(c) RETURN c;
+             QUERY PLAN              
+-------------------------------------
+ Hash Join
+   Hash Cond: (b."end" = c.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Seq Scan on loop b
+         ->  Hash
+               ->  Seq Scan on sl a
+   ->  Hash
+         ->  Seq Scan on sl c
+(9 rows)
+
+MATCH (a:sl)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
+   b    |  c   
+--------+------
+ "loop" | "sl"
+(1 row)
+
+-- cycle: three hops around the triangle land back on t1
+EXPLAIN (costs off) MATCH (a:t1)-[b]->(c)-[d]->(e)-[f]->(g) RETURN g;
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Hash Join
+   Hash Cond: (f."end" = g.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Hash Join
+               Hash Cond: (f.start = e.id)
+               Join Filter: ((b.id <> f.id) AND (d.id <> f.id))
+               ->  Seq Scan on te f
+               ->  Hash
+                     ->  Hash Join
+                           Hash Cond: (d."end" = e.id)
+                           ->  Hash Join
+                                 Hash Cond: (d.start = c.id)
+                                 Join Filter: (b.id <> d.id)
+                                 ->  Seq Scan on te d
+                                 ->  Hash
+                                       ->  Hash Join
+                                             Hash Cond: (b."end" = c.id)
+                                             ->  Seq Scan on te b
+                                             ->  Hash
+                                                   ->  Seq Scan on t2 c
+                           ->  Hash
+                                 ->  Seq Scan on t3 e
+         ->  Hash
+               ->  Seq Scan on t1 a
+   ->  Hash
+         ->  Seq Scan on t1 g
+(27 rows)
+
+MATCH (a:t1)-[b]->(c)-[d]->(e)-[f]->(g)
+  RETURN label(c) AS c, label(e) AS e, label(g) AS g ORDER BY c, e, g;
+  c   |  e   |  g   
+------+------+------
+ "t2" | "t3" | "t1"
+(1 row)
+
+-- equivalence for the cyclic shapes
+SET auto_gather_graphmeta = false;
+MATCH (a:sl)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
+   b    |  c   
+--------+------
+ "loop" | "sl"
+(1 row)
+
+MATCH (a:t1)-[b]->(c)-[d]->(e)-[f]->(g) RETURN label(c) AS c, label(e) AS e, label(g) AS g ORDER BY c, e, g;
+  c   |  e   |  g   
+------+------+------
+ "t2" | "t3" | "t1"
+(1 row)
+
+SET auto_gather_graphmeta = true;
+NOTICE:  regathering graphmeta...
+DROP GRAPH gmp6 CASCADE;
+NOTICE:  drop cascades to 9 other objects
+DETAIL:  drop cascades to sequence gmp6.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel sl
+drop cascades to vlabel t1
+drop cascades to vlabel t2
+drop cascades to vlabel t3
+drop cascades to elabel loop
+drop cascades to elabel te
+-- ============================================================
+-- prepared statements adapt to connectivity changes: a cached (generic) pruned
+-- plan must be re-planned when new labels/edges extend what the pattern reaches,
+-- so it never keeps scanning a stale, too-narrow label set (which would drop the
+-- newly-connected rows).
+-- ============================================================
+CREATE GRAPH gmp7;
+SET graph_path = gmp7;
+CREATE VLABEL n1; CREATE VLABEL n2;
+CREATE ELABEL e1;
+SET auto_gather_graphmeta = true;
+CREATE (:n1)-[:e1]->(:n2);
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start | edge | end | edgecount 
+-----------+-------+------+-----+-----------
+ gmp7      | n1    | e1   | n2  |         1
+(1 row)
+
+-- force the generic (cached) plan so we actually exercise plan-cache reuse
+SET plan_cache_mode = force_generic_plan;
+PREPARE pp AS MATCH (a:n1)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
+-- initial cached plan: b scans only {e1}, c only {n2}
+EXPLAIN (costs off) EXECUTE pp;
+                                                           QUERY PLAN                                                           
+--------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (label(ROW(b.id, b.start, b."end", b.properties, b.ctid)::edge)), (label(ROW(c.id, c.properties, c.ctid)::vertex))
+   ->  Hash Join
+         Hash Cond: (b."end" = c.id)
+         ->  Hash Join
+               Hash Cond: (b.start = a.id)
+               ->  Seq Scan on e1 b
+               ->  Hash
+                     ->  Seq Scan on n1 a
+         ->  Hash
+               ->  Seq Scan on n2 c
+(11 rows)
+
+EXECUTE pp;
+  b   |  c   
+------+------
+ "e1" | "n2"
+(1 row)
+
+-- modify the graph: a NEW edge label + vertex label that n1 now also reaches
+CREATE VLABEL n3;
+CREATE ELABEL e2;
+CREATE (:n1)-[:e2]->(:n3);
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start | edge | end | edgecount 
+-----------+-------+------+-----+-----------
+ gmp7      | n1    | e1   | n2  |         1
+ gmp7      | n1    | e2   | n3  |         1
+(2 rows)
+
+-- the cached plan must be re-planned: b now scans {e1,e2}, c now {n2,n3}
+EXPLAIN (costs off) EXECUTE pp;
+                                                           QUERY PLAN                                                           
+--------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (label(ROW(b.id, b.start, b."end", b.properties, b.ctid)::edge)), (label(ROW(c.id, c.properties, c.ctid)::vertex))
+   ->  Hash Join
+         Hash Cond: (b."end" = c.id)
+         ->  Hash Join
+               Hash Cond: (b.start = a.id)
+               ->  Append
+                     ->  Seq Scan on e1 b_1
+                     ->  Seq Scan on e2 b_2
+               ->  Hash
+                     ->  Seq Scan on n1 a
+         ->  Hash
+               ->  Append
+                     ->  Seq Scan on n2 c_1
+                     ->  Seq Scan on n3 c_2
+(15 rows)
+
+EXECUTE pp;
+  b   |  c   
+------+------
+ "e1" | "n2"
+ "e2" | "n3"
+(2 rows)
+
+-- extend once more with another new endpoint label reached from n1
+CREATE VLABEL n4;
+CREATE (:n1)-[:e2]->(:n4);
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start | edge | end | edgecount 
+-----------+-------+------+-----+-----------
+ gmp7      | n1    | e1   | n2  |         1
+ gmp7      | n1    | e2   | n3  |         1
+ gmp7      | n1    | e2   | n4  |         1
+(3 rows)
+
+EXPLAIN (costs off) EXECUTE pp;
+                                                           QUERY PLAN                                                           
+--------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (label(ROW(b.id, b.start, b."end", b.properties, b.ctid)::edge)), (label(ROW(c.id, c.properties, c.ctid)::vertex))
+   ->  Hash Join
+         Hash Cond: (b."end" = c.id)
+         ->  Hash Join
+               Hash Cond: (b.start = a.id)
+               ->  Append
+                     ->  Seq Scan on e1 b_1
+                     ->  Seq Scan on e2 b_2
+               ->  Hash
+                     ->  Seq Scan on n1 a
+         ->  Hash
+               ->  Append
+                     ->  Seq Scan on n2 c_1
+                     ->  Seq Scan on n3 c_2
+                     ->  Seq Scan on n4 c_3
+(16 rows)
+
+EXECUTE pp;
+  b   |  c   
+------+------
+ "e1" | "n2"
+ "e2" | "n3"
+ "e2" | "n4"
+(3 rows)
+
+-- an UNRELATED new component must NOT widen n1's pruned set (still {e1,e2}/{n2,n3,n4})
+CREATE VLABEL u1; CREATE VLABEL u2; CREATE ELABEL eu;
+CREATE (:u1)-[:eu]->(:u2);
+EXPLAIN (costs off) EXECUTE pp;
+                                                           QUERY PLAN                                                           
+--------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (label(ROW(b.id, b.start, b."end", b.properties, b.ctid)::edge)), (label(ROW(c.id, c.properties, c.ctid)::vertex))
+   ->  Hash Join
+         Hash Cond: (b."end" = c.id)
+         ->  Hash Join
+               Hash Cond: (b.start = a.id)
+               ->  Append
+                     ->  Seq Scan on e1 b_1
+                     ->  Seq Scan on e2 b_2
+               ->  Hash
+                     ->  Seq Scan on n1 a
+         ->  Hash
+               ->  Append
+                     ->  Seq Scan on n2 c_1
+                     ->  Seq Scan on n3 c_2
+                     ->  Seq Scan on n4 c_3
+(16 rows)
+
+EXECUTE pp;
+  b   |  c   
+------+------
+ "e1" | "n2"
+ "e2" | "n3"
+ "e2" | "n4"
+(3 rows)
+
+-- ground truth: the prepared (pruned) result equals the unpruned scan
+SET auto_gather_graphmeta = false;
+MATCH (a:n1)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
+  b   |  c   
+------+------
+ "e1" | "n2"
+ "e2" | "n3"
+ "e2" | "n4"
+(3 rows)
+
+SET auto_gather_graphmeta = true;
+NOTICE:  regathering graphmeta...
+DEALLOCATE pp;
+SET plan_cache_mode = auto;
+DROP GRAPH gmp7 CASCADE;
+NOTICE:  drop cascades to 12 other objects
+DETAIL:  drop cascades to sequence gmp7.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel n1
+drop cascades to vlabel n2
+drop cascades to elabel e1
+drop cascades to vlabel n3
+drop cascades to elabel e2
+drop cascades to vlabel n4
+drop cascades to vlabel u1
+drop cascades to vlabel u2
+drop cascades to elabel eu
+-- ============================================================
+-- bulk COPY maintenance: the copyfrom.c hook must record connectivity for
+-- edges loaded via COPY (not just Cypher CREATE), or pruning would drop the
+-- bulk-loaded rows.  (Label ids in a fresh graph are deterministic: ag_vertex=1,
+-- ag_edge=2, then user labels in creation order; localids start at 1 -- hence
+-- the graphid literals below.)
+-- ============================================================
+CREATE GRAPH gmp8;
+SET graph_path = gmp8;
+CREATE VLABEL src;             -- labid 3
+CREATE VLABEL mid;             -- labid 4
+CREATE VLABEL dst;             -- labid 5
+CREATE ELABEL rel;             -- labid 6
+SET auto_gather_graphmeta = true;
+CREATE (:src);                 -- graphid 3.1
+CREATE (:mid);                 -- graphid 4.1
+CREATE (:dst);                 -- graphid 5.1
+-- bulk-load two edges via COPY: src -rel-> mid and mid -rel-> dst
+COPY gmp8.rel (id, start, "end", properties) FROM stdin;
+-- COPY must have recorded both triples
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start | edge | end | edgecount 
+-----------+-------+------+-----+-----------
+ gmp8      | mid   | rel  | dst |         1
+ gmp8      | src   | rel  | mid |         1
+(2 rows)
+
+-- pruning uses the COPY-loaded connectivity: chain from src reaches dst
+EXPLAIN (costs off) MATCH (a:src)-[b]->(c)-[d]->(e) RETURN e;
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Hash Join
+   Hash Cond: (d."end" = e.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Hash Join
+               Hash Cond: (d.start = c.id)
+               Join Filter: (b.id <> d.id)
+               ->  Seq Scan on rel d
+               ->  Hash
+                     ->  Hash Join
+                           Hash Cond: (b."end" = c.id)
+                           ->  Seq Scan on rel b
+                           ->  Hash
+                                 ->  Seq Scan on mid c
+         ->  Hash
+               ->  Seq Scan on src a
+   ->  Hash
+         ->  Seq Scan on dst e
+(18 rows)
+
+MATCH (a:src)-[b]->(c)-[d]->(e) RETURN label(c) AS c, label(e) AS e ORDER BY c, e;
+   c   |   e   
+-------+-------
+ "mid" | "dst"
+(1 row)
+
+-- result-equivalence on COPY-loaded data
+SET auto_gather_graphmeta = false;
+MATCH (a:src)-[b]->(c)-[d]->(e) RETURN label(c) AS c, label(e) AS e ORDER BY c, e;
+   c   |   e   
+-------+-------
+ "mid" | "dst"
+(1 row)
+
+SET auto_gather_graphmeta = true;
+NOTICE:  regathering graphmeta...
+DROP GRAPH gmp8 CASCADE;
+NOTICE:  drop cascades to 7 other objects
+DETAIL:  drop cascades to sequence gmp8.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel src
+drop cascades to vlabel mid
+drop cascades to vlabel dst
+drop cascades to elabel rel
+-- ============================================================
+-- direct-UPDATE maintenance: a non-Cypher UPDATE that rewires an edge endpoint
+-- records the NEW connectivity triple (nodeModifyTable.c hook).  The old triple
+-- remains (deliberately not decremented -- overstating only causes a harmless
+-- extra empty scan, never a dropped row), so pruning still accommodates the new
+-- endpoint and results stay correct.
+-- ============================================================
+CREATE GRAPH gmp9;
+SET graph_path = gmp9;
+CREATE VLABEL p; CREATE VLABEL c1; CREATE VLABEL c2;
+CREATE ELABEL rel;
+SET auto_gather_graphmeta = true;
+CREATE (:p)-[:rel]->(:c1);
+CREATE (:c2);
+-- before: rel connects only p -> c1
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start | edge | end | edgecount 
+-----------+-------+------+-----+-----------
+ gmp9      | p     | rel  | c1  |         1
+(1 row)
+
+MATCH (a:p)-[b:rel]->(c) RETURN label(c) AS c ORDER BY c;
+  c   
+------
+ "c1"
+(1 row)
+
+-- rewire the edge's endpoint from the c1 vertex to the c2 vertex via direct SQL
+SET enable_graph_dml = on;
+UPDATE gmp9.rel SET "end" = (SELECT id FROM gmp9.c2 ORDER BY id LIMIT 1);
+SET enable_graph_dml = off;
+-- after: the new triple (p,rel,c2) is recorded; the old (p,rel,c1) remains (loose)
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start | edge | end | edgecount 
+-----------+-------+------+-----+-----------
+ gmp9      | p     | rel  | c1  |         1
+ gmp9      | p     | rel  | c2  |         1
+(2 rows)
+
+-- pruning now includes c2 (the new endpoint); the actual row resolves to c2
+EXPLAIN (costs off) MATCH (a:p)-[b:rel]->(c) RETURN c;
+              QUERY PLAN              
+--------------------------------------
+ Hash Join
+   Hash Cond: (b."end" = c.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Seq Scan on rel b
+         ->  Hash
+               ->  Seq Scan on p a
+   ->  Hash
+         ->  Append
+               ->  Seq Scan on c1 c_1
+               ->  Seq Scan on c2 c_2
+(11 rows)
+
+MATCH (a:p)-[b:rel]->(c) RETURN label(c) AS c ORDER BY c;
+  c   
+------
+ "c2"
+(1 row)
+
+-- result-equivalence after the rewire
+SET auto_gather_graphmeta = false;
+MATCH (a:p)-[b:rel]->(c) RETURN label(c) AS c ORDER BY c;
+  c   
+------
+ "c2"
+(1 row)
+
+SET auto_gather_graphmeta = true;
+NOTICE:  regathering graphmeta...
+DROP GRAPH gmp9 CASCADE;
+NOTICE:  drop cascades to 7 other objects
+DETAIL:  drop cascades to sequence gmp9.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel p
+drop cascades to vlabel c1
+drop cascades to vlabel c2
+drop cascades to elabel rel
+-- ============================================================
+-- label inheritance: a labelled element whose label has CHILD labels covers the
+-- whole subtree; ag_graphmeta records the LEAF labids; and pruning narrows WITHIN
+-- the subtree by actual connectivity (a subtree member that participates in no
+-- matching edge is dropped from the scan).  Covers vertex- and edge-label trees.
+-- ============================================================
+CREATE GRAPH gmp10;
+SET graph_path = gmp10;
+CREATE VLABEL animal;
+CREATE VLABEL dog INHERITS (animal);
+CREATE VLABEL cat INHERITS (animal);
+CREATE ELABEL rel;
+CREATE ELABEL subrel INHERITS (rel);
+SET auto_gather_graphmeta = true;
+CREATE (:animal)-[:rel]->(:dog);
+CREATE (:dog)-[:subrel]->(:cat);
+-- leaf labids recorded: (animal,rel,dog), (dog,subrel,cat)
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start  |  edge  | end | edgecount 
+-----------+--------+--------+-----+-----------
+ gmp10     | animal | rel    | dog |         1
+ gmp10     | dog    | subrel | cat |         1
+(2 rows)
+
+-- parent vertex-label anchor: a scans {animal,dog} (cat starts nothing), c scans
+-- {dog,cat} (nothing ends at an animal-direct vertex), b covers {rel,subrel}
+EXPLAIN (costs off) MATCH (a:animal)-[b]->(c) RETURN c;
+                   QUERY PLAN                   
+------------------------------------------------
+ Hash Join
+   Hash Cond: (b."end" = c.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Append
+               ->  Seq Scan on rel b_1
+               ->  Seq Scan on subrel b_2
+         ->  Hash
+               ->  Append
+                     ->  Seq Scan on animal a_1
+                     ->  Seq Scan on dog a_2
+   ->  Hash
+         ->  Append
+               ->  Seq Scan on dog c_1
+               ->  Seq Scan on cat c_2
+(15 rows)
+
+MATCH (a:animal)-[b]->(c) RETURN label(a) AS la, label(b) AS lb, label(c) AS lc ORDER BY la, lb, lc;
+    la    |    lb    |  lc   
+----------+----------+-------
+ "animal" | "rel"    | "dog"
+ "dog"    | "subrel" | "cat"
+(2 rows)
+
+-- child vertex-label anchor: (a:dog) scans only dog; dog starts subrel -> cat
+EXPLAIN (costs off) MATCH (a:dog)-[b]->(c) RETURN c;
+             QUERY PLAN              
+-------------------------------------
+ Hash Join
+   Hash Cond: (b."end" = c.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Seq Scan on subrel b
+         ->  Hash
+               ->  Seq Scan on dog a
+   ->  Hash
+         ->  Seq Scan on cat c
+(9 rows)
+
+MATCH (a:dog)-[b]->(c) RETURN label(b) AS lb, label(c) AS lc ORDER BY lb, lc;
+    lb    |  lc   
+----------+-------
+ "subrel" | "cat"
+(1 row)
+
+-- parent edge-label anchor: b covers the {rel,subrel} subtree; endpoints span both hops
+EXPLAIN (costs off) MATCH (a)-[b:rel]->(c) RETURN c;
+                   QUERY PLAN                   
+------------------------------------------------
+ Hash Join
+   Hash Cond: (b."end" = c.id)
+   ->  Hash Join
+         Hash Cond: (b.start = a.id)
+         ->  Append
+               ->  Seq Scan on rel b_1
+               ->  Seq Scan on subrel b_2
+         ->  Hash
+               ->  Append
+                     ->  Seq Scan on animal a_1
+                     ->  Seq Scan on dog a_2
+   ->  Hash
+         ->  Append
+               ->  Seq Scan on dog c_1
+               ->  Seq Scan on cat c_2
+(15 rows)
+
+MATCH (a)-[b:rel]->(c) RETURN label(a) AS la, label(b) AS lb, label(c) AS lc ORDER BY la, lb, lc;
+    la    |    lb    |  lc   
+----------+----------+-------
+ "animal" | "rel"    | "dog"
+ "dog"    | "subrel" | "cat"
+(2 rows)
+
+-- child edge-label anchor: only the subrel hop dog -> cat
+MATCH (a)-[b:subrel]->(c) RETURN label(a) AS la, label(c) AS lc ORDER BY la, lc;
+  la   |  lc   
+-------+-------
+ "dog" | "cat"
+(1 row)
+
+-- result-equivalence (on vs off) for the inheritance cases
+SET auto_gather_graphmeta = false;
+MATCH (a:animal)-[b]->(c) RETURN label(a) AS la, label(b) AS lb, label(c) AS lc ORDER BY la, lb, lc;
+    la    |    lb    |  lc   
+----------+----------+-------
+ "animal" | "rel"    | "dog"
+ "dog"    | "subrel" | "cat"
+(2 rows)
+
+MATCH (a:dog)-[b]->(c) RETURN label(b) AS lb, label(c) AS lc ORDER BY lb, lc;
+    lb    |  lc   
+----------+-------
+ "subrel" | "cat"
+(1 row)
+
+MATCH (a)-[b:rel]->(c) RETURN label(a) AS la, label(b) AS lb, label(c) AS lc ORDER BY la, lb, lc;
+    la    |    lb    |  lc   
+----------+----------+-------
+ "animal" | "rel"    | "dog"
+ "dog"    | "subrel" | "cat"
+(2 rows)
+
+MATCH (a)-[b:subrel]->(c) RETURN label(a) AS la, label(c) AS lc ORDER BY la, lc;
+  la   |  lc   
+-------+-------
+ "dog" | "cat"
+(1 row)
+
+SET auto_gather_graphmeta = true;
+NOTICE:  regathering graphmeta...
+DROP GRAPH gmp10 CASCADE;
+NOTICE:  drop cascades to 8 other objects
+DETAIL:  drop cascades to sequence gmp10.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel animal
+drop cascades to vlabel dog
+drop cascades to vlabel cat
+drop cascades to elabel rel
+drop cascades to elabel subrel

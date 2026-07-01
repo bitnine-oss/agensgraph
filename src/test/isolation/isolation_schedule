@@ -117,3 +117,7 @@ test: serializable-parallel-2
 test: serializable-parallel-3
 test: matview-write-skew
 test: lock-nowait
+
+# ag_graphmeta cross-session plan-cache invalidation
+test: graphmeta_prune_replan
+test: graphmeta_prune_drop

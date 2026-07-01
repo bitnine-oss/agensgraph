@@ -20,6 +20,9 @@
 extern void expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 									 RangeTblEntry *rte, Index rti);
 
+/* agensgraph: ag_graphmeta constraint-propagation scan-pruning pre-pass */
+extern void propagate_graphmeta_constraints(PlannerInfo *root);
+
 extern Bitmapset *get_rel_all_updated_cols(PlannerInfo *root, RelOptInfo *rel);
 
 extern bool apply_child_basequals(PlannerInfo *root, RelOptInfo *parentrel,

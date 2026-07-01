@@ -21,6 +21,7 @@
 #include "access/xact.h"
 #include "catalog/pg_am_d.h"
 #include "commands/trigger.h"
+#include "executor/execGraphMeta.h"
 #include "executor/executor.h"
 #include "executor/nodeModifyTable.h"
 #include "replication/logicalrelation.h"
@@ -541,6 +542,9 @@ ExecSimpleRelationInsert(ResultRelInfo *resultRelInfo,
 		 */
 
 		list_free(recheckIndexes);
+
+		/* Maintain ag_graphmeta connectivity for replicated edge inserts. */
+		GraphmetaRecordEdgeInsertFromSlot(rel, slot);
 	}
 }
 
@@ -606,6 +610,12 @@ ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 							 recheckIndexes, NULL, false);
 
 		list_free(recheckIndexes);
+
+		/*
+		 * Maintain ag_graphmeta connectivity for replicated edge updates
+		 * (records the new endpoints; see GraphmetaRecordEdgeInsertFromSlot).
+		 */
+		GraphmetaRecordEdgeInsertFromSlot(rel, slot);
 	}
 }
 

@@ -152,6 +152,9 @@ test: cypher_privileges
 # run graphmeta
 test: graphmeta
 
+# run graphmeta scan pruning
+test: cypher_graphmeta_prune
+
 # run cypher ddl test
 test: cypher_ddl
 

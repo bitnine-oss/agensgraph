@@ -1,0 +1,19 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1_exec1 s2_addedge s1_exec2
+s1: NOTICE:  regathering graphmeta...
+s2: NOTICE:  regathering graphmeta...
+step s1_exec1: EXECUTE pp;
+c   
+----
+"n2"
+(1 row)
+
+step s2_addedge: CREATE (:n1)-[:e2]->(:n3);
+step s1_exec2: EXECUTE pp;
+c   
+----
+"n2"
+"n3"
+(2 rows)
+

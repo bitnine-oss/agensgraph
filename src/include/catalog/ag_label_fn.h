@@ -20,5 +20,7 @@ extern Oid	label_create_with_catalog(RangeVar *label, Oid relid, char labkind,
 extern void label_drop_with_catalog(Oid laboid);
 extern List *get_connected_edge_labels_for_vertex(Snapshot snapshot, Oid graph_oid,
 												  Labid vertex_labid);
+extern void get_vertex_labels_for_edge(Oid graph_oid, Labid edge_labid,
+									   List **start_relids, List **end_relids);
 
 #endif							/* AG_LABEL_FN_H */

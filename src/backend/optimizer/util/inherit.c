@@ -39,6 +39,15 @@
 /* Agensgraph */
 #include "storage/lmgr.h"
 #include "utils/syscache.h"
+#include "ag_const.h"
+#include "catalog/ag_graph_fn.h"
+#include "catalog/ag_graphmeta.h"
+#include "catalog/ag_label.h"
+#include "catalog/ag_label_fn.h"
+#include "nodes/bitmapset.h"
+#include "pgstat.h"
+#include "utils/catcache.h"
+#include "utils/lsyscache.h"
 
 
 static void expand_partitioned_rtentry(PlannerInfo *root, RelOptInfo *relinfo,
@@ -60,6 +69,583 @@ static Bitmapset *translate_col_privs_multilevel(PlannerInfo *root,
 												 Bitmapset *parent_cols);
 static void expand_appendrel_subquery(PlannerInfo *root, RelOptInfo *rel,
 									  RangeTblEntry *rte, Index rti);
+
+
+/* ----------------------------------------------------------------
+ *		ag_graphmeta constraint-propagation scan pruning
+ *
+ * propagate_graphmeta_constraints() runs once per query (just before
+ * inheritance expansion), reconstructs the Cypher MATCH pattern from the
+ * per-RTE topology the parser recorded (graphPrune* fields), and runs
+ * arc-consistency over it: each pattern element has a candidate-label domain,
+ * and ag_graphmeta connectivity triples (edge,start,end) are the only legal
+ * combinations.  Any labelled element anywhere in the pattern narrows every
+ * reachable unlabelled element, transitively.  The converged per-element domain
+ * is stashed in root->graphmeta_pruned[rti] and consumed by
+ * expand_inherited_rtentry().  Narrowing-only + a complete ag_graphmeta
+ * (maintained while auto_gather_graphmeta is on) make this sound: a removed
+ * label has no connectivity support, so it cannot contribute a matched row.
+ * ---------------------------------------------------------------- */
+
+/* Per-rtindex result; non-NULL slot => prune.  See pathnodes.h. */
+typedef struct GraphmetaPrune
+{
+	List	   *relids;			/* child relids to scan besides the parent;
+								 * NIL => parent-only (pattern empty here) */
+} GraphmetaPrune;
+
+/* A candidate-label domain over int16 labids during the solve. */
+typedef struct GMDomain
+{
+	bool		universe;		/* true => all labels (set ignored) */
+	Bitmapset  *set;			/* candidate labids when !universe */
+} GMDomain;
+
+/* One pattern edge = one connectivity constraint between two node rtindexes. */
+typedef struct GMEdge
+{
+	int			src_rti;		/* source (written-before) node */
+	int			dst_rti;		/* dest (written-after) node */
+	int			edge_rti;		/* edge's own rtindex (also a domain slot) */
+	bool		undirected;		/* match either orientation; don't narrow edge */
+	bool		reverse;		/* directed <- : pattern src is graphmeta END side */
+} GMEdge;
+
+/* relid -> labid (0 if the relation is not a graph label). */
+static int
+gm_relid_labid(Oid relid)
+{
+	HeapTuple	tup;
+	int			labid = 0;
+
+	tup = SearchSysCache1(LABELRELID, ObjectIdGetDatum(relid));
+	if (HeapTupleIsValid(tup))
+	{
+		labid = (int) ((Form_ag_label) GETSTRUCT(tup))->labid;
+		ReleaseSysCache(tup);
+	}
+	return labid;
+}
+
+static bool
+gm_member(GMDomain *d, int labid)
+{
+	return d->universe || bms_is_member(labid, d->set);
+}
+
+/* Narrow *d to support (taking ownership of support); true if the domain shrank. */
+static bool
+gm_narrow(GMDomain *d, Bitmapset *support)
+{
+	if (d->universe)
+	{
+		d->universe = false;
+		d->set = support;		/* universe -> finite is always a change */
+		return true;
+	}
+	else
+	{
+		Bitmapset  *newset = bms_intersect(d->set, support);
+		bool		changed = !bms_equal(newset, d->set);
+
+		bms_free(support);
+		bms_free(d->set);
+		d->set = newset;
+		return changed;
+	}
+}
+
+/* Initial domain of a pattern element: universe if unlabelled, else its subtree. */
+static GMDomain
+gm_init_domain(Oid graph, int labid)
+{
+	GMDomain	d;
+
+	d.universe = true;
+	d.set = NULL;
+
+	if (labid != 0)
+	{
+		Oid			relid = get_labid_relid(graph, (uint16) labid);
+
+		if (OidIsValid(relid))
+		{
+			List	   *inh = find_all_inheritors(relid, NoLock, NULL);
+			ListCell   *lc;
+
+			d.universe = false;
+			foreach(lc, inh)
+			{
+				int			l = gm_relid_labid(lfirst_oid(lc));
+
+				if (l != 0)
+					d.set = bms_add_member(d.set, l);
+			}
+			list_free(inh);
+		}
+	}
+	return d;
+}
+
+/* Accumulate a (start,end,edge) triple into the support sets. */
+#define GM_ADD(set, v)	((set) = bms_add_member((set), (v)))
+
+/*
+ * ag_graphmeta's edge/start/end columns are int16, but label ids are uint16
+ * (Labid): a labid > 32767 round-trips through the catalog as a negative int16.
+ * Recover the original unsigned value before it meets a bitmapset (bms_* reject
+ * negative members with elog) or is compared against a positive domain labid.
+ */
+#define GM_LABID(v)		((int) (uint16) (v))
+
+/*
+ * Recompute a directed constraint's three domains from ag_graphmeta and narrow
+ * them.  Returns true if any changed; sets *empty if any domain emptied.
+ */
+static bool
+gm_revise_directed(Oid graph, GMEdge *e, GMDomain *dom, bool *empty)
+{
+	GMDomain   *edom = &dom[e->edge_rti];
+	GMDomain   *adom = e->reverse ? &dom[e->dst_rti] : &dom[e->src_rti];	/* gm start side */
+	GMDomain   *bdom = e->reverse ? &dom[e->src_rti] : &dom[e->dst_rti];	/* gm end side */
+	Bitmapset  *supS = NULL,
+			   *supE = NULL,
+			   *supEdge = NULL;
+	bool		changed = false;
+	int			i;
+	int			k;
+	CatCList   *cl;
+
+	if (!edom->universe)
+	{
+		k = -1;
+		while ((k = bms_next_member(edom->set, k)) >= 0)
+		{
+			cl = SearchSysCacheList2(GRAPHMETAFULL, ObjectIdGetDatum(graph),
+									 Int16GetDatum((int16) k));
+			for (i = 0; i < cl->n_members; i++)
+			{
+				Form_ag_graphmeta m =
+					(Form_ag_graphmeta) GETSTRUCT(&cl->members[i]->tuple);
+
+				if (gm_member(adom, GM_LABID(m->start)) && gm_member(bdom, GM_LABID(m->end)))
+				{
+					GM_ADD(supS, GM_LABID(m->start));
+					GM_ADD(supE, GM_LABID(m->end));
+					GM_ADD(supEdge, k);
+				}
+			}
+			ReleaseCatCacheList(cl);
+		}
+	}
+	else if (!adom->universe)
+	{
+		k = -1;
+		while ((k = bms_next_member(adom->set, k)) >= 0)
+		{
+			cl = SearchSysCacheList2(GRAPHMETASTART, ObjectIdGetDatum(graph),
+									 Int16GetDatum((int16) k));
+			for (i = 0; i < cl->n_members; i++)
+			{
+				Form_ag_graphmeta m =
+					(Form_ag_graphmeta) GETSTRUCT(&cl->members[i]->tuple);
+
+				if (gm_member(bdom, GM_LABID(m->end)))
+				{
+					GM_ADD(supS, GM_LABID(m->start));
+					GM_ADD(supE, GM_LABID(m->end));
+					GM_ADD(supEdge, GM_LABID(m->edge));
+				}
+			}
+			ReleaseCatCacheList(cl);
+		}
+	}
+	else if (!bdom->universe)
+	{
+		k = -1;
+		while ((k = bms_next_member(bdom->set, k)) >= 0)
+		{
+			cl = SearchSysCacheList2(GRAPHMETAEND, ObjectIdGetDatum(graph),
+									 Int16GetDatum((int16) k));
+			for (i = 0; i < cl->n_members; i++)
+			{
+				Form_ag_graphmeta m =
+					(Form_ag_graphmeta) GETSTRUCT(&cl->members[i]->tuple);
+
+				if (gm_member(adom, GM_LABID(m->start)))
+				{
+					GM_ADD(supS, GM_LABID(m->start));
+					GM_ADD(supE, GM_LABID(m->end));
+					GM_ADD(supEdge, GM_LABID(m->edge));
+				}
+			}
+			ReleaseCatCacheList(cl);
+		}
+	}
+	else
+		return false;			/* all universe: nothing to constrain yet */
+
+	changed |= gm_narrow(adom, supS);
+	changed |= gm_narrow(bdom, supE);
+	changed |= gm_narrow(edom, supEdge);
+
+	if ((!adom->universe && bms_is_empty(adom->set)) ||
+		(!bdom->universe && bms_is_empty(bdom->set)) ||
+		(!edom->universe && bms_is_empty(edom->set)))
+		*empty = true;
+
+	return changed;
+}
+
+/*
+ * Undirected constraint: narrow the two node endpoints to labels consistent in
+ * either orientation.  The edge is a UNION subquery -- used as a fixed filter,
+ * never narrowed.
+ */
+static bool
+gm_revise_undirected(Oid graph, GMEdge *e, GMDomain *dom, bool *empty)
+{
+	GMDomain   *edom = &dom[e->edge_rti];
+	GMDomain   *adom = &dom[e->src_rti];
+	GMDomain   *bdom = &dom[e->dst_rti];
+	Bitmapset  *supA = NULL,
+			   *supB = NULL;
+	bool		changed = false;
+	int			i;
+	int			k;
+	CatCList   *cl;
+
+	if (!edom->universe)
+	{
+		k = -1;
+		while ((k = bms_next_member(edom->set, k)) >= 0)
+		{
+			cl = SearchSysCacheList2(GRAPHMETAFULL, ObjectIdGetDatum(graph),
+									 Int16GetDatum((int16) k));
+			for (i = 0; i < cl->n_members; i++)
+			{
+				Form_ag_graphmeta m =
+					(Form_ag_graphmeta) GETSTRUCT(&cl->members[i]->tuple);
+
+				if (gm_member(adom, GM_LABID(m->start)) && gm_member(bdom, GM_LABID(m->end)))
+				{
+					GM_ADD(supA, GM_LABID(m->start));
+					GM_ADD(supB, GM_LABID(m->end));
+				}
+				if (gm_member(adom, GM_LABID(m->end)) && gm_member(bdom, GM_LABID(m->start)))
+				{
+					GM_ADD(supA, GM_LABID(m->end));
+					GM_ADD(supB, GM_LABID(m->start));
+				}
+			}
+			ReleaseCatCacheList(cl);
+		}
+	}
+	else if (!adom->universe || !bdom->universe)
+	{
+		/* drive from whichever node is finite; X is finite, Y is the other */
+		GMDomain   *xdom = !adom->universe ? adom : bdom;
+		GMDomain   *ydom = !adom->universe ? bdom : adom;
+		Bitmapset **supX = !adom->universe ? &supA : &supB;
+		Bitmapset **supY = !adom->universe ? &supB : &supA;
+
+		k = -1;
+		while ((k = bms_next_member(xdom->set, k)) >= 0)
+		{
+			cl = SearchSysCacheList2(GRAPHMETASTART, ObjectIdGetDatum(graph),
+									 Int16GetDatum((int16) k));
+			for (i = 0; i < cl->n_members; i++)
+			{
+				Form_ag_graphmeta m =
+					(Form_ag_graphmeta) GETSTRUCT(&cl->members[i]->tuple);
+
+				if (gm_member(ydom, GM_LABID(m->end)))	/* x as start, y as end */
+				{
+					GM_ADD(*supX, k);
+					GM_ADD(*supY, GM_LABID(m->end));
+				}
+			}
+			ReleaseCatCacheList(cl);
+
+			cl = SearchSysCacheList2(GRAPHMETAEND, ObjectIdGetDatum(graph),
+									 Int16GetDatum((int16) k));
+			for (i = 0; i < cl->n_members; i++)
+			{
+				Form_ag_graphmeta m =
+					(Form_ag_graphmeta) GETSTRUCT(&cl->members[i]->tuple);
+
+				if (gm_member(ydom, GM_LABID(m->start)))	/* x as end, y as start */
+				{
+					GM_ADD(*supX, k);
+					GM_ADD(*supY, GM_LABID(m->start));
+				}
+			}
+			ReleaseCatCacheList(cl);
+		}
+	}
+	else
+		return false;			/* all universe */
+
+	changed |= gm_narrow(adom, supA);
+	changed |= gm_narrow(bdom, supB);
+
+	if ((!adom->universe && bms_is_empty(adom->set)) ||
+		(!bdom->universe && bms_is_empty(bdom->set)))
+		*empty = true;
+
+	return changed;
+}
+
+/*
+ * propagate_graphmeta_constraints
+ *		Plan-time pre-pass: solve the MATCH pattern's label constraints against
+ *		ag_graphmeta and stash per-rtindex pruned child sets for
+ *		expand_inherited_rtentry().  No-op unless gathering is on, the catalog is
+ *		current (no pending same-txn edge writes), and the pattern has at least
+ *		one labelled (anchor) element and one edge constraint.
+ */
+void
+propagate_graphmeta_constraints(PlannerInfo *root)
+{
+	int			n = root->simple_rel_array_size;
+	Oid			graph = InvalidOid;
+	GMDomain   *dom;
+	bool	   *isvar;
+	GMEdge	   *edges;
+	int			nedges = 0;
+	bool		any_anchor = false;
+	bool		empty = false;
+	int			rti;
+
+	if (!graphmeta_baseline_gathered() || has_pending_graphmeta_writes())
+		return;
+
+	/* First pass: find the graph and whether there is anything to do. */
+	for (rti = 1; rti < n; rti++)
+	{
+		RangeTblEntry *rte = root->simple_rte_array[rti];
+
+		if (rte == NULL || !OidIsValid(rte->graphPruneGraph) ||
+			rte->graphPruneRole == GRAPHPRUNE_ROLE_VLE)
+			continue;
+		graph = rte->graphPruneGraph;
+		if (rte->graphPruneLabid != 0)
+			any_anchor = true;
+	}
+	if (!OidIsValid(graph) || !any_anchor)
+		return;
+
+	dom = (GMDomain *) palloc0(n * sizeof(GMDomain));
+	isvar = (bool *) palloc0(n * sizeof(bool));
+	edges = (GMEdge *) palloc(n * sizeof(GMEdge));
+
+	/*
+	 * Second pass (a): init a domain for every solver variable (node or
+	 * directed/undirected edge).  Endpoint resolution in pass (b) is derived
+	 * per-edge, so no cross-element id map is needed here.
+	 */
+	for (rti = 1; rti < n; rti++)
+	{
+		RangeTblEntry *rte = root->simple_rte_array[rti];
+		char		role;
+
+		if (rte == NULL || !OidIsValid(rte->graphPruneGraph))
+			continue;
+		role = rte->graphPruneRole;
+		if (role == GRAPHPRUNE_ROLE_NODE ||
+			role == GRAPHPRUNE_ROLE_DIR_EDGE ||
+			role == GRAPHPRUNE_ROLE_UNDIR_EDGE)
+		{
+			dom[rti] = gm_init_domain(graph, rte->graphPruneLabid);
+			isvar[rti] = true;
+		}
+	}
+
+	/*
+	 * Second pass (b): collect edge constraints.  An edge and its two endpoint
+	 * nodes are always emitted by one Cypher clause, and clause pull-up shifts
+	 * every rangetable index in that clause by a single constant offset.  So the
+	 * edge's own (current rtindex - recorded parse-time elem id) is exactly that
+	 * offset; adding it to each endpoint's recorded parse-time id yields the
+	 * endpoint's current rtindex -- without a query-global elem-id map, whose
+	 * parse-time ids collide across clauses (each clause numbers from 1) and
+	 * would otherwise bind an edge to the wrong clause's node.  The
+	 * graphPruneElemId cross-check rejects any offset that does not land on the
+	 * intended endpoint.  Must run after pass (a) so isvar[]/domains are set.
+	 */
+	for (rti = 1; rti < n; rti++)
+	{
+		RangeTblEntry *rte = root->simple_rte_array[rti];
+		char		role;
+		int			shift;
+		int			src;
+		int			dst;
+
+		if (rte == NULL || !OidIsValid(rte->graphPruneGraph))
+			continue;
+		role = rte->graphPruneRole;
+		if (role != GRAPHPRUNE_ROLE_DIR_EDGE && role != GRAPHPRUNE_ROLE_UNDIR_EDGE)
+			continue;
+
+		/* this clause's pull-up offset, derived from the edge itself */
+		shift = (int) rti - rte->graphPruneElemId;
+		src = rte->graphPruneSrcRti + shift;
+		dst = rte->graphPruneDstRti + shift;
+
+		/*
+		 * Both endpoints must be in-range pattern nodes we have a domain for,
+		 * and must be the very elements this edge recorded (elem-id cross-check
+		 * guards against a stray offset landing on an unrelated RTE).
+		 */
+		if (src > 0 && src < n && dst > 0 && dst < n &&
+			isvar[src] && isvar[dst] &&
+			root->simple_rte_array[src]->graphPruneElemId == rte->graphPruneSrcRti &&
+			root->simple_rte_array[dst]->graphPruneElemId == rte->graphPruneDstRti)
+		{
+			GMEdge	   *E = &edges[nedges++];
+
+			E->src_rti = src;
+			E->dst_rti = dst;
+			E->edge_rti = rti;
+			E->undirected = (role == GRAPHPRUNE_ROLE_UNDIR_EDGE);
+			E->reverse = (rte->graphPruneDir == CYPHER_REL_DIR_LEFT);
+		}
+	}
+
+	if (nedges == 0)
+		return;					/* anchors but no edges: nothing to propagate */
+
+	/* Arc-consistency to a fixpoint (domains only shrink => terminates). */
+	{
+		bool		changed = true;
+
+		while (changed && !empty)
+		{
+			int			i;
+
+			changed = false;
+			for (i = 0; i < nedges && !empty; i++)
+			{
+				if (edges[i].undirected)
+					changed |= gm_revise_undirected(graph, &edges[i], dom, &empty);
+				else
+					changed |= gm_revise_directed(graph, &edges[i], dom, &empty);
+			}
+		}
+	}
+
+	/* Write results for prunable inheritance elements (nodes + directed edges). */
+	root->graphmeta_pruned = (GraphmetaPrune **)
+		palloc0(n * sizeof(GraphmetaPrune *));
+
+	for (rti = 1; rti < n; rti++)
+	{
+		RangeTblEntry *rte = root->simple_rte_array[rti];
+		char		role;
+		GraphmetaPrune *gp;
+
+		if (rte == NULL || !isvar[rti] || !rte->inh)
+			continue;
+		role = rte->graphPruneRole;
+		if (role != GRAPHPRUNE_ROLE_NODE && role != GRAPHPRUNE_ROLE_DIR_EDGE)
+			continue;
+
+		if (empty)
+		{
+			gp = (GraphmetaPrune *) palloc(sizeof(GraphmetaPrune));
+			gp->relids = NIL;	/* parent-only */
+			root->graphmeta_pruned[rti] = gp;
+		}
+		else if (!dom[rti].universe)
+		{
+			int			l = -1;
+
+			gp = (GraphmetaPrune *) palloc(sizeof(GraphmetaPrune));
+			gp->relids = NIL;
+			while ((l = bms_next_member(dom[rti].set, l)) >= 0)
+			{
+				Oid			relid = get_labid_relid(graph, (uint16) l);
+
+				if (OidIsValid(relid))
+					gp->relids = lappend_oid(gp->relids, relid);
+			}
+			root->graphmeta_pruned[rti] = gp;
+		}
+		/* universe => leave NULL (no prune; full inheritance scan) */
+	}
+}
+
+/* attno of the graphid "id" column on ag_vertex / ag_edge (and every label). */
+#define GRAPHMETA_ID_ATTNO 1
+
+/*
+ * graphmeta_propagate_id_unique
+ *		A graphmeta-pruned element is scanned as an appendrel over a set of
+ *		vertex/edge label tables.  Their graphid "id" values (attno 1) are
+ *		globally unique across labels -- the label id is encoded in the graphid's
+ *		high bits, so distinct labels occupy disjoint id ranges -- hence if every
+ *		surviving child has a unique index on id, the appendrel parent is itself
+ *		unique on id.  Lift one such child index onto the parent rel's indexlist
+ *		as a uniqueness proof.
+ *
+ * Legacy-inheritance parents carry no indexlist (plancat.c get_relation_info
+ * sets hasindex=false for them), so without this the join planner cannot see
+ * that e.g. b.id is unique, and mis-estimates joins on the pruned element
+ * (inflating cardinality and picking merge+sort over hash joins) until ANALYZE
+ * independently recovers the distinctness.  This works for any number of
+ * surviving labels, and is the same kind of proof propagation PostgreSQL
+ * already does for partitioned parents.
+ *
+ * Only the id column is propagated: it is the one column provably disjoint
+ * across labels (other columns may repeat values between labels).  Graph-label
+ * children share the parent's column layout, so no attno translation is needed.
+ * The parent is an appendrel and never builds index scan paths itself, so the
+ * entry is consulted only as a proof.
+ */
+static void
+graphmeta_propagate_id_unique(PlannerInfo *root, RelOptInfo *parentrel,
+							  List *child_rtis)
+{
+	IndexOptInfo *proto = NULL;
+	IndexOptInfo *pidx;
+	ListCell   *lc;
+
+	if (child_rtis == NIL)
+		return;
+
+	/* Require EVERY surviving child to be unique on id; else prove nothing. */
+	foreach(lc, child_rtis)
+	{
+		RelOptInfo *childrel = root->simple_rel_array[lfirst_int(lc)];
+		IndexOptInfo *found = NULL;
+		ListCell   *il;
+
+		if (childrel == NULL)
+			return;
+
+		foreach(il, childrel->indexlist)
+		{
+			IndexOptInfo *idx = (IndexOptInfo *) lfirst(il);
+
+			if (idx->unique && idx->nkeycolumns == 1 &&
+				idx->indexkeys[0] == GRAPHMETA_ID_ATTNO &&
+				idx->indpred == NIL)
+			{
+				found = idx;
+				break;
+			}
+		}
+		if (found == NULL)
+			return;
+		if (proto == NULL)
+			proto = found;
+	}
+
+	pidx = makeNode(IndexOptInfo);
+	memcpy(pidx, proto, sizeof(IndexOptInfo));
+	pidx->rel = parentrel;
+	parentrel->indexlist = lappend(parentrel->indexlist, pidx);
+}
 
 
 /*
@@ -169,6 +755,9 @@ expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 		 */
 		List	   *inhOIDs;
 		ListCell   *l;
+		bool		gm_omit_parent = false;
+		bool		gm_pruned = false;
+		List	   *gm_child_rtis = NIL;
 
 		/* Agensgraph optimization */
 		if (rte->hasDeleteOptimization)
@@ -204,6 +793,85 @@ expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 
 				inhOIDs = lappend_oid(inhOIDs, crelid);
 			}
+
+			/*
+			 * The pruned child set was derived from ag_graphmeta connectivity,
+			 * so depend on it: a connectivity change fires an explicit relcache
+			 * invalidation on ag_graphmeta that re-plans this (possibly cached)
+			 * DELETE.  Without this a prepared DETACH DELETE could keep pruning
+			 * to a stale edge-label set after new connectivity appears.
+			 */
+			root->glob->relationOids = lappend_oid(root->glob->relationOids,
+												   GraphMetaRelationId);
+		}
+		else if (root->graphmeta_pruned != NULL &&
+				 root->graphmeta_pruned[rti] != NULL)
+		{
+			/*
+			 * The graphmeta constraint-propagation pre-pass narrowed this
+			 * element to the labels ag_graphmeta says can occur.  Scan only the
+			 * parent plus those children (an empty list => parent-only, i.e. the
+			 * pattern is provably empty here).
+			 */
+			GraphmetaPrune *gp = root->graphmeta_pruned[rti];
+			bool		include_parent;
+
+			gm_pruned = true;
+
+			/*
+			 * The parent table holds the rows of the element's own label -- for
+			 * the abstract roots ag_vertex / ag_edge that is the *unlabelled*
+			 * vertices / edges.  Scan it only if that label is still in the
+			 * pruned domain (parentOID present in relids), or if the domain is
+			 * empty (parent-only => provably-empty pattern).  Otherwise the
+			 * parent provably contributes nothing, so we drop it and the
+			 * Append/MergeAppend carries only the connected children -- a tighter
+			 * plan.  This mirrors how partitioned-table and UNION ALL appendrels
+			 * have no parent-self member; the child loop and rowmark handling
+			 * below key off (childOID != parentOID), not on the parent's
+			 * presence.
+			 */
+			include_parent = (gp->relids == NIL) ||
+				list_member_oid(gp->relids, parentOID);
+
+			inhOIDs = include_parent ? list_make1_oid(parentOID) : NIL;
+			foreach(l, gp->relids)
+			{
+				Oid			crelid = lfirst_oid(l);
+
+				if (crelid == parentOID || !OidIsValid(crelid))
+					continue;
+
+				if (lockmode != NoLock)
+				{
+					/* Lock to synchronize against concurrent drop, then re-check. */
+					LockRelationOid(crelid, lockmode);
+					if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(crelid)))
+					{
+						UnlockRelationOid(crelid, lockmode);
+						continue;
+					}
+				}
+
+				inhOIDs = lappend_oid(inhOIDs, crelid);
+			}
+
+			/*
+			 * If we dropped the parent but every connected child was dropped
+			 * concurrently, fall back to a parent-only (empty) scan so inhOIDs
+			 * stays valid.
+			 */
+			if (inhOIDs == NIL)
+				inhOIDs = list_make1_oid(parentOID);
+			gm_omit_parent = (linitial_oid(inhOIDs) != parentOID);
+
+			/*
+			 * Depend on ag_graphmeta so a connectivity change (which fires an
+			 * explicit relcache invalidation on ag_graphmeta) re-plans this
+			 * pruned, possibly cached, plan.
+			 */
+			root->glob->relationOids = lappend_oid(root->glob->relationOids,
+												   GraphMetaRelationId);
 		}
 		else
 			/* Scan for all members of inheritance set, acquire needed locks */
@@ -218,7 +886,13 @@ expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 		 * have been found, though.
 		 */
 		Assert(inhOIDs != NIL);
-		Assert(linitial_oid(inhOIDs) == parentOID);
+		/*
+		 * The parent is normally the first member, in its role as a plain
+		 * member of the inheritance set.  Graphmeta pruning may legitimately
+		 * omit it when its own label is provably disconnected (gm_omit_parent),
+		 * leaving a children-only appendrel as partitioned/UNION ALL ones have.
+		 */
+		Assert(gm_omit_parent || linitial_oid(inhOIDs) == parentOID);
 
 		/* Expand simple_rel_array and friends to hold child objects. */
 		expand_planner_arrays(root, list_length(inhOIDs));
@@ -260,10 +934,23 @@ expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 			/* Create the otherrel RelOptInfo too. */
 			(void) build_simple_rel(root, childRTindex, rel);
 
+			/* Remember graphmeta-pruned members for the id-unique proof below. */
+			if (gm_pruned)
+				gm_child_rtis = lappend_int(gm_child_rtis, (int) childRTindex);
+
 			/* Close child relations, but keep locks */
 			if (childOID != parentOID)
 				table_close(newrelation, NoLock);
 		}
+
+		/*
+		 * For a graphmeta-pruned appendrel, lift the children's id-uniqueness
+		 * onto the parent rel so joins on the pruned element are costed like a
+		 * directly-labelled one, for any number of surviving labels (see
+		 * graphmeta_propagate_id_unique).
+		 */
+		if (gm_pruned)
+			graphmeta_propagate_id_unique(root, rel, gm_child_rtis);
 	}
 
 	/*

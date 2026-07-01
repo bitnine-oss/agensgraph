@@ -87,6 +87,25 @@ Notes:
 - `work_mem` is allocated **per sort/hash node, per connection**, so a large value combined with many concurrent clients can over-commit memory. Size it to roughly `RAM / expected_concurrency`, or raise it only per session for heavy analytic queries.
 - Parallelism helps large full-scan analytics but adds worker-startup overhead to small point or single-hop reads; lower `max_parallel_workers_per_gather` if your workload is mostly short, OLTP-style queries.
 - After bulk-loading a graph, run `ANALYZE` so the planner has accurate statistics for traversal joins.
+## Connectivity-Aware Scan Pruning (`auto_gather_graphmeta`)
+
+An unlabelled Cypher element such as `(b)` in `MATCH (a)-[:KNOWS]->(b)` is, by default, expanded to a scan of **every** vertex label in the graph (the `ag_vertex` inheritance hierarchy); an unlabelled edge scans the whole `ag_edge` hierarchy. But the connectivity recorded in the `ag_graphmeta` catalog (one `(edge, start, end)` triple per connected combination) constrains what can actually match. When gathering is enabled, the **planner** propagates these constraints across the whole MATCH pattern and scans only the labels each element can possibly be:
+
+```sql
+SET auto_gather_graphmeta = on;   -- enables maintenance AND planner pruning
+```
+
+- **Any labelled element constrains every reachable unlabelled one, transitively.** A labelled edge prunes its endpoint nodes (`()-[:KNOWS]->(b)` ⇒ `b` only the labels `:KNOWS` ends at); a labelled *node* prunes its adjacent edges *and* the nodes beyond them (`(a:Person)-[r]->(c)` ⇒ `r` only the edge types that start at `:Person`, and `c` only the vertex labels those reach); chains propagate hop by hop (`(a:Person)-[]->()-[]->(d)`). It is solved by arc-consistency over the pattern using `ag_graphmeta` as the legal-combination relation.
+- Pruning is purely a plan-time optimization and **never changes query results**. For an impossible pattern (e.g. `()-[:KNOWS]->(:City)` where no `:KNOWS` edge ends at a `:City`, or a chain whose constraints don't intersect) it proves the result empty and skips the scan.
+- Undirected (`-[:E]-`) and variable-length (`-[:E*1..3]->`) edges are UNION/VLE subqueries, so their *own* scans aren't inheritance-pruned, but they still propagate to (and prune) their neighbouring nodes. `ONLY`-qualified elements aren't pruned but still anchor their neighbours. With no labelled element anywhere in the pattern there is nothing to anchor, so it falls back to a full scan.
+- Plans that prune depend on `ag_graphmeta`: when new connectivity appears (the first edge of a new label/endpoint combination) cached and prepared plans are automatically re-planned, so pruning is safe under prepared statements and connection poolers.
+
+**Keeping the catalog complete.** While `auto_gather_graphmeta` is on, every edge write maintains `ag_graphmeta` — Cypher `CREATE`/`MERGE`/`DELETE`, direct SQL `INSERT`/`UPDATE` (under `enable_graph_dml`), `COPY` into an edge label, and logical-replication apply. Turning the GUC from off to on **regathers a complete baseline** from existing data, so the invariant "gathering on ⇒ ag_graphmeta is complete" holds for pre-existing graphs too. (Enable it with `SET auto_gather_graphmeta = on` inside a session; enabling it from `postgresql.conf` cannot regather at startup — run `SET ... = on` once, or `regather_graphmeta()` after toggling it off, to gather a baseline for an existing graph.)
+
+Notes:
+- Maintaining `ag_graphmeta` during a bulk load adds only an in-memory counter per edge (aggregated into a few catalog rows at commit), not per-row index work, so it is cheap; you can load with the GUC on. The separate `CREATE ELABEL ... DISABLE INDEX` / `ALTER ELABEL ... ENABLE ALL INDEX` trick remains the way to avoid the *btree* maintenance cost of a bulk edge load.
+- Non-Cypher `DELETE`s and endpoint-rewiring `UPDATE`s are not decremented in `ag_graphmeta`; a removed combination may linger as a stale triple until `regather_graphmeta()` compacts it. This is always safe — a stale triple only causes a harmless extra (empty) scan, never a wrong or missing row.
+- Within a single open transaction that has just written edges, connectivity is not yet flushed to the catalog (it is merged at commit), so a read in that same transaction falls back to a full scan rather than pruning on not-yet-committed connectivity.
 
 ## AgensGraph AI Integration
 [AgensGraph-AI Repository](https://github.com/skaiworldwide-oss/agensgraph-ai) provide collection of tools, integrations, and starter templates for building AI-powered applications that work with AgensGraph.

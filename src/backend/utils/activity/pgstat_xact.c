@@ -20,6 +20,7 @@
 #include "catalog/ag_graph_fn.h"
 #include "catalog/indexing.h"
 #include "pgstat.h"
+#include "utils/inval.h"
 #include "utils/memutils.h"
 #include "utils/pgstat_internal.h"
 #include "utils/rel.h"
@@ -56,6 +57,49 @@ typedef struct AgStat_SubXactStatus
 } AgStat_SubXactStatus;
 
 static AgStat_SubXactStatus *agStatXactStack = NULL;
+
+/*
+ * Returns true if the current transaction has accumulated, but not yet flushed,
+ * edge-connectivity changes destined for ag_graphmeta.  Those deltas are merged
+ * into the catalog only at PreCommit (AtEOXact_AgStat), so while they are pending
+ * the catalog does not yet reflect them.  Graphmeta-based scan pruning consults
+ * this to fall back to a full scan within such a transaction, so it never prunes
+ * away connectivity the same transaction just created.  Walks the whole subxact
+ * stack, since a pending write may live at an outer level.
+ */
+bool
+has_pending_graphmeta_writes(void)
+{
+	AgStat_SubXactStatus *xact_state;
+
+	for (xact_state = agStatXactStack; xact_state != NULL;
+		 xact_state = xact_state->prev)
+	{
+		if (xact_state->htab != NULL &&
+			hash_get_num_entries(xact_state->htab) > 0)
+			return true;
+	}
+
+	return false;
+}
+
+/*
+ * Called just before recording the transaction's next pending edge-connectivity
+ * change.  On the FIRST such write of the transaction, invalidate ag_graphmeta's
+ * relcache entry so any already-cached, graphmeta-pruned plan is re-planned: that
+ * plan pruned against connectivity this transaction is now changing but has not
+ * committed, and its only invalidation dependency (GraphMetaRelationId) otherwise
+ * fires only at commit (AtEOXact_AgStat).  Re-planning within the transaction then
+ * observes has_pending_graphmeta_writes() and skips pruning, so the uncommitted
+ * change is not dropped from a read-your-own-writes query.  Guarded by the
+ * empty->non-empty transition, so a bulk edge load pays this at most once.
+ */
+static void
+graphmeta_invalidate_on_first_pending_write(void)
+{
+	if (!has_pending_graphmeta_writes())
+		CacheInvalidateRelcacheByRelid(GraphMetaRelationId);
+}
 
 /*
  * Called from access/transam/xact.c at top-level transaction commit/abort.
@@ -448,6 +492,18 @@ get_agstat_stack_level(int nest_level)
 void
 agstat_count_edge_create(Labid edge, Labid start, Labid end)
 {
+	agstat_count_edge_create_ext(get_graph_path_oid(), edge, start, end);
+}
+
+/*
+ * Like agstat_count_edge_create, but for a caller-supplied graph oid instead of
+ * the session graph_path.  Non-Cypher write paths (direct DML, COPY, logical
+ * replication apply) take the graph from the target relation, since their
+ * graph_path may not match the relation's graph.
+ */
+void
+agstat_count_edge_create_ext(Oid graph, Labid edge, Labid start, Labid end)
+{
 	int			nest_level;
 	bool		found;
 
@@ -458,12 +514,15 @@ agstat_count_edge_create(Labid edge, Labid start, Labid end)
 	nest_level = GetCurrentTransactionNestLevel();
 	xact_state = get_agstat_stack_level(nest_level);
 
+	/* re-plan cached pruned plans on the transaction's first edge write */
+	graphmeta_invalidate_on_first_pending_write();
+
 	/*
 	 * AgStat_key is 10 byte but aligned to 12 byte. So last 2 byte can have
 	 * garbage value. It must be cleaned before use.
 	 */
 	memset(&key, 0, sizeof(key));
-	key.graph = get_graph_path_oid();
+	key.graph = graph;
 	key.edge = edge;
 	key.start = start;
 	key.end = end;
@@ -484,6 +543,13 @@ agstat_count_edge_create(Labid edge, Labid start, Labid end)
 void
 agstat_count_edge_delete(Labid edge, Labid start, Labid end)
 {
+	agstat_count_edge_delete_ext(get_graph_path_oid(), edge, start, end);
+}
+
+/* See agstat_count_edge_create_ext. */
+void
+agstat_count_edge_delete_ext(Oid graph, Labid edge, Labid start, Labid end)
+{
 	int			nest_level;
 	bool		found;
 
@@ -494,8 +560,11 @@ agstat_count_edge_delete(Labid edge, Labid start, Labid end)
 	nest_level = GetCurrentTransactionNestLevel();
 	xact_state = get_agstat_stack_level(nest_level);
 
+	/* re-plan cached pruned plans on the transaction's first edge write */
+	graphmeta_invalidate_on_first_pending_write();
+
 	memset(&key, 0, sizeof(key));
-	key.graph = get_graph_path_oid();
+	key.graph = graph;
 	key.edge = edge;
 	key.start = start;
 	key.end = end;
@@ -536,6 +605,7 @@ AtEOXact_AgStat(bool isCommit)
 		HASH_SEQ_STATUS seq;
 		Relation	ag_graphmeta;
 		HeapTuple	tup;
+		bool		topology_changed = false;
 
 		hash_seq_init(&seq, xact_state->htab);
 
@@ -562,7 +632,11 @@ AtEOXact_AgStat(bool isCommit)
 					elog(ERROR, "The edge count can not be less than 0.");
 
 				if (metatup->edgecount == 0)
+				{
+					/* Last edge of this triple gone: connectivity changed. */
 					CatalogTupleDelete(ag_graphmeta, &tup->t_self);
+					topology_changed = true;
+				}
 				else
 					CatalogTupleUpdate(ag_graphmeta, &tup->t_self, tup);
 				ReleaseSysCache(tup);
@@ -587,12 +661,26 @@ AtEOXact_AgStat(bool isCommit)
 
 				tup = heap_form_tuple(RelationGetDescr(ag_graphmeta), values, isnull);
 
+				/* New connectivity triple appeared. */
 				CatalogTupleInsert(ag_graphmeta, tup);
+				topology_changed = true;
 
 				heap_freetuple(tup);
 			}
 		}
 		table_close(ag_graphmeta, RowExclusiveLock);
+
+		/*
+		 * If a connectivity triple appeared or disappeared (not merely a count
+		 * change), invalidate plans that pruned scans using ag_graphmeta.  A
+		 * plain data-row change to ag_graphmeta emits only catcache invals,
+		 * which PlanCacheRelCallback does not observe, so issue an explicit
+		 * relcache invalidation.  One per transaction suffices; count-only
+		 * updates are intentionally excluded so ordinary edge writes never
+		 * thrash cached read plans.
+		 */
+		if (topology_changed)
+			CacheInvalidateRelcacheByRelid(GraphMetaRelationId);
 	}
 	agStatXactStack = NULL;
 }

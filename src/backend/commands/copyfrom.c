@@ -32,6 +32,7 @@
 #include "commands/copyfrom_internal.h"
 #include "commands/progress.h"
 #include "commands/trigger.h"
+#include "executor/execGraphMeta.h"
 #include "executor/execPartition.h"
 #include "executor/executor.h"
 #include "executor/nodeModifyTable.h"
@@ -1041,6 +1042,16 @@ CopyFrom(CopyFromState cstate)
 				continue;
 			}
 		}
+
+		/*
+		 * Maintain ag_graphmeta connectivity for edges loaded via COPY into an
+		 * edge label.  No-op for ordinary tables / when gathering is off.  Graph
+		 * labels are never partitioned, so the COPY target relation and myslot
+		 * hold the row here; if a later constraint fails the whole COPY aborts
+		 * and these deltas are discarded.
+		 */
+		GraphmetaRecordEdgeInsertFromSlot(target_resultRelInfo->ri_RelationDesc,
+										  myslot);
 
 		/* Determine the partition to insert the tuple into */
 		if (proute)

@@ -55,6 +55,7 @@
 #include "access/tableam.h"
 #include "access/xact.h"
 #include "commands/trigger.h"
+#include "executor/execGraphMeta.h"
 #include "executor/execPartition.h"
 #include "executor/executor.h"
 #include "executor/nodeModifyTable.h"
@@ -1147,6 +1148,12 @@ ExecInsert(ModifyTableContext *context,
 													   false);
 		}
 	}
+
+	/*
+	 * Maintain ag_graphmeta connectivity for direct (non-Cypher) inserts into
+	 * an edge label.  No-op for ordinary tables / when gathering is off.
+	 */
+	GraphmetaRecordEdgeInsertFromSlot(resultRelationDesc, slot);
 
 	if (canSetTag)
 		(estate->es_processed)++;
@@ -2483,6 +2490,13 @@ redo_act:
 
 	if (canSetTag)
 		(estate->es_processed)++;
+
+	/*
+	 * Maintain ag_graphmeta connectivity for direct (non-Cypher) updates to an
+	 * edge label.  Recording the new tuple's endpoints captures a rewiring
+	 * update's new connectivity (the soundness-relevant direction).
+	 */
+	GraphmetaRecordEdgeInsertFromSlot(resultRelationDesc, slot);
 
 	ExecUpdateEpilogue(context, &updateCxt, resultRelInfo, tupleid, oldtuple,
 					   slot);

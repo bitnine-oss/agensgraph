@@ -2444,6 +2444,93 @@ arePathsConnected(CypherPath *path1, CypherPath *path2)
 	return false;
 }
 
+/* labid of an ag_vertex/ag_edge child relation, or 0 if it doesn't resolve. */
+static int
+graphElemLabid(Oid relid)
+{
+	HeapTuple	tup;
+	int			labid = 0;
+
+	tup = SearchSysCache1(LABELRELID, ObjectIdGetDatum(relid));
+	if (HeapTupleIsValid(tup))
+	{
+		labid = (int) ((Form_ag_label) GETSTRUCT(tup))->labid;
+		ReleaseSysCache(tup);
+	}
+	return labid;
+}
+
+/* rangetable index / RTE of a transformed element, or 0/NULL if not an nsitem. */
+static int
+graphElemRti(Node *elem, bool is_nsitem)
+{
+	return is_nsitem ? ((ParseNamespaceItem *) elem)->p_rtindex : 0;
+}
+
+static RangeTblEntry *
+graphElemRte(Node *elem, bool is_nsitem)
+{
+	return is_nsitem ? ((ParseNamespaceItem *) elem)->p_rte : NULL;
+}
+
+/*
+ * recordGraphmetaNode / recordGraphmetaEdge
+ *		Record a MATCH pattern element's connectivity-independent topology on its
+ *		RTE, for the planner's graphmeta constraint-propagation pre-pass (see
+ *		propagate_graphmeta_constraints / expand_inherited_rtentry).
+ *
+ * Nodes record their own label id (0 = the universal ag_vertex parent, i.e.
+ * "unlabelled / any vertex").  Edges record their label id (0 = unlabelled),
+ * direction, kind (directed relation vs undirected/VLE subquery), and the
+ * rangetable indices of their two endpoint nodes.  All of this is structural
+ * (derived from the pattern text, not from connectivity), so it never goes stale
+ * behind a cached plan; the planner resolves it against ag_graphmeta each plan.
+ */
+static void
+recordGraphmetaNode(Node *vertex, bool vertex_is_nsitem,
+					Oid graphoid, Oid agvertex_relid)
+{
+	RangeTblEntry *rte = graphElemRte(vertex, vertex_is_nsitem);
+
+	if (rte == NULL || rte->rtekind != RTE_RELATION || !OidIsValid(graphoid))
+		return;
+
+	rte->graphPruneGraph = graphoid;
+	rte->graphPruneRole = GRAPHPRUNE_ROLE_NODE;
+	rte->graphPruneElemId = graphElemRti(vertex, vertex_is_nsitem);
+	rte->graphPruneLabid = (rte->relid == agvertex_relid) ? 0
+		: graphElemLabid(rte->relid);
+}
+
+static void
+recordGraphmetaEdge(Node *edge, bool edge_is_nsitem, CypherRel *crel,
+					Oid graphoid, int src_rti, int dst_rti)
+{
+	RangeTblEntry *rte = graphElemRte(edge, edge_is_nsitem);
+	char	   *typname;
+
+	if (rte == NULL || !OidIsValid(graphoid))
+		return;
+
+	getCypherRelType(crel, &typname, NULL);
+
+	rte->graphPruneGraph = graphoid;
+	rte->graphPruneElemId = graphElemRti(edge, edge_is_nsitem);
+	rte->graphPruneLabid = (strcmp(typname, AG_EDGE) == 0) ? 0
+		: (int) get_labname_labid(typname, graphoid);
+	rte->graphPruneSrcRti = src_rti;
+	rte->graphPruneDstRti = dst_rti;
+	rte->graphPruneDir = crel->direction;
+	rte->graphPruneVleMin = -1;
+
+	if (crel->varlen != NULL)
+		rte->graphPruneRole = GRAPHPRUNE_ROLE_VLE;
+	else if (crel->direction == CYPHER_REL_DIR_NONE)
+		rte->graphPruneRole = GRAPHPRUNE_ROLE_UNDIR_EDGE;
+	else
+		rte->graphPruneRole = GRAPHPRUNE_ROLE_DIR_EDGE;
+}
+
 static Node *
 transformComponents(ParseState *pstate, List *components, List **targetList)
 {
@@ -2451,6 +2538,18 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 	Node	   *qual = NULL;
 	ListCell   *lc;
 	ListCell   *leqo;
+	Oid			gm_graphoid = InvalidOid;
+	Oid			gm_agvertex_relid = InvalidOid;
+
+	/* Graph context for graphmeta scan-pruning topology (recordGraphmeta*). */
+	if (pstate->p_valid_labels)
+	{
+		gm_graphoid = get_graph_path_oid();
+		if (OidIsValid(gm_graphoid))
+			gm_agvertex_relid = get_labid_relid(gm_graphoid,
+												get_labname_labid(AG_VERTEX,
+																  gm_graphoid));
+	}
 
 	foreach(lc, components)
 	{
@@ -2473,6 +2572,8 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			CypherRel  *prev_crel = NULL;
 			Node	   *prev_edge = NULL;
 			bool		prev_edge_is_nsitem;
+			Node	   *src_vertex = NULL;	/* source node of prev_crel */
+			bool		src_vertex_is_nsitem = false;
 			Node	   *pvs = makeArrayExpr(VERTEXARRAYOID, VERTEXOID, NIL);
 			Node	   *pes = makeArrayExpr(EDGEARRAYOID, EDGEOID, NIL);
 
@@ -2539,6 +2640,16 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					edge = transformMatchRel(pstate, crel, targetList,
 											 &eqoList, out, &edge_is_nsitem);
 
+					/*
+					 * graphmeta: record this (first) node; it is the source of
+					 * `crel`, whose edge topology is completed once its dest node
+					 * (next in the chain) is transformed.
+					 */
+					recordGraphmetaNode(vertex, vertex_is_nsitem,
+										gm_graphoid, gm_agvertex_relid);
+					src_vertex = vertex;
+					src_vertex_is_nsitem = vertex_is_nsitem;
+
 					qual = addQualNodeIn(pstate, qual, vertex,
 										 vertex_is_nsitem, crel, edge,
 										 edge_is_nsitem, false);
@@ -2547,6 +2658,19 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				{
 					vertex = transformMatchNode(pstate, cnode, targetList,
 												&eqoList, &vertex_is_nsitem);
+
+					/*
+					 * graphmeta: record this node, then complete `prev_crel`'s
+					 * edge topology now that both its endpoints are known
+					 * (src = src_vertex, dst = this node).
+					 */
+					recordGraphmetaNode(vertex, vertex_is_nsitem,
+										gm_graphoid, gm_agvertex_relid);
+					recordGraphmetaEdge(prev_edge, prev_edge_is_nsitem, prev_crel,
+										gm_graphoid,
+										graphElemRti(src_vertex, src_vertex_is_nsitem),
+										graphElemRti(vertex, vertex_is_nsitem));
+
 					qual = addQualNodeIn(pstate, qual, vertex,
 										 vertex_is_nsitem, prev_crel,
 										 prev_edge, prev_edge_is_nsitem, true);
@@ -2561,6 +2685,11 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 										prev_crel, prev_edge, prev_edge_is_nsitem);
 					edge = transformMatchRel(pstate, crel, targetList,
 											 &eqoList, out, &edge_is_nsitem);
+
+					/* this node is the source of the next edge `crel` */
+					src_vertex = vertex;
+					src_vertex_is_nsitem = vertex_is_nsitem;
+
 					qual = addQualRelPath(pstate, qual, prev_crel, prev_edge,
 										  prev_edge_is_nsitem, crel,
 										  edge, edge_is_nsitem);
@@ -5957,7 +6086,8 @@ transformDeleteJoinNSItem(ParseState *pstate, CypherClause *clause)
 							  true);
 	Assert(r_qry->commandType == CMD_SELECT);
 
-	if (auto_gather_graphmeta &&
+	if (graphmeta_baseline_gathered() &&
+		!has_pending_graphmeta_writes() &&
 		list_length(exprs) == 1 &&
 		exprType(linitial(exprs)) == VERTEXOID)
 	{
