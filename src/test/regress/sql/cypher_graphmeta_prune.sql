@@ -712,3 +712,367 @@ CREATE (:v)-[:e]->(:v);
 MATCH (a:v) DELETE a;
 DROP GRAPH gmp13g CASCADE;
 SET auto_gather_graphmeta = true;
+
+-- ============================================================
+-- gmp14 -- DELETE prune vs vertex-label INHERITANCE (SOUNDNESS)
+-- A DETACH DELETE of a PARENT vertex label must remove every incident edge of
+-- the whole subtree.  ag_graphmeta records edges under the LEAF vertex labids
+-- (e.g. an edge dog->cat is stored as (dog, .., cat), never (animal, .., cat)),
+-- so the incident-edge-label set for the parent must be computed over the
+-- vertex-label SUBTREE -- exactly as the MATCH path does via find_all_inheritors
+-- (see gmp10).  If the delete-join prune instead looks up only the parent labid
+-- in ag_graphmeta, a child-exclusive edge label is invisible, gets pruned away,
+-- and DETACH DELETE leaves a DANGLING edge (vertex gone, edge row remains).
+--
+-- Oracle: on (pruned) end state MUST equal off (full-scan) end state, byte for
+-- byte, including physical edge-row counts (SELECT count(*) FROM <g>.<elabel>),
+-- which reveal a dangling edge even when a graph-pattern query hides it.
+-- ============================================================
+
+-- gmp14a: child-EXCLUSIVE edge label (the minimal dangling-edge repro).
+-- 'chases' is used ONLY on dog->cat, so ag_graphmeta holds only (dog,chases,cat);
+-- there is no animal-direct triple carrying 'chases'.  A subtree-aware prune must
+-- still keep 'chases' in the incident set for (a:animal).
+CREATE GRAPH gmp14a_on;
+SET graph_path = gmp14a_on;
+CREATE VLABEL animal;
+CREATE VLABEL dog INHERITS (animal);
+CREATE VLABEL cat INHERITS (animal);
+CREATE ELABEL chases;
+SET auto_gather_graphmeta = true;
+CREATE (:dog {n: 'd1'})-[:chases]->(:cat {n: 'c1'});
+-- recorded under leaf labids: (dog, chases, cat) only
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+-- the delete-join for (a:animal) must scan the 'chases' child; a subtree-blind
+-- prune drops it and scans only the empty ag_edge root
+EXPLAIN (costs off) MATCH (a:animal) DETACH DELETE a;
+MATCH (a:animal) DETACH DELETE a;
+MATCH (a)-[r]->(b) RETURN label(r) AS rel, count(*) AS n ORDER BY rel;
+MATCH (v) RETURN label(v) AS lbl, count(*) AS n ORDER BY lbl;
+-- physical edge rows: 0 iff the chases edge was actually deleted (not dangling)
+SELECT count(*) AS chases_rows FROM gmp14a_on.chases;
+DROP GRAPH gmp14a_on CASCADE;
+
+-- identical graph, gathering OFF (full ag_edge scan) -- the correctness baseline
+CREATE GRAPH gmp14a_off;
+SET graph_path = gmp14a_off;
+CREATE VLABEL animal;
+CREATE VLABEL dog INHERITS (animal);
+CREATE VLABEL cat INHERITS (animal);
+CREATE ELABEL chases;
+SET auto_gather_graphmeta = false;
+CREATE (:dog {n: 'd1'})-[:chases]->(:cat {n: 'c1'});
+MATCH (a:animal) DETACH DELETE a;
+MATCH (a)-[r]->(b) RETURN label(r) AS rel, count(*) AS n ORDER BY rel;
+MATCH (v) RETURN label(v) AS lbl, count(*) AS n ORDER BY lbl;
+SELECT count(*) AS chases_rows FROM gmp14a_off.chases;
+DROP GRAPH gmp14a_off CASCADE;
+
+-- gmp14b: mixed -- 'rel' appears on BOTH a parent-direct pair (animal->animal)
+-- and a child pair (dog->cat).  Because the parent-direct animal->animal triple
+-- keeps 'rel' in the incident set (prune is over edge LABELS, not triples), the
+-- dog->cat 'rel' edge is deleted even by a subtree-blind prune.  This bounds the
+-- bug: it fires only for a CHILD-EXCLUSIVE incident edge label.
+CREATE GRAPH gmp14b_on;
+SET graph_path = gmp14b_on;
+CREATE VLABEL animal;
+CREATE VLABEL dog INHERITS (animal);
+CREATE VLABEL cat INHERITS (animal);
+CREATE ELABEL rel;
+SET auto_gather_graphmeta = true;
+CREATE (:animal {n: 'a1'})-[:rel]->(:animal {n: 'a2'});
+CREATE (:dog {n: 'd1'})-[:rel]->(:cat {n: 'c1'});
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+EXPLAIN (costs off) MATCH (a:animal) DETACH DELETE a;
+MATCH (a:animal) DETACH DELETE a;
+MATCH (a)-[r]->(b) RETURN label(r) AS rel, count(*) AS n ORDER BY rel;
+MATCH (v) RETURN label(v) AS lbl, count(*) AS n ORDER BY lbl;
+SELECT count(*) AS rel_rows FROM gmp14b_on.rel;
+DROP GRAPH gmp14b_on CASCADE;
+
+CREATE GRAPH gmp14b_off;
+SET graph_path = gmp14b_off;
+CREATE VLABEL animal;
+CREATE VLABEL dog INHERITS (animal);
+CREATE VLABEL cat INHERITS (animal);
+CREATE ELABEL rel;
+SET auto_gather_graphmeta = false;
+CREATE (:animal {n: 'a1'})-[:rel]->(:animal {n: 'a2'});
+CREATE (:dog {n: 'd1'})-[:rel]->(:cat {n: 'c1'});
+MATCH (a:animal) DETACH DELETE a;
+MATCH (a)-[r]->(b) RETURN label(r) AS rel, count(*) AS n ORDER BY rel;
+MATCH (v) RETURN label(v) AS lbl, count(*) AS n ORDER BY lbl;
+SELECT count(*) AS rel_rows FROM gmp14b_off.rel;
+DROP GRAPH gmp14b_off CASCADE;
+
+-- ============================================================
+-- gmp15 -- DELETE prune vs EDGE-label inheritance
+-- The deleted vertex is plain (childless label); its incident edges are of a
+-- CHILD edge label (subrel INHERITS rel).  ag_graphmeta records the leaf elabid
+-- (v, subrel, v).  The prune keys on the VERTEX label, and the delete-join scans
+-- the incident edge label's whole subtree, so the child-elabel edge is deleted.
+-- ============================================================
+CREATE GRAPH gmp15_on;
+SET graph_path = gmp15_on;
+CREATE VLABEL v;
+CREATE ELABEL rel;
+CREATE ELABEL subrel INHERITS (rel);
+SET auto_gather_graphmeta = true;
+-- vertex 'a' has one child-elabel out-edge (subrel) and one parent-elabel
+-- out-edge (rel); both are incident and must be deleted by DETACH DELETE (a)
+CREATE (a:v {n: 'a'})-[:subrel]->(:v {n: 'b'}), (a)-[:rel]->(:v {n: 'c'});
+-- recorded under leaf elabids: (v,rel,v) and (v,subrel,v)
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+EXPLAIN (costs off) MATCH (x:v) WHERE x.n = 'a' DETACH DELETE x;
+MATCH (x:v) WHERE x.n = 'a' DETACH DELETE x;
+MATCH (p)-[r]->(q) RETURN label(r) AS rel, count(*) AS n ORDER BY rel;
+MATCH (n) RETURN count(*) AS verts;
+SELECT count(*) AS rel_rows FROM gmp15_on.rel;
+SELECT count(*) AS subrel_rows FROM gmp15_on.subrel;
+DROP GRAPH gmp15_on CASCADE;
+
+CREATE GRAPH gmp15_off;
+SET graph_path = gmp15_off;
+CREATE VLABEL v;
+CREATE ELABEL rel;
+CREATE ELABEL subrel INHERITS (rel);
+SET auto_gather_graphmeta = false;
+CREATE (a:v {n: 'a'})-[:subrel]->(:v {n: 'b'}), (a)-[:rel]->(:v {n: 'c'});
+MATCH (x:v) WHERE x.n = 'a' DETACH DELETE x;
+MATCH (p)-[r]->(q) RETURN label(r) AS rel, count(*) AS n ORDER BY rel;
+SELECT count(*) AS rel_rows FROM gmp15_off.rel;
+SELECT count(*) AS subrel_rows FROM gmp15_off.subrel;
+DROP GRAPH gmp15_off CASCADE;
+
+-- ============================================================
+-- gmp16 -- delete shapes that do NOT get a prune stamp -> full ag_edge scan
+-- The parser stamps GRAPHPRUNE_ROLE_DELETE_EDGE only for a single, labelled
+-- vertex target.  These three shapes fall back to the full inheritance scan and
+-- must stay correct: (a) unlabelled single target, (b) multiple targets,
+-- (c) a path delete.  on == off throughout.
+-- ============================================================
+
+-- gmp16a: unlabelled single target -- MATCH (n) DETACH DELETE n
+CREATE GRAPH gmp16a_on;
+SET graph_path = gmp16a_on;
+CREATE VLABEL person; CREATE VLABEL city;
+CREATE ELABEL knows; CREATE ELABEL livesin;
+SET auto_gather_graphmeta = true;
+CREATE (p1:person {n: 'p1'})-[:knows]->(:person {n: 'p2'}),
+       (p1)-[:livesin]->(:city {n: 'c1'});
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+-- no label anchor: full scan, delete everything
+EXPLAIN (costs off) MATCH (n) DETACH DELETE n;
+MATCH (n) DETACH DELETE n;
+MATCH (a)-[r]->(b) RETURN count(*) AS edges;
+MATCH (v) RETURN count(*) AS verts;
+SELECT count(*) AS knows_rows FROM gmp16a_on.knows;
+SELECT count(*) AS livesin_rows FROM gmp16a_on.livesin;
+DROP GRAPH gmp16a_on CASCADE;
+
+CREATE GRAPH gmp16a_off;
+SET graph_path = gmp16a_off;
+CREATE VLABEL person; CREATE VLABEL city;
+CREATE ELABEL knows; CREATE ELABEL livesin;
+SET auto_gather_graphmeta = false;
+CREATE (p1:person {n: 'p1'})-[:knows]->(:person {n: 'p2'}),
+       (p1)-[:livesin]->(:city {n: 'c1'});
+MATCH (n) DETACH DELETE n;
+SELECT count(*) AS knows_rows FROM gmp16a_off.knows;
+SELECT count(*) AS livesin_rows FROM gmp16a_off.livesin;
+DROP GRAPH gmp16a_off CASCADE;
+
+-- gmp16b: multiple delete targets -- DETACH DELETE a, b (not single-target)
+CREATE GRAPH gmp16b_on;
+SET graph_path = gmp16b_on;
+CREATE VLABEL person; CREATE VLABEL city;
+CREATE ELABEL knows; CREATE ELABEL livesin;
+SET auto_gather_graphmeta = true;
+CREATE (p1:person {n: 'p1'})-[:knows]->(p2:person {n: 'p2'}),
+       (p1)-[:livesin]->(:city {n: 'c1'});
+EXPLAIN (costs off)
+  MATCH (a:person {n: 'p1'}), (b:person {n: 'p2'}) DETACH DELETE a, b;
+MATCH (a:person {n: 'p1'}), (b:person {n: 'p2'}) DETACH DELETE a, b;
+MATCH (a)-[r]->(b) RETURN label(r) AS rel, count(*) AS n ORDER BY rel;
+MATCH (v) RETURN label(v) AS lbl, count(*) AS n ORDER BY lbl;
+SELECT count(*) AS knows_rows FROM gmp16b_on.knows;
+SELECT count(*) AS livesin_rows FROM gmp16b_on.livesin;
+DROP GRAPH gmp16b_on CASCADE;
+
+CREATE GRAPH gmp16b_off;
+SET graph_path = gmp16b_off;
+CREATE VLABEL person; CREATE VLABEL city;
+CREATE ELABEL knows; CREATE ELABEL livesin;
+SET auto_gather_graphmeta = false;
+CREATE (p1:person {n: 'p1'})-[:knows]->(p2:person {n: 'p2'}),
+       (p1)-[:livesin]->(:city {n: 'c1'});
+MATCH (a:person {n: 'p1'}), (b:person {n: 'p2'}) DETACH DELETE a, b;
+MATCH (a)-[r]->(b) RETURN label(r) AS rel, count(*) AS n ORDER BY rel;
+MATCH (v) RETURN label(v) AS lbl, count(*) AS n ORDER BY lbl;
+SELECT count(*) AS knows_rows FROM gmp16b_off.knows;
+SELECT count(*) AS livesin_rows FROM gmp16b_off.livesin;
+DROP GRAPH gmp16b_off CASCADE;
+
+-- gmp16c: path delete -- DETACH DELETE p over a matched path (multi-vertex)
+CREATE GRAPH gmp16c_on;
+SET graph_path = gmp16c_on;
+CREATE VLABEL person; CREATE ELABEL knows;
+SET auto_gather_graphmeta = true;
+CREATE (a:person {n: 'a'})-[:knows]->(b:person {n: 'b'})-[:knows]->(:person {n: 'c'});
+EXPLAIN (costs off) MATCH p = (:person {n: 'a'})-[:knows*1..2]->(:person) DETACH DELETE p;
+MATCH p = (:person {n: 'a'})-[:knows*1..2]->(:person) DETACH DELETE p;
+MATCH (x)-[r]->(y) RETURN count(*) AS edges;
+MATCH (v) RETURN count(*) AS verts;
+SELECT count(*) AS knows_rows FROM gmp16c_on.knows;
+DROP GRAPH gmp16c_on CASCADE;
+
+CREATE GRAPH gmp16c_off;
+SET graph_path = gmp16c_off;
+CREATE VLABEL person; CREATE ELABEL knows;
+SET auto_gather_graphmeta = false;
+CREATE (a:person {n: 'a'})-[:knows]->(b:person {n: 'b'})-[:knows]->(:person {n: 'c'});
+MATCH p = (:person {n: 'a'})-[:knows*1..2]->(:person) DETACH DELETE p;
+SELECT count(*) AS knows_rows FROM gmp16c_off.knows;
+DROP GRAPH gmp16c_off CASCADE;
+
+-- ============================================================
+-- gmp17 -- both orientations of the incident set: self-loops and in+out edges
+-- The incident set is START(labid) UNION END(labid).  These cases exercise both
+-- arms: a self-loop (start == end == the deleted vertex) and a vertex that is
+-- the start of some edges and the end of others.  Every incident edge in either
+-- orientation must be deleted.  on == off.
+-- ============================================================
+
+-- gmp17a: self-loop (v)-[:loop]->(v)
+CREATE GRAPH gmp17a_on;
+SET graph_path = gmp17a_on;
+CREATE VLABEL v; CREATE ELABEL loop;
+SET auto_gather_graphmeta = true;
+CREATE (n:v {n: 'n'});
+MATCH (n:v {n: 'n'}) CREATE (n)-[:loop]->(n);
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+EXPLAIN (costs off) MATCH (x:v) DETACH DELETE x;
+MATCH (x:v) DETACH DELETE x;
+MATCH (a)-[r]->(b) RETURN count(*) AS edges;
+MATCH (a) RETURN count(*) AS verts;
+SELECT count(*) AS loop_rows FROM gmp17a_on.loop;
+DROP GRAPH gmp17a_on CASCADE;
+
+CREATE GRAPH gmp17a_off;
+SET graph_path = gmp17a_off;
+CREATE VLABEL v; CREATE ELABEL loop;
+SET auto_gather_graphmeta = false;
+CREATE (n:v {n: 'n'});
+MATCH (n:v {n: 'n'}) CREATE (n)-[:loop]->(n);
+MATCH (x:v) DETACH DELETE x;
+SELECT count(*) AS loop_rows FROM gmp17a_off.loop;
+DROP GRAPH gmp17a_off CASCADE;
+
+-- gmp17b: the deleted vertex is the START of one edge and the END of another,
+-- via two different edge labels -- START(hub) contributes 'out', END(hub)
+-- contributes 'in'; both must be in the incident set and both deleted.
+CREATE GRAPH gmp17b_on;
+SET graph_path = gmp17b_on;
+CREATE VLABEL hub; CREATE VLABEL other;
+CREATE ELABEL out_e; CREATE ELABEL in_e;
+SET auto_gather_graphmeta = true;
+CREATE (h:hub {n: 'h'}),
+       (h)-[:out_e]->(:other {n: 'o1'}),
+       (:other {n: 'o2'})-[:in_e]->(h);
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+EXPLAIN (costs off) MATCH (x:hub) DETACH DELETE x;
+MATCH (x:hub) DETACH DELETE x;
+MATCH (a)-[r]->(b) RETURN label(r) AS rel, count(*) AS n ORDER BY rel;
+MATCH (v) RETURN label(v) AS lbl, count(*) AS n ORDER BY lbl;
+SELECT count(*) AS out_rows FROM gmp17b_on.out_e;
+SELECT count(*) AS in_rows FROM gmp17b_on.in_e;
+DROP GRAPH gmp17b_on CASCADE;
+
+CREATE GRAPH gmp17b_off;
+SET graph_path = gmp17b_off;
+CREATE VLABEL hub; CREATE VLABEL other;
+CREATE ELABEL out_e; CREATE ELABEL in_e;
+SET auto_gather_graphmeta = false;
+CREATE (h:hub {n: 'h'}),
+       (h)-[:out_e]->(:other {n: 'o1'}),
+       (:other {n: 'o2'})-[:in_e]->(h);
+MATCH (x:hub) DETACH DELETE x;
+MATCH (a)-[r]->(b) RETURN label(r) AS rel, count(*) AS n ORDER BY rel;
+MATCH (v) RETURN label(v) AS lbl, count(*) AS n ORDER BY lbl;
+SELECT count(*) AS out_rows FROM gmp17b_off.out_e;
+SELECT count(*) AS in_rows FROM gmp17b_off.in_e;
+DROP GRAPH gmp17b_off CASCADE;
+
+-- ============================================================
+-- gmp18 -- same-transaction pending graphmeta writes disable the prune
+-- has_pending_graphmeta_writes() gates BOTH the parse-time stamp and the
+-- plan-time propagation off: an edge created and then DETACH DELETEd in one
+-- transaction must fall back to the full ag_edge scan (the just-created edge is
+-- not yet in ag_graphmeta, so a prune could miss it).  on == off.
+-- ============================================================
+CREATE GRAPH gmp18_on;
+SET graph_path = gmp18_on;
+CREATE VLABEL person; CREATE ELABEL knows;
+SET auto_gather_graphmeta = true;
+BEGIN;
+-- brand-new connectivity in this txn: (person,knows,person) not yet gathered
+CREATE (:person {n: 'p1'})-[:knows]->(:person {n: 'p2'});
+-- prune must be OFF here (pending write) -> full scan finds the fresh edge
+EXPLAIN (costs off) MATCH (p:person) DETACH DELETE p;
+MATCH (p:person) DETACH DELETE p;
+COMMIT;
+MATCH (a)-[r]->(b) RETURN count(*) AS edges;
+MATCH (v) RETURN count(*) AS verts;
+SELECT count(*) AS knows_rows FROM gmp18_on.knows;
+DROP GRAPH gmp18_on CASCADE;
+
+CREATE GRAPH gmp18_off;
+SET graph_path = gmp18_off;
+CREATE VLABEL person; CREATE ELABEL knows;
+SET auto_gather_graphmeta = false;
+BEGIN;
+CREATE (:person {n: 'p1'})-[:knows]->(:person {n: 'p2'});
+MATCH (p:person) DETACH DELETE p;
+COMMIT;
+SELECT count(*) AS knows_rows FROM gmp18_off.knows;
+DROP GRAPH gmp18_off CASCADE;
+
+-- ============================================================
+-- gmp19 -- isolated labelled vertex (no edges): incident set legitimately empty
+-- DETACH DELETE removes the vertex with no error; plain DELETE of an
+-- edge-less vertex succeeds (the connected-vertex guard must NOT fire).  The
+-- prune-to-empty here is CORRECT (there genuinely are no incident edges), unlike
+-- gmp14 where empty is a subtree-blindness bug.  on == off.
+-- ============================================================
+CREATE GRAPH gmp19_on;
+SET graph_path = gmp19_on;
+CREATE VLABEL loner; CREATE VLABEL other; CREATE ELABEL rel;
+SET auto_gather_graphmeta = true;
+-- 'loner' participates in no edge; 'other' pair carries the only connectivity
+CREATE (:loner {n: 'x'});
+CREATE (:other {n: 'a'})-[:rel]->(:other {n: 'b'});
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+-- delete-join prunes to empty incident set (parent-only) -- correct: no edges
+EXPLAIN (costs off) MATCH (n:loner) DETACH DELETE n;
+MATCH (n:loner) DETACH DELETE n;
+-- plain DELETE of an edge-less labelled vertex must succeed (no guard)
+CREATE (:loner {n: 'y'});
+MATCH (n:loner) DELETE n;
+MATCH (v) RETURN label(v) AS lbl, count(*) AS n ORDER BY lbl;
+SELECT count(*) AS rel_rows FROM gmp19_on.rel;
+DROP GRAPH gmp19_on CASCADE;
+
+CREATE GRAPH gmp19_off;
+SET graph_path = gmp19_off;
+CREATE VLABEL loner; CREATE VLABEL other; CREATE ELABEL rel;
+SET auto_gather_graphmeta = false;
+CREATE (:loner {n: 'x'});
+CREATE (:other {n: 'a'})-[:rel]->(:other {n: 'b'});
+MATCH (n:loner) DETACH DELETE n;
+CREATE (:loner {n: 'y'});
+MATCH (n:loner) DELETE n;
+MATCH (v) RETURN label(v) AS lbl, count(*) AS n ORDER BY lbl;
+SELECT count(*) AS rel_rows FROM gmp19_off.rel;
+DROP GRAPH gmp19_off CASCADE;
+
+SET auto_gather_graphmeta = true;

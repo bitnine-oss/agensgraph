@@ -491,45 +491,67 @@ gm_revise_vle(Oid graph, GMEdge *e, GMDomain *dom, bool *empty)
 /*
  * gm_incident_edge_relids
  *		Edge-label relation OIDs incident (either orientation) to a vertex label,
- *		from ag_graphmeta: START(vlabid) UNION END(vlabid).  Used to prune a
- *		delete-join's ag_edge scan to the labels that can hold an edge on the
- *		deleted vertex.  A row exists in ag_graphmeta iff >=1 live edge of that
- *		triple exists, so the result is a superset of the labels actually
- *		incident -- it never drops an edge a DETACH DELETE must remove.
+ *		from ag_graphmeta.  Used to prune a delete-join's ag_edge scan to the
+ *		labels that can hold an edge on the deleted vertex.
+ *
+ * A DETACH DELETE of (a:L) deletes every vertex in L's inheritance subtree, and
+ * ag_graphmeta records edges under the LEAF vertex labids -- so the incident
+ * edge labels are the union of START/END over every vlabid in the subtree, not
+ * just L itself (mirrors how gm_init_domain / gm_vle_sides expand the subtree).
+ * Using L alone would miss a child vertex's edges and leave them dangling after
+ * the delete.  A row exists in ag_graphmeta iff >=1 live edge of that triple
+ * exists, so the result is a superset of the labels actually incident -- it
+ * never drops an edge a DETACH DELETE must remove.
  */
 static List *
 gm_incident_edge_relids(Oid graph, int vlabid)
 {
 	List	   *relids = NIL;
 	Bitmapset  *seen = NULL;
-	int			pass;
+	Oid			vrelid = get_labid_relid(graph, (uint16) vlabid);
+	List	   *inh;
+	ListCell   *lc;
 
-	/* pass 0: vlabid on the start side; pass 1: on the end side */
-	for (pass = 0; pass < 2; pass++)
+	if (!OidIsValid(vrelid))
+		return NIL;
+
+	inh = find_all_inheritors(vrelid, NoLock, NULL);
+	foreach(lc, inh)
 	{
-		CatCList   *cl;
-		int			i;
+		int			v = gm_relid_labid(lfirst_oid(lc));
+		int			pass;
 
-		cl = SearchSysCacheList2(pass == 0 ? GRAPHMETASTART : GRAPHMETAEND,
-								 ObjectIdGetDatum(graph),
-								 Int16GetDatum((int16) vlabid));
-		for (i = 0; i < cl->n_members; i++)
+		if (v == 0)
+			continue;
+
+		/* pass 0: v on the start side; pass 1: on the end side */
+		for (pass = 0; pass < 2; pass++)
 		{
-			Form_ag_graphmeta m =
-				(Form_ag_graphmeta) GETSTRUCT(&cl->members[i]->tuple);
-			int			e = GM_LABID(m->edge);
+			CatCList   *cl;
+			int			i;
 
-			if (!bms_is_member(e, seen))
+			cl = SearchSysCacheList2(pass == 0 ? GRAPHMETASTART : GRAPHMETAEND,
+									 ObjectIdGetDatum(graph),
+									 Int16GetDatum((int16) v));
+			for (i = 0; i < cl->n_members; i++)
 			{
-				Oid			relid = get_labid_relid(graph, (uint16) e);
+				Form_ag_graphmeta m =
+					(Form_ag_graphmeta) GETSTRUCT(&cl->members[i]->tuple);
+				int			e = GM_LABID(m->edge);
 
-				seen = bms_add_member(seen, e);
-				if (OidIsValid(relid))
-					relids = lappend_oid(relids, relid);
+				if (!bms_is_member(e, seen))
+				{
+					Oid			relid = get_labid_relid(graph, (uint16) e);
+
+					seen = bms_add_member(seen, e);
+					if (OidIsValid(relid))
+						relids = lappend_oid(relids, relid);
+				}
 			}
+			ReleaseCatCacheList(cl);
 		}
-		ReleaseCatCacheList(cl);
 	}
+	list_free(inh);
 
 	bms_free(seen);
 	return relids;
