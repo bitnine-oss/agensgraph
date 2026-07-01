@@ -741,9 +741,38 @@ graphmeta_propagate_id_unique(PlannerInfo *root, RelOptInfo *parentrel,
 			proto = found;
 	}
 
+	/*
+	 * Build the parent's proof entry from scratch rather than shallow-copying
+	 * proto.  A memcpy would alias proto's child-owned per-column arrays and,
+	 * worse, carry proto's child indexoid: get_actual_variable_range() (reached
+	 * when a merge join on the id column is costed) would then index_open() that
+	 * child index and probe it against the *parent's* heap -- a wrong-heap TID
+	 * probe.  Copy only what the uniqueness/distinctness proofs read
+	 * (relation_has_unique_index_for, has_unique_index, rel_supports_distinctness)
+	 * -- the id key column, its opclass metadata, and the unique/immediate flags
+	 * -- mark the entry hypothetical with no indexoid so nothing ever opens it,
+	 * and leave the ordering/predicate/expression fields unset: this appendrel
+	 * parent never builds an index-scan path from the entry.
+	 */
 	pidx = makeNode(IndexOptInfo);
-	memcpy(pidx, proto, sizeof(IndexOptInfo));
 	pidx->rel = parentrel;
+	pidx->ncolumns = 1;
+	pidx->nkeycolumns = 1;
+	pidx->indexkeys = (int *) palloc(sizeof(int));
+	pidx->indexkeys[0] = GRAPHMETA_ID_ATTNO;
+	pidx->indexcollations = (Oid *) palloc(sizeof(Oid));
+	pidx->indexcollations[0] = proto->indexcollations[0];
+	pidx->opfamily = (Oid *) palloc(sizeof(Oid));
+	pidx->opfamily[0] = proto->opfamily[0];
+	pidx->opcintype = (Oid *) palloc(sizeof(Oid));
+	pidx->opcintype[0] = proto->opcintype[0];
+	pidx->relam = proto->relam;
+	pidx->unique = true;
+	pidx->immediate = proto->immediate;
+	pidx->indpred = NIL;
+	pidx->predOK = false;
+	pidx->hypothetical = true;
+	pidx->indexoid = InvalidOid;
 	parentrel->indexlist = lappend(parentrel->indexlist, pidx);
 }
 
