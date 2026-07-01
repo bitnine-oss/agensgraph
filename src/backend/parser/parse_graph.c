@@ -379,6 +379,7 @@ static Node *makePathVertexExpr(ParseState *pstate, Node *obj, bool is_nsitem);
 static Node *makePathEdgeExpr(ParseState *pstate, CypherRel *crel, Node *obj,
 							  bool is_nsitem);
 static Node *getExprField(Expr *expr, char *fname);
+static Node *getRowExprField(Expr *rowexpr, char *fname);
 static Node *qualAndExpr(Node *qual, Node *expr);
 
 /* parse node */
@@ -5365,9 +5366,9 @@ transformSetProp(ParseState *pstate, CypherSetProp *sp, bool is_remove,
 		}
 		else					/* SET a.b.c = expr */
 		{
-			FuncCall   *set;
-			Node	   *set_prop;
-			CoalesceExpr *coalesce;
+			FuncCall   *set_lax;
+			Node	   *create_if_missing;
+			Node	   *null_treatment;
 
 			/*
 			 * UNKNOWNOID 'null' will be passed to jsonb_in() when
@@ -5377,22 +5378,30 @@ transformSetProp(ParseState *pstate, CypherSetProp *sp, bool is_remove,
 				expr = (Node *) makeConst(UNKNOWNOID, -1, InvalidOid, -2,
 										  CStringGetDatum("null"), false, false);
 
-			set = makeFuncCall(list_make1(makeString("jsonb_set")), NIL,
-							   COERCE_EXPLICIT_CALL, -1);
-			set_prop = ParseFuncOrColumn(pstate, set->funcname,
-										 list_make3(prop_map, path, expr),
-										 pstate->p_last_srf, set, false, -1);
-
 			/*
-			 * The right operand can be null. In this case, it behaves like
-			 * REMOVE clause.
+			 * Use jsonb_set_lax(map, path, val, true, 'delete_key') instead of
+			 * COALESCE(jsonb_set(map, path, val), jsonb_delete_path(map, path)).
+			 * It is equivalent -- it sets the key when `val` is a real value
+			 * (creating it if missing) and deletes the key when `val` is SQL
+			 * NULL, so a NULL right operand behaves like REMOVE -- but it
+			 * references `map` (prop_map) exactly once.  The COALESCE form
+			 * referenced prop_map twice, which combined with the per-SET-item
+			 * RowExpr rebuild made the target expression grow geometrically
+			 * with the number of properties set on the same element.
 			 */
-			coalesce = makeNode(CoalesceExpr);
-			coalesce->args = list_make2(set_prop, del_prop);
-			coalesce->coalescetype = JSONBOID;
-			coalesce->location = -1;
+			create_if_missing = (Node *) makeBoolConst(true, false);
+			null_treatment = (Node *) makeConst(TEXTOID, -1,
+												DEFAULT_COLLATION_OID, -1,
+												CStringGetTextDatum("delete_key"),
+												false, false);
 
-			prop_map = (Node *) coalesce;
+			set_lax = makeFuncCall(list_make1(makeString("jsonb_set_lax")), NIL,
+								   COERCE_EXPLICIT_CALL, -1);
+			prop_map = ParseFuncOrColumn(pstate, set_lax->funcname,
+										 list_make5(prop_map, path, expr,
+													create_if_missing,
+													null_treatment),
+										 pstate->p_last_srf, set_lax, false, -1);
 		}
 	}
 
@@ -5549,14 +5558,23 @@ substitute_set_props_as_targetentry(ParseState *pstate, Query *query,
 			TargetEntry *targetEntry = cur_ext_tle->tle;
 			Expr	   *prev_expr = targetEntry->expr;
 
-			/* todo: do not make new RowExpr. */
+			/*
+			 * Rebuild the element as a RowExpr whose property map is the
+			 * result of this SET item and whose other fields are carried over
+			 * unchanged.  prev_expr is always the RowExpr produced above (for
+			 * the first item) or by the previous iteration, so extract the
+			 * carried-over fields directly with getRowExprField() rather than
+			 * wrapping the whole prev_expr in a FieldSelect per field -- the
+			 * latter grows the expression geometrically with the number of SET
+			 * items on the same element (see getRowExprField()).
+			 */
 			if (cur_ext_tle->type == VERTEXOID)
 			{
 				Expr	   *new_expr = (Expr *) makeTypedRowExpr(
 																 list_make3(
-																			getExprField(prev_expr, AG_ELEM_LOCAL_ID),
+																			getRowExprField(prev_expr, AG_ELEM_LOCAL_ID),
 																			gsp->expr,
-																			getExprField(prev_expr, "tid")),
+																			getRowExprField(prev_expr, "tid")),
 																 VERTEXOID, -1);
 
 				targetEntry->expr = new_expr;
@@ -5565,11 +5583,11 @@ substitute_set_props_as_targetentry(ParseState *pstate, Query *query,
 			{
 				Expr	   *new_expr = (Expr *) makeTypedRowExpr(
 																 list_make5(
-																			getExprField(prev_expr, AG_ELEM_LOCAL_ID),
-																			getExprField(prev_expr, AG_START_ID),
-																			getExprField(prev_expr, AG_END_ID),
+																			getRowExprField(prev_expr, AG_ELEM_LOCAL_ID),
+																			getRowExprField(prev_expr, AG_START_ID),
+																			getRowExprField(prev_expr, AG_END_ID),
 																			gsp->expr,
-																			getExprField(prev_expr, "tid")),
+																			getRowExprField(prev_expr, "tid")),
 																 EDGEOID, -1);
 
 				targetEntry->expr = new_expr;
@@ -7328,6 +7346,47 @@ getExprField(Expr *expr, char *fname)
 	fselect->resultcollid = attr->attcollation;
 
 	return (Node *) fselect;
+}
+
+/*
+ * getRowExprField
+ *
+ * Like getExprField(), but for a `rowexpr` that is already a RowExpr built with
+ * one argument per column of its row type (as the SET target assembly does for
+ * vertices and edges).  Instead of wrapping the whole RowExpr in a FieldSelect,
+ * this returns the matching argument sub-expression directly.
+ *
+ * This matters when several properties are set on the same element.  The SET
+ * target for an element is rebuilt as a fresh RowExpr for every SET item, and
+ * the unchanged id/start/end/tid fields are carried over from the previous
+ * RowExpr.  Re-deriving them with getExprField() embeds a full FieldSelect over
+ * the entire previous RowExpr each time, so the target expression grows
+ * geometrically with the number of SET items (which the planner then walks and
+ * copies once per inherited child table).  Extracting the sub-node keeps the
+ * carried-over fields as their original leaf expressions, so the target stays
+ * linear in the number of SET items.
+ */
+static Node *
+getRowExprField(Expr *rowexpr, char *fname)
+{
+	Oid			typoid;
+	TupleDesc	tupdesc;
+	int			idx;
+
+	Assert(IsA(rowexpr, RowExpr));
+
+	typoid = exprType((Node *) rowexpr);
+
+	tupdesc = lookup_rowtype_tupdesc_copy(typoid, -1);
+	for (idx = 0; idx < tupdesc->natts; idx++)
+	{
+		if (namestrcmp(&TupleDescAttr(tupdesc, idx)->attname, fname) == 0)
+			break;
+	}
+	Assert(idx < tupdesc->natts);
+	Assert(idx < list_length(((RowExpr *) rowexpr)->args));
+
+	return (Node *) list_nth(((RowExpr *) rowexpr)->args, idx);
 }
 
 static Node *
