@@ -585,8 +585,8 @@ propagate_graphmeta_constraints(PlannerInfo *root)
 
 		/* this clause's pull-up offset, derived from the edge itself */
 		shift = (int) rti - rte->graphPruneElemId;
-		src = rte->graphPruneSrcRti + shift;
-		dst = rte->graphPruneDstRti + shift;
+		src = rte->graphPruneSrcElemId + shift;
+		dst = rte->graphPruneDstElemId + shift;
 
 		/*
 		 * Both endpoints must be in-range pattern nodes we have a domain for,
@@ -595,8 +595,8 @@ propagate_graphmeta_constraints(PlannerInfo *root)
 		 */
 		if (src > 0 && src < n && dst > 0 && dst < n &&
 			isvar[src] && isvar[dst] &&
-			root->simple_rte_array[src]->graphPruneElemId == rte->graphPruneSrcRti &&
-			root->simple_rte_array[dst]->graphPruneElemId == rte->graphPruneDstRti)
+			root->simple_rte_array[src]->graphPruneElemId == rte->graphPruneSrcElemId &&
+			root->simple_rte_array[dst]->graphPruneElemId == rte->graphPruneDstElemId)
 		{
 			GMEdge	   *E = &edges[nedges++];
 

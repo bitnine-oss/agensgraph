@@ -2482,7 +2482,7 @@ graphElemRte(Node *elem, bool is_nsitem)
  * Nodes record their own label id (0 = the universal ag_vertex parent, i.e.
  * "unlabelled / any vertex").  Edges record their label id (0 = unlabelled),
  * direction, kind (directed relation vs undirected/VLE subquery), and the
- * rangetable indices of their two endpoint nodes.  All of this is structural
+ * element ids of their two endpoint nodes.  All of this is structural
  * (derived from the pattern text, not from connectivity), so it never goes stale
  * behind a cached plan; the planner resolves it against ag_graphmeta each plan.
  */
@@ -2504,7 +2504,7 @@ recordGraphmetaNode(Node *vertex, bool vertex_is_nsitem,
 
 static void
 recordGraphmetaEdge(Node *edge, bool edge_is_nsitem, CypherRel *crel,
-					Oid graphoid, int src_rti, int dst_rti)
+					Oid graphoid, int src_elemid, int dst_elemid)
 {
 	RangeTblEntry *rte = graphElemRte(edge, edge_is_nsitem);
 	char	   *typname;
@@ -2518,8 +2518,8 @@ recordGraphmetaEdge(Node *edge, bool edge_is_nsitem, CypherRel *crel,
 	rte->graphPruneElemId = graphElemRti(edge, edge_is_nsitem);
 	rte->graphPruneLabid = (strcmp(typname, AG_EDGE) == 0) ? 0
 		: (int) get_labname_labid(typname, graphoid);
-	rte->graphPruneSrcRti = src_rti;
-	rte->graphPruneDstRti = dst_rti;
+	rte->graphPruneSrcElemId = src_elemid;
+	rte->graphPruneDstElemId = dst_elemid;
 	rte->graphPruneDir = crel->direction;
 	rte->graphPruneVleMin = -1;
 

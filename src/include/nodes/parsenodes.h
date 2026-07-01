@@ -1314,7 +1314,7 @@ typedef struct RangeTblEntry
 	 * this is connectivity-derived, so it never goes stale behind a cached plan.
 	 * graphPruneGraph == InvalidOid means this RTE is not a pattern element.
 	 *
-	 * Edges store their two endpoints by rangetable index: the "source" node is
+	 * Edges store their two endpoints by element id: the "source" node is
 	 * written before the edge token, the "dest" node after.  Labels are 0 when
 	 * absent (unlabelled).  graphPruneRole is one of GRAPHPRUNE_ROLE_*.
 	 */
@@ -1332,9 +1332,9 @@ typedef struct RangeTblEntry
 	 */
 	int			graphPruneElemId pg_node_attr(query_jumble_ignore);
 	/* edges only: elem id of the source (written-before) node */
-	int			graphPruneSrcRti pg_node_attr(query_jumble_ignore);
+	int			graphPruneSrcElemId pg_node_attr(query_jumble_ignore);
 	/* edges only: elem id of the dest (written-after) node */
-	int			graphPruneDstRti pg_node_attr(query_jumble_ignore);
+	int			graphPruneDstElemId pg_node_attr(query_jumble_ignore);
 	/* edges only: CYPHER_REL_DIR_* (direction of the arrow) */
 	int			graphPruneDir pg_node_attr(query_jumble_ignore);
 	/* VLE edges only: minimum hop count; -1 if not a VLE */
