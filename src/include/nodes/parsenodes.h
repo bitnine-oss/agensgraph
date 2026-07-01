@@ -1297,14 +1297,6 @@ typedef struct RangeTblEntry
 	List	   *securityQuals pg_node_attr(query_jumble_ignore);
 
 	/*
-	 * Used in agensgraph DELETE operation, only if inh is true for the RTE.
-	 */
-	/* indicates if this RTE has optimization for DELETE in Cypher */
-	bool		hasDeleteOptimization;
-	/* list of OIDs of connected edge relations */
-	List	   *connected_relids;
-
-	/*
 	 * Used in agensgraph graphmeta scan pruning.  The parser records each MATCH
 	 * pattern element's connectivity-independent structure here -- its role, its
 	 * own label id, and (for edges) the adjacent node RTEs plus direction.  A
@@ -1346,6 +1338,8 @@ typedef struct RangeTblEntry
 #define GRAPHPRUNE_ROLE_DIR_EDGE	'E'		/* directed edge (ag_edge / elabel) */
 #define GRAPHPRUNE_ROLE_UNDIR_EDGE	'U'		/* undirected edge (UNION subquery) */
 #define GRAPHPRUNE_ROLE_VLE			'V'		/* variable-length edge (subquery) */
+#define GRAPHPRUNE_ROLE_DELETE_EDGE	'D'		/* delete-join ag_edge scan: prune to
+											 * edge labels incident to a vertex label */
 
 /*
  * RTEPermissionInfo

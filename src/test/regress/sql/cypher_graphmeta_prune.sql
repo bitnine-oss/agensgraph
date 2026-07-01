@@ -655,3 +655,60 @@ MATCH (a:src)-[:e]->(m), p = shortestpath((a)-[:e*]->(d:dst))
 MATCH q = allshortestpaths((x:src)-[:e*]->(y:dst)) RETURN length(q) AS len;
 SET auto_gather_graphmeta = true;
 DROP GRAPH gmp12 CASCADE;
+
+-- ============================================================
+-- DELETE optimization via the pruning infra: a DETACH DELETE of a labelled
+-- vertex prunes the delete-join's ag_edge scan to the edge labels incident
+-- (either orientation) to that vertex label (GRAPHPRUNE_ROLE_DELETE_EDGE),
+-- replacing the retired hasDeleteOptimization / connected_relids path.  This is
+-- an EXECUTING correctness test (not EXPLAIN-only): every incident edge must be
+-- deleted -- pruning away a connected label would leave a dangling edge -- so
+-- the end state must match the un-gathered (full-scan) baseline exactly.
+-- ============================================================
+CREATE GRAPH gmp13on;
+SET graph_path = gmp13on;
+CREATE VLABEL person; CREATE VLABEL city;
+CREATE ELABEL knows;                 -- person -> person
+CREATE ELABEL livesin;               -- person -> city
+CREATE ELABEL borders;               -- city -> city (never incident to a person)
+SET auto_gather_graphmeta = true;
+CREATE (p1:person {name: 'p1'})-[:knows]->(:person {name: 'p2'}),
+       (p1)-[:livesin]->(c1:city {name: 'c1'}),
+       (c1)-[:borders]->(:city {name: 'c2'});
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+-- the delete-join for (p:person) prunes to the person-incident labels
+-- {knows, livesin}; borders (city->city) is dropped, and the empty ag_edge
+-- parent is not scanned
+EXPLAIN (costs off) MATCH (p:person) WHERE p.name = 'p1' DETACH DELETE p;
+MATCH (p:person) WHERE p.name = 'p1' DETACH DELETE p;
+-- p1 and its knows + livesin edges are gone; p2, both cities, and the borders
+-- edge remain (borders was never incident to the deleted person)
+MATCH (a)-[r]->(b) RETURN label(r) AS rel, count(*) AS n ORDER BY rel;
+MATCH (v) RETURN label(v) AS lbl, count(*) AS n ORDER BY lbl;
+DROP GRAPH gmp13on CASCADE;
+
+-- identical graph with gathering OFF (full ag_edge scan): the end state must be
+-- byte-identical to the pruned run above
+CREATE GRAPH gmp13off;
+SET graph_path = gmp13off;
+CREATE VLABEL person; CREATE VLABEL city;
+CREATE ELABEL knows; CREATE ELABEL livesin; CREATE ELABEL borders;
+SET auto_gather_graphmeta = false;
+CREATE (p1:person {name: 'p1'})-[:knows]->(:person {name: 'p2'}),
+       (p1)-[:livesin]->(c1:city {name: 'c1'}),
+       (c1)-[:borders]->(:city {name: 'c2'});
+MATCH (p:person) WHERE p.name = 'p1' DETACH DELETE p;
+MATCH (a)-[r]->(b) RETURN label(r) AS rel, count(*) AS n ORDER BY rel;
+MATCH (v) RETURN label(v) AS lbl, count(*) AS n ORDER BY lbl;
+DROP GRAPH gmp13off CASCADE;
+
+-- plain (non-DETACH) DELETE of a connected vertex must still raise: pruning must
+-- not bypass the connected-vertex guard by dropping the incident edge label
+CREATE GRAPH gmp13g;
+SET graph_path = gmp13g;
+CREATE VLABEL v; CREATE ELABEL e;
+SET auto_gather_graphmeta = true;
+CREATE (:v)-[:e]->(:v);
+MATCH (a:v) DELETE a;
+DROP GRAPH gmp13g CASCADE;
+SET auto_gather_graphmeta = true;

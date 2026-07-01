@@ -489,12 +489,60 @@ gm_revise_vle(Oid graph, GMEdge *e, GMDomain *dom, bool *empty)
 }
 
 /*
+ * gm_incident_edge_relids
+ *		Edge-label relation OIDs incident (either orientation) to a vertex label,
+ *		from ag_graphmeta: START(vlabid) UNION END(vlabid).  Used to prune a
+ *		delete-join's ag_edge scan to the labels that can hold an edge on the
+ *		deleted vertex.  A row exists in ag_graphmeta iff >=1 live edge of that
+ *		triple exists, so the result is a superset of the labels actually
+ *		incident -- it never drops an edge a DETACH DELETE must remove.
+ */
+static List *
+gm_incident_edge_relids(Oid graph, int vlabid)
+{
+	List	   *relids = NIL;
+	Bitmapset  *seen = NULL;
+	int			pass;
+
+	/* pass 0: vlabid on the start side; pass 1: on the end side */
+	for (pass = 0; pass < 2; pass++)
+	{
+		CatCList   *cl;
+		int			i;
+
+		cl = SearchSysCacheList2(pass == 0 ? GRAPHMETASTART : GRAPHMETAEND,
+								 ObjectIdGetDatum(graph),
+								 Int16GetDatum((int16) vlabid));
+		for (i = 0; i < cl->n_members; i++)
+		{
+			Form_ag_graphmeta m =
+				(Form_ag_graphmeta) GETSTRUCT(&cl->members[i]->tuple);
+			int			e = GM_LABID(m->edge);
+
+			if (!bms_is_member(e, seen))
+			{
+				Oid			relid = get_labid_relid(graph, (uint16) e);
+
+				seen = bms_add_member(seen, e);
+				if (OidIsValid(relid))
+					relids = lappend_oid(relids, relid);
+			}
+		}
+		ReleaseCatCacheList(cl);
+	}
+
+	bms_free(seen);
+	return relids;
+}
+
+/*
  * propagate_graphmeta_constraints
  *		Plan-time pre-pass: solve the MATCH pattern's label constraints against
  *		ag_graphmeta and stash per-rtindex pruned child sets for
  *		expand_inherited_rtentry().  No-op unless gathering is on, the catalog is
  *		current (no pending same-txn edge writes), and the pattern has at least
- *		one labelled (anchor) element and one edge constraint.
+ *		one labelled (anchor) element and one edge constraint (or a delete-join
+ *		ag_edge scan to prune, see GRAPHPRUNE_ROLE_DELETE_EDGE).
  */
 void
 propagate_graphmeta_constraints(PlannerInfo *root)
@@ -506,6 +554,7 @@ propagate_graphmeta_constraints(PlannerInfo *root)
 	GMEdge	   *edges;
 	int			nedges = 0;
 	bool		any_anchor = false;
+	bool		has_delete_edge = false;
 	bool		empty = false;
 	int			rti;
 
@@ -533,11 +582,52 @@ propagate_graphmeta_constraints(PlannerInfo *root)
 				rte->graphPruneVleMin >= 1)
 				any_anchor = true;
 		}
+		else if (rte->graphPruneRole == GRAPHPRUNE_ROLE_DELETE_EDGE)
+		{
+			/*
+			 * Delete-join ag_edge scan (not a MATCH element): its anchor is the
+			 * deleted vertex label, and it is pruned directly below rather than
+			 * through the node/edge arc-consistency.
+			 */
+			if (rte->graphPruneLabid != 0)
+				has_delete_edge = true;
+		}
 		else if (rte->graphPruneLabid != 0)
 			any_anchor = true;
 	}
-	if (!OidIsValid(graph) || !any_anchor)
+	if (!OidIsValid(graph) || (!any_anchor && !has_delete_edge))
 		return;
+
+	/*
+	 * Delete-join pruning is a direct unary computation (the edge labels
+	 * incident to the deleted vertex label), independent of the MATCH node/edge
+	 * arc-consistency below -- and a delete-join subquery has neither a labelled
+	 * node RTE nor a solver edge -- so handle it here and return.  It writes the
+	 * same root->graphmeta_pruned[] that expand_inherited_rtentry() consumes, so
+	 * the parent keep/drop, the concurrent-drop lock recheck, and the
+	 * ag_graphmeta plan-cache dependency are all shared with MATCH pruning.
+	 */
+	if (has_delete_edge)
+	{
+		root->graphmeta_pruned = (GraphmetaPrune **)
+			palloc0(n * sizeof(GraphmetaPrune *));
+
+		for (rti = 1; rti < n; rti++)
+		{
+			RangeTblEntry *rte = root->simple_rte_array[rti];
+			GraphmetaPrune *gp;
+
+			if (rte == NULL ||
+				rte->graphPruneRole != GRAPHPRUNE_ROLE_DELETE_EDGE ||
+				!rte->inh)
+				continue;
+
+			gp = (GraphmetaPrune *) palloc(sizeof(GraphmetaPrune));
+			gp->relids = gm_incident_edge_relids(graph, rte->graphPruneLabid);
+			root->graphmeta_pruned[rti] = gp;
+		}
+		return;
+	}
 
 	dom = (GMDomain *) palloc0(n * sizeof(GMDomain));
 	isvar = (bool *) palloc0(n * sizeof(bool));
@@ -907,54 +997,10 @@ expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 		bool		gm_pruned = false;
 		List	   *gm_child_rtis = NIL;
 
-		/* Agensgraph optimization */
-		if (rte->hasDeleteOptimization)
-		{
-			inhOIDs = list_make1_oid(parentOID);
-
-			/*
-			 * Acquire locks on all connected relations, and add them to the
-			 * list of child OIDs.
-			 */
-			foreach(l, rte->connected_relids)
-			{
-				Oid			crelid = lfirst_oid(l);
-
-				if (lockmode != NoLock)
-				{
-					/* Get the lock to synchronize against concurrent drop */
-					LockRelationOid(crelid, lockmode);
-
-					/*
-					 * Now that we have the lock, double-check to see if the
-					 * relation really exists or not.  If not, assume it was
-					 * dropped while we waited to acquire lock, and ignore it.
-					 */
-					if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(crelid)))
-					{
-						/* Release useless lock */
-						UnlockRelationOid(crelid, lockmode);
-						/* And ignore this relation */
-						continue;
-					}
-				}
-
-				inhOIDs = lappend_oid(inhOIDs, crelid);
-			}
-
-			/*
-			 * The pruned child set was derived from ag_graphmeta connectivity,
-			 * so depend on it: a connectivity change fires an explicit relcache
-			 * invalidation on ag_graphmeta that re-plans this (possibly cached)
-			 * DELETE.  Without this a prepared DETACH DELETE could keep pruning
-			 * to a stale edge-label set after new connectivity appears.
-			 */
-			root->glob->relationOids = lappend_oid(root->glob->relationOids,
-												   GraphMetaRelationId);
-		}
-		else if (root->graphmeta_pruned != NULL &&
-				 rti < root->simple_rel_array_size &&
-				 root->graphmeta_pruned[rti] != NULL)
+		/* Agensgraph graphmeta scan pruning (MATCH elements and delete-joins) */
+		if (root->graphmeta_pruned != NULL &&
+			rti < root->simple_rel_array_size &&
+			root->graphmeta_pruned[rti] != NULL)
 		{
 			/*
 			 * The graphmeta constraint-propagation pre-pass narrowed this

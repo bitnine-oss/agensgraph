@@ -6105,7 +6105,6 @@ transformDeleteJoinNSItem(ParseState *pstate, CypherClause *clause)
 	{
 		char	   *varname;
 		EntityInfo *einfo;
-		char	   *labname;
 		RangeTblEntry *rte = NULL;
 		ColumnRef  *cref = linitial_node(ColumnRef, detail->exprs);
 
@@ -6120,17 +6119,22 @@ transformDeleteJoinNSItem(ParseState *pstate, CypherClause *clause)
 
 		varname = strVal(linitial(cref->fields));
 		einfo = getEntityInfo(pstate, varname, T_CypherNode, false);
-		if (einfo != NULL)
+		if (einfo != NULL && einfo->labname != NULL)
 		{
-			labname = einfo->labname;
-			if (labname != NULL)
-			{
-				rte->hasDeleteOptimization = true;
-				rte->connected_relids = get_connected_edge_labels_for_vertex(
-																			 GetLatestSnapshot(),
-																			 graph_oid,
-																			 get_labname_labid(labname, graph_oid));
-			}
+			/*
+			 * Mark the delete-join's ag_edge scan for graphmeta scan pruning: the
+			 * planner scans only the edge labels ag_graphmeta records as incident
+			 * (either orientation) to the deleted vertex's label, instead of the
+			 * whole ag_edge hierarchy.  The label set is resolved at plan time by
+			 * propagate_graphmeta_constraints and applied through the shared
+			 * graphmeta_pruned[] path (GRAPHPRUNE_ROLE_DELETE_EDGE), so it stays
+			 * fresh behind a cached plan and reuses that path's concurrent-drop
+			 * lock recheck and ag_graphmeta plan-cache dependency.
+			 */
+			rte->graphPruneGraph = graph_oid;
+			rte->graphPruneRole = GRAPHPRUNE_ROLE_DELETE_EDGE;
+			rte->graphPruneLabid = (int) get_labname_labid(einfo->labname,
+														   graph_oid);
 		}
 	}
 

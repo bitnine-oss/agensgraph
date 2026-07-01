@@ -5161,89 +5161,77 @@ ORDER BY edge, start, "end";
 
 -- Append node should not have relation e2, since n1 and n2 are not connected to e2 edge label.
 EXPLAIN MATCH (n:n1) DETACH DELETE (n);
-                                                  QUERY PLAN                                                   
----------------------------------------------------------------------------------------------------------------
- Graph Delete  (cost=19.17..23044.17 rows=1200 width=0)
-   ->  Nested Loop CypherDelete Join  (cost=19.17..23044.17 rows=1200 width=64)
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
+ Graph Delete  (cost=19.10..22966.17 rows=1200 width=0)
+   ->  Nested Loop CypherDelete Join  (cost=19.10..22966.17 rows=1200 width=64)
          ->  Seq Scan on n1 n  (cost=0.00..22.00 rows=1200 width=32)
-         ->  Aggregate  (cost=19.17..19.18 rows=1 width=32)
-               ->  Nested Loop  (cost=0.00..19.14 rows=10 width=30)
+         ->  Aggregate  (cost=19.10..19.11 rows=1 width=32)
+               ->  Nested Loop  (cost=8.38..19.07 rows=10 width=30)
                      ->  Function Scan on unnest v  (cost=0.00..0.01 rows=1 width=8)
-                     ->  Append  (cost=0.00..19.02 rows=11 width=30)
-                           ->  Seq Scan on ag_edge e_1  (cost=0.00..0.00 rows=1 width=30)
-                                 Filter: ((start = v.id) OR ("end" = v.id))
-                           ->  Bitmap Heap Scan on e1 e_2  (cost=8.38..18.96 rows=10 width=30)
-                                 Recheck Cond: ((start = v.id) OR ("end" = v.id))
-                                 ->  BitmapOr  (cost=8.38..8.38 rows=10 width=0)
-                                       ->  Bitmap Index Scan on e1_start_idx  (cost=0.00..4.19 rows=5 width=0)
-                                             Index Cond: (start = v.id)
-                                       ->  Bitmap Index Scan on e1_end_idx  (cost=0.00..4.19 rows=5 width=0)
-                                             Index Cond: ("end" = v.id)
-(16 rows)
+                     ->  Bitmap Heap Scan on e1 e_1  (cost=8.38..18.96 rows=10 width=30)
+                           Recheck Cond: ((start = v.id) OR ("end" = v.id))
+                           ->  BitmapOr  (cost=8.38..8.38 rows=10 width=0)
+                                 ->  Bitmap Index Scan on e1_start_idx  (cost=0.00..4.19 rows=5 width=0)
+                                       Index Cond: (start = v.id)
+                                 ->  Bitmap Index Scan on e1_end_idx  (cost=0.00..4.19 rows=5 width=0)
+                                       Index Cond: ("end" = v.id)
+(13 rows)
 
 EXPLAIN MATCH (n:n2) DETACH DELETE (n);
-                                                  QUERY PLAN                                                   
----------------------------------------------------------------------------------------------------------------
- Graph Delete  (cost=19.17..23044.17 rows=1200 width=0)
-   ->  Nested Loop CypherDelete Join  (cost=19.17..23044.17 rows=1200 width=64)
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
+ Graph Delete  (cost=19.10..22966.17 rows=1200 width=0)
+   ->  Nested Loop CypherDelete Join  (cost=19.10..22966.17 rows=1200 width=64)
          ->  Seq Scan on n2 n  (cost=0.00..22.00 rows=1200 width=32)
-         ->  Aggregate  (cost=19.17..19.18 rows=1 width=32)
-               ->  Nested Loop  (cost=0.00..19.14 rows=10 width=30)
+         ->  Aggregate  (cost=19.10..19.11 rows=1 width=32)
+               ->  Nested Loop  (cost=8.38..19.07 rows=10 width=30)
                      ->  Function Scan on unnest v  (cost=0.00..0.01 rows=1 width=8)
-                     ->  Append  (cost=0.00..19.02 rows=11 width=30)
-                           ->  Seq Scan on ag_edge e_1  (cost=0.00..0.00 rows=1 width=30)
-                                 Filter: ((start = v.id) OR ("end" = v.id))
-                           ->  Bitmap Heap Scan on e1 e_2  (cost=8.38..18.96 rows=10 width=30)
-                                 Recheck Cond: ((start = v.id) OR ("end" = v.id))
-                                 ->  BitmapOr  (cost=8.38..8.38 rows=10 width=0)
-                                       ->  Bitmap Index Scan on e1_start_idx  (cost=0.00..4.19 rows=5 width=0)
-                                             Index Cond: (start = v.id)
-                                       ->  Bitmap Index Scan on e1_end_idx  (cost=0.00..4.19 rows=5 width=0)
-                                             Index Cond: ("end" = v.id)
-(16 rows)
+                     ->  Bitmap Heap Scan on e1 e_1  (cost=8.38..18.96 rows=10 width=30)
+                           Recheck Cond: ((start = v.id) OR ("end" = v.id))
+                           ->  BitmapOr  (cost=8.38..8.38 rows=10 width=0)
+                                 ->  Bitmap Index Scan on e1_start_idx  (cost=0.00..4.19 rows=5 width=0)
+                                       Index Cond: (start = v.id)
+                                 ->  Bitmap Index Scan on e1_end_idx  (cost=0.00..4.19 rows=5 width=0)
+                                       Index Cond: ("end" = v.id)
+(13 rows)
 
 -- Append node should not have relation e1, since n3 is not connected to e1 edge label.
 EXPLAIN MATCH (n:n3) DETACH DELETE (n);
-                                                  QUERY PLAN                                                   
----------------------------------------------------------------------------------------------------------------
- Graph Delete  (cost=19.17..23044.17 rows=1200 width=0)
-   ->  Nested Loop CypherDelete Join  (cost=19.17..23044.17 rows=1200 width=64)
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
+ Graph Delete  (cost=19.10..22966.17 rows=1200 width=0)
+   ->  Nested Loop CypherDelete Join  (cost=19.10..22966.17 rows=1200 width=64)
          ->  Seq Scan on n3 n  (cost=0.00..22.00 rows=1200 width=32)
-         ->  Aggregate  (cost=19.17..19.18 rows=1 width=32)
-               ->  Nested Loop  (cost=0.00..19.14 rows=10 width=30)
+         ->  Aggregate  (cost=19.10..19.11 rows=1 width=32)
+               ->  Nested Loop  (cost=8.38..19.07 rows=10 width=30)
                      ->  Function Scan on unnest v  (cost=0.00..0.01 rows=1 width=8)
-                     ->  Append  (cost=0.00..19.02 rows=11 width=30)
-                           ->  Seq Scan on ag_edge e_1  (cost=0.00..0.00 rows=1 width=30)
-                                 Filter: ((start = v.id) OR ("end" = v.id))
-                           ->  Bitmap Heap Scan on e2 e_2  (cost=8.38..18.96 rows=10 width=30)
-                                 Recheck Cond: ((start = v.id) OR ("end" = v.id))
-                                 ->  BitmapOr  (cost=8.38..8.38 rows=10 width=0)
-                                       ->  Bitmap Index Scan on e2_start_idx  (cost=0.00..4.19 rows=5 width=0)
-                                             Index Cond: (start = v.id)
-                                       ->  Bitmap Index Scan on e2_end_idx  (cost=0.00..4.19 rows=5 width=0)
-                                             Index Cond: ("end" = v.id)
-(16 rows)
+                     ->  Bitmap Heap Scan on e2 e_1  (cost=8.38..18.96 rows=10 width=30)
+                           Recheck Cond: ((start = v.id) OR ("end" = v.id))
+                           ->  BitmapOr  (cost=8.38..8.38 rows=10 width=0)
+                                 ->  Bitmap Index Scan on e2_start_idx  (cost=0.00..4.19 rows=5 width=0)
+                                       Index Cond: (start = v.id)
+                                 ->  Bitmap Index Scan on e2_end_idx  (cost=0.00..4.19 rows=5 width=0)
+                                       Index Cond: ("end" = v.id)
+(13 rows)
 
 EXPLAIN MATCH (n:n4) DETACH DELETE (n);
-                                                  QUERY PLAN                                                   
----------------------------------------------------------------------------------------------------------------
- Graph Delete  (cost=19.17..23044.17 rows=1200 width=0)
-   ->  Nested Loop CypherDelete Join  (cost=19.17..23044.17 rows=1200 width=64)
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
+ Graph Delete  (cost=19.10..22966.17 rows=1200 width=0)
+   ->  Nested Loop CypherDelete Join  (cost=19.10..22966.17 rows=1200 width=64)
          ->  Seq Scan on n4 n  (cost=0.00..22.00 rows=1200 width=32)
-         ->  Aggregate  (cost=19.17..19.18 rows=1 width=32)
-               ->  Nested Loop  (cost=0.00..19.14 rows=10 width=30)
+         ->  Aggregate  (cost=19.10..19.11 rows=1 width=32)
+               ->  Nested Loop  (cost=8.38..19.07 rows=10 width=30)
                      ->  Function Scan on unnest v  (cost=0.00..0.01 rows=1 width=8)
-                     ->  Append  (cost=0.00..19.02 rows=11 width=30)
-                           ->  Seq Scan on ag_edge e_1  (cost=0.00..0.00 rows=1 width=30)
-                                 Filter: ((start = v.id) OR ("end" = v.id))
-                           ->  Bitmap Heap Scan on e2 e_2  (cost=8.38..18.96 rows=10 width=30)
-                                 Recheck Cond: ((start = v.id) OR ("end" = v.id))
-                                 ->  BitmapOr  (cost=8.38..8.38 rows=10 width=0)
-                                       ->  Bitmap Index Scan on e2_start_idx  (cost=0.00..4.19 rows=5 width=0)
-                                             Index Cond: (start = v.id)
-                                       ->  Bitmap Index Scan on e2_end_idx  (cost=0.00..4.19 rows=5 width=0)
-                                             Index Cond: ("end" = v.id)
-(16 rows)
+                     ->  Bitmap Heap Scan on e2 e_1  (cost=8.38..18.96 rows=10 width=30)
+                           Recheck Cond: ((start = v.id) OR ("end" = v.id))
+                           ->  BitmapOr  (cost=8.38..8.38 rows=10 width=0)
+                                 ->  Bitmap Index Scan on e2_start_idx  (cost=0.00..4.19 rows=5 width=0)
+                                       Index Cond: (start = v.id)
+                                 ->  Bitmap Index Scan on e2_end_idx  (cost=0.00..4.19 rows=5 width=0)
+                                       Index Cond: ("end" = v.id)
+(13 rows)
 
 -- Append node should not have any relations, since n5 is not connected to any edge labels
 EXPLAIN MATCH (n:n5) DETACH DELETE (n);
