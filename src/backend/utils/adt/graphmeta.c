@@ -12,6 +12,7 @@
 
 #include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/xact.h"
 #include "catalog/ag_graphmeta.h"
 #include "catalog/ag_label.h"
 #include "catalog/ag_edge_d.h"
@@ -73,7 +74,21 @@ scan_label(Oid relid, Oid graphid)
 	AgStat_GraphMeta *meta_elem;
 
 	rel = table_open(relid, AccessShareLock);
-	snapshot = RegisterSnapshot(GetLatestSnapshot());
+
+	/*
+	 * Read edge connectivity under the transaction's own snapshot when the
+	 * isolation level fixes one (REPEATABLE READ / SERIALIZABLE), so the
+	 * rebuilt catalog matches exactly what queries in this transaction see.
+	 * Using the latest snapshot here would let a regather triggered mid
+	 * transaction (SET auto_gather_graphmeta = on, or regather_graphmeta())
+	 * record connectivity from a newer snapshot than the reader's -- and if an
+	 * edge the reader still sees was deleted and committed in the meantime, the
+	 * now-missing triple would prune that edge's labels away and drop rows.
+	 * Under READ COMMITTED the latest snapshot matches per-statement
+	 * visibility, so keep it there.
+	 */
+	snapshot = RegisterSnapshot(IsolationUsesXactSnapshot() ?
+								GetTransactionSnapshot() : GetLatestSnapshot());
 	scan = table_beginscan(rel, snapshot, 0, NULL);
 
 	memset(&key, 0, sizeof(key));

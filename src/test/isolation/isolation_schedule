@@ -121,3 +121,4 @@ test: lock-nowait
 # ag_graphmeta cross-session plan-cache invalidation
 test: graphmeta_prune_replan
 test: graphmeta_prune_drop
+test: graphmeta_prune_regather

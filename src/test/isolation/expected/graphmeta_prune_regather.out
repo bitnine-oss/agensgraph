@@ -1,0 +1,20 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1_begin s1_snap s2_del s1_gather s1_match s1_commit
+step s1_begin: BEGIN ISOLATION LEVEL REPEATABLE READ;
+step s1_snap: MATCH (n:a) RETURN count(*) AS n;
+n
+-
+1
+(1 row)
+
+step s2_del: MATCH (x:a)-[r:e]->(z:b) DELETE r;
+s1: NOTICE:  regathering graphmeta...
+step s1_gather: SET auto_gather_graphmeta = on;
+step s1_match: MATCH (x:a)-[:e]->(z) RETURN count(*) AS n;
+n
+-
+1
+(1 row)
+
+step s1_commit: COMMIT;
