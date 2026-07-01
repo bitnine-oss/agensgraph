@@ -621,3 +621,37 @@ SET auto_gather_graphmeta = false;
 MATCH (a:hub)-[b:rel]->(c:hub) RETURN count(*) AS n;
 SET auto_gather_graphmeta = true;
 DROP GRAPH gmp11 CASCADE;
+
+-- ============================================================
+-- shortest-path patterns are lowered to a separate dijkstra/shortestpath
+-- subquery, not to inheritance-expanded label scans, so the graphmeta pre-pass
+-- records no topology for them and can never mis-prune a shortest-path
+-- endpoint.  Confirm shortest paths return complete results with gathering on
+-- (alone, and sharing an endpoint variable with a normal pruned MATCH) and
+-- match the gathering-off results.
+-- ============================================================
+CREATE GRAPH gmp12;
+SET graph_path = gmp12;
+CREATE VLABEL src; CREATE VLABEL mid; CREATE VLABEL dst;
+CREATE ELABEL e;
+SET auto_gather_graphmeta = true;
+CREATE (:src)-[:e]->(:mid)-[:e]->(:dst);
+-- only (src,e,mid) and (mid,e,dst) are recorded
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+-- pure shortest path across the chain: length 2 (src -> mid -> dst)
+MATCH p = shortestpath((x:src)-[:e*]->(y:dst)) RETURN length(p) AS len;
+-- shortest path sharing endpoint variable a with a normal pruned hop: the hop
+-- (a:src)-[:e]->(m) prunes m to {mid}; the shared node a also anchors a
+-- shortest path to dst.  Both parts must resolve with gathering on.
+MATCH (a:src)-[:e]->(m), p = shortestpath((a)-[:e*]->(d:dst))
+  RETURN label(m) AS m, length(p) AS len;
+-- allshortestpaths variant, likewise unaffected by pruning
+MATCH q = allshortestpaths((x:src)-[:e*]->(y:dst)) RETURN length(q) AS len;
+-- result-equivalence (on vs off)
+SET auto_gather_graphmeta = false;
+MATCH p = shortestpath((x:src)-[:e*]->(y:dst)) RETURN length(p) AS len;
+MATCH (a:src)-[:e]->(m), p = shortestpath((a)-[:e*]->(d:dst))
+  RETURN label(m) AS m, length(p) AS len;
+MATCH q = allshortestpaths((x:src)-[:e*]->(y:dst)) RETURN length(q) AS len;
+SET auto_gather_graphmeta = true;
+DROP GRAPH gmp12 CASCADE;
