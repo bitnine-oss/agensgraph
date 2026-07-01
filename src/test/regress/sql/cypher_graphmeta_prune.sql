@@ -578,3 +578,46 @@ EXPLAIN (costs off) MATCH (a:animal)-[:rel*1..2]->(c) RETURN c;
 EXPLAIN (verbose, costs off) MATCH (a:animal)-[:rel*1..2]->(c) RETURN c;
 
 DROP GRAPH gmp10 CASCADE;
+
+-- ============================================================
+-- COPY + BEFORE-INSERT trigger: the copyfrom.c maintenance hook must record an
+-- edge's endpoints AFTER any BEFORE-INSERT trigger has run.  A trigger that
+-- rewrites start/end changes which vertex labels the edge connects; recording
+-- the pre-trigger endpoints would register the wrong connectivity, and a pruned
+-- MATCH would then drop the rows actually stored.  (labids: ag_vertex=1,
+-- ag_edge=2, decoy=3, hub=4, rel=5; localids from 1.)
+-- ============================================================
+CREATE GRAPH gmp11;
+SET graph_path = gmp11;
+CREATE VLABEL decoy;           -- labid 3
+CREATE VLABEL hub;             -- labid 4
+CREATE ELABEL rel;             -- labid 5
+CREATE (:hub);                 -- graphid 4.1, the real endpoint
+-- BEFORE-INSERT trigger on the edge table: force both endpoints onto the hub
+-- vertex, regardless of the endpoints handed to COPY.
+CREATE FUNCTION gmp11_reroute() RETURNS trigger AS $$
+BEGIN
+    NEW."start" := (SELECT id FROM gmp11.hub ORDER BY id LIMIT 1);
+    NEW."end"   := (SELECT id FROM gmp11.hub ORDER BY id LIMIT 1);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER gmp11_reroute_trg BEFORE INSERT ON gmp11.rel
+    FOR EACH ROW EXECUTE FUNCTION gmp11_reroute();
+SET auto_gather_graphmeta = true;
+-- COPY an edge whose given endpoints point at the decoy label (3.x); the trigger
+-- rewrites them to the hub vertex (4.1) before the row is stored.
+COPY gmp11.rel (id, start, "end", properties) FROM stdin;
+5.1	3.1	3.2	{}
+\.
+-- the recorded triple must be (hub,rel,hub) = (4,5,4), reflecting the stored row,
+-- NOT the pre-trigger decoy endpoints (3,5,3)
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+-- pruning must keep the hub label; the stored edge connects hub -> hub
+EXPLAIN (costs off) MATCH (a:hub)-[b:rel]->(c:hub) RETURN c;
+MATCH (a:hub)-[b:rel]->(c:hub) RETURN count(*) AS n;
+-- result-equivalence (on vs off): both must see the stored edge
+SET auto_gather_graphmeta = false;
+MATCH (a:hub)-[b:rel]->(c:hub) RETURN count(*) AS n;
+SET auto_gather_graphmeta = true;
+DROP GRAPH gmp11 CASCADE;
