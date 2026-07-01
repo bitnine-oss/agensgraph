@@ -540,15 +540,14 @@ agstat_count_edge_create_ext(Oid graph, Labid edge, Labid start, Labid end)
 	}
 }
 
+/*
+ * Count an edge deletion for ag_graphmeta maintenance.
+ *
+ * Unlike the create path there is no _ext variant: edge deletes are counted
+ * only from the Cypher executor, whose graph is always the session graph_path.
+ */
 void
 agstat_count_edge_delete(Labid edge, Labid start, Labid end)
-{
-	agstat_count_edge_delete_ext(get_graph_path_oid(), edge, start, end);
-}
-
-/* See agstat_count_edge_create_ext. */
-void
-agstat_count_edge_delete_ext(Oid graph, Labid edge, Labid start, Labid end)
 {
 	int			nest_level;
 	bool		found;
@@ -564,7 +563,7 @@ agstat_count_edge_delete_ext(Oid graph, Labid edge, Labid start, Labid end)
 	graphmeta_invalidate_on_first_pending_write();
 
 	memset(&key, 0, sizeof(key));
-	key.graph = graph;
+	key.graph = get_graph_path_oid();
 	key.edge = edge;
 	key.start = start;
 	key.end = end;

@@ -1342,7 +1342,6 @@ typedef struct RangeTblEntry
 } RangeTblEntry;
 
 /* graphPruneRole values: the kind of MATCH pattern element an RTE represents. */
-#define GRAPHPRUNE_ROLE_NONE		'\0'	/* not a pattern element */
 #define GRAPHPRUNE_ROLE_NODE		'N'		/* node (ag_vertex / vlabel) */
 #define GRAPHPRUNE_ROLE_DIR_EDGE	'E'		/* directed edge (ag_edge / elabel) */
 #define GRAPHPRUNE_ROLE_UNDIR_EDGE	'U'		/* undirected edge (UNION subquery) */

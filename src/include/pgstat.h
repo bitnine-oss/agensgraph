@@ -788,7 +788,6 @@ extern PGDLLIMPORT PgStat_PendingWalStats PendingWalStats;
 extern void agstat_count_edge_create(Labid edge, Labid start, Labid end);
 extern void agstat_count_edge_delete(Labid edge, Labid start, Labid end);
 extern void agstat_count_edge_create_ext(Oid graph, Labid edge, Labid start, Labid end);
-extern void agstat_count_edge_delete_ext(Oid graph, Labid edge, Labid start, Labid end);
 extern bool has_pending_graphmeta_writes(void);
 extern void agstat_drop_vlabel(const char *vlab);
 extern void agstat_drop_elabel(const char *elab);
