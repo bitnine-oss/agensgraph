@@ -905,6 +905,7 @@ expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 												   GraphMetaRelationId);
 		}
 		else if (root->graphmeta_pruned != NULL &&
+				 rti < root->simple_rel_array_size &&
 				 root->graphmeta_pruned[rti] != NULL)
 		{
 			/*
