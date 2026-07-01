@@ -111,6 +111,14 @@ typedef struct GMEdge
 	bool		reverse;		/* directed <- : pattern src is graphmeta END side */
 	bool		vle;			/* variable-length edge: bound endpoints only */
 	int			labid;			/* vle only: edge label id (edge_rti has no domain) */
+	/*
+	 * vle only: memoized startside/endside(E).  These depend only on E's label,
+	 * not on the evolving domains, so the arc-consistency loop computes them
+	 * once and reuses them every round instead of re-walking E's subtree.
+	 */
+	bool		vle_sides_done;
+	Bitmapset  *vle_start;
+	Bitmapset  *vle_end;
 } GMEdge;
 
 /* relid -> labid (0 if the relation is not a graph label). */
@@ -456,14 +464,22 @@ gm_revise_vle(Oid graph, GMEdge *e, GMDomain *dom, bool *empty)
 {
 	GMDomain   *adom = e->reverse ? &dom[e->dst_rti] : &dom[e->src_rti];	/* gm start side */
 	GMDomain   *bdom = e->reverse ? &dom[e->src_rti] : &dom[e->dst_rti];	/* gm end side */
-	Bitmapset  *supStart;
-	Bitmapset  *supEnd;
 	bool		changed = false;
 
-	gm_vle_sides(graph, e->labid, &supStart, &supEnd);
+	/*
+	 * startside/endside(E) depend only on E's label, not on the current
+	 * domains, so compute them once and reuse across arc-consistency rounds.
+	 * gm_narrow takes ownership of the set it is handed, so give it a fresh
+	 * copy of the memoized sides each round.
+	 */
+	if (!e->vle_sides_done)
+	{
+		gm_vle_sides(graph, e->labid, &e->vle_start, &e->vle_end);
+		e->vle_sides_done = true;
+	}
 
-	changed |= gm_narrow(adom, supStart);
-	changed |= gm_narrow(bdom, supEnd);
+	changed |= gm_narrow(adom, bms_copy(e->vle_start));
+	changed |= gm_narrow(bdom, bms_copy(e->vle_end));
 
 	if ((!adom->universe && bms_is_empty(adom->set)) ||
 		(!bdom->universe && bms_is_empty(bdom->set)))
@@ -607,6 +623,9 @@ propagate_graphmeta_constraints(PlannerInfo *root)
 			E->reverse = (rte->graphPruneDir == CYPHER_REL_DIR_LEFT);
 			E->vle = is_vle;
 			E->labid = rte->graphPruneLabid;
+			E->vle_sides_done = false;
+			E->vle_start = NULL;
+			E->vle_end = NULL;
 		}
 	}
 
