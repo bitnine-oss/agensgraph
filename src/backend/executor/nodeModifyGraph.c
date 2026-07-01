@@ -991,6 +991,16 @@ GraphmetaRecordEdgeInsertFromSlot(Relation rel, TupleTableSlot *slot)
 	if (!auto_gather_graphmeta)
 		return;
 
+	/*
+	 * Resolving (is-edge-label, graph, edge labid) from the relation is
+	 * invariant for a given target, so a bulk load repeats it per row.  This is
+	 * left per-row deliberately: LABELRELID is syscache-backed, so after the
+	 * first row it is a hash probe, and it is dominated anyway by the per-row
+	 * dynahash insert in agstat_count_edge_create_ext().  A relation-keyed memo
+	 * is not worth the hazard -- a stale entry surviving a DROP/CREATE relid
+	 * reuse could mis-resolve an edge label as a non-edge and under-record
+	 * connectivity, dropping rows (the one failure the soundness rule forbids).
+	 */
 	tup = SearchSysCache1(LABELRELID, ObjectIdGetDatum(RelationGetRelid(rel)));
 	if (!HeapTupleIsValid(tup))
 		return;					/* not a graph label */
