@@ -25,6 +25,7 @@
 #include "storage/procsignal.h"
 #include "utils/catcache.h"
 #include "utils/fmgroids.h"
+#include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "utils/pgstat_internal.h"
@@ -505,6 +506,9 @@ agstat_drop_vlabel(const char *vlab)
 
 	systable_endscan(scan);
 
+	/* connectivity changed: re-plan cached graphmeta-pruned plans */
+	CacheInvalidateRelcacheByRelid(GraphMetaRelationId);
+
 	table_close(ag_graphmeta, RowExclusiveLock);
 }
 
@@ -535,6 +539,10 @@ agstat_drop_elabel(const char *elab)
 	}
 
 	ReleaseCatCacheList(tuplist);
+
+	/* connectivity changed: re-plan cached graphmeta-pruned plans */
+	CacheInvalidateRelcacheByRelid(GraphMetaRelationId);
+
 	table_close(ag_graphmeta, RowExclusiveLock);
 }
 
@@ -559,5 +567,9 @@ agstat_drop_graph(const char *graphname)
 	}
 
 	ReleaseCatCacheList(tuplist);
+
+	/* connectivity changed: re-plan cached graphmeta-pruned plans */
+	CacheInvalidateRelcacheByRelid(GraphMetaRelationId);
+
 	table_close(ag_graphmeta, RowExclusiveLock);
 }
