@@ -37,6 +37,7 @@
 #include "parser/parse_cypher_expr.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_func.h"
+#include "parser/parse_graph.h"
 #include "parser/parse_oper.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
@@ -1923,76 +1924,93 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 	return (Node *) make_op(pstate, a->name, l, r, last_srf, a->location);
 }
 
+/*
+ * A graph type whose value is a single id-bearing element (vertex/edge/graphid),
+ * hence reducible to a graphid for identity comparison.  A graphpath or an array
+ * of graph elements is NOT: it has no single identity, so IN over it keeps the
+ * jsonb-containment behavior.
+ */
+static bool
+is_id_reducible_graph_type(Oid type)
+{
+	return type == GRAPHIDOID || type == VERTEXOID || type == EDGEOID;
+}
+
+/*
+ * Reduce a graph-membership operand to a graphid, so both sides of IN can be
+ * compared by identity (matching the id-only "=" operator):
+ *   - a graphid stays as-is;
+ *   - a vertex/edge is reduced to its "id" field (a graphid);
+ *   - anything else (a numeric graphid literal like 1.1, an unknown literal)
+ *     is coerced to graphid via the implicit numeric->graphid cast; if there is
+ *     no path to graphid, a clear type error is raised here.
+ */
+static Node *
+reduce_graph_elem_to_id(ParseState *pstate, Node *elem, int location)
+{
+	Oid			typoid = exprType(elem);
+	Node	   *id;
+
+	if (typoid == GRAPHIDOID)
+		return elem;
+	if (typoid == VERTEXOID || typoid == EDGEOID)
+		return getExprField((Expr *) elem, AG_ELEM_ID);
+
+	id = coerce_to_target_type(pstate, elem, typoid, GRAPHIDOID, -1,
+							   COERCION_IMPLICIT, COERCE_IMPLICIT_CAST, location);
+	if (id == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("cannot compare graph element identity to type %s",
+						format_type_be(typoid)),
+				 parser_errposition(pstate, location)));
+	return id;
+}
+
 static Node *
 transformAExprIn(ParseState *pstate, A_Expr *a)
 {
 	Node	   *result = NULL;
 	Node	   *lexpr;
-	Node	   *containmentLhs;
-	Node	   *rexpr;
 	List	   *rexprs;
 	List	   *rvars;
 	List	   *rnonvars;
 	ListCell   *l;
-	bool		lexpr_is_graph;
 
 	lexpr = transformCypherExprRecurse(pstate, a->lexpr);
-	lexpr_is_graph = is_graph_type(exprType(lexpr));
-
-	/*
-	 * TODO(perf): membership is tested via jsonb `@>` containment, which
-	 * compares the full serialization (id + tid + properties) of every
-	 * collected element.  A dedicated id-only predicate -- scan the collected
-	 * jsonb array comparing just each element's ->'id' as a graphid, short-
-	 * circuiting on match -- would be faster (8-byte graphid compares, no
-	 * properties) and more correct: id-only identity matches the `=` operator,
-	 * removing the mutate-then-test divergence noted below.  Kept the
-	 * containment form for now as it reuses the existing IN machinery.
-	 */
-
-	/*
-	 * A vertex/edge on the left of IN is a membership test by identity, e.g.
-	 * `v IN collect(u)`.  coerce_to_jsonb() deliberately rejects graph types,
-	 * so serialize the graph element with to_jsonb() instead -- the very same
-	 * serialization collect() uses ({"id": <graphid>, ...}), so the jsonb `@>`
-	 * containment below matches the collected element exactly (identical vertex
-	 * -> identical jsonb).  Note the vertex_to_jsonb cast would NOT work here:
-	 * it yields only the properties.
-	 */
-	if (lexpr_is_graph)
-		lexpr = (Node *) makeFuncExpr(F_TO_JSONB, JSONBOID, list_make1(lexpr),
-									  InvalidOid, InvalidOid,
-									  COERCE_EXPLICIT_CALL);
-	else
-		lexpr = coerce_to_jsonb(pstate, lexpr, "jsonb");
-
-	/*
-	 * jsonb containment `arr @> x` only treats x as an array element when x is
-	 * a primitive; for an object (a serialized vertex/edge) it returns false.
-	 * So for a graph element wrap it in a one-element jsonb array: `arr @> [v]`
-	 * is array-vs-array containment, which does match the element.
-	 */
-	if (lexpr_is_graph)
-	{
-		CypherListExpr *wrap = makeNode(CypherListExpr);
-
-		wrap->elems = list_make1(lexpr);
-		wrap->location = -1;
-		containmentLhs = (Node *) wrap;
-	}
-	else
-		containmentLhs = lexpr;
-
-	rexpr = transformCypherExprRecurse(pstate, a->rexpr);
 
 	rexprs = rvars = rnonvars = NIL;
 
-	switch (nodeTag(rexpr))
+	/*
+	 * A graph element (vertex/edge/graphid) on the left of IN is a membership
+	 * test by *identity*, matching the id-only "=" operator (vertex_eq and
+	 * edge_eq reduce to graphid_eq).  Reduce the LHS to its graphid and compare
+	 * ids, rather than the jsonb "@>" containment used for scalars below:
+	 * containment compares the full serialization (id + properties), so it is
+	 * slower and, worse, diverges from "=" once a collected element is mutated.
+	 * (A graphpath / graph-array LHS is not a single element; it falls to the
+	 * containment path below, preserving its prior behavior.)
+	 */
+	if (is_id_reducible_graph_type(exprType(lexpr)))
 	{
-		case T_CypherListExpr:
-			foreach(l, ((CypherListExpr *) rexpr)->elems)
+		Node	   *idLhs = reduce_graph_elem_to_id(pstate, lexpr,
+													   exprLocation(a->lexpr));
+
+		if (IsA(a->rexpr, CypherListExpr))
+		{
+			/*
+			 * Literal list: reduce each element to a graphid and fall through
+			 * to the shared tail, which lowers this to "id = ANY(graphid[])"
+			 * (or a single / OR of "id = ...").  Those fold to graphid Consts,
+			 * so the scan-pruning pass can restrict the scan to just the labels
+			 * the ids name.  coerce_to_jsonb() rejects graph elements, so the
+			 * raw elements are transformed here rather than the whole list.
+			 */
+			foreach(l, ((CypherListExpr *) a->rexpr)->elems)
 			{
-				Node	   *elem = lfirst(l);
+				Node	   *elem = transformCypherExprRecurse(pstate, lfirst(l));
+
+				elem = reduce_graph_elem_to_id(pstate, elem, exprLocation(elem));
 
 				rexprs = lappend(rexprs, elem);
 				if (contain_vars_of_level(elem, 0))
@@ -2000,41 +2018,128 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 				else
 					rnonvars = lappend(rnonvars, elem);
 			}
-			break;
-		case T_CypherAccessExpr:
-		case T_Var:
-			result = (Node *) make_op(pstate, list_make1(makeString("@>")),
-									  rexpr, containmentLhs, pstate->p_last_srf,
-									  a->location);
-			break;
-		default:
-			{
-				/*
-				 * For other expr types, check if the result type is
-				 * compatible with JSONB containment.
-				 */
-				Oid			rtype = exprType(rexpr);
+			lexpr = idLhs;
+			/* fall through to the shared SAOP/OR tail below */
+		}
+		else
+		{
+			/*
+			 * Dynamic RHS (collect(u), or an array/jsonb expression): it is
+			 * rebuilt per outer row and never const-folded, so test membership
+			 * at runtime by graphid identity.
+			 */
+			Node	   *rexpr = transformCypherExprRecurse(pstate, a->rexpr);
+			Oid			rtype = exprType(rexpr);
 
-				if (rtype == JSONBOID || type_is_array(rtype) || rtype == ANYARRAYOID)
-				{
-					/* Coerce anyarray to jsonb for containment operator */
-					if (rtype == ANYARRAYOID || type_is_array(rtype))
-						rexpr = coerce_to_jsonb(pstate, rexpr, "list");
+			/* already graphid[]: a plain "= ANY" SAOP (also prunable) */
+			if (rtype == GRAPHIDARRAYOID)
+				return (Node *) make_scalar_array_op(pstate, a->name, true,
+													 idLhs, rexpr, a->location);
 
-					result = (Node *) make_op(pstate, list_make1(makeString("@>")),
-											  rexpr, containmentLhs, pstate->p_last_srf,
-											  a->location);
-				}
-				else
+			/* vertex[]/edge[]/anyarray/...: serialize to a jsonb array */
+			if (rtype != JSONBOID)
+				rexpr = (Node *) makeFuncExpr(F_TO_JSONB, JSONBOID,
+											  list_make1(rexpr), InvalidOid,
+											  InvalidOid, COERCE_EXPLICIT_CALL);
+
+			/*
+			 * id-only membership over the jsonb array: compares just each
+			 * element's ->'id' as a graphid (matching "=", unlike "@>"
+			 * containment) and short-circuits on the first match.
+			 */
+			return (Node *) makeFuncExpr(F_GRAPHID_IN_JSONB_ARRAY, BOOLOID,
+										 list_make2(idLhs, rexpr), InvalidOid,
+										 InvalidOid, COERCE_EXPLICIT_CALL);
+		}
+	}
+	else
+	{
+		/*
+		 * Scalar LHS, or a graph type that is not a single id-bearing element
+		 * (a graphpath, or an array of graph elements): membership via jsonb
+		 * "@>" containment, exactly as before.  A graph value is serialized with
+		 * to_jsonb() (coerce_to_jsonb() rejects graph types) and matched as a
+		 * one-element array; a scalar is coerced to jsonb directly.
+		 */
+		bool		lexpr_is_graph = is_graph_type(exprType(lexpr));
+		Node	   *containmentLhs;
+		Node	   *rexpr;
+
+		if (lexpr_is_graph)
+			lexpr = (Node *) makeFuncExpr(F_TO_JSONB, JSONBOID, list_make1(lexpr),
+										  InvalidOid, InvalidOid,
+										  COERCE_EXPLICIT_CALL);
+		else
+			lexpr = coerce_to_jsonb(pstate, lexpr, "jsonb");
+
+		if (lexpr_is_graph)
+		{
+			/*
+			 * `arr @> x` treats x as an array element only when x is a
+			 * primitive; for a serialized object it returns false, so wrap the
+			 * element in a one-element array: `arr @> [v]` is array-vs-array
+			 * containment, which does match.
+			 */
+			CypherListExpr *wrap = makeNode(CypherListExpr);
+
+			wrap->elems = list_make1(lexpr);
+			wrap->location = -1;
+			containmentLhs = (Node *) wrap;
+		}
+		else
+			containmentLhs = lexpr;
+
+		rexpr = transformCypherExprRecurse(pstate, a->rexpr);
+
+		switch (nodeTag(rexpr))
+		{
+			case T_CypherListExpr:
+				foreach(l, ((CypherListExpr *) rexpr)->elems)
 				{
-					ereport(ERROR,
-							(errcode(ERRCODE_DATATYPE_MISMATCH),
-							 errmsg("CypherList is expected but %s",
-									format_type_be(rtype)),
-							 parser_errposition(pstate, exprLocation(a->rexpr))));
+					Node	   *elem = lfirst(l);
+
+					rexprs = lappend(rexprs, elem);
+					if (contain_vars_of_level(elem, 0))
+						rvars = lappend(rvars, elem);
+					else
+						rnonvars = lappend(rnonvars, elem);
 				}
 				break;
-			}
+			case T_CypherAccessExpr:
+			case T_Var:
+				result = (Node *) make_op(pstate, list_make1(makeString("@>")),
+										  rexpr, containmentLhs, pstate->p_last_srf,
+										  a->location);
+				break;
+			default:
+				{
+					/*
+					 * For other expr types, check if the result type is
+					 * compatible with JSONB containment.
+					 */
+					Oid			rtype = exprType(rexpr);
+
+					if (rtype == JSONBOID || type_is_array(rtype) || rtype == ANYARRAYOID)
+					{
+						/* Coerce anyarray to jsonb for containment operator */
+						if (rtype == ANYARRAYOID || type_is_array(rtype))
+							rexpr = coerce_to_jsonb(pstate, rexpr, "list");
+
+						result = (Node *) make_op(pstate, list_make1(makeString("@>")),
+												  rexpr, containmentLhs, pstate->p_last_srf,
+												  a->location);
+					}
+					else
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_DATATYPE_MISMATCH),
+								 errmsg("CypherList is expected but %s",
+										format_type_be(rtype)),
+								 parser_errposition(pstate, exprLocation(a->rexpr))));
+					}
+					break;
+				}
+		}
 	}
 
 	/*

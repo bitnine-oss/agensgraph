@@ -1111,10 +1111,22 @@ MATCH (u:city) WHERE id(u) = '3.1'::graphid RETURN count(*) AS n;
 EXPLAIN (costs off) MATCH (u:person) WHERE id(u) = '5.1'::graphid RETURN u;
 MATCH (u:person) WHERE id(u) = '5.1'::graphid RETURN label(u) AS l;
 
--- IN/ANY: Cypher `id(u) IN [graphid,...]` is unsupported syntax (a graphid
--- cannot be a Cypher list element), but a SQL `= ANY(graphid[])` on the scan
--- prunes to exactly the listed labels: Append over person + city (employee and
--- the abstract ag_vertex parent dropped).
+-- IN: Cypher `id(u) IN [g1, g2]` is a membership test by identity; it lowers to
+-- `id = ANY('{g1,g2}'::graphid[])` on the scan, which prunes to exactly the
+-- listed labels: Append over person + city (employee and the abstract ag_vertex
+-- parent dropped).
+EXPLAIN (costs off) MATCH (u) WHERE id(u) IN ['3.1'::graphid, '4.1'::graphid] RETURN u;
+MATCH (u) WHERE id(u) IN ['3.1'::graphid, '4.1'::graphid] RETURN label(u) AS l, id(u) AS id ORDER BY id;
+-- bare numeric graphid literals coerce to graphid and match the same rows
+MATCH (u) WHERE id(u) IN [3.1, 4.1] RETURN label(u) AS l ORDER BY l;
+-- single-element list -> a single `id =`, pins to one label (person only)
+EXPLAIN (costs off) MATCH (u) WHERE id(u) IN ['3.1'::graphid] RETURN u;
+-- contradictory IN intersection -> empty prune, 0 rows
+MATCH (u) WHERE id(u) IN ['3.1'::graphid] AND id(u) IN ['4.1'::graphid] RETURN count(*) AS n;
+-- a scalar (non-list) RHS is not a list: matches nothing even though the scalar
+-- '3.1' would name person 3.1 (guards against the JB_FSCALAR pseudo-array leak)
+MATCH (u) WHERE id(u) IN '3.1' RETURN count(*) AS n;
+-- the equivalent low-level SQL `= ANY(graphid[])` prunes identically
 EXPLAIN (costs off) SELECT id FROM gmp20.ag_vertex WHERE id = ANY (ARRAY['3.1','4.1']::graphid[]);
 
 -- combined with connectivity pruning: b pruned to {city} by knows, pinned to city by id

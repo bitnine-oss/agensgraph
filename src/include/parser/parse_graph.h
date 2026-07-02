@@ -56,4 +56,11 @@ extern TargetEntry *makeCountTargetEntry(ParseState *pstate);
 
 extern bool IsGraphWriteClause(Node *clause);
 
+/*
+ * Build a FieldSelect that extracts the named field of a composite expression;
+ * for a vertex/edge this reduces it to its graphid "id".  Used by the graph
+ * membership rewrite in parse_cypher_expr.c.
+ */
+extern Node *getExprField(Expr *expr, char *fname);
+
 #endif							/* PARSE_GRAPH_H */

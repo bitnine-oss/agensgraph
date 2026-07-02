@@ -3567,10 +3567,63 @@ MATCH (u:person) WHERE id(u) = '5.1'::graphid RETURN label(u) AS l;
  "employee"
 (1 row)
 
--- IN/ANY: Cypher `id(u) IN [graphid,...]` is unsupported syntax (a graphid
--- cannot be a Cypher list element), but a SQL `= ANY(graphid[])` on the scan
--- prunes to exactly the listed labels: Append over person + city (employee and
--- the abstract ag_vertex parent dropped).
+-- IN: Cypher `id(u) IN [g1, g2]` is a membership test by identity; it lowers to
+-- `id = ANY('{g1,g2}'::graphid[])` on the scan, which prunes to exactly the
+-- listed labels: Append over person + city (employee and the abstract ag_vertex
+-- parent dropped).
+EXPLAIN (costs off) MATCH (u) WHERE id(u) IN ['3.1'::graphid, '4.1'::graphid] RETURN u;
+                             QUERY PLAN                              
+---------------------------------------------------------------------
+ Result
+   ->  Append
+         ->  Seq Scan on person u_1
+               Filter: (id = ANY ('{3.1,4.1}'::graphid[]))
+         ->  Bitmap Heap Scan on city u_2
+               Recheck Cond: (id = ANY ('{3.1,4.1}'::graphid[]))
+               ->  Bitmap Index Scan on city_pkey
+                     Index Cond: (id = ANY ('{3.1,4.1}'::graphid[]))
+(8 rows)
+
+MATCH (u) WHERE id(u) IN ['3.1'::graphid, '4.1'::graphid] RETURN label(u) AS l, id(u) AS id ORDER BY id;
+    l     | id  
+----------+-----
+ "person" | 3.1
+ "city"   | 4.1
+(2 rows)
+
+-- bare numeric graphid literals coerce to graphid and match the same rows
+MATCH (u) WHERE id(u) IN [3.1, 4.1] RETURN label(u) AS l ORDER BY l;
+    l     
+----------
+ "city"
+ "person"
+(2 rows)
+
+-- single-element list -> a single `id =`, pins to one label (person only)
+EXPLAIN (costs off) MATCH (u) WHERE id(u) IN ['3.1'::graphid] RETURN u;
+              QUERY PLAN               
+---------------------------------------
+ Result
+   ->  Seq Scan on person u
+         Filter: (id = '3.1'::graphid)
+(3 rows)
+
+-- contradictory IN intersection -> empty prune, 0 rows
+MATCH (u) WHERE id(u) IN ['3.1'::graphid] AND id(u) IN ['4.1'::graphid] RETURN count(*) AS n;
+ n 
+---
+ 0
+(1 row)
+
+-- a scalar (non-list) RHS is not a list: matches nothing even though the scalar
+-- '3.1' would name person 3.1 (guards against the JB_FSCALAR pseudo-array leak)
+MATCH (u) WHERE id(u) IN '3.1' RETURN count(*) AS n;
+ n 
+---
+ 0
+(1 row)
+
+-- the equivalent low-level SQL `= ANY(graphid[])` prunes identically
 EXPLAIN (costs off) SELECT id FROM gmp20.ag_vertex WHERE id = ANY (ARRAY['3.1','4.1']::graphid[]);
                           QUERY PLAN                           
 ---------------------------------------------------------------

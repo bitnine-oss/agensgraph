@@ -2518,6 +2518,80 @@ MATCH (person:Person)
 WHERE NOT ('Fido' IN COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name })
 RETURN person.name AS name ORDER BY name;
 
+-- ============================================================
+-- graph-element membership: `x IN list` for vertex/edge/graphid.
+-- Matches by identity (the id-only `=` operator), not jsonb containment.
+-- ============================================================
+
+-- vertex IN [vertex, vertex] (literal list; previously errored)
+MATCH (fido:Dog {name: 'Fido'}), (ozzy:Dog {name: 'Ozzy'})
+MATCH (d:Dog)
+WHERE d IN [fido, ozzy]
+RETURN d.name AS dog ORDER BY dog;
+
+-- negated: everything NOT in the pair
+MATCH (fido:Dog {name: 'Fido'}), (ozzy:Dog {name: 'Ozzy'})
+MATCH (d:Dog)
+WHERE NOT (d IN [fido, ozzy])
+RETURN d.name AS dog ORDER BY dog;
+
+-- edge IN [edge, edge] (literal list; previously errored)
+MATCH ()-[a:HAS_DOG]->(:Dog {name: 'Fido'})
+MATCH ()-[b:HAS_DOG]->(:Dog {name: 'Ozzy'})
+MATCH ()-[e:HAS_DOG]->(d:Dog)
+WHERE e IN [a, b]
+RETURN d.name AS dog ORDER BY dog;
+
+-- id(v) IN [id(v), id(v)] -- explicit graphid operands
+MATCH (fido:Dog {name: 'Fido'}), (ozzy:Dog {name: 'Ozzy'})
+MATCH (d:Dog)
+WHERE id(d) IN [id(fido), id(ozzy)]
+RETURN d.name AS dog ORDER BY dog;
+
+-- mixed: a graphid expression and a bare numeric graphid literal (non-existent)
+MATCH (fido:Dog {name: 'Fido'})
+MATCH (d:Dog)
+WHERE id(d) IN [id(fido), 999.999]
+RETURN d.name AS dog ORDER BY dog;
+
+-- single-element list
+MATCH (fido:Dog {name: 'Fido'})
+MATCH (d:Dog)
+WHERE d IN [fido]
+RETURN d.name AS dog;
+
+-- empty list -> always false
+MATCH (d:Dog)
+WHERE d IN []
+RETURN count(*) AS n;
+
+-- v IN collect(u): dynamic RHS, membership by identity
+MATCH (d:Dog) WITH collect(d) AS dogs
+MATCH (fido:Dog {name: 'Fido'})
+RETURN fido IN dogs AS present;
+
+-- a non-member (a Person is not among the collected Dogs)
+MATCH (d:Dog) WITH collect(d) AS dogs
+MATCH (p:Person {name: 'Andy'})
+RETURN p IN dogs AS present;
+
+-- mutate-after-collect: identity membership survives a property change.
+-- (jsonb `@>` containment compared the full serialization and returned false
+-- here; id-only identity correctly stays true since the id is unchanged.)
+MATCH (d:Dog) WITH collect(d) AS dogs
+MATCH (fido:Dog {name: 'Fido'})
+SET fido.tagged = true
+RETURN fido IN dogs AS still_member;
+-- restore the mutated vertex so later tests observe the original graph
+MATCH (fido:Dog {name: 'Fido'}) REMOVE fido.tagged;
+
+-- a graphpath is not a single id-bearing element: membership falls back to
+-- jsonb containment (unchanged behavior) and still returns a boolean
+MATCH q=(:Person)-[:HAS_DOG]->(:Dog)
+WITH collect(q) AS paths
+MATCH p=(:Person)-[:HAS_DOG]->(:Dog {name: 'Fido'})
+RETURN p IN paths AS present;
+
 -- list equality against a literal
 MATCH (person:Person {name: 'Peter'})
 RETURN COLLECT { MATCH (person)-[:HAS_DOG]->(d:Dog) RETURN d.name ORDER BY d.name } = ['Fido', 'Ozzy'] AS eq;

@@ -378,7 +378,7 @@ static void mark_nodes_as_nonlocal(List *nis);
 static Node *makePathVertexExpr(ParseState *pstate, Node *obj, bool is_nsitem);
 static Node *makePathEdgeExpr(ParseState *pstate, CypherRel *crel, Node *obj,
 							  bool is_nsitem);
-static Node *getExprField(Expr *expr, char *fname);
+/* getExprField() is declared extern in parse_graph.h (used by parse_cypher_expr.c) */
 static Node *getRowExprField(Expr *rowexpr, char *fname);
 static Node *qualAndExpr(Node *qual, Node *expr);
 
@@ -7317,7 +7317,7 @@ makePathEdgeExpr(ParseState *pstate, CypherRel *crel, Node *obj, bool is_nsitem)
 	}
 }
 
-static Node *
+Node *
 getExprField(Expr *expr, char *fname)
 {
 	Oid			typoid;

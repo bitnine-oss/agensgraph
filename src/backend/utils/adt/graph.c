@@ -242,6 +242,114 @@ graphid_ne(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(graphid_cmp(fcinfo) != 0);
 }
 
+/*
+ * Parse a graphid out of a (not necessarily NUL-terminated) string of the form
+ * "labid.locid".  Unlike graphid_in(), a malformed string yields false rather
+ * than an error, because this is used to test membership against an arbitrary
+ * jsonb array whose elements need not be graphids: a non-graphid element simply
+ * cannot be a member and must be skipped, not rejected.
+ */
+static bool
+graphid_from_cstring(const char *str, Graphid *result)
+{
+	const char	GRAPHID_DELIM = '.';
+	char	   *endptr;
+	const char *next;
+	unsigned long labid_ul;
+	uint16		labid;
+	uint64		locid;
+
+	errno = 0;
+	labid_ul = strtoul(str, &endptr, 10);
+	if (errno != 0 || endptr == str || *endptr != GRAPHID_DELIM)
+		return false;
+	if (labid_ul > GRAPHID_LABID_MAX)
+		return false;
+	labid = (uint16) labid_ul;
+
+	next = endptr + 1;
+	errno = 0;
+	locid = strtoull(next, &endptr, 10);
+	if (errno != 0 || endptr == next || *endptr != '\0')
+		return false;
+	if (locid > GRAPHID_LOCID_MAX)
+		return false;
+
+	GraphidSet(result, labid, locid);
+	return true;
+}
+
+/*
+ * graphid_in_jsonb_array(graphid, jsonb) -> bool
+ *
+ * True iff the graphid equals the identity of some element of the jsonb array.
+ * Each element is either a serialized vertex/edge object {"id": "labid.locid",
+ * ...} (from to_jsonb()/collect()) or a bare graphid string "labid.locid" (from
+ * collect(id(u))); we read its "id" (or the string itself), parse it, and
+ * compare by graphid identity -- matching the id-only "=" operator, unlike the
+ * jsonb "@>" containment this replaces, which compared the full serialization
+ * (id *and* properties) and so diverged from "=" once a collected vertex was
+ * mutated.  Iterates the array once and short-circuits on the first match.
+ */
+Datum
+graphid_in_jsonb_array(PG_FUNCTION_ARGS)
+{
+	Graphid		id = PG_GETARG_GRAPHID(0);
+	Jsonb	   *arr = PG_GETARG_JSONB_P(1);
+	JsonbContainer *jc = &arr->root;
+	int			n;
+	int			i;
+
+	/*
+	 * A naked jsonb scalar is stored as a one-element pseudo-array flagged
+	 * JB_FSCALAR, so JsonContainerIsArray() alone would let it through and then
+	 * test the scalar as element 0.  Reject it: a non-list RHS has no members.
+	 */
+	if (!JsonContainerIsArray(jc) || JsonContainerIsScalar(jc))
+		PG_RETURN_BOOL(false);
+
+	n = JsonContainerSize(jc);
+	for (i = 0; i < n; i++)
+	{
+		JsonbValue *elem = getIthJsonbValueFromContainer(jc, i);
+		JsonbValue	idbuf;
+		JsonbValue *idval;
+		char		buf[GRAPHID_BUFLEN];
+		Graphid		elemid;
+
+		if (elem == NULL)
+			continue;
+
+		if (elem->type == jbvString)
+		{
+			/* a bare graphid string, e.g. from collect(id(u)) */
+			idval = elem;
+		}
+		else if (elem->type == jbvBinary &&
+				 JsonContainerIsObject(elem->val.binary.data))
+		{
+			/* a serialized {"id": ...} vertex/edge object */
+			idval = getKeyJsonValueFromContainer(elem->val.binary.data,
+												 AG_ELEM_ID, strlen(AG_ELEM_ID),
+												 &idbuf);
+		}
+		else
+			continue;			/* number/bool/null/array: cannot match */
+
+		if (idval == NULL || idval->type != jbvString ||
+			idval->val.string.len >= GRAPHID_BUFLEN)
+			continue;			/* no usable id */
+
+		memcpy(buf, idval->val.string.val, idval->val.string.len);
+		buf[idval->val.string.len] = '\0';
+
+		if (graphid_from_cstring(buf, &elemid) && elemid == id)
+			PG_RETURN_BOOL(true);
+	}
+
+	PG_RETURN_BOOL(false);
+}
+
 Datum
 graphid_lt(PG_FUNCTION_ARGS)
 {
