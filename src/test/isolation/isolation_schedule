@@ -122,3 +122,4 @@ test: lock-nowait
 test: graphmeta_prune_replan
 test: graphmeta_prune_drop
 test: graphmeta_prune_regather
+test: graphmeta_prune_regather_ser
