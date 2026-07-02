@@ -1160,3 +1160,115 @@ SET plan_cache_mode = auto;
 SET auto_gather_graphmeta = false;
 DROP GRAPH gmp20 CASCADE;
 SET auto_gather_graphmeta = true;
+
+-- ============================================================
+-- id() constant scan pruning: recognizer branches and composition edge cases.
+-- gmp20 covered the mainline; gmp21 adds a parent (person) with TWO children
+-- (employee, manager) so "a parent labid prunes to the parent table ONLY, never
+-- its child tables" is directly observable, and exercises the gm_id_clause_labids
+-- branches gmp20 did not: commuted operand order, NULL/empty graphid constants and
+-- arrays, an array with a NULL element, an unbounded (non-Const-element) array,
+-- non-contradictory AND-narrowing, two independently-pruned scans, and the
+-- non-equality clauses the pass deliberately does not prune (but must still answer
+-- correctly).  labids: ag_vertex=1, ag_edge=2, person=3, city=4, employee=5,
+-- manager=6, knows=7.
+-- ============================================================
+CREATE GRAPH gmp21;
+SET graph_path = gmp21;
+CREATE VLABEL person;
+CREATE VLABEL city;
+CREATE VLABEL employee INHERITS (person);
+CREATE VLABEL manager INHERITS (person);
+CREATE ELABEL knows;
+SET auto_gather_graphmeta = true;
+CREATE (:person);                    -- 3.1
+CREATE (:city);                      -- 4.1
+MATCH (p:person), (c:city) CREATE (p)-[:knows]->(c);   -- knows 7.1: person -> city
+CREATE (:employee);                  -- 5.1 (person 3.1 is the only knows source)
+CREATE (:manager);                   -- 6.1
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+
+-- (1) commuted operand order: the id Var may sit on EITHER side of `=`.  A Cypher
+-- `id(u) = c` and the low-level `c = id` must prune identically to {person}.
+EXPLAIN (costs off) MATCH (u) WHERE '3.1'::graphid = id(u) RETURN u;
+MATCH (u) WHERE '3.1'::graphid = id(u) RETURN label(u) AS l, id(u) AS id;
+-- explicit Var-on-the-right SQL form (exercises the gm_is_id_var(r) branch)
+EXPLAIN (costs off) SELECT id FROM gmp21.ag_vertex WHERE '3.1'::graphid = id;
+
+-- (2) NULL graphid constant: id = NULL is a strict operator on a null Const, which
+-- the CORE planner (eval_const_expressions) folds to a constant-false qual BEFORE
+-- our pass runs -- so the plan is a One-Time Filter:false, not a parent-only scan;
+-- 0 rows either way.  (Our gm_const_labid "== -1 -> matches nothing" branch is thus
+-- shadowed here by core folding; case 3 below is the form that actually reaches it.)
+EXPLAIN (costs off) SELECT id FROM gmp21.ag_vertex WHERE id = NULL::graphid;
+SELECT count(*) AS n FROM gmp21.ag_vertex WHERE id = NULL::graphid;
+MATCH (u) WHERE id(u) = NULL::graphid RETURN count(*) AS n;
+
+-- (3) = ANY(NULL::graphid[]): a NULL array is NOT const-folded by core, so it does
+-- reach our recognizer's SAOP-null "matched but empty -> provably empty" branch:
+-- the scan prunes to the abstract parent table only (Seq Scan on ag_vertex, which
+-- is physically empty; all child label tables dropped), 0 rows.
+EXPLAIN (costs off) SELECT id FROM gmp21.ag_vertex WHERE id = ANY (NULL::graphid[]);
+SELECT count(*) AS n FROM gmp21.ag_vertex WHERE id = ANY (NULL::graphid[]);
+
+-- (4) = ANY(ARRAY[]::graphid[]): an empty-array SAOP is constant-false and is, like
+-- case 2, folded by core to a One-Time Filter:false before our pass; 0 rows.
+EXPLAIN (costs off) SELECT id FROM gmp21.ag_vertex WHERE id = ANY (ARRAY[]::graphid[]);
+SELECT count(*) AS n FROM gmp21.ag_vertex WHERE id = ANY (ARRAY[]::graphid[]);
+
+-- (5) array with a NULL element: the non-null constant still contributes its labid
+-- and prunes ({person}); the NULL element is skipped (a never-true disjunct).
+EXPLAIN (costs off) SELECT id FROM gmp21.ag_vertex WHERE id = ANY (ARRAY['3.1', NULL]::graphid[]);
+SELECT id FROM gmp21.ag_vertex WHERE id = ANY (ARRAY['3.1', NULL]::graphid[]) ORDER BY id;
+
+-- (6) unbounded array: a non-Const array element (here the row's own id column)
+-- makes the `= ANY` set unknown at plan time, so the pass falls back to a FULL
+-- inheritance scan (ag_vertex + person + city + employee + manager) -- the '3.1'
+-- constant must NOT prune anything away.  Results stay correct: id = ANY([id, ...])
+-- is reflexively true for every row, so all four vertices are returned.
+EXPLAIN (costs off) SELECT id FROM gmp21.ag_vertex v WHERE id = ANY (ARRAY[v.id, '3.1'::graphid]::graphid[]);
+SELECT id FROM gmp21.ag_vertex v WHERE id = ANY (ARRAY[v.id, '3.1'::graphid]::graphid[]) ORDER BY id;
+
+-- (7) non-contradictory AND-narrowing: two id restrictions whose labid sets overlap
+-- intersect to the common subset.  {person,city} AND {city,employee} -> {city}, so
+-- the scan prunes to city ONLY (person/employee/manager/ag_vertex dropped).
+EXPLAIN (costs off) MATCH (u) WHERE id(u) IN ['3.1'::graphid, '4.1'::graphid]
+                              AND id(u) IN ['4.1'::graphid, '5.1'::graphid] RETURN u;
+MATCH (u) WHERE id(u) IN ['3.1'::graphid, '4.1'::graphid]
+             AND id(u) IN ['4.1'::graphid, '5.1'::graphid] RETURN label(u) AS l, id(u) AS id;
+
+-- (8) two independent scans in one query: each unrelated node is pruned to its own
+-- label -- a to person, b to city -- with no cross-contamination.
+EXPLAIN (costs off) MATCH (a), (b) WHERE id(a) = '3.1'::graphid AND id(b) = '4.1'::graphid RETURN a, b;
+MATCH (a), (b) WHERE id(a) = '3.1'::graphid AND id(b) = '4.1'::graphid
+  RETURN label(a) AS la, id(a) AS ida, label(b) AS lb, id(b) AS idb;
+
+-- (9) a PARENT labid prunes to the parent table ONLY, never its children.  Baseline:
+-- an unpinned (u:person) scans the whole subtree (person + employee + manager).
+EXPLAIN (costs off) MATCH (u:person) RETURN u;
+-- Pinned to the person labid (3): employee AND manager must be dropped, leaving
+-- person alone -- the const's labid is NOT expanded to its subtree.
+EXPLAIN (costs off) MATCH (u:person) WHERE id(u) = '3.1'::graphid RETURN u;
+MATCH (u:person) WHERE id(u) = '3.1'::graphid RETURN label(u) AS l, id(u) AS id;
+-- A child labid under the same parent prunes to that child ONLY (person + manager
+-- dropped): the complementary direction of the parent<->child asymmetry.
+EXPLAIN (costs off) MATCH (u:person) WHERE id(u) = '5.1'::graphid RETURN u;
+MATCH (u:person) WHERE id(u) = '5.1'::graphid RETURN label(u) AS l, id(u) AS id;
+
+-- (10) inequality: id <> c is not an equality/IN filter, so the pass does not prune
+-- (full Append over every vertex label); results must still be correct.
+EXPLAIN (costs off) MATCH (u) WHERE id(u) <> '3.1'::graphid RETURN u;
+MATCH (u) WHERE id(u) <> '3.1'::graphid RETURN label(u) AS l, id(u) AS id ORDER BY id;
+
+-- (11) range: id > c is likewise not pruned; full scan, correct rows.
+EXPLAIN (costs off) MATCH (u) WHERE id(u) > '3.1'::graphid RETURN u;
+MATCH (u) WHERE id(u) > '3.1'::graphid RETURN label(u) AS l, id(u) AS id ORDER BY id;
+
+-- (12) OR of two id equalities: a top-level BoolExpr, not an OpExpr/ScalarArrayOpExpr,
+-- so v1 does not recognize it and does not prune (full Append); results correct.
+EXPLAIN (costs off) MATCH (u) WHERE id(u) = '3.1'::graphid OR id(u) = '4.1'::graphid RETURN u;
+MATCH (u) WHERE id(u) = '3.1'::graphid OR id(u) = '4.1'::graphid RETURN label(u) AS l, id(u) AS id ORDER BY id;
+
+SET auto_gather_graphmeta = false;
+DROP GRAPH gmp21 CASCADE;
+SET auto_gather_graphmeta = true;
