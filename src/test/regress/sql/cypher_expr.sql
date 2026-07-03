@@ -331,6 +331,25 @@ RETURN ALL(x in [1, null, 3] WHERE x IS NOT NULL);
 RETURN ANY(x in [1, null, 3] WHERE x IS NOT NULL);
 RETURN NONE(x in [1, null, 3] WHERE x IS NOT NULL);
 
+-- three-valued logic: when the predicate is unknown (null) for elements and no
+-- element gives a definite deciding result, the list predicate returns null,
+-- not a definite boolean (#779).  Comments give the Neo4j-equivalent result.
+RETURN ANY(x in [null] WHERE x > 10);           -- null
+RETURN ALL(x in [null] WHERE x > 10);           -- null
+RETURN NONE(x in [null] WHERE x > 10);          -- null
+RETURN SINGLE(x in [null] WHERE x > 10);        -- null
+RETURN ANY(x in [1, null] WHERE x > 10);        -- null (no true, one unknown)
+RETURN ANY(x in [20, null] WHERE x > 10);       -- true (a definite true short-circuits)
+RETURN ALL(x in [1, null] WHERE x > 10);        -- false (a definite false decides it)
+RETURN ALL(x in [20, null] WHERE x > 10);       -- null (true so far, one unknown)
+RETURN NONE(x in [1, null] WHERE x > 10);       -- null (no true, one unknown)
+RETURN NONE(x in [20, null] WHERE x > 10);      -- false (a definite true)
+RETURN SINGLE(x in [20, null] WHERE x > 10);    -- null (one true, an unknown could be a second)
+RETURN SINGLE(x in [20, 30] WHERE x > 10);      -- false (two true)
+RETURN SINGLE(x in [1, 20] WHERE x > 10);       -- true (exactly one true, no unknown)
+-- a null list argument is unknown throughout
+RETURN ANY(x in NULL WHERE x > 10);             -- null
+
 -- Functions
 
 CREATE (:coll {name: 'AgensGraph'});

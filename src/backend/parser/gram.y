@@ -21065,42 +21065,36 @@ cypher_expr_func_subexpr:
 					{ $$ = makeSQLValueFunction(SVFOP_CURRENT_PROPERTY_GRAPH, -1, @1); }
 			| ALL '(' cypher_expr_varname IN_P cypher_expr cypher_where ')'
 				{
-					CypherListComp *clc;
-					FuncCall   *n;
-					FuncCall   *m;
+					CypherListComp *clc = makeNode(CypherListComp);
 
-					clc = makeNode(CypherListComp);
+					/*
+					 * Project the predicate for every element (do not filter);
+					 * cypher_all() then reduces the true/false/null results
+					 * with Cypher's three-valued logic.
+					 */
 					clc->list = $5;
 					clc->varname = $3;
-					clc->cond = $6;
+					clc->cond = NULL;
+					clc->elem = $6;
+					clc->location = @1;
 
-					n = makeFuncCall(SystemFuncName("length"),
-									 list_make1(clc),
-									 COERCE_EXPLICIT_CALL, @1);
-
-					m = makeFuncCall(SystemFuncName("length"),
-									 list_make1($5),
-									 COERCE_EXPLICIT_CALL, @1);
-
-					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=",
-												   (Node*) n, (Node*) m, @1);
+					$$ = (Node *) makeFuncCall(SystemFuncName("cypher_all"),
+											   list_make1(clc),
+											   COERCE_EXPLICIT_CALL, @1);
 				}
 			| ANY '(' cypher_expr_varname IN_P cypher_expr cypher_where ')'
 				{
-					CypherListComp *clc;
-					FuncCall   *n;
+					CypherListComp *clc = makeNode(CypherListComp);
 
-					clc = makeNode(CypherListComp);
 					clc->list = $5;
 					clc->varname = $3;
-					clc->cond = $6;
+					clc->cond = NULL;
+					clc->elem = $6;
+					clc->location = @1;
 
-					n = makeFuncCall(SystemFuncName("length"),
-									 list_make1(clc),
-									 COERCE_EXPLICIT_CALL, @1);
-
-					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">", (Node*) n,
-												   makeIntConst(0, -1), @1);
+					$$ = (Node *) makeFuncCall(SystemFuncName("cypher_any"),
+											   list_make1(clc),
+											   COERCE_EXPLICIT_CALL, @1);
 				}
 			| COALESCE '(' cypher_expr_comma_list ')'
 				{
@@ -21141,37 +21135,31 @@ cypher_expr_func_subexpr:
 				}
 			| NONE '(' cypher_expr_varname IN_P cypher_expr cypher_where ')'
 				{
-					CypherListComp *clc;
-					FuncCall   *n;
+					CypherListComp *clc = makeNode(CypherListComp);
 
-					clc = makeNode(CypherListComp);
 					clc->list = $5;
 					clc->varname = $3;
-					clc->cond = $6;
+					clc->cond = NULL;
+					clc->elem = $6;
+					clc->location = @1;
 
-					n = makeFuncCall(SystemFuncName("length"),
-									 list_make1(clc),
-									 COERCE_EXPLICIT_CALL, @1);
-
-					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=", (Node*) n,
-												   makeIntConst(0, -1), @1);
+					$$ = (Node *) makeFuncCall(SystemFuncName("cypher_none"),
+											   list_make1(clc),
+											   COERCE_EXPLICIT_CALL, @1);
 				}
 			| SINGLE '(' cypher_expr_varname IN_P cypher_expr cypher_where ')'
 				{
-					CypherListComp *clc;
-					FuncCall   *n;
+					CypherListComp *clc = makeNode(CypherListComp);
 
-					clc = makeNode(CypherListComp);
 					clc->list = $5;
 					clc->varname = $3;
-					clc->cond = $6;
+					clc->cond = NULL;
+					clc->elem = $6;
+					clc->location = @1;
 
-					n = makeFuncCall(SystemFuncName("length"),
-									 list_make1(clc), 
-									 COERCE_EXPLICIT_CALL, @1);
-
-					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=", (Node*) n,
-												   makeIntConst(1, -1), @1);
+					$$ = (Node *) makeFuncCall(SystemFuncName("cypher_single"),
+											   list_make1(clc),
+											   COERCE_EXPLICIT_CALL, @1);
 				}
 			| SIZE_P '(' cypher_anon_pattern ')'
 				{

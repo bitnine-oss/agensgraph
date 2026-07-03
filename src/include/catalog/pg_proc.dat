@@ -12761,4 +12761,16 @@
   proallargtypes => '{jsonb,jsonb}', proargmodes => '{i,o}',
   proargnames => '{from_json,value}', prosrc => 'jsonb_array_elements' },
 
+{ oid => '8038', descr => 'cypher ALL() list predicate (three-valued)',
+  proname => 'cypher_all', prorettype => 'bool', proargtypes => 'jsonb',
+  prosrc => 'cypher_all' },
+{ oid => '8039', descr => 'cypher ANY() list predicate (three-valued)',
+  proname => 'cypher_any', prorettype => 'bool', proargtypes => 'jsonb',
+  prosrc => 'cypher_any' },
+{ oid => '8040', descr => 'cypher NONE() list predicate (three-valued)',
+  proname => 'cypher_none', prorettype => 'bool', proargtypes => 'jsonb',
+  prosrc => 'cypher_none' },
+{ oid => '8041', descr => 'cypher SINGLE() list predicate (three-valued)',
+  proname => 'cypher_single', prorettype => 'bool', proargtypes => 'jsonb',
+  prosrc => 'cypher_single' },
 ]

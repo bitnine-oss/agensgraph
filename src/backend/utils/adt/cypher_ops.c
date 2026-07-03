@@ -308,3 +308,136 @@ numeric_graphid(PG_FUNCTION_ARGS)
 
 	PG_RETURN_DATUM(DirectFunctionCall1(graphid_in, d));
 }
+
+/*
+ * Cypher list predicates: all() / any() / none() / single().
+ *
+ * The grammar lowers `all(x IN list WHERE p)` (and friends) to
+ * cypher_all([x IN list | p]) -- a list comprehension that projects the
+ * predicate result for every element -- so the argument here is a jsonb array
+ * whose elements are JSON true, false, or null (unknown; a null list element or
+ * a predicate that evaluated to NULL under three-valued logic).
+ *
+ * We reduce that array with Cypher's three-valued logic, short-circuiting once
+ * the outcome is decided, then combine:
+ *
+ *   all     true if no false and no null; false on the first false; else null
+ *   any     true on the first true; false if no true and no null; else null
+ *   none    = NOT any: false on the first true; true if none and no null; else null
+ *   single  false as soon as a second true is seen, or if none are true and no
+ *           null was seen; true if exactly one true and no null; else null
+ *           (an unknown could change the true-count)
+ *
+ * The functions are strict, so a null list yields null -- matching Cypher's
+ * "all(x IN null WHERE ...)" and so on.
+ */
+typedef enum CypherListPredKind
+{
+	CLP_ALL,
+	CLP_ANY,
+	CLP_NONE,
+	CLP_SINGLE
+} CypherListPredKind;
+
+typedef enum CypherTrit
+{
+	TRIT_FALSE,
+	TRIT_TRUE,
+	TRIT_NULL
+} CypherTrit;
+
+static CypherTrit
+cypher_list_predicate(Jsonb *arr, CypherListPredKind kind)
+{
+	JsonbIterator *it;
+	JsonbValue	jv;
+	JsonbIteratorToken tok;
+	int64		ntrue = 0;
+	bool		saw_null = false;
+
+	if (!JB_ROOT_IS_ARRAY(arr) || JB_ROOT_IS_SCALAR(arr))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("a list is expected for a list predicate")));
+
+	it = JsonbIteratorInit(&arr->root);
+	tok = JsonbIteratorNext(&it, &jv, false);
+	Assert(tok == WJB_BEGIN_ARRAY);
+	(void) tok;
+
+	while (JsonbIteratorNext(&it, &jv, true) == WJB_ELEM)
+	{
+		if (jv.type == jbvNull)
+		{
+			saw_null = true;
+			continue;
+		}
+		if (jv.type != jbvBool)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("a boolean is expected in a list predicate")));
+
+		if (jv.val.boolean)
+		{
+			ntrue++;
+			if (kind == CLP_ANY)
+				return TRIT_TRUE;
+			if (kind == CLP_NONE)
+				return TRIT_FALSE;
+			if (kind == CLP_SINGLE && ntrue > 1)
+				return TRIT_FALSE;	/* >= 2 true: definitely not single */
+		}
+		else if (kind == CLP_ALL)
+			return TRIT_FALSE;		/* one false decides all() */
+	}
+
+	switch (kind)
+	{
+		case CLP_ALL:				/* no false seen */
+		case CLP_NONE:				/* no true seen */
+			return saw_null ? TRIT_NULL : TRIT_TRUE;
+		case CLP_ANY:				/* no true seen */
+			return saw_null ? TRIT_NULL : TRIT_FALSE;
+		case CLP_SINGLE:			/* ntrue is 0 or 1 here */
+			if (ntrue == 1)
+				return saw_null ? TRIT_NULL : TRIT_TRUE;
+			return saw_null ? TRIT_NULL : TRIT_FALSE;
+	}
+
+	pg_unreachable();
+	return TRIT_NULL;
+}
+
+static Datum
+cypher_list_predicate_result(FunctionCallInfo fcinfo, CypherListPredKind kind)
+{
+	CypherTrit	r = cypher_list_predicate(PG_GETARG_JSONB_P(0), kind);
+
+	if (r == TRIT_NULL)
+		PG_RETURN_NULL();
+	PG_RETURN_BOOL(r == TRIT_TRUE);
+}
+
+Datum
+cypher_all(PG_FUNCTION_ARGS)
+{
+	return cypher_list_predicate_result(fcinfo, CLP_ALL);
+}
+
+Datum
+cypher_any(PG_FUNCTION_ARGS)
+{
+	return cypher_list_predicate_result(fcinfo, CLP_ANY);
+}
+
+Datum
+cypher_none(PG_FUNCTION_ARGS)
+{
+	return cypher_list_predicate_result(fcinfo, CLP_NONE);
+}
+
+Datum
+cypher_single(PG_FUNCTION_ARGS)
+{
+	return cypher_list_predicate_result(fcinfo, CLP_SINGLE);
+}

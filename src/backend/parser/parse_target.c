@@ -1792,8 +1792,25 @@ FigureColnameInternal(Node *node, char **name)
 			}
 			break;
 		case T_FuncCall:
-			*name = strVal(llast(((FuncCall *) node)->funcname));
-			return 2;
+			{
+				char	   *fname = strVal(llast(((FuncCall *) node)->funcname));
+
+				/*
+				 * The cypher_all/any/none/single reducers are the internal
+				 * implementation of the Cypher ALL()/ANY()/NONE()/SINGLE() list
+				 * predicates; the user never writes those names, so leave the
+				 * column unnamed (?column?) rather than expose them, matching
+				 * the anonymous label these predicates carried before.
+				 */
+				if (strcmp(fname, "cypher_all") == 0 ||
+					strcmp(fname, "cypher_any") == 0 ||
+					strcmp(fname, "cypher_none") == 0 ||
+					strcmp(fname, "cypher_single") == 0)
+					return 0;
+
+				*name = fname;
+				return 2;
+			}
 		case T_A_Expr:
 			if (((A_Expr *) node)->kind == AEXPR_NULLIF)
 			{

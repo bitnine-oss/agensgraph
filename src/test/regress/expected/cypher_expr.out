@@ -878,6 +878,94 @@ RETURN NONE(x in [1, null, 3] WHERE x IS NOT NULL);
  f
 (1 row)
 
+-- three-valued logic: when the predicate is unknown (null) for elements and no
+-- element gives a definite deciding result, the list predicate returns null,
+-- not a definite boolean (#779).  Comments give the Neo4j-equivalent result.
+RETURN ANY(x in [null] WHERE x > 10);           -- null
+ ?column? 
+----------
+ 
+(1 row)
+
+RETURN ALL(x in [null] WHERE x > 10);           -- null
+ ?column? 
+----------
+ 
+(1 row)
+
+RETURN NONE(x in [null] WHERE x > 10);          -- null
+ ?column? 
+----------
+ 
+(1 row)
+
+RETURN SINGLE(x in [null] WHERE x > 10);        -- null
+ ?column? 
+----------
+ 
+(1 row)
+
+RETURN ANY(x in [1, null] WHERE x > 10);        -- null (no true, one unknown)
+ ?column? 
+----------
+ 
+(1 row)
+
+RETURN ANY(x in [20, null] WHERE x > 10);       -- true (a definite true short-circuits)
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN ALL(x in [1, null] WHERE x > 10);        -- false (a definite false decides it)
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN ALL(x in [20, null] WHERE x > 10);       -- null (true so far, one unknown)
+ ?column? 
+----------
+ 
+(1 row)
+
+RETURN NONE(x in [1, null] WHERE x > 10);       -- null (no true, one unknown)
+ ?column? 
+----------
+ 
+(1 row)
+
+RETURN NONE(x in [20, null] WHERE x > 10);      -- false (a definite true)
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN SINGLE(x in [20, null] WHERE x > 10);    -- null (one true, an unknown could be a second)
+ ?column? 
+----------
+ 
+(1 row)
+
+RETURN SINGLE(x in [20, 30] WHERE x > 10);      -- false (two true)
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN SINGLE(x in [1, 20] WHERE x > 10);       -- true (exactly one true, no unknown)
+ ?column? 
+----------
+ t
+(1 row)
+
+-- a null list argument is unknown throughout
+RETURN ANY(x in NULL WHERE x > 10);             -- null
+ ?column? 
+----------
+ 
+(1 row)
+
 -- Functions
 CREATE (:coll {name: 'AgensGraph'});
 MATCH (n:coll) SET n.l = tolower(n.name);
