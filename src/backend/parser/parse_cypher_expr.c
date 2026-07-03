@@ -1060,6 +1060,20 @@ preprocess_func_args(ParseState *pstate, FuncCall *fn)
 
 		argtype = exprType(arg);
 
+		/*
+		 * collect() takes anyelement, so an unknown-typed literal argument (a
+		 * bare NULL or an unadorned string literal) leaves the polymorphic type
+		 * unresolvable and errors.  Coerce it to text -- Postgres's default
+		 * resolution for an unknown literal -- so collect(NULL) yields [] and
+		 * collect('x') yields ["x"] instead of failing.
+		 */
+		if (argtype == UNKNOWNOID &&
+			strcmp(strVal(llast(fn->funcname)), "collect") == 0)
+		{
+			arg = coerce_to_specific_type(pstate, arg, TEXTOID, "collect");
+			argtype = exprType(arg);
+		}
+
 		Assert(!(IsA(arg, Param) && argtype == VOIDOID));
 
 		args = lappend(args, arg);

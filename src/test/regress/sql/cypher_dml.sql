@@ -1022,6 +1022,10 @@ RETURN collect(5);
 -- should return an empty array
 RETURN collect(NULL::jsonb);
 MATCH (u) WHERE u.name =~ 'does not exist' RETURN collect(u.name);
+-- an unknown-typed literal argument is coerced rather than raising a
+-- "could not determine polymorphic type" error (#629)
+RETURN collect(NULL);
+RETURN collect('abc');
 
 -- should fail
 RETURN collect();

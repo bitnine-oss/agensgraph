@@ -3163,6 +3163,20 @@ MATCH (u) WHERE u.name =~ 'does not exist' RETURN collect(u.name);
  []
 (1 row)
 
+-- an unknown-typed literal argument is coerced rather than raising a
+-- "could not determine polymorphic type" error (#629)
+RETURN collect(NULL);
+ collect 
+---------
+ []
+(1 row)
+
+RETURN collect('abc');
+ collect 
+---------
+ ["abc"]
+(1 row)
+
 -- should fail
 RETURN collect();
 ERROR:  function collect() does not exist
