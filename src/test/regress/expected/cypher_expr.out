@@ -697,6 +697,16 @@ RETURN [x IN [[0], [1]] WHERE length([y IN x]) = 1 | [y IN x]];
  [[0], [1]]
 (1 row)
 
+-- an aggregate in the projection or filter has no group here: reject cleanly
+-- rather than crash the backend (#793)
+RETURN [x IN [1, 2, 3] | sum(x)];
+ERROR:  aggregate functions are not allowed in a list comprehension
+LINE 1: RETURN [x IN [1, 2, 3] | sum(x)];
+               ^
+RETURN [x IN [1, 2, 3] WHERE sum(x) > 0 | x];
+ERROR:  aggregate functions are not allowed in a list comprehension
+LINE 1: RETURN [x IN [1, 2, 3] WHERE sum(x) > 0 | x];
+               ^
 -- List predicate functions
 RETURN ALL(x in [] WHERE x = 0);
  ?column? 

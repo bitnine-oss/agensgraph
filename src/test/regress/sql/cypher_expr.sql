@@ -293,6 +293,10 @@ RETURN [x IN [0, 1, 2, 3, 4] | x + 1];
 RETURN [x IN [0, 1, 2, 3, 4] WHERE x % 2 = 0 | x + 1];
 -- nested use of variables
 RETURN [x IN [[0], [1]] WHERE length([y IN x]) = 1 | [y IN x]];
+-- an aggregate in the projection or filter has no group here: reject cleanly
+-- rather than crash the backend (#793)
+RETURN [x IN [1, 2, 3] | sum(x)];
+RETURN [x IN [1, 2, 3] WHERE sum(x) > 0 | x];
 
 -- List predicate functions
 RETURN ALL(x in [] WHERE x = 0);

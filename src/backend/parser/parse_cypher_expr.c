@@ -731,6 +731,8 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 	Node	   *cond;
 	Node	   *elem;
 	CypherListCompExpr *clcexpr;
+	bool		save_hasAggs;
+	bool		save_hasWindowFuncs;
 
 	list = transformCypherExprRecurse(pstate, (Node *) clc->list);
 	type = exprType(list);
@@ -759,8 +761,36 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 	save_varname = pstate->p_lc_varname;
 	save_elem_type = pstate->p_lc_elem_type;
 	pstate->p_lc_varname = clc->varname;
+
+	/*
+	 * A list comprehension is a per-element projection, not a grouping context,
+	 * so an aggregate or window function in its filter or projection has no
+	 * group to evaluate over -- and the per-element evaluator cannot run one
+	 * (it crashes the backend).  Detect any that the filter/projection adds and
+	 * reject it with a clear error, mirroring Cypher semantics.  Save and clear
+	 * the flags around the transform so we observe only what these clauses add.
+	 */
+	save_hasAggs = pstate->p_hasAggs;
+	save_hasWindowFuncs = pstate->p_hasWindowFuncs;
+	pstate->p_hasAggs = false;
+	pstate->p_hasWindowFuncs = false;
+
 	cond = transformCypherWhere(pstate, clc->cond, pstate->p_expr_kind);
 	elem = transformCypherExprRecurse(pstate, clc->elem);
+
+	if (pstate->p_hasAggs)
+		ereport(ERROR,
+				(errcode(ERRCODE_GROUPING_ERROR),
+				 errmsg("aggregate functions are not allowed in a list comprehension"),
+				 parser_errposition(pstate, clc->location)));
+	if (pstate->p_hasWindowFuncs)
+		ereport(ERROR,
+				(errcode(ERRCODE_WINDOWING_ERROR),
+				 errmsg("window functions are not allowed in a list comprehension"),
+				 parser_errposition(pstate, clc->location)));
+
+	pstate->p_hasAggs = save_hasAggs;
+	pstate->p_hasWindowFuncs = save_hasWindowFuncs;
 
 	/*
 	 * If elem is NULL, implicitly use the iteration variable.
