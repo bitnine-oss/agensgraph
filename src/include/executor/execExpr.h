@@ -763,6 +763,15 @@ typedef struct ExprEvalStep
 		struct
 		{
 			Datum	   *listvalue;
+			/*
+			 * listnull is the list's null-ness for the ITER_INIT step.  The
+			 * ITER_NEXT step does not use it, so it doubles there as the current
+			 * element's own SQL null-ness (elemnull): resvalue/resnull of
+			 * ITER_NEXT carry the element value and the "iteration exhausted"
+			 * signal, while listnull carries the element's null-ness for the
+			 * iteration variable -- kept separate so a null element binds the
+			 * variable to NULL without ending the loop.
+			 */
 			bool	   *listnull;
 			JsonbIterator **jsonb_list_iterator;
 			struct CypherListCompArrayIterator *array_iterator;

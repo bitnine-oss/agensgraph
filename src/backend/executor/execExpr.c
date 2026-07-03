@@ -4753,6 +4753,7 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 	bool	   *elem_resnull;
 	ExprEvalStep next_step;
 	int			next_stepno;
+	bool	   *elem_isnull;
 	ExprEvalStep hasnext_step;
 	int			hasnext_stepno;
 	ExprEvalStep elem_step;
@@ -4827,16 +4828,19 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 
 	elem_resvalue = (Datum *) palloc(sizeof(Datum));
 	elem_resnull = (bool *) palloc(sizeof(bool));
+	elem_isnull = (bool *) palloc(sizeof(bool));
 
 	next_step.opcode = EEOP_CYPHERLISTCOMP_ITER_NEXT;
 	next_step.resvalue = elem_resvalue;
-	next_step.resnull = elem_resnull;
+	next_step.resnull = elem_resnull;	/* set true only when iteration ends */
 	next_step.d.cypherlistcomp_iter.is_null_list_or_array =
 		init_step.d.cypherlistcomp_iter.is_null_list_or_array;
 	next_step.d.cypherlistcomp_iter.jsonb_list_iterator =
 		init_step.d.cypherlistcomp_iter.jsonb_list_iterator;
 	next_step.d.cypherlistcomp_iter.array_iterator =
 		init_step.d.cypherlistcomp_iter.array_iterator;
+	/* ITER_NEXT reuses the unused listnull slot for the element's null-ness */
+	next_step.d.cypherlistcomp_iter.listnull = elem_isnull;
 
 	ExprEvalPushStep(state, &next_step);
 	next_stepno = state->steps_len - 1;
@@ -4929,7 +4933,13 @@ initExprSaveIter(Expr *node, ExprEvalStep *next_step,
 	save_iterval = state->innermost_cypherlistcomp_iterval;
 	save_iternull = state->innermost_cypherlistcomp_iternull;
 	state->innermost_cypherlistcomp_iterval = next_step->resvalue;
-	state->innermost_cypherlistcomp_iternull = next_step->resnull;
+	/*
+	 * The iteration variable's null-ness is the element's own null-ness
+	 * (elemnull), not the loop-exhausted signal (resnull); a null element must
+	 * bind the variable to SQL NULL without ending the loop.
+	 */
+	state->innermost_cypherlistcomp_iternull =
+		next_step->d.cypherlistcomp_iter.listnull;
 
 	ExecInitExprRec(node, state, resv, resnull);
 

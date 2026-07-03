@@ -6223,6 +6223,14 @@ ExecEvalCypherListCompIterInit(ExprState *state, ExprEvalStep *op)
 void
 ExecEvalCypherListCompIterInitNext(ExprState *state, ExprEvalStep *op)
 {
+	/*
+	 * resnull is the loop's "iteration exhausted" flag (tested by the following
+	 * EEOP_JUMP_IF_NULL); elemnull carries the current element's own null-ness
+	 * for the iteration variable.  Keeping them separate lets a null element
+	 * bind the variable to SQL NULL without prematurely ending the loop.
+	 */
+	bool	   *elemnull = op->d.cypherlistcomp_iter.listnull;
+
 	if (op->d.cypherlistcomp_iter.jsonb_list_iterator != NULL)
 	{
 		JsonbIterator **ji;
@@ -6232,7 +6240,7 @@ ExecEvalCypherListCompIterInitNext(ExprState *state, ExprEvalStep *op)
 		if (*op->d.cypherlistcomp_iter.is_null_list_or_array)
 		{
 			*op->resvalue = (Datum) 0;
-			*op->resnull = true;
+			*op->resnull = true;	/* exhausted */
 			return;
 		}
 
@@ -6240,41 +6248,49 @@ ExecEvalCypherListCompIterInitNext(ExprState *state, ExprEvalStep *op)
 		jt = JsonbIteratorNext(ji, &jv, true);
 		if (jt == WJB_ELEM)
 		{
-			*op->resvalue = JsonbPGetDatum(JsonbValueToJsonb(&jv));
-			*op->resnull = false;
+			*op->resnull = false;	/* an element is available */
+			if (jv.type == jbvNull)
+			{
+				/* a JSON null element is the Cypher null value */
+				*op->resvalue = (Datum) 0;
+				*elemnull = true;
+			}
+			else
+			{
+				*op->resvalue = JsonbPGetDatum(JsonbValueToJsonb(&jv));
+				*elemnull = false;
+			}
 		}
 		else
 		{
 			*op->resvalue = (Datum) 0;
-			*op->resnull = true;
+			*op->resnull = true;	/* exhausted */
 		}
 	}
 	else
 	{
 		CypherListCompArrayIterator *array_iter;
-		Datum		vertex_or_edge_datum;
+		Datum		elem_datum;
 
 		array_iter = op->d.cypherlistcomp_iter.array_iterator;
 
 		if (array_iter->array_position >= array_iter->array_size)
 		{
 			*op->resvalue = (Datum) 0;
-			*op->resnull = true;
+			*op->resnull = true;	/* exhausted */
 			return;
 		}
 
-		vertex_or_edge_datum = array_iter_next(&array_iter->array_iter,
-											   op->resnull,
-											   array_iter->array_position++,
-											   array_iter->typlen,
-											   array_iter->typbyval,
-											   array_iter->typalign);
+		/* array_iter_next writes the element's own null-ness into elemnull */
+		elem_datum = array_iter_next(&array_iter->array_iter,
+									 elemnull,
+									 array_iter->array_position++,
+									 array_iter->typlen,
+									 array_iter->typbyval,
+									 array_iter->typalign);
 
-		if (*op->resnull)
-		{
-			return;
-		}
-		*op->resvalue = vertex_or_edge_datum;
+		*op->resnull = false;		/* an element is available */
+		*op->resvalue = *elemnull ? (Datum) 0 : elem_datum;
 	}
 }
 

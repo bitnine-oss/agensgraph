@@ -320,6 +320,17 @@ RETURN SINGLE(x in [0, 1, 2, 3, 4] WHERE x = 0);
 RETURN SINGLE(x in [0, 1, 2, 3, 4] WHERE x >= 0);
 RETURN SINGLE(x in [0, 1, 2, 3, 4] WHERE x = 5);
 
+-- a null list element is the Cypher null value: it is filtered by IS NOT NULL
+-- and does not prematurely end the iteration (#780)
+RETURN [x IN [1, null, 3] WHERE x IS NOT NULL];
+RETURN [x IN [null, null] | x IS NULL];
+RETURN ALL(x in [null, null, null] WHERE x IS NOT NULL);
+RETURN ANY(x in [null, null, null] WHERE x IS NOT NULL);
+RETURN NONE(x in [null, null, null] WHERE x IS NOT NULL);
+RETURN ALL(x in [1, null, 3] WHERE x IS NOT NULL);
+RETURN ANY(x in [1, null, 3] WHERE x IS NOT NULL);
+RETURN NONE(x in [1, null, 3] WHERE x IS NOT NULL);
+
 -- Functions
 
 CREATE (:coll {name: 'AgensGraph'});

@@ -828,6 +828,56 @@ RETURN SINGLE(x in [0, 1, 2, 3, 4] WHERE x = 5);
  f
 (1 row)
 
+-- a null list element is the Cypher null value: it is filtered by IS NOT NULL
+-- and does not prematurely end the iteration (#780)
+RETURN [x IN [1, null, 3] WHERE x IS NOT NULL];
+ ?column? 
+----------
+ [1, 3]
+(1 row)
+
+RETURN [x IN [null, null] | x IS NULL];
+   ?column?   
+--------------
+ [true, true]
+(1 row)
+
+RETURN ALL(x in [null, null, null] WHERE x IS NOT NULL);
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN ANY(x in [null, null, null] WHERE x IS NOT NULL);
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN NONE(x in [null, null, null] WHERE x IS NOT NULL);
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN ALL(x in [1, null, 3] WHERE x IS NOT NULL);
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN ANY(x in [1, null, 3] WHERE x IS NOT NULL);
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN NONE(x in [1, null, 3] WHERE x IS NOT NULL);
+ ?column? 
+----------
+ f
+(1 row)
+
 -- Functions
 CREATE (:coll {name: 'AgensGraph'});
 MATCH (n:coll) SET n.l = tolower(n.name);
