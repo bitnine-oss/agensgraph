@@ -650,6 +650,13 @@ RETURN properties(nodes(p)[0]) AS first, properties(vertices(p)[1]) AS second, p
 	   id(nodes(p)[2]) = id(endnode(r[1])) AS check_end_of_second_edge,
 	   length(edges(p));
 
+-- negative indices count from the end on native vertex[]/edge[] arrays too, not
+-- just jsonb lists (#778: nodes(p)[-1] used to return NULL)
+MATCH p = (:time {sec: 1})-[:goes*3]->(:time {sec: 4})
+RETURN nodes(p)[-1].sec AS last, nodes(p)[-4].sec AS first, nodes(p)[-5] IS NULL AS oob,
+       id(relationships(p)[-1]) = id(relationships(p)[2]) AS rel_last,
+       [x IN nodes(p)[-2..] | x.sec] AS last2, [x IN nodes(p)[..-1] | x.sec] AS but_last;
+
 MATCH p = (:time)-[:goes*0]->(:time)-[:goes*2..4]->(:time)-[:goes*0]-(:time)
 RETURN properties(nodes(p)[0]) AS first, properties(vertices(p)[1]) AS second, properties(vertices(p)[2]) AS third,
 	   properties(nodes(p)[3]) AS fourth, properties(vertices(p)[4]) AS fifth, properties(vertices(p)[5]) AS sixth,

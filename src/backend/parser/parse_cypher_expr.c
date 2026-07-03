@@ -88,7 +88,7 @@ static List *func_get_best_args(ParseState *pstate, List *args,
 								FuncCandidateList candidate);
 static Node *transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c);
 static Node *transformIndirection(ParseState *pstate, A_Indirection *indir);
-static Node *makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive);
+static Node *makeArrayIndex(ParseState *pstate, Node *idx, Node *arr, bool exclusive);
 static Node *adjustListIndexType(ParseState *pstate, Node *idx);
 static Node *transformAExprOp(ParseState *pstate, A_Expr *a);
 static Node *transformAExprIn(ParseState *pstate, A_Expr *a);
@@ -1722,10 +1722,10 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 			ind = (A_Indices *) i;
 
 			if (ind->is_slice && ind->lidx != NULL)
-				lidx = makeArrayIndex(pstate, ind->lidx, false);
+				lidx = makeArrayIndex(pstate, ind->lidx, res, false);
 
 			if (ind->uidx != NULL)
-				uidx = makeArrayIndex(pstate, ind->uidx, ind->is_slice);
+				uidx = makeArrayIndex(pstate, ind->uidx, res, ind->is_slice);
 
 			arrtype = restype;
 			arrtypmod = exprTypmod(res);
@@ -1805,12 +1805,17 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 }
 
 static Node *
-makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive)
+makeArrayIndex(ParseState *pstate, Node *idx, Node *arr, bool exclusive)
 {
 	Node	   *last_srf = pstate->p_last_srf;
 	Node	   *idxexpr;
 	Node	   *result;
+	Node	   *len;
+	Node	   *isneg;
+	Node	   *fromend;
 	Node	   *one;
+	CaseWhen   *when;
+	CaseExpr   *norm;
 
 	Assert(idx != NULL);
 
@@ -1825,6 +1830,42 @@ makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive)
 				 parser_errposition(pstate, exprLocation(idxexpr))));
 		return NULL;
 	}
+
+	/*
+	 * Cypher lets a negative subscript count from the end of the list, but a
+	 * Postgres array subscript does not.  Map i (< 0) to i + array_length(arr,1)
+	 * at run time, so negative indices and slice bounds on a vertex[]/edge[]
+	 * behave the way they do on a jsonb list (which ExecEvalCypherAccessExpr
+	 * already handles).  On an empty array array_length() is NULL, so a negative
+	 * subscript resolves to NULL -- "out of range", the same as Cypher.  A
+	 * non-negative subscript keeps the CASE's default and is unaffected.
+	 */
+	len = (Node *) makeFuncExpr(F_ARRAY_LENGTH, INT4OID,
+								list_make2(copyObject(arr),
+										   makeConst(INT4OID, -1, InvalidOid,
+													 sizeof(int32),
+													 Int32GetDatum(1),
+													 false, true)),
+								InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+	isneg = (Node *) make_op(pstate, list_make1(makeString("<")), copyObject(result),
+							 (Node *) makeConst(INT4OID, -1, InvalidOid, sizeof(int32),
+												Int32GetDatum(0), false, true),
+							 last_srf, -1);
+	fromend = (Node *) make_op(pstate, list_make1(makeString("+")), copyObject(result),
+							   len, last_srf, -1);
+
+	when = makeNode(CaseWhen);
+	when->expr = (Expr *) isneg;
+	when->result = (Expr *) fromend;
+	when->location = -1;
+
+	norm = makeNode(CaseExpr);
+	norm->casetype = INT4OID;
+	norm->arg = NULL;
+	norm->args = list_make1(when);
+	norm->defresult = (Expr *) result;
+	norm->location = -1;
+	result = (Node *) norm;
 
 	if (exclusive)
 		return result;
