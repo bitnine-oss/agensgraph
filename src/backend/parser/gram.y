@@ -21220,6 +21220,11 @@ cypher_expr_func_subexpr:
 					c->location = @1;
 					$$ = (Node *) c;
 				}
+			| NULLIF '(' cypher_expr ',' cypher_expr ')'
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_NULLIF, "=",
+												   $3, $5, @1);
+				}
 			| EXISTS '(' cypher_anon_pattern ')'
 				{
 					CypherSubPattern *sub;

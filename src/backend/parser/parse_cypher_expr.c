@@ -92,6 +92,7 @@ static Node *makeArrayIndex(ParseState *pstate, Node *idx, Node *arr, bool exclu
 static Node *adjustListIndexType(ParseState *pstate, Node *idx);
 static Node *transformAExprOp(ParseState *pstate, A_Expr *a);
 static Node *transformAExprIn(ParseState *pstate, A_Expr *a);
+static Node *transformCypherNullIf(ParseState *pstate, A_Expr *a);
 static Node *transformBoolExpr(ParseState *pstate, BoolExpr *b);
 static Node *coerce_unknown_const(ParseState *pstate, Node *expr, Oid ityp,
 								  Oid otyp);
@@ -184,6 +185,8 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 						return transformAExprOp(pstate, a);
 					case AEXPR_IN:
 						return transformAExprIn(pstate, a);
+					case AEXPR_NULLIF:
+						return transformCypherNullIf(pstate, a);
 					default:
 						elog(ERROR, "unrecognized A_Expr kind: %d", a->kind);
 						return NULL;
@@ -2007,6 +2010,58 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 	}
 
 	return (Node *) make_op(pstate, a->name, l, r, last_srf, a->location);
+}
+
+/*
+ * transformCypherNullIf
+ *		NULLIF(v1, v2) yields NULL when v1 = v2, otherwise v1.
+ *
+ *		It is defined in terms of "=", so the comparison is built through the
+ *		ordinary cypher "=" handling (transformAExprOp) -- giving it the same
+ *		coercion any cypher equality gets: graphid identity for graph elements,
+ *		jsonb equality when either operand is jsonb (e.g. a property) or has no
+ *		native "=" operator, and the native operator for matching scalar types.
+ *		The resulting comparison OpExpr is then retagged to a NullIfExpr (the two
+ *		are the same struct) whose result type is the first operand's, reusing
+ *		the core NULLIF executor and deparse.
+ */
+static Node *
+transformCypherNullIf(ParseState *pstate, A_Expr *a)
+{
+	A_Expr	   *cmp;
+	Node	   *node;
+	OpExpr	   *result;
+
+	cmp = makeSimpleA_Expr(AEXPR_OP, "=", a->lexpr, a->rexpr, a->location);
+	node = transformAExprOp(pstate, cmp);
+
+	/* The "=" comparison must be a plain operator yielding a scalar boolean. */
+	if (!IsA(node, OpExpr))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("NULLIF requires = operator to yield boolean"),
+				 parser_errposition(pstate, a->location)));
+
+	result = (OpExpr *) node;
+
+	if (result->opresulttype != BOOLOID)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("NULLIF requires = operator to yield boolean"),
+				 parser_errposition(pstate, a->location)));
+	if (result->opretset)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("NULLIF must not return a set"),
+				 parser_errposition(pstate, a->location)));
+
+	/* The NullIfExpr yields the (possibly coerced) first operand's type. */
+	result->opresulttype = exprType((Node *) linitial(result->args));
+
+	/* NullIfExpr and OpExpr are the same struct. */
+	NodeSetTag(result, T_NullIfExpr);
+
+	return (Node *) result;
 }
 
 /*
