@@ -6951,6 +6951,8 @@ get_window_frame_options_for_explain(int frameOptions,
 	context.inGroupBy = false;
 	context.varInOrderBy = false;
 	context.appendparents = NULL;
+	/* not deparsing a Cypher expression: keep normal type labels on Consts */
+	context.cypherexpr = false;
 
 	get_window_frame_options(frameOptions, startOffset, endOffset, &context);
 
