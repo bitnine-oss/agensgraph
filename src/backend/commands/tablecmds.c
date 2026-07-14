@@ -2498,20 +2498,21 @@ truncate_check_activity(Relation rel)
 	 * without deleting their incident edges (orphaning the edges' start/end
 	 * graphids) and, running outside the graph-write executor, it does not
 	 * maintain the per-row ag_graphmeta connectivity that scan pruning relies
-	 * on.  The supported ways to empty a label are Cypher DELETE/DETACH DELETE
-	 * or dropping the label.
+	 * on.  The supported ways to empty a label are Cypher DELETE/DETACH
+	 * DELETE or dropping the label.
 	 *
 	 * Truncating an *empty* label, however, is a semantic no-op: with no rows
 	 * there is no edge to orphan and no graphmeta entry to invalidate.  We
 	 * allow that narrow, provably safe case so a freshly created, still-empty
-	 * label can be reloaded by a parallel pg_restore, which issues
-	 * "TRUNCATE TABLE ONLY <rel>" before COPY on tables it just created as a
+	 * label can be reloaded by a parallel pg_restore, which issues "TRUNCATE
+	 * TABLE ONLY <rel>" before COPY on tables it just created as a
 	 * WAL-skipping optimization (see use_truncate in
-	 * src/bin/pg_dump/pg_backup_archiver.c).  Without this, pg_dump/pg_restore
-	 * and pg_upgrade round-trips of any graph containing data would fail.  A
-	 * heap with zero blocks provably contains zero rows; truncate_check_activity
-	 * runs once per relation in the truncate set (including inheritance
-	 * children), so a non-empty child still blocks a recursive TRUNCATE.
+	 * src/bin/pg_dump/pg_backup_archiver.c).  Without this,
+	 * pg_dump/pg_restore and pg_upgrade round-trips of any graph containing
+	 * data would fail.  A heap with zero blocks provably contains zero rows;
+	 * truncate_check_activity runs once per relation in the truncate set
+	 * (including inheritance children), so a non-empty child still blocks a
+	 * recursive TRUNCATE.
 	 */
 	if (OidIsValid(get_relid_laboid(RelationGetRelid(rel))) &&
 		RelationGetNumberOfBlocks(rel) != 0)

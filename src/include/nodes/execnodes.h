@@ -1258,10 +1258,10 @@ typedef struct PlanState
 
 	/*
 	 * AgensGraph: transient channel used while ExecInitSubPlan builds the
-	 * lefthand/test ExprStates for a SubPlan that appears inside a cypher list
-	 * comprehension's filter or result expression.  It carries the current
-	 * iteration-variable slot so those freshly built ExprStates can resolve a
-	 * CypherListCompVar.  NULL except during that build.
+	 * lefthand/test ExprStates for a SubPlan that appears inside a cypher
+	 * list comprehension's filter or result expression.  It carries the
+	 * current iteration-variable slot so those freshly built ExprStates can
+	 * resolve a CypherListCompVar.  NULL except during that build.
 	 */
 	Datum	   *innermost_cypherlistcomp_iterval;
 	bool	   *innermost_cypherlistcomp_iternull;
@@ -3075,6 +3075,7 @@ typedef struct GraphVLEState
 	ResultRelInfo *target_rel_infos;
 	TupleTableSlot *current_scan_tuple;
 	int			num_target_rel_info;
+
 	/*
 	 * Per target label, the btree indexes used to expand a hop without
 	 * scanning the whole edge label: start_index_rels[i] is the (start,end)

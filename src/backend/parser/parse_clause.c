@@ -3952,12 +3952,13 @@ generateGroupClause(ParseState *pstate, List **targetlist, List *sortClause)
 		if (find_agg_walker((Node *) te->expr, &factx))
 		{
 			/*
-			 * The target contains an aggregate (possibly nested inside another
-			 * expression, e.g. round(avg(x), 1), or sitting beside another
-			 * aggregate); it is an aggregated output, not a grouping key, so do
-			 * not add it to the implicit GROUP BY.  If such an expression also
-			 * references a plain column that is neither grouped nor aggregated,
-			 * the standard ungrouped-column check reports it later.
+			 * The target contains an aggregate (possibly nested inside
+			 * another expression, e.g. round(avg(x), 1), or sitting beside
+			 * another aggregate); it is an aggregated output, not a grouping
+			 * key, so do not add it to the implicit GROUP BY.  If such an
+			 * expression also references a plain column that is neither
+			 * grouped nor aggregated, the standard ungrouped-column check
+			 * reports it later.
 			 */
 		}
 		else

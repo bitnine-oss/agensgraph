@@ -3341,7 +3341,7 @@ ExecEvalSQLValueFunction(ExprState *state, ExprEvalStep *op)
 			*op->resnull = fcinfo->isnull;
 			break;
 
-		/* AgensGraph: current graph name, or NULL when none is set */
+			/* AgensGraph: current graph name, or NULL when none is set */
 		case SVFOP_CURRENT_GRAPH:
 		case SVFOP_CURRENT_PROPERTY_GRAPH:
 			{
@@ -6939,10 +6939,11 @@ void
 ExecEvalCypherListCompIterInitNext(ExprState *state, ExprEvalStep *op)
 {
 	/*
-	 * resnull is the loop's "iteration exhausted" flag (tested by the following
-	 * EEOP_JUMP_IF_NULL); elemnull carries the current element's own null-ness
-	 * for the iteration variable.  Keeping them separate lets a null element
-	 * bind the variable to SQL NULL without prematurely ending the loop.
+	 * resnull is the loop's "iteration exhausted" flag (tested by the
+	 * following EEOP_JUMP_IF_NULL); elemnull carries the current element's
+	 * own null-ness for the iteration variable.  Keeping them separate lets a
+	 * null element bind the variable to SQL NULL without prematurely ending
+	 * the loop.
 	 */
 	bool	   *elemnull = op->d.cypherlistcomp_iter.listnull;
 
@@ -7004,7 +7005,7 @@ ExecEvalCypherListCompIterInitNext(ExprState *state, ExprEvalStep *op)
 									 array_iter->typbyval,
 									 array_iter->typalign);
 
-		*op->resnull = false;		/* an element is available */
+		*op->resnull = false;	/* an element is available */
 		*op->resvalue = *elemnull ? (Datum) 0 : elem_datum;
 	}
 }

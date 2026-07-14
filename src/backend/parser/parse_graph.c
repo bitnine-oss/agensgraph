@@ -89,7 +89,8 @@ typedef struct
 {
 	TargetEntry *te;
 	Node	   *prop_map;
-	Index		varno;			/* RTE of the (anonymous) element, for ginAvail */
+	Index		varno;			/* RTE of the (anonymous) element, for
+								 * ginAvail */
 } ElemQualOnly;
 
 typedef struct prop_constr_context
@@ -171,7 +172,7 @@ static List *makeComponents(List *pattern);
 static bool isPathConnectedTo(CypherPath *path, List *component);
 static bool arePathsConnected(CypherPath *path1, CypherPath *path2);
 static bool validate_pattern_labels(ParseState *pstate,
-									 CypherClause *clause);
+									CypherClause *clause);
 static bool labelCreatedByPrevClause(Node *prev, char *labname,
 									 char labkind);
 
@@ -379,6 +380,7 @@ static void mark_nodes_as_nonlocal(List *nis);
 static Node *makePathVertexExpr(ParseState *pstate, Node *obj, bool is_nsitem);
 static Node *makePathEdgeExpr(ParseState *pstate, CypherRel *crel, Node *obj,
 							  bool is_nsitem);
+
 /* getExprField() is declared extern in parse_graph.h (used by parse_cypher_expr.c) */
 static Node *getRowExprField(Expr *rowexpr, char *fname);
 static Node *qualAndExpr(Node *qual, Node *expr);
@@ -557,8 +559,8 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 
 		/*
 		 * Otherwise the query is read-only: keep the read for planning but
-		 * return nothing by applying LIMIT 0.  FINISH has no projection items,
-		 * so the target list is left empty.
+		 * return nothing by applying LIMIT 0.  FINISH has no projection
+		 * items, so the target list is left empty.
 		 */
 		if (!pstate->p_hasGraphwriteClause)
 			qry->limitCount = transformCypherLimit(pstate, makeIntConst(0, -1),
@@ -582,8 +584,8 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	else
 	{
 		/*
-		 * Build the projection and apply ORDER BY / DISTINCT / SKIP / LIMIT at
-		 * the same query level as the pattern, rather than wrapping the
+		 * Build the projection and apply ORDER BY / DISTINCT / SKIP / LIMIT
+		 * at the same query level as the pattern, rather than wrapping the
 		 * projection in a subquery.  This lets ORDER BY reference variables
 		 * that are not in the RETURN list (e.g. "RETURN p.name ORDER BY
 		 * p.age"); transformCypherOrderBy() adds such sort keys as resjunk
@@ -834,7 +836,7 @@ validate_pattern_labels(ParseState *pstate, CypherClause *clause)
 
 				if (!labelExist(pstate, labname, labloc, LABEL_KIND_VERTEX, false) &&
 					!labelCreatedByPrevClause(clause->prev, labname,
-											 LABEL_KIND_VERTEX))
+											  LABEL_KIND_VERTEX))
 					return false;
 			}
 			else
@@ -849,7 +851,7 @@ validate_pattern_labels(ParseState *pstate, CypherClause *clause)
 
 				if (!labelExist(pstate, typname, typloc, LABEL_KIND_EDGE, false) &&
 					!labelCreatedByPrevClause(clause->prev, typname,
-											 LABEL_KIND_EDGE))
+											  LABEL_KIND_EDGE))
 					return false;
 			}
 		}
@@ -1493,8 +1495,8 @@ transformCypherForClause(ParseState *pstate, CypherClause *clause)
 
 		/*
 		 * Per the GQL standard the offset is 0-based, but the ordinality
-		 * column produced by WITH ORDINALITY is 1-based.  Project
-		 * (ordinality - 1) under the offset variable's name.
+		 * column produced by WITH ORDINALITY is 1-based.  Project (ordinality
+		 * - 1) under the offset variable's name.
 		 */
 		zero_based = (Node *) makeSimpleA_Expr(AEXPR_OP, "-",
 											   makeColumnRef(list_make1(detail->offset)),
@@ -1705,18 +1707,18 @@ transformCypherCallClause(ParseState *pstate, CypherClause *clause)
 
 	/*
 	 * Analyze the subquery and join it in.  It is LATERAL exactly when it
-	 * imports outer variables; an uncorrelated CALL is an ordinary subquery the
-	 * planner may flatten.
+	 * imports outer variables; an uncorrelated CALL is an ordinary subquery
+	 * the planner may flatten.
 	 */
 	lateral = (detail->importlist != NIL);
 
 	/*
 	 * Restrict the outer variables visible inside the subquery to exactly the
-	 * imported ones: a correlated CALL (var, ...) sees only its imports, while
-	 * an uncorrelated CALL () / CALL sees no outer variables at all.  Without
-	 * this, a body referencing a non-imported outer variable would silently
-	 * capture it -- or, for an uncorrelated CALL, reach the planner as a
-	 * malformed outer reference inside a non-lateral subquery (a crash).
+	 * imported ones: a correlated CALL (var, ...) sees only its imports,
+	 * while an uncorrelated CALL () / CALL sees no outer variables at all.
+	 * Without this, a body referencing a non-imported outer variable would
+	 * silently capture it -- or, for an uncorrelated CALL, reach the planner
+	 * as a malformed outer reference inside a non-lateral subquery (a crash).
 	 */
 	saved_namespace = pstate->p_namespace;
 	if (lateral)
@@ -1743,7 +1745,10 @@ transformCypherCallClause(ParseState *pstate, CypherClause *clause)
 				 errmsg("a write clause is not allowed in a CALL subquery"),
 				 parser_errposition(pstate, detail->location)));
 
-	/* The subquery must RETURN something (a FINISH-terminated body yields none). */
+	/*
+	 * The subquery must RETURN something (a FINISH-terminated body yields
+	 * none).
+	 */
 	has_col = false;
 	foreach(lc, subqry->targetList)
 	{
@@ -1767,10 +1772,10 @@ transformCypherCallClause(ParseState *pstate, CypherClause *clause)
 	/*
 	 * A CALL subquery may not return a variable already bound in the outer
 	 * query: it would shadow the outer one for the clauses that follow the
-	 * CALL.  Reject the collision -- without this an uncorrelated body silently
-	 * shadows the outer variable, while a correlated one fails later with a
-	 * confusing type error.  To return an imported variable the body must alias
-	 * it to a fresh name.
+	 * CALL.  Reject the collision -- without this an uncorrelated body
+	 * silently shadows the outer variable, while a correlated one fails later
+	 * with a confusing type error.  To return an imported variable the body
+	 * must alias it to a fresh name.
 	 */
 	{
 		List	   *body_tlist = makeTargetListFromNSItem(pstate, nsitem);
@@ -2530,10 +2535,11 @@ recordGraphmetaEdge(Node *edge, bool edge_is_nsitem, CypherRel *crel,
 		A_Const    *lidx = (A_Const *) ((A_Indices *) crel->varlen)->lidx;
 
 		/*
-		 * Record the real lower hop bound (the grammar sets lidx to a constant,
-		 * defaulting to 1 when omitted).  The planner prunes a VLE's endpoints
-		 * only when this is >= 1; a *0.. VLE (which may match a zero-length path)
-		 * keeps the barrier behaviour via the -1 sentinel above if lidx is absent.
+		 * Record the real lower hop bound (the grammar sets lidx to a
+		 * constant, defaulting to 1 when omitted).  The planner prunes a
+		 * VLE's endpoints only when this is >= 1; a *0.. VLE (which may match
+		 * a zero-length path) keeps the barrier behaviour via the -1 sentinel
+		 * above if lidx is absent.
 		 */
 		if (lidx != NULL)
 			rte->graphPruneVleMin = intVal(&lidx->val);
@@ -2655,9 +2661,9 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 											 &eqoList, out, &edge_is_nsitem);
 
 					/*
-					 * graphmeta: record this (first) node; it is the source of
-					 * `crel`, whose edge topology is completed once its dest node
-					 * (next in the chain) is transformed.
+					 * graphmeta: record this (first) node; it is the source
+					 * of `crel`, whose edge topology is completed once its
+					 * dest node (next in the chain) is transformed.
 					 */
 					recordGraphmetaNode(vertex, vertex_is_nsitem,
 										gm_graphoid, gm_agvertex_relid);
@@ -2674,9 +2680,9 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 												&eqoList, &vertex_is_nsitem);
 
 					/*
-					 * graphmeta: record this node, then complete `prev_crel`'s
-					 * edge topology now that both its endpoints are known
-					 * (src = src_vertex, dst = this node).
+					 * graphmeta: record this node, then complete
+					 * `prev_crel`'s edge topology now that both its endpoints
+					 * are known (src = src_vertex, dst = this node).
 					 */
 					recordGraphmetaNode(vertex, vertex_is_nsitem,
 										gm_graphoid, gm_agvertex_relid);
@@ -2804,15 +2810,16 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 
 		/*
 		 * Apply this anonymous element's property constraint here, inside the
-		 * pattern query, referencing the element expression directly.  Deferring
-		 * it to the enclosing clause instead (via addElemQual() /
-		 * transformElemQuals()) would make the outer qual reference this resjunk
-		 * targetlist column across the subquery boundary.  PG18's planner cannot
-		 * handle that: a subquery rel does not expose its resjunk columns, so
-		 * pulling the subquery up or pushing the qual into it fails (either
-		 * "could not find replacement targetlist entry" or an attno-range
-		 * assertion).  The column is still added to the target list above so
-		 * that later clauses can reference the element as a future vertex.
+		 * pattern query, referencing the element expression directly.
+		 * Deferring it to the enclosing clause instead (via addElemQual() /
+		 * transformElemQuals()) would make the outer qual reference this
+		 * resjunk targetlist column across the subquery boundary.  PG18's
+		 * planner cannot handle that: a subquery rel does not expose its
+		 * resjunk columns, so pulling the subquery up or pushing the qual
+		 * into it fails (either "could not find replacement targetlist entry"
+		 * or an attno-range assertion).  The column is still added to the
+		 * target list above so that later clauses can reference the element
+		 * as a future vertex.
 		 */
 		if (eqo->prop_map != NULL)
 		{
@@ -5419,15 +5426,16 @@ transformSetProp(ParseState *pstate, CypherSetProp *sp, bool is_remove,
 										  CStringGetDatum("null"), false, false);
 
 			/*
-			 * Use jsonb_set_lax(map, path, val, true, 'delete_key') instead of
-			 * COALESCE(jsonb_set(map, path, val), jsonb_delete_path(map, path)).
-			 * It is equivalent -- it sets the key when `val` is a real value
-			 * (creating it if missing) and deletes the key when `val` is SQL
-			 * NULL, so a NULL right operand behaves like REMOVE -- but it
-			 * references `map` (prop_map) exactly once.  The COALESCE form
-			 * referenced prop_map twice, which combined with the per-SET-item
-			 * RowExpr rebuild made the target expression grow geometrically
-			 * with the number of properties set on the same element.
+			 * Use jsonb_set_lax(map, path, val, true, 'delete_key') instead
+			 * of COALESCE(jsonb_set(map, path, val), jsonb_delete_path(map,
+			 * path)). It is equivalent -- it sets the key when `val` is a
+			 * real value (creating it if missing) and deletes the key when
+			 * `val` is SQL NULL, so a NULL right operand behaves like REMOVE
+			 * -- but it references `map` (prop_map) exactly once.  The
+			 * COALESCE form referenced prop_map twice, which combined with
+			 * the per-SET-item RowExpr rebuild made the target expression
+			 * grow geometrically with the number of properties set on the
+			 * same element.
 			 */
 			create_if_missing = (Node *) makeBoolConst(true, false);
 			null_treatment = (Node *) makeConst(TEXTOID, -1,
@@ -5605,8 +5613,8 @@ substitute_set_props_as_targetentry(ParseState *pstate, Query *query,
 			 * the first item) or by the previous iteration, so extract the
 			 * carried-over fields directly with getRowExprField() rather than
 			 * wrapping the whole prev_expr in a FieldSelect per field -- the
-			 * latter grows the expression geometrically with the number of SET
-			 * items on the same element (see getRowExprField()).
+			 * latter grows the expression geometrically with the number of
+			 * SET items on the same element (see getRowExprField()).
 			 */
 			if (cur_ext_tle->type == VERTEXOID)
 			{
@@ -6180,14 +6188,15 @@ transformDeleteJoinNSItem(ParseState *pstate, CypherClause *clause)
 		if (einfo != NULL && einfo->labname != NULL)
 		{
 			/*
-			 * Mark the delete-join's ag_edge scan for graphmeta scan pruning: the
-			 * planner scans only the edge labels ag_graphmeta records as incident
-			 * (either orientation) to the deleted vertex's label, instead of the
-			 * whole ag_edge hierarchy.  The label set is resolved at plan time by
-			 * propagate_graphmeta_constraints and applied through the shared
-			 * graphmeta_pruned[] path (GRAPHPRUNE_ROLE_DELETE_EDGE), so it stays
-			 * fresh behind a cached plan and reuses that path's concurrent-drop
-			 * lock recheck and ag_graphmeta plan-cache dependency.
+			 * Mark the delete-join's ag_edge scan for graphmeta scan pruning:
+			 * the planner scans only the edge labels ag_graphmeta records as
+			 * incident (either orientation) to the deleted vertex's label,
+			 * instead of the whole ag_edge hierarchy.  The label set is
+			 * resolved at plan time by propagate_graphmeta_constraints and
+			 * applied through the shared graphmeta_pruned[] path
+			 * (GRAPHPRUNE_ROLE_DELETE_EDGE), so it stays fresh behind a
+			 * cached plan and reuses that path's concurrent-drop lock recheck
+			 * and ag_graphmeta plan-cache dependency.
 			 */
 			rte->graphPruneGraph = graph_oid;
 			rte->graphPruneRole = GRAPHPRUNE_ROLE_DELETE_EDGE;

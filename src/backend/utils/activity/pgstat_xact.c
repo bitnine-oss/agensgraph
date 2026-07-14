@@ -675,13 +675,13 @@ AtEOXact_AgStat(bool isCommit)
 		table_close(ag_graphmeta, RowExclusiveLock);
 
 		/*
-		 * If a connectivity triple appeared or disappeared (not merely a count
-		 * change), invalidate plans that pruned scans using ag_graphmeta.  A
-		 * plain data-row change to ag_graphmeta emits only catcache invals,
-		 * which PlanCacheRelCallback does not observe, so issue an explicit
-		 * relcache invalidation.  One per transaction suffices; count-only
-		 * updates are intentionally excluded so ordinary edge writes never
-		 * thrash cached read plans.
+		 * If a connectivity triple appeared or disappeared (not merely a
+		 * count change), invalidate plans that pruned scans using
+		 * ag_graphmeta.  A plain data-row change to ag_graphmeta emits only
+		 * catcache invals, which PlanCacheRelCallback does not observe, so
+		 * issue an explicit relcache invalidation.  One per transaction
+		 * suffices; count-only updates are intentionally excluded so ordinary
+		 * edge writes never thrash cached read plans.
 		 */
 		if (topology_changed)
 			CacheInvalidateRelcacheByRelid(GraphMetaRelationId);

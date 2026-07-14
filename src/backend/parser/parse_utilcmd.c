@@ -5376,11 +5376,12 @@ transformCreateConstraintStmt(ParseState *pstate,
 	propexpr = (Node *) cexpr;
 
 	constr = makeNode(Constraint);
+
 	/*
 	 * Graph ASSERT constraints are always enforced.  PG18 added the
 	 * is_enforced field (NOT ENFORCED constraints); CreateConstraintEntry()
-	 * asserts that a validated constraint is enforced, so this must be set for
-	 * both the CHECK and EXCLUSION variants below.
+	 * asserts that a validated constraint is enforced, so this must be set
+	 * for both the CHECK and EXCLUSION variants below.
 	 */
 	constr->is_enforced = true;
 	switch (constraintStmt->contype)

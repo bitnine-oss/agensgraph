@@ -2693,8 +2693,8 @@ redo_act:
 		(estate->es_processed)++;
 
 	/*
-	 * Maintain ag_graphmeta connectivity for direct (non-Cypher) updates to an
-	 * edge label.  Recording the new tuple's endpoints captures a rewiring
+	 * Maintain ag_graphmeta connectivity for direct (non-Cypher) updates to
+	 * an edge label.  Recording the new tuple's endpoints captures a rewiring
 	 * update's new connectivity (the soundness-relevant direction).
 	 */
 	GraphmetaRecordEdgeInsertFromSlot(resultRelationDesc, slot);

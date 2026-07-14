@@ -178,11 +178,11 @@ ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 			Datum		affected_datum;
 
 			/*
-			 * The element to update may have no value -- for instance one bound
-			 * by an OPTIONAL MATCH that did not match.  That shows up either as
-			 * a NULL column or as a node/relationship row whose id is NULL.
-			 * Either way there is nothing to update, and dereferencing it would
-			 * crash, so skip it.
+			 * The element to update may have no value -- for instance one
+			 * bound by an OPTIONAL MATCH that did not match.  That shows up
+			 * either as a NULL column or as a node/relationship row whose id
+			 * is NULL. Either way there is nothing to update, and
+			 * dereferencing it would crash, so skip it.
 			 */
 			if (slot->tts_isnull[i])
 				continue;

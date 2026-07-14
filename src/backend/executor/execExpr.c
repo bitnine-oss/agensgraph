@@ -421,7 +421,10 @@ ExecBuildProjectionInfo(List *targetList,
 	state->parent = parent;
 	state->ext_params = NULL;
 
-	/* AgensGraph: inherit list-comprehension iteration slot (see ExecInitExpr) */
+	/*
+	 * AgensGraph: inherit list-comprehension iteration slot (see
+	 * ExecInitExpr)
+	 */
 	if (parent != NULL)
 	{
 		state->innermost_cypherlistcomp_iterval =
@@ -2705,7 +2708,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				break;
 			}
 
-		/* Agensgraph cases below */
+			/* Agensgraph cases below */
 		case T_CypherTypeCast:
 			{
 				CypherTypeCast *tc = (CypherTypeCast *) node;
@@ -2958,11 +2961,10 @@ ExecInitSubPlanExpr(SubPlan *subplan,
 	}
 
 	/*
-	 * AgensGraph: if we are compiling a cypher list comprehension's
-	 * filter or result expression, the SubPlan's lefthand/test
-	 * expression may reference the iteration variable.  Hand the
-	 * current iteration slot to the parent plan node so the
-	 * ExprStates ExecInitSubPlan builds inherit it.
+	 * AgensGraph: if we are compiling a cypher list comprehension's filter or
+	 * result expression, the SubPlan's lefthand/test expression may reference
+	 * the iteration variable.  Hand the current iteration slot to the parent
+	 * plan node so the ExprStates ExecInitSubPlan builds inherit it.
 	 */
 	save_iterval = state->parent->innermost_cypherlistcomp_iterval;
 	save_iternull = state->parent->innermost_cypherlistcomp_iternull;
@@ -5505,10 +5507,11 @@ initExprSaveIter(Expr *node, ExprEvalStep *next_step,
 	save_iterval = state->innermost_cypherlistcomp_iterval;
 	save_iternull = state->innermost_cypherlistcomp_iternull;
 	state->innermost_cypherlistcomp_iterval = next_step->resvalue;
+
 	/*
 	 * The iteration variable's null-ness is the element's own null-ness
-	 * (elemnull), not the loop-exhausted signal (resnull); a null element must
-	 * bind the variable to SQL NULL without ending the loop.
+	 * (elemnull), not the loop-exhausted signal (resnull); a null element
+	 * must bind the variable to SQL NULL without ending the loop.
 	 */
 	state->innermost_cypherlistcomp_iternull =
 		next_step->d.cypherlistcomp_iter.listnull;

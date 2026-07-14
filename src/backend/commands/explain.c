@@ -1907,9 +1907,10 @@ ExplainNode(PlanState *planstate, List *ancestors,
 
 				/*
 				 * Show the edge label the VLE traverses each hop -- an
-				 * unlabelled VLE walks the whole ag_edge hierarchy, a labelled
-				 * one walks that label (its subtree, unless ONLY) -- so the plan
-				 * reveals what the node actually scans rather than just "VLE".
+				 * unlabelled VLE walks the whole ag_edge hierarchy, a
+				 * labelled one walks that label (its subtree, unless ONLY) --
+				 * so the plan reveals what the node actually scans rather
+				 * than just "VLE".
 				 */
 				typname = (cypher_rel->types == NIL) ? AG_EDGE
 					: getCypherName(linitial(cypher_rel->types));
@@ -2111,11 +2112,11 @@ ExplainNode(PlanState *planstate, List *ancestors,
 
 				/*
 				 * List the physical edge tables the traversal walks each hop
-				 * (the label subtree, unless ONLY).  This is the honest analogue
-				 * of a child Append -- the per-hop scan is internal to the node
-				 * and never a real subplan -- so render one label per line in
-				 * text (a comma list gets unreadable for large hierarchies), and
-				 * a proper array in the structured formats.
+				 * (the label subtree, unless ONLY).  This is the honest
+				 * analogue of a child Append -- the per-hop scan is internal
+				 * to the node and never a real subplan -- so render one label
+				 * per line in text (a comma list gets unreadable for large
+				 * hierarchies), and a proper array in the structured formats.
 				 */
 				if (OidIsValid(labrelid))
 				{
@@ -5256,4 +5257,3 @@ show_hash2side_info(Hash2SideState *hashstate, ExplainState *es)
 		}
 	}
 }
-

@@ -233,7 +233,11 @@ base_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner)
 			break;
 
 		case WITH:
-			/* Replace WITH by WITH_LA if followed by TIME, ORDINALITY or OFFSET */
+
+			/*
+			 * Replace WITH by WITH_LA if followed by TIME, ORDINALITY or
+			 * OFFSET
+			 */
 			switch (next_token)
 			{
 				case TIME:
@@ -257,13 +261,14 @@ base_yylex(YYSTYPE *lvalp, YYLTYPE *llocp, core_yyscan_t yyscanner)
 		case CALL:
 
 			/*
-			 * Replace CALL by CALL_LA when it is immediately followed by '(' or
-			 * '{', i.e. when it begins a cypher CALL clause ("CALL (vars) { ...
-			 * }" or "CALL { ... }").  Using a distinct token for the clause lets
-			 * it appear inside read subqueries -- where a bare CALL could be an
-			 * identifier and "CALL(...)" a function call -- without a grammar
-			 * ambiguity, while leaving "call" usable as an identifier and the
-			 * SQL "CALL proc()" statement (CALL followed by a name) untouched.
+			 * Replace CALL by CALL_LA when it is immediately followed by '('
+			 * or '{', i.e. when it begins a cypher CALL clause ("CALL (vars)
+			 * { ... }" or "CALL { ... }").  Using a distinct token for the
+			 * clause lets it appear inside read subqueries -- where a bare
+			 * CALL could be an identifier and "CALL(...)" a function call --
+			 * without a grammar ambiguity, while leaving "call" usable as an
+			 * identifier and the SQL "CALL proc()" statement (CALL followed
+			 * by a name) untouched.
 			 */
 			switch (next_token)
 			{

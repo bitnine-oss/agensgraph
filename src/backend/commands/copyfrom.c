@@ -1369,17 +1369,19 @@ CopyFrom(CopyFromState cstate)
 					ExecPartitionCheck(resultRelInfo, myslot, estate, true);
 
 				/*
-				 * Maintain ag_graphmeta connectivity for edges loaded via COPY
-				 * into an edge label.  Record from the final slot here -- after
-				 * any BEFORE-INSERT trigger has run and can no longer rewrite the
-				 * edge's start/end -- so the recorded endpoints match the row
-				 * actually stored (recording before the trigger, as an earlier
-				 * placement did, would miss trigger-rewritten endpoints and could
-				 * under-record connectivity, dropping rows from a pruned MATCH).
-				 * No-op for ordinary tables / when gathering is off.  INSTEAD OF
-				 * triggers take the branch above and never reach here, so an edge
-				 * they suppress is correctly not recorded; both the buffered
-				 * (multi-insert) and direct insert paths pass through here.
+				 * Maintain ag_graphmeta connectivity for edges loaded via
+				 * COPY into an edge label.  Record from the final slot here
+				 * -- after any BEFORE-INSERT trigger has run and can no
+				 * longer rewrite the edge's start/end -- so the recorded
+				 * endpoints match the row actually stored (recording before
+				 * the trigger, as an earlier placement did, would miss
+				 * trigger-rewritten endpoints and could under-record
+				 * connectivity, dropping rows from a pruned MATCH). No-op for
+				 * ordinary tables / when gathering is off.  INSTEAD OF
+				 * triggers take the branch above and never reach here, so an
+				 * edge they suppress is correctly not recorded; both the
+				 * buffered (multi-insert) and direct insert paths pass
+				 * through here.
 				 */
 				GraphmetaRecordEdgeInsertFromSlot(resultRelInfo->ri_RelationDesc,
 												  myslot);

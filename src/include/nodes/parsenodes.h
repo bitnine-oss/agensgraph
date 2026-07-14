@@ -1322,18 +1322,19 @@ typedef struct RangeTblEntry
 	List	   *securityQuals pg_node_attr(query_jumble_ignore);
 
 	/*
-	 * Used in agensgraph graphmeta scan pruning.  The parser records each MATCH
-	 * pattern element's connectivity-independent structure here -- its role, its
-	 * own label id, and (for edges) the adjacent node RTEs plus direction.  A
-	 * planner pre-pass (propagate_graphmeta_constraints) reconstructs the pattern
-	 * graph from these, propagates candidate label-set constraints through
-	 * ag_graphmeta, and prunes which label tables each element must scan.  None of
-	 * this is connectivity-derived, so it never goes stale behind a cached plan.
-	 * graphPruneGraph == InvalidOid means this RTE is not a pattern element.
+	 * Used in agensgraph graphmeta scan pruning.  The parser records each
+	 * MATCH pattern element's connectivity-independent structure here -- its
+	 * role, its own label id, and (for edges) the adjacent node RTEs plus
+	 * direction.  A planner pre-pass (propagate_graphmeta_constraints)
+	 * reconstructs the pattern graph from these, propagates candidate
+	 * label-set constraints through ag_graphmeta, and prunes which label
+	 * tables each element must scan.  None of this is connectivity-derived,
+	 * so it never goes stale behind a cached plan. graphPruneGraph ==
+	 * InvalidOid means this RTE is not a pattern element.
 	 *
 	 * Edges store their two endpoints by element id: the "source" node is
-	 * written before the edge token, the "dest" node after.  Labels are 0 when
-	 * absent (unlabelled).  graphPruneRole is one of GRAPHPRUNE_ROLE_*.
+	 * written before the edge token, the "dest" node after.  Labels are 0
+	 * when absent (unlabelled).  graphPruneRole is one of GRAPHPRUNE_ROLE_*.
 	 */
 	/* graph oid this element belongs to; InvalidOid => not a pattern element */
 	Oid			graphPruneGraph pg_node_attr(query_jumble_ignore);
@@ -1341,11 +1342,12 @@ typedef struct RangeTblEntry
 	char		graphPruneRole pg_node_attr(query_jumble_ignore);
 	/* this element's own label id, or 0 if unlabelled */
 	int			graphPruneLabid pg_node_attr(query_jumble_ignore);
+
 	/*
 	 * Stable per-element id (the element's rangetable index when the parser
 	 * recorded it).  The planner's rangetable indices can differ from these
-	 * (later clause-wrapping shifts them), so edges identify their endpoints by
-	 * elem id and the planner maps elem id -> current rtindex.
+	 * (later clause-wrapping shifts them), so edges identify their endpoints
+	 * by elem id and the planner maps elem id -> current rtindex.
 	 */
 	int			graphPruneElemId pg_node_attr(query_jumble_ignore);
 	/* edges only: elem id of the source (written-before) node */
@@ -1359,12 +1361,13 @@ typedef struct RangeTblEntry
 } RangeTblEntry;
 
 /* graphPruneRole values: the kind of MATCH pattern element an RTE represents. */
-#define GRAPHPRUNE_ROLE_NODE		'N'		/* node (ag_vertex / vlabel) */
-#define GRAPHPRUNE_ROLE_DIR_EDGE	'E'		/* directed edge (ag_edge / elabel) */
-#define GRAPHPRUNE_ROLE_UNDIR_EDGE	'U'		/* undirected edge (UNION subquery) */
-#define GRAPHPRUNE_ROLE_VLE			'V'		/* variable-length edge (subquery) */
-#define GRAPHPRUNE_ROLE_DELETE_EDGE	'D'		/* delete-join ag_edge scan: prune to
-											 * edge labels incident to a vertex label */
+#define GRAPHPRUNE_ROLE_NODE		'N' /* node (ag_vertex / vlabel) */
+#define GRAPHPRUNE_ROLE_DIR_EDGE	'E' /* directed edge (ag_edge / elabel) */
+#define GRAPHPRUNE_ROLE_UNDIR_EDGE	'U' /* undirected edge (UNION subquery) */
+#define GRAPHPRUNE_ROLE_VLE			'V' /* variable-length edge (subquery) */
+#define GRAPHPRUNE_ROLE_DELETE_EDGE	'D' /* delete-join ag_edge scan: prune to
+										 * edge labels incident to a vertex
+										 * label */
 
 /*
  * RTEPermissionInfo
@@ -4691,7 +4694,8 @@ typedef struct CypherForClause
 typedef struct CypherCountClause
 {
 	NodeTag		type;
-	Node	   *subquery;		/* read-only sub-statement whose rows are counted */
+	Node	   *subquery;		/* read-only sub-statement whose rows are
+								 * counted */
 } CypherCountClause;
 
 /*
@@ -4703,9 +4707,9 @@ typedef struct CypherCallClause
 {
 	NodeTag		type;
 	Node	   *subquery;		/* the CALL body (a CypherStmt) */
-	List	   *importlist;		/* imported variable names (String); NIL = none.
-								 * A single A_Star element is the CALL (*) sentinel:
-								 * import every outer variable. */
+	List	   *importlist;		/* imported variable names (String); NIL =
+								 * none. A single A_Star element is the CALL
+								 * (*) sentinel: import every outer variable. */
 	int			location;
 } CypherCallClause;
 

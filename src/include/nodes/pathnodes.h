@@ -276,9 +276,9 @@ struct PlannerInfo
 	 * constraint-propagation pre-pass (propagate_graphmeta_constraints), same
 	 * length as simple_rel_array.  A NULL slot means "no pruning" (full
 	 * inheritance scan); a non-NULL GraphmetaPrune gives the candidate child
-	 * relids (or empty => the pattern is provably empty).  Lazily allocated by
-	 * the pre-pass only when the query has a graphmeta-prunable pattern; not
-	 * printed (planner-internal scratch).
+	 * relids (or empty => the pattern is provably empty).  Lazily allocated
+	 * by the pre-pass only when the query has a graphmeta-prunable pattern;
+	 * not printed (planner-internal scratch).
 	 */
 	struct GraphmetaPrune **graphmeta_pruned pg_node_attr(read_write_ignore);
 

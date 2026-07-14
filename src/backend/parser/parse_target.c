@@ -1806,10 +1806,11 @@ FigureColnameInternal(Node *node, char **name)
 
 				/*
 				 * The cypher_all/any/none/single reducers are the internal
-				 * implementation of the Cypher ALL()/ANY()/NONE()/SINGLE() list
-				 * predicates; the user never writes those names, so leave the
-				 * column unnamed (?column?) rather than expose them, matching
-				 * the anonymous label these predicates carried before.
+				 * implementation of the Cypher ALL()/ANY()/NONE()/SINGLE()
+				 * list predicates; the user never writes those names, so
+				 * leave the column unnamed (?column?) rather than expose
+				 * them, matching the anonymous label these predicates carried
+				 * before.
 				 */
 				if (strcmp(fname, "cypher_all") == 0 ||
 					strcmp(fname, "cypher_any") == 0 ||

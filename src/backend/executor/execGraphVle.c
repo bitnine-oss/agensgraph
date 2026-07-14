@@ -75,8 +75,10 @@ static void free_scan_desc(VLEDepthCtx *vle_depth_ctx);
 /* expand one hop on rel_index, keyed on `key`, using the start or end index */
 static void open_depth_scan(GraphVLEState *vle_state, VLEDepthCtx *ctx,
 							bool by_start, Graphid key);
+
 /* end whichever scan (index or heap) is open on ctx */
 static void end_depth_scan(VLEDepthCtx *ctx);
+
 /* fetch the next edge from ctx's open scan into slot */
 static inline bool
 depth_getnext(VLEDepthCtx *ctx, TupleTableSlot *slot)
@@ -235,8 +237,8 @@ ExecInitGraphVLE(GraphVLE *vleplan, EState *estate, int eflags)
 				 * not-yet-ready index (DISABLE INDEX, or an in-progress /
 				 * failed CREATE INDEX CONCURRENTLY), whose contents are stale
 				 * or incomplete, and skip a partial index, which omits the
-				 * edges excluded by its predicate.  Leaving the slot NULL makes
-				 * the hop fall back to the always-correct heap scan.
+				 * edges excluded by its predicate.  Leaving the slot NULL
+				 * makes the hop fall back to the always-correct heap scan.
 				 */
 				if (!idx->rd_index->indisvalid || !idx->rd_index->indisready)
 					continue;
