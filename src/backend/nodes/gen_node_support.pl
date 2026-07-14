@@ -108,8 +108,13 @@ my @nodetag_only_files = qw(
 # In HEAD, these variables should be left undef, since we don't promise
 # ABI stability during development.
 
-my $last_nodetag = undef;
-my $last_nodetag_no = undef;
+# Same cross-check as upstream, but pinned to AgensGraph's node count: our graph
+# node types are generated before WindowObjectData, so it keeps the last slot but
+# its number shifts from upstream's 479 to 537.  Take these from the last line of
+# the generated nodetags.h; a stable upstream branch pins its own value, so after
+# merging one, re-sync $last_nodetag_no to AgensGraph's count here.
+my $last_nodetag = 'WindowObjectData';
+my $last_nodetag_no = 537;
 
 # output file names
 my @output_files;

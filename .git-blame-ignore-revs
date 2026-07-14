@@ -20,6 +20,15 @@
 14b7befef6b574376e59454f5e33a2ce29e4d07a # 2025-06-23 12:03:10 +0500
 # Run pgindent prior to branching v2.16
 
+2795f5a5428fd292996fd155f16a57b0db3df8f4 # 2025-10-21 09:56:26 -0500
+# Re-pgindent brin.c.
+
+17a5ca58eb119a33e81e57b72618236538932167 # 2025-09-13 14:50:02 -0500
+# Re-pgindent nbtpreprocesskeys.c after commit 796962922e.
+
+07448b3969d55a2081cdafafc23f68df3392f220 # 2025-07-01 15:24:19 +0200
+# Fix indentation in pg_numa code
+
 b27644bade0348d0dafd3036c47880a349fe9332 # 2025-06-15 13:04:24 -0400
 # Sync typedefs.list with the buildfarm.
 

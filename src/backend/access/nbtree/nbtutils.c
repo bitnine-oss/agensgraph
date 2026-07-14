@@ -44,7 +44,6 @@ static bool _bt_array_decrement(Relation rel, ScanKey skey, BTArrayKeyInfo *arra
 static bool _bt_array_increment(Relation rel, ScanKey skey, BTArrayKeyInfo *array);
 static bool _bt_advance_array_keys_increment(IndexScanDesc scan, ScanDirection dir,
 											 bool *skip_array_set);
-static void _bt_rewind_nonrequired_arrays(IndexScanDesc scan, ScanDirection dir);
 static bool _bt_tuple_before_array_skeys(IndexScanDesc scan, ScanDirection dir,
 										 IndexTuple tuple, TupleDesc tupdesc, int tupnatts,
 										 bool readpagetup, int sktrig, bool *scanBehind);
@@ -52,7 +51,6 @@ static bool _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 								   IndexTuple tuple, int tupnatts, TupleDesc tupdesc,
 								   int sktrig, bool sktrig_required);
 #ifdef USE_ASSERT_CHECKING
-static bool _bt_verify_arrays_bt_first(IndexScanDesc scan, ScanDirection dir);
 static bool _bt_verify_keys_with_arraykeys(IndexScanDesc scan);
 #endif
 static bool _bt_oppodir_checkkeys(IndexScanDesc scan, ScanDirection dir,
@@ -61,7 +59,7 @@ static bool _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
 							  IndexTuple tuple, int tupnatts, TupleDesc tupdesc,
 							  bool advancenonrequired, bool forcenonrequired,
 							  bool *continuescan, int *ikey);
-static bool _bt_check_rowcompare(ScanKey skey,
+static bool _bt_check_rowcompare(ScanKey header,
 								 IndexTuple tuple, int tupnatts, TupleDesc tupdesc,
 								 ScanDirection dir, bool forcenonrequired, bool *continuescan);
 static void _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
@@ -1035,73 +1033,6 @@ _bt_advance_array_keys_increment(IndexScanDesc scan, ScanDirection dir,
 }
 
 /*
- * _bt_rewind_nonrequired_arrays() -- Rewind SAOP arrays not marked required
- *
- * Called when _bt_advance_array_keys decides to start a new primitive index
- * scan on the basis of the current scan position being before the position
- * that _bt_first is capable of repositioning the scan to by applying an
- * inequality operator required in the opposite-to-scan direction only.
- *
- * Although equality strategy scan keys (for both arrays and non-arrays alike)
- * are either marked required in both directions or in neither direction,
- * there is a sense in which non-required arrays behave like required arrays.
- * With a qual such as "WHERE a IN (100, 200) AND b >= 3 AND c IN (5, 6, 7)",
- * the scan key on "c" is non-required, but nevertheless enables positioning
- * the scan at the first tuple >= "(100, 3, 5)" on the leaf level during the
- * first descent of the tree by _bt_first.  Later on, there could also be a
- * second descent, that places the scan right before tuples >= "(200, 3, 5)".
- * _bt_first must never be allowed to build an insertion scan key whose "c"
- * entry is set to a value other than 5, the "c" array's first element/value.
- * (Actually, it's the first in the current scan direction.  This example uses
- * a forward scan.)
- *
- * Calling here resets the array scan key elements for the scan's non-required
- * arrays.  This is strictly necessary for correctness in a subset of cases
- * involving "required in opposite direction"-triggered primitive index scans.
- * Not all callers are at risk of _bt_first using a non-required array like
- * this, but advancement always resets the arrays when another primitive scan
- * is scheduled, just to keep things simple.  Array advancement even makes
- * sure to reset non-required arrays during scans that have no inequalities.
- * (Advancement still won't call here when there are no inequalities, though
- * that's just because it's all handled indirectly instead.)
- *
- * Note: _bt_verify_arrays_bt_first is called by an assertion to enforce that
- * everybody got this right.
- *
- * Note: In practice almost all SAOP arrays are marked required during
- * preprocessing (if necessary by generating skip arrays).  It is hardly ever
- * truly necessary to call here, but consistently doing so is simpler.
- */
-static void
-_bt_rewind_nonrequired_arrays(IndexScanDesc scan, ScanDirection dir)
-{
-	Relation	rel = scan->indexRelation;
-	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-	int			arrayidx = 0;
-
-	for (int ikey = 0; ikey < so->numberOfKeys; ikey++)
-	{
-		ScanKey		cur = so->keyData + ikey;
-		BTArrayKeyInfo *array = NULL;
-
-		if (!(cur->sk_flags & SK_SEARCHARRAY) ||
-			cur->sk_strategy != BTEqualStrategyNumber)
-			continue;
-
-		array = &so->arrayKeys[arrayidx++];
-		Assert(array->scan_key == ikey);
-
-		if ((cur->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD)))
-			continue;
-
-		Assert(array->num_elems != -1); /* No non-required skip arrays */
-
-		_bt_array_set_low_or_high(rel, cur, array,
-								  ScanDirectionIsForward(dir));
-	}
-}
-
-/*
  * _bt_tuple_before_array_skeys() -- too early to advance required arrays?
  *
  * We always compare the tuple using the current array keys (which we assume
@@ -1380,8 +1311,6 @@ _bt_start_prim_scan(IndexScanDesc scan, ScanDirection dir)
 	 */
 	if (so->needPrimScan)
 	{
-		Assert(_bt_verify_arrays_bt_first(scan, dir));
-
 		/*
 		 * Flag was set -- must call _bt_first again, which will reset the
 		 * scan's needPrimScan flag
@@ -1516,7 +1445,6 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 		BTArrayKeyInfo *array = NULL;
 		Datum		tupdatum;
 		bool		required = false,
-					required_opposite_direction_only = false,
 					tupnull;
 		int32		result;
 		int			set_elem = 0;
@@ -1540,8 +1468,7 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 				  (cur->sk_flags & (SK_BT_REQBKWD))) ||
 				 (ScanDirectionIsBackward(dir) &&
 				  (cur->sk_flags & (SK_BT_REQFWD)))))
-				has_required_opposite_direction_only =
-					required_opposite_direction_only = true;
+				has_required_opposite_direction_only = true;
 		}
 
 		/* Optimization: skip over known-satisfied scan keys */
@@ -2007,14 +1934,7 @@ _bt_advance_array_keys(IndexScanDesc scan, BTReadPageState *pstate,
 	 */
 	else if (has_required_opposite_direction_only && pstate->finaltup &&
 			 unlikely(!_bt_oppodir_checkkeys(scan, dir, pstate->finaltup)))
-	{
-		/*
-		 * Make sure that any SAOP arrays that were not marked required by
-		 * preprocessing are reset to their first element for this direction
-		 */
-		_bt_rewind_nonrequired_arrays(scan, dir);
 		goto new_prim_scan;
-	}
 
 continue_scan:
 
@@ -2044,8 +1964,6 @@ continue_scan:
 		 * marked required in the opposite scan direction" for why).
 		 */
 		so->oppositeDirCheck = has_required_opposite_direction_only;
-
-		_bt_rewind_nonrequired_arrays(scan, dir);
 
 		/*
 		 * skip by setting "look ahead" mechanism's offnum for forwards scans
@@ -2143,48 +2061,6 @@ end_toplevel_scan:
 
 #ifdef USE_ASSERT_CHECKING
 /*
- * Verify that the scan's qual state matches what we expect at the point that
- * _bt_start_prim_scan is about to start a just-scheduled new primitive scan.
- *
- * We enforce a rule against non-required array scan keys: they must start out
- * with whatever element is the first for the scan's current scan direction.
- * See _bt_rewind_nonrequired_arrays comments for an explanation.
- */
-static bool
-_bt_verify_arrays_bt_first(IndexScanDesc scan, ScanDirection dir)
-{
-	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-	int			arrayidx = 0;
-
-	for (int ikey = 0; ikey < so->numberOfKeys; ikey++)
-	{
-		ScanKey		cur = so->keyData + ikey;
-		BTArrayKeyInfo *array = NULL;
-		int			first_elem_dir;
-
-		if (!(cur->sk_flags & SK_SEARCHARRAY) ||
-			cur->sk_strategy != BTEqualStrategyNumber)
-			continue;
-
-		array = &so->arrayKeys[arrayidx++];
-
-		if (((cur->sk_flags & SK_BT_REQFWD) && ScanDirectionIsForward(dir)) ||
-			((cur->sk_flags & SK_BT_REQBKWD) && ScanDirectionIsBackward(dir)))
-			continue;
-
-		if (ScanDirectionIsForward(dir))
-			first_elem_dir = 0;
-		else
-			first_elem_dir = array->num_elems - 1;
-
-		if (array->cur_elem != first_elem_dir)
-			return false;
-	}
-
-	return _bt_verify_keys_with_arraykeys(scan);
-}
-
-/*
  * Verify that the scan's "so->keyData[]" scan keys are in agreement with
  * its array key state
  */
@@ -2194,6 +2070,7 @@ _bt_verify_keys_with_arraykeys(IndexScanDesc scan)
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	int			last_sk_attno = InvalidAttrNumber,
 				arrayidx = 0;
+	bool		nonrequiredseen = false;
 
 	if (!so->qual_ok)
 		return false;
@@ -2217,8 +2094,16 @@ _bt_verify_keys_with_arraykeys(IndexScanDesc scan)
 		if (array->num_elems != -1 &&
 			cur->sk_argument != array->elem_values[array->cur_elem])
 			return false;
-		if (last_sk_attno > cur->sk_attno)
-			return false;
+		if (cur->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD))
+		{
+			if (last_sk_attno > cur->sk_attno)
+				return false;
+			if (nonrequiredseen)
+				return false;
+		}
+		else
+			nonrequiredseen = true;
+
 		last_sk_attno = cur->sk_attno;
 	}
 
@@ -2551,37 +2436,12 @@ _bt_set_startikey(IndexScanDesc scan, BTReadPageState *pstate)
 		if (!(key->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD)))
 		{
 			/* Scan key isn't marked required (corner case) */
-			Assert(!(key->sk_flags & SK_ROW_HEADER));
 			break;				/* unsafe */
 		}
 		if (key->sk_flags & SK_ROW_HEADER)
 		{
-			/*
-			 * RowCompare inequality.
-			 *
-			 * Only the first subkey from a RowCompare can ever be marked
-			 * required (that happens when the row header is marked required).
-			 * There is no simple, general way for us to transitively deduce
-			 * whether or not every tuple on the page satisfies a RowCompare
-			 * key based only on firsttup and lasttup -- so we just give up.
-			 */
-			if (!start_past_saop_eq && !so->skipScan)
-				break;			/* unsafe to go further */
-
-			/*
-			 * We have to be even more careful with RowCompares that come
-			 * after an array: we assume it's unsafe to even bypass the array.
-			 * Calling _bt_start_array_keys to recover the scan's arrays
-			 * following use of forcenonrequired mode isn't compatible with
-			 * _bt_check_rowcompare's continuescan=false behavior with NULL
-			 * row compare members.  _bt_advance_array_keys must not make a
-			 * decision on the basis of a key not being satisfied in the
-			 * opposite-to-scan direction until the scan reaches a leaf page
-			 * where the same key begins to be satisfied in scan direction.
-			 * The _bt_first !used_all_subkeys behavior makes this limitation
-			 * hard to work around some other way.
-			 */
-			return;				/* completely unsafe to set pstate.startikey */
+			/* RowCompare inequalities currently aren't supported */
+			break;				/* "unsafe" */
 		}
 		if (key->sk_strategy != BTEqualStrategyNumber)
 		{
@@ -3017,11 +2877,6 @@ _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
 			 * Tuple fails this qual.  If it's a required qual for the current
 			 * scan direction, then we can conclude no further tuples will
 			 * pass, either.
-			 *
-			 * Note: because we stop the scan as soon as any required equality
-			 * qual fails, it is critical that equality quals be used for the
-			 * initial positioning in _bt_first() when they are available. See
-			 * comments in _bt_first().
 			 */
 			if (requiredSameDir)
 				*continuescan = false;
@@ -3056,19 +2911,64 @@ _bt_check_compare(IndexScanDesc scan, ScanDirection dir,
  * it's not possible for any future tuples in the current scan direction
  * to pass the qual.
  *
- * This is a subroutine for _bt_checkkeys/_bt_check_compare.
+ * This is a subroutine for _bt_checkkeys/_bt_check_compare.  Caller passes us
+ * a row compare header key taken from so->keyData[].
+ *
+ * Row value comparisons can be described in terms of logical expansions that
+ * use only scalar operators.  Consider the following example row comparison:
+ *
+ * "(a, b, c) > (7, 'bar', 62)"
+ *
+ * This can be evaluated as:
+ *
+ * "(a = 7 AND b = 'bar' AND c > 62) OR (a = 7 AND b > 'bar') OR (a > 7)".
+ *
+ * Notice that this condition is satisfied by _all_ rows that satisfy "a > 7",
+ * and by a subset of all rows that satisfy "a >= 7" (possibly all such rows).
+ * It _can't_ be satisfied by other rows (where "a < 7" or where "a IS NULL").
+ * A row comparison header key can therefore often be treated as if it was a
+ * simple scalar inequality on the row compare's most significant column.
+ * (For example, _bt_advance_array_keys and most preprocessing routines treat
+ * row compares like any other same-strategy inequality on the same column.)
+ *
+ * Things get more complicated for our row compare given a row where "a = 7".
+ * Note that a row compare isn't necessarily satisfied by _every_ tuple that
+ * appears between the first and last satisfied tuple returned by the scan,
+ * due to the way that its lower-order subkeys are only conditionally applied.
+ * A forwards scan that uses our example qual might initially return a tuple
+ * "(a, b, c) = (7, 'zebra', 54)".  But it won't subsequently return a tuple
+ * "(a, b, c) = (7, NULL, 1)" located to the right of the first matching tuple
+ * (assume that "b" was declared NULLS LAST here).  The scan will only return
+ * additional matches upon reaching tuples where "a > 7".  If you rereview our
+ * example row comparison's logical expansion, you'll understand why this is.
+ * (Here we assume that all subkeys could be marked required, guaranteeing
+ * that row comparison order matches index order.  This is the common case.)
+ *
+ * Note that a row comparison header key behaves _exactly_ the same as a
+ * similar scalar inequality key on the row's most significant column once the
+ * scan reaches the point where it no longer needs to evaluate lower-order
+ * subkeys (or before the point where it starts needing to evaluate them).
+ * For example, once a forwards scan that uses our example qual reaches the
+ * first tuple "a > 7", we'll behave in just the same way as our caller would
+ * behave with a similar scalar inequality "a > 7" for the remainder of the
+ * scan (assuming that the scan never changes direction/never goes backwards).
+ * We'll even set continuescan=false according to exactly the same rules as
+ * the ones our caller applies with simple scalar inequalities, including the
+ * rules it applies when NULL tuple values don't satisfy an inequality qual.
  */
 static bool
-_bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
+_bt_check_rowcompare(ScanKey header, IndexTuple tuple, int tupnatts,
 					 TupleDesc tupdesc, ScanDirection dir,
 					 bool forcenonrequired, bool *continuescan)
 {
-	ScanKey		subkey = (ScanKey) DatumGetPointer(skey->sk_argument);
+	ScanKey		subkey = (ScanKey) DatumGetPointer(header->sk_argument);
 	int32		cmpresult = 0;
 	bool		result;
 
 	/* First subkey should be same as the header says */
-	Assert(subkey->sk_attno == skey->sk_attno);
+	Assert(header->sk_flags & SK_ROW_HEADER);
+	Assert(subkey->sk_attno == header->sk_attno);
+	Assert(subkey->sk_strategy == header->sk_strategy);
 
 	/* Loop over columns of the row condition */
 	for (;;)
@@ -3078,76 +2978,7 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
 
 		Assert(subkey->sk_flags & SK_ROW_MEMBER);
 
-		if (subkey->sk_attno > tupnatts)
-		{
-			/*
-			 * This attribute is truncated (must be high key).  The value for
-			 * this attribute in the first non-pivot tuple on the page to the
-			 * right could be any possible value.  Assume that truncated
-			 * attribute passes the qual.
-			 */
-			Assert(BTreeTupleIsPivot(tuple));
-			cmpresult = 0;
-			if (subkey->sk_flags & SK_ROW_END)
-				break;
-			subkey++;
-			continue;
-		}
-
-		datum = index_getattr(tuple,
-							  subkey->sk_attno,
-							  tupdesc,
-							  &isNull);
-
-		if (isNull)
-		{
-			if (forcenonrequired)
-			{
-				/* treating scan's keys as non-required */
-			}
-			else if (subkey->sk_flags & SK_BT_NULLS_FIRST)
-			{
-				/*
-				 * Since NULLs are sorted before non-NULLs, we know we have
-				 * reached the lower limit of the range of values for this
-				 * index attr.  On a backward scan, we can stop if this qual
-				 * is one of the "must match" subset.  We can stop regardless
-				 * of whether the qual is > or <, so long as it's required,
-				 * because it's not possible for any future tuples to pass. On
-				 * a forward scan, however, we must keep going, because we may
-				 * have initially positioned to the start of the index.
-				 * (_bt_advance_array_keys also relies on this behavior during
-				 * forward scans.)
-				 */
-				if ((subkey->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD)) &&
-					ScanDirectionIsBackward(dir))
-					*continuescan = false;
-			}
-			else
-			{
-				/*
-				 * Since NULLs are sorted after non-NULLs, we know we have
-				 * reached the upper limit of the range of values for this
-				 * index attr.  On a forward scan, we can stop if this qual is
-				 * one of the "must match" subset.  We can stop regardless of
-				 * whether the qual is > or <, so long as it's required,
-				 * because it's not possible for any future tuples to pass. On
-				 * a backward scan, however, we must keep going, because we
-				 * may have initially positioned to the end of the index.
-				 * (_bt_advance_array_keys also relies on this behavior during
-				 * backward scans.)
-				 */
-				if ((subkey->sk_flags & (SK_BT_REQFWD | SK_BT_REQBKWD)) &&
-					ScanDirectionIsForward(dir))
-					*continuescan = false;
-			}
-
-			/*
-			 * In any case, this indextuple doesn't match the qual.
-			 */
-			return false;
-		}
-
+		/* When a NULL row member is compared, the row never matches */
 		if (subkey->sk_flags & SK_ISNULL)
 		{
 			/*
@@ -3157,7 +2988,7 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
 			 * columns are required for the scan direction, we can stop the
 			 * scan, because there can't be another tuple that will succeed.
 			 */
-			Assert(subkey != (ScanKey) DatumGetPointer(skey->sk_argument));
+			Assert(subkey != (ScanKey) DatumGetPointer(header->sk_argument));
 			subkey--;
 			if (forcenonrequired)
 			{
@@ -3169,6 +3000,114 @@ _bt_check_rowcompare(ScanKey skey, IndexTuple tuple, int tupnatts,
 			else if ((subkey->sk_flags & SK_BT_REQBKWD) &&
 					 ScanDirectionIsBackward(dir))
 				*continuescan = false;
+			return false;
+		}
+
+		if (subkey->sk_attno > tupnatts)
+		{
+			/*
+			 * This attribute is truncated (must be high key).  The value for
+			 * this attribute in the first non-pivot tuple on the page to the
+			 * right could be any possible value.  Assume that truncated
+			 * attribute passes the qual.
+			 */
+			Assert(BTreeTupleIsPivot(tuple));
+			return true;
+		}
+
+		datum = index_getattr(tuple,
+							  subkey->sk_attno,
+							  tupdesc,
+							  &isNull);
+
+		if (isNull)
+		{
+			int			reqflags;
+
+			if (forcenonrequired)
+			{
+				/* treating scan's keys as non-required */
+			}
+			else if (subkey->sk_flags & SK_BT_NULLS_FIRST)
+			{
+				/*
+				 * Since NULLs are sorted before non-NULLs, we know we have
+				 * reached the lower limit of the range of values for this
+				 * index attr.  On a backward scan, we can stop if this qual
+				 * is one of the "must match" subset.  However, on a forwards
+				 * scan, we must keep going, because we may have initially
+				 * positioned to the start of the index.
+				 *
+				 * All required NULLS FIRST > row members can use NULL tuple
+				 * values to end backwards scans, just like with other values.
+				 * A qual "WHERE (a, b, c) > (9, 42, 'foo')" can terminate a
+				 * backwards scan upon reaching the index's rightmost "a = 9"
+				 * tuple whose "b" column contains a NULL (if not sooner).
+				 * Since "b" is NULLS FIRST, we can treat its NULLs as "<" 42.
+				 */
+				reqflags = SK_BT_REQBKWD;
+
+				/*
+				 * When a most significant required NULLS FIRST < row compare
+				 * member sees NULL tuple values during a backwards scan, it
+				 * signals the end of matches for the whole row compare/scan.
+				 * A qual "WHERE (a, b, c) < (9, 42, 'foo')" will terminate a
+				 * backwards scan upon reaching the rightmost tuple whose "a"
+				 * column has a NULL.  The "a" NULL value is "<" 9, and yet
+				 * our < row compare will still end the scan.  (This isn't
+				 * safe with later/lower-order row members.  Notice that it
+				 * can only happen with an "a" NULL some time after the scan
+				 * completely stops needing to use its "b" and "c" members.)
+				 */
+				if (subkey == (ScanKey) DatumGetPointer(header->sk_argument))
+					reqflags |= SK_BT_REQFWD;	/* safe, first row member */
+
+				if ((subkey->sk_flags & reqflags) &&
+					ScanDirectionIsBackward(dir))
+					*continuescan = false;
+			}
+			else
+			{
+				/*
+				 * Since NULLs are sorted after non-NULLs, we know we have
+				 * reached the upper limit of the range of values for this
+				 * index attr.  On a forward scan, we can stop if this qual is
+				 * one of the "must match" subset.  However, on a backward
+				 * scan, we must keep going, because we may have initially
+				 * positioned to the end of the index.
+				 *
+				 * All required NULLS LAST < row members can use NULL tuple
+				 * values to end forwards scans, just like with other values.
+				 * A qual "WHERE (a, b, c) < (9, 42, 'foo')" can terminate a
+				 * forwards scan upon reaching the index's leftmost "a = 9"
+				 * tuple whose "b" column contains a NULL (if not sooner).
+				 * Since "b" is NULLS LAST, we can treat its NULLs as ">" 42.
+				 */
+				reqflags = SK_BT_REQFWD;
+
+				/*
+				 * When a most significant required NULLS LAST > row compare
+				 * member sees NULL tuple values during a forwards scan, it
+				 * signals the end of matches for the whole row compare/scan.
+				 * A qual "WHERE (a, b, c) > (9, 42, 'foo')" will terminate a
+				 * forwards scan upon reaching the leftmost tuple whose "a"
+				 * column has a NULL.  The "a" NULL value is ">" 9, and yet
+				 * our > row compare will end the scan.  (This isn't safe with
+				 * later/lower-order row members.  Notice that it can only
+				 * happen with an "a" NULL some time after the scan completely
+				 * stops needing to use its "b" and "c" members.)
+				 */
+				if (subkey == (ScanKey) DatumGetPointer(header->sk_argument))
+					reqflags |= SK_BT_REQBKWD;	/* safe, first row member */
+
+				if ((subkey->sk_flags & reqflags) &&
+					ScanDirectionIsForward(dir))
+					*continuescan = false;
+			}
+
+			/*
+			 * In any case, this indextuple doesn't match the qual.
+			 */
 			return false;
 		}
 
@@ -3391,7 +3330,6 @@ _bt_killitems(IndexScanDesc scan)
 		buf = _bt_getbuf(rel, so->currPos.currPage, BT_READ);
 
 		latestlsn = BufferGetLSNAtomic(buf);
-		Assert(!XLogRecPtrIsInvalid(so->currPos.lsn));
 		Assert(so->currPos.lsn <= latestlsn);
 		if (so->currPos.lsn != latestlsn)
 		{

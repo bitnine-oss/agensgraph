@@ -78,7 +78,9 @@ typedef struct TransitionCaptureState
 	/*
 	 * Private data including the tuplestore(s) into which to insert tuples.
 	 */
-	struct AfterTriggersTableData *tcs_private;
+	struct AfterTriggersTableData *tcs_insert_private;
+	struct AfterTriggersTableData *tcs_update_private;
+	struct AfterTriggersTableData *tcs_delete_private;
 } TransitionCaptureState;
 
 /*
@@ -213,7 +215,8 @@ extern bool ExecBRDeleteTriggers(EState *estate,
 								 HeapTuple fdw_trigtuple,
 								 TupleTableSlot **epqslot,
 								 TM_Result *tmresult,
-								 TM_FailureData *tmfd);
+								 TM_FailureData *tmfd,
+								 bool is_merge_delete);
 extern void ExecARDeleteTriggers(EState *estate,
 								 ResultRelInfo *relinfo,
 								 ItemPointer tupleid,
@@ -235,7 +238,8 @@ extern bool ExecBRUpdateTriggers(EState *estate,
 								 HeapTuple fdw_trigtuple,
 								 TupleTableSlot *newslot,
 								 TM_Result *tmresult,
-								 TM_FailureData *tmfd);
+								 TM_FailureData *tmfd,
+								 bool is_merge_update);
 extern void ExecARUpdateTriggers(EState *estate,
 								 ResultRelInfo *relinfo,
 								 ResultRelInfo *src_partinfo,

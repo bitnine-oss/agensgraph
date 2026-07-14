@@ -80,6 +80,7 @@
 #include "storage/bufmgr.h"
 #include "storage/bufpage.h"
 #include "storage/copydir.h"
+#include "storage/fd.h"
 #include "storage/io_worker.h"
 #include "storage/large_object.h"
 #include "storage/pg_shmem.h"
@@ -493,6 +494,14 @@ static const struct config_enum_entry file_copy_method_options[] = {
 #if defined(HAVE_COPYFILE) && defined(COPYFILE_CLONE_FORCE) || defined(HAVE_COPY_FILE_RANGE)
 	{"clone", FILE_COPY_METHOD_CLONE, false},
 #endif
+	{NULL, 0, false}
+};
+
+static const struct config_enum_entry file_extend_method_options[] = {
+#ifdef HAVE_POSIX_FALLOCATE
+	{"posix_fallocate", FILE_EXTEND_METHOD_POSIX_FALLOCATE, false},
+#endif
+	{"write_zeros", FILE_EXTEND_METHOD_WRITE_ZEROS, false},
 	{NULL, 0, false}
 };
 
@@ -3152,7 +3161,7 @@ struct config_int ConfigureNamesInt[] =
 		},
 		&max_slot_wal_keep_size_mb,
 		-1, -1, MAX_KILOBYTES,
-		check_max_slot_wal_keep_size, NULL, NULL
+		NULL, NULL, NULL
 	},
 
 	{
@@ -3171,11 +3180,11 @@ struct config_int ConfigureNamesInt[] =
 			gettext_noop("Sets the duration a replication slot can remain idle before "
 						 "it is invalidated."),
 			NULL,
-			GUC_UNIT_MIN
+			GUC_UNIT_S
 		},
-		&idle_replication_slot_timeout_mins,
-		0, 0, INT_MAX / SECS_PER_MINUTE,
-		check_idle_replication_slot_timeout, NULL, NULL
+		&idle_replication_slot_timeout_secs,
+		0, 0, INT_MAX,
+		NULL, NULL, NULL
 	},
 
 	{
@@ -5367,6 +5376,16 @@ struct config_enum ConfigureNamesEnum[] =
 		},
 		&file_copy_method,
 		FILE_COPY_METHOD_COPY, file_copy_method_options,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"file_extend_method", PGC_SIGHUP, RESOURCES_DISK,
+			gettext_noop("Selects the method used for extending data files."),
+			NULL
+		},
+		&file_extend_method,
+		DEFAULT_FILE_EXTEND_METHOD, file_extend_method_options,
 		NULL, NULL, NULL
 	},
 

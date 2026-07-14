@@ -224,7 +224,9 @@ typedef struct _typeInfo
 	bool		isDefined;		/* true if typisdefined */
 	/* If needed, we'll create a "shell type" entry for it; link that here: */
 	struct _shellTypeInfo *shellType;	/* shell-type entry, or NULL */
-	/* If it's a domain, we store links to its constraints here: */
+	/* If it's a domain, its not-null constraint is here: */
+	struct _constraintInfo *notnull;
+	/* If it's a domain, we store links to its CHECK constraints here: */
 	int			nDomChecks;
 	struct _constraintInfo *domChecks;
 } TypeInfo;
@@ -260,6 +262,8 @@ typedef struct _oprInfo
 	DumpableObject dobj;
 	const char *rolname;
 	char		oprkind;
+	Oid			oprleft;
+	Oid			oprright;
 	Oid			oprcode;
 } OprInfo;
 
@@ -273,12 +277,14 @@ typedef struct _accessMethodInfo
 typedef struct _opclassInfo
 {
 	DumpableObject dobj;
+	Oid			opcmethod;
 	const char *rolname;
 } OpclassInfo;
 
 typedef struct _opfamilyInfo
 {
 	DumpableObject dobj;
+	Oid			opfmethod;
 	const char *rolname;
 } OpfamilyInfo;
 
@@ -286,6 +292,7 @@ typedef struct _collInfo
 {
 	DumpableObject dobj;
 	const char *rolname;
+	int			collencoding;
 } CollInfo;
 
 typedef struct _convInfo
@@ -763,6 +770,7 @@ extern TableInfo *findTableByOid(Oid oid);
 extern TypeInfo *findTypeByOid(Oid oid);
 extern FuncInfo *findFuncByOid(Oid oid);
 extern OprInfo *findOprByOid(Oid oid);
+extern AccessMethodInfo *findAccessMethodByOid(Oid oid);
 extern CollInfo *findCollationByOid(Oid oid);
 extern NamespaceInfo *findNamespaceByOid(Oid oid);
 extern ExtensionInfo *findExtensionByOid(Oid oid);

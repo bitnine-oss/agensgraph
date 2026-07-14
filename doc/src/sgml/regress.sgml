@@ -285,21 +285,13 @@ make check-world PG_TEST_EXTRA='kerberos ldap ssl load_balance libpq_encryption'
     </varlistentry>
 
     <varlistentry>
-     <term><literal>sepgsql</literal></term>
+     <term><literal>libpq_encryption</literal></term>
      <listitem>
       <para>
-       Runs the test suite under <filename>contrib/sepgsql</filename>.  This
-       requires an SELinux environment that is set up in a specific way; see
-       <xref linkend="sepgsql-regression"/>.
-      </para>
-     </listitem>
-    </varlistentry>
-
-    <varlistentry>
-     <term><literal>ssl</literal></term>
-     <listitem>
-      <para>
-       Runs the test suite under <filename>src/test/ssl</filename>.  This opens TCP/IP listen sockets.
+       Runs the test <filename>src/interfaces/libpq/t/005_negotiate_encryption.pl</filename>.
+       This opens TCP/IP listen sockets. If <varname>PG_TEST_EXTRA</varname>
+       also includes <literal>kerberos</literal>, additional tests that require
+       an MIT Kerberos installation are enabled.
       </para>
      </listitem>
     </varlistentry>
@@ -316,13 +308,44 @@ make check-world PG_TEST_EXTRA='kerberos ldap ssl load_balance libpq_encryption'
     </varlistentry>
 
     <varlistentry>
-     <term><literal>libpq_encryption</literal></term>
+     <term><literal>oauth</literal></term>
      <listitem>
       <para>
-       Runs the test <filename>src/interfaces/libpq/t/005_negotiate_encryption.pl</filename>.
-       This opens TCP/IP listen sockets. If <varname>PG_TEST_EXTRA</varname>
-       also includes <literal>kerberos</literal>, additional tests that require
-       an MIT Kerberos installation are enabled.
+       Runs the test suite under <filename>src/test/modules/oauth_validator</filename>.
+       This opens TCP/IP listen sockets for a test server running HTTPS.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>regress_dump_restore</literal></term>
+     <listitem>
+      <para>
+       Runs an additional test suite in
+       <filename>src/bin/pg_upgrade/t/002_pg_upgrade.pl</filename> which
+       cycles the regression database through <command>pg_dump</command>/
+       <command>pg_restore</command>.  Not enabled by default because it
+       is resource intensive.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>sepgsql</literal></term>
+     <listitem>
+      <para>
+       Runs the test suite under <filename>contrib/sepgsql</filename>.  This
+       requires an SELinux environment that is set up in a specific way; see
+       <xref linkend="sepgsql-regression"/>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>ssl</literal></term>
+     <listitem>
+      <para>
+       Runs the test suite under <filename>src/test/ssl</filename>.  This opens TCP/IP listen sockets.
       </para>
      </listitem>
     </varlistentry>
@@ -344,16 +367,6 @@ make check-world PG_TEST_EXTRA='kerberos ldap ssl load_balance libpq_encryption'
       <para>
        Runs the test suite under <filename>src/test/modules/xid_wraparound</filename>.
        Not enabled by default because it is resource intensive.
-      </para>
-     </listitem>
-    </varlistentry>
-
-    <varlistentry>
-     <term><literal>oauth</literal></term>
-     <listitem>
-      <para>
-       Runs the test suite under <filename>src/test/modules/oauth_validator</filename>.
-       This opens TCP/IP listen sockets for a test server running HTTPS.
       </para>
      </listitem>
     </varlistentry>

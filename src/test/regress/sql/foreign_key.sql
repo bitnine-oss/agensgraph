@@ -784,6 +784,43 @@ INSERT INTO fktable VALUES (500, 1000);
 
 COMMIT;
 
+-- Check that the existing FK trigger is both deferrable and initially deferred
+SELECT conname, tgrelid::regclass as tgrel,
+       regexp_replace(tgname, '[0-9]+', 'N') as tgname, tgtype,
+       tgdeferrable, tginitdeferred
+FROM pg_trigger t JOIN pg_constraint c ON (t.tgconstraint = c.oid)
+WHERE conrelid = 'fktable'::regclass AND conname = 'fktable_fk_fkey'
+ORDER BY tgrelid, tgtype;
+
+-- Changing the constraint to NOT ENFORCED drops the associated FK triggers
+ALTER TABLE FKTABLE ALTER CONSTRAINT fktable_fk_fkey NOT ENFORCED;
+SELECT conname, tgrelid::regclass as tgrel,
+       regexp_replace(tgname, '[0-9]+', 'N') as tgname, tgtype,
+       tgdeferrable, tginitdeferred
+FROM pg_trigger t JOIN pg_constraint c ON (t.tgconstraint = c.oid)
+WHERE conrelid = 'fktable'::regclass AND conname = 'fktable_fk_fkey'
+ORDER BY tgrelid, tgtype;
+
+-- Changing it back to ENFORCED will recreate the necessary FK triggers
+-- that are deferrable and initially deferred
+ALTER TABLE FKTABLE ALTER CONSTRAINT fktable_fk_fkey ENFORCED;
+SELECT conname, tgrelid::regclass as tgrel,
+       regexp_replace(tgname, '[0-9]+', 'N') as tgname, tgtype,
+       tgdeferrable, tginitdeferred
+FROM pg_trigger t JOIN pg_constraint c ON (t.tgconstraint = c.oid)
+WHERE conrelid = 'fktable'::regclass AND conname = 'fktable_fk_fkey'
+ORDER BY tgrelid, tgtype;
+
+-- Verify that a deferrable, initially deferred foreign key still works
+-- as expected after being set to NOT ENFORCED and then re-enabled
+BEGIN;
+
+-- doesn't match PK, but no error yet
+INSERT INTO fktable VALUES (2, 20);
+
+-- should catch error from INSERT at commit
+COMMIT;
+
 DROP TABLE fktable, pktable;
 
 -- tricky behavior: according to SQL99, if a deferred constraint is set
@@ -1296,7 +1333,7 @@ UPDATE fk_notpartitioned_pk SET b = 2504 WHERE a = 2500;
 -- check psql behavior
 \d fk_notpartitioned_pk
 
--- Check the exsting FK trigger
+-- Check the existing FK trigger
 SELECT conname, tgrelid::regclass as tgrel, regexp_replace(tgname, '[0-9]+', 'N') as tgname, tgtype
 FROM pg_trigger t JOIN pg_constraint c ON (t.tgconstraint = c.oid)
 WHERE tgrelid IN (SELECT relid FROM pg_partition_tree('fk_partitioned_fk'::regclass)
@@ -2385,4 +2422,52 @@ ALTER TABLE fk_r_2 DROP CONSTRAINT fk_r_p_id_p_jd_fkey;
 SET client_min_messages TO warning;
 DROP SCHEMA fkpart12 CASCADE;
 RESET client_min_messages;
+RESET search_path;
+
+-- Exercise the column mapping code with foreign keys.  In this test we'll
+-- create a partitioned table which has a partition with a dropped column and
+-- check to ensure that an UPDATE cascades the changes correctly to the
+-- partitioned table.
+CREATE SCHEMA fkpart13;
+SET search_path TO fkpart13;
+
+CREATE TABLE fkpart13_t1 (a int PRIMARY KEY);
+
+CREATE TABLE fkpart13_t2 (
+  part_id int PRIMARY KEY,
+  column_to_drop int,
+  FOREIGN KEY (part_id) REFERENCES fkpart13_t1 ON UPDATE CASCADE ON DELETE CASCADE
+) PARTITION BY LIST (part_id);
+
+CREATE TABLE fkpart13_t2_p1 PARTITION OF fkpart13_t2 FOR VALUES IN (1);
+
+-- drop the column
+ALTER TABLE fkpart13_t2 DROP COLUMN column_to_drop;
+
+-- create a new partition without the dropped column
+CREATE TABLE fkpart13_t2_p2 PARTITION OF fkpart13_t2 FOR VALUES IN (2);
+
+CREATE TABLE fkpart13_t3 (
+  a int NOT NULL,
+  FOREIGN KEY (a)
+    REFERENCES fkpart13_t2
+    ON UPDATE CASCADE ON DELETE CASCADE
+);
+
+INSERT INTO fkpart13_t1 (a) VALUES (1);
+INSERT INTO fkpart13_t2 (part_id) VALUES (1);
+INSERT INTO fkpart13_t3 (a) VALUES (1);
+
+-- Test a cascading update works correctly with with the dropped column
+UPDATE fkpart13_t1 SET a = 2 WHERE a = 1;
+SELECT tableoid::regclass,* FROM fkpart13_t2;
+SELECT tableoid::regclass,* FROM fkpart13_t3;
+
+-- Exercise code in ExecGetTriggerResultRel() as there's been previous issues
+-- with ResultRelInfos being returned with the incorrect ri_RootResultRelInfo
+WITH cte AS (
+  UPDATE fkpart13_t2_p1 SET part_id = part_id
+) UPDATE fkpart13_t1 SET a = 2 WHERE a = 1;
+
+DROP SCHEMA fkpart13 CASCADE;
 RESET search_path;

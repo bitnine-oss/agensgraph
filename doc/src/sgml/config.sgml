@@ -1680,13 +1680,19 @@ include_dir 'conf.d'
         This parameter determines whether the passphrase command set by
         <varname>ssl_passphrase_command</varname> will also be called during a
         configuration reload if a key file needs a passphrase.  If this
-        parameter is off (the default), then
+        parameter is <literal>off</literal> (the default), then
         <varname>ssl_passphrase_command</varname> will be ignored during a
         reload and the SSL configuration will not be reloaded if a passphrase
         is needed.  That setting is appropriate for a command that requires a
         TTY for prompting, which might not be available when the server is
         running.  Setting this parameter to on might be appropriate if the
         passphrase is obtained from a file, for example.
+       </para>
+       <para>
+        This parameter must be set to <literal>on</literal> when running on
+        <systemitem class="osname">Windows</systemitem> since all connections
+        will perform a configuration reload due to the different process model
+        of that platform.
        </para>
        <para>
         This parameter can only be set in the <filename>postgresql.conf</filename>
@@ -1760,7 +1766,8 @@ include_dir 'conf.d'
        <para>
         Controls whether huge pages are requested for the main shared memory
         area. Valid values are <literal>try</literal> (the default),
-        <literal>on</literal>, and <literal>off</literal>.  With
+        <literal>on</literal>, and <literal>off</literal>.
+        This parameter can only be set at server start. With
         <varname>huge_pages</varname> set to <literal>try</literal>, the
         server will try to request huge pages, but fall back to the default if
         that fails. With <literal>on</literal>, failure to request huge pages
@@ -2273,6 +2280,7 @@ include_dir 'conf.d'
         platform, is generally discouraged because it typically requires
         non-default kernel settings to allow for large allocations (see <xref
         linkend="sysvipc"/>).
+        This parameter can only be set at server start.
        </para>
       </listitem>
      </varlistentry>
@@ -2300,6 +2308,7 @@ include_dir 'conf.d'
         however, it may be useful for debugging, when the
         <literal>pg_dynshmem</literal> directory is stored on a RAM disk, or when
         other shared memory facilities are not available.
+        This parameter can only be set at server start.
        </para>
       </listitem>
      </varlistentry>
@@ -2401,6 +2410,43 @@ include_dir 'conf.d'
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-file-extend-method" xreflabel="file_extend_method">
+      <term><varname>file_extend_method</varname> (<type>enum</type>)
+      <indexterm>
+       <primary><varname>file_extend_method</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Specifies the method used to extend data files during bulk operations
+        such as <command>COPY</command>.  The first available option is used as
+        the default, depending on the operating system:
+        <itemizedlist>
+         <listitem>
+          <para>
+           <literal>posix_fallocate</literal> (Unix) uses the standard POSIX
+            interface for allocating disk space, but is missing on some systems.
+            If it is present but the underlying file system doesn't support it,
+            this option silently falls back to <literal>write_zeros</literal>.
+            Current versions of BTRFS are known to disable compression when
+            this option is used.
+            This is the default on systems that have the function.
+           </para>
+         </listitem>
+         <listitem>
+          <para>
+           <literal>write_zeros</literal> extends files by writing out blocks
+            of zero bytes.  This is the default on systems that don't have the
+            function <function>posix_fallocate</function>.
+          </para>
+         </listitem>
+        </itemizedlist>
+        The <literal>write_zeros</literal> method is always used when data
+        files are extended by 8 blocks or fewer.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-max-notify-queue-pages" xreflabel="max_notify_queue_pages">
       <term><varname>max_notify_queue_pages</varname> (<type>integer</type>)
       <indexterm>
@@ -2413,6 +2459,7 @@ include_dir 'conf.d'
         <xref linkend="sql-notify"/> / <xref linkend="sql-listen"/> queue.
         The default value is 1048576. For 8 KB pages it allows to consume
         up to 8 GB of disk space.
+        This parameter can only be set at server start.
        </para>
       </listitem>
      </varlistentry>
@@ -2647,7 +2694,7 @@ include_dir 'conf.d'
          Higher values will have the most impact on higher latency storage
          where queries otherwise experience noticeable I/O stalls and on
          devices with high IOPs. Unnecessarily high values may increase I/O
-         latency for all queries on the system
+         latency for all queries on the system.
         </para>
 
         <para>
@@ -2694,9 +2741,9 @@ include_dir 'conf.d'
         <para>
          Controls the largest I/O size in operations that combine I/O, and silently
          limits the user-settable parameter <varname>io_combine_limit</varname>.
-         This parameter can only be set in
-         the <filename>postgresql.conf</filename> file or on the server
-         command line.
+         This parameter can only be set at server start.
+         If this value is specified without units, it is taken as blocks,
+         that is <symbol>BLCKSZ</symbol> bytes, typically 8kB.
          The maximum possible size depends on the operating system and block
          size, but is typically 1MB on Unix and 128kB on Windows.
          The default is 128kB.
@@ -2716,6 +2763,8 @@ include_dir 'conf.d'
          higher than the <varname>io_max_combine_limit</varname> parameter, the
          lower value will silently be used instead, so both may need to be raised
          to increase the I/O size.
+         If this value is specified without units, it is taken as blocks,
+         that is <symbol>BLCKSZ</symbol> bytes, typically 8kB.
          The maximum possible size depends on the operating system and block
          size, but is typically 1MB on Unix and 128kB on Windows.
          The default is 128kB.
@@ -3399,8 +3448,9 @@ include_dir 'conf.d'
         This parameter enables compression of WAL using the specified
         compression method.
         When enabled, the <productname>PostgreSQL</productname>
-        server compresses full page images written to WAL when
-        <xref linkend="guc-full-page-writes"/> is on or during a base backup.
+        server compresses full page images written to WAL (e.g. when
+        <xref linkend="guc-full-page-writes"/> is on, during a base backup,
+        etc.).
         A compressed page image will be decompressed during WAL replay.
         The supported methods are <literal>pglz</literal>,
         <literal>lz4</literal> (if <productname>PostgreSQL</productname>
@@ -3962,6 +4012,7 @@ include_dir 'conf.d'
         blocks to prefetch.  If this value is specified without units, it is
         taken as bytes.
         The default is 512kB.
+        This parameter can only be set at server start.
        </para>
       </listitem>
      </varlistentry>
@@ -4618,10 +4669,12 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
       </term>
       <listitem>
        <para>
-        Invalidate replication slots that have remained idle longer than this
-        duration. If this value is specified without units, it is taken as
-        minutes. A value of zero (the default) disables the idle timeout
-        invalidation mechanism. This parameter can only be set in the
+        Invalidate replication slots that have remained inactive (not used by
+        a <link linkend="protocol-replication">replication connection</link>)
+        for longer than this duration.
+        If this value is specified without units, it is taken as seconds.
+        A value of zero (the default) disables the idle timeout
+        invalidation mechanism.  This parameter can only be set in the
         <filename>postgresql.conf</filename> file or on the server command
         line.
        </para>
@@ -4685,48 +4738,9 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
       </term>
       <listitem>
        <para>
-        Record commit time of transactions. This parameter
-        can only be set in <filename>postgresql.conf</filename> file or on the server
-        command line. The default value is <literal>off</literal>.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-synchronized-standby-slots" xreflabel="synchronized_standby_slots">
-      <term><varname>synchronized_standby_slots</varname> (<type>string</type>)
-      <indexterm>
-       <primary><varname>synchronized_standby_slots</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        A comma-separated list of streaming replication standby server slot names
-        that logical WAL sender processes will wait for. Logical WAL sender processes
-        will send decoded changes to plugins only after the specified replication
-        slots confirm receiving WAL. This guarantees that logical replication
-        failover slots do not consume changes until those changes are received
-        and flushed to corresponding physical standbys. If a
-        logical replication connection is meant to switch to a physical standby
-        after the standby is promoted, the physical replication slot for the
-        standby should be listed here. Note that logical replication will not
-        proceed if the slots specified in the
-        <varname>synchronized_standby_slots</varname> do not exist or are invalidated.
-        Additionally, the replication management functions
-        <link linkend="pg-replication-slot-advance">
-        <function>pg_replication_slot_advance</function></link>,
-        <link linkend="pg-logical-slot-get-changes">
-        <function>pg_logical_slot_get_changes</function></link>, and
-        <link linkend="pg-logical-slot-peek-changes">
-        <function>pg_logical_slot_peek_changes</function></link>,
-        when used with logical failover slots, will block until all
-        physical slots specified in <varname>synchronized_standby_slots</varname> have
-        confirmed WAL receipt.
-       </para>
-       <para>
-        The standbys corresponding to the physical replication slots in
-        <varname>synchronized_standby_slots</varname> must configure
-        <literal>sync_replication_slots = true</literal> so they can receive
-        logical failover slot changes from the primary.
+        Record commit time of transactions.
+        This parameter can only be set at server start.
+        The default value is <literal>off</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -4877,6 +4891,45 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
        <para>
         This parameter can only be set in the <filename>postgresql.conf</filename>
         file or on the server command line.
+       </para>
+      </listitem>
+
+     </varlistentry>
+     <varlistentry id="guc-synchronized-standby-slots" xreflabel="synchronized_standby_slots">
+      <term><varname>synchronized_standby_slots</varname> (<type>string</type>)
+      <indexterm>
+       <primary><varname>synchronized_standby_slots</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        A comma-separated list of streaming replication standby server slot names
+        that logical WAL sender processes will wait for. Logical WAL sender processes
+        will send decoded changes to plugins only after the specified replication
+        slots confirm receiving WAL. This guarantees that logical replication
+        failover slots do not consume changes until those changes are received
+        and flushed to corresponding physical standbys. If a
+        logical replication connection is meant to switch to a physical standby
+        after the standby is promoted, the physical replication slot for the
+        standby should be listed here. Note that logical replication will not
+        proceed if the slots specified in the
+        <varname>synchronized_standby_slots</varname> do not exist or are invalidated.
+        Additionally, the replication management functions
+        <link linkend="pg-replication-slot-advance">
+        <function>pg_replication_slot_advance</function></link>,
+        <link linkend="pg-logical-slot-get-changes">
+        <function>pg_logical_slot_get_changes</function></link>, and
+        <link linkend="pg-logical-slot-peek-changes">
+        <function>pg_logical_slot_peek_changes</function></link>,
+        when used with logical failover slots, will block until all
+        physical slots specified in <varname>synchronized_standby_slots</varname> have
+        confirmed WAL receipt.
+       </para>
+       <para>
+        The standbys corresponding to the physical replication slots in
+        <varname>synchronized_standby_slots</varname> must configure
+        <literal>sync_replication_slots = true</literal> so they can receive
+        logical failover slot changes from the primary.
        </para>
       </listitem>
      </varlistentry>
@@ -5904,24 +5957,24 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
        </para>
 
        <para>
-        Random access to mechanical disk storage is normally much more expensive
-        than four times sequential access.  However, a lower default is used
-        (4.0) because the majority of random accesses to disk, such as indexed
-        reads, are assumed to be in cache.  The default value can be thought of
-        as modeling random access as 40 times slower than sequential, while
-        expecting 90% of random reads to be cached.
+        Random access to durable storage is normally much more expensive
+        than four times sequential access.  However, a lower default is
+        used (4.0) because the majority of random accesses to storage,
+        such as indexed reads, are assumed to be in cache.  Also, the
+        latency of network-attached storage tends to reduce the relative
+        overhead of random access.
        </para>
 
        <para>
-        If you believe a 90% cache rate is an incorrect assumption
-        for your workload, you can increase random_page_cost to better
-        reflect the true cost of random storage reads. Correspondingly,
-        if your data is likely to be completely in cache, such as when
-        the database is smaller than the total server memory, decreasing
-        random_page_cost can be appropriate.  Storage that has a low random
-        read cost relative to sequential, e.g., solid-state drives, might
-        also be better modeled with a lower value for random_page_cost,
-        e.g., <literal>1.1</literal>.
+        If you believe caching is less frequent than the default
+        value reflects, and network latency is minimal, you can increase
+        random_page_cost to better reflect the true cost of random storage
+        reads.  Storage that has a higher random read cost relative to
+        sequential, like magnetic disks, might also be better modeled with
+        a higher value for random_page_cost.  Correspondingly, if your data
+        is likely to be completely in cache, such as when the database
+        is smaller than the total server memory, or network latency is
+        high, decreasing random_page_cost might be appropriate.
        </para>
 
        <tip>
@@ -7003,8 +7056,7 @@ local0.*    /var/log/postgresql
         determines the program name used to identify
         <productname>PostgreSQL</productname> messages in
         the log. The default is <literal>PostgreSQL</literal>.
-        This parameter can only be set in the <filename>postgresql.conf</filename>
-        file or on the server command line.
+        This parameter can only be set at server start.
        </para>
       </listitem>
      </varlistentry>
@@ -11055,6 +11107,12 @@ extension_control_path = 'C:\tools\postgresql;H:\my_project\share;$system'
        </para>
 
        <para>
+        If extensions with equal names are present in multiple directories in
+        the configured path, only the instance found first in the path will be
+        used.
+       </para>
+
+       <para>
         This parameter can be changed at run time by superusers and users
         with the appropriate <literal>SET</literal> privilege, but a
         setting done that way will only persist until the end of the
@@ -12194,6 +12252,7 @@ dynamic_library_path = '/usr/local/lib/postgresql:$libdir'
         main data files, <literal>wal</literal> for WAL files, and
         <literal>wal_init</literal> for WAL files when being initially
         allocated.
+        This parameter can only be set at server start.
        </para>
        <para>
         Some operating systems and file systems do not support direct I/O, so
@@ -12681,7 +12740,9 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
         If LLVM has the required functionality, register generated functions
         with <productname>GDB</productname>.  This makes debugging easier.
         The default setting is <literal>off</literal>.
-        This parameter can only be set at server start.
+        Only superusers and users with the appropriate <literal>SET</literal>
+        privilege can change this parameter at session start,
+        and it cannot be changed at all within a session.
        </para>
       </listitem>
      </varlistentry>
@@ -12732,7 +12793,9 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
         This writes out files to <filename>~/.debug/jit/</filename>; the
         user is responsible for performing cleanup when desired.
         The default setting is <literal>off</literal>.
-        This parameter can only be set at server start.
+        Only superusers and users with the appropriate <literal>SET</literal>
+        privilege can change this parameter at session start,
+        and it cannot be changed at all within a session.
        </para>
       </listitem>
      </varlistentry>

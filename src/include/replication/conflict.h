@@ -9,8 +9,15 @@
 #ifndef CONFLICT_H
 #define CONFLICT_H
 
-#include "nodes/execnodes.h"
+#include "access/xlogdefs.h"
+#include "nodes/pg_list.h"
 #include "utils/timestamp.h"
+
+/* Avoid including execnodes.h here */
+struct EState;
+struct ResultRelInfo;
+struct TupleTableSlot;
+
 
 /*
  * Conflict types that could occur while applying remote changes.
@@ -54,29 +61,30 @@ typedef enum
 #define CONFLICT_NUM_TYPES (CT_MULTIPLE_UNIQUE_CONFLICTS + 1)
 
 /*
- * Information for the existing local tuple that caused the conflict.
+ * Information for the existing local row that caused the conflict.
  */
 typedef struct ConflictTupleInfo
 {
-	TupleTableSlot *slot;		/* tuple slot holding the conflicting local
-								 * tuple */
+	struct TupleTableSlot *slot;	/* tuple slot holding the conflicting
+									 * local tuple */
 	Oid			indexoid;		/* OID of the index where the conflict
 								 * occurred */
 	TransactionId xmin;			/* transaction ID of the modification causing
 								 * the conflict */
 	RepOriginId origin;			/* origin identifier of the modification */
 	TimestampTz ts;				/* timestamp of when the modification on the
-								 * conflicting local tuple occurred */
+								 * conflicting local row occurred */
 } ConflictTupleInfo;
 
-extern bool GetTupleTransactionInfo(TupleTableSlot *localslot,
+extern bool GetTupleTransactionInfo(struct TupleTableSlot *localslot,
 									TransactionId *xmin,
 									RepOriginId *localorigin,
 									TimestampTz *localts);
-extern void ReportApplyConflict(EState *estate, ResultRelInfo *relinfo,
+extern void ReportApplyConflict(struct EState *estate, struct ResultRelInfo *relinfo,
 								int elevel, ConflictType type,
-								TupleTableSlot *searchslot,
-								TupleTableSlot *remoteslot,
+								struct TupleTableSlot *searchslot,
+								struct TupleTableSlot *remoteslot,
 								List *conflicttuples);
-extern void InitConflictIndexes(ResultRelInfo *relInfo);
+extern void InitConflictIndexes(struct ResultRelInfo *relInfo);
+
 #endif

@@ -2956,12 +2956,12 @@ log_status_format(StringInfo buf, const char *format, ErrorData *edata)
 				{
 					char		strfbuf[128];
 
-					snprintf(strfbuf, sizeof(strfbuf) - 1, INT64_HEX_FORMAT ".%x",
+					snprintf(strfbuf, sizeof(strfbuf) - 1, "%" PRIx64 ".%x",
 							 MyStartTime, MyProcPid);
 					appendStringInfo(buf, "%*s", padding, strfbuf);
 				}
 				else
-					appendStringInfo(buf, INT64_HEX_FORMAT ".%x", MyStartTime, MyProcPid);
+					appendStringInfo(buf, "%" PRIx64 ".%x", MyStartTime, MyProcPid);
 				break;
 			case 'p':
 				if (padding != 0)
@@ -3783,13 +3783,24 @@ write_stderr(const char *fmt,...)
 {
 	va_list		ap;
 
+	va_start(ap, fmt);
+	vwrite_stderr(fmt, ap);
+	va_end(ap);
+}
+
+
+/*
+ * Write errors to stderr (or by equal means when stderr is
+ * not available) - va_list version
+ */
+void
+vwrite_stderr(const char *fmt, va_list ap)
+{
 #ifdef WIN32
 	char		errbuf[2048];	/* Arbitrary size? */
 #endif
 
 	fmt = _(fmt);
-
-	va_start(ap, fmt);
 #ifndef WIN32
 	/* On Unix, we just fprintf to stderr */
 	vfprintf(stderr, fmt, ap);
@@ -3812,5 +3823,4 @@ write_stderr(const char *fmt,...)
 		fflush(stderr);
 	}
 #endif
-	va_end(ap);
 }

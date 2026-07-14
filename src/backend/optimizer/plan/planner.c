@@ -59,6 +59,7 @@
 #include "parser/parsetree.h"
 #include "partitioning/partdesc.h"
 #include "rewrite/rewriteManip.h"
+#include "utils/acl.h"
 #include "utils/backend_status.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -128,9 +129,27 @@ typedef struct
 								 * subquery belonging to a set operation */
 } standard_qp_extra;
 
+/*
+ * Context for the find_having_collation_conflicts walker.
+ *
+ * ancestor_collids is a stack of inputcollids contributed by collation-aware
+ * ancestors of the current node.  Entries are pushed before recursing into a
+ * node's children and popped afterwards, so the stack reflects exactly the
+ * inputcollids on the current root-to-node path.
+ */
+typedef struct
+{
+	Index		group_rtindex;
+	List	   *ancestor_collids;
+} having_collation_ctx;
+
 /* Local functions */
 static Node *preprocess_expression(PlannerInfo *root, Node *expr, int kind);
 static void preprocess_qual_conditions(PlannerInfo *root, Node *jtnode);
+static Bitmapset *find_having_collation_conflicts(Query *parse,
+												  Index group_rtindex);
+static bool having_collation_conflict_walker(Node *node,
+											 having_collation_ctx *ctx);
 static void grouping_planner(PlannerInfo *root, double tuple_fraction,
 							 SetOperationStmt *setops);
 static grouping_sets_data *preprocess_grouping_sets(PlannerInfo *root);
@@ -681,6 +700,8 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	PlannerInfo *root;
 	List	   *newWithCheckOptions;
 	List	   *newHaving;
+	Bitmapset  *havingCollationConflicts;
+	int			havingIdx;
 	bool		hasOuterJoins;
 	bool		hasResultRTEs;
 	RelOptInfo *final_rel;
@@ -875,6 +896,38 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 		if (!rte->inh)
 			root->leaf_result_relids =
 				bms_make_singleton(parse->resultRelation);
+	}
+
+	/*
+	 * This would be a convenient time to check access permissions for all
+	 * relations mentioned in the query, since it would be better to fail now,
+	 * before doing any detailed planning.  However, for historical reasons,
+	 * we leave this to be done at executor startup.
+	 *
+	 * Note, however, that we do need to check access permissions for any view
+	 * relations mentioned in the query, in order to prevent information being
+	 * leaked by selectivity estimation functions, which only check view owner
+	 * permissions on underlying tables (see all_rows_selectable() and its
+	 * callers).  This is a little ugly, because it means that access
+	 * permissions for views will be checked twice, which is another reason
+	 * why it would be better to do all the ACL checks here.
+	 */
+	foreach(l, parse->rtable)
+	{
+		RangeTblEntry *rte = lfirst_node(RangeTblEntry, l);
+
+		if (rte->perminfoindex != 0 &&
+			rte->relkind == RELKIND_VIEW)
+		{
+			RTEPermissionInfo *perminfo;
+			bool		result;
+
+			perminfo = getRTEPermissionInfo(parse->rteperminfos, rte);
+			result = ExecCheckOneRelPerms(perminfo);
+			if (!result)
+				aclcheck_error(ACLCHECK_NO_PRIV, OBJECT_VIEW,
+							   get_rel_name(perminfo->relid));
+		}
 	}
 
 	/*
@@ -1082,6 +1135,27 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	}
 
 	/*
+	 * Before we flatten GROUP Vars, check which HAVING clauses have collation
+	 * conflicts.  When GROUP BY uses a nondeterministic collation, values
+	 * that are "equal" for grouping may be distinguishable under a different
+	 * collation.  If such a HAVING clause were moved to WHERE, it would
+	 * filter individual rows before grouping, potentially eliminating some
+	 * members of a group and thereby changing aggregate results.
+	 *
+	 * We do this check before flatten_group_exprs because we can easily
+	 * identify grouping expressions by checking whether a Var references
+	 * RTE_GROUP, and such Vars directly carry the GROUP BY collation as their
+	 * varcollid.  After flattening, these Vars are replaced by the underlying
+	 * expressions, and we would have to match expressions in the HAVING
+	 * clause back to grouping expressions, which is much more complex.
+	 */
+	if (parse->hasGroupRTE)
+		havingCollationConflicts =
+			find_having_collation_conflicts(parse, root->group_rtindex);
+	else
+		havingCollationConflicts = NULL;
+
+	/*
 	 * Replace any Vars in the subquery's targetlist and havingQual that
 	 * reference GROUP outputs with the underlying grouping expressions.
 	 *
@@ -1103,14 +1177,35 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 		parse->hasTargetSRFs = expression_returns_set((Node *) parse->targetList);
 
 	/*
+	 * If we have grouping sets, expand the groupingSets tree of this query to
+	 * a flat list of grouping sets.  We need to do this before optimizing
+	 * HAVING, since we can't easily tell if there's an empty grouping set
+	 * until we have this representation.
+	 */
+	if (parse->groupingSets)
+	{
+		parse->groupingSets =
+			expand_grouping_sets(parse->groupingSets, parse->groupDistinct, -1);
+	}
+
+	/*
 	 * In some cases we may want to transfer a HAVING clause into WHERE. We
 	 * cannot do so if the HAVING clause contains aggregates (obviously) or
 	 * volatile functions (since a HAVING clause is supposed to be executed
-	 * only once per group).  We also can't do this if there are any nonempty
-	 * grouping sets and the clause references any columns that are nullable
-	 * by the grouping sets; moving such a clause into WHERE would potentially
-	 * change the results.  (If there are only empty grouping sets, then the
-	 * HAVING clause must be degenerate as discussed below.)
+	 * only once per group).  We also can't do this if there are any grouping
+	 * sets and the clause references any columns that are nullable by the
+	 * grouping sets; the nulled values of those columns are not available
+	 * before the grouping step.  (The test on groupClause might seem wrong,
+	 * but it's okay: it's just an optimization to avoid running pull_varnos
+	 * when there cannot be any Vars in the HAVING clause.)
+	 *
+	 * We also cannot do this if the HAVING clause uses a different collation
+	 * than the GROUP BY for any grouping expression whose GROUP BY collation
+	 * is nondeterministic.  This is detected before flatten_group_exprs (see
+	 * find_having_collation_conflicts above) and recorded in the
+	 * havingCollationConflicts bitmapset.  The bitmapset indexes remain valid
+	 * here because flatten_group_exprs uses expression_tree_mutator, which
+	 * preserves the list length and ordering of havingQual.
 	 *
 	 * Also, it may be that the clause is so expensive to execute that we're
 	 * better off doing it only once per group, despite the loss of
@@ -1120,19 +1215,19 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	 * clause into WHERE, in hopes of eliminating tuples before aggregation
 	 * instead of after.
 	 *
-	 * If the query has explicit grouping then we can simply move such a
+	 * If the query has no empty grouping set then we can simply move such a
 	 * clause into WHERE; any group that fails the clause will not be in the
 	 * output because none of its tuples will reach the grouping or
-	 * aggregation stage.  Otherwise we must have a degenerate (variable-free)
-	 * HAVING clause, which we put in WHERE so that query_planner() can use it
-	 * in a gating Result node, but also keep in HAVING to ensure that we
-	 * don't emit a bogus aggregated row. (This could be done better, but it
-	 * seems not worth optimizing.)
+	 * aggregation stage.  Otherwise we have to keep the clause in HAVING to
+	 * ensure that we don't emit a bogus aggregated row.  But then the HAVING
+	 * clause must be degenerate (variable-free), so we can copy it into WHERE
+	 * so that query_planner() can use it in a gating Result node. (This could
+	 * be done better, but it seems not worth optimizing.)
 	 *
 	 * Note that a HAVING clause may contain expressions that are not fully
 	 * preprocessed.  This can happen if these expressions are part of
 	 * grouping items.  In such cases, they are replaced with GROUP Vars in
-	 * the parser and then replaced back after we've done with expression
+	 * the parser and then replaced back after we're done with expression
 	 * preprocessing on havingQual.  This is not an issue if the clause
 	 * remains in HAVING, because these expressions will be matched to lower
 	 * target items in setrefs.c.  However, if the clause is moved or copied
@@ -1144,6 +1239,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	 * as Node *.
 	 */
 	newHaving = NIL;
+	havingIdx = 0;
 	foreach(l, (List *) parse->havingQual)
 	{
 		Node	   *havingclause = (Node *) lfirst(l);
@@ -1151,14 +1247,18 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 		if (contain_agg_clause(havingclause) ||
 			contain_volatile_functions(havingclause) ||
 			contain_subplans(havingclause) ||
+			bms_is_member(havingIdx, havingCollationConflicts) ||
 			(parse->groupClause && parse->groupingSets &&
 			 bms_is_member(root->group_rtindex, pull_varnos(root, havingclause))))
 		{
 			/* keep it in HAVING */
 			newHaving = lappend(newHaving, havingclause);
 		}
-		else if (parse->groupClause)
+		else if (parse->groupClause &&
+				 (parse->groupingSets == NIL ||
+				  (List *) linitial(parse->groupingSets) != NIL))
 		{
+			/* There is GROUP BY, but no empty grouping set */
 			Node	   *whereclause;
 
 			/* Preprocess the HAVING clause fully */
@@ -1171,6 +1271,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 		}
 		else
 		{
+			/* There is an empty grouping set (perhaps implicitly) */
 			Node	   *whereclause;
 
 			/* Preprocess the HAVING clause fully */
@@ -1183,6 +1284,8 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 			/* ... and also keep it in HAVING */
 			newHaving = lappend(newHaving, havingclause);
 		}
+
+		havingIdx++;
 	}
 	parse->havingQual = (Node *) newHaving;
 
@@ -1469,6 +1572,195 @@ preprocess_graph_delete(PlannerInfo *root, List *exprs)
 
 		gde->elem = preprocess_expression(root, gde->elem, EXPRKIND_TARGET);
 	}
+}
+
+/*
+ * find_having_collation_conflicts
+ *	  Identify HAVING clauses that must not be moved to WHERE due to collation
+ *	  mismatches with GROUP BY.
+ *
+ * This must be called before flatten_group_exprs, while the HAVING clause
+ * still contains GROUP Vars (Vars referencing RTE_GROUP).  These GROUP Vars
+ * carry the GROUP BY collation as their varcollid.  A GROUP Var with a
+ * nondeterministic varcollid conflicts whenever some collation-aware ancestor
+ * on its path applies a different inputcollid: that operator would distinguish
+ * values which the GROUP BY considers equal, so the clause is unsafe to push
+ * to WHERE.
+ *
+ * Returns a Bitmapset of zero-based indexes into the havingQual list for
+ * clauses that have collation conflicts and must stay in HAVING.
+ */
+static Bitmapset *
+find_having_collation_conflicts(Query *parse, Index group_rtindex)
+{
+	Bitmapset  *result = NULL;
+	having_collation_ctx ctx;
+	int			idx;
+
+	if (parse->havingQual == NULL)
+		return NULL;
+
+	ctx.group_rtindex = group_rtindex;
+	ctx.ancestor_collids = NIL;
+
+	idx = 0;
+	foreach_ptr(Node, clause, (List *) parse->havingQual)
+	{
+		if (having_collation_conflict_walker(clause, &ctx))
+			result = bms_add_member(result, idx);
+		idx++;
+		Assert(ctx.ancestor_collids == NIL);
+	}
+
+	return result;
+}
+
+/*
+ * Walker function for find_having_collation_conflicts.
+ *
+ * Walk the clause top-down, maintaining a stack of inputcollids contributed
+ * by collation-aware ancestors.  At each GROUP Var with a nondeterministic
+ * varcollid, the clause has a conflict if any ancestor's inputcollid differs
+ * from the GROUP Var's varcollid.  Most collation-aware nodes expose their
+ * inputcollid through exprInputCollation().  Two structural exceptions need
+ * special handling:
+ *
+ * - RowCompareExpr carries one inputcollid per column in inputcollids[], so we
+ *   descend into its (largs[i], rargs[i]) pairs explicitly with the matching
+ *   collation pushed onto the stack.
+ *
+ * - A simple CASE (CaseExpr with a non-NULL arg) holds the arg outside the
+ *   WHEN's OpExpr, even though the WHEN's OpExpr is the place where the
+ *   comparison's inputcollid lives.  Parse analysis builds each WHEN as
+ *   "OpExpr(CaseTestExpr op val)" -- the CaseTestExpr is a placeholder for
+ *   the arg.  Before walking cexpr->arg we therefore push every WHEN's
+ *   inputcollid onto the ancestor stack, so a GROUP Var at the arg is
+ *   checked against the same collations the WHEN comparisons would apply.
+ *   The WHEN bodies and defresult are then walked under the unchanged stack
+ *   so their own collation contexts are picked up by the default path.
+ */
+static bool
+having_collation_conflict_walker(Node *node, having_collation_ctx *ctx)
+{
+	Oid			this_collid;
+	bool		result;
+
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, Var))
+	{
+		Var		   *var = (Var *) node;
+
+		/* We should not see any upper-level Vars here */
+		Assert(var->varlevelsup == 0);
+
+		if (var->varno == ctx->group_rtindex &&
+			OidIsValid(var->varcollid) &&
+			!get_collation_isdeterministic(var->varcollid))
+		{
+			foreach_oid(collid, ctx->ancestor_collids)
+			{
+				if (collid != var->varcollid)
+					return true;
+			}
+		}
+		return false;
+	}
+
+	if (IsA(node, RowCompareExpr))
+	{
+		RowCompareExpr *rcexpr = (RowCompareExpr *) node;
+		ListCell   *lc_l;
+		ListCell   *lc_r;
+		ListCell   *lc_c;
+
+		/*
+		 * Each column of a row comparison is compared under its own
+		 * inputcollids[i].  Walk each (largs[i], rargs[i]) pair with that
+		 * collation pushed, so a Var in column i is checked against the
+		 * collation that actually applies to it.
+		 */
+		forthree(lc_l, rcexpr->largs,
+				 lc_r, rcexpr->rargs,
+				 lc_c, rcexpr->inputcollids)
+		{
+			Oid			collid = lfirst_oid(lc_c);
+			bool		found;
+
+			if (OidIsValid(collid))
+				ctx->ancestor_collids = lappend_oid(ctx->ancestor_collids,
+													collid);
+
+			found = having_collation_conflict_walker((Node *) lfirst(lc_l),
+													 ctx) ||
+				having_collation_conflict_walker((Node *) lfirst(lc_r),
+												 ctx);
+
+			if (OidIsValid(collid))
+				ctx->ancestor_collids =
+					list_delete_last(ctx->ancestor_collids);
+
+			if (found)
+				return true;
+		}
+		return false;
+	}
+
+	if (IsA(node, CaseExpr) && ((CaseExpr *) node)->arg != NULL)
+	{
+		CaseExpr   *cexpr = (CaseExpr *) node;
+		int			saved_len = list_length(ctx->ancestor_collids);
+		bool		found;
+
+		/*
+		 * Push every WHEN's inputcollid before walking cexpr->arg, since each
+		 * WHEN implicitly compares the arg under that inputcollid.
+		 */
+		foreach_node(CaseWhen, cw, cexpr->args)
+		{
+			Oid			collid = exprInputCollation((Node *) cw->expr);
+
+			if (OidIsValid(collid))
+				ctx->ancestor_collids = lappend_oid(ctx->ancestor_collids,
+													collid);
+		}
+
+		found = having_collation_conflict_walker((Node *) cexpr->arg, ctx);
+
+		ctx->ancestor_collids = list_truncate(ctx->ancestor_collids,
+											  saved_len);
+
+		if (found)
+			return true;
+
+		/*
+		 * Walk the WHEN bodies and defresult under the unchanged ancestor
+		 * stack; any inputcollids inside them are picked up by the default
+		 * path.
+		 */
+		foreach_node(CaseWhen, cw, cexpr->args)
+		{
+			if (having_collation_conflict_walker((Node *) cw->expr, ctx) ||
+				having_collation_conflict_walker((Node *) cw->result, ctx))
+				return true;
+		}
+		return having_collation_conflict_walker((Node *) cexpr->defresult,
+												ctx);
+	}
+
+	this_collid = exprInputCollation(node);
+	if (OidIsValid(this_collid))
+		ctx->ancestor_collids = lappend_oid(ctx->ancestor_collids,
+											this_collid);
+
+	result = expression_tree_walker(node, having_collation_conflict_walker,
+									ctx);
+
+	if (OidIsValid(this_collid))
+		ctx->ancestor_collids = list_delete_last(ctx->ancestor_collids);
+
+	return result;
 }
 
 /*
@@ -1836,9 +2128,10 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 			sort_input_target = linitial_node(PathTarget, sort_input_targets);
 			Assert(!linitial_int(sort_input_targets_contain_srfs));
 			/* likewise for grouping_target vs. scanjoin_target */
-			split_pathtarget_at_srfs(root, grouping_target, scanjoin_target,
-									 &grouping_targets,
-									 &grouping_targets_contain_srfs);
+			split_pathtarget_at_srfs_grouping(root,
+											  grouping_target, scanjoin_target,
+											  &grouping_targets,
+											  &grouping_targets_contain_srfs);
 			grouping_target = linitial_node(PathTarget, grouping_targets);
 			Assert(!linitial_int(grouping_targets_contain_srfs));
 			/* scanjoin_target will not have any SRFs precomputed for it */
@@ -2310,10 +2603,13 @@ grouping_planner(PlannerInfo *root, double tuple_fraction,
 }
 
 /*
- * Do preprocessing for groupingSets clause and related data.  This handles the
- * preliminary steps of expanding the grouping sets, organizing them into lists
- * of rollups, and preparing annotations which will later be filled in with
- * size estimates.
+ * Do preprocessing for groupingSets clause and related data.
+ *
+ * We expect that parse->groupingSets has already been expanded into a flat
+ * list of grouping sets (that is, just integer Lists of ressortgroupref
+ * numbers) by expand_grouping_sets().  This function handles the preliminary
+ * steps of organizing the grouping sets into lists of rollups, and preparing
+ * annotations which will later be filled in with size estimates.
  */
 static grouping_sets_data *
 preprocess_grouping_sets(PlannerInfo *root)
@@ -2324,18 +2620,17 @@ preprocess_grouping_sets(PlannerInfo *root)
 	ListCell   *lc_set;
 	grouping_sets_data *gd = palloc0(sizeof(grouping_sets_data));
 
-	parse->groupingSets = expand_grouping_sets(parse->groupingSets, parse->groupDistinct, -1);
-
-	gd->any_hashable = false;
-	gd->unhashable_refs = NULL;
-	gd->unsortable_refs = NULL;
-	gd->unsortable_sets = NIL;
-
 	/*
 	 * We don't currently make any attempt to optimize the groupClause when
 	 * there are grouping sets, so just duplicate it in processed_groupClause.
 	 */
 	root->processed_groupClause = parse->groupClause;
+
+	/* Detect unhashable and unsortable grouping expressions */
+	gd->any_hashable = false;
+	gd->unhashable_refs = NULL;
+	gd->unsortable_refs = NULL;
+	gd->unsortable_sets = NIL;
 
 	if (parse->groupClause)
 	{
@@ -6174,6 +6469,41 @@ optimize_window_clauses(PlannerInfo *root, WindowFuncLists *wflists)
 				}
 			}
 		}
+	}
+
+	/*
+	 * XXX remove any duplicate WindowFuncs from each WindowClause.  This has
+	 * been done only in the back branches.  Previously, the deduplication was
+	 * done in find_window_functions(), but that caused issues with the code
+	 * above when moving a WindowFunc to another WindowClause as any duplicate
+	 * WindowFuncs won't receive the adjusted winref when merging
+	 * WindowClauses.  The deduplication below has been done only so that we
+	 * maintain the same cost calculations.  As it turns out, the previous
+	 * deduplication code thought it was saving effort during execution by
+	 * getting rid of duplicates, but that was not true as the expression
+	 * evaluation code will evaluate each WindowFunc mentioned in the
+	 * targetlist.
+	 */
+	foreach(lc, windowClause)
+	{
+		WindowClause *wc = lfirst_node(WindowClause, lc);
+		ListCell   *lc2;
+		List	   *list = wflists->windowFuncs[wc->winref];
+		List	   *newlist = NIL;
+
+		if (list == NIL)
+			continue;
+
+		foreach(lc2, list)
+		{
+			if (!list_member(newlist, lfirst(lc2)))
+				newlist = lappend(newlist, lfirst(lc2));
+			else
+				wflists->numWindowFuncs--;
+		}
+		list_free(list);
+
+		wflists->windowFuncs[wc->winref] = newlist;
 	}
 }
 

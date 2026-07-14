@@ -23,6 +23,7 @@
 #include "postgres.h"
 
 #include "access/timeline.h"
+#include "access/visibilitymap.h"
 #include "access/xlog.h"
 #include "access/xlog_internal.h"
 #include "access/xlogrecovery.h"
@@ -644,7 +645,7 @@ WakeupWalSummarizer(void)
 	if (WalSummarizerCtl == NULL)
 		return;
 
-	LWLockAcquire(WALSummarizerLock, LW_EXCLUSIVE);
+	LWLockAcquire(WALSummarizerLock, LW_SHARED);
 	pgprocno = WalSummarizerCtl->summarizer_pgprocno;
 	LWLockRelease(WALSummarizerLock);
 
@@ -685,7 +686,7 @@ WaitForWalSummarization(XLogRecPtr lsn)
 		/*
 		 * If the LSN summarized on disk has reached the target value, stop.
 		 */
-		LWLockAcquire(WALSummarizerLock, LW_EXCLUSIVE);
+		LWLockAcquire(WALSummarizerLock, LW_SHARED);
 		summarized_lsn = WalSummarizerCtl->summarized_lsn;
 		pending_lsn = WalSummarizerCtl->pending_lsn;
 		LWLockRelease(WALSummarizerLock);
@@ -1356,7 +1357,8 @@ SummarizeSmgrRecord(XLogReaderState *xlogreader, BlockRefTable *brtab)
 									   MAIN_FORKNUM, xlrec->blkno);
 		if ((xlrec->flags & SMGR_TRUNCATE_VM) != 0)
 			BlockRefTableSetLimitBlock(brtab, &xlrec->rlocator,
-									   VISIBILITYMAP_FORKNUM, xlrec->blkno);
+									   VISIBILITYMAP_FORKNUM,
+									   visibilitymap_truncation_length(xlrec->blkno));
 	}
 }
 

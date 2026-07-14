@@ -59,7 +59,7 @@ static const PgStat_KindInfo injection_stats = {
 /*
  * Kind ID reserved for statistics of injection points.
  */
-#define PGSTAT_KIND_INJECTION	129
+#define PGSTAT_KIND_INJECTION	25
 
 /* Track if stats are loaded */
 static bool inj_stats_loaded = false;
@@ -164,8 +164,7 @@ void
 pgstat_report_inj(const char *name)
 {
 	PgStat_EntryRef *entry_ref;
-	PgStatShared_InjectionPoint *shstatent;
-	PgStat_StatInjEntry *statent;
+	PgStat_StatInjEntry *pending;
 
 	/* leave if disabled */
 	if (!inj_stats_loaded || !inj_stats_enabled)
@@ -174,11 +173,10 @@ pgstat_report_inj(const char *name)
 	entry_ref = pgstat_prep_pending_entry(PGSTAT_KIND_INJECTION, InvalidOid,
 										  PGSTAT_INJ_IDX(name), NULL);
 
-	shstatent = (PgStatShared_InjectionPoint *) entry_ref->shared_stats;
-	statent = &shstatent->stats;
+	pending = (PgStat_StatInjEntry *) entry_ref->pending;
 
-	/* Update the injection point statistics */
-	statent->numcalls++;
+	/* Update the injection point pending statistics */
+	pending->numcalls++;
 }
 
 /*

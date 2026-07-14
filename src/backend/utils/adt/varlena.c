@@ -138,6 +138,7 @@ static text *text_substring(Datum str,
 							int32 start,
 							int32 length,
 							bool length_not_specified);
+static int	pg_mbcharcliplen_chars(const char *mbstr, int len, int limit);
 static text *text_overlay(text *t1, text *t2, int sp, int sl);
 static int	text_position(text *t1, text *t2, Oid collid);
 static void text_position_setup(text *t1, text *t2, Oid collid, TextPositionState *state);
@@ -807,8 +808,11 @@ text_catenate(text *t1, text *t2)
  * charlen_to_bytelen()
  *	Compute the number of bytes occupied by n characters starting at *p
  *
- * It is caller's responsibility that there actually are n characters;
- * the string need not be null-terminated.
+ * The caller shall ensure there are n complete characters.  Callers achieve
+ * this by deriving "n" from regmatch_t findings from searching a wchar array.
+ * pg_mb2wchar_with_len() skips any trailing incomplete character, so regex
+ * matches will end no later than the last complete character.  (The string
+ * need not be null-terminated.)
  */
 static int
 charlen_to_bytelen(const char *p, int n)
@@ -823,7 +827,7 @@ charlen_to_bytelen(const char *p, int n)
 		const char *s;
 
 		for (s = p; n > 0; n--)
-			s += pg_mblen(s);
+			s += pg_mblen_unbounded(s); /* caller verified encoding */
 
 		return s - p;
 	}
@@ -896,7 +900,7 @@ text_substring(Datum str, int32 start, int32 length, bool length_not_specified)
 	int32		S = start;		/* start position */
 	int32		S1;				/* adjusted start position */
 	int32		L1;				/* adjusted substring length */
-	int32		E;				/* end position */
+	int32		E;				/* end position, exclusive */
 
 	/*
 	 * SQL99 says S can be zero or negative (which we don't document), but we
@@ -957,6 +961,7 @@ text_substring(Datum str, int32 start, int32 length, bool length_not_specified)
 		int32		slice_start;
 		int32		slice_size;
 		int32		slice_strlen;
+		int32		slice_len;
 		text	   *slice;
 		int32		E1;
 		int32		i;
@@ -973,14 +978,14 @@ text_substring(Datum str, int32 start, int32 length, bool length_not_specified)
 
 		if (length_not_specified)	/* special case - get length to end of
 									 * string */
-			slice_size = L1 = -1;
+			E = slice_size = L1 = -1;
 		else if (length < 0)
 		{
 			/* SQL99 says to throw an error for E < S, i.e., negative length */
 			ereport(ERROR,
 					(errcode(ERRCODE_SUBSTRING_ERROR),
 					 errmsg("negative substring length not allowed")));
-			slice_size = L1 = -1;	/* silence stupider compilers */
+			E = slice_size = L1 = -1;	/* silence stupider compilers */
 		}
 		else if (pg_add_s32_overflow(S, length, &E))
 		{
@@ -993,11 +998,11 @@ text_substring(Datum str, int32 start, int32 length, bool length_not_specified)
 		else
 		{
 			/*
-			 * A zero or negative value for the end position can happen if the
-			 * start was negative or one. SQL99 says to return a zero-length
-			 * string.
+			 * Ending at position 1, exclusive, obviously yields an empty
+			 * string.  A zero or negative value can happen if the start was
+			 * negative or one. SQL99 says to return a zero-length string.
 			 */
-			if (E < 1)
+			if (E <= 1)
 				return cstring_to_text("");
 
 			/*
@@ -1007,11 +1012,11 @@ text_substring(Datum str, int32 start, int32 length, bool length_not_specified)
 			L1 = E - S1;
 
 			/*
-			 * Total slice size in bytes can't be any longer than the start
-			 * position plus substring length times the encoding max length.
-			 * If that overflows, we can just use -1.
+			 * Total slice size in bytes can't be any longer than the
+			 * inclusive end position times the encoding max length.  If that
+			 * overflows, we can just use -1.
 			 */
-			if (pg_mul_s32_overflow(E, eml, &slice_size))
+			if (pg_mul_s32_overflow(E - 1, eml, &slice_size))
 				slice_size = -1;
 		}
 
@@ -1026,16 +1031,25 @@ text_substring(Datum str, int32 start, int32 length, bool length_not_specified)
 			slice = (text *) DatumGetPointer(str);
 
 		/* see if we got back an empty string */
-		if (VARSIZE_ANY_EXHDR(slice) == 0)
+		slice_len = VARSIZE_ANY_EXHDR(slice);
+		if (slice_len == 0)
 		{
 			if (slice != (text *) DatumGetPointer(str))
 				pfree(slice);
 			return cstring_to_text("");
 		}
 
-		/* Now we can get the actual length of the slice in MB characters */
-		slice_strlen = pg_mbstrlen_with_len(VARDATA_ANY(slice),
-											VARSIZE_ANY_EXHDR(slice));
+		/*
+		 * Now we can get the actual length of the slice in MB characters,
+		 * stopping at the end of the substring.  Continuing beyond the
+		 * substring end could find an incomplete character attributable
+		 * solely to DatumGetTextPSlice() chopping in the middle of a
+		 * character, and it would be superfluous work at best.
+		 */
+		slice_strlen =
+			(slice_size == -1 ?
+			 pg_mbstrlen_with_len(VARDATA_ANY(slice), slice_len) :
+			 pg_mbcharcliplen_chars(VARDATA_ANY(slice), slice_len, E - 1));
 
 		/*
 		 * Check that the start position wasn't > slice_strlen. If so, SQL99
@@ -1062,7 +1076,7 @@ text_substring(Datum str, int32 start, int32 length, bool length_not_specified)
 		 */
 		p = VARDATA_ANY(slice);
 		for (i = 0; i < S1 - 1; i++)
-			p += pg_mblen(p);
+			p += pg_mblen_unbounded(p);
 
 		/* hang onto a pointer to our start position */
 		s = p;
@@ -1072,7 +1086,7 @@ text_substring(Datum str, int32 start, int32 length, bool length_not_specified)
 		 * length.
 		 */
 		for (i = S1; i < E1; i++)
-			p += pg_mblen(p);
+			p += pg_mblen_unbounded(p);
 
 		ret = (text *) palloc(VARHDRSZ + (p - s));
 		SET_VARSIZE(ret, VARHDRSZ + (p - s));
@@ -1088,6 +1102,35 @@ text_substring(Datum str, int32 start, int32 length, bool length_not_specified)
 
 	/* not reached: suppress compiler warning */
 	return NULL;
+}
+
+/*
+ * pg_mbcharcliplen_chars -
+ *	Mirror pg_mbcharcliplen(), except return value unit is chars, not bytes.
+ *
+ *	This mirrors all the dubious historical behavior, so it's static to
+ *	discourage proliferation.  The assertions are specific to the one caller.
+ */
+static int
+pg_mbcharcliplen_chars(const char *mbstr, int len, int limit)
+{
+	int			nch = 0;
+	int			l;
+
+	Assert(len > 0);
+	Assert(limit > 0);
+	Assert(pg_database_encoding_max_length() > 1);
+
+	while (len > 0 && *mbstr)
+	{
+		l = pg_mblen_with_len(mbstr, len);
+		nch++;
+		if (nch == limit)
+			break;
+		len -= l;
+		mbstr += l;
+	}
+	return nch;
 }
 
 /*
@@ -1377,6 +1420,8 @@ retry:
 	 */
 	if (state->is_multibyte_char_in_char && state->locale->deterministic)
 	{
+		const char *haystack_end = state->str1 + state->len1;
+
 		/* Walk one character at a time, until we reach the match. */
 
 		/* the search should never move backwards. */
@@ -1385,7 +1430,7 @@ retry:
 		while (state->refpoint < matchptr)
 		{
 			/* step to next character. */
-			state->refpoint += pg_mblen(state->refpoint);
+			state->refpoint += pg_mblen_range(state->refpoint, haystack_end);
 			state->refpos++;
 
 			/*
@@ -1424,6 +1469,7 @@ text_position_next_internal(char *start_ptr, TextPositionState *state)
 	const char *hptr;
 
 	Assert(start_ptr >= haystack && start_ptr <= haystack_end);
+	Assert(needle_len > 0);
 
 	state->last_match_len_tmp = needle_len;
 
@@ -1436,19 +1482,26 @@ text_position_next_internal(char *start_ptr, TextPositionState *state)
 		 * needle under the given collation.
 		 *
 		 * Note, the found substring could have a different length than the
-		 * needle, including being empty.  Callers that want to skip over the
-		 * found string need to read the length of the found substring from
-		 * last_match_len rather than just using the length of their needle.
+		 * needle.  Callers that want to skip over the found string need to
+		 * read the length of the found substring from last_match_len rather
+		 * than just using the length of their needle.
 		 *
 		 * Most callers will require "greedy" semantics, meaning that we need
 		 * to find the longest such substring, not the shortest.  For callers
 		 * that don't need greedy semantics, we can finish on the first match.
+		 *
+		 * This loop depends on the assumption that the needle is nonempty and
+		 * any matching substring must also be nonempty.  (Even if the
+		 * collation would accept an empty match, returning one would send
+		 * callers that search for successive matches into an infinite loop.)
 		 */
 		const char *result_hptr = NULL;
 
 		hptr = start_ptr;
 		while (hptr < haystack_end)
 		{
+			const char *test_end;
+
 			/*
 			 * First check the common case that there is a match in the
 			 * haystack of exactly the length of the needle.
@@ -1459,11 +1512,13 @@ text_position_next_internal(char *start_ptr, TextPositionState *state)
 				return (char *) hptr;
 
 			/*
-			 * Else check if any of the possible substrings starting at hptr
-			 * are equal to the needle.
+			 * Else check if any of the non-empty substrings starting at hptr
+			 * compare equal to the needle.
 			 */
-			for (const char *test_end = hptr; test_end < haystack_end; test_end += pg_mblen(test_end))
+			test_end = hptr;
+			do
 			{
+				test_end += pg_mblen_range(test_end, haystack_end);
 				if (pg_strncoll(hptr, (test_end - hptr), needle, needle_len, state->locale) == 0)
 				{
 					state->last_match_len_tmp = (test_end - hptr);
@@ -1471,11 +1526,12 @@ text_position_next_internal(char *start_ptr, TextPositionState *state)
 					if (!state->greedy)
 						break;
 				}
-			}
+			} while (test_end < haystack_end);
+
 			if (result_hptr)
 				break;
 
-			hptr += pg_mblen(hptr);
+			hptr += pg_mblen_range(hptr, haystack_end);
 		}
 
 		return (char *) result_hptr;
@@ -4887,6 +4943,8 @@ split_text(FunctionCallInfo fcinfo, SplitTextOutputData *tstate)
 	}
 	else
 	{
+		const char *end_ptr;
+
 		/*
 		 * When fldsep is NULL, each character in the input string becomes a
 		 * separate element in the result set.  The separator is effectively
@@ -4895,10 +4953,11 @@ split_text(FunctionCallInfo fcinfo, SplitTextOutputData *tstate)
 		inputstring_len = VARSIZE_ANY_EXHDR(inputstring);
 
 		start_ptr = VARDATA_ANY(inputstring);
+		end_ptr = start_ptr + inputstring_len;
 
 		while (inputstring_len > 0)
 		{
-			int			chunk_len = pg_mblen(start_ptr);
+			int			chunk_len = pg_mblen_range(start_ptr, end_ptr);
 
 			CHECK_FOR_INTERRUPTS();
 
@@ -5802,7 +5861,7 @@ text_reverse(PG_FUNCTION_ARGS)
 		{
 			int			sz;
 
-			sz = pg_mblen(p);
+			sz = pg_mblen_range(p, endp);
 			dst -= sz;
 			memcpy(dst, p, sz);
 			p += sz;
@@ -5963,7 +6022,7 @@ text_format(PG_FUNCTION_ARGS)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("unrecognized format() type specifier \"%.*s\"",
-							pg_mblen(cp), cp),
+							pg_mblen_range(cp, end_ptr), cp),
 					 errhint("For a single \"%%\" use \"%%%%\".")));
 
 		/* If indirect width was specified, get its value */
@@ -6084,7 +6143,7 @@ text_format(PG_FUNCTION_ARGS)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("unrecognized format() type specifier \"%.*s\"",
-								pg_mblen(cp), cp),
+								pg_mblen_range(cp, end_ptr), cp),
 						 errhint("For a single \"%%\" use \"%%%%\".")));
 				break;
 		}
@@ -6548,18 +6607,18 @@ unicode_normalize_func(PG_FUNCTION_ARGS)
 	text	   *input = PG_GETARG_TEXT_PP(0);
 	char	   *formstr = text_to_cstring(PG_GETARG_TEXT_PP(1));
 	UnicodeNormalizationForm form;
-	int			size;
+	size_t		size;
 	pg_wchar   *input_chars;
 	pg_wchar   *output_chars;
 	unsigned char *p;
 	text	   *result;
-	int			i;
+	size_t		i;
 
 	form = unicode_norm_form_from_string(formstr);
 
 	/* convert to pg_wchar */
 	size = pg_mbstrlen_with_len(VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
-	input_chars = palloc((size + 1) * sizeof(pg_wchar));
+	input_chars = palloc_array(pg_wchar, size + 1);
 	p = (unsigned char *) VARDATA_ANY(input);
 	for (i = 0; i < size; i++)
 	{
@@ -6614,20 +6673,20 @@ unicode_is_normalized(PG_FUNCTION_ARGS)
 	text	   *input = PG_GETARG_TEXT_PP(0);
 	char	   *formstr = text_to_cstring(PG_GETARG_TEXT_PP(1));
 	UnicodeNormalizationForm form;
-	int			size;
+	size_t		size;
 	pg_wchar   *input_chars;
 	pg_wchar   *output_chars;
 	unsigned char *p;
-	int			i;
+	size_t		i;
 	UnicodeNormalizationQC quickcheck;
-	int			output_size;
+	size_t		output_size;
 	bool		result;
 
 	form = unicode_norm_form_from_string(formstr);
 
 	/* convert to pg_wchar */
 	size = pg_mbstrlen_with_len(VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
-	input_chars = palloc((size + 1) * sizeof(pg_wchar));
+	input_chars = palloc_array(pg_wchar, size + 1);
 	p = (unsigned char *) VARDATA_ANY(input);
 	for (i = 0; i < size; i++)
 	{

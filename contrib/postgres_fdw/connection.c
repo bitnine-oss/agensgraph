@@ -462,7 +462,7 @@ pgfdw_security_check(const char **keywords, const char **values, UserMapping *us
 	 * assume that UseScramPassthrough is also true since SCRAM options are
 	 * only set when UseScramPassthrough is enabled.
 	 */
-	if (MyProcPort->has_scram_keys && pgfdw_has_required_scram_options(keywords, values))
+	if (MyProcPort != NULL && MyProcPort->has_scram_keys && pgfdw_has_required_scram_options(keywords, values))
 		return;
 
 	ereport(ERROR,
@@ -568,7 +568,7 @@ connect_pg_server(ForeignServer *server, UserMapping *user)
 		n++;
 
 		/* Add required SCRAM pass-through connection options if it's enabled. */
-		if (MyProcPort->has_scram_keys && UseScramPassthrough(server, user))
+		if (MyProcPort != NULL && MyProcPort->has_scram_keys && UseScramPassthrough(server, user))
 		{
 			int			len;
 			int			encoded_len;
@@ -660,8 +660,9 @@ disconnect_pg_server(ConnCacheEntry *entry)
 }
 
 /*
- * Return true if the password_required is defined and false for this user
- * mapping, otherwise false. The mapping has been pre-validated.
+ * Check and return the value of password_required, if defined; otherwise,
+ * return true, which is the default value of it.  The mapping has been
+ * pre-validated.
  */
 static bool
 UserMappingPasswordRequired(UserMapping *user)
@@ -743,7 +744,7 @@ check_conn_params(const char **keywords, const char **values, UserMapping *user)
 	 * assume that UseScramPassthrough is also true since SCRAM options are
 	 * only set when UseScramPassthrough is enabled.
 	 */
-	if (MyProcPort->has_scram_keys && pgfdw_has_required_scram_options(keywords, values))
+	if (MyProcPort != NULL && MyProcPort->has_scram_keys && pgfdw_has_required_scram_options(keywords, values))
 		return;
 
 	ereport(ERROR,
@@ -1341,6 +1342,11 @@ pgfdw_inval_callback(Datum arg, int cacheid, uint32 hashvalue)
  * Such connections can't safely be further used.  Re-establishing the
  * connection would change the snapshot and roll back any writes already
  * performed, so that's not an option, either. Thus, we must abort.
+ *
+ * Note: there might be open cursors that use the connection, so even if the
+ * connection cache entry is marked as such, we will retain it until abort
+ * cleanup of the main transaction, to ensure such open cursors can safely
+ * refer to the PGconn for the connection.
  */
 static void
 pgfdw_reject_incomplete_xact_state_change(ConnCacheEntry *entry)
@@ -1351,15 +1357,12 @@ pgfdw_reject_incomplete_xact_state_change(ConnCacheEntry *entry)
 	if (entry->conn == NULL || !entry->changing_xact_state)
 		return;
 
-	/* make sure this entry is inactive */
-	disconnect_pg_server(entry);
-
 	/* find server name to be shown in the message below */
 	server = GetForeignServer(entry->serverid);
 
 	ereport(ERROR,
 			(errcode(ERRCODE_CONNECTION_EXCEPTION),
-			 errmsg("connection to server \"%s\" was lost",
+			 errmsg("connection to server \"%s\" cannot be used due to abort cleanup failure",
 					server->servername)));
 }
 
@@ -2557,7 +2560,7 @@ pgfdw_has_required_scram_options(const char **keywords, const char **values)
 		}
 	}
 
-	has_scram_keys = has_scram_client_key && has_scram_server_key && MyProcPort->has_scram_keys;
+	has_scram_keys = has_scram_client_key && has_scram_server_key && MyProcPort != NULL && MyProcPort->has_scram_keys;
 
 	return (has_scram_keys && has_require_auth);
 }

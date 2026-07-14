@@ -23,6 +23,7 @@
 #include "pgstat.h"
 #include "port/pg_bitutils.h"
 #include "replication/logicalworker.h"
+#include "replication/slotsync.h"
 #include "replication/walsender.h"
 #include "storage/condition_variable.h"
 #include "storage/ipc.h"
@@ -694,6 +695,9 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
 	if (CheckProcSignal(PROCSIG_PARALLEL_APPLY_MESSAGE))
 		HandleParallelApplyMessageInterrupt();
 
+	if (CheckProcSignal(PROCSIG_SLOTSYNC_MESSAGE))
+		HandleSlotSyncMessageInterrupt();
+
 	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_DATABASE))
 		HandleRecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_DATABASE);
 
@@ -728,7 +732,11 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
 void
 SendCancelRequest(int backendPID, const uint8 *cancel_key, int cancel_key_len)
 {
-	Assert(backendPID != 0);
+	if (backendPID == 0)
+	{
+		ereport(LOG, (errmsg("invalid cancel request with PID 0")));
+		return;
+	}
 
 	/*
 	 * See if we have a matching backend. Reading the pss_pid and

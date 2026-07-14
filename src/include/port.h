@@ -58,6 +58,7 @@ extern void make_native_path(char *filename);
 extern void cleanup_path(char *path);
 extern bool path_contains_parent_reference(const char *path);
 extern bool path_is_relative_and_below_cwd(const char *path);
+extern bool path_is_safe_for_extraction(const char *path);
 extern bool path_is_prefix_of_path(const char *path1, const char *path2);
 extern char *make_absolute_path(const char *path);
 extern const char *get_progname(const char *argv0);
@@ -338,7 +339,6 @@ extern bool rmtree(const char *path, bool rmtopdir);
  * open() and fopen() replacements to allow deletion of open files and
  * passing of other special options.
  */
-#define		O_DIRECT	0x80000000
 extern HANDLE pgwin32_open_handle(const char *, int, bool);
 extern int	pgwin32_open(const char *, int,...);
 extern FILE *pgwin32_fopen(const char *, const char *);

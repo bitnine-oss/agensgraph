@@ -67,7 +67,7 @@ prssyntaxerror(HSParser *state)
 	errsave(state->escontext,
 			(errcode(ERRCODE_SYNTAX_ERROR),
 			 errmsg("syntax error in hstore, near \"%.*s\" at position %d",
-					pg_mblen(state->ptr), state->ptr,
+					pg_mblen_cstr(state->ptr), state->ptr,
 					(int) (state->ptr - state->begin))));
 	/* In soft error situation, return false as convenience for caller */
 	return false;
@@ -385,7 +385,8 @@ hstoreUniquePairs(Pairs *a, int32 l, int32 *buflen)
 			if (ptr->needfree)
 			{
 				pfree(ptr->key);
-				pfree(ptr->val);
+				if (ptr->val != NULL)
+					pfree(ptr->val);
 			}
 		}
 		else

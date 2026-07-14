@@ -21,9 +21,10 @@ generate_old_dump(void)
 
 	/* run new pg_dumpall binary for globals */
 	exec_prog(UTILITY_LOG_FILE, NULL, true, true,
-			  "\"%s/pg_dumpall\" %s --globals-only --quote-all-identifiers "
+			  "\"%s/pg_dumpall\" %s%s --globals-only --quote-all-identifiers "
 			  "--binary-upgrade %s --no-sync -f \"%s/%s\"",
 			  new_cluster.bindir, cluster_conn_opts(&old_cluster),
+			  protocol_negotiation_supported(&old_cluster) ? "" : " -d \"max_protocol_version=3.0\"",
 			  log_opts.verbose ? "--verbose" : "",
 			  log_opts.dumpdir,
 			  GLOBALS_DUMP_FILE);
@@ -43,6 +44,9 @@ generate_old_dump(void)
 		initPQExpBuffer(&connstr);
 		appendPQExpBufferStr(&connstr, "dbname=");
 		appendConnStrVal(&connstr, old_db->db_name);
+		if (!protocol_negotiation_supported(&old_cluster))
+			appendPQExpBufferStr(&connstr, " max_protocol_version=3.0");
+
 		initPQExpBuffer(&escaped_connstr);
 		appendShellString(&escaped_connstr, connstr.data);
 		termPQExpBuffer(&connstr);
@@ -58,7 +62,7 @@ generate_old_dump(void)
 						   (user_opts.transfer_mode == TRANSFER_MODE_SWAP) ?
 						   "" : "--sequence-data",
 						   log_opts.verbose ? "--verbose" : "",
-						   user_opts.do_statistics ? "--with-statistics" : "--no-statistics",
+						   user_opts.do_statistics ? "--statistics" : "--no-statistics",
 						   log_opts.dumpdir,
 						   sql_file_name, escaped_connstr.data);
 

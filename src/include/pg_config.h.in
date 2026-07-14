@@ -238,6 +238,9 @@
 /* Define to 1 if you have the global variable 'int timezone'. */
 #undef HAVE_INT_TIMEZONE
 
+/* Define to 1 if you have the `io_uring_queue_init_mem' function. */
+#undef HAVE_IO_URING_QUEUE_INIT_MEM
+
 /* Define to 1 if __builtin_constant_p(x) implies "i"(x) acceptance. */
 #undef HAVE_I_CONSTRAINT__BUILTIN_CONSTANT_P
 
@@ -599,6 +602,14 @@
 /* Define to the version of this package. */
 #undef PACKAGE_VERSION
 
+/* Define to best C++ printf format archetype, usually gnu_printf if
+   available. */
+#undef PG_CXX_PRINTF_ATTRIBUTE
+
+/* Define to best C printf format archetype, usually gnu_printf if available.
+   */
+#undef PG_C_PRINTF_ATTRIBUTE
+
 /* Define to the name of a signed 128-bit integer type. */
 #undef PG_INT128_TYPE
 
@@ -614,9 +625,6 @@
 
 /* PostgreSQL minor version number */
 #undef PG_MINORVERSION_NUM
-
-/* Define to best printf format archetype, usually gnu_printf if available. */
-#undef PG_PRINTF_ATTRIBUTE
 
 /* PostgreSQL version as a string */
 #undef PG_VERSION

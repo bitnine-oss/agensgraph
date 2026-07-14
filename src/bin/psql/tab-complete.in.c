@@ -1002,7 +1002,7 @@ static const SchemaQuery Query_for_trigger_of_table = {
 
 #define Query_for_list_of_database_vars \
 "SELECT conf FROM ("\
-"       SELECT setdatabase, pg_catalog.split_part(unnest(setconfig),'=',1) conf"\
+"       SELECT setdatabase, pg_catalog.split_part(pg_catalog.unnest(setconfig),'=',1) conf"\
 "         FROM pg_db_role_setting "\
 "       ) s, pg_database d "\
 " WHERE s.setdatabase = d.oid "\
@@ -1078,9 +1078,12 @@ Keywords_for_list_of_owner_roles, "PUBLIC"
 "  WHERE usename LIKE '%s'"
 
 #define Query_for_list_of_user_vars \
-" SELECT pg_catalog.split_part(pg_catalog.unnest(rolconfig),'=',1) "\
-"   FROM pg_catalog.pg_roles "\
-"  WHERE rolname LIKE '%s'"
+"SELECT conf FROM ("\
+"       SELECT rolname, pg_catalog.split_part(pg_catalog.unnest(rolconfig),'=',1) conf"\
+"         FROM pg_catalog.pg_roles"\
+"       ) s"\
+"  WHERE s.conf like '%s' "\
+"    AND s.rolname LIKE '%s'"
 
 #define Query_for_list_of_access_methods \
 " SELECT amname "\
@@ -1189,6 +1192,19 @@ Alter_procedure_options, "COST", "IMMUTABLE", "LEAKPROOF", "NOT LEAKPROOF", \
 #define Alter_function_options \
 Alter_routine_options, "CALLED ON NULL INPUT", "RETURNS NULL ON NULL INPUT", \
 "STRICT", "SUPPORT"
+
+/* COPY options shared between FROM and TO */
+#define Copy_common_options \
+"DELIMITER", "ENCODING", "ESCAPE", "FORMAT", "HEADER", "NULL", "QUOTE"
+
+/* COPY FROM options */
+#define Copy_from_options \
+Copy_common_options, "DEFAULT", "FORCE_NOT_NULL", "FORCE_NULL", "FREEZE", \
+"LOG_VERBOSITY", "ON_ERROR", "REJECT_LIMIT"
+
+/* COPY TO options */
+#define Copy_to_options \
+Copy_common_options, "FORCE_QUOTE"
 
 /* Agensgraph list of graphs */
 #define Query_for_list_of_graphs \
@@ -1910,11 +1926,11 @@ psql_completion(const char *text, int start, int end)
 		"\\out",
 		"\\parse", "\\password", "\\print", "\\prompt", "\\pset",
 		"\\qecho", "\\quit",
-		"\\reset",
+		"\\reset", "\\restrict",
 		"\\s", "\\sendpipeline", "\\set", "\\setenv", "\\sf",
 		"\\startpipeline", "\\sv", "\\syncpipeline",
 		"\\t", "\\T", "\\timing",
-		"\\unset",
+		"\\unrestrict", "\\unset",
 		"\\x",
 		"\\warn", "\\watch", "\\write",
 		"\\z",
@@ -2626,7 +2642,10 @@ match_previous_words(int pattern_id,
 
 	/* ALTER USER,ROLE <name> RESET */
 	else if (Matches("ALTER", "USER|ROLE", MatchAny, "RESET"))
+	{
+		set_completion_reference(prev2_wd);
 		COMPLETE_WITH_QUERY_PLUS(Query_for_list_of_user_vars, "ALL");
+	}
 
 	/* ALTER USER,ROLE <name> WITH */
 	else if (Matches("ALTER", "USER|ROLE", MatchAny, "WITH"))
@@ -3228,6 +3247,9 @@ match_previous_words(int pattern_id,
 		else if (TailMatches("VERBOSE|SKIP_LOCKED"))
 			COMPLETE_WITH("ON", "OFF");
 	}
+	else if (Matches("ANALYZE", "(*)"))
+		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_analyzables,
+										"ONLY");
 	else if (Matches("ANALYZE", MatchAnyN, "("))
 		/* "ANALYZE (" should be caught above, so assume we want columns */
 		COMPLETE_WITH_ATTR(prev2_wd);
@@ -3415,23 +3437,24 @@ match_previous_words(int pattern_id,
 	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny))
 		COMPLETE_WITH("WITH (", "WHERE");
 
-	/* Complete COPY <sth> FROM|TO filename WITH ( */
-	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO", MatchAny, "WITH", "("))
-		COMPLETE_WITH("FORMAT", "FREEZE", "DELIMITER", "NULL",
-					  "HEADER", "QUOTE", "ESCAPE", "FORCE_QUOTE",
-					  "FORCE_NOT_NULL", "FORCE_NULL", "ENCODING", "DEFAULT",
-					  "ON_ERROR", "LOG_VERBOSITY", "REJECT_LIMIT");
+	/* Complete COPY <sth> FROM filename WITH ( */
+	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny, "WITH", "("))
+		COMPLETE_WITH(Copy_from_options);
+
+	/* Complete COPY <sth> TO filename WITH ( */
+	else if (Matches("COPY|\\copy", MatchAny, "TO", MatchAny, "WITH", "("))
+		COMPLETE_WITH(Copy_to_options);
 
 	/* Complete COPY <sth> FROM|TO filename WITH (FORMAT */
 	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO", MatchAny, "WITH", "(", "FORMAT"))
 		COMPLETE_WITH("binary", "csv", "text");
 
 	/* Complete COPY <sth> FROM filename WITH (ON_ERROR */
-	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO", MatchAny, "WITH", "(", "ON_ERROR"))
+	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny, "WITH", "(", "ON_ERROR"))
 		COMPLETE_WITH("stop", "ignore");
 
 	/* Complete COPY <sth> FROM filename WITH (LOG_VERBOSITY */
-	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO", MatchAny, "WITH", "(", "LOG_VERBOSITY"))
+	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny, "WITH", "(", "LOG_VERBOSITY"))
 		COMPLETE_WITH("silent", "default", "verbose");
 
 	/* Complete COPY <sth> FROM <sth> WITH (<options>) */
@@ -5082,7 +5105,7 @@ match_previous_words(int pattern_id,
 	/* Complete with a variable name */
 	else if (TailMatches("SET|RESET") &&
 			 !TailMatches("UPDATE", MatchAny, "SET") &&
-			 !TailMatches("ALTER", "DATABASE", MatchAny, "RESET"))
+			 !TailMatches("ALTER", "DATABASE|USER|ROLE", MatchAny, "RESET"))
 		COMPLETE_WITH_QUERY_VERBATIM_PLUS(Query_for_list_of_set_vars,
 										  "CONSTRAINTS",
 										  "TRANSACTION",
@@ -5287,24 +5310,6 @@ match_previous_words(int pattern_id,
 										"VERBOSE",
 										"ANALYZE",
 										"ONLY");
-	else if (Matches("VACUUM", "FULL"))
-		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
-										"FREEZE",
-										"VERBOSE",
-										"ANALYZE",
-										"ONLY");
-	else if (Matches("VACUUM", MatchAnyN, "FREEZE"))
-		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
-										"VERBOSE",
-										"ANALYZE",
-										"ONLY");
-	else if (Matches("VACUUM", MatchAnyN, "VERBOSE"))
-		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
-										"ANALYZE",
-										"ONLY");
-	else if (Matches("VACUUM", MatchAnyN, "ANALYZE"))
-		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
-										"ONLY");
 	else if (HeadMatches("VACUUM", "(*") &&
 			 !HeadMatches("VACUUM", "(*)"))
 	{
@@ -5324,6 +5329,27 @@ match_previous_words(int pattern_id,
 		else if (TailMatches("INDEX_CLEANUP"))
 			COMPLETE_WITH("AUTO", "ON", "OFF");
 	}
+	else if (Matches("VACUUM", "(*)"))
+		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
+										"ONLY");
+	else if (Matches("VACUUM", "FULL"))
+		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
+										"FREEZE",
+										"VERBOSE",
+										"ANALYZE",
+										"ONLY");
+	else if (Matches("VACUUM", MatchAnyN, "FREEZE"))
+		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
+										"VERBOSE",
+										"ANALYZE",
+										"ONLY");
+	else if (Matches("VACUUM", MatchAnyN, "VERBOSE"))
+		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
+										"ANALYZE",
+										"ONLY");
+	else if (Matches("VACUUM", MatchAnyN, "ANALYZE"))
+		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
+										"ONLY");
 	else if (Matches("VACUUM", MatchAnyN, "("))
 		/* "VACUUM (" should be caught above, so assume we want columns */
 		COMPLETE_WITH_ATTR(prev2_wd);

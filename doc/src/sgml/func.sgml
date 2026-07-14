@@ -11247,10 +11247,10 @@ now()
     statement (more specifically, the time of receipt of the latest command
     message from the client).
     <function>statement_timestamp()</function> and <function>transaction_timestamp()</function>
-    return the same value during the first command of a transaction, but might
-    differ during subsequent commands.
+    return the same value during the first statement of a transaction, but might
+    differ during subsequent statements.
     <function>clock_timestamp()</function> returns the actual current time, and
-    therefore its value changes even within a single SQL command.
+    therefore its value changes even within a single SQL statement.
     <function>timeofday()</function> is a historical
     <productname>PostgreSQL</productname> function.  Like
     <function>clock_timestamp()</function>, it returns the actual current time,
@@ -14419,8 +14419,7 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
    <tgroup cols="1">
     <thead>
      <row>
-      <entry role="func_table_entry">
-       <para role="func_signature">
+      <entry role="func_table_entry"><para role="func_signature">
         Function
        </para>
        <para>
@@ -14428,24 +14427,22 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
         </para>
        <para>
         Example(s)
-       </para>
-       </entry>
+       </para></entry>
      </row>
     </thead>
 
     <tbody>
      <row>
-      <entry role="func_table_entry">
-       <para role="func_signature">
-        <type>gen_random_uuid</type>
+      <entry role="func_table_entry"><para role="func_signature">
+        <function>gen_random_uuid</function> ( )
         <returnvalue>uuid</returnvalue>
        </para>
        <para role="func_signature">
-        <type>uuidv4</type>
+        <function>uuidv4</function> ( )
         <returnvalue>uuid</returnvalue>
        </para>
        <para>
-         Generate a version 4 (random) UUID.
+        Generates a version 4 (random) UUID
        </para>
        <para>
         <literal>gen_random_uuid()</literal>
@@ -14454,26 +14451,25 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
        <para>
         <literal>uuidv4()</literal>
         <returnvalue>b42410ee-132f-42ee-9e4f-09a6485c95b8</returnvalue>
-       </para>
-      </entry>
+       </para></entry>
      </row>
      <row>
-      <entry role="func_table_entry">
-       <para role="func_signature">
-        <type>uuidv7</type>
+      <entry role="func_table_entry"><para role="func_signature">
+        <function>uuidv7</function>
         ( <optional> <parameter>shift</parameter> <type>interval</type> </optional> )
         <returnvalue>uuid</returnvalue>
        </para>
        <para>
-        Generate a version 7 (time-ordered) UUID. The timestamp is computed using UNIX timestamp
-        with millisecond precision + sub-millisecond timestamp + random. The optional parameter
-        <parameter>shift</parameter> will shift the computed timestamp by the given <type>interval</type>.
+        Generates a version 7 (time-ordered) UUID. The timestamp is
+        computed using UNIX timestamp with millisecond precision +
+        sub-millisecond timestamp + random. The optional
+        parameter <parameter>shift</parameter> will shift the computed
+        timestamp by the given <type>interval</type>.
        </para>
        <para>
         <literal>uuidv7()</literal>
         <returnvalue>019535d9-3df7-79fb-b466-fa907fa17f9e</returnvalue>
-       </para>
-      </entry>
+       </para></entry>
      </row>
     </tbody>
    </tgroup>
@@ -14496,8 +14492,7 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
    <tgroup cols="1">
     <thead>
      <row>
-      <entry role="func_table_entry">
-       <para role="func_signature">
+      <entry role="func_table_entry"><para role="func_signature">
         Function
        </para>
        <para>
@@ -14505,44 +14500,41 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
        </para>
        <para>
         Example(s)
-       </para>
-      </entry>
+       </para></entry>
      </row>
     </thead>
 
     <tbody>
      <row>
-      <entry role="func_table_entry">
-       <para role="func_signature">
-        <type>uuid_extract_timestamp</type>
+      <entry role="func_table_entry"><para role="func_signature">
+        <function>uuid_extract_timestamp</function>
         ( <type>uuid</type> )
         <returnvalue>timestamp with time zone</returnvalue>
        </para>
        <para>
-        Extracts a <type>timestamp with time zone</type> from UUID
-        version 1 and 7.  For other versions, this function returns null.  Note that
-        the extracted timestamp is not necessarily exactly equal to the time the
-        UUID was generated; this depends on the implementation that generated the
-        UUID.
+        Extracts a <type>timestamp with time zone</type> from a UUID of
+        version 1 or 7.  For other versions, this function returns null.
+        Note that the extracted timestamp is not necessarily exactly equal
+        to the time the UUID was generated; this depends on the
+        implementation that generated the UUID.
        </para>
        <para>
         <literal>uuid_extract_timestamp('019535d9-3df7-79fb-b466-&zwsp;fa907fa17f9e'::uuid)</literal>
          <returnvalue>2025-02-23 21:46:24.503-05</returnvalue>
-       </para>
-      </entry>
+       </para></entry>
      </row>
      <row>
-      <entry role="func_table_entry">
-       <para role="func_signature">
-        <type>uuid_extract_version</type>
+      <entry role="func_table_entry"><para role="func_signature">
+        <function>uuid_extract_version</function>
         ( <type>uuid</type> )
         <returnvalue>smallint</returnvalue>
        </para>
        <para>
-        Extracts the version from a UUID of the variant described by
-        <ulink url="https://datatracker.ietf.org/doc/html/rfc9562">RFC 9562</ulink>.  For
-        other variants, this function returns null.  For example, for a UUID
-        generated by <function>gen_random_uuid</function>, this function will
+        Extracts the version from a UUID of one of the variants described by
+        <ulink url="https://datatracker.ietf.org/doc/html/rfc9562">RFC
+        9562</ulink>.  For other variants, this function returns null.
+        For example, for a UUID generated
+        by <function>gen_random_uuid()</function>, this function will
         return 4.
        </para>
        <para>
@@ -14552,8 +14544,7 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
        <para>
         <literal>uuid_extract_version('019535d9-3df7-79fb-b466-&zwsp;fa907fa17f9e'::uuid)</literal>
         <returnvalue>7</returnvalue>
-       </para>
-      </entry>
+       </para></entry>
      </row>
     </tbody>
    </tgroup>
@@ -17449,7 +17440,7 @@ ERROR:  value too long for type character(2)
         <returnvalue>[{"f1":1},2,null,3]</returnvalue>
        </para>
        <para>
-        <literal>jsonb_strip_nulls('[1,2,null,3,4]', true);</literal>
+        <literal>jsonb_strip_nulls('[1,2,null,3,4]', true)</literal>
         <returnvalue>[1,2,3,4]</returnvalue>
        </para>
        </entry>
@@ -26410,6 +26401,21 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
       <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
+         <primary>pg_get_partition_constraintdef</primary>
+        </indexterm>
+        <function>pg_get_partition_constraintdef</function> ( <parameter>table</parameter> <type>oid</type> )
+        <returnvalue>text</returnvalue>
+       </para>
+       <para>
+        Reconstructs the definition of a partition constraint.
+        (This is a decompiled reconstruction, not the original text
+        of the command.)
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
          <primary>pg_get_partkeydef</primary>
         </indexterm>
         <function>pg_get_partkeydef</function> ( <parameter>table</parameter> <type>oid</type> )
@@ -27687,6 +27693,31 @@ acl      | {postgres=arwdDxtm/postgres,foo=r/postgres}
         details.
        </para></entry>
       </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_get_multixact_members</primary>
+        </indexterm>
+        <function>pg_get_multixact_members</function> ( <parameter>multixid</parameter> <type>xid</type> )
+        <returnvalue>setof record</returnvalue>
+        ( <parameter>xid</parameter> <type>xid</type>,
+        <parameter>mode</parameter> <type>text</type> )
+       </para>
+       <para>
+        Returns the transaction ID and lock mode for each member of the
+        specified multixact ID.  The lock modes <literal>forupd</literal>,
+        <literal>fornokeyupd</literal>, <literal>sh</literal>, and
+        <literal>keysh</literal> correspond to the row-level locks
+        <literal>FOR UPDATE</literal>, <literal>FOR NO KEY UPDATE</literal>,
+        <literal>FOR SHARE</literal>, and <literal>FOR KEY SHARE</literal>,
+        respectively, as described in <xref linkend="locking-rows"/>.  Two
+        additional modes are specific to multixacts:
+        <literal>nokeyupd</literal>, used by updates that do not modify key
+        columns, and <literal>upd</literal>, used by updates or deletes that
+        modify key columns.
+       </para></entry>
+      </row>
      </tbody>
     </tgroup>
    </table>
@@ -27695,7 +27726,8 @@ acl      | {postgres=arwdDxtm/postgres,foo=r/postgres}
     The internal transaction ID type <type>xid</type> is 32 bits wide and
     wraps around every 4 billion transactions.  However,
     the functions shown in <xref linkend="functions-pg-snapshot"/>, except
-    <function>age</function> and <function>mxid_age</function>, use a
+    <function>age</function>, <function>mxid_age</function>, and
+    <function>pg_get_multixact_members</function>, use a
     64-bit type <type>xid8</type> that does not wrap around during the life
     of an installation and can be converted to <type>xid</type> by casting if
     required;  see <xref linkend="transaction-id"/> for details.
@@ -29981,7 +30013,7 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
         logical decoding and must be dropped after promotion. See
         <xref linkend="logicaldecoding-replication-slots-synchronization"/> for details.
         Note that this function is primarily intended for testing and
-        debugging purposes and should be used with caution. Additionaly,
+        debugging purposes and should be used with caution. Additionally,
         this function cannot be executed if
         <link linkend="guc-sync-replication-slots"><varname>
         sync_replication_slots</varname></link> is enabled and the slotsync
@@ -30336,7 +30368,8 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
         <function>pg_relation_filepath</function>.  For a relation in the
         database's default tablespace, the tablespace can be specified as zero.
         Returns <literal>NULL</literal> if no relation in the current database
-        is associated with the given values.
+        is associated with the given values, or if dealing with a temporary
+        relation.
        </para></entry>
       </row>
      </tbody>

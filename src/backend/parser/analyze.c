@@ -612,6 +612,14 @@ transformDeleteStmt(ParseState *pstate, DeleteStmt *stmt)
 										 ACL_DELETE);
 	nsitem = pstate->p_target_nsitem;
 
+	/* disallow DELETE ... WHERE CURRENT OF on a view */
+	if (stmt->whereClause &&
+		IsA(stmt->whereClause, CurrentOfExpr) &&
+		pstate->p_target_relation->rd_rel->relkind == RELKIND_VIEW)
+		ereport(ERROR,
+				errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				errmsg("WHERE CURRENT OF on a view is not implemented"));
+
 	/* there's no DISTINCT in DELETE */
 	qry->distinctClause = NIL;
 
@@ -2529,6 +2537,14 @@ transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt)
 										 ACL_UPDATE);
 	nsitem = pstate->p_target_nsitem;
 
+	/* disallow UPDATE ... WHERE CURRENT OF on a view */
+	if (stmt->whereClause &&
+		IsA(stmt->whereClause, CurrentOfExpr) &&
+		pstate->p_target_relation->rd_rel->relkind == RELKIND_VIEW)
+		ereport(ERROR,
+				errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				errmsg("WHERE CURRENT OF on a view is not implemented"));
+
 	/* subqueries in FROM cannot access the result relation */
 	nsitem->p_lateral_only = true;
 	nsitem->p_lateral_ok = false;
@@ -2983,6 +2999,7 @@ transformPLAssignStmt(ParseState *pstate, PLAssignStmt *stmt)
 											qry->sortClause,
 											EXPR_KIND_GROUP_BY,
 											false /* allow SQL92 rules */ );
+	qry->groupDistinct = sstmt->groupDistinct;
 
 	if (sstmt->distinctClause == NIL)
 	{

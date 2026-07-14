@@ -222,6 +222,7 @@ RESET enable_bitmapscan;
 
 DROP INDEX wowidx;
 
+ALTER TABLE test_tsvector SET (parallel_workers = 2);
 CREATE INDEX wowidx ON test_tsvector USING gin (a);
 
 SET enable_seqscan=OFF;
@@ -645,6 +646,14 @@ SELECT ts_headline('english',
 '', to_tsquery('english', ''));
 SELECT ts_headline('english',
 'foo bar', to_tsquery('english', ''));
+
+-- Test for large values of StartSel, StopSel and FragmentDelimiter
+SELECT ts_headline('english', 'foo barbar', to_tsquery('english', 'foo'),
+  'StartSel=' || repeat('x', 32768));
+SELECT ts_headline('english', 'foo barbar', to_tsquery('english', 'foo'),
+  'StopSel=' || repeat('x', 32768));
+SELECT ts_headline('english', 'foo barbar', to_tsquery('english', 'foo'),
+  'FragmentDelimiter=' || repeat('x', 32768));
 
 --Rewrite sub system
 

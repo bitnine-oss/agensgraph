@@ -388,7 +388,7 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 		resultRelInfo->ri_TrigDesc->trig_update_before_row)
 	{
 		if (!ExecBRUpdateTriggers(estate, epqstate, resultRelInfo, ctid,
-								  NULL, elemTupleSlot, &result, &tmfd))
+								  NULL, elemTupleSlot, &result, &tmfd, false))
 			return (Datum) 0;
 	}
 
@@ -611,7 +611,7 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 		resultRelInfo->ri_TrigDesc->trig_update_before_row)
 	{
 		if (!ExecBRUpdateTriggers(estate, epqstate, resultRelInfo, ctid,
-								  NULL, elemTupleSlot, &result, &tmfd))
+								  NULL, elemTupleSlot, &result, &tmfd, false))
 		{
 			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
 			return NULL;

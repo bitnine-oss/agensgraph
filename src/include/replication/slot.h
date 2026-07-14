@@ -266,7 +266,7 @@ extern PGDLLIMPORT ReplicationSlot *MyReplicationSlot;
 /* GUCs */
 extern PGDLLIMPORT int max_replication_slots;
 extern PGDLLIMPORT char *synchronized_standby_slots;
-extern PGDLLIMPORT int idle_replication_slot_timeout_mins;
+extern PGDLLIMPORT int idle_replication_slot_timeout_secs;
 
 /* shmem initialization functions */
 extern Size ReplicationSlotsShmemSize(void);
@@ -293,6 +293,8 @@ extern void ReplicationSlotMarkDirty(void);
 /* misc stuff */
 extern void ReplicationSlotInitialize(void);
 extern bool ReplicationSlotValidateName(const char *name, int elevel);
+extern bool ReplicationSlotValidateNameInternal(const char *name,
+												int *err_code, char **err_msg, char **err_hint);
 extern void ReplicationSlotReserveWal(void);
 extern void ReplicationSlotsComputeRequiredXmin(bool already_locked);
 extern void ReplicationSlotsComputeRequiredLSN(void);

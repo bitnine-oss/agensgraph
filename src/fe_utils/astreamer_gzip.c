@@ -316,8 +316,9 @@ astreamer_gzip_decompressor_content(astreamer *streamer,
 		 */
 		res = inflate(zs, Z_NO_FLUSH);
 
-		if (res == Z_STREAM_ERROR)
-			pg_log_error("could not decompress data: %s", zs->msg);
+		if (res != Z_OK && res != Z_STREAM_END && res != Z_BUF_ERROR)
+			pg_fatal("could not decompress data: %s",
+					 zs->msg ? zs->msg : "unknown error");
 
 		mystreamer->bytes_written =
 			mystreamer->base.bbs_buffer.maxlen - zs->avail_out;
@@ -347,10 +348,11 @@ astreamer_gzip_decompressor_finalize(astreamer *streamer)
 	 * End of the stream, if there is some pending data in output buffers then
 	 * we must forward it to next streamer.
 	 */
-	astreamer_content(mystreamer->base.bbs_next, NULL,
-					  mystreamer->base.bbs_buffer.data,
-					  mystreamer->base.bbs_buffer.maxlen,
-					  ASTREAMER_UNKNOWN);
+	if (mystreamer->bytes_written > 0)
+		astreamer_content(mystreamer->base.bbs_next, NULL,
+						  mystreamer->base.bbs_buffer.data,
+						  mystreamer->bytes_written,
+						  ASTREAMER_UNKNOWN);
 
 	astreamer_finalize(mystreamer->base.bbs_next);
 }
@@ -361,7 +363,12 @@ astreamer_gzip_decompressor_finalize(astreamer *streamer)
 static void
 astreamer_gzip_decompressor_free(astreamer *streamer)
 {
+	astreamer_gzip_decompressor *mystreamer;
+
+	mystreamer = (astreamer_gzip_decompressor *) streamer;
+
 	astreamer_free(streamer->bbs_next);
+	inflateEnd(&mystreamer->zstream);
 	pfree(streamer->bbs_buffer.data);
 	pfree(streamer);
 }

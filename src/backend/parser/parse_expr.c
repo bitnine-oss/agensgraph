@@ -95,7 +95,8 @@ static Node *transformJsonFuncExpr(ParseState *pstate, JsonFuncExpr *func);
 static void transformJsonPassingArgs(ParseState *pstate, const char *constructName,
 									 JsonFormatType format, List *args,
 									 List **passing_values, List **passing_names);
-static JsonBehavior *transformJsonBehavior(ParseState *pstate, JsonBehavior *behavior,
+static JsonBehavior *transformJsonBehavior(ParseState *pstate, JsonExpr *jsexpr,
+										   JsonBehavior *behavior,
 										   JsonBehaviorType default_behavior,
 										   JsonReturning *returning);
 static Node *GetJsonBehaviorConst(JsonBehaviorType btype, int location);
@@ -1137,6 +1138,7 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 	List	   *rnonvars;
 	bool		useOr;
 	ListCell   *l;
+	bool		has_rvars = false;
 
 	/*
 	 * If the operator is <>, combine with AND not OR.
@@ -1165,7 +1167,10 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 
 		rexprs = lappend(rexprs, rexpr);
 		if (contain_vars_of_level(rexpr, 0))
+		{
 			rvars = lappend(rvars, rexpr);
+			has_rvars = true;
+		}
 		else
 			rnonvars = lappend(rnonvars, rexpr);
 	}
@@ -1230,9 +1235,14 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 			newa->element_typeid = scalar_type;
 			newa->elements = aexprs;
 			newa->multidims = false;
-			newa->list_start = a->rexpr_list_start;
-			newa->list_end = a->rexpr_list_end;
 			newa->location = -1;
+
+			/*
+			 * If the IN expression contains Vars, disable query jumbling
+			 * squashing.  Vars cannot be safely jumbled.
+			 */
+			newa->list_start = has_rvars ? -1 : a->rexpr_list_start;
+			newa->list_end = has_rvars ? -1 : a->rexpr_list_end;
 
 			result = (Node *) make_scalar_array_op(pstate,
 												   a->name,
@@ -4293,6 +4303,9 @@ transformJsonFuncExpr(ParseState *pstate, JsonFuncExpr *func)
 {
 	JsonExpr   *jsexpr;
 	Node	   *path_spec;
+	Oid			pathspec_type;
+	int			pathspec_loc;
+	Node	   *coerced_path_spec;
 	const char *func_name = NULL;
 	JsonFormatType default_format;
 
@@ -4508,17 +4521,21 @@ transformJsonFuncExpr(ParseState *pstate, JsonFuncExpr *func)
 	jsexpr->format = func->context_item->format;
 
 	path_spec = transformExprRecurse(pstate, func->pathspec);
-	path_spec = coerce_to_target_type(pstate, path_spec, exprType(path_spec),
-									  JSONPATHOID, -1,
-									  COERCION_EXPLICIT, COERCE_IMPLICIT_CAST,
-									  exprLocation(path_spec));
-	if (path_spec == NULL)
+	pathspec_type = exprType(path_spec);
+	pathspec_loc = exprLocation(path_spec);
+	coerced_path_spec = coerce_to_target_type(pstate, path_spec,
+											  pathspec_type,
+											  JSONPATHOID, -1,
+											  COERCION_EXPLICIT,
+											  COERCE_IMPLICIT_CAST,
+											  pathspec_loc);
+	if (coerced_path_spec == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
 				 errmsg("JSON path expression must be of type %s, not of type %s",
-						"jsonpath", format_type_be(exprType(path_spec))),
-				 parser_errposition(pstate, exprLocation(path_spec))));
-	jsexpr->path_spec = path_spec;
+						"jsonpath", format_type_be(pathspec_type)),
+				 parser_errposition(pstate, pathspec_loc)));
+	jsexpr->path_spec = coerced_path_spec;
 
 	/* Transform and coerce the PASSING arguments to jsonb. */
 	transformJsonPassingArgs(pstate, func_name,
@@ -4538,13 +4555,16 @@ transformJsonFuncExpr(ParseState *pstate, JsonFuncExpr *func)
 			{
 				jsexpr->returning->typid = BOOLOID;
 				jsexpr->returning->typmod = -1;
+				jsexpr->collation = InvalidOid;
 			}
 
 			/* JSON_TABLE() COLUMNS can specify a non-boolean type. */
 			if (jsexpr->returning->typid != BOOLOID)
 				jsexpr->use_json_coercion = true;
 
-			jsexpr->on_error = transformJsonBehavior(pstate, func->on_error,
+			jsexpr->on_error = transformJsonBehavior(pstate,
+													 jsexpr,
+													 func->on_error,
 													 JSON_BEHAVIOR_FALSE,
 													 jsexpr->returning);
 			break;
@@ -4558,6 +4578,8 @@ transformJsonFuncExpr(ParseState *pstate, JsonFuncExpr *func)
 				ret->typid = JSONBOID;
 				ret->typmod = -1;
 			}
+
+			jsexpr->collation = get_typcollation(jsexpr->returning->typid);
 
 			/*
 			 * Keep quotes on scalar strings by default, omitting them only if
@@ -4575,11 +4597,15 @@ transformJsonFuncExpr(ParseState *pstate, JsonFuncExpr *func)
 				jsexpr->use_json_coercion = true;
 
 			/* Assume NULL ON EMPTY when ON EMPTY is not specified. */
-			jsexpr->on_empty = transformJsonBehavior(pstate, func->on_empty,
+			jsexpr->on_empty = transformJsonBehavior(pstate,
+													 jsexpr,
+													 func->on_empty,
 													 JSON_BEHAVIOR_NULL,
 													 jsexpr->returning);
 			/* Assume NULL ON ERROR when ON ERROR is not specified. */
-			jsexpr->on_error = transformJsonBehavior(pstate, func->on_error,
+			jsexpr->on_error = transformJsonBehavior(pstate,
+													 jsexpr,
+													 func->on_error,
 													 JSON_BEHAVIOR_NULL,
 													 jsexpr->returning);
 			break;
@@ -4591,6 +4617,7 @@ transformJsonFuncExpr(ParseState *pstate, JsonFuncExpr *func)
 				jsexpr->returning->typid = TEXTOID;
 				jsexpr->returning->typmod = -1;
 			}
+			jsexpr->collation = get_typcollation(jsexpr->returning->typid);
 
 			/*
 			 * Override whatever transformJsonOutput() set these to, which
@@ -4616,11 +4643,15 @@ transformJsonFuncExpr(ParseState *pstate, JsonFuncExpr *func)
 			}
 
 			/* Assume NULL ON EMPTY when ON EMPTY is not specified. */
-			jsexpr->on_empty = transformJsonBehavior(pstate, func->on_empty,
+			jsexpr->on_empty = transformJsonBehavior(pstate,
+													 jsexpr,
+													 func->on_empty,
 													 JSON_BEHAVIOR_NULL,
 													 jsexpr->returning);
 			/* Assume NULL ON ERROR when ON ERROR is not specified. */
-			jsexpr->on_error = transformJsonBehavior(pstate, func->on_error,
+			jsexpr->on_error = transformJsonBehavior(pstate,
+													 jsexpr,
+													 func->on_error,
 													 JSON_BEHAVIOR_NULL,
 													 jsexpr->returning);
 			break;
@@ -4631,6 +4662,7 @@ transformJsonFuncExpr(ParseState *pstate, JsonFuncExpr *func)
 				jsexpr->returning->typid = exprType(jsexpr->formatted_expr);
 				jsexpr->returning->typmod = -1;
 			}
+			jsexpr->collation = get_typcollation(jsexpr->returning->typid);
 
 			/*
 			 * Assume EMPTY ARRAY ON ERROR when ON ERROR is not specified.
@@ -4638,7 +4670,9 @@ transformJsonFuncExpr(ParseState *pstate, JsonFuncExpr *func)
 			 * ON EMPTY cannot be specified at the top level but it can be for
 			 * the individual columns.
 			 */
-			jsexpr->on_error = transformJsonBehavior(pstate, func->on_error,
+			jsexpr->on_error = transformJsonBehavior(pstate,
+													 jsexpr,
+													 func->on_error,
 													 JSON_BEHAVIOR_EMPTY_ARRAY,
 													 jsexpr->returning);
 			break;
@@ -4714,7 +4748,8 @@ ValidJsonBehaviorDefaultExpr(Node *expr, void *context)
  * Transform a JSON BEHAVIOR clause.
  */
 static JsonBehavior *
-transformJsonBehavior(ParseState *pstate, JsonBehavior *behavior,
+transformJsonBehavior(ParseState *pstate, JsonExpr *jsexpr,
+					  JsonBehavior *behavior,
 					  JsonBehaviorType default_behavior,
 					  JsonReturning *returning)
 {
@@ -4729,7 +4764,11 @@ transformJsonBehavior(ParseState *pstate, JsonBehavior *behavior,
 		location = behavior->location;
 		if (btype == JSON_BEHAVIOR_DEFAULT)
 		{
+			Oid			targetcoll = jsexpr->collation;
+			Oid			exprcoll;
+
 			expr = transformExprRecurse(pstate, behavior->expr);
+
 			if (!ValidJsonBehaviorDefaultExpr(expr, NULL))
 				ereport(ERROR,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
@@ -4745,6 +4784,24 @@ transformJsonBehavior(ParseState *pstate, JsonBehavior *behavior,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
 						 errmsg("DEFAULT expression must not return a set"),
 						 parser_errposition(pstate, exprLocation(expr))));
+
+			/*
+			 * Reject a DEFAULT expression whose collation differs from the
+			 * enclosing JSON expression's result collation
+			 * (jsexpr->collation), as chosen by the RETURNING clause.
+			 */
+			exprcoll = exprCollation(expr);
+			if (!OidIsValid(exprcoll))
+				exprcoll = get_typcollation(exprType(expr));
+			if (OidIsValid(targetcoll) && OidIsValid(exprcoll) &&
+				targetcoll != exprcoll)
+				ereport(ERROR,
+						errcode(ERRCODE_COLLATION_MISMATCH),
+						errmsg("collation of DEFAULT expression conflicts with RETURNING clause"),
+						errdetail("\"%s\" versus \"%s\"",
+								  get_collation_name(exprcoll),
+								  get_collation_name(targetcoll)),
+						parser_errposition(pstate, exprLocation(expr)));
 		}
 	}
 

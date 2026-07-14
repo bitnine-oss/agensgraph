@@ -760,6 +760,26 @@ select * from tbl_rs t1 join
   on true;
 
 --
+-- regression test for bug with parallel-hash-right-semi join
+--
+
+begin;
+
+-- encourage use of parallel plans
+set local parallel_setup_cost=0;
+set local parallel_tuple_cost=0;
+set local min_parallel_table_scan_size=0;
+set local max_parallel_workers_per_gather=4;
+
+-- ensure we don't get parallel hash right semi join
+explain (costs off)
+select * from tenk1 t1
+where exists (select 1 from tenk1 t2 where fivethous = t1.fivethous)
+and t1.fivethous < 5;
+
+rollback;
+
+--
 -- regression test for bug #13908 (hash join with skew tuples & nbatch increase)
 --
 
@@ -838,6 +858,13 @@ where not exists (select 1 from tenk1 b where a.unique1 = b.unique2);
 explain (costs off)
 select a.* from tenk1 a left join tenk1 b on a.unique1 = b.unique2
 where b.unique2 is null;
+
+-- check that we avoid de-duplicating columns redundantly
+set enable_memoize to off;
+explain (costs off)
+select 1 from tenk1
+where (hundred, thousand) in (select twothousand, twothousand from onek);
+reset enable_memoize;
 
 --
 -- regression test for bogus RTE_GROUP entries
@@ -1453,6 +1480,30 @@ select * from int4_tbl left join (
   select text 'foo' union all select text 'bar'
 ) ss(x) on true
 where ss.x is null;
+
+-- Test computation of varnullingrels when translating appendrel Var
+begin;
+
+create temp table t_append (a int not null, b int);
+insert into t_append values (1, 1);
+insert into t_append values (2, 3);
+
+explain (verbose, costs off)
+select t1.a, s.a from t_append t1
+  left join t_append t2 on t1.a = t2.b
+  join lateral (
+    select t1.a as a union all select t2.a as a
+  ) s on true
+where s.a is not null;
+
+select t1.a, s.a from t_append t1
+  left join t_append t2 on t1.a = t2.b
+  join lateral (
+    select t1.a as a union all select t2.a as a
+  ) s on true
+where s.a is not null;
+
+rollback;
 
 --
 -- test inlining of immutable functions
@@ -2174,6 +2225,29 @@ from int8_tbl t1
   left join onek t4
     on t2.q2 < t3.unique2;
 
+-- bug #19460: we need to clean up RestrictInfos more than we had been doing
+explain (costs off)
+select * from
+  (select 1::int as id) as lhs
+full join
+  (select dummy_source.id
+   from (select null::int as id) as dummy_source
+   left join (select a.id from a where a.id = 42) as sub
+   on sub.id = dummy_source.id
+  ) as rhs
+on lhs.id = rhs.id;
+
+explain (costs off)
+select * from
+  (select 1::int as id) as lhs
+full join
+  (select dummy_source.id
+   from (select 2::int as id) as dummy_source
+   left join (select a.id from a) as sub
+   on sub.id = dummy_source.id
+  ) as rhs
+on lhs.id = rhs.id;
+
 -- More tests of correct placement of pseudoconstant quals
 
 -- simple constant-false condition
@@ -2417,6 +2491,69 @@ from t t1
              from t t2 left join t t3 on t2.a = t3.a) s
     on true
 where t1.a = s.c;
+
+rollback;
+
+-- check handling of semijoins after join removal: we must suppress
+-- unique-ification of known-constant values
+begin;
+
+create temp table t (a int unique, b int);
+insert into t values (1, 2);
+
+explain (verbose, costs off)
+select t1.a from t t1
+  left join t t2 on t1.a = t2.a
+       join t t3 on true
+where exists (select 1 from t t4
+                join t t5 on t4.b = t5.b
+                join t t6 on t5.b = t6.b
+              where t1.a = t4.a and t3.a = t5.a and t4.a = 1);
+
+select t1.a from t t1
+  left join t t2 on t1.a = t2.a
+       join t t3 on true
+where exists (select 1 from t t4
+                join t t5 on t4.b = t5.b
+                join t t6 on t5.b = t6.b
+              where t1.a = t4.a and t3.a = t5.a and t4.a = 1);
+
+rollback;
+
+-- check handling of semijoins if all RHS columns are equated to constants: we
+-- should suppress unique-ification in this case.
+begin;
+
+create temp table t (a int, b int);
+insert into t values (1, 2);
+
+explain (costs off)
+select * from t t1, t t2 where exists
+  (select 1 from t t3 where t1.a = t3.a and t2.b = t3.b and t3.a = 1 and t3.b = 2);
+
+select * from t t1, t t2 where exists
+  (select 1 from t t3 where t1.a = t3.a and t2.b = t3.b and t3.a = 1 and t3.b = 2);
+
+rollback;
+
+-- check handling of semijoin unique-ification for child relations if all RHS
+-- columns are equated to constants.
+begin;
+
+create temp table p (a int, b int) partition by range (a);
+create temp table p1 partition of p for values from (0) to (10);
+create temp table p2 partition of p for values from (10) to (20);
+insert into p values (1, 2);
+insert into p values (10, 20);
+
+set enable_partitionwise_join to on;
+
+explain (costs off)
+select * from p t1 where exists
+  (select 1 from p t2 where t1.a = t2.a and t1.a = 1);
+
+select * from p t1 where exists
+  (select 1 from p t2 where t1.a = t2.a and t1.a = 1);
 
 rollback;
 
@@ -2963,6 +3100,12 @@ EXPLAIN (COSTS OFF)
 SELECT * FROM
 (SELECT n2.a FROM sj n1, sj n2 WHERE n1.a <> n2.a) q0, sl
 WHERE q0.a = 1;
+
+-- Do not forget to replace relid in bare Var join clause (bug #19435)
+ALTER TABLE sl ADD COLUMN bool_col boolean;
+EXPLAIN (COSTS OFF)
+SELECT 1 AS c1 FROM sl sl1 LEFT JOIN (sl AS sl2 NATURAL JOIN sl AS sl3)
+  ON sl2.bool_col LEFT JOIN sl AS sl4 ON sl2.bool_col;
 
 -- Check optimization disabling if it will violate special join conditions.
 -- Two identical joined relations satisfies self join removal conditions but
@@ -3641,6 +3784,16 @@ SELECT 1 FROM group_tbl t1
 GROUP BY s.c1, s.c2;
 
 DROP TABLE group_tbl;
+
+-- Test that we ignore PlaceHolderVars when looking up statistics
+EXPLAIN (COSTS OFF)
+SELECT t1.unique1 FROM tenk1 t1 LEFT JOIN
+  (SELECT *, 42 AS phv FROM tenk1 t2) ss ON t1.unique2 = ss.unique2
+WHERE ss.unique1 = ss.phv AND t1.unique1 < 100;
+
+SELECT t1.unique1 FROM tenk1 t1 LEFT JOIN
+  (SELECT *, 42 AS phv FROM tenk1 t2) ss ON t1.unique2 = ss.unique2
+WHERE ss.unique1 = ss.phv AND t1.unique1 < 100;
 
 --
 -- Test for a nested loop join involving index scan, transforming OR-clauses

@@ -17,7 +17,7 @@ dnl Read the Autoconf manual for details.
 dnl
 m4_pattern_forbid(^PGAC_)dnl to catch undefined macros
 
-AC_INIT([PostgreSQL], [18beta1], [pgsql-bugs@lists.postgresql.org], [], [https://www.postgresql.org/])
+AC_INIT([PostgreSQL], [18.4], [pgsql-bugs@lists.postgresql.org], [], [https://www.postgresql.org/])
 
 m4_if(m4_defn([m4_PACKAGE_VERSION]), [2.69], [], [m4_fatal([Autoconf version 2.69 is required.
 Untested combinations of 'autoconf' and PostgreSQL versions are not
@@ -1112,12 +1112,12 @@ if test "$with_libxml" = yes ; then
   # Note the user could also set XML2_CFLAGS/XML2_LIBS directly
   for pgac_option in $XML2_CFLAGS; do
     case $pgac_option in
-      -I*|-D*) CPPFLAGS="$CPPFLAGS $pgac_option";;
+      -I*|-D*) INCLUDES="$INCLUDES $pgac_option";;
     esac
   done
   for pgac_option in $XML2_LIBS; do
     case $pgac_option in
-      -L*) LDFLAGS="$LDFLAGS $pgac_option";;
+      -L*) LIBDIRS="$LIBDIRS $pgac_option";;
     esac
   done
 fi
@@ -1161,12 +1161,12 @@ if test "$with_lz4" = yes; then
   # note that -llz4 will be added by AC_CHECK_LIB below.
   for pgac_option in $LZ4_CFLAGS; do
     case $pgac_option in
-      -I*|-D*) CPPFLAGS="$CPPFLAGS $pgac_option";;
+      -I*|-D*) INCLUDES="$INCLUDES $pgac_option";;
     esac
   done
   for pgac_option in $LZ4_LIBS; do
     case $pgac_option in
-      -L*) LDFLAGS="$LDFLAGS $pgac_option";;
+      -L*) LIBDIRS="$LIBDIRS $pgac_option";;
     esac
   done
 fi
@@ -1186,12 +1186,12 @@ if test "$with_zstd" = yes; then
   # note that -lzstd will be added by AC_CHECK_LIB below.
   for pgac_option in $ZSTD_CFLAGS; do
     case $pgac_option in
-      -I*|-D*) CPPFLAGS="$CPPFLAGS $pgac_option";;
+      -I*|-D*) INCLUDES="$INCLUDES $pgac_option";;
     esac
   done
   for pgac_option in $ZSTD_LIBS; do
     case $pgac_option in
-      -L*) LDFLAGS="$LDFLAGS $pgac_option";;
+      -L*) LIBDIRS="$LIBDIRS $pgac_option";;
     esac
   done
 fi
@@ -1427,6 +1427,13 @@ fi
 
 if test "$with_libxslt" = yes ; then
   AC_CHECK_LIB(xslt, xsltCleanupGlobals, [], [AC_MSG_ERROR([library 'xslt' is required for XSLT support])])
+fi
+
+if test "$with_liburing" = yes; then
+  _LIBS="$LIBS"
+  LIBS="$LIBURING_LIBS $LIBS"
+  AC_CHECK_FUNCS([io_uring_queue_init_mem])
+  LIBS="$_LIBS"
 fi
 
 if test "$with_lz4" = yes ; then
@@ -1683,6 +1690,7 @@ m4_defun([AC_PROG_CC_STDC], []) dnl We don't want that.
 AC_C_BIGENDIAN
 AC_C_INLINE
 PGAC_PRINTF_ARCHETYPE
+PGAC_CXX_PRINTF_ARCHETYPE
 PGAC_C_STATIC_ASSERT
 PGAC_C_TYPEOF
 PGAC_C_TYPES_COMPATIBLE
@@ -1946,7 +1954,7 @@ fi
 
 if test "$with_icu" = yes; then
   ac_save_CPPFLAGS=$CPPFLAGS
-  CPPFLAGS="$ICU_CFLAGS $CPPFLAGS"
+  CPPFLAGS="$CPPFLAGS $ICU_CFLAGS"
 
   # Verify we have ICU's header files
   AC_CHECK_HEADER(unicode/ucol.h, [],
@@ -2046,7 +2054,7 @@ PGAC_HAVE_GCC__ATOMIC_INT32_CAS
 PGAC_HAVE_GCC__ATOMIC_INT64_CAS
 
 
-# Check for x86 cpuid instruction
+# Check for __get_cpuid() and __cpuid()
 AC_CACHE_CHECK([for __get_cpuid], [pgac_cv__get_cpuid],
 [AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <cpuid.h>],
   [[unsigned int exx[4] = {0, 0, 0, 0};
@@ -2056,8 +2064,21 @@ AC_CACHE_CHECK([for __get_cpuid], [pgac_cv__get_cpuid],
   [pgac_cv__get_cpuid="no"])])
 if test x"$pgac_cv__get_cpuid" = x"yes"; then
   AC_DEFINE(HAVE__GET_CPUID, 1, [Define to 1 if you have __get_cpuid.])
+else
+  # __cpuid()
+  AC_CACHE_CHECK([for __cpuid], [pgac_cv__cpuid],
+  [AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <intrin.h>],
+    [[unsigned int exx[4] = {0, 0, 0, 0};
+    __cpuid(exx, 1);
+    ]])],
+    [pgac_cv__cpuid="yes"],
+    [pgac_cv__cpuid="no"])])
+  if test x"$pgac_cv__cpuid" = x"yes"; then
+    AC_DEFINE(HAVE__CPUID, 1, [Define to 1 if you have __cpuid.])
+  fi
 fi
 
+# Check for __get_cpuid_count() and __cpuidex() in a similar fashion.
 AC_CACHE_CHECK([for __get_cpuid_count], [pgac_cv__get_cpuid_count],
 [AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <cpuid.h>],
   [[unsigned int exx[4] = {0, 0, 0, 0};
@@ -2067,28 +2088,18 @@ AC_CACHE_CHECK([for __get_cpuid_count], [pgac_cv__get_cpuid_count],
   [pgac_cv__get_cpuid_count="no"])])
 if test x"$pgac_cv__get_cpuid_count" = x"yes"; then
   AC_DEFINE(HAVE__GET_CPUID_COUNT, 1, [Define to 1 if you have __get_cpuid_count.])
-fi
-
-AC_CACHE_CHECK([for __cpuid], [pgac_cv__cpuid],
-[AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <intrin.h>],
-  [[unsigned int exx[4] = {0, 0, 0, 0};
-  __get_cpuid(exx[0], 1);
-  ]])],
-  [pgac_cv__cpuid="yes"],
-  [pgac_cv__cpuid="no"])])
-if test x"$pgac_cv__cpuid" = x"yes"; then
-  AC_DEFINE(HAVE__CPUID, 1, [Define to 1 if you have __cpuid.])
-fi
-
-AC_CACHE_CHECK([for __cpuidex], [pgac_cv__cpuidex],
-[AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <intrin.h>],
-  [[unsigned int exx[4] = {0, 0, 0, 0};
-  __get_cpuidex(exx[0], 7, 0);
-  ]])],
-  [pgac_cv__cpuidex="yes"],
-  [pgac_cv__cpuidex="no"])])
-if test x"$pgac_cv__cpuidex" = x"yes"; then
-  AC_DEFINE(HAVE__CPUIDEX, 1, [Define to 1 if you have __cpuidex.])
+else
+  # __cpuidex()
+  AC_CACHE_CHECK([for __cpuidex], [pgac_cv__cpuidex],
+  [AC_LINK_IFELSE([AC_LANG_PROGRAM([#include <intrin.h>],
+    [[unsigned int exx[4] = {0, 0, 0, 0};
+    __cpuidex(exx, 7, 0);
+    ]])],
+    [pgac_cv__cpuidex="yes"],
+    [pgac_cv__cpuidex="no"])])
+  if test x"$pgac_cv__cpuidex" = x"yes"; then
+    AC_DEFINE(HAVE__CPUIDEX, 1, [Define to 1 if you have __cpuidex.])
+  fi
 fi
 
 # Check for XSAVE intrinsics
@@ -2346,7 +2357,7 @@ Use --without-tcl to disable building PL/Tcl.])
     fi
     # now that we have TCL_INCLUDE_SPEC, we can check for <tcl.h>
     ac_save_CPPFLAGS=$CPPFLAGS
-    CPPFLAGS="$TCL_INCLUDE_SPEC $CPPFLAGS"
+    CPPFLAGS="$CPPFLAGS $TCL_INCLUDE_SPEC"
     AC_CHECK_HEADER(tcl.h, [], [AC_MSG_ERROR([header file <tcl.h> is required for Tcl])])
     CPPFLAGS=$ac_save_CPPFLAGS
 fi
@@ -2383,7 +2394,7 @@ fi
 # check for <Python.h>
 if test "$with_python" = yes; then
   ac_save_CPPFLAGS=$CPPFLAGS
-  CPPFLAGS="$python_includespec $CPPFLAGS"
+  CPPFLAGS="$CPPFLAGS $python_includespec"
   AC_CHECK_HEADER(Python.h, [], [AC_MSG_ERROR([header file <Python.h> is required for Python])])
   CPPFLAGS=$ac_save_CPPFLAGS
 fi

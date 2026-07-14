@@ -130,8 +130,8 @@ ParseExplainOptionList(ExplainState *es, List *options, ParseState *pstate)
 				else
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							 errmsg("unrecognized value for EXPLAIN option \"%s\": \"%s\"",
-									opt->defname, p),
+							 errmsg("unrecognized value for %s option \"%s\": \"%s\"",
+									"EXPLAIN", opt->defname, p),
 							 parser_errposition(pstate, opt->location)));
 			}
 			else
@@ -155,15 +155,15 @@ ParseExplainOptionList(ExplainState *es, List *options, ParseState *pstate)
 			else
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("unrecognized value for EXPLAIN option \"%s\": \"%s\"",
-								opt->defname, p),
+						 errmsg("unrecognized value for %s option \"%s\": \"%s\"",
+								"EXPLAIN", opt->defname, p),
 						 parser_errposition(pstate, opt->location)));
 		}
 		else if (!ApplyExtensionExplainOption(es, opt, pstate))
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("unrecognized EXPLAIN option \"%s\"",
-							opt->defname),
+					 errmsg("unrecognized %s option \"%s\"",
+							"EXPLAIN", opt->defname),
 					 parser_errposition(pstate, opt->location)));
 	}
 
@@ -195,7 +195,8 @@ ParseExplainOptionList(ExplainState *es, List *options, ParseState *pstate)
 	if (es->generic && es->analyze)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("EXPLAIN options ANALYZE and GENERIC_PLAN cannot be used together")));
+				 errmsg("%s options %s and %s cannot be used together",
+						"EXPLAIN", "ANALYZE", "GENERIC_PLAN")));
 
 	/* if the summary was not set explicitly, set default value */
 	es->summary = (summary_set) ? es->summary : es->analyze;
@@ -281,7 +282,8 @@ SetExplainExtensionState(ExplainState *es, int extension_id, void *opaque)
 	/* If there is no array yet, create one. */
 	if (es->extension_state == NULL)
 	{
-		es->extension_state_allocated = 16;
+		es->extension_state_allocated =
+			Max(16, pg_nextpower2_32(extension_id + 1));
 		es->extension_state =
 			palloc0(es->extension_state_allocated * sizeof(void *));
 	}
@@ -291,7 +293,7 @@ SetExplainExtensionState(ExplainState *es, int extension_id, void *opaque)
 	{
 		int			i;
 
-		i = pg_nextpower2_32(es->extension_state_allocated + 1);
+		i = pg_nextpower2_32(extension_id + 1);
 		es->extension_state = (void **)
 			repalloc0(es->extension_state,
 					  es->extension_state_allocated * sizeof(void *),
@@ -336,7 +338,7 @@ RegisterExtensionExplainOption(const char *option_name,
 		ExplainExtensionOptionArray = (ExplainExtensionOption *)
 			MemoryContextAlloc(TopMemoryContext,
 							   ExplainExtensionOptionsAllocated
-							   * sizeof(char *));
+							   * sizeof(ExplainExtensionOption));
 	}
 
 	/* If there's an array but it's currently full, expand it. */
@@ -345,7 +347,7 @@ RegisterExtensionExplainOption(const char *option_name,
 		int			i = pg_nextpower2_32(ExplainExtensionOptionsAssigned + 1);
 
 		ExplainExtensionOptionArray = (ExplainExtensionOption *)
-			repalloc(ExplainExtensionOptionArray, i * sizeof(char *));
+			repalloc(ExplainExtensionOptionArray, i * sizeof(ExplainExtensionOption));
 		ExplainExtensionOptionsAllocated = i;
 	}
 

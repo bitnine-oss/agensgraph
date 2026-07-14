@@ -677,6 +677,23 @@ select * from (
 (1 row)
 
 --
+-- Test cases for interactions between PARAM_EXEC, subplans and array
+-- subscripts
+--
+-- check that array subscription doesn't conflict with PARAM_EXEC (see #19370)
+SELECT (array[1,2])[(SELECT g.i)] FROM generate_series(1, 1) g(i);
+ array 
+-------
+     1
+(1 row)
+
+SELECT (array[1,2])[(SELECT g.i):(SELECT g.i + 1)] FROM generate_series(1, 1) g(i);
+ array 
+-------
+ {1,2}
+(1 row)
+
+--
 -- Test that an IN implemented using a UniquePath does unique-ification
 -- with the right semantics, as per bug #4113.  (Unfortunately we have
 -- no simple way to ensure that this test case actually chooses that type
@@ -771,6 +788,25 @@ select (select (a.*)::text) from view_a a;
   a   
 ------
  (42)
+(1 row)
+
+--
+-- Test case for bug #19037: no relation entry for relid N
+--
+explain (costs off)
+select (1 = any(array_agg(f1))) = any (select false) from int4_tbl;
+         QUERY PLAN         
+----------------------------
+ Aggregate
+   ->  Seq Scan on int4_tbl
+   SubPlan 1
+     ->  Result
+(4 rows)
+
+select (1 = any(array_agg(f1))) = any (select false) from int4_tbl;
+ ?column? 
+----------
+ t
 (1 row)
 
 --
@@ -1695,6 +1731,110 @@ NOTICE:  x = 9, y = 13
  9 | 3
 (3 rows)
 
+--
+-- check that an upper-level qual is not pushed down if it references a grouped
+-- Var whose underlying expression contains SRFs
+--
+explain (verbose, costs off)
+select * from
+  (select generate_series(1, ten) as g, count(*) from tenk1 group by 1) ss
+  where ss.g = 1;
+                                                                                                                            QUERY PLAN                                                                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on ss
+   Output: ss.g, ss.count
+   Filter: (ss.g = 1)
+   ->  HashAggregate
+         Output: (generate_series(1, tenk1.ten)), count(*)
+         Group Key: generate_series(1, tenk1.ten)
+         ->  ProjectSet
+               Output: generate_series(1, tenk1.ten)
+               ->  Seq Scan on public.tenk1
+                     Output: tenk1.unique1, tenk1.unique2, tenk1.two, tenk1.four, tenk1.ten, tenk1.twenty, tenk1.hundred, tenk1.thousand, tenk1.twothousand, tenk1.fivethous, tenk1.tenthous, tenk1.odd, tenk1.even, tenk1.stringu1, tenk1.stringu2, tenk1.string4
+(10 rows)
+
+select * from
+  (select generate_series(1, ten) as g, count(*) from tenk1 group by 1) ss
+  where ss.g = 1;
+ g | count 
+---+-------
+ 1 |  9000
+(1 row)
+
+--
+-- check that an upper-level qual is not pushed down if it references a grouped
+-- Var whose underlying expression contains volatile functions
+--
+alter function tattle(x int, y int) volatile;
+explain (verbose, costs off)
+select * from
+  (select tattle(3, ten) as v, count(*) from tenk1 where unique1 < 3 group by 1) ss
+  where ss.v;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Subquery Scan on ss
+   Output: ss.v, ss.count
+   Filter: ss.v
+   ->  GroupAggregate
+         Output: (tattle(3, tenk1.ten)), count(*)
+         Group Key: (tattle(3, tenk1.ten))
+         ->  Sort
+               Output: (tattle(3, tenk1.ten))
+               Sort Key: (tattle(3, tenk1.ten))
+               ->  Bitmap Heap Scan on public.tenk1
+                     Output: tattle(3, tenk1.ten)
+                     Recheck Cond: (tenk1.unique1 < 3)
+                     ->  Bitmap Index Scan on tenk1_unique1
+                           Index Cond: (tenk1.unique1 < 3)
+(14 rows)
+
+select * from
+  (select tattle(3, ten) as v, count(*) from tenk1 where unique1 < 3 group by 1) ss
+  where ss.v;
+NOTICE:  x = 3, y = 2
+NOTICE:  x = 3, y = 1
+NOTICE:  x = 3, y = 0
+ v | count 
+---+-------
+ t |     3
+(1 row)
+
+-- if we pretend it's stable, we get different results:
+alter function tattle(x int, y int) stable;
+explain (verbose, costs off)
+select * from
+  (select tattle(3, ten) as v, count(*) from tenk1 where unique1 < 3 group by 1) ss
+  where ss.v;
+                      QUERY PLAN                      
+------------------------------------------------------
+ GroupAggregate
+   Output: (tattle(3, tenk1.ten)), count(*)
+   Group Key: (tattle(3, tenk1.ten))
+   ->  Sort
+         Output: (tattle(3, tenk1.ten))
+         Sort Key: (tattle(3, tenk1.ten))
+         ->  Bitmap Heap Scan on public.tenk1
+               Output: tattle(3, tenk1.ten)
+               Recheck Cond: (tenk1.unique1 < 3)
+               Filter: tattle(3, tenk1.ten)
+               ->  Bitmap Index Scan on tenk1_unique1
+                     Index Cond: (tenk1.unique1 < 3)
+(12 rows)
+
+select * from
+  (select tattle(3, ten) as v, count(*) from tenk1 where unique1 < 3 group by 1) ss
+  where ss.v;
+NOTICE:  x = 3, y = 2
+NOTICE:  x = 3, y = 2
+NOTICE:  x = 3, y = 1
+NOTICE:  x = 3, y = 1
+NOTICE:  x = 3, y = 0
+NOTICE:  x = 3, y = 0
+ v | count 
+---+-------
+ t |     3
+(1 row)
+
 drop function tattle(x int, y int);
 --
 -- Test that LIMIT can be pushed to SORT through a subquery that just projects
@@ -1763,6 +1903,34 @@ fetch backward all in c1;
 (2 rows)
 
 commit;
+--
+-- Check that JsonConstructorExpr is treated as non-strict, and thus can be
+-- wrapped in a PlaceHolderVar
+--
+begin;
+create temp table json_tab (a int);
+insert into json_tab values (1);
+explain (verbose, costs off)
+select * from json_tab t1 left join (select json_array(1, a) from json_tab t2) s on false;
+                    QUERY PLAN                     
+---------------------------------------------------
+ Nested Loop Left Join
+   Output: t1.a, (JSON_ARRAY(1, a RETURNING json))
+   Join Filter: false
+   ->  Seq Scan on pg_temp.json_tab t1
+         Output: t1.a
+   ->  Result
+         Output: JSON_ARRAY(1, a RETURNING json)
+         One-Time Filter: false
+(8 rows)
+
+select * from json_tab t1 left join (select json_array(1, a) from json_tab t2) s on false;
+ a | json_array 
+---+------------
+ 1 | 
+(1 row)
+
+rollback;
 --
 -- Verify that we correctly flatten cases involving a subquery output
 -- expression that doesn't need to be wrapped in a PlaceHolderVar

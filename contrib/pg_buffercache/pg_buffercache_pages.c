@@ -194,6 +194,8 @@ pg_buffercache_pages(PG_FUNCTION_ARGS)
 			BufferDesc *bufHdr;
 			uint32		buf_state;
 
+			CHECK_FOR_INTERRUPTS();
+
 			bufHdr = GetBufferDescriptor(i);
 			/* Lock each buffer header before inspecting. */
 			buf_state = LockBufHdr(bufHdr);
@@ -320,7 +322,6 @@ pg_buffercache_numa_pages(PG_FUNCTION_ARGS)
 		uint64		os_page_count;
 		int			pages_per_buffer;
 		int			max_entries;
-		volatile uint64 touch pg_attribute_unused();
 		char	   *startptr,
 				   *endptr;
 
@@ -365,7 +366,7 @@ pg_buffercache_numa_pages(PG_FUNCTION_ARGS)
 
 		/* Used to determine the NUMA node for all OS pages at once */
 		os_page_ptrs = palloc0(sizeof(void *) * os_page_count);
-		os_page_status = palloc(sizeof(uint64) * os_page_count);
+		os_page_status = palloc(sizeof(int) * os_page_count);
 
 		/* Fill pointers for all the memory pages. */
 		idx = 0;
@@ -375,7 +376,7 @@ pg_buffercache_numa_pages(PG_FUNCTION_ARGS)
 
 			/* Only need to touch memory once per backend process lifetime */
 			if (firstNumaTouch)
-				pg_numa_touch_mem_if_required(touch, ptr);
+				pg_numa_touch_mem_if_required(ptr);
 		}
 
 		Assert(idx == os_page_count);
@@ -525,8 +526,18 @@ pg_buffercache_numa_pages(PG_FUNCTION_ARGS)
 		values[1] = Int64GetDatum(fctx->record[i].page_num);
 		nulls[1] = false;
 
-		values[2] = Int32GetDatum(fctx->record[i].numa_node);
-		nulls[2] = false;
+		/* status is valid node number */
+		if (fctx->record[i].numa_node >= 0)
+		{
+			values[2] = Int32GetDatum(fctx->record[i].numa_node);
+			nulls[2] = false;
+		}
+		else
+		{
+			/* some kind of error (e.g. pages moved to swap) */
+			values[2] = (Datum) 0;
+			nulls[2] = true;
+		}
 
 		/* Build and return the tuple. */
 		tuple = heap_form_tuple(fctx->tupdesc, values, nulls);
@@ -560,6 +571,8 @@ pg_buffercache_summary(PG_FUNCTION_ARGS)
 	{
 		BufferDesc *bufHdr;
 		uint32		buf_state;
+
+		CHECK_FOR_INTERRUPTS();
 
 		/*
 		 * This function summarizes the state of all headers. Locking the
@@ -620,6 +633,8 @@ pg_buffercache_usage_counts(PG_FUNCTION_ARGS)
 		BufferDesc *bufHdr = GetBufferDescriptor(i);
 		uint32		buf_state = pg_atomic_read_u32(&bufHdr->state);
 		int			usage_count;
+
+		CHECK_FOR_INTERRUPTS();
 
 		usage_count = BUF_STATE_GET_USAGECOUNT(buf_state);
 		usage_counts[usage_count]++;

@@ -504,11 +504,15 @@ CheckAttributeNamesTypes(TupleDesc tupdesc, char relkind,
 	 */
 	for (i = 0; i < natts; i++)
 	{
-		CheckAttributeType(NameStr(TupleDescAttr(tupdesc, i)->attname),
-						   TupleDescAttr(tupdesc, i)->atttypid,
-						   TupleDescAttr(tupdesc, i)->attcollation,
+		Form_pg_attribute attr = TupleDescAttr(tupdesc, i);
+
+		if (attr->attisdropped)
+			continue;
+		CheckAttributeType(NameStr(attr->attname),
+						   attr->atttypid,
+						   attr->attcollation,
 						   NIL, /* assume we're creating a new rowtype */
-						   flags | (TupleDescAttr(tupdesc, i)->attgenerated == ATTRIBUTE_GENERATED_VIRTUAL ? CHKATYPE_IS_VIRTUAL : 0));
+						   flags | (attr->attgenerated == ATTRIBUTE_GENERATED_VIRTUAL ? CHKATYPE_IS_VIRTUAL : 0));
 	}
 }
 
@@ -651,6 +655,16 @@ CheckAttributeType(const char *attname,
 		 */
 		CheckAttributeType(attname, get_range_subtype(atttypid),
 						   get_range_collation(atttypid),
+						   containing_rowtypes,
+						   flags);
+	}
+	else if (att_typtype == TYPTYPE_MULTIRANGE)
+	{
+		/*
+		 * If it's a multirange, recurse to check its plain range type.
+		 */
+		CheckAttributeType(attname, get_multirange_range(atttypid),
+						   InvalidOid,	/* range types are not collatable */
 						   containing_rowtypes,
 						   flags);
 	}
@@ -2635,6 +2649,7 @@ AddRelationNewConstraints(Relation rel,
 			 * requested validity.
 			 */
 			if (AdjustNotNullInheritance(RelationGetRelid(rel), colnum,
+										 cdef->conname,
 										 is_local, cdef->is_no_inherit,
 										 cdef->skip_validation))
 				continue;
@@ -2885,14 +2900,16 @@ MergeWithExistingConstraint(Relation rel, const char *ccname, Node *expr,
  * for each column, giving priority to user-specified ones, and setting
  * inhcount according to how many parents cause each column to get a
  * not-null constraint.  If a user-specified name clashes with another
- * user-specified name, an error is raised.
+ * user-specified name, an error is raised.  'existing_constraints'
+ * is a list of already defined constraint names, which should be avoided
+ * when generating further ones.
  *
  * Returns a list of AttrNumber for columns that need to have the attnotnull
  * flag set.
  */
 List *
 AddRelationNotNullConstraints(Relation rel, List *constraints,
-							  List *old_notnulls)
+							  List *old_notnulls, List *existing_constraints)
 {
 	List	   *givennames;
 	List	   *nnnames;
@@ -2904,7 +2921,7 @@ AddRelationNotNullConstraints(Relation rel, List *constraints,
 	 * because we must raise error for user-generated name conflicts, but for
 	 * system-generated name conflicts we just generate another.
 	 */
-	nnnames = NIL;
+	nnnames = list_copy(existing_constraints);	/* don't scribble on input */
 	givennames = NIL;
 
 	/*

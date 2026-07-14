@@ -6489,20 +6489,31 @@ UPDATE ft2 d SET c2 = CASE WHEN random() >= 0 THEN d.c2 ELSE 0 END
 ALTER SERVER loopback OPTIONS (DROP extensions);
 INSERT INTO ft2 (c1,c2,c3)
   SELECT id, id % 10, to_char(id, 'FM00000') FROM generate_series(2001, 2010) id;
+-- this will do a remote seqscan, causing unstable result order, so sort
 EXPLAIN (verbose, costs off)
-UPDATE ft2 SET c3 = 'bar' WHERE postgres_fdw_abs(c1) > 2000 RETURNING *;            -- can't be pushed down
-                                                QUERY PLAN                                                
-----------------------------------------------------------------------------------------------------------
- Update on public.ft2
-   Output: c1, c2, c3, c4, c5, c6, c7, c8
-   Remote SQL: UPDATE "S 1"."T 1" SET c3 = $2 WHERE ctid = $1 RETURNING "C 1", c2, c3, c4, c5, c6, c7, c8
-   ->  Foreign Scan on public.ft2
-         Output: 'bar'::text, ctid, ft2.*
-         Filter: (postgres_fdw_abs(ft2.c1) > 2000)
-         Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8, ctid FROM "S 1"."T 1" FOR UPDATE
-(7 rows)
+WITH cte AS (
+  UPDATE ft2 SET c3 = 'bar' WHERE postgres_fdw_abs(c1) > 2000 RETURNING *
+) SELECT * FROM cte ORDER BY c1;          -- can't be pushed down
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Sort
+   Output: cte.c1, cte.c2, cte.c3, cte.c4, cte.c5, cte.c6, cte.c7, cte.c8
+   Sort Key: cte.c1
+   CTE cte
+     ->  Update on public.ft2
+           Output: ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8
+           Remote SQL: UPDATE "S 1"."T 1" SET c3 = $2 WHERE ctid = $1 RETURNING "C 1", c2, c3, c4, c5, c6, c7, c8
+           ->  Foreign Scan on public.ft2
+                 Output: 'bar'::text, ft2.ctid, ft2.*
+                 Filter: (postgres_fdw_abs(ft2.c1) > 2000)
+                 Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8, ctid FROM "S 1"."T 1" FOR UPDATE
+   ->  CTE Scan on cte
+         Output: cte.c1, cte.c2, cte.c3, cte.c4, cte.c5, cte.c6, cte.c7, cte.c8
+(13 rows)
 
-UPDATE ft2 SET c3 = 'bar' WHERE postgres_fdw_abs(c1) > 2000 RETURNING *;
+WITH cte AS (
+  UPDATE ft2 SET c3 = 'bar' WHERE postgres_fdw_abs(c1) > 2000 RETURNING *
+) SELECT * FROM cte ORDER BY c1;
   c1  | c2 | c3  | c4 | c5 | c6 |     c7     | c8 
 ------+----+-----+----+----+----+------------+----
  2001 |  1 | bar |    |    |    | ft2        | 
@@ -8212,6 +8223,119 @@ DELETE FROM rem1;                 -- can't be pushed down
 (5 rows)
 
 DROP TRIGGER trig_row_after_delete ON rem1;
+-- We are allowed to create transition-table triggers on both kinds of
+-- inheritance even if they contain foreign tables as children, but currently
+-- collecting transition tuples from such foreign tables is not supported.
+CREATE TABLE local_tbl (a text, b int);
+CREATE FOREIGN TABLE foreign_tbl (a text, b int)
+  SERVER loopback OPTIONS (table_name 'local_tbl');
+INSERT INTO foreign_tbl VALUES ('AAA', 42);
+-- Test case for partition hierarchy
+CREATE TABLE parent_tbl (a text, b int) PARTITION BY LIST (a);
+ALTER TABLE parent_tbl ATTACH PARTITION foreign_tbl FOR VALUES IN ('AAA');
+CREATE TRIGGER parent_tbl_insert_trig
+  AFTER INSERT ON parent_tbl REFERENCING NEW TABLE AS new_table
+  FOR EACH STATEMENT EXECUTE PROCEDURE trigger_func();
+CREATE TRIGGER parent_tbl_update_trig
+  AFTER UPDATE ON parent_tbl REFERENCING OLD TABLE AS old_table NEW TABLE AS new_table
+  FOR EACH STATEMENT EXECUTE PROCEDURE trigger_func();
+CREATE TRIGGER parent_tbl_delete_trig
+  AFTER DELETE ON parent_tbl REFERENCING OLD TABLE AS old_table
+  FOR EACH STATEMENT EXECUTE PROCEDURE trigger_func();
+INSERT INTO parent_tbl VALUES ('AAA', 42);
+ERROR:  cannot collect transition tuples from child foreign tables
+COPY parent_tbl (a, b) FROM stdin;
+ERROR:  cannot collect transition tuples from child foreign tables
+CONTEXT:  COPY parent_tbl, line 1: "AAA	42"
+ALTER SERVER loopback OPTIONS (ADD batch_size '10');
+INSERT INTO parent_tbl VALUES ('AAA', 42);
+ERROR:  cannot collect transition tuples from child foreign tables
+COPY parent_tbl (a, b) FROM stdin;
+ERROR:  cannot collect transition tuples from child foreign tables
+CONTEXT:  COPY parent_tbl, line 1: "AAA	42"
+ALTER SERVER loopback OPTIONS (DROP batch_size);
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE parent_tbl SET b = b + 1;
+                                           QUERY PLAN                                           
+------------------------------------------------------------------------------------------------
+ Update on public.parent_tbl
+   Foreign Update on public.foreign_tbl parent_tbl_1
+     Remote SQL: UPDATE public.local_tbl SET b = $2 WHERE ctid = $1
+   ->  Foreign Scan on public.foreign_tbl parent_tbl_1
+         Output: (parent_tbl_1.b + 1), parent_tbl_1.tableoid, parent_tbl_1.ctid, parent_tbl_1.*
+         Remote SQL: SELECT a, b, ctid FROM public.local_tbl FOR UPDATE
+(6 rows)
+
+UPDATE parent_tbl SET b = b + 1;
+ERROR:  cannot collect transition tuples from child foreign tables
+EXPLAIN (VERBOSE, COSTS OFF)
+DELETE FROM parent_tbl;
+                            QUERY PLAN                            
+------------------------------------------------------------------
+ Delete on public.parent_tbl
+   Foreign Delete on public.foreign_tbl parent_tbl_1
+     Remote SQL: DELETE FROM public.local_tbl WHERE ctid = $1
+   ->  Foreign Scan on public.foreign_tbl parent_tbl_1
+         Output: parent_tbl_1.tableoid, parent_tbl_1.ctid
+         Remote SQL: SELECT ctid FROM public.local_tbl FOR UPDATE
+(6 rows)
+
+DELETE FROM parent_tbl;
+ERROR:  cannot collect transition tuples from child foreign tables
+ALTER TABLE parent_tbl DETACH PARTITION foreign_tbl;
+DROP TABLE parent_tbl;
+-- Test case for non-partition hierarchy
+CREATE TABLE parent_tbl (a text, b int);
+ALTER FOREIGN TABLE foreign_tbl INHERIT parent_tbl;
+CREATE TRIGGER parent_tbl_update_trig
+  AFTER UPDATE ON parent_tbl REFERENCING OLD TABLE AS old_table NEW TABLE AS new_table
+  FOR EACH STATEMENT EXECUTE PROCEDURE trigger_func();
+CREATE TRIGGER parent_tbl_delete_trig
+  AFTER DELETE ON parent_tbl REFERENCING OLD TABLE AS old_table
+  FOR EACH STATEMENT EXECUTE PROCEDURE trigger_func();
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE parent_tbl SET b = b + 1;
+                                              QUERY PLAN                                              
+------------------------------------------------------------------------------------------------------
+ Update on public.parent_tbl
+   Update on public.parent_tbl parent_tbl_1
+   Foreign Update on public.foreign_tbl parent_tbl_2
+     Remote SQL: UPDATE public.local_tbl SET b = $2 WHERE ctid = $1
+   ->  Result
+         Output: (parent_tbl.b + 1), parent_tbl.tableoid, parent_tbl.ctid, (NULL::record)
+         ->  Append
+               ->  Seq Scan on public.parent_tbl parent_tbl_1
+                     Output: parent_tbl_1.b, parent_tbl_1.tableoid, parent_tbl_1.ctid, NULL::record
+               ->  Foreign Scan on public.foreign_tbl parent_tbl_2
+                     Output: parent_tbl_2.b, parent_tbl_2.tableoid, parent_tbl_2.ctid, parent_tbl_2.*
+                     Remote SQL: SELECT a, b, ctid FROM public.local_tbl FOR UPDATE
+(12 rows)
+
+UPDATE parent_tbl SET b = b + 1;
+ERROR:  cannot collect transition tuples from child foreign tables
+EXPLAIN (VERBOSE, COSTS OFF)
+DELETE FROM parent_tbl;
+                               QUERY PLAN                               
+------------------------------------------------------------------------
+ Delete on public.parent_tbl
+   Delete on public.parent_tbl parent_tbl_1
+   Foreign Delete on public.foreign_tbl parent_tbl_2
+     Remote SQL: DELETE FROM public.local_tbl WHERE ctid = $1
+   ->  Append
+         ->  Seq Scan on public.parent_tbl parent_tbl_1
+               Output: parent_tbl_1.tableoid, parent_tbl_1.ctid
+         ->  Foreign Scan on public.foreign_tbl parent_tbl_2
+               Output: parent_tbl_2.tableoid, parent_tbl_2.ctid
+               Remote SQL: SELECT ctid FROM public.local_tbl FOR UPDATE
+(10 rows)
+
+DELETE FROM parent_tbl;
+ERROR:  cannot collect transition tuples from child foreign tables
+ALTER FOREIGN TABLE foreign_tbl NO INHERIT parent_tbl;
+DROP TABLE parent_tbl;
+-- Cleanup
+DROP FOREIGN TABLE foreign_tbl;
+DROP TABLE local_tbl;
 -- ===================================================================
 -- test inheritance features
 -- ===================================================================
@@ -12515,7 +12639,7 @@ ALTER SERVER loopback2 OPTIONS (DROP parallel_abort);
 -- ===================================================================
 CREATE TABLE analyze_table (id int, a text, b bigint);
 CREATE FOREIGN TABLE analyze_ftable (id int, a text, b bigint)
-       SERVER loopback OPTIONS (table_name 'analyze_rtable1');
+       SERVER loopback OPTIONS (table_name 'analyze_table');
 INSERT INTO analyze_table (SELECT x FROM generate_series(1,1000) x);
 ANALYZE analyze_table;
 SET default_statistics_target = 10;
@@ -12523,15 +12647,15 @@ ANALYZE analyze_table;
 ALTER SERVER loopback OPTIONS (analyze_sampling 'invalid');
 ERROR:  invalid value for string option "analyze_sampling": invalid
 ALTER SERVER loopback OPTIONS (analyze_sampling 'auto');
-ANALYZE analyze_table;
+ANALYZE analyze_ftable;
 ALTER SERVER loopback OPTIONS (SET analyze_sampling 'system');
-ANALYZE analyze_table;
+ANALYZE analyze_ftable;
 ALTER SERVER loopback OPTIONS (SET analyze_sampling 'bernoulli');
-ANALYZE analyze_table;
+ANALYZE analyze_ftable;
 ALTER SERVER loopback OPTIONS (SET analyze_sampling 'random');
-ANALYZE analyze_table;
+ANALYZE analyze_ftable;
 ALTER SERVER loopback OPTIONS (SET analyze_sampling 'off');
-ANALYZE analyze_table;
+ANALYZE analyze_ftable;
 -- cleanup
 DROP FOREIGN TABLE analyze_ftable;
 DROP TABLE analyze_table;
@@ -12590,3 +12714,79 @@ SELECT server_name,
 -- Clean up
 \set VERBOSITY default
 RESET debug_discard_caches;
+-- ===================================================================
+-- test cleanup of failed connections on abort
+-- ===================================================================
+CREATE VIEW my_backend_pid (pid) AS SELECT pg_backend_pid();
+CREATE FOREIGN TABLE remote_backend_pid (pid int)
+  SERVER loopback OPTIONS (table_name 'my_backend_pid');
+CREATE FUNCTION wait_for_backend_termination(int) RETURNS void AS $$
+  BEGIN
+    WHILE (SELECT count(*) FROM pg_stat_activity WHERE pid = $1) > 0
+    LOOP
+      PERFORM pg_stat_clear_snapshot();
+    END LOOP;
+  END
+$$ LANGUAGE plpgsql;
+SET client_min_messages = 'ERROR';
+BEGIN;
+DECLARE c CURSOR FOR SELECT * FROM ft1 ORDER BY c1;
+SAVEPOINT s;
+SELECT pid AS remote_pid FROM remote_backend_pid \gset
+SELECT pg_terminate_backend(:remote_pid);
+ pg_terminate_backend 
+----------------------
+ t
+(1 row)
+
+SELECT wait_for_backend_termination(:remote_pid);
+ wait_for_backend_termination 
+------------------------------
+ 
+(1 row)
+
+ROLLBACK TO SAVEPOINT s;
+SELECT pid FROM remote_backend_pid;
+ERROR:  connection to server "loopback" cannot be used due to abort cleanup failure
+ROLLBACK TO SAVEPOINT s;
+RELEASE SAVEPOINT s;
+FETCH c;
+ERROR:  no connection to the server
+CONTEXT:  remote SQL command: DECLARE c1 CURSOR FOR
+SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" ORDER BY "C 1" ASC NULLS LAST
+ABORT;
+BEGIN;
+DECLARE c CURSOR FOR SELECT * FROM ft1 ORDER BY c1;
+FETCH c;
+ c1 | c2 |        c3         |              c4              |            c5            | c6 |     c7     | c8  
+----+----+-------------------+------------------------------+--------------------------+----+------------+-----
+  1 |  2 | 00001_trig_update | Fri Jan 02 00:00:00 1970 PST | Fri Jan 02 00:00:00 1970 | 1  | 1          | foo
+(1 row)
+
+SAVEPOINT s;
+SELECT pid AS remote_pid FROM remote_backend_pid \gset
+SELECT pg_terminate_backend(:remote_pid);
+ pg_terminate_backend 
+----------------------
+ t
+(1 row)
+
+SELECT wait_for_backend_termination(:remote_pid);
+ wait_for_backend_termination 
+------------------------------
+ 
+(1 row)
+
+ROLLBACK TO SAVEPOINT s;
+SELECT pid FROM remote_backend_pid;
+ERROR:  connection to server "loopback" cannot be used due to abort cleanup failure
+ROLLBACK TO SAVEPOINT s;
+RELEASE SAVEPOINT s;
+CLOSE c;
+ERROR:  no connection to the server
+CONTEXT:  remote SQL command: CLOSE c1
+ABORT;
+RESET client_min_messages;
+DROP FUNCTION wait_for_backend_termination(int);
+DROP FOREIGN TABLE remote_backend_pid;
+DROP VIEW my_backend_pid;

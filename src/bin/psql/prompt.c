@@ -169,8 +169,12 @@ get_prompt(promptStatus_t status, ConditionalStack cstack)
 					break;
 					/* service name */
 				case 's':
-					if (pset.db && PQservice(pset.db))
-						strlcpy(buf, PQservice(pset.db), sizeof(buf));
+					{
+						const char *service_name = GetVariable(pset.vars, "SERVICE");
+
+						if (service_name)
+							strlcpy(buf, service_name, sizeof(buf));
+					}
 					break;
 					/* backend pid */
 				case 'p':
@@ -184,6 +188,7 @@ get_prompt(promptStatus_t status, ConditionalStack cstack)
 					break;
 					/* pipeline status */
 				case 'P':
+					if (pset.db)
 					{
 						PGpipelineStatus status = PQpipelineStatus(pset.db);
 
@@ -193,9 +198,8 @@ get_prompt(promptStatus_t status, ConditionalStack cstack)
 							strlcpy(buf, "abort", sizeof(buf));
 						else
 							strlcpy(buf, "off", sizeof(buf));
-						break;
 					}
-
+					break;
 				case '0':
 				case '1':
 				case '2':

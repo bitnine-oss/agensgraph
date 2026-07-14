@@ -610,10 +610,10 @@ ExecSimpleRelationInsert(ResultRelInfo *resultRelInfo,
 												   conflictindexes, false);
 
 		/*
-		 * Checks the conflict indexes to fetch the conflicting local tuple
-		 * and reports the conflict. We perform this check here, instead of
+		 * Checks the conflict indexes to fetch the conflicting local row and
+		 * reports the conflict. We perform this check here, instead of
 		 * performing an additional index scan before the actual insertion and
-		 * reporting the conflict if any conflicting tuples are found. This is
+		 * reporting the conflict if any conflicting rows are found. This is
 		 * to avoid the overhead of executing the extra scan for each INSERT
 		 * operation, even when no conflict arises, which could introduce
 		 * significant overhead to replication, particularly in cases where
@@ -674,7 +674,7 @@ ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 		resultRelInfo->ri_TrigDesc->trig_update_before_row)
 	{
 		if (!ExecBRUpdateTriggers(estate, epqstate, resultRelInfo,
-								  tid, NULL, slot, NULL, NULL))
+								  tid, NULL, slot, NULL, NULL, false))
 			skip_tuple = true;	/* "do nothing" */
 	}
 
@@ -756,7 +756,7 @@ ExecSimpleRelationDelete(ResultRelInfo *resultRelInfo,
 		resultRelInfo->ri_TrigDesc->trig_delete_before_row)
 	{
 		skip_tuple = !ExecBRDeleteTriggers(estate, epqstate, resultRelInfo,
-										   tid, NULL, NULL, NULL, NULL);
+										   tid, NULL, NULL, NULL, NULL, false);
 	}
 
 	if (!skip_tuple)

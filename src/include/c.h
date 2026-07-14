@@ -224,6 +224,16 @@
 #define PG_USED_FOR_ASSERTS_ONLY pg_attribute_unused()
 #endif
 
+/*
+ * Our C and C++ compilers may have different ideas about which printf
+ * archetype best represents what src/port/snprintf.c can do.
+ */
+#ifndef __cplusplus
+#define PG_PRINTF_ATTRIBUTE PG_C_PRINTF_ATTRIBUTE
+#else
+#define PG_PRINTF_ATTRIBUTE PG_CXX_PRINTF_ATTRIBUTE
+#endif
+
 /* GCC supports format attributes */
 #if defined(__GNUC__)
 #define pg_attribute_format_arg(a) __attribute__((format_arg(a)))
@@ -519,8 +529,6 @@ typedef uint32 bits32;			/* >= 32 bits */
 /* snprintf format strings to use for 64-bit integers */
 #define INT64_FORMAT "%" PRId64
 #define UINT64_FORMAT "%" PRIu64
-#define INT64_HEX_FORMAT "%" PRIx64
-#define UINT64_HEX_FORMAT "%" PRIx64
 
 /*
  * 128-bit signed and unsigned integers

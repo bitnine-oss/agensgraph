@@ -1484,11 +1484,6 @@ StartReadBuffersImpl(ReadBuffersOperation *operation,
  * buffers must remain valid until WaitReadBuffers() is called, and any
  * forwarded buffers must also be preserved for a continuing call unless
  * they are explicitly released.
- *
- * Currently the I/O is only started with optional operating system advice if
- * requested by the caller with READ_BUFFERS_ISSUE_ADVICE, and the real I/O
- * happens synchronously in WaitReadBuffers().  In future work, true I/O could
- * be initiated here.
  */
 bool
 StartReadBuffers(ReadBuffersOperation *operation,
@@ -1770,10 +1765,10 @@ AsyncReadBuffers(ReadBuffersOperation *operation, int *nblocks_progress)
 {
 	Buffer	   *buffers = &operation->buffers[0];
 	int			flags = operation->flags;
-	BlockNumber blocknum = operation->blocknum;
 	ForkNumber	forknum = operation->forknum;
 	char		persistence = operation->persistence;
 	int16		nblocks_done = operation->nblocks_done;
+	BlockNumber blocknum = operation->blocknum + nblocks_done;
 	Buffer	   *io_buffers = &operation->buffers[nblocks_done];
 	int			io_buffers_len = 0;
 	PgAioHandle *ioh;
@@ -1885,7 +1880,7 @@ AsyncReadBuffers(ReadBuffersOperation *operation, int *nblocks_progress)
 		 * must have started out as a miss in PinBufferForBlock(). The other
 		 * backend will track this as a 'read'.
 		 */
-		TRACE_POSTGRESQL_BUFFER_READ_DONE(forknum, blocknum + operation->nblocks_done,
+		TRACE_POSTGRESQL_BUFFER_READ_DONE(forknum, blocknum,
 										  operation->smgr->smgr_rlocator.locator.spcOid,
 										  operation->smgr->smgr_rlocator.locator.dbOid,
 										  operation->smgr->smgr_rlocator.locator.relNumber,
@@ -1957,7 +1952,7 @@ AsyncReadBuffers(ReadBuffersOperation *operation, int *nblocks_progress)
 		 */
 		io_start = pgstat_prepare_io_time(track_io_timing);
 		smgrstartreadv(ioh, operation->smgr, forknum,
-					   blocknum + nblocks_done,
+					   blocknum,
 					   io_pages, io_buffers_len);
 		pgstat_count_io_op_time(io_object, io_context, IOOP_READ,
 								io_start, 1, io_buffers_len * BLCKSZ);
@@ -2776,7 +2771,7 @@ ExtendBufferedRelShared(BufferManagerRelation bmr,
 
 			if (valid && !PageIsNew((Page) buf_block))
 				ereport(ERROR,
-						(errmsg("unexpected data beyond EOF in block %u of relation %s",
+						(errmsg("unexpected data beyond EOF in block %u of relation \"%s\"",
 								existing_hdr->tag.blockNum,
 								relpath(bmr.smgr->smgr_rlocator, fork).str),
 						 errhint("This has been seen to occur with buggy kernels; consider updating your system.")));
@@ -6201,7 +6196,7 @@ shared_buffer_write_error_callback(void *arg)
 
 	/* Buffer is pinned, so we can read the tag without locking the spinlock */
 	if (bufHdr != NULL)
-		errcontext("writing block %u of relation %s",
+		errcontext("writing block %u of relation \"%s\"",
 				   bufHdr->tag.blockNum,
 				   relpathperm(BufTagGetRelFileLocator(&bufHdr->tag),
 							   BufTagGetForkNum(&bufHdr->tag)).str);
@@ -6216,7 +6211,7 @@ local_buffer_write_error_callback(void *arg)
 	BufferDesc *bufHdr = (BufferDesc *) arg;
 
 	if (bufHdr != NULL)
-		errcontext("writing block %u of relation %s",
+		errcontext("writing block %u of relation \"%s\"",
 				   bufHdr->tag.blockNum,
 				   relpathbackend(BufTagGetRelFileLocator(&bufHdr->tag),
 								  MyProcNumber,
@@ -6688,6 +6683,8 @@ EvictAllUnpinnedBuffers(int32 *buffers_evicted, int32 *buffers_flushed,
 		uint32		buf_state;
 		bool		buffer_flushed;
 
+		CHECK_FOR_INTERRUPTS();
+
 		buf_state = pg_atomic_read_u32(&desc->state);
 		if (!(buf_state & BM_VALID))
 			continue;
@@ -6737,6 +6734,8 @@ EvictRelUnpinnedBuffers(Relation rel, int32 *buffers_evicted,
 		BufferDesc *desc = GetBufferDescriptor(buf - 1);
 		uint32		buf_state = pg_atomic_read_u32(&(desc->state));
 		bool		buffer_flushed;
+
+		CHECK_FOR_INTERRUPTS();
 
 		/* An unlocked precheck should be safe and saves some cycles. */
 		if ((buf_state & BM_VALID) == 0 ||
@@ -7315,13 +7314,15 @@ buffer_readv_report(PgAioResult result, const PgAioTargetData *td,
 
 		ereport(elevel,
 				errcode(ERRCODE_DATA_CORRUPTED),
-				errmsg("zeroing %u page(s) and ignoring %u checksum failure(s) among blocks %u..%u of relation %s",
+				errmsg("zeroing %u page(s) and ignoring %u checksum failure(s) among blocks %u..%u of relation \"%s\"",
 					   affected_count, checkfail_count, first, last, rpath.str),
 				affected_count > 1 ?
-				errdetail("Block %u held first zeroed page.",
+				errdetail("Block %u held the first zeroed page.",
 						  first + first_off) : 0,
-				errhint("See server log for details about the other %d invalid block(s).",
-						affected_count + checkfail_count - 1));
+				errhint_plural("See server log for details about the other %d invalid block.",
+							   "See server log for details about the other %d invalid blocks.",
+							   affected_count + checkfail_count - 1,
+							   affected_count + checkfail_count - 1));
 		return;
 	}
 
@@ -7334,25 +7335,25 @@ buffer_readv_report(PgAioResult result, const PgAioTargetData *td,
 	{
 		Assert(!zeroed_any);	/* can't have invalid pages when zeroing them */
 		affected_count = zeroed_or_error_count;
-		msg_one = _("invalid page in block %u of relation %s");
-		msg_mult = _("%u invalid pages among blocks %u..%u of relation %s");
-		det_mult = _("Block %u held first invalid page.");
+		msg_one = _("invalid page in block %u of relation \"%s\"");
+		msg_mult = _("%u invalid pages among blocks %u..%u of relation \"%s\"");
+		det_mult = _("Block %u held the first invalid page.");
 		hint_mult = _("See server log for the other %u invalid block(s).");
 	}
 	else if (zeroed_any && !ignored_any)
 	{
 		affected_count = zeroed_or_error_count;
-		msg_one = _("invalid page in block %u of relation %s; zeroing out page");
-		msg_mult = _("zeroing out %u invalid pages among blocks %u..%u of relation %s");
-		det_mult = _("Block %u held first zeroed page.");
+		msg_one = _("invalid page in block %u of relation \"%s\"; zeroing out page");
+		msg_mult = _("zeroing out %u invalid pages among blocks %u..%u of relation \"%s\"");
+		det_mult = _("Block %u held the first zeroed page.");
 		hint_mult = _("See server log for the other %u zeroed block(s).");
 	}
 	else if (!zeroed_any && ignored_any)
 	{
 		affected_count = checkfail_count;
-		msg_one = _("ignoring checksum failure in block %u of relation %s");
-		msg_mult = _("ignoring %u checksum failures among blocks %u..%u of relation %s");
-		det_mult = _("Block %u held first ignored page.");
+		msg_one = _("ignoring checksum failure in block %u of relation \"%s\"");
+		msg_mult = _("ignoring %u checksum failures among blocks %u..%u of relation \"%s\"");
+		det_mult = _("Block %u held the first ignored page.");
 		hint_mult = _("See server log for the other %u ignored block(s).");
 	}
 	else

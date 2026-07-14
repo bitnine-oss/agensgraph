@@ -122,7 +122,12 @@ parse_publication_options(ParseState *pstate,
 			pubactions->pubtruncate = false;
 
 			*publish_given = true;
-			publish = defGetString(defel);
+
+			/*
+			 * SplitIdentifierString destructively modifies its input, so make
+			 * a copy so we don't modify the memory of the executing statement
+			 */
+			publish = pstrdup(defGetString(defel));
 
 			if (!SplitIdentifierString(publish, ',', &publish_list))
 				ereport(ERROR,
@@ -2113,20 +2118,20 @@ AlterPublicationOwner_oid(Oid pubid, Oid newOwnerId)
 static char
 defGetGeneratedColsOption(DefElem *def)
 {
-	char	   *sval;
+	char	   *sval = "";
 
 	/*
-	 * If no parameter value given, assume "stored" is meant.
+	 * A parameter value is required.
 	 */
-	if (!def->arg)
-		return PUBLISH_GENCOLS_STORED;
+	if (def->arg)
+	{
+		sval = defGetString(def);
 
-	sval = defGetString(def);
-
-	if (pg_strcasecmp(sval, "none") == 0)
-		return PUBLISH_GENCOLS_NONE;
-	if (pg_strcasecmp(sval, "stored") == 0)
-		return PUBLISH_GENCOLS_STORED;
+		if (pg_strcasecmp(sval, "none") == 0)
+			return PUBLISH_GENCOLS_NONE;
+		if (pg_strcasecmp(sval, "stored") == 0)
+			return PUBLISH_GENCOLS_STORED;
+	}
 
 	ereport(ERROR,
 			errcode(ERRCODE_SYNTAX_ERROR),

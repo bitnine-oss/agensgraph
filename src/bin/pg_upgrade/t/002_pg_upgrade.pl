@@ -87,6 +87,7 @@ sub get_dump_for_comparison
 	$node->run_log(
 		[
 			'pg_dump', '--no-sync',
+			'--restrict-key=test',
 			'-d' => $node->connstr($db),
 			'-f' => $dumpfile
 		]);
@@ -376,6 +377,9 @@ SKIP:
 {
 	my $dstnode = PostgreSQL::Test::Cluster->new('dst_node');
 
+	skip "regress_dump_restore not enabled in PG_TEST_EXTRA"
+	  if (!$ENV{PG_TEST_EXTRA}
+		|| $ENV{PG_TEST_EXTRA} !~ /\bregress_dump_restore\b/);
 	skip "different Postgres versions"
 	  if ($oldnode->pg_version != $dstnode->pg_version);
 	skip "source node not using default install"
@@ -425,6 +429,7 @@ SKIP:
 # that we need to use pg_dumpall from the new node here.
 my @dump_command = (
 	'pg_dumpall', '--no-sync',
+	'--restrict-key=test',
 	'--dbname' => $oldnode->connstr('postgres'),
 	'--file' => $dump1_file);
 # --extra-float-digits is needed when upgrading from a version older than 11.
@@ -639,6 +644,7 @@ is( $result,
 # Second dump from the upgraded instance.
 @dump_command = (
 	'pg_dumpall', '--no-sync',
+	'--restrict-key=test',
 	'--dbname' => $newnode->connstr('postgres'),
 	'--file' => $dump2_file);
 # --extra-float-digits is needed when upgrading from a version older than 11.

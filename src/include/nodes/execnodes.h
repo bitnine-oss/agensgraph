@@ -179,12 +179,13 @@ typedef struct ExprState
  *		UniqueProcs
  *		UniqueStrats
  *		Unique				is it a unique index?
- *		OpclassOptions		opclass-specific options, or NULL if none
+ *		NullsNotDistinct	is NULLS NOT DISTINCT?
  *		ReadyForInserts		is it valid for inserts?
  *		CheckedUnchanged	IndexUnchanged status determined yet?
  *		IndexUnchanged		aminsert hint, cached for retail inserts
  *		Concurrent			are we doing a concurrent index build?
  *		BrokenHotChain		did we detect any broken HOT chains?
+ *		WithoutOverlaps		is it a WITHOUT OVERLAPS index?
  *		Summarizing			is it a summarizing index?
  *		ParallelWorkers		# of workers requested (excludes leader)
  *		Am					Oid of index AM
@@ -607,15 +608,13 @@ typedef struct ResultRelInfo
 	bool		ri_RootToChildMapValid;
 
 	/*
-	 * Information needed by tuple routing target relations
+	 * Other information needed by child result relations
 	 *
-	 * RootResultRelInfo gives the target relation mentioned in the query, if
-	 * it's a partitioned table. It is not set if the target relation
-	 * mentioned in the query is an inherited table, nor when tuple routing is
-	 * not needed.
+	 * ri_RootResultRelInfo gives the target relation mentioned in the query.
+	 * Used as the root for tuple routing and/or transition capture.
 	 *
-	 * PartitionTupleSlot is non-NULL if RootToChild conversion is needed and
-	 * the relation is a partition.
+	 * ri_PartitionTupleSlot is non-NULL if the relation is a partition to
+	 * route tuples into and ri_RootToChildMap conversion is needed.
 	 */
 	struct ResultRelInfo *ri_RootResultRelInfo;
 	TupleTableSlot *ri_PartitionTupleSlot;

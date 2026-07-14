@@ -8,13 +8,28 @@
  </indexterm>
 
  <para>
-  The <filename>pg_overexplain</filename> extends <command>EXPLAIN</command>
+  The <filename>pg_overexplain</filename> module extends <command>EXPLAIN</command>
   with new options that provide additional output. It is mostly intended to
   assist with debugging of and development of the planner, rather than for
   general use. Since this module displays internal details of planner data
   structures, it may be necessary to refer to the source code to make sense
   of the output. Furthermore, the output is likely to change whenever (and as
   often as) those data structures change.
+ </para>
+
+ <para>
+  To use it, simply load it into the server.  You can load it into an
+  individual session:
+
+<programlisting>
+LOAD 'pg_overexplain';
+</programlisting>
+
+  You can also preload it into some or all sessions by including
+  <literal>pg_overexplain</literal> in
+  <xref linkend="guc-session-preload-libraries"/> or
+  <xref linkend="guc-shared-preload-libraries"/> in
+  <filename>postgresql.conf</filename>.
  </para>
 
  <sect2 id="pgoverexplain-debug">
@@ -24,8 +39,8 @@
    The <literal>DEBUG</literal> option displays miscellaneous information from
    the plan tree that is not normally shown because it is not expected to be
    of general interest. For each individual plan node, it will display the
-   following fields.  See <literal>Plan</literal> in
-   <literal>nodes/plannodes.h</literal> for additional documentation of these
+   following fields.  See <structname>Plan</structname> in
+   <filename>nodes/plannodes.h</filename> for additional documentation of these
    fields.
   </para>
 
@@ -67,8 +82,8 @@
 
   <para>
    Once per query, the <literal>DEBUG</literal> option will display the
-   following fields. See <literal>PlannedStmt</literal> in
-   <literal>nodes/plannodes.h</literal> for additional detail.
+   following fields. See <structname>PlannedStmt</structname> in
+   <filename>nodes/plannodes.h</filename> for additional detail.
   </para>
 
   <itemizedlist>
@@ -82,7 +97,7 @@
    <listitem>
     <para>
      <literal>Flags</literal>. A comma-separated list of Boolean structure
-     member names from the <literal>PlannedStmt</literal> that are set to
+     member names from the <structname>PlannedStmt</structname> that are set to
      <literal>true</literal>. It covers the following structure members:
      <literal>hasReturning</literal>, <literal>hasModifyingCTE</literal>,
      <literal>canSetTag</literal>, <literal>transientPlan</literal>,
@@ -162,7 +177,7 @@
    table entry (e.g.  <literal>relation</literal>,
    <literal>subquery</literal>, or <literal>join</literal>), followed by the
    contents of various range table entry fields that are not normally part of
-   <literal>EXPLAIN</literal> output. Some of these fields are only displayed
+   <command>EXPLAIN</command> output. Some of these fields are only displayed
    for certain kinds of range table entries. For example,
    <literal>Eref</literal> is displayed for all types of range table entries,
    but <literal>CTE Name</literal> is displayed only for range table entries
@@ -171,7 +186,7 @@
 
   <para>
    For more information about range table entries, see the definition of
-   <literal>RangeTblEntry</literal> in <literal>nodes/plannodes.h</literal>.
+   <structname>RangeTblEntry</structname> in <filename>nodes/parsenodes.h</filename>.
   </para>
  </sect2>
 

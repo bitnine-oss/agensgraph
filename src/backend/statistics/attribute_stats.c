@@ -19,8 +19,10 @@
 
 #include "access/heapam.h"
 #include "catalog/indexing.h"
+#include "catalog/namespace.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_operator.h"
+#include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "statistics/statistics.h"
 #include "statistics/stat_utils.h"
@@ -143,6 +145,7 @@ attribute_statistics_update(FunctionCallInfo fcinfo)
 	char	   *attname;
 	AttrNumber	attnum;
 	bool		inherited;
+	Oid			locked_table = InvalidOid;
 
 	Relation	starel;
 	HeapTuple	statup;
@@ -182,8 +185,6 @@ attribute_statistics_update(FunctionCallInfo fcinfo)
 	nspname = TextDatumGetCString(PG_GETARG_DATUM(ATTRELSCHEMA_ARG));
 	relname = TextDatumGetCString(PG_GETARG_DATUM(ATTRELNAME_ARG));
 
-	reloid = stats_lookup_relid(nspname, relname);
-
 	if (RecoveryInProgress())
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
@@ -191,7 +192,9 @@ attribute_statistics_update(FunctionCallInfo fcinfo)
 				 errhint("Statistics cannot be modified during recovery.")));
 
 	/* lock before looking up attribute */
-	stats_lock_check_privileges(reloid);
+	reloid = RangeVarGetRelidExtended(makeRangeVar(nspname, relname, -1),
+									  ShareUpdateExclusiveLock, 0,
+									  RangeVarCallbackForStats, &locked_table);
 
 	/* user can specify either attname or attnum, but not both */
 	if (!PG_ARGISNULL(ATTNAME_ARG))
@@ -199,7 +202,7 @@ attribute_statistics_update(FunctionCallInfo fcinfo)
 		if (!PG_ARGISNULL(ATTNUM_ARG))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("cannot specify both attname and attnum")));
+					 errmsg("cannot specify both \"%s\" and \"%s\"", "attname", "attnum")));
 		attname = TextDatumGetCString(PG_GETARG_DATUM(ATTNAME_ARG));
 		attnum = get_attnum(reloid, attname);
 		/* note that this test covers attisdropped cases too: */
@@ -225,7 +228,7 @@ attribute_statistics_update(FunctionCallInfo fcinfo)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("must specify either attname or attnum")));
+				 errmsg("must specify either \"%s\" or \"%s\"", "attname", "attnum")));
 		attname = NULL;			/* keep compiler quiet */
 		attnum = 0;
 	}
@@ -297,8 +300,9 @@ attribute_statistics_update(FunctionCallInfo fcinfo)
 								&elemtypid, &elem_eq_opr))
 		{
 			ereport(WARNING,
-					(errmsg("unable to determine element type of attribute \"%s\"", attname),
-					 errdetail("Cannot set STATISTIC_KIND_MCELEM or STATISTIC_KIND_DECHIST.")));
+					(errmsg("could not determine element type of column \"%s\"", attname),
+					 errdetail("Cannot set %s or %s.",
+							   "STATISTIC_KIND_MCELEM", "STATISTIC_KIND_DECHIST")));
 			elemtypid = InvalidOid;
 			elem_eq_opr = InvalidOid;
 
@@ -313,8 +317,9 @@ attribute_statistics_update(FunctionCallInfo fcinfo)
 	{
 		ereport(WARNING,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("could not determine less-than operator for attribute \"%s\"", attname),
-				 errdetail("Cannot set STATISTIC_KIND_HISTOGRAM or STATISTIC_KIND_CORRELATION.")));
+				 errmsg("could not determine less-than operator for column \"%s\"", attname),
+				 errdetail("Cannot set %s or %s.",
+						   "STATISTIC_KIND_HISTOGRAM", "STATISTIC_KIND_CORRELATION")));
 
 		do_histogram = false;
 		do_correlation = false;
@@ -327,8 +332,9 @@ attribute_statistics_update(FunctionCallInfo fcinfo)
 	{
 		ereport(WARNING,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("attribute \"%s\" is not a range type", attname),
-				 errdetail("Cannot set STATISTIC_KIND_RANGE_LENGTH_HISTOGRAM or STATISTIC_KIND_BOUNDS_HISTOGRAM.")));
+				 errmsg("column \"%s\" is not a range type", attname),
+				 errdetail("Cannot set %s or %s.",
+						   "STATISTIC_KIND_RANGE_LENGTH_HISTOGRAM", "STATISTIC_KIND_BOUNDS_HISTOGRAM")));
 
 		do_bounds_histogram = false;
 		do_range_length_histogram = false;
@@ -378,10 +384,27 @@ attribute_statistics_update(FunctionCallInfo fcinfo)
 
 		if (converted)
 		{
-			set_stats_slot(values, nulls, replaces,
-						   STATISTIC_KIND_MCV,
-						   eq_opr, atttypcoll,
-						   stanumbers, false, stavalues, false);
+			ArrayType  *vals_arr = DatumGetArrayTypeP(stavalues);
+			ArrayType  *nums_arr = DatumGetArrayTypeP(stanumbers);
+			int			nvals = ARR_DIMS(vals_arr)[0];
+			int			nnums = ARR_DIMS(nums_arr)[0];
+
+			if (nvals != nnums)
+			{
+				ereport(WARNING,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("could not parse \"%s\": incorrect number of elements (same as \"%s\" required)",
+								"most_common_vals",
+								"most_common_freqs")));
+				result = false;
+			}
+			else
+			{
+				set_stats_slot(values, nulls, replaces,
+							   STATISTIC_KIND_MCV,
+							   eq_opr, atttypcoll,
+							   stanumbers, false, stavalues, false);
+			}
 		}
 		else
 			result = false;
@@ -587,7 +610,7 @@ get_attr_stat_type(Oid reloid, AttrNumber attnum,
 	if (!HeapTupleIsValid(atup))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_COLUMN),
-				 errmsg("attribute %d of relation \"%s\" does not exist",
+				 errmsg("column %d of relation \"%s\" does not exist",
 						attnum, RelationGetRelationName(rel))));
 
 	attr = (Form_pg_attribute) GETSTRUCT(atup);
@@ -595,7 +618,7 @@ get_attr_stat_type(Oid reloid, AttrNumber attnum,
 	if (attr->attisdropped)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_COLUMN),
-				 errmsg("attribute %d of relation \"%s\" does not exist",
+				 errmsg("column %d of relation \"%s\" does not exist",
 						attnum, RelationGetRelationName(rel))));
 
 	expr = get_attr_expr(rel, attr->attnum);
@@ -725,11 +748,20 @@ text_to_stavalues(const char *staname, FmgrInfo *array_in, Datum d, Oid typid,
 		return (Datum) 0;
 	}
 
+	if (ARR_NDIM(DatumGetArrayTypeP(result)) != 1)
+	{
+		ereport(WARNING,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("\"%s\" must be a one-dimensional array", staname)));
+		*ok = false;
+		return (Datum) 0;
+	}
+
 	if (array_contains_nulls(DatumGetArrayTypeP(result)))
 	{
 		ereport(WARNING,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("\"%s\" array cannot contain NULL values", staname)));
+				 errmsg("\"%s\" array must not contain null values", staname)));
 		*ok = false;
 		return (Datum) 0;
 	}
@@ -914,6 +946,7 @@ pg_clear_attribute_stats(PG_FUNCTION_ARGS)
 	char	   *attname;
 	AttrNumber	attnum;
 	bool		inherited;
+	Oid			locked_table = InvalidOid;
 
 	stats_check_required_arg(fcinfo, cleararginfo, C_ATTRELSCHEMA_ARG);
 	stats_check_required_arg(fcinfo, cleararginfo, C_ATTRELNAME_ARG);
@@ -923,15 +956,15 @@ pg_clear_attribute_stats(PG_FUNCTION_ARGS)
 	nspname = TextDatumGetCString(PG_GETARG_DATUM(C_ATTRELSCHEMA_ARG));
 	relname = TextDatumGetCString(PG_GETARG_DATUM(C_ATTRELNAME_ARG));
 
-	reloid = stats_lookup_relid(nspname, relname);
-
 	if (RecoveryInProgress())
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("recovery is in progress"),
 				 errhint("Statistics cannot be modified during recovery.")));
 
-	stats_lock_check_privileges(reloid);
+	reloid = RangeVarGetRelidExtended(makeRangeVar(nspname, relname, -1),
+									  ShareUpdateExclusiveLock, 0,
+									  RangeVarCallbackForStats, &locked_table);
 
 	attname = TextDatumGetCString(PG_GETARG_DATUM(C_ATTNAME_ARG));
 	attnum = get_attnum(reloid, attname);

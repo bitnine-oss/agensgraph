@@ -197,7 +197,7 @@ find_variable(const char *name)
 	struct variable *p;
 	int			count;
 
-	next = strpbrk(name, ".[-");
+	next = (char *) strpbrk(name, ".[-");
 	if (next)
 	{
 		if (*next == '[')

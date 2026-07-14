@@ -1483,7 +1483,6 @@ expandTableLikeClause(RangeVar *heapRel, TableLikeClause *table_like_clause)
 			char	   *ccname = constr->check[ccnum].ccname;
 			char	   *ccbin = constr->check[ccnum].ccbin;
 			bool		ccenforced = constr->check[ccnum].ccenforced;
-			bool		ccvalid = constr->check[ccnum].ccvalid;
 			bool		ccnoinherit = constr->check[ccnum].ccnoinherit;
 			Node	   *ccbin_node;
 			bool		found_whole_row;
@@ -1514,7 +1513,7 @@ expandTableLikeClause(RangeVar *heapRel, TableLikeClause *table_like_clause)
 			n->conname = pstrdup(ccname);
 			n->location = -1;
 			n->is_enforced = ccenforced;
-			n->initially_valid = ccvalid;
+			n->initially_valid = ccenforced;	/* sic */
 			n->is_no_inherit = ccnoinherit;
 			n->raw_expr = NULL;
 			n->cooked_expr = nodeToString(ccbin_node);
@@ -2063,7 +2062,10 @@ generateClonedIndexStmt(RangeVar *heapRel, Relation source_idx,
  * extended statistic "source_statsid", for the rel identified by heapRel and
  * heapRelid.
  *
- * Attribute numbers in expression Vars are adjusted according to attmap.
+ * stxkeys in the source statistic holds attribute numbers from the parent
+ * relation.  Those attnums, along with the attribute numbers referenced by
+ * Vars inside the expression tree, are remapped to the new relation's
+ * numbering according to attmap.
  */
 static CreateStatsStmt *
 generateClonedExtStatsStmt(RangeVar *heapRel, Oid heapRelid,
@@ -2121,7 +2123,8 @@ generateClonedExtStatsStmt(RangeVar *heapRel, Oid heapRelid,
 		StatsElem  *selem = makeNode(StatsElem);
 		AttrNumber	attnum = statsrec->stxkeys.values[i];
 
-		selem->name = get_attname(heapRelid, attnum, false);
+		selem->name =
+			get_attname(heapRelid, attmap->attnums[attnum - 1], false);
 		selem->expr = NULL;
 
 		def_names = lappend(def_names, selem);
@@ -2781,7 +2784,7 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 
 			/*
 			 * The WITHOUT OVERLAPS part (if any) must be a range or
-			 * multirange type.
+			 * multirange type, or a domain over such a type.
 			 */
 			if (constraint->without_overlaps && lc == list_last_cell(constraint->keys))
 			{
@@ -2799,8 +2802,7 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 						const char *attname;
 
 						if (attr->attisdropped)
-							break;
-
+							continue;
 						attname = NameStr(attr->attname);
 						if (strcmp(attname, key) == 0)
 						{
@@ -2812,10 +2814,16 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 				}
 				if (found)
 				{
+					/* Look up column type if we didn't already */
 					if (!OidIsValid(typid) && column)
-						typid = typenameTypeId(NULL, column->typeName);
-
-					if (!OidIsValid(typid) || !(type_is_range(typid) || type_is_multirange(typid)))
+						typid = typenameTypeId(cxt->pstate,
+											   column->typeName);
+					/* Look through any domain */
+					if (OidIsValid(typid))
+						typid = getBaseType(typid);
+					/* Complain if not range/multirange */
+					if (!OidIsValid(typid) ||
+						!(type_is_range(typid) || type_is_multirange(typid)))
 						ereport(ERROR,
 								(errcode(ERRCODE_DATATYPE_MISMATCH),
 								 errmsg("column \"%s\" in WITHOUT OVERLAPS is not a range or multirange type", key),
@@ -4470,11 +4478,13 @@ transformPartitionRangeBounds(ParseState *pstate, List *blist,
 	int			i,
 				j;
 
-	i = j = 0;
+	j = 0;
 	foreach(lc, blist)
 	{
 		Node	   *expr = lfirst(lc);
 		PartitionRangeDatum *prd = NULL;
+
+		i = foreach_current_index(lc);
 
 		/*
 		 * Infinite range bounds -- "minvalue" and "maxvalue" -- get passed in
@@ -4553,7 +4563,6 @@ transformPartitionRangeBounds(ParseState *pstate, List *blist,
 			prd = makeNode(PartitionRangeDatum);
 			prd->kind = PARTITION_RANGE_DATUM_VALUE;
 			prd->value = (Node *) value;
-			++i;
 		}
 
 		prd->location = exprLocation(expr);

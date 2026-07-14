@@ -127,7 +127,7 @@ typedef struct
 #define LQUERY_HASNOT		0x01
 
 /* valid label chars are alphanumerics, underscores and hyphens */
-#define ISLABEL(x) ( t_isalnum(x) || t_iseq(x, '_') || t_iseq(x, '-') )
+#define ISLABEL(x) ( t_isalnum_cstr(x) || t_iseq(x, '_') || t_iseq(x, '-') )
 
 /* full text query */
 
@@ -207,10 +207,11 @@ bool		ltree_execute(ITEM *curitem, void *checkval,
 
 int			ltree_compare(const ltree *a, const ltree *b);
 bool		inner_isparent(const ltree *c, const ltree *p);
-bool		compare_subnode(ltree_level *t, char *qn, int len,
-							int (*cmpptr) (const char *, const char *, size_t), bool anyend);
+bool		compare_subnode(ltree_level *t, char *qn, int len, bool prefix, bool ci);
 ltree	   *lca_inner(ltree **a, int len);
-int			ltree_strncasecmp(const char *a, const char *b, size_t s);
+bool		ltree_label_match(const char *pred, size_t pred_len,
+							  const char *label, size_t label_len,
+							  bool prefix, bool ci);
 
 /* fmgr macros for ltree objects */
 #define DatumGetLtreeP(X)			((ltree *) PG_DETOAST_DATUM(X))

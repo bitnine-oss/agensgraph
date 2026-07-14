@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: pg_combinebackup (PostgreSQL) 18\n"
 "Report-Msgid-Bugs-To: pgsql-bugs@lists.postgresql.org\n"
-"POT-Creation-Date: 2025-05-02 22:22+0000\n"
+"POT-Creation-Date: 2026-02-08 14:52+0000\n"
 "PO-Revision-Date: 2025-05-03 01:27+0200\n"
 "Last-Translator: Temuri Doghonadze <temuri.doghonadze@gmail.com>\n"
 "Language-Team: \n"
@@ -43,7 +43,7 @@ msgid "could not open file \"%s\" for reading: %m"
 msgstr "ფაილის (%s) გახსნის შეცდომა: %m"
 
 #: ../../common/controldata_utils.c:110 copy_file.c:164 load_manifest.c:161
-#: load_manifest.c:199 pg_combinebackup.c:1410 reconstruct.c:540
+#: load_manifest.c:199 pg_combinebackup.c:1410 reconstruct.c:542
 #, c-format
 msgid "could not read file \"%s\": %m"
 msgstr "ფაილის (%s) წაკითხვის შეცდომა: %m"
@@ -55,7 +55,7 @@ msgstr "\"%s\"-ის წაკითხვის შეცდომა: წა�
 
 #: ../../common/controldata_utils.c:132 ../../common/controldata_utils.c:280
 #: backup_label.c:174 copy_file.c:71 pg_combinebackup.c:548
-#: pg_combinebackup.c:1185 reconstruct.c:369 reconstruct.c:740
+#: pg_combinebackup.c:1185 reconstruct.c:369 reconstruct.c:742
 #: write_manifest.c:187
 #, c-format
 msgid "could not close file \"%s\": %m"
@@ -82,13 +82,13 @@ msgstr ""
 #: ../../common/file_utils.c:502 backup_label.c:143 copy_file.c:69
 #: copy_file.c:153 copy_file.c:185 copy_file.c:189 copy_file.c:239
 #: copy_file.c:282 load_manifest.c:128 pg_combinebackup.c:533
-#: pg_combinebackup.c:1177 reconstruct.c:523 reconstruct.c:638
+#: pg_combinebackup.c:1177 reconstruct.c:525 reconstruct.c:640
 #: write_manifest.c:250
 #, c-format
 msgid "could not open file \"%s\": %m"
 msgstr "ფაილის (%s) გახსნის შეცდომა: %m"
 
-#: ../../common/controldata_utils.c:249 backup_label.c:160 reconstruct.c:759
+#: ../../common/controldata_utils.c:249 backup_label.c:160 reconstruct.c:761
 #: write_manifest.c:260
 #, c-format
 msgid "could not write file \"%s\": %m"
@@ -101,7 +101,7 @@ msgid "could not fsync file \"%s\": %m"
 msgstr "ფაილის (%s) fsync-ის შეცდომა: %m"
 
 #: ../../common/cryptohash.c:261 ../../common/cryptohash_openssl.c:356
-#: ../../common/jsonapi.c:2407 ../../common/parse_manifest.c:157
+#: ../../common/jsonapi.c:2410 ../../common/parse_manifest.c:157
 #: ../../common/parse_manifest.c:852
 #, c-format
 msgid "out of memory"
@@ -139,7 +139,7 @@ msgstr "შეუძლებელია ფაილური სისტე�
 #: ../../common/file_utils.c:123 ../../common/file_utils.c:588
 #: backup_label.c:187 load_manifest.c:133 pg_combinebackup.c:685
 #: pg_combinebackup.c:1141 pg_combinebackup.c:1393 reconstruct.c:204
-#: reconstruct.c:421
+#: reconstruct.c:422
 #, c-format
 msgid "could not stat file \"%s\": %m"
 msgstr "ფაილი \"%s\" არ არსებობს: %m"
@@ -166,103 +166,103 @@ msgstr "საქაღალდის (%s) წაკითხვის შე�
 msgid "could not rename file \"%s\" to \"%s\": %m"
 msgstr "გადარქმევის შეცდომა %s - %s: %m"
 
-#: ../../common/jsonapi.c:2432
+#: ../../common/jsonapi.c:2435
 msgid "Recursive descent parser cannot use incremental lexer."
 msgstr "რეკურსიულ დაღმავალ დამმუშავებელს ინკრემენტული lexer-ის გამოყენება არ შეუძლია."
 
-#: ../../common/jsonapi.c:2434
+#: ../../common/jsonapi.c:2437
 msgid "Incremental parser requires incremental lexer."
 msgstr "ინკრემენტულ დამმუშავებელს ინკრემენტული lexer სჭირდება."
 
-#: ../../common/jsonapi.c:2436
+#: ../../common/jsonapi.c:2439
 msgid "JSON nested too deep, maximum permitted depth is 6400."
 msgstr "JSON მეტისმეტად ღრმადაა ერთმანეთში ჩალაგებული. მაქსიმალური დასაშვები სიღრმეა 6400."
 
-#: ../../common/jsonapi.c:2438
+#: ../../common/jsonapi.c:2441
 #, c-format
 msgid "Escape sequence \"\\%.*s\" is invalid."
 msgstr "სპეციალური მიმდევრობა \"\\%.*s\" არასწორია."
 
-#: ../../common/jsonapi.c:2442
+#: ../../common/jsonapi.c:2445
 #, c-format
 msgid "Character with value 0x%02x must be escaped."
 msgstr "სიმბოლო კოდით 0x%02x აუცილებლად ეკრანირებული უნდა იყოს."
 
-#: ../../common/jsonapi.c:2446
+#: ../../common/jsonapi.c:2449
 #, c-format
 msgid "Expected end of input, but found \"%.*s\"."
 msgstr "მოველოდი შეყვანის დასასრულს, მაგრამ მივიღე \"%.*s\"."
 
-#: ../../common/jsonapi.c:2449
+#: ../../common/jsonapi.c:2452
 #, c-format
 msgid "Expected array element or \"]\", but found \"%.*s\"."
 msgstr "მოველოდი მასივის ელემენტს ან \"]\", მაგრამ მივიღე \"%.*s\"."
 
-#: ../../common/jsonapi.c:2452
+#: ../../common/jsonapi.c:2455
 #, c-format
 msgid "Expected \",\" or \"]\", but found \"%.*s\"."
 msgstr "მოველოდი \",\" ან \"]\", მაგრამ მივიღე \"%.*s\"."
 
-#: ../../common/jsonapi.c:2455
+#: ../../common/jsonapi.c:2458
 #, c-format
 msgid "Expected \":\", but found \"%.*s\"."
 msgstr "მოველოდი \":\", მაგრამ მივიღე \"%.*s\"."
 
-#: ../../common/jsonapi.c:2458
+#: ../../common/jsonapi.c:2461
 #, c-format
 msgid "Expected JSON value, but found \"%.*s\"."
 msgstr "მოველოდი JSON მნიშვნელობას. მივიღე \"%.*s\"."
 
-#: ../../common/jsonapi.c:2461
+#: ../../common/jsonapi.c:2464
 msgid "The input string ended unexpectedly."
 msgstr "შეყვანის სტრიქონი მოულოდნელად დასრულდა."
 
-#: ../../common/jsonapi.c:2463
+#: ../../common/jsonapi.c:2466
 #, c-format
 msgid "Expected string or \"}\", but found \"%.*s\"."
 msgstr "მოველოდი სტრიქონს ან \"}\", მაგრამ მივიღე \"%.*s\"."
 
-#: ../../common/jsonapi.c:2466
+#: ../../common/jsonapi.c:2469
 #, c-format
 msgid "Expected \",\" or \"}\", but found \"%.*s\"."
 msgstr "მოველოდი \",\", ან \"}\", მაგრამ მივიღე \"%.*s\"."
 
-#: ../../common/jsonapi.c:2469
+#: ../../common/jsonapi.c:2472
 #, c-format
 msgid "Expected string, but found \"%.*s\"."
 msgstr "მოველოდი სტრიქონს, მაგრამ მივიღე \"%.*s\"."
 
-#: ../../common/jsonapi.c:2472
+#: ../../common/jsonapi.c:2475
 #, c-format
 msgid "Token \"%.*s\" is invalid."
 msgstr "კოდი \"%.*s\" არასწორია."
 
-#: ../../common/jsonapi.c:2478
+#: ../../common/jsonapi.c:2481
 msgid "\\u0000 cannot be converted to text."
 msgstr "\\u0000 ტექსტად ვერ გარდაიქმნება."
 
-#: ../../common/jsonapi.c:2480
+#: ../../common/jsonapi.c:2483
 msgid "\"\\u\" must be followed by four hexadecimal digits."
 msgstr "\"\\u\" ს თექვსმეტობითი ციფრები უნდა მოჰყვებოდეს."
 
-#: ../../common/jsonapi.c:2483
+#: ../../common/jsonapi.c:2486
 msgid "Unicode escape values cannot be used for code point values above 007F when the encoding is not UTF8."
 msgstr "უნიკოდის სპეციალური კოდების გამოყენება კოდის წერტილის მნიშვნელობებად 007F-ის ზემოთ შეუძლებელია, თუ კოდირება UTF-8 არაა."
 
-#: ../../common/jsonapi.c:2492
+#: ../../common/jsonapi.c:2495
 #, c-format
 msgid "Unicode escape value could not be translated to the server's encoding %s."
 msgstr "უნიკოდის სპეციალური კოდების სერვერის კოდირებაში (%s) თარგმნა შეუძლებელია."
 
-#: ../../common/jsonapi.c:2499
+#: ../../common/jsonapi.c:2502
 msgid "Unicode high surrogate must not follow a high surrogate."
 msgstr "უნიკოდის მაღალ სუროგატს მაღალი სუროგატი არ უნდა მოსდევდეს."
 
-#: ../../common/jsonapi.c:2501
+#: ../../common/jsonapi.c:2504
 msgid "Unicode low surrogate must follow a high surrogate."
 msgstr "უნიკოდის დაბალი სუროგატი მაღალ სუროგატს უნდა მისდევდეს."
 
-#: ../../common/jsonapi.c:2523
+#: ../../common/jsonapi.c:2526
 msgid "out of memory while constructing error description"
 msgstr "არასაკმარისი მეხსიერება შეცდომის აღწერის აგებისას"
 
@@ -468,13 +468,13 @@ msgstr "%s: %s ვერ ვიპოვე"
 msgid "%s: %s requires %s"
 msgstr "%s: %s-ს %s სჭირდება"
 
-#: backup_label.c:162 reconstruct.c:761 write_manifest.c:262
+#: backup_label.c:162 reconstruct.c:763 write_manifest.c:262
 #, c-format
 msgid "could not write file \"%s\": wrote %d of %d"
 msgstr "ფაილში \"%s\" ჩაწერა შეუძლებელია. ჩაწერილია %d %d-დან"
 
-#: backup_label.c:166 copy_file.c:160 copy_file.c:207 reconstruct.c:721
-#: reconstruct.c:767 write_manifest.c:270
+#: backup_label.c:166 copy_file.c:160 copy_file.c:207 reconstruct.c:723
+#: reconstruct.c:769 write_manifest.c:270
 #, c-format
 msgid "could not update checksum of file \"%s\""
 msgstr "ფაილის (\"%s\") საკონტროლო ჯამის განახლების შეცდომა"
@@ -489,7 +489,7 @@ msgstr "ფაილში (%s) ჩაწერის შეცდომა: %m"
 msgid "could not write to file \"%s\", offset %u: wrote %d of %d"
 msgstr "ფაილში \"%s\" ჩაწერის შეცდომა. წანაცვლება %u: ჩავწერე %d ბაიტი %d-დან"
 
-#: copy_file.c:213 reconstruct.c:784
+#: copy_file.c:213 reconstruct.c:786
 #, c-format
 msgid "could not read from file \"%s\": %m"
 msgstr "ფაილიდან (\"%s\") წაკითხვის შეცდომა: %m"
@@ -514,12 +514,12 @@ msgstr "შეცდომა ფაილის დაკლონვისა�
 msgid "file cloning not supported on this platform"
 msgstr "ამ პლატფორმაზე კლონირება მხარდაჭერილი არაა"
 
-#: copy_file.c:292 reconstruct.c:704
+#: copy_file.c:292 reconstruct.c:706
 #, c-format
 msgid "error while copying file range from \"%s\" to \"%s\": %m"
 msgstr "შეცდომა ფაილბის შუალედის კოპირებისას \"%s\"-დან \"%s\"-მდე: %m"
 
-#: copy_file.c:299 pg_combinebackup.c:269 reconstruct.c:724
+#: copy_file.c:299 pg_combinebackup.c:269 reconstruct.c:726
 #, c-format
 msgid "copy_file_range not supported on this platform"
 msgstr "ამ პლატფორმაზე copy_file_range მხარდაჭერილი არაა"
@@ -614,10 +614,15 @@ msgstr "ცხრილების სივრცის მიბმაში 
 msgid "invalid tablespace mapping format \"%s\", must be \"OLDDIR=NEWDIR\""
 msgstr "ცხრილების მიბმის არასწორი ფორმატი \"%s\", უნდა იყოს \"OLDDIR=NEWDIR\""
 
-#: pg_combinebackup.c:490 pg_combinebackup.c:494
+#: pg_combinebackup.c:490
 #, c-format
 msgid "old directory is not an absolute path in tablespace mapping: %s"
 msgstr "ძველი საქაღალდის ბილიკი ცხრილის სივრცის მიბმაში აბსოლუტური არაა: %s"
+
+#: pg_combinebackup.c:494
+#, c-format
+msgid "new directory is not an absolute path in tablespace mapping: %s"
+msgstr "ახალი საქაღალდის ბილიკი ცხრილის სივრცის მიბმაში აბსოლუტური არაა: %s"
 
 #: pg_combinebackup.c:563
 #, c-format
@@ -884,32 +889,32 @@ msgstr "ფაილის \"%s\" წაკითხვა შეუძლებ
 msgid "full backup contains unexpected incremental file \"%s\""
 msgstr "სრული მარქაფი შეიცავს მოულოდნელ ინკრემენტულ ფაილს \"%s\""
 
-#: reconstruct.c:423
+#: reconstruct.c:424
 #, c-format
 msgid "file \"%s\" is too short: expected %llu, found %llu"
 msgstr "ფაილი \"%s\" მეტისმეტად მოკლეა. მოველოდი %llu, მივიღე %llu"
 
-#: reconstruct.c:465
+#: reconstruct.c:466
 #, c-format
 msgid "file \"%s\" has bad incremental magic number (0x%x, expected 0x%x)"
 msgstr "ფაილს \"%s\" არასწორი ინკრემენტული ჯადოსნური რიცხვი (0x%x not 0x%x) გააჩნია"
 
-#: reconstruct.c:471
+#: reconstruct.c:472
 #, c-format
 msgid "file \"%s\" has block count %u in excess of segment size %u"
 msgstr "ფაილს \"%s\" აქვს ბლოკების რაოდენობა %u, რომელიც სეგმენტის ზომას %u აჭარბებს"
 
-#: reconstruct.c:478
+#: reconstruct.c:479
 #, c-format
 msgid "file \"%s\" has truncation block length %u in excess of segment size %u"
 msgstr "ფაილს \"%s\" აქვს წაკვეთის ბლოკის სიგრძე %u, რომელიც სეგმენტის ზომას %u აჭარბებს"
 
-#: reconstruct.c:542
+#: reconstruct.c:544
 #, c-format
 msgid "could not read file \"%s\": read %d of %u"
 msgstr "ფაილის \"%s\" წაკითხვის შეცდომა: წაკითხულია %d %u-დან"
 
-#: reconstruct.c:786
+#: reconstruct.c:788
 #, c-format
 msgid "could not read from file \"%s\", offset %llu: read %d of %d"
 msgstr "ფაილიდან \"%s\" წაკითხვის შეცდომა. წანაცვლება %llu: წაკითხულია %d %d-დან"

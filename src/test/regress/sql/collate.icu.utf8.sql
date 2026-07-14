@@ -568,6 +568,9 @@ SELECT 'abc' <= 'ABC' COLLATE case_insensitive, 'abc' >= 'ABC' COLLATE case_inse
 SELECT array_sort('{a,B}'::text[] COLLATE case_insensitive);
 SELECT array_sort('{a,B}'::text[] COLLATE "C");
 
+-- test replace() at the end of the string (bug #19341)
+SELECT replace('testX' COLLATE case_insensitive, 'x' COLLATE case_insensitive, 'er');
+
 -- test language tags
 CREATE COLLATION lt_insensitive (provider = icu, locale = 'en-u-ks-level1', deterministic = false);
 SELECT 'aBcD' COLLATE lt_insensitive = 'AbCd' COLLATE lt_insensitive;
@@ -605,6 +608,109 @@ CREATE UNIQUE INDEX ON test3cs (x);  -- ok
 SELECT string_to_array('ABC,DEF,GHI' COLLATE case_sensitive, ',', 'abc');
 SELECT string_to_array('ABCDEFGHI' COLLATE case_sensitive, NULL, 'b');
 
+--
+-- A unique index under one collation does not prove uniqueness under
+-- another, so the planner must not use such a proof for any optimization.
+--
+
+-- Ensure that we do not use inner-unique join execution
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM test1cs t1, test3cs t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+
+SELECT * FROM test1cs t1, test3cs t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+
+-- Ensure that left-join is not removed
+EXPLAIN (COSTS OFF)
+SELECT t1.* FROM test3cs t1
+       LEFT JOIN test3cs t2 ON t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1;
+
+SELECT t1.* FROM test3cs t1
+       LEFT JOIN test3cs t2 ON t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1;
+
+-- Ensure that self-join is not removed
+EXPLAIN (COSTS OFF)
+SELECT * FROM test3cs t1, test3cs t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+
+SELECT * FROM test3cs t1, test3cs t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+
+-- Ensure that semijoin is not reduced to innerjoin
+EXPLAIN (COSTS OFF)
+SELECT * FROM test3cs t1
+  WHERE EXISTS (SELECT 1 FROM test3cs t2 WHERE t1.x = t2.x COLLATE case_insensitive)
+ORDER BY 1;
+
+SELECT * FROM test3cs t1
+  WHERE EXISTS (SELECT 1 FROM test3cs t2 WHERE t1.x = t2.x COLLATE case_insensitive)
+ORDER BY 1;
+
+--
+-- A DISTINCT / GROUP BY / set-op on a subquery does not prove uniqueness
+-- under a different collation, so the planner must not use such a proof for
+-- any optimization.
+--
+
+-- Ensure that we do not use inner-unique join execution
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM test1cs t1, (SELECT DISTINCT x FROM test3cs) t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+
+SELECT * FROM test1cs t1, (SELECT DISTINCT x FROM test3cs) t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+
+-- Same with GROUP BY
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM test1cs t1, (SELECT x FROM test3cs GROUP BY x) t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+
+SELECT * FROM test1cs t1, (SELECT x FROM test3cs GROUP BY x) t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+
+-- Same with set-op
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM test1cs t1, (SELECT x FROM test3cs UNION SELECT x FROM test3cs) t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+
+SELECT * FROM test1cs t1, (SELECT x FROM test3cs UNION SELECT x FROM test3cs) t2
+WHERE t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1, 2;
+
+-- Ensure that left-join is not removed
+EXPLAIN (COSTS OFF)
+SELECT t1.* FROM test3cs t1
+       LEFT JOIN (SELECT DISTINCT x FROM test3cs) t2 ON t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1;
+
+SELECT t1.* FROM test3cs t1
+       LEFT JOIN (SELECT DISTINCT x FROM test3cs) t2 ON t1.x = t2.x COLLATE case_insensitive
+ORDER BY 1;
+
+-- Ensure that semijoin is not reduced to innerjoin
+EXPLAIN (COSTS OFF)
+SELECT * FROM test3cs t1
+  WHERE EXISTS (SELECT 1 FROM (SELECT DISTINCT x FROM test3cs) t2
+                WHERE t1.x = t2.x COLLATE case_insensitive)
+ORDER BY 1;
+
+SELECT * FROM test3cs t1
+  WHERE EXISTS (SELECT 1 FROM (SELECT DISTINCT x FROM test3cs) t2
+                WHERE t1.x = t2.x COLLATE case_insensitive)
+ORDER BY 1;
+
 CREATE TABLE test1ci (x text COLLATE case_insensitive);
 CREATE TABLE test2ci (x text COLLATE case_insensitive);
 CREATE TABLE test3ci (x text COLLATE case_insensitive);
@@ -634,6 +740,87 @@ INSERT INTO test1ci VALUES ('ABC');  -- error
 CREATE UNIQUE INDEX ON test3ci (x);  -- error
 SELECT string_to_array('ABC,DEF,GHI' COLLATE case_insensitive, ',', 'abc');
 SELECT string_to_array('ABCDEFGHI' COLLATE case_insensitive, NULL, 'b');
+
+-- Test HAVING-to-WHERE pushdown with nondeterministic collations.
+-- When a HAVING clause uses a different collation than the GROUP BY's
+-- nondeterministic collation, it must not be pushed to WHERE, otherwise
+-- aggregate results can change because the stricter filter eliminates rows
+-- before grouping.
+
+-- Negative: collation conflict, HAVING must not be pushed to WHERE
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_sensitive;
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_sensitive;
+
+-- Positive: same collation, safe to push HAVING to WHERE
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_insensitive;
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_insensitive;
+
+-- Negative: function applied to grouped column with conflicting collation
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING upper(x) = 'ABC' COLLATE case_sensitive;
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING upper(x) = 'ABC' COLLATE case_sensitive;
+
+-- Positive: function with same collation as GROUP BY
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING upper(x) = 'ABC' COLLATE case_insensitive;
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING upper(x) = 'ABC' COLLATE case_insensitive;
+
+-- Negative: inner function has conflicting collation, even though outer
+-- operator's collation matches GROUP BY due to a COLLATE override
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING upper(x COLLATE case_sensitive) COLLATE case_insensitive = 'ABC';
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING upper(x COLLATE case_sensitive) COLLATE case_insensitive = 'ABC';
+
+-- Mixed AND: conflicting clause stays in HAVING, safe clause pushed to WHERE
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_sensitive AND length(x) > 1;
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_sensitive AND length(x) > 1;
+
+-- Positive: AND of two safe clauses, both can be pushed
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_insensitive AND length(x) > 1;
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_insensitive AND length(x) > 1;
+
+-- Negative: OR with a conflicting clause: must stay in HAVING
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_sensitive OR x = 'def' COLLATE case_sensitive ORDER BY 1;
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING x = 'abc' COLLATE case_sensitive OR x = 'def' COLLATE case_sensitive ORDER BY 1;
+
+-- Negative: collation conflict inside a RowCompareExpr
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING ROW(x, 1) < ROW('ABC' COLLATE case_sensitive, 1) ORDER BY 1;
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING ROW(x, 1) < ROW('ABC' COLLATE case_sensitive, 1) ORDER BY 1;
+
+-- Negative: simple-CASE form with conflicting WHEN comparison collation
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING (CASE x WHEN 'abc' COLLATE case_sensitive THEN true ELSE false END);
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING (CASE x WHEN 'abc' COLLATE case_sensitive THEN true ELSE false END);
+
+-- Positive: simple-CASE form with matching collation, safe to push
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING (CASE x WHEN 'abc' COLLATE case_insensitive THEN true ELSE false END);
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING (CASE x WHEN 'abc' COLLATE case_insensitive THEN true ELSE false END);
+
+-- Negative: nested CASE with collation conflict
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING (CASE WHEN (CASE x WHEN 'abc' COLLATE case_sensitive THEN 1 ELSE 0 END) = 1 THEN true ELSE false END);
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING (CASE WHEN (CASE x WHEN 'abc' COLLATE case_sensitive THEN 1 ELSE 0 END) = 1 THEN true ELSE false END);
+
+-- Positive: conflicting collation but no grouping expression reference
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3ci GROUP BY x HAVING current_setting('server_version') = 'abc' COLLATE case_sensitive;
+
+-- Positive: deterministic collation in GROUP BY: always safe to push, even if
+-- HAVING uses a nondeterministic collation
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3cs GROUP BY x HAVING x = 'abc' COLLATE case_sensitive;
+SELECT x, count(*) FROM test3cs GROUP BY x HAVING x = 'abc' COLLATE case_sensitive;
+
+EXPLAIN (COSTS OFF)
+SELECT x, count(*) FROM test3cs GROUP BY x HAVING x = 'abc' COLLATE case_insensitive ORDER BY 1;
+SELECT x, count(*) FROM test3cs GROUP BY x HAVING x = 'abc' COLLATE case_insensitive ORDER BY 1;
 
 -- bpchar
 CREATE TABLE test1bpci (x char(3) COLLATE case_insensitive);
@@ -983,6 +1170,26 @@ RESET enable_partitionwise_aggregate;
 RESET max_parallel_workers_per_gather;
 RESET enable_incremental_sort;
 
+--
+-- A unique index can prove functional dependency for GROUP BY column
+-- removal only if its per-column collation agrees on equality with
+-- the GROUP BY column's collation.  An index built under a different
+-- (deterministic) collation would otherwise let remove_useless_groupby_columns
+-- drop other columns whose values still differ within a nondeterministic
+-- group.
+--
+CREATE TABLE groupby_collation_t (a text COLLATE case_insensitive NOT NULL, b text);
+INSERT INTO groupby_collation_t VALUES ('foo', 'X'), ('FOO', 'Y');
+CREATE UNIQUE INDEX ON groupby_collation_t (a COLLATE "C");
+
+-- Column b must NOT be dropped: under case_insensitive on a, 'foo' and
+-- 'FOO' would merge, but they have distinct b values.
+EXPLAIN (COSTS OFF)
+SELECT a, b FROM groupby_collation_t GROUP BY a, b ORDER BY a, b;
+SELECT a, b FROM groupby_collation_t GROUP BY a, b ORDER BY a, b;
+
+DROP TABLE groupby_collation_t;
+
 -- virtual generated columns
 CREATE TABLE t5 (
     a int,
@@ -997,6 +1204,19 @@ INSERT INTO t5 (a, b) values (1, 'D1'), (2, 'D2'), (3, 'd1');
 -- rewriting.)
 SELECT * FROM t5 ORDER BY c ASC, a ASC;
 
+-- Check that DEFAULT expressions in SQL/JSON functions use the same collation
+-- as the RETURNING type.  Mismatched collations should raise an error.
+CREATE DOMAIN d1 AS text COLLATE case_insensitive;
+CREATE DOMAIN d2 AS text COLLATE "C";
+SELECT JSON_VALUE('{"a": "A"}', '$.a' RETURNING d1 DEFAULT ('C' COLLATE "C") COLLATE case_insensitive ON EMPTY) = 'a'; -- true
+SELECT JSON_VALUE('{"a": "A"}', '$.a' RETURNING d1 DEFAULT 'C' ON EMPTY) = 'a'; -- true
+SELECT JSON_VALUE('{"a": "A"}', '$.a' RETURNING d1 DEFAULT 'C'::d2 ON EMPTY) = 'a'; -- error
+SELECT JSON_VALUE('{"a": "A"}', '$.a' RETURNING d1 DEFAULT 'C' COLLATE "C" ON EMPTY) = 'a'; -- error
+SELECT JSON_VALUE('{"a": "A"}', '$.c' RETURNING d1 DEFAULT 'A' ON EMPTY) = 'a'; -- true
+SELECT JSON_VALUE('{"a": "A"}', '$.c' RETURNING d1 DEFAULT 'A' COLLATE case_insensitive ON EMPTY) = 'a'; -- true
+SELECT JSON_VALUE('{"a": "A"}', '$.c' RETURNING d1 DEFAULT 'A'::d2 ON EMPTY) = 'a'; -- error
+SELECT JSON_VALUE('{"a": "A"}', '$.c' RETURNING d1 DEFAULT 'A' COLLATE "C" ON EMPTY) = 'a'; -- error
+DROP DOMAIN d1, d2;
 
 -- cleanup
 RESET search_path;

@@ -340,6 +340,17 @@ select * from (
   where not exists (select 1 from tenk1 as b where b.unique2 = 10000)
 ) ss;
 
+
+--
+-- Test cases for interactions between PARAM_EXEC, subplans and array
+-- subscripts
+--
+
+-- check that array subscription doesn't conflict with PARAM_EXEC (see #19370)
+SELECT (array[1,2])[(SELECT g.i)] FROM generate_series(1, 1) g(i);
+SELECT (array[1,2])[(SELECT g.i):(SELECT g.i + 1)] FROM generate_series(1, 1) g(i);
+
+
 --
 -- Test that an IN implemented using a UniquePath does unique-ification
 -- with the right semantics, as per bug #4113.  (Unfortunately we have
@@ -411,6 +422,15 @@ select view_a from view_a;
 select (select view_a) from view_a;
 select (select (select view_a)) from view_a;
 select (select (a.*)::text) from view_a a;
+
+--
+-- Test case for bug #19037: no relation entry for relid N
+--
+
+explain (costs off)
+select (1 = any(array_agg(f1))) = any (select false) from int4_tbl;
+
+select (1 = any(array_agg(f1))) = any (select false) from int4_tbl;
 
 --
 -- Check that whole-row Vars reading the result of a subselect don't include
@@ -863,6 +883,46 @@ select * from
   (select 9 as x, unnest(array[1,2,3,11,12,13]) as u) ss
   where tattle(x, u);
 
+--
+-- check that an upper-level qual is not pushed down if it references a grouped
+-- Var whose underlying expression contains SRFs
+--
+explain (verbose, costs off)
+select * from
+  (select generate_series(1, ten) as g, count(*) from tenk1 group by 1) ss
+  where ss.g = 1;
+
+select * from
+  (select generate_series(1, ten) as g, count(*) from tenk1 group by 1) ss
+  where ss.g = 1;
+
+--
+-- check that an upper-level qual is not pushed down if it references a grouped
+-- Var whose underlying expression contains volatile functions
+--
+alter function tattle(x int, y int) volatile;
+
+explain (verbose, costs off)
+select * from
+  (select tattle(3, ten) as v, count(*) from tenk1 where unique1 < 3 group by 1) ss
+  where ss.v;
+
+select * from
+  (select tattle(3, ten) as v, count(*) from tenk1 where unique1 < 3 group by 1) ss
+  where ss.v;
+
+-- if we pretend it's stable, we get different results:
+alter function tattle(x int, y int) stable;
+
+explain (verbose, costs off)
+select * from
+  (select tattle(3, ten) as v, count(*) from tenk1 where unique1 < 3 group by 1) ss
+  where ss.v;
+
+select * from
+  (select tattle(3, ten) as v, count(*) from tenk1 where unique1 < 3 group by 1) ss
+  where ss.v;
+
 drop function tattle(x int, y int);
 
 --
@@ -919,6 +979,23 @@ move forward all in c1;
 fetch backward all in c1;
 
 commit;
+
+--
+-- Check that JsonConstructorExpr is treated as non-strict, and thus can be
+-- wrapped in a PlaceHolderVar
+--
+
+begin;
+
+create temp table json_tab (a int);
+insert into json_tab values (1);
+
+explain (verbose, costs off)
+select * from json_tab t1 left join (select json_array(1, a) from json_tab t2) s on false;
+
+select * from json_tab t1 left join (select json_array(1, a) from json_tab t2) s on false;
+
+rollback;
 
 --
 -- Verify that we correctly flatten cases involving a subquery output

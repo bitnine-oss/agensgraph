@@ -85,8 +85,11 @@ static void compute_new_xmax_infomask(TransactionId xmax, uint16 old_infomask,
 									  LockTupleMode mode, bool is_update,
 									  TransactionId *result_xmax, uint16 *result_infomask,
 									  uint16 *result_infomask2);
-static TM_Result heap_lock_updated_tuple(Relation rel, HeapTuple tuple,
-										 ItemPointer ctid, TransactionId xid,
+static TM_Result heap_lock_updated_tuple(Relation rel,
+										 uint16 prior_infomask,
+										 TransactionId prior_rawxmax,
+										 const ItemPointerData *prior_ctid,
+										 TransactionId xid,
 										 LockTupleMode mode);
 static void GetMultiXactIdHintBits(MultiXactId multi, uint16 *new_infomask,
 								   uint16 *new_infomask2);
@@ -1059,7 +1062,7 @@ continue_page:
 			ItemId		lpp;
 			OffsetNumber lineoff;
 
-			Assert(lineindex <= scan->rs_ntuples);
+			Assert(lineindex < scan->rs_ntuples);
 			lineoff = scan->rs_vistuples[lineindex];
 			lpp = PageGetItemId(page, lineoff);
 			Assert(ItemIdIsNormal(lpp));
@@ -4783,11 +4786,13 @@ l3:
 				 * If there are updates, follow the update chain; bail out if
 				 * that cannot be done.
 				 */
-				if (follow_updates && updated)
+				if (follow_updates && updated &&
+					!ItemPointerEquals(&tuple->t_self, &t_ctid))
 				{
 					TM_Result	res;
 
-					res = heap_lock_updated_tuple(relation, tuple, &t_ctid,
+					res = heap_lock_updated_tuple(relation,
+												  infomask, xwait, &t_ctid,
 												  GetCurrentTransactionId(),
 												  mode);
 					if (res != TM_Ok)
@@ -5030,11 +5035,13 @@ l3:
 			}
 
 			/* if there are updates, follow the update chain */
-			if (follow_updates && !HEAP_XMAX_IS_LOCKED_ONLY(infomask))
+			if (follow_updates && !HEAP_XMAX_IS_LOCKED_ONLY(infomask) &&
+				!ItemPointerEquals(&tuple->t_self, &t_ctid))
 			{
 				TM_Result	res;
 
-				res = heap_lock_updated_tuple(relation, tuple, &t_ctid,
+				res = heap_lock_updated_tuple(relation,
+											  infomask, xwait, &t_ctid,
 											  GetCurrentTransactionId(),
 											  mode);
 				if (res != TM_Ok)
@@ -5688,7 +5695,8 @@ test_lockmode_for_conflict(MultiXactStatus status, TransactionId xid,
  * version as well.
  */
 static TM_Result
-heap_lock_updated_tuple_rec(Relation rel, ItemPointer tid, TransactionId xid,
+heap_lock_updated_tuple_rec(Relation rel, TransactionId priorXmax,
+							const ItemPointerData *tid, TransactionId xid,
 							LockTupleMode mode)
 {
 	TM_Result	result;
@@ -5701,7 +5709,6 @@ heap_lock_updated_tuple_rec(Relation rel, ItemPointer tid, TransactionId xid,
 				old_infomask2;
 	TransactionId xmax,
 				new_xmax;
-	TransactionId priorXmax = InvalidTransactionId;
 	bool		cleared_all_frozen = false;
 	bool		pinned_desired_page;
 	Buffer		vmbuffer = InvalidBuffer;
@@ -6015,7 +6022,10 @@ out_unlocked:
  *		Follow update chain when locking an updated tuple, acquiring locks (row
  *		marks) on the updated versions.
  *
- * The initial tuple is assumed to be already locked.
+ * 'prior_infomask', 'prior_raw_xmax' and 'prior_ctid' are the corresponding
+ * fields from the initial tuple.  We will lock the tuples starting from the
+ * one that 'prior_ctid' points to.  Note: This function does not lock the
+ * initial tuple itself.
  *
  * This function doesn't check visibility, it just unconditionally marks the
  * tuple(s) as locked.  If any tuple in the updated chain is being deleted
@@ -6033,16 +6043,22 @@ out_unlocked:
  * levels, because that would lead to a serializability failure.
  */
 static TM_Result
-heap_lock_updated_tuple(Relation rel, HeapTuple tuple, ItemPointer ctid,
+heap_lock_updated_tuple(Relation rel,
+						uint16 prior_infomask,
+						TransactionId prior_raw_xmax,
+						const ItemPointerData *prior_ctid,
 						TransactionId xid, LockTupleMode mode)
 {
+	INJECTION_POINT("heap_lock_updated_tuple", NULL);
+
 	/*
-	 * If the tuple has not been updated, or has moved into another partition
-	 * (effectively a delete) stop here.
+	 * If the tuple has moved into another partition (effectively a delete)
+	 * stop here.
 	 */
-	if (!HeapTupleHeaderIndicatesMovedPartitions(tuple->t_data) &&
-		!ItemPointerEquals(&tuple->t_self, ctid))
+	if (!ItemPointerIndicatesMovedPartitions(prior_ctid))
 	{
+		TransactionId prior_xmax;
+
 		/*
 		 * If this is the first possibly-multixact-able operation in the
 		 * current transaction, set my per-backend OldestMemberMXactId
@@ -6054,7 +6070,9 @@ heap_lock_updated_tuple(Relation rel, HeapTuple tuple, ItemPointer ctid,
 		 */
 		MultiXactIdSetOldestMember();
 
-		return heap_lock_updated_tuple_rec(rel, ctid, xid, mode);
+		prior_xmax = (prior_infomask & HEAP_XMAX_IS_MULTI) ?
+			MultiXactIdGetUpdateXid(prior_raw_xmax, prior_infomask) : prior_raw_xmax;
+		return heap_lock_updated_tuple_rec(rel, prior_xmax, prior_ctid, xid, mode);
 	}
 
 	/* nothing to lock */
@@ -6360,15 +6378,17 @@ heap_inplace_lock(Relation relation,
 	Assert(BufferIsValid(buffer));
 
 	/*
-	 * Construct shared cache inval if necessary.  Because we pass a tuple
-	 * version without our own inplace changes or inplace changes other
-	 * sessions complete while we wait for locks, inplace update mustn't
-	 * change catcache lookup keys.  But we aren't bothering with index
-	 * updates either, so that's true a fortiori.  After LockBuffer(), it
-	 * would be too late, because this might reach a
-	 * CatalogCacheInitializeCache() that locks "buffer".
+	 * Register shared cache invals if necessary.  Other sessions may finish
+	 * inplace updates of this tuple between this step and LockTuple().  Since
+	 * inplace updates don't change cache keys, that's harmless.
+	 *
+	 * While it's tempting to register invals only after confirming we can
+	 * return true, the following obstacle precludes reordering steps that
+	 * way.  Registering invals might reach a CatalogCacheInitializeCache()
+	 * that locks "buffer".  That would hang indefinitely if running after our
+	 * own LockBuffer().  Hence, we must register invals before LockBuffer().
 	 */
-	CacheInvalidateHeapTupleInplace(relation, oldtup_ptr, NULL);
+	CacheInvalidateHeapTupleInplace(relation, oldtup_ptr);
 
 	LockTuple(relation, &oldtup.t_self, InplaceUpdateTupleLock);
 	LockBuffer(buffer, BUFFER_LOCK_EXCLUSIVE);
@@ -6606,10 +6626,6 @@ heap_inplace_update_and_unlock(Relation relation,
 	/*
 	 * Send invalidations to shared queue.  SearchSysCacheLocked1() assumes we
 	 * do this before UnlockTuple().
-	 *
-	 * If we're mutating a tuple visible only to this transaction, there's an
-	 * equivalent transactional inval from the action that created the tuple,
-	 * and this inval is superfluous.
 	 */
 	AtInplace_Inval();
 
@@ -6620,10 +6636,10 @@ heap_inplace_update_and_unlock(Relation relation,
 	AcceptInvalidationMessages();	/* local processing of just-sent inval */
 
 	/*
-	 * Queue a transactional inval.  The immediate invalidation we just sent
-	 * is the only one known to be necessary.  To reduce risk from the
-	 * transition to immediate invalidation, continue sending a transactional
-	 * invalidation like we've long done.  Third-party code might rely on it.
+	 * Queue a transactional inval, for logical decoding and for third-party
+	 * code that might have been relying on it since long before inplace
+	 * update adopted immediate invalidation.  See README.tuplock section
+	 * "Reading inplace-updated columns" for logical decoding details.
 	 */
 	if (!IsBootstrapProcessingMode())
 		CacheInvalidateHeapTuple(relation, tuple, NULL);

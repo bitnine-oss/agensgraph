@@ -114,6 +114,7 @@
 #include "executor/executor.h"
 #include "nodes/nodeFuncs.h"
 #include "storage/lmgr.h"
+#include "utils/lsyscache.h"
 #include "utils/multirangetypes.h"
 #include "utils/rangetypes.h"
 #include "utils/snapmgr.h"
@@ -279,7 +280,7 @@ ExecCloseIndices(ResultRelInfo *resultRelInfo)
  *		executor is performing an UPDATE that could not use an
  *		optimization like heapam's HOT (in more general terms a
  *		call to table_tuple_update() took place and set
- *		'update_indexes' to TUUI_All).  Receiving this hint makes
+ *		'update_indexes' to TU_All).  Receiving this hint makes
  *		us consider if we should pass down the 'indexUnchanged'
  *		hint in turn.  That's something that we figure out for
  *		each index_insert() call iff 'update' is true.
@@ -290,7 +291,7 @@ ExecCloseIndices(ResultRelInfo *resultRelInfo)
  *		HOT has been applied and any updated columns are indexed
  *		only by summarizing indexes (or in more general terms a
  *		call to table_tuple_update() took place and set
- *		'update_indexes' to TUUI_Summarizing). We can (and must)
+ *		'update_indexes' to TU_Summarizing). We can (and must)
  *		therefore only update the indexes that have
  *		'amsummarizing' = true.
  *
@@ -753,11 +754,18 @@ check_exclusion_or_unique_constraint(Relation heap, Relation index,
 		{
 			TupleDesc	tupdesc = RelationGetDescr(heap);
 			Form_pg_attribute att = TupleDescAttr(tupdesc, attno - 1);
-			TypeCacheEntry *typcache = lookup_type_cache(att->atttypid, 0);
+			TypeCacheEntry *typcache = lookup_type_cache(att->atttypid,
+														 TYPECACHE_DOMAIN_BASE_INFO);
+			char		typtype;
+
+			if (OidIsValid(typcache->domainBaseType))
+				typtype = get_typtype(typcache->domainBaseType);
+			else
+				typtype = typcache->typtype;
 
 			ExecWithoutOverlapsNotEmpty(heap, att->attname,
 										values[indnkeyatts - 1],
-										typcache->typtype, att->atttypid);
+										typtype, att->atttypid);
 		}
 	}
 

@@ -232,9 +232,9 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
         <term><literal>INCLUDING COMMENTS</literal></term>
         <listitem>
          <para>
-          Comments for the copied columns and constraints will be
-          copied.  The default behavior is to exclude comments, resulting in
-          the copied columns and constraints in the new table having no
+          Comments for the copied columns, constraints, and extended statistics
+          will be copied.  The default behavior is to exclude comments,
+          resulting in the corresponding objects in the new table having no
           comments.
          </para>
         </listitem>

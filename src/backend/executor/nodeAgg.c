@@ -2912,7 +2912,7 @@ agg_retrieve_hash_table_in_memory(AggState *aggstate)
 
 				perhash = &aggstate->perhash[aggstate->current_set];
 
-				ResetTupleHashIterator(hashtable, &perhash->hashiter);
+				ResetTupleHashIterator(perhash->hashtable, &perhash->hashiter);
 
 				continue;
 			}
@@ -4413,7 +4413,7 @@ ExecEndAgg(AggState *node)
 	{
 		AggregateInstrumentation *si;
 
-		Assert(ParallelWorkerNumber <= node->shared_info->num_workers);
+		Assert(ParallelWorkerNumber < node->shared_info->num_workers);
 		si = &node->shared_info->sinstrument[ParallelWorkerNumber];
 		si->hash_batches_used = node->hash_batches_used;
 		si->hash_disk_used = node->hash_disk_used;

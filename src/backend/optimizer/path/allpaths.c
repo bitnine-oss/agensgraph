@@ -1727,9 +1727,11 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
  * We generate a path for each ordering (pathkey list) appearing in
  * all_child_pathkeys.
  *
- * We consider both cheapest-startup and cheapest-total cases, ie, for each
- * interesting ordering, collect all the cheapest startup subpaths and all the
- * cheapest total paths, and build a suitable path for each case.
+ * We consider the cheapest-startup and cheapest-total cases, and also the
+ * cheapest-fractional case when not all tuples need to be retrieved.  For each
+ * interesting ordering, we collect all the cheapest startup subpaths, all the
+ * cheapest total paths, and, if applicable, all the cheapest fractional paths,
+ * and build a suitable path for each case.
  *
  * We don't currently generate any parameterized ordered paths here.  While
  * it would not take much more code here to do so, it's very unclear that it
@@ -1894,14 +1896,18 @@ generate_orderedappend_paths(PlannerInfo *root, RelOptInfo *rel,
 				double		path_fraction = root->tuple_fraction;
 
 				/*
-				 * Merge Append considers only live children relations.  Dummy
-				 * relations must be filtered out before.
+				 * We should not have a dummy child relation here.  However,
+				 * we cannot use childrel->rows to compute the tuple fraction,
+				 * as childrel can be an upper relation with an unset row
+				 * estimate.  Instead, we use the row estimate from the
+				 * cheapest_total path, which should already have been forced
+				 * to a sane value.
 				 */
-				Assert(childrel->rows > 0);
+				Assert(cheapest_total->rows > 0);
 
 				/* Convert absolute limit to a path fraction */
 				if (path_fraction >= 1.0)
-					path_fraction /= childrel->rows;
+					path_fraction /= cheapest_total->rows;
 
 				cheapest_fractional =
 					get_cheapest_fractional_path_for_pathkeys(childrel->pathlist,
@@ -3747,9 +3753,33 @@ recurse_pushdown_safe(Node *setOp, Query *topquery,
 static void
 check_output_expressions(Query *subquery, pushdown_safety_info *safetyInfo)
 {
+	List	   *flattened_targetList = subquery->targetList;
 	ListCell   *lc;
 
-	foreach(lc, subquery->targetList)
+	/*
+	 * We must be careful with grouping Vars and join alias Vars in the
+	 * subquery's outputs, as they hide the underlying expressions.
+	 *
+	 * We need to expand grouping Vars to their underlying expressions (the
+	 * grouping clauses) because the grouping expressions themselves might be
+	 * volatile or set-returning.  However, we do not need to expand join
+	 * alias Vars, as their underlying structure does not introduce volatile
+	 * or set-returning functions at the current level.
+	 *
+	 * In neither case do we need to recursively examine the Vars contained in
+	 * these underlying expressions.  Even if they reference outputs from
+	 * lower-level subqueries (at any depth), those references are guaranteed
+	 * not to expand to volatile or set-returning functions, because
+	 * subqueries containing such functions in their targetlists are never
+	 * pulled up.
+	 */
+	if (subquery->hasGroupRTE)
+	{
+		flattened_targetList = (List *)
+			flatten_group_exprs(NULL, subquery, (Node *) subquery->targetList);
+	}
+
+	foreach(lc, flattened_targetList)
 	{
 		TargetEntry *tle = (TargetEntry *) lfirst(lc);
 

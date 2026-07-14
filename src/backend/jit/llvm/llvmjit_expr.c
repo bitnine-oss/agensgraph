@@ -62,7 +62,9 @@ static LLVMValueRef build_EvalXFuncInt(LLVMBuilderRef b, LLVMModuleRef mod,
 									   LLVMValueRef v_state,
 									   ExprEvalStep *op,
 									   int natts, LLVMValueRef *v_args);
+#if LLVM_VERSION_MAJOR < 22
 static LLVMValueRef create_LifetimeEnd(LLVMModuleRef mod);
+#endif
 
 /* macro making it easier to call ExecEval* functions */
 #define build_EvalXFunc(b, mod, funcname, v_state, op, ...) \
@@ -698,8 +700,8 @@ llvm_compile_expr(ExprState *state)
 						LLVMBuildStore(b, l_sbool_const(1), v_resnullp);
 
 						/* create blocks for checking args, one for each */
-						b_checkargnulls =
-							palloc(sizeof(LLVMBasicBlockRef *) * op->d.func.nargs);
+						b_checkargnulls = (LLVMBasicBlockRef *)
+							palloc(sizeof(LLVMBasicBlockRef) * op->d.func.nargs);
 						for (int argno = 0; argno < op->d.func.nargs; argno++)
 							b_checkargnulls[argno] =
 								l_bb_before_v(b_nonull, "b.%d.isnull.%d", opno,
@@ -2505,7 +2507,7 @@ llvm_compile_expr(ExprState *state)
 					v_nullsp = l_ptr_const(nulls, l_ptr(TypeStorageBool));
 
 					/* create blocks for checking args */
-					b_checknulls = palloc(sizeof(LLVMBasicBlockRef *) * nargs);
+					b_checknulls = palloc(sizeof(LLVMBasicBlockRef) * nargs);
 					for (int argno = 0; argno < nargs; argno++)
 					{
 						b_checknulls[argno] =
@@ -3071,13 +3073,10 @@ BuildV1Call(LLVMJitContext *context, LLVMBuilderRef b,
 			LLVMModuleRef mod, FunctionCallInfo fcinfo,
 			LLVMValueRef *v_fcinfo_isnull)
 {
-	LLVMContextRef lc;
 	LLVMValueRef v_fn;
 	LLVMValueRef v_fcinfo_isnullp;
 	LLVMValueRef v_retval;
 	LLVMValueRef v_fcinfo;
-
-	lc = LLVMGetModuleContext(mod);
 
 	v_fn = llvm_function_reference(context, b, mod, fcinfo);
 
@@ -3094,11 +3093,14 @@ BuildV1Call(LLVMJitContext *context, LLVMBuilderRef b,
 	if (v_fcinfo_isnull)
 		*v_fcinfo_isnull = l_load(b, TypeStorageBool, v_fcinfo_isnullp, "");
 
+#if LLVM_VERSION_MAJOR < 22
+
 	/*
 	 * Add lifetime-end annotation, signaling that writes to memory don't have
 	 * to be retained (important for inlining potential).
 	 */
 	{
+		LLVMContextRef lc = LLVMGetModuleContext(mod);
 		LLVMValueRef v_lifetime = create_LifetimeEnd(mod);
 		LLVMValueRef params[2];
 
@@ -3110,6 +3112,7 @@ BuildV1Call(LLVMJitContext *context, LLVMBuilderRef b,
 		params[1] = l_ptr_const(&fcinfo->isnull, l_ptr(LLVMInt8TypeInContext(lc)));
 		l_call(b, LLVMGetFunctionType(v_lifetime), v_lifetime, params, lengthof(params), "");
 	}
+#endif
 
 	return v_retval;
 }
@@ -3147,6 +3150,7 @@ build_EvalXFuncInt(LLVMBuilderRef b, LLVMModuleRef mod, const char *funcname,
 	return v_ret;
 }
 
+#if LLVM_VERSION_MAJOR < 22
 static LLVMValueRef
 create_LifetimeEnd(LLVMModuleRef mod)
 {
@@ -3176,3 +3180,4 @@ create_LifetimeEnd(LLVMModuleRef mod)
 
 	return fn;
 }
+#endif

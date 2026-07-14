@@ -537,6 +537,11 @@
         The frontend should not respond to this message, but should
         continue listening for a ReadyForQuery message.
        </para>
+       <para>
+        The <productname>PostgreSQL</productname> server will always send this
+        message, but some third party backend implementations of the protocol
+        that don't support query cancellation are known not to.
+       </para>
       </listitem>
      </varlistentry>
 
@@ -885,6 +890,16 @@ SELCT 1/0;<!-- this typo is intentional -->
      difference that the first <command>INSERT</command> is not committed.
      Errors detected at semantic analysis or later, such as a misspelled
      table or column name, do not have this effect.
+    </para>
+
+    <para>
+     Lastly, note that all the statements within the Query message will
+     observe the same value of <function>statement_timestamp()</function>,
+     since that timestamp is updated only upon receipt of the Query
+     message.  This will result in them all observing the same
+     value of <function>transaction_timestamp()</function> as well,
+     except in cases where the query string ends a previously-started
+     transaction and begins a new one.
     </para>
    </sect3>
   </sect2>
@@ -3504,11 +3519,13 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
      </term>
      <listitem>
       <para>
-       Boolean option to enable streaming of in-progress transactions.
-       It accepts an additional value "parallel" to enable sending extra
-       information with some messages to be used for parallelisation.
-       Minimum protocol version 2 is required to turn it on.  Minimum protocol
-       version 4 is required for the "parallel" option.
+       Option to enable streaming of in-progress transactions. Valid values are
+       <literal>off</literal> (the default), <literal>on</literal> and
+       <literal>parallel</literal>. The setting <literal>parallel</literal>
+       enables sending extra information with some messages to be used for
+       parallelization. Minimum protocol version 2 is required to turn it
+       <literal>on</literal>.  Minimum protocol version 4 is required for the
+       <literal>parallel</literal> value.
       </para>
      </listitem>
     </varlistentry>
@@ -4146,7 +4163,7 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
          message, indicated by the length field.
         </para>
         <para>
-          The maximum key length is 256 bytes. The
+          The minimum and maximum key length are 4 and 256 bytes, respectively. The
           <productname>PostgreSQL</productname> server only sends keys up to
           32 bytes, but the larger maximum size allows for future server
           versions, as well as connection poolers and other middleware, to use
@@ -4337,7 +4354,7 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
     <listitem>
      <variablelist>
       <varlistentry>
-       <term>Int32(16)</term>
+       <term>Int32</term>
        <listitem>
         <para>
          Length of message contents in bytes, including self.
@@ -6081,13 +6098,13 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
       </varlistentry>
 
       <varlistentry>
-       <term>Int32(196608)</term>
+       <term>Int32(196610)</term>
        <listitem>
         <para>
          The protocol version number.  The most significant 16 bits are
          the major version number (3 for the protocol described here).
          The least significant 16 bits are the minor version number
-         (0 for the protocol described here).
+         (2 for the protocol described here).
         </para>
        </listitem>
       </varlistentry>

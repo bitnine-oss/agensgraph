@@ -303,12 +303,13 @@ static bool FatalError = false; /* T if recovering from backend crash */
  *
  * When the startup process is ready to start archive recovery, it signals the
  * postmaster, and we switch to PM_RECOVERY state. The background writer and
- * checkpointer are launched, while the startup process continues applying WAL.
- * If Hot Standby is enabled, then, after reaching a consistent point in WAL
- * redo, startup process signals us again, and we switch to PM_HOT_STANDBY
- * state and begin accepting connections to perform read-only queries.  When
- * archive recovery is finished, the startup process exits with exit code 0
- * and we switch to PM_RUN state.
+ * checkpointer are already running (as these are launched during PM_STARTUP),
+ * and the startup process continues applying WAL.  If Hot Standby is enabled,
+ * then, after reaching a consistent point in WAL redo, startup process
+ * signals us again, and we switch to PM_HOT_STANDBY state and begin accepting
+ * connections to perform read-only queries.  When archive recovery is
+ * finished, the startup process exits with exit code 0 and we switch to
+ * PM_RUN state.
  *
  * Normal child backends can only be launched when we are in PM_RUN or
  * PM_HOT_STANDBY state.  (connsAllowed can also restrict launching.)
@@ -2277,29 +2278,13 @@ process_pm_child_exit(void)
 			}
 
 			/*
-			 * Unexpected exit of startup process (including FATAL exit)
-			 * during PM_STARTUP is treated as catastrophic. There are no
-			 * other processes running yet, so we can just exit.
-			 */
-			if (pmState == PM_STARTUP &&
-				StartupStatus != STARTUP_SIGNALED &&
-				!EXIT_STATUS_0(exitstatus))
-			{
-				LogChildExit(LOG, _("startup process"),
-							 pid, exitstatus);
-				ereport(LOG,
-						(errmsg("aborting startup due to startup process failure")));
-				ExitPostmaster(1);
-			}
-
-			/*
-			 * After PM_STARTUP, any unexpected exit (including FATAL exit) of
-			 * the startup process is catastrophic, so kill other children,
-			 * and set StartupStatus so we don't try to reinitialize after
-			 * they're gone.  Exception: if StartupStatus is STARTUP_SIGNALED,
-			 * then we previously sent the startup process a SIGQUIT; so
-			 * that's probably the reason it died, and we do want to try to
-			 * restart in that case.
+			 * Any unexpected exit (including FATAL exit) of the startup
+			 * process is catastrophic, so kill other children, and set
+			 * StartupStatus so we don't try to reinitialize after they're
+			 * gone.  Exception: if StartupStatus is STARTUP_SIGNALED, then we
+			 * previously sent the startup process a SIGQUIT; so that's
+			 * probably the reason it died, and we do want to try to restart
+			 * in that case.
 			 *
 			 * This stanza also handles the case where we sent a SIGQUIT
 			 * during PM_STARTUP due to some dead-end child crashing: in that
@@ -2630,6 +2615,13 @@ CleanupBackend(PMChild *bp,
 	}
 	bp = NULL;
 
+	/*
+	 * In a crash case, exit immediately without resetting background worker
+	 * state. However, if restart_after_crash is enabled, the background
+	 * worker state (e.g., rw_pid) still needs be reset so the worker can
+	 * restart after crash recovery. This reset is handled in
+	 * ResetBackgroundWorkerCrashTimes(), not here.
+	 */
 	if (crashed)
 	{
 		HandleChildCrash(bp_pid, exitstatus, procname);
@@ -2727,12 +2719,9 @@ HandleFatalError(QuitSignalReason reason, bool consider_sigabrt)
 			/* shouldn't have any children */
 			Assert(false);
 			break;
-		case PM_STARTUP:
-			/* should have been handled in process_pm_child_exit */
-			Assert(false);
-			break;
 
 			/* wait for children to die */
+		case PM_STARTUP:
 		case PM_RECOVERY:
 		case PM_HOT_STANDBY:
 		case PM_RUN:
@@ -4337,15 +4326,15 @@ maybe_start_bgworkers(void)
 static bool
 maybe_reap_io_worker(int pid)
 {
-	for (int id = 0; id < MAX_IO_WORKERS; ++id)
+	for (int i = 0; i < MAX_IO_WORKERS; ++i)
 	{
-		if (io_worker_children[id] &&
-			io_worker_children[id]->pid == pid)
+		if (io_worker_children[i] &&
+			io_worker_children[i]->pid == pid)
 		{
-			ReleasePostmasterChildSlot(io_worker_children[id]);
+			ReleasePostmasterChildSlot(io_worker_children[i]);
 
 			--io_worker_count;
-			io_worker_children[id] = NULL;
+			io_worker_children[i] = NULL;
 			return true;
 		}
 	}
@@ -4389,22 +4378,22 @@ maybe_adjust_io_workers(void)
 	while (io_worker_count < io_workers)
 	{
 		PMChild    *child;
-		int			id;
+		int			i;
 
 		/* find unused entry in io_worker_children array */
-		for (id = 0; id < MAX_IO_WORKERS; ++id)
+		for (i = 0; i < MAX_IO_WORKERS; ++i)
 		{
-			if (io_worker_children[id] == NULL)
+			if (io_worker_children[i] == NULL)
 				break;
 		}
-		if (id == MAX_IO_WORKERS)
-			elog(ERROR, "could not find a free IO worker ID");
+		if (i == MAX_IO_WORKERS)
+			elog(ERROR, "could not find a free IO worker slot");
 
 		/* Try to launch one. */
 		child = StartChildProcess(B_IO_WORKER);
 		if (child != NULL)
 		{
-			io_worker_children[id] = child;
+			io_worker_children[i] = child;
 			++io_worker_count;
 		}
 		else
@@ -4415,11 +4404,11 @@ maybe_adjust_io_workers(void)
 	if (io_worker_count > io_workers)
 	{
 		/* ask the IO worker in the highest slot to exit */
-		for (int id = MAX_IO_WORKERS - 1; id >= 0; --id)
+		for (int i = MAX_IO_WORKERS - 1; i >= 0; --i)
 		{
-			if (io_worker_children[id] != NULL)
+			if (io_worker_children[i] != NULL)
 			{
-				kill(io_worker_children[id]->pid, SIGUSR2);
+				kill(io_worker_children[i]->pid, SIGUSR2);
 				break;
 			}
 		}

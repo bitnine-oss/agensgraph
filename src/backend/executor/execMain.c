@@ -84,7 +84,6 @@ static void ExecutePlan(QueryDesc *queryDesc,
 						uint64 numberTuples,
 						ScanDirection direction,
 						DestReceiver *dest);
-static bool ExecCheckOneRelPerms(RTEPermissionInfo *perminfo);
 static bool ExecCheckPermissionsModified(Oid relOid, Oid userid,
 										 Bitmapset *modifiedCols,
 										 AclMode requiredPerms);
@@ -659,7 +658,7 @@ ExecCheckPermissions(List *rangeTable, List *rteperminfos,
  * ExecCheckOneRelPerms
  *		Check access permissions for a single relation.
  */
-static bool
+bool
 ExecCheckOneRelPerms(RTEPermissionInfo *perminfo)
 {
 	AclMode		requiredPerms;
@@ -897,21 +896,25 @@ InitPlan(QueryDesc *queryDesc, int eflags)
 		foreach(l, plannedstmt->rowMarks)
 		{
 			PlanRowMark *rc = (PlanRowMark *) lfirst(l);
+			RangeTblEntry *rte = exec_rt_fetch(rc->rti, estate);
 			Oid			relid;
 			Relation	relation;
 			ExecRowMark *erm;
 
+			/* ignore "parent" rowmarks; they are irrelevant at runtime */
+			if (rc->isParent)
+				continue;
+
 			/*
-			 * Ignore "parent" rowmarks, because they are irrelevant at
-			 * runtime.  Also ignore the rowmarks belonging to child tables
-			 * that have been pruned in ExecDoInitialPruning().
+			 * Also ignore rowmarks belonging to child tables that have been
+			 * pruned in ExecDoInitialPruning().
 			 */
-			if (rc->isParent ||
+			if (rte->rtekind == RTE_RELATION &&
 				!bms_is_member(rc->rti, estate->es_unpruned_relids))
 				continue;
 
 			/* get relation's OID (will produce InvalidOid if subquery) */
-			relid = exec_rt_fetch(rc->rti, estate)->relid;
+			relid = rte->relid;
 
 			/* open relation, if we need to access it for this mark type */
 			switch (rc->markType)
@@ -1053,6 +1056,9 @@ InitPlan(QueryDesc *queryDesc, int eflags)
  * Generally the parser and/or planner should have noticed any such mistake
  * already, but let's make sure.
  *
+ * For INSERT ON CONFLICT, the result relation is required to support the
+ * onConflictAction, regardless of whether a conflict actually occurs.
+ *
  * For MERGE, mergeActions is the list of actions that may be performed.  The
  * result relation is required to support every action, regardless of whether
  * or not they are all executed.
@@ -1062,7 +1068,7 @@ InitPlan(QueryDesc *queryDesc, int eflags)
  */
 void
 CheckValidResultRel(ResultRelInfo *resultRelInfo, CmdType operation,
-					List *mergeActions)
+					OnConflictAction onConflictAction, List *mergeActions)
 {
 	Relation	resultRel = resultRelInfo->ri_RelationDesc;
 	FdwRoutine *fdwroutine;
@@ -1075,7 +1081,23 @@ CheckValidResultRel(ResultRelInfo *resultRelInfo, CmdType operation,
 	{
 		case RELKIND_RELATION:
 		case RELKIND_PARTITIONED_TABLE:
-			CheckCmdReplicaIdentity(resultRel, operation);
+
+			/*
+			 * For MERGE, check that the target relation supports each action.
+			 * For other operations, just check the operation itself.
+			 */
+			if (operation == CMD_MERGE)
+				foreach_node(MergeAction, action, mergeActions)
+					CheckCmdReplicaIdentity(resultRel, action->commandType);
+			else
+				CheckCmdReplicaIdentity(resultRel, operation);
+
+			/*
+			 * For INSERT ON CONFLICT DO UPDATE, additionally check that the
+			 * target relation supports UPDATE.
+			 */
+			if (onConflictAction == ONCONFLICT_UPDATE)
+				CheckCmdReplicaIdentity(resultRel, CMD_UPDATE);
 			break;
 		case RELKIND_SEQUENCE:
 			ereport(ERROR,
@@ -1324,10 +1346,9 @@ InitResultRelInfo(ResultRelInfo *resultRelInfo,
  *		Get a ResultRelInfo for a trigger target relation.
  *
  * Most of the time, triggers are fired on one of the result relations of the
- * query, and so we can just return a member of the es_result_relations array,
- * or the es_tuple_routing_result_relations list (if any). (Note: in self-join
- * situations there might be multiple members with the same OID; if so it
- * doesn't matter which one we pick.)
+ * query, and so we can just return a suitable one we already made and stored
+ * in the es_opened_result_relations or es_tuple_routing_result_relations
+ * Lists.
  *
  * However, it is sometimes necessary to fire triggers on other relations;
  * this happens mainly when an RI update trigger queues additional triggers
@@ -1347,11 +1368,20 @@ ExecGetTriggerResultRel(EState *estate, Oid relid,
 	Relation	rel;
 	MemoryContext oldcontext;
 
+	/*
+	 * Before creating a new ResultRelInfo, check if we've already made and
+	 * cached one for this relation.  We must ensure that the given
+	 * 'rootRelInfo' matches the one stored in the cached ResultRelInfo as
+	 * trigger handling for partitions can result in mixed requirements for
+	 * what ri_RootResultRelInfo is set to.
+	 */
+
 	/* Search through the query result relations */
 	foreach(l, estate->es_opened_result_relations)
 	{
 		rInfo = lfirst(l);
-		if (RelationGetRelid(rInfo->ri_RelationDesc) == relid)
+		if (RelationGetRelid(rInfo->ri_RelationDesc) == relid &&
+			rInfo->ri_RootResultRelInfo == rootRelInfo)
 			return rInfo;
 	}
 
@@ -1362,7 +1392,8 @@ ExecGetTriggerResultRel(EState *estate, Oid relid,
 	foreach(l, estate->es_tuple_routing_result_relations)
 	{
 		rInfo = (ResultRelInfo *) lfirst(l);
-		if (RelationGetRelid(rInfo->ri_RelationDesc) == relid)
+		if (RelationGetRelid(rInfo->ri_RelationDesc) == relid &&
+			rInfo->ri_RootResultRelInfo == rootRelInfo)
 			return rInfo;
 	}
 
@@ -1370,7 +1401,8 @@ ExecGetTriggerResultRel(EState *estate, Oid relid,
 	foreach(l, estate->es_trig_target_relations)
 	{
 		rInfo = (ResultRelInfo *) lfirst(l);
-		if (RelationGetRelid(rInfo->ri_RelationDesc) == relid)
+		if (RelationGetRelid(rInfo->ri_RelationDesc) == relid &&
+			rInfo->ri_RootResultRelInfo == rootRelInfo)
 			return rInfo;
 	}
 	/* Nope, so we need a new one */
@@ -3083,6 +3115,18 @@ EvalPlanQualStart(EPQState *epqstate, Plan *planTree)
 	rcestate->es_unpruned_relids = parentestate->es_unpruned_relids;
 
 	/*
+	 * Also make the PartitionPruneInfo and the results of pruning available.
+	 * These need to match exactly so that we initialize all the same Append
+	 * and MergeAppend subplans as the parent did.
+	 */
+	rcestate->es_part_prune_infos = parentestate->es_part_prune_infos;
+	rcestate->es_part_prune_states = parentestate->es_part_prune_states;
+	rcestate->es_part_prune_results = parentestate->es_part_prune_results;
+
+	/* We'll also borrow the es_partition_directory from the parent state */
+	rcestate->es_partition_directory = parentestate->es_partition_directory;
+
+	/*
 	 * Initialize private state information for each SubPlan.  We must do this
 	 * before running ExecInitNode on the main query tree, since
 	 * ExecInitSubPlan expects to be able to find these entries. Some of the
@@ -3198,6 +3242,13 @@ EvalPlanQualEnd(EPQState *epqstate)
 	ExecCloseResultRelations(estate);
 
 	MemoryContextSwitchTo(oldcontext);
+
+	/*
+	 * NULLify the partition directory before freeing the executor state.
+	 * Since EvalPlanQualStart() just borrowed the parent EState's directory,
+	 * we'd better leave it up to the parent to delete it.
+	 */
+	estate->es_partition_directory = NULL;
 
 	FreeExecutorState(estate);
 

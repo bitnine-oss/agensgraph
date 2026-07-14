@@ -224,7 +224,8 @@ astreamer_tar_parser_content(astreamer *streamer, astreamer_member *member,
 				/* OK, now we can send it. */
 				astreamer_content(mystreamer->base.bbs_next,
 								  &mystreamer->member,
-								  data, mystreamer->pad_bytes_expected,
+								  mystreamer->base.bbs_buffer.data,
+								  mystreamer->pad_bytes_expected,
 								  ASTREAMER_MEMBER_TRAILER);
 
 				/* Expect next file header. */
@@ -236,12 +237,16 @@ astreamer_tar_parser_content(astreamer *streamer, astreamer_member *member,
 
 				/*
 				 * We've seen an end-of-archive indicator, so anything more is
-				 * buffered and sent as part of the archive trailer. But we
-				 * don't expect more than 2 blocks.
+				 * buffered and sent as part of the archive trailer.
+				 *
+				 * Per POSIX, the last physical block of a tar archive is
+				 * always full-sized, so there may be undefined data after the
+				 * two zero blocks that mark end-of-archive.  GNU tar, for
+				 * example, zero-pads to a 10kB boundary by default.  We just
+				 * buffer whatever we receive and pass it along at finalize
+				 * time.
 				 */
 				astreamer_buffer_bytes(streamer, &data, &len, len);
-				if (len > 2 * TAR_BLOCK_SIZE)
-					pg_fatal("tar file trailer exceeds 2 blocks");
 				return;
 
 			default:
@@ -255,7 +260,8 @@ astreamer_tar_parser_content(astreamer *streamer, astreamer_member *member,
  * Parse a file header within a tar stream.
  *
  * The return value is true if we found a file header and passed it on to the
- * next astreamer; it is false if we have reached the archive trailer.
+ * next astreamer; it is false if we have found the archive trailer.
+ * We throw error if we see invalid data.
  */
 static bool
 astreamer_tar_header(astreamer_tar_parser *mystreamer)
@@ -266,6 +272,9 @@ astreamer_tar_header(astreamer_tar_parser *mystreamer)
 	char	   *buffer = mystreamer->base.bbs_buffer.data;
 
 	Assert(mystreamer->base.bbs_buffer.len == TAR_BLOCK_SIZE);
+
+	/* Zero out fields of *member, just for consistency. */
+	memset(member, 0, sizeof(astreamer_member));
 
 	/* Check whether we've got a block of all zero bytes. */
 	for (i = 0; i < TAR_BLOCK_SIZE; ++i)
@@ -285,21 +294,47 @@ astreamer_tar_header(astreamer_tar_parser *mystreamer)
 		return false;
 
 	/*
+	 * Verify that we have a reasonable-looking header.
+	 */
+	if (!isValidTarHeader(buffer))
+		pg_fatal("input file does not appear to be a valid tar archive");
+
+	/*
 	 * Parse key fields out of the header.
 	 */
 	strlcpy(member->pathname, &buffer[TAR_OFFSET_NAME], MAXPGPATH);
 	if (member->pathname[0] == '\0')
 		pg_fatal("tar member has empty name");
+	if (!path_is_safe_for_extraction(member->pathname))
+		pg_fatal("tar member has unsafe path name: \"%s\"",
+				 member->pathname);
+
 	member->size = read_tar_number(&buffer[TAR_OFFSET_SIZE], 12);
 	member->mode = read_tar_number(&buffer[TAR_OFFSET_MODE], 8);
 	member->uid = read_tar_number(&buffer[TAR_OFFSET_UID], 8);
 	member->gid = read_tar_number(&buffer[TAR_OFFSET_GID], 8);
-	member->is_directory =
-		(buffer[TAR_OFFSET_TYPEFLAG] == TAR_FILETYPE_DIRECTORY);
-	member->is_link =
-		(buffer[TAR_OFFSET_TYPEFLAG] == TAR_FILETYPE_SYMLINK);
-	if (member->is_link)
-		strlcpy(member->linktarget, &buffer[TAR_OFFSET_LINKNAME], 100);
+
+	switch (buffer[TAR_OFFSET_TYPEFLAG])
+	{
+		case TAR_FILETYPE_PLAIN:
+		case TAR_FILETYPE_PLAIN_OLD:
+			member->is_regular = true;
+			break;
+		case TAR_FILETYPE_DIRECTORY:
+			member->is_directory = true;
+			break;
+		case TAR_FILETYPE_SYMLINK:
+			member->is_symlink = true;
+			strlcpy(member->linktarget, &buffer[TAR_OFFSET_LINKNAME], 100);
+			break;
+		case TAR_FILETYPE_PAX_EXTENDED:
+		case TAR_FILETYPE_PAX_EXTENDED_GLOBAL:
+			pg_fatal("pax extensions to tar format are not supported");
+			break;
+		default:
+			/* For special filetypes, set none of the three is_xxx flags */
+			break;
+	}
 
 	/* Compute number of padding bytes. */
 	mystreamer->pad_bytes_expected = tarPaddingBytesRequired(member->size);
@@ -342,6 +377,7 @@ astreamer_tar_parser_free(astreamer *streamer)
 {
 	pfree(streamer->bbs_buffer.data);
 	astreamer_free(streamer->bbs_next);
+	pfree(streamer);
 }
 
 /*

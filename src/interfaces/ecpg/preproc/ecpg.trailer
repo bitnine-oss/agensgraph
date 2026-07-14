@@ -1974,7 +1974,7 @@ civarind: cvariable indicator
 
 char_civar: char_variable
 	{
-		char	   *ptr = strstr(@1, ".arr");
+		char	   *ptr = (char *) strstr(@1, ".arr");
 
 		if (ptr)				/* varchar, we need the struct name here, not
 								 * the struct element */

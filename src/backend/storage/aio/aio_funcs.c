@@ -56,7 +56,7 @@ pg_get_aios(PG_FUNCTION_ARGS)
 	for (uint64 i = 0; i < pgaio_ctl->io_handle_count; i++)
 	{
 		PgAioHandle *live_ioh = &pgaio_ctl->io_handles[i];
-		uint32		ioh_id = pgaio_io_get_id(live_ioh);
+		int			ioh_id = pgaio_io_get_id(live_ioh);
 		Datum		values[PG_GET_AIOS_COLS] = {0};
 		bool		nulls[PG_GET_AIOS_COLS] = {0};
 		ProcNumber	owner;
@@ -149,10 +149,10 @@ retry:
 		if (owner_pid != 0)
 			values[0] = Int32GetDatum(owner_pid);
 		else
-			nulls[0] = false;
+			nulls[0] = true;
 
 		/* column: IO's id */
-		values[1] = ioh_id;
+		values[1] = Int32GetDatum(ioh_id);
 
 		/* column: IO's generation */
 		values[2] = Int64GetDatum(start_generation);
@@ -175,7 +175,7 @@ retry:
 		values[4] = CStringGetTextDatum(pgaio_io_get_op_name(&ioh_copy));
 
 		/* columns: details about the IO's operation (offset, length) */
-		switch (ioh_copy.op)
+		switch ((PgAioOp) ioh_copy.op)
 		{
 			case PGAIO_OP_INVALID:
 				nulls[5] = true;

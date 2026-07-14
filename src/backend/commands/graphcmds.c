@@ -249,7 +249,7 @@ static ObjectAddress
 DefineLabel(CreateStmt *stmt, char labkind, const char *queryString,
 			bool is_fixed_id, int32 fixed_id)
 {
-	static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
+	static const char *const validnsps[] = HEAP_RELOPT_NAMESPACES;
 	ObjectAddress reladdr;
 	Datum		toast_options;
 	Oid			tablespaceId;

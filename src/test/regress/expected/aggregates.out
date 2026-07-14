@@ -1515,6 +1515,37 @@ explain (costs off) select y,z from t2 group by y,z;
    ->  Seq Scan on t2
 (3 rows)
 
+-- A unique index proves uniqueness only under its own opfamily.  When the
+-- GROUP BY's eqop comes from a different opfamily with looser equality,
+-- rows the index regards as distinct can collapse into one GROUP BY group,
+-- so the index is not usable for removing redundant columns.
+create type t_rec as (x numeric);
+create temp table t_opf (a t_rec not null, b text);
+create unique index on t_opf (a record_image_ops);
+-- (1.0) and (1.00) are bytewise distinct but logically equal as records;
+-- the index admits both, but GROUP BY a (default record_ops) would merge
+-- them, so b must be retained as a grouping key.
+insert into t_opf values (row(1.0)::t_rec, 'X'), (row(1.00)::t_rec, 'Y');
+explain (costs off)
+select a, b from t_opf group by a, b order by b;
+          QUERY PLAN           
+-------------------------------
+ Group
+   Group Key: b, a
+   ->  Sort
+         Sort Key: b, a
+         ->  Seq Scan on t_opf
+(5 rows)
+
+select a, b from t_opf group by a, b order by b;
+   a    | b 
+--------+---
+ (1.0)  | X
+ (1.00) | Y
+(2 rows)
+
+drop table t_opf;
+drop type t_rec;
 drop table t1 cascade;
 NOTICE:  drop cascades to table t1c
 drop table t2;
@@ -1561,6 +1592,19 @@ group by f2;
 ----+-------
 (0 rows)
 
+-- check that we preserve join alias in GROUP BY expressions
+create temp view v1 as
+select f1::int from t1 left join t2 using (f1) group by f1;
+select pg_get_viewdef('v1'::regclass);
+        pg_get_viewdef         
+-------------------------------
+  SELECT (f1)::integer AS f1  +
+    FROM (t1                  +
+      LEFT JOIN t2 USING (f1))+
+   GROUP BY f1;
+(1 row)
+
+drop view v1;
 drop table t1, t2;
 --
 -- Test planner's selection of pathkeys for ORDER BY aggregates
@@ -3379,26 +3423,6 @@ select v||'a', case when v||'a' = 'aa' then 1 else 0 end, count(*)
  ba       |    0 |     1
 (2 rows)
 
--- Make sure that generation of HashAggregate for uniqification purposes
--- does not lead to array overflow due to unexpected duplicate hash keys
--- see CAFeeJoKKu0u+A_A9R9316djW-YW3-+Gtgvy3ju655qRHR3jtdA@mail.gmail.com
-set enable_memoize to off;
-explain (costs off)
-  select 1 from tenk1
-   where (hundred, thousand) in (select twothousand, twothousand from onek);
-                         QUERY PLAN                          
--------------------------------------------------------------
- Hash Join
-   Hash Cond: (tenk1.hundred = onek.twothousand)
-   ->  Seq Scan on tenk1
-         Filter: (hundred = thousand)
-   ->  Hash
-         ->  HashAggregate
-               Group Key: onek.twothousand, onek.twothousand
-               ->  Seq Scan on onek
-(8 rows)
-
-reset enable_memoize;
 --
 -- Hash Aggregation Spill tests
 --

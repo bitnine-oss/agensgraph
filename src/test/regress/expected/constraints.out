@@ -748,6 +748,11 @@ ALTER TABLE unique_tbl ALTER CONSTRAINT unique_tbl_i_key ENFORCED;
 ERROR:  cannot alter enforceability of constraint "unique_tbl_i_key" of relation "unique_tbl"
 ALTER TABLE unique_tbl ALTER CONSTRAINT unique_tbl_i_key NOT ENFORCED;
 ERROR:  cannot alter enforceability of constraint "unique_tbl_i_key" of relation "unique_tbl"
+-- can't make an existing constraint NOT VALID
+ALTER TABLE unique_tbl ALTER CONSTRAINT unique_tbl_i_key NOT VALID;
+ERROR:  constraints cannot be altered to be NOT VALID
+LINE 1: ...ABLE unique_tbl ALTER CONSTRAINT unique_tbl_i_key NOT VALID;
+                                                             ^
 DROP TABLE unique_tbl;
 --
 -- EXCLUDE constraints
@@ -841,8 +846,12 @@ CREATE TABLE notnull_tbl1 (a INTEGER NOT NULL NOT NULL);
 Not-null constraints:
     "notnull_tbl1_a_not_null" NOT NULL "a"
 
--- no-op
+-- specifying an existing constraint is a no-op
+ALTER TABLE notnull_tbl1 ADD CONSTRAINT notnull_tbl1_a_not_null NOT NULL a;
+-- but using a different constraint name is not allowed
 ALTER TABLE notnull_tbl1 ADD CONSTRAINT nn NOT NULL a;
+ERROR:  cannot create not-null constraint "nn" on column "a" of table "notnull_tbl1"
+DETAIL:  A not-null constraint named "notnull_tbl1_a_not_null" already exists for this column.
 \d+ notnull_tbl1
                                Table "public.notnull_tbl1"
  Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
@@ -1399,6 +1408,10 @@ ALTER TABLE notnull_tbl1 ADD PRIMARY KEY (a);
 ERROR:  cannot create primary key on column "a"
 DETAIL:  The constraint "nn" on column "a" of table "notnull_tbl1", marked NOT VALID, is incompatible with a primary key.
 HINT:  You might need to validate it using ALTER TABLE ... VALIDATE CONSTRAINT.
+-- cannot set column as generated-as-identity if it has an invalid not-null
+ALTER TABLE notnull_tbl1 ALTER COLUMN a ADD GENERATED ALWAYS AS IDENTITY;
+ERROR:  incompatible NOT VALID constraint "nn" on relation "notnull_tbl1"
+HINT:  You might need to validate it using ALTER TABLE ... VALIDATE CONSTRAINT.
 -- ALTER column SET NOT NULL validates an invalid constraint (but this fails
 -- because of rows with null values)
 ALTER TABLE notnull_tbl1 ALTER a SET NOT NULL;
@@ -1696,3 +1709,11 @@ DROP TABLE constraint_comments_tbl;
 DROP DOMAIN constraint_comments_dom;
 DROP ROLE regress_constraint_comments;
 DROP ROLE regress_constraint_comments_noaccess;
+-- Leave some constraints for the pg_upgrade test to pick up
+CREATE DOMAIN constraint_comments_dom AS int;
+ALTER DOMAIN constraint_comments_dom ADD CONSTRAINT inv_ck CHECK (value > 0) NOT VALID;
+COMMENT ON CONSTRAINT inv_ck ON DOMAIN constraint_comments_dom IS 'comment on invalid constraint';
+-- Create a table that exercises pg_upgrade
+CREATE TABLE regress_notnull1 (a integer);
+CREATE TABLE regress_notnull2 () INHERITS (regress_notnull1);
+ALTER TABLE ONLY regress_notnull2 ALTER COLUMN a SET NOT NULL;

@@ -760,7 +760,7 @@ init_htab(HTAB *hashp, long nelem)
 	hctl->nelem_alloc = choose_nelem_alloc(hctl->entrysize);
 
 #ifdef HASH_DEBUG
-	fprintf(stderr, "init_htab:\n%s%p\n%s%ld\n%s%ld\n%s%d\n%s%ld\n%s%u\n%s%x\n%s%x\n%s%ld\n",
+	fprintf(stderr, "init_htab:\n%s%p\n%s%ld\n%s%ld\n%s%d\n%s%u\n%s%x\n%s%x\n%s%ld\n",
 			"TABLE POINTER   ", hashp,
 			"DIRECTORY SIZE  ", hctl->dsize,
 			"SEGMENT SIZE    ", hctl->ssize,
@@ -1158,6 +1158,8 @@ hash_update_hash_key(HTAB *hashp,
 	HashCompareFunc match;
 
 #ifdef HASH_STATISTICS
+	HASHHDR    *hctl = hashp->hctl;
+
 	hash_accesses++;
 	hctl->accesses++;
 #endif

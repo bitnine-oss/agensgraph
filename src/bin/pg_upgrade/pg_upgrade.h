@@ -493,6 +493,7 @@ unsigned int str2uint(const char *str);
 /* version.c */
 
 bool		jsonb_9_4_check_applicable(ClusterInfo *cluster);
+bool		protocol_negotiation_supported(const ClusterInfo *cluster);
 void		old_9_6_invalidate_hash_indexes(ClusterInfo *cluster,
 											bool check_mode);
 

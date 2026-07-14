@@ -88,6 +88,7 @@ tests += {
       'plperl_trigger',
       'plperl_shared',
       'plperl_elog',
+      'plperl_unicode',
       'plperl_util',
       'plperl_init',
       'plperlu',

@@ -5592,7 +5592,8 @@ fix_indexqual_clause(PlannerInfo *root, IndexOptInfo *index, int indexcol,
  * equal to the index's attribute number (index column position).
  *
  * Most of the code here is just for sanity cross-checking that the given
- * expression actually matches the index column it's claimed to.
+ * expression actually matches the index column it's claimed to.  It should
+ * match the logic in match_index_to_operand().
  */
 static Node *
 fix_indexqual_operand(Node *node, IndexOptInfo *index, int indexcol)
@@ -5601,13 +5602,18 @@ fix_indexqual_operand(Node *node, IndexOptInfo *index, int indexcol)
 	int			pos;
 	ListCell   *indexpr_item;
 
+	Assert(indexcol >= 0 && indexcol < index->ncolumns);
+
+	/*
+	 * Remove any PlaceHolderVar wrapping of the indexkey
+	 */
+	node = strip_noop_phvs(node);
+
 	/*
 	 * Remove any binary-compatible relabeling of the indexkey
 	 */
-	if (IsA(node, RelabelType))
+	while (IsA(node, RelabelType))
 		node = (Node *) ((RelabelType *) node)->arg;
-
-	Assert(indexcol >= 0 && indexcol < index->ncolumns);
 
 	if (index->indexkeys[indexcol] != 0)
 	{
@@ -7510,6 +7516,8 @@ make_modifytable(PlannerInfo *root, Plan *subplan,
 	ModifyTable *node = makeNode(ModifyTable);
 	bool		returning_old_or_new = false;
 	bool		returning_old_or_new_valid = false;
+	bool		transition_tables = false;
+	bool		transition_tables_valid = false;
 	List	   *fdw_private_list;
 	Bitmapset  *direct_modify_plans;
 	ListCell   *lc;
@@ -7656,8 +7664,8 @@ make_modifytable(PlannerInfo *root, Plan *subplan,
 		 * callback functions needed for that and (2) there are no local
 		 * structures that need to be run for each modified row: row-level
 		 * triggers on the foreign table, stored generated columns, WITH CHECK
-		 * OPTIONs from parent views, or Vars returning OLD/NEW in the
-		 * RETURNING list.
+		 * OPTIONs from parent views, Vars returning OLD/NEW in the RETURNING
+		 * list, or transition tables on the named relation.
 		 */
 		direct_modify = false;
 		if (fdwroutine != NULL &&
@@ -7669,7 +7677,10 @@ make_modifytable(PlannerInfo *root, Plan *subplan,
 			!has_row_triggers(root, rti, operation) &&
 			!has_stored_generated_columns(root, rti))
 		{
-			/* returning_old_or_new is the same for all result relations */
+			/*
+			 * returning_old_or_new and transition_tables are the same for all
+			 * result relations, respectively
+			 */
 			if (!returning_old_or_new_valid)
 			{
 				returning_old_or_new =
@@ -7678,7 +7689,18 @@ make_modifytable(PlannerInfo *root, Plan *subplan,
 				returning_old_or_new_valid = true;
 			}
 			if (!returning_old_or_new)
-				direct_modify = fdwroutine->PlanDirectModify(root, node, rti, i);
+			{
+				if (!transition_tables_valid)
+				{
+					transition_tables = has_transition_tables(root,
+															  nominalRelation,
+															  operation);
+					transition_tables_valid = true;
+				}
+				if (!transition_tables)
+					direct_modify = fdwroutine->PlanDirectModify(root, node,
+																 rti, i);
+			}
 		}
 		if (direct_modify)
 			direct_modify_plans = bms_add_member(direct_modify_plans, i);
