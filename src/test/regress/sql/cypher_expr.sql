@@ -241,6 +241,158 @@ MATCH (n:v1)
 RETURN CASE n.i WHEN 0 THEN true ELSE false END,
        CASE WHEN n.i = 0 THEN true ELSE false END;
 
+--
+-- NULLIF expression
+--
+
+-- literals: NULL when the operands are equal, otherwise the first operand
+RETURN nullIf(1, 1), nullIf(1, 2), nullIf('a', 'a'), nullIf('a', 'b');
+-- keyword is case-insensitive (nullIf / NULLIF / nullif are the same)
+RETURN NULLIF(1, 1), nullif(1, 2);
+-- NULL operands: NULLIF(NULL, x) = NULL, NULLIF(x, NULL) = x
+RETURN nullIf(NULL, 1), nullIf(1, NULL), nullIf(NULL, NULL);
+-- jsonb property vs a literal (equal -> NULL, else the property value)
+MATCH (n:v1) RETURN n.i, nullIf(n.i, 0) ORDER BY n.i;
+-- jsonb list / map equality
+RETURN nullIf([1, 2], [1, 2]), nullIf([1, 2], [1, 3]), nullIf({a: 1}, {a: 1});
+-- graph-element identity: graphid and whole-vertex equality
+MATCH (n:v1 {i: 0})
+RETURN nullIf(id(n), id(n)) IS NULL AS same_id,
+       nullIf(n, n) IS NULL AS same_vertex;
+-- in WHERE: keep only the rows whose value equals 0 (NULLIF -> NULL)
+MATCH (n:v1) WHERE nullIf(n.i, 0) IS NULL RETURN n.i;
+-- in WITH: carry the folded value forward
+MATCH (n:v1) WITH nullIf(n.i, -1) AS x RETURN x ORDER BY x;
+
+-- The groups below exhaust the operand kinds, NULL positions, composition,
+-- clause positions and error paths so new variants can be appended per group.
+-- They reuse the existing v0 (one property of every kind) and v1 (small
+-- integers) vertices; no new label is created here, so the shared graph's
+-- label ids -- and every later section's golden output -- stay unchanged.
+-- Whole-edge identity needs an edge, so that one fixture and test live at the
+-- very end of the file (see "NULLIF: whole-edge identity" near the teardown).
+
+-- number operands (jsonb): NULL when equal, else the first operand
+RETURN nullIf(0, 0), nullIf(0, 1), nullIf(-1, -1), nullIf(3.14, 3.14),
+       nullIf(3.14, 2.72), nullIf(1, 1.0), nullIf(1, 2.0);
+-- int8 and beyond-int8 magnitudes
+RETURN nullIf(9223372036854775807, 9223372036854775807),
+       nullIf(9223372036854775808, 1);
+-- string operands (jsonb)
+RETURN nullIf('a', 'a'), nullIf('a', 'b'), nullIf('', ''), nullIf('a', '');
+-- boolean operands (native bool)
+RETURN nullIf(true, true), nullIf(true, false),
+       nullIf(false, false), nullIf(false, true);
+-- list / map operands (jsonb equality, element/entry-wise)
+RETURN nullIf([1, 2], [1, 2]), nullIf([1, 2], [2, 1]), nullIf([], []),
+       nullIf({a: 1, b: 2}, {a: 1, b: 2}), nullIf({a: 1}, {a: 2}),
+       nullIf({}, {}), nullIf([1, 2], [1, 2, 3]);
+-- mixed operand kinds: the comparison coerces through cypher "=", where a
+-- bare numeric-looking string literal parses as a jsonb number (so '1' = 1)
+RETURN nullIf(1, '1'), nullIf('1', 1), nullIf(true, 1),
+       nullIf(1, true), nullIf([1], 1);
+
+-- property operands (the everyday use): equal folds away, else the value.
+-- v0 carries a number (o.i = 7), a bool (o.t = true), a list (l), a map (f)
+-- and a json null (o.z); a stored number is NOT equal to a stored string.
+MATCH (n:v0)
+RETURN nullIf(n.o.i, 7) AS eq_num, nullIf(n.o.i, 8) AS ne_num,
+       nullIf(n.o.i, n.o.i) AS prop_prop, nullIf(n.o.t, true) AS eq_bool,
+       nullIf(n.o.i, 's') AS num_vs_str, nullIf(n.l, n.l) AS eq_list,
+       nullIf(n.f, n.f) AS eq_map, nullIf(n.o.z, 1) AS null_prop;
+
+-- graph-element identity: whole vertices and graphids compare by identity
+MATCH (a:v1 {i: 0}), (b:v1 {i: 1})
+RETURN nullIf(a, a) IS NULL AS same_vtx, nullIf(a, b) IS NULL AS diff_vtx,
+       nullIf(id(a), id(a)) IS NULL AS same_id,
+       nullIf(id(a), id(b)) IS NULL AS diff_id,
+-- distinct elements are unequal, so NULLIF returns the first one unchanged
+       nullIf(a, b) = a AS returns_first,
+       nullIf(id(a), id(b)) = id(a) AS id_first;
+-- a whole vertex has no "=" against a bare graphid: report the missing operator
+MATCH (a:v1 {i: 0}) RETURN nullIf(a, id(a));
+
+-- NULL in either or both positions: NULLIF(NULL, x) / NULLIF(NULL, NULL) = NULL,
+-- NULLIF(x, NULL) = x (the comparison is never true, so the first arg survives)
+RETURN nullIf(NULL, NULL), nullIf(NULL, 1), nullIf(1, NULL),
+       nullIf(NULL, 'a'), nullIf(NULL, [1]), nullIf([1], NULL);
+
+-- composition: inside COALESCE (replace a sentinel value with a default)
+MATCH (n:v1) RETURN n.i, coalesce(nullIf(n.i, 0), -99) AS c ORDER BY n.i;
+-- inside CASE
+MATCH (n:v1)
+RETURN n.i, CASE WHEN nullIf(n.i, 0) IS NULL THEN 'zero' ELSE 'nonzero' END AS lbl
+ORDER BY n.i;
+-- inside arithmetic (the NULL from NULLIF propagates)
+MATCH (n:v1) RETURN n.i, nullIf(n.i, 0) + 10 AS a ORDER BY n.i;
+-- inside a list literal and a list comprehension (projection and filter)
+RETURN [nullIf(1, 1), nullIf(2, 3), nullIf('x', 'x')] AS lst;
+RETURN [x IN [0, 1, 2, 3] | nullIf(x, 2)] AS proj;
+RETURN [x IN [0, 1, 2, 3] WHERE nullIf(x, 2) IS NULL] AS filt;
+-- nested NULLIF
+RETURN nullIf(nullIf(5, 5), 3) AS a, nullIf(nullIf(5, 4), 5) AS b,
+       nullIf(nullIf(5, 4), 3) AS c;
+
+-- aggregation: the classic "aggregate the values that are not the sentinel"
+MATCH (n:v1) RETURN count(nullIf(n.i, 0)) AS non_zero, count(*) AS total;
+MATCH (n:v1) RETURN sum(nullIf(n.i, 0)) AS s;
+-- NULLIF as a grouping key (the NULL group is kept)
+MATCH (n:v1) RETURN nullIf(n.i, 0) AS k, count(*) AS c ORDER BY k;
+
+-- clause positions: WHERE, WITH, ORDER BY (NULLs sort last by default)
+MATCH (n:v1) WHERE nullIf(n.i, 1) IS NOT NULL RETURN n.i ORDER BY n.i;
+MATCH (n:v1) WITH nullIf(n.i, 0) AS k WHERE k IS NOT NULL RETURN k ORDER BY k;
+MATCH (n:v1) RETURN n.i ORDER BY nullIf(n.i, 0), n.i;
+
+-- IS [NOT] NULL and the three-valued list predicates
+RETURN nullIf(1, 1) IS NULL, nullIf(1, 2) IS NULL,
+       nullIf(1, 1) IS NOT NULL, nullIf(1, 2) IS NOT NULL;
+RETURN any(x IN [1, 2, 3] WHERE nullIf(x, 2) IS NULL) AS any_null,
+       all(x IN [1, 2, 3] WHERE nullIf(x, 2) IS NOT NULL) AS all_nn,
+       none(x IN [1, 2, 3] WHERE nullIf(x, 0) IS NULL) AS none_null,
+       single(x IN [1, 2, 3] WHERE nullIf(x, 2) IS NULL) AS single_null;
+
+-- parameters: string params arrive as JSON, numeric-looking strings fold to
+-- numbers, so nullIf($1, 1) with '1' is NULL and with '2' is 2
+PREPARE np AS RETURN nullIf($1, $2);
+EXECUTE np ('"a"', '"a"');
+EXECUTE np ('"a"', '"b"');
+DEALLOCATE np;
+PREPARE np1 AS RETURN nullIf($1, 1);
+EXECUTE np1 ('1');
+EXECUTE np1 ('2');
+DEALLOCATE np1;
+
+-- case-insensitive spelling: NULLIF / nullif / mixed are the same keyword
+RETURN NULLIF(1, 1) AS upper, nullif(1, 1) AS lower, nUlLiF(1, 1) AS mixed;
+
+-- single evaluation of the first operand: over v1's three rows the sequence
+-- advances by exactly 3 (not 6), so nextval() runs once per NULLIF
+CREATE SEQUENCE nullif_eval_seq;
+MATCH (n:v1) WITH nullIf(nextval('nullif_eval_seq'), -1) AS s
+RETURN count(s) AS rows;
+SELECT currval('nullif_eval_seq') AS seq_value;
+DROP SEQUENCE nullif_eval_seq;
+-- structurally the plan carries a genuine NULLIF node (single-eval by design)
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:v1) RETURN nullIf(n.i, 0);
+
+-- self-check: for non-null operands, NULLIF(a, b) IS NULL exactly when a = b
+MATCH (n:v0)
+RETURN (nullIf(n.o.i, 7) IS NULL) = (n.o.i = 7) AS o1,
+       (nullIf(n.o.i, 8) IS NULL) = (n.o.i = 8) AS o2,
+       (nullIf(n.o.t, true) IS NULL) = (n.o.t = true) AS o3,
+       (nullIf(n.l, n.l) IS NULL) = (n.l = n.l) AS o4;
+
+-- SQL-side NULLIF still works and agrees with the cypher form on the same
+-- inputs (only the rendering differs: text vs jsonb)
+SELECT NULLIF(1, 1) AS a, NULLIF(1, 2) AS b,
+       NULLIF('a'::text, 'a'::text) AS c, NULLIF('a'::text, 'b'::text) AS d;
+
+-- error paths: NULLIF takes exactly two arguments
+RETURN nullIf(1);
+RETURN nullIf(1, 2, 3);
+RETURN nullIf();
+
 -- IN expression
 
 MATCH (n:v0) RETURN true IN n.l;
@@ -429,6 +581,17 @@ RETURN NULL XOR NULL;
 RETURN true OR false XOR true;
 RETURN true XOR true AND false;
 RETURN true XOR false XOR true;
+
+-- NULLIF: whole-edge identity
+-- This is the only NULLIF case that needs an edge.  Its label is created here,
+-- at the very end, so it does not renumber any label used by the sections
+-- above (their golden output stays byte-identical); only the teardown cascade
+-- below gains this one label.  The endpoints reuse existing v1 vertices.
+SET graph_path = test_cypher_expr;
+MATCH (a:v1 {i: 0}), (b:v1 {i: 1}) CREATE (a)-[:NEDGE {w: 1}]->(b);
+MATCH ()-[r:NEDGE]->()
+RETURN nullIf(r, r) IS NULL AS same_edge,
+       nullIf(id(r), id(r)) IS NULL AS same_edge_id;
 
 -- Tear down
 DROP TABLE t1;
