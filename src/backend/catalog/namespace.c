@@ -9,7 +9,7 @@
  * and implementing search-path-controlled searches.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -230,7 +230,7 @@ static void AccessTempTableNamespace(bool force);
 static void InitTempTableNamespace(void);
 static void RemoveTempRelations(Oid tempNamespaceId);
 static void RemoveTempRelationsCallback(int code, Datum arg);
-static void NamespaceCallback(Datum arg, int cacheid, uint32 hashvalue);
+static void InvalidationCallback(Datum arg, int cacheid, uint32 hashvalue);
 static bool MatchNamedCall(HeapTuple proctup, int nargs, List *argnames,
 						   bool include_out_arguments, int pronargs,
 						   int **argnumbers);
@@ -305,17 +305,32 @@ static SearchPathCacheEntry *LastSearchPathCacheEntry = NULL;
 static void
 spcache_init(void)
 {
-	Assert(SearchPathCacheContext);
-
 	if (SearchPathCache && searchPathCacheValid &&
 		SearchPathCache->members < SPCACHE_RESET_THRESHOLD)
 		return;
 
-	/* make sure we don't leave dangling pointers if nsphash_create fails */
+	searchPathCacheValid = false;
+	baseSearchPathValid = false;
+
+	/*
+	 * Make sure we don't leave dangling pointers if a failure happens during
+	 * initialization.
+	 */
 	SearchPathCache = NULL;
 	LastSearchPathCacheEntry = NULL;
 
-	MemoryContextReset(SearchPathCacheContext);
+	if (SearchPathCacheContext == NULL)
+	{
+		/* Make the context we'll keep search path cache hashtable in */
+		SearchPathCacheContext = AllocSetContextCreate(TopMemoryContext,
+													   "search_path processing cache",
+													   ALLOCSET_DEFAULT_SIZES);
+	}
+	else
+	{
+		MemoryContextReset(SearchPathCacheContext);
+	}
+
 	/* arbitrary initial starting size of 16 elements */
 	SearchPathCache = nsphash_create(SearchPathCacheContext, 16, NULL);
 	searchPathCacheValid = true;
@@ -4742,22 +4757,31 @@ InitializeSearchPath(void)
 	}
 	else
 	{
-		/* Make the context we'll keep search path cache hashtable in */
-		SearchPathCacheContext = AllocSetContextCreate(TopMemoryContext,
-													   "search_path processing cache",
-													   ALLOCSET_DEFAULT_SIZES);
-
 		/*
 		 * In normal mode, arrange for a callback on any syscache invalidation
-		 * of pg_namespace or pg_authid rows. (Changing a role name may affect
-		 * the meaning of the special string $user.)
+		 * that will affect the search_path cache.
 		 */
+
+		/* namespace name or ACLs may have changed */
 		CacheRegisterSyscacheCallback(NAMESPACEOID,
-									  NamespaceCallback,
+									  InvalidationCallback,
 									  (Datum) 0);
+
+		/* role name may affect the meaning of "$user" */
 		CacheRegisterSyscacheCallback(AUTHOID,
-									  NamespaceCallback,
+									  InvalidationCallback,
 									  (Datum) 0);
+
+		/* role membership may affect ACLs */
+		CacheRegisterSyscacheCallback(AUTHMEMROLEMEM,
+									  InvalidationCallback,
+									  (Datum) 0);
+
+		/* database owner may affect ACLs */
+		CacheRegisterSyscacheCallback(DATABASEOID,
+									  InvalidationCallback,
+									  (Datum) 0);
+
 		/* Force search path to be recomputed on next use */
 		baseSearchPathValid = false;
 		searchPathCacheValid = false;
@@ -4765,11 +4789,11 @@ InitializeSearchPath(void)
 }
 
 /*
- * NamespaceCallback
+ * InvalidationCallback
  *		Syscache inval callback function
  */
 static void
-NamespaceCallback(Datum arg, int cacheid, uint32 hashvalue)
+InvalidationCallback(Datum arg, int cacheid, uint32 hashvalue)
 {
 	/*
 	 * Force search path to be recomputed on next use, also invalidating the

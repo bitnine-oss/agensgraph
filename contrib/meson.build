@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 contrib_mod_args = pg_mod_args
 
@@ -47,6 +47,8 @@ subdir('passwordcheck')
 subdir('pg_buffercache')
 subdir('pgcrypto')
 subdir('pg_freespacemap')
+subdir('pg_logicalinspect')
+subdir('pg_overexplain')
 subdir('pg_prewarm')
 subdir('pgrowlocks')
 subdir('pg_stat_statements')

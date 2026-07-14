@@ -3,7 +3,7 @@
  * pg_sequence.h
  *	  definition of the "sequence" system catalog (pg_sequence)
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_sequence.h
@@ -18,7 +18,7 @@
 #define PG_SEQUENCE_H
 
 #include "catalog/genbki.h"
-#include "catalog/pg_sequence_d.h"
+#include "catalog/pg_sequence_d.h"	/* IWYU pragma: export */
 
 CATALOG(pg_sequence,2224,SequenceRelationId)
 {

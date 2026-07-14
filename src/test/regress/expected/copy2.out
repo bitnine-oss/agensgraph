@@ -86,9 +86,9 @@ ERROR:  conflicting or redundant options
 LINE 1: COPY x from stdin (log_verbosity default, log_verbosity verb...
                                                   ^
 -- incorrect options
-COPY x to stdin (format BINARY, delimiter ',');
+COPY x from stdin (format BINARY, delimiter ',');
 ERROR:  cannot specify DELIMITER in BINARY mode
-COPY x to stdin (format BINARY, null 'x');
+COPY x from stdin (format BINARY, null 'x');
 ERROR:  cannot specify NULL in BINARY mode
 COPY x from stdin (format BINARY, on_error ignore);
 ERROR:  only ON_ERROR STOP is allowed in BINARY mode
@@ -96,26 +96,42 @@ COPY x from stdin (on_error unsupported);
 ERROR:  COPY ON_ERROR "unsupported" not recognized
 LINE 1: COPY x from stdin (on_error unsupported);
                            ^
-COPY x to stdin (format TEXT, force_quote(a));
+COPY x from stdin (format TEXT, force_quote(a));
+ERROR:  COPY FORCE_QUOTE requires CSV mode
+COPY x from stdin (format TEXT, force_quote *);
 ERROR:  COPY FORCE_QUOTE requires CSV mode
 COPY x from stdin (format CSV, force_quote(a));
 ERROR:  COPY FORCE_QUOTE cannot be used with COPY FROM
-COPY x to stdout (format TEXT, force_not_null(a));
+COPY x from stdin (format CSV, force_quote *);
+ERROR:  COPY FORCE_QUOTE cannot be used with COPY FROM
+COPY x from stdin (format TEXT, force_not_null(a));
 ERROR:  COPY FORCE_NOT_NULL requires CSV mode
-COPY x to stdin (format CSV, force_not_null(a));
+COPY x from stdin (format TEXT, force_not_null *);
+ERROR:  COPY FORCE_NOT_NULL requires CSV mode
+COPY x to stdout (format CSV, force_not_null(a));
 ERROR:  COPY FORCE_NOT_NULL cannot be used with COPY TO
-COPY x to stdout (format TEXT, force_null(a));
+COPY x to stdout (format CSV, force_not_null *);
+ERROR:  COPY FORCE_NOT_NULL cannot be used with COPY TO
+COPY x from stdin (format TEXT, force_null(a));
 ERROR:  COPY FORCE_NULL requires CSV mode
-COPY x to stdin (format CSV, force_null(a));
+COPY x from stdin (format TEXT, force_null *);
+ERROR:  COPY FORCE_NULL requires CSV mode
+COPY x to stdout (format CSV, force_null(a));
 ERROR:  COPY FORCE_NULL cannot be used with COPY TO
-COPY x to stdin (format BINARY, on_error unsupported);
+COPY x to stdout (format CSV, force_null *);
+ERROR:  COPY FORCE_NULL cannot be used with COPY TO
+COPY x to stdout (format BINARY, on_error unsupported);
 ERROR:  COPY ON_ERROR cannot be used with COPY TO
-LINE 1: COPY x to stdin (format BINARY, on_error unsupported);
-                                        ^
-COPY x to stdout (log_verbosity unsupported);
+LINE 1: COPY x to stdout (format BINARY, on_error unsupported);
+                                         ^
+COPY x from stdin (log_verbosity unsupported);
 ERROR:  COPY LOG_VERBOSITY "unsupported" not recognized
-LINE 1: COPY x to stdout (log_verbosity unsupported);
-                          ^
+LINE 1: COPY x from stdin (log_verbosity unsupported);
+                           ^
+COPY x from stdin with (reject_limit 1);
+ERROR:  COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE
+COPY x from stdin with (on_error ignore, reject_limit 0);
+ERROR:  REJECT_LIMIT (0) must be greater than zero
 -- too many columns in column list: should fail
 COPY x (a, b, c, d, e, d, c) from stdin;
 ERROR:  column "d" specified more than once
@@ -740,26 +756,27 @@ CONTEXT:  COPY check_ign_err, line 2, column n: "a"
 -- want context for notices
 \set SHOW_CONTEXT always
 COPY check_ign_err FROM STDIN WITH (on_error ignore, log_verbosity verbose);
-NOTICE:  skipping row due to data type incompatibility at line 2 for column n: "a"
+NOTICE:  skipping row due to data type incompatibility at line 2 for column "n": "a"
 CONTEXT:  COPY check_ign_err
-NOTICE:  skipping row due to data type incompatibility at line 3 for column k: "3333333333"
+NOTICE:  skipping row due to data type incompatibility at line 3 for column "k": "3333333333"
 CONTEXT:  COPY check_ign_err
-NOTICE:  skipping row due to data type incompatibility at line 4 for column m: "{a, 4}"
+NOTICE:  skipping row due to data type incompatibility at line 4 for column "m": "{a, 4}"
 CONTEXT:  COPY check_ign_err
-NOTICE:  skipping row due to data type incompatibility at line 5 for column n: ""
+NOTICE:  skipping row due to data type incompatibility at line 5 for column "n": ""
 CONTEXT:  COPY check_ign_err
-NOTICE:  skipping row due to data type incompatibility at line 7 for column m: "a"
+NOTICE:  skipping row due to data type incompatibility at line 7 for column "m": "a"
 CONTEXT:  COPY check_ign_err
-NOTICE:  skipping row due to data type incompatibility at line 8 for column k: "a"
+NOTICE:  skipping row due to data type incompatibility at line 8 for column "k": "a"
 CONTEXT:  COPY check_ign_err
 NOTICE:  6 rows were skipped due to data type incompatibility
 -- tests for on_error option with log_verbosity and null constraint via domain
 CREATE DOMAIN dcheck_ign_err2 varchar(15) NOT NULL;
 CREATE TABLE check_ign_err2 (n int, m int[], k int, l dcheck_ign_err2);
 COPY check_ign_err2 FROM STDIN WITH (on_error ignore, log_verbosity verbose);
-NOTICE:  skipping row due to data type incompatibility at line 2 for column l: null input
+NOTICE:  skipping row due to data type incompatibility at line 2 for column "l": null input
 CONTEXT:  COPY check_ign_err2
 NOTICE:  1 row was skipped due to data type incompatibility
+COPY check_ign_err2 FROM STDIN WITH (on_error ignore, log_verbosity silent);
 -- reset context choice
 \set SHOW_CONTEXT errors
 SELECT * FROM check_ign_err;
@@ -774,7 +791,8 @@ SELECT * FROM check_ign_err2;
  n |  m  | k |   l   
 ---+-----+---+-------
  1 | {1} | 1 | 'foo'
-(1 row)
+ 3 | {3} | 3 | 'bar'
+(2 rows)
 
 -- test datatype error that can't be handled as soft: should fail
 CREATE TABLE hard_err(foo widget);
@@ -789,6 +807,12 @@ CONTEXT:  COPY check_ign_err, line 1: "1	{1}"
 COPY check_ign_err FROM STDIN WITH (on_error ignore);
 ERROR:  extra data after last expected column
 CONTEXT:  COPY check_ign_err, line 1: "1	{1}	3	abc"
+-- tests for reject_limit option
+COPY check_ign_err FROM STDIN WITH (on_error ignore, reject_limit 3);
+ERROR:  skipped more than REJECT_LIMIT (3) rows due to data type incompatibility
+CONTEXT:  COPY check_ign_err, line 5, column n: ""
+COPY check_ign_err FROM STDIN WITH (on_error ignore, reject_limit 4);
+NOTICE:  4 rows were skipped due to data type incompatibility
 -- clean up
 DROP TABLE forcetest;
 DROP TABLE vistest;
@@ -844,7 +868,7 @@ copy copy_default from stdin with (default E'\r');
 ERROR:  COPY default representation cannot use newline or carriage return
 -- DELIMITER cannot appear in DEFAULT spec
 copy copy_default from stdin with (delimiter ';', default 'test;test');
-ERROR:  COPY delimiter must not appear in the DEFAULT specification
+ERROR:  COPY delimiter character must not appear in the DEFAULT specification
 -- CSV quote cannot appear in DEFAULT spec
 copy copy_default from stdin with (format csv, quote '"', default 'test"test');
 ERROR:  CSV quote character must not appear in the DEFAULT specification
@@ -904,4 +928,4 @@ select id, text_value, ts_value from copy_default;
 truncate copy_default;
 -- DEFAULT cannot be used in COPY TO
 copy (select 1 as test) TO stdout with (default '\D');
-ERROR:  COPY DEFAULT only available using COPY FROM
+ERROR:  COPY DEFAULT cannot be used with COPY TO

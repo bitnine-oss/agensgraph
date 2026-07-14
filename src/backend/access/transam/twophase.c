@@ -3,7 +3,7 @@
  * twophase.c
  *		Two-phase commit support functions.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -466,7 +466,7 @@ MarkAsPreparingGuts(GlobalTransaction gxact, TransactionId xid, const char *gid,
 	proc->databaseId = databaseid;
 	proc->roleId = owner;
 	proc->tempNamespaceId = InvalidOid;
-	proc->isBackgroundWorker = false;
+	proc->isRegularBackend = false;
 	proc->lwWaiting = LW_WS_NOT_WAITING;
 	proc->lwWaitMode = 0;
 	proc->waitLock = NULL;
@@ -747,7 +747,7 @@ pg_prepared_xact(PG_FUNCTION_ARGS)
 		 * out as a result set.
 		 */
 		status = (Working_State *) palloc(sizeof(Working_State));
-		funcctx->user_fctx = (void *) status;
+		funcctx->user_fctx = status;
 
 		status->ngxacts = GetPreparedTransactionList(&status->array);
 		status->currIdx = 0;
@@ -929,32 +929,16 @@ TwoPhaseGetDummyProc(TransactionId xid, bool lock_held)
 /*
  * Compute the FullTransactionId for the given TransactionId.
  *
- * The wrap logic is safe here because the span of active xids cannot exceed one
- * epoch at any given time.
+ * This is safe if the xid has not yet reached COMMIT PREPARED or ROLLBACK
+ * PREPARED.  After those commands, concurrent vac_truncate_clog() may make
+ * the xid cease to qualify as allowable.  XXX Not all callers limit their
+ * calls accordingly.
  */
 static inline FullTransactionId
 AdjustToFullTransactionId(TransactionId xid)
 {
-	FullTransactionId nextFullXid;
-	TransactionId nextXid;
-	uint32		epoch;
-
 	Assert(TransactionIdIsValid(xid));
-
-	LWLockAcquire(XidGenLock, LW_SHARED);
-	nextFullXid = TransamVariables->nextXid;
-	LWLockRelease(XidGenLock);
-
-	nextXid = XidFromFullTransactionId(nextFullXid);
-	epoch = EpochFromFullTransactionId(nextFullXid);
-	if (unlikely(xid > nextXid))
-	{
-		/* Wraparound occurred, must be from a prev epoch. */
-		Assert(epoch > 0);
-		epoch--;
-	}
-
-	return FullTransactionIdFromEpochAndXid(epoch, xid);
+	return FullTransactionIdFromAllowableAt(ReadNextFullTransactionId(), xid);
 }
 
 static inline int
@@ -1505,6 +1489,7 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
 	GlobalTransaction gxact;
 	PGPROC	   *proc;
 	TransactionId xid;
+	bool		ondisk;
 	char	   *buf;
 	char	   *bufptr;
 	TwoPhaseFileHeader *hdr;
@@ -1657,6 +1642,12 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
 
 	PredicateLockTwoPhaseFinish(xid, isCommit);
 
+	/*
+	 * Read this value while holding the two-phase lock, as the on-disk 2PC
+	 * file is physically removed after the lock is released.
+	 */
+	ondisk = gxact->ondisk;
+
 	/* Clear shared memory state */
 	RemoveGXact(gxact);
 
@@ -1672,7 +1663,7 @@ FinishPreparedTransaction(const char *gid, bool isCommit)
 	/*
 	 * And now we can clean up any files we may have left.
 	 */
-	if (gxact->ondisk)
+	if (ondisk)
 		RemoveTwoPhaseFile(xid, true);
 
 	MyLockedGxact = NULL;
@@ -1700,8 +1691,7 @@ ProcessRecords(char *bufptr, TransactionId xid,
 		bufptr += MAXALIGN(sizeof(TwoPhaseRecordOnDisk));
 
 		if (callbacks[record->rmid] != NULL)
-			callbacks[record->rmid] (xid, record->info,
-									 (void *) bufptr, record->len);
+			callbacks[record->rmid] (xid, record->info, bufptr, record->len);
 
 		bufptr += MAXALIGN(record->len);
 	}
@@ -2679,5 +2669,84 @@ LookupGXact(const char *gid, XLogRecPtr prepare_end_lsn,
 		}
 	}
 	LWLockRelease(TwoPhaseStateLock);
+	return found;
+}
+
+/*
+ * TwoPhaseTransactionGid
+ *		Form the prepared transaction GID for two_phase transactions.
+ *
+ * Return the GID in the supplied buffer.
+ */
+void
+TwoPhaseTransactionGid(Oid subid, TransactionId xid, char *gid_res, int szgid)
+{
+	Assert(OidIsValid(subid));
+
+	if (!TransactionIdIsValid(xid))
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg_internal("invalid two-phase transaction ID")));
+
+	snprintf(gid_res, szgid, "pg_gid_%u_%u", subid, xid);
+}
+
+/*
+ * IsTwoPhaseTransactionGidForSubid
+ *		Check whether the given GID (as formed by TwoPhaseTransactionGid) is
+ *		for the specified 'subid'.
+ */
+static bool
+IsTwoPhaseTransactionGidForSubid(Oid subid, char *gid)
+{
+	int			ret;
+	Oid			subid_from_gid;
+	TransactionId xid_from_gid;
+	char		gid_tmp[GIDSIZE];
+
+	/* Extract the subid and xid from the given GID */
+	ret = sscanf(gid, "pg_gid_%u_%u", &subid_from_gid, &xid_from_gid);
+
+	/*
+	 * Check that the given GID has expected format, and at least the subid
+	 * matches.
+	 */
+	if (ret != 2 || subid != subid_from_gid)
+		return false;
+
+	/*
+	 * Reconstruct a temporary GID based on the subid and xid extracted from
+	 * the given GID and check whether the temporary GID and the given GID
+	 * match.
+	 */
+	TwoPhaseTransactionGid(subid, xid_from_gid, gid_tmp, sizeof(gid_tmp));
+
+	return strcmp(gid, gid_tmp) == 0;
+}
+
+/*
+ * LookupGXactBySubid
+ *		Check if the prepared transaction done by apply worker exists.
+ */
+bool
+LookupGXactBySubid(Oid subid)
+{
+	bool		found = false;
+
+	LWLockAcquire(TwoPhaseStateLock, LW_SHARED);
+	for (int i = 0; i < TwoPhaseState->numPrepXacts; i++)
+	{
+		GlobalTransaction gxact = TwoPhaseState->prepXacts[i];
+
+		/* Ignore not-yet-valid GIDs. */
+		if (gxact->valid &&
+			IsTwoPhaseTransactionGidForSubid(subid, gxact->gid))
+		{
+			found = true;
+			break;
+		}
+	}
+	LWLockRelease(TwoPhaseStateLock);
+
 	return found;
 }

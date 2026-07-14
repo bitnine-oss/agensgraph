@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 if not llvm.found()
   subdir_done()
@@ -14,6 +14,7 @@ llvmjit_sources += files(
   'llvmjit_error.cpp',
   'llvmjit_inline.cpp',
   'llvmjit_wrap.cpp',
+  'SectionMemoryManager.cpp',
 )
 
 # Code generation
@@ -60,9 +61,6 @@ endif
 
 # XXX: Need to determine proper version of the function cflags for clang
 bitcode_cflags = ['-fno-strict-aliasing', '-fwrapv']
-if llvm.version().version_compare('=15.0')
-  bitcode_cflags += ['-Xclang', '-no-opaque-pointers']
-endif
 bitcode_cflags += get_option('c_args')
 bitcode_cflags += cppflags
 

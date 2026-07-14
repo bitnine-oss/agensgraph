@@ -8,26 +8,24 @@
 
 #include <limits.h>
 
-#include "access/xact.h"
 #include "catalog/pg_type.h"
 #include "mb/pg_wchar.h"
 #include "plpy_cursorobject.h"
 #include "plpy_elog.h"
 #include "plpy_main.h"
 #include "plpy_planobject.h"
-#include "plpy_procedure.h"
 #include "plpy_resultobject.h"
 #include "plpy_spi.h"
-#include "plpython.h"
+#include "plpy_util.h"
 #include "utils/memutils.h"
 
 static PyObject *PLy_cursor_query(const char *query);
-static void PLy_cursor_dealloc(PyObject *arg);
+static void PLy_cursor_dealloc(PLyCursorObject *self);
 static PyObject *PLy_cursor_iternext(PyObject *self);
 static PyObject *PLy_cursor_fetch(PyObject *self, PyObject *args);
 static PyObject *PLy_cursor_close(PyObject *self, PyObject *unused);
 
-static char PLy_cursor_doc[] = "Wrapper around a PostgreSQL cursor";
+static const char PLy_cursor_doc[] = "Wrapper around a PostgreSQL cursor";
 
 static PyMethodDef PLy_cursor_methods[] = {
 	{"fetch", PLy_cursor_fetch, METH_VARARGS, NULL},
@@ -35,22 +33,43 @@ static PyMethodDef PLy_cursor_methods[] = {
 	{NULL, NULL, 0, NULL}
 };
 
-static PyTypeObject PLy_CursorType = {
-	PyVarObject_HEAD_INIT(NULL, 0)
-	.tp_name = "PLyCursor",
-	.tp_basicsize = sizeof(PLyCursorObject),
-	.tp_dealloc = PLy_cursor_dealloc,
-	.tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
-	.tp_doc = PLy_cursor_doc,
-	.tp_iter = PyObject_SelfIter,
-	.tp_iternext = PLy_cursor_iternext,
-	.tp_methods = PLy_cursor_methods,
+static PyType_Slot PLyCursor_slots[] =
+{
+	{
+		Py_tp_dealloc, PLy_cursor_dealloc
+	},
+	{
+		Py_tp_doc, (char *) PLy_cursor_doc
+	},
+	{
+		Py_tp_iter, PyObject_SelfIter
+	},
+	{
+		Py_tp_iternext, PLy_cursor_iternext
+	},
+	{
+		Py_tp_methods, PLy_cursor_methods
+	},
+	{
+		0, NULL
+	}
 };
+
+static PyType_Spec PLyCursor_spec =
+{
+	.name = "PLyCursor",
+	.basicsize = sizeof(PLyCursorObject),
+	.flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+	.slots = PLyCursor_slots,
+};
+
+static PyTypeObject *PLy_CursorType;
 
 void
 PLy_cursor_init_type(void)
 {
-	if (PyType_Ready(&PLy_CursorType) < 0)
+	PLy_CursorType = (PyTypeObject *) PyType_FromSpec(&PLyCursor_spec);
+	if (!PLy_CursorType)
 		elog(ERROR, "could not initialize PLy_CursorType");
 }
 
@@ -82,8 +101,12 @@ PLy_cursor_query(const char *query)
 	volatile MemoryContext oldcontext;
 	volatile ResourceOwner oldowner;
 
-	if ((cursor = PyObject_New(PLyCursorObject, &PLy_CursorType)) == NULL)
+	if ((cursor = PyObject_New(PLyCursorObject, PLy_CursorType)) == NULL)
 		return NULL;
+#if PY_VERSION_HEX < 0x03080000
+	/* Workaround for Python issue 35810; no longer necessary in Python 3.8 */
+	Py_INCREF(PLy_CursorType);
+#endif
 	cursor->portalname = NULL;
 	cursor->closed = false;
 	cursor->mcxt = AllocSetContextCreate(TopMemoryContext,
@@ -142,7 +165,6 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 {
 	PLyCursorObject *cursor;
 	volatile int nargs;
-	int			i;
 	PLyPlanObject *plan;
 	PLyExecutionContext *exec_ctx = PLy_current_execution_context();
 	volatile MemoryContext oldcontext;
@@ -180,8 +202,12 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 		return NULL;
 	}
 
-	if ((cursor = PyObject_New(PLyCursorObject, &PLy_CursorType)) == NULL)
+	if ((cursor = PyObject_New(PLyCursorObject, PLy_CursorType)) == NULL)
 		return NULL;
+#if PY_VERSION_HEX < 0x03080000
+	/* Workaround for Python issue 35810; no longer necessary in Python 3.8 */
+	Py_INCREF(PLy_CursorType);
+#endif
 	cursor->portalname = NULL;
 	cursor->closed = false;
 	cursor->mcxt = AllocSetContextCreate(TopMemoryContext,
@@ -201,13 +227,30 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 	PG_TRY();
 	{
 		Portal		portal;
+		MemoryContext tmpcontext;
+		Datum	   *volatile values;
 		char	   *volatile nulls;
 		volatile int j;
 
+		/*
+		 * Converted arguments and associated cruft will be in this context,
+		 * which is local to our subtransaction.
+		 */
+		tmpcontext = AllocSetContextCreate(CurTransactionContext,
+										   "PL/Python temporary context",
+										   ALLOCSET_SMALL_SIZES);
+		MemoryContextSwitchTo(tmpcontext);
+
 		if (nargs > 0)
-			nulls = palloc(nargs * sizeof(char));
+		{
+			values = (Datum *) palloc(nargs * sizeof(Datum));
+			nulls = (char *) palloc(nargs * sizeof(char));
+		}
 		else
+		{
+			values = NULL;
 			nulls = NULL;
+		}
 
 		for (j = 0; j < nargs; j++)
 		{
@@ -219,7 +262,7 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 			{
 				bool		isnull;
 
-				plan->values[j] = PLy_output_convert(arg, elem, &isnull);
+				values[j] = PLy_output_convert(arg, elem, &isnull);
 				nulls[j] = isnull ? 'n' : ' ';
 			}
 			PG_FINALLY(2);
@@ -229,7 +272,9 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 			PG_END_TRY(2);
 		}
 
-		portal = SPI_cursor_open(NULL, plan->plan, plan->values, nulls,
+		MemoryContextSwitchTo(oldcontext);
+
+		portal = SPI_cursor_open(NULL, plan->plan, values, nulls,
 								 exec_ctx->curr_proc->fn_readonly);
 		if (portal == NULL)
 			elog(ERROR, "SPI_cursor_open() failed: %s",
@@ -239,69 +284,52 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 
 		PinPortal(portal);
 
+		MemoryContextDelete(tmpcontext);
 		PLy_spi_subtransaction_commit(oldcontext, oldowner);
 	}
 	PG_CATCH();
 	{
-		int			k;
-
-		/* cleanup plan->values array */
-		for (k = 0; k < nargs; k++)
-		{
-			if (!plan->args[k].typbyval &&
-				(plan->values[k] != PointerGetDatum(NULL)))
-			{
-				pfree(DatumGetPointer(plan->values[k]));
-				plan->values[k] = PointerGetDatum(NULL);
-			}
-		}
-
 		Py_DECREF(cursor);
-
+		/* Subtransaction abort will remove the tmpcontext */
 		PLy_spi_subtransaction_abort(oldcontext, oldowner);
 		return NULL;
 	}
 	PG_END_TRY();
-
-	for (i = 0; i < nargs; i++)
-	{
-		if (!plan->args[i].typbyval &&
-			(plan->values[i] != PointerGetDatum(NULL)))
-		{
-			pfree(DatumGetPointer(plan->values[i]));
-			plan->values[i] = PointerGetDatum(NULL);
-		}
-	}
 
 	Assert(cursor->portalname != NULL);
 	return (PyObject *) cursor;
 }
 
 static void
-PLy_cursor_dealloc(PyObject *arg)
+PLy_cursor_dealloc(PLyCursorObject *self)
 {
-	PLyCursorObject *cursor;
+#if PY_VERSION_HEX >= 0x03080000
+	PyTypeObject *tp = Py_TYPE(self);
+#endif
 	Portal		portal;
 
-	cursor = (PLyCursorObject *) arg;
-
-	if (!cursor->closed)
+	if (!self->closed)
 	{
-		portal = GetPortalByName(cursor->portalname);
+		portal = GetPortalByName(self->portalname);
 
 		if (PortalIsValid(portal))
 		{
 			UnpinPortal(portal);
 			SPI_cursor_close(portal);
 		}
-		cursor->closed = true;
+		self->closed = true;
 	}
-	if (cursor->mcxt)
+	if (self->mcxt)
 	{
-		MemoryContextDelete(cursor->mcxt);
-		cursor->mcxt = NULL;
+		MemoryContextDelete(self->mcxt);
+		self->mcxt = NULL;
 	}
-	arg->ob_type->tp_free(arg);
+
+	PyObject_Free(self);
+#if PY_VERSION_HEX >= 0x03080000
+	/* This was not needed before Python 3.8 (Python issue 35810) */
+	Py_DECREF(tp);
+#endif
 }
 
 static PyObject *

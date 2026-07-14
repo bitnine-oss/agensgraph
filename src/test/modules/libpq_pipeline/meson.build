@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 libpq_pipeline_sources = files(
   'libpq_pipeline.c',
@@ -27,5 +27,6 @@ tests += {
     'tests': [
       't/001_libpq_pipeline.pl',
     ],
+    'deps': [libpq_pipeline],
   },
 }

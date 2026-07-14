@@ -278,6 +278,22 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>--missing-stats-only</option></term>
+      <listitem>
+       <para>
+        Only analyze relations that are missing statistics for a column, index
+        expression, or extended statistics object.  This option prevents
+        <application>vacuumdb</application> from deleting existing statistics
+        so that the query optimizer's choices do not become transiently worse.
+       </para>
+       <para>
+        This option can only be used in conjunction with
+        <option>--analyze-only</option> or <option>--analyze-in-stages</option>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>-n <replaceable class="parameter">schema</replaceable></option></term>
       <term><option>--schema=<replaceable class="parameter">schema</replaceable></option></term>
       <listitem>
@@ -544,9 +560,8 @@ PostgreSQL documentation
       <term><option>--maintenance-db=<replaceable class="parameter">dbname</replaceable></option></term>
       <listitem>
        <para>
-        Specifies the name of the database to connect to to discover which
-        databases should be vacuumed,
-        when <option>-a</option>/<option>--all</option> is used.
+        When the <option>-a</option>/<option>--all</option> is used, connect
+        to this database to gather the list of databases to vacuum.
         If not specified, the <literal>postgres</literal> database will be used,
         or if that does not exist, <literal>template1</literal> will be used.
         This can be a <link linkend="libpq-connstring">connection

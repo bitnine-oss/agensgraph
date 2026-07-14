@@ -1,6 +1,17 @@
 --
 -- PARALLEL
 --
+-- Save parallel worker stats, used for comparison at the end
+select pg_stat_force_next_flush();
+ pg_stat_force_next_flush 
+--------------------------
+ 
+(1 row)
+
+select parallel_workers_to_launch as parallel_workers_to_launch_before,
+       parallel_workers_launched as parallel_workers_launched_before
+  from pg_stat_database
+  where datname = current_database() \gset
 create function sp_parallel_restricted(int) returns int as
   $$begin return $1; end$$ language plpgsql parallel restricted;
 begin;
@@ -538,15 +549,18 @@ explain (costs off)
 ------------------------------------------------------------
  Aggregate
    ->  Nested Loop
-         ->  Seq Scan on tenk2
-               Filter: (thousand = 0)
+         ->  Gather
+               Workers Planned: 4
+               ->  Parallel Seq Scan on tenk2
+                     Disabled: true
+                     Filter: (thousand = 0)
          ->  Gather
                Workers Planned: 4
                ->  Parallel Bitmap Heap Scan on tenk1
                      Recheck Cond: (hundred > 1)
                      ->  Bitmap Index Scan on tenk1_hundred
                            Index Cond: (hundred > 1)
-(10 rows)
+(13 rows)
 
 select count(*) from tenk1, tenk2 where tenk1.hundred > 1 and tenk2.thousand=0;
  count 
@@ -566,20 +580,20 @@ select count(*) from bmscantest where a>1;
 -- test accumulation of stats for parallel nodes
 reset enable_seqscan;
 alter table tenk2 set (parallel_workers = 0);
-explain (analyze, timing off, summary off, costs off)
+explain (analyze, timing off, summary off, costs off, buffers off)
    select count(*) from tenk1, tenk2 where tenk1.hundred > 1
         and tenk2.thousand=0;
-                                QUERY PLAN                                
---------------------------------------------------------------------------
- Aggregate (actual rows=1 loops=1)
-   ->  Nested Loop (actual rows=98000 loops=1)
-         ->  Seq Scan on tenk2 (actual rows=10 loops=1)
+                                 QUERY PLAN                                  
+-----------------------------------------------------------------------------
+ Aggregate (actual rows=1.00 loops=1)
+   ->  Nested Loop (actual rows=98000.00 loops=1)
+         ->  Seq Scan on tenk2 (actual rows=10.00 loops=1)
                Filter: (thousand = 0)
                Rows Removed by Filter: 9990
-         ->  Gather (actual rows=9800 loops=10)
+         ->  Gather (actual rows=9800.00 loops=10)
                Workers Planned: 4
                Workers Launched: 4
-               ->  Parallel Seq Scan on tenk1 (actual rows=1960 loops=50)
+               ->  Parallel Seq Scan on tenk1 (actual rows=1960.00 loops=50)
                      Filter: (hundred > 1)
                      Rows Removed by Filter: 40
 (11 rows)
@@ -592,7 +606,7 @@ $$
 declare ln text;
 begin
     for ln in
-        explain (analyze, timing off, summary off, costs off)
+        explain (analyze, timing off, summary off, costs off, buffers off)
           select * from
           (select ten from tenk1 where ten < 100 order by ten) ss
           right join (values (1),(2),(3)) v(x) on true
@@ -603,21 +617,21 @@ begin
 end;
 $$;
 select * from explain_parallel_sort_stats();
-                       explain_parallel_sort_stats                        
---------------------------------------------------------------------------
- Nested Loop Left Join (actual rows=30000 loops=1)
-   ->  Values Scan on "*VALUES*" (actual rows=3 loops=1)
-   ->  Gather Merge (actual rows=10000 loops=3)
+                         explain_parallel_sort_stats                         
+-----------------------------------------------------------------------------
+ Nested Loop Left Join (actual rows=30000.00 loops=1)
+   ->  Values Scan on "*VALUES*" (actual rows=3.00 loops=1)
+   ->  Gather Merge (actual rows=10000.00 loops=3)
          Workers Planned: 4
          Workers Launched: 4
-         ->  Sort (actual rows=2000 loops=15)
+         ->  Sort (actual rows=2000.00 loops=15)
                Sort Key: tenk1.ten
                Sort Method: quicksort  Memory: xxx
                Worker 0:  Sort Method: quicksort  Memory: xxx
                Worker 1:  Sort Method: quicksort  Memory: xxx
                Worker 2:  Sort Method: quicksort  Memory: xxx
                Worker 3:  Sort Method: quicksort  Memory: xxx
-               ->  Parallel Seq Scan on tenk1 (actual rows=2000 loops=15)
+               ->  Parallel Seq Scan on tenk1 (actual rows=2000.00 loops=15)
                      Filter: (ten < 100)
 (14 rows)
 
@@ -653,6 +667,41 @@ select  count(*) from tenk1, tenk2 where tenk1.unique1 = tenk2.unique1;
 
 reset enable_hashjoin;
 reset enable_nestloop;
+-- test parallel nestloop join path with materialization of the inner path
+alter table tenk2 set (parallel_workers = 0);
+explain (costs off)
+select * from tenk1 t1, tenk2 t2 where t1.two > t2.two;
+                QUERY PLAN                 
+-------------------------------------------
+ Gather
+   Workers Planned: 4
+   ->  Nested Loop
+         Join Filter: (t1.two > t2.two)
+         ->  Parallel Seq Scan on tenk1 t1
+         ->  Materialize
+               ->  Seq Scan on tenk2 t2
+(7 rows)
+
+-- test that parallel nestloop join is not generated if the inner path is
+-- not parallel-safe
+explain (costs off)
+select * from tenk1 t1
+    left join lateral
+      (select t1.unique1 as x, * from tenk2 t2 order by 1) t2
+    on true
+where t1.two > t2.two;
+                QUERY PLAN                 
+-------------------------------------------
+ Nested Loop
+   ->  Gather
+         Workers Planned: 4
+         ->  Parallel Seq Scan on tenk1 t1
+   ->  Subquery Scan on t2
+         Filter: (t1.two > t2.two)
+         ->  Seq Scan on tenk2 t2_1
+(7 rows)
+
+alter table tenk2 reset (parallel_workers);
 -- test gather merge
 set enable_hashagg = false;
 explain (costs off)
@@ -1076,27 +1125,28 @@ reset role;
 explain (costs off, verbose)
   select count(*) from tenk1 a where (unique1, two) in
     (select unique1, row_number() over() from tenk1 b);
-                                          QUERY PLAN                                          
-----------------------------------------------------------------------------------------------
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
  Aggregate
    Output: count(*)
-   ->  Hash Semi Join
-         Hash Cond: ((a.unique1 = b.unique1) AND (a.two = (row_number() OVER (?))))
-         ->  Gather
-               Output: a.unique1, a.two
-               Workers Planned: 4
-               ->  Parallel Seq Scan on public.tenk1 a
-                     Output: a.unique1, a.two
-         ->  Hash
-               Output: b.unique1, (row_number() OVER (?))
-               ->  WindowAgg
-                     Output: b.unique1, row_number() OVER (?)
-                     ->  Gather
+   ->  Hash Right Semi Join
+         Hash Cond: ((b.unique1 = a.unique1) AND ((row_number() OVER w1) = a.two))
+         ->  WindowAgg
+               Output: b.unique1, row_number() OVER w1
+               Window: w1 AS (ROWS UNBOUNDED PRECEDING)
+               ->  Gather
+                     Output: b.unique1
+                     Workers Planned: 4
+                     ->  Parallel Index Only Scan using tenk1_unique1 on public.tenk1 b
                            Output: b.unique1
-                           Workers Planned: 4
-                           ->  Parallel Index Only Scan using tenk1_unique1 on public.tenk1 b
-                                 Output: b.unique1
-(18 rows)
+         ->  Hash
+               Output: a.unique1, a.two
+               ->  Gather
+                     Output: a.unique1, a.two
+                     Workers Planned: 4
+                     ->  Parallel Seq Scan on public.tenk1 a
+                           Output: a.unique1, a.two
+(19 rows)
 
 -- LIMIT/OFFSET within sub-selects can't be pushed to workers.
 explain (costs off)
@@ -1120,13 +1170,13 @@ explain (costs off)
 -- to increase the parallel query test coverage
 SAVEPOINT settings;
 SET LOCAL debug_parallel_query = 1;
-EXPLAIN (analyze, timing off, summary off, costs off) SELECT * FROM tenk1;
-                         QUERY PLAN                          
--------------------------------------------------------------
- Gather (actual rows=10000 loops=1)
+EXPLAIN (analyze, timing off, summary off, costs off, buffers off) SELECT * FROM tenk1;
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Gather (actual rows=10000.00 loops=1)
    Workers Planned: 4
    Workers Launched: 4
-   ->  Parallel Seq Scan on tenk1 (actual rows=2000 loops=5)
+   ->  Parallel Seq Scan on tenk1 (actual rows=2000.00 loops=5)
 (4 rows)
 
 ROLLBACK TO SAVEPOINT settings;
@@ -1294,3 +1344,94 @@ SELECT 1 FROM tenk1_vw_sec
 (9 rows)
 
 rollback;
+-- test that a newly-created session role propagates to workers.
+begin;
+create role regress_parallel_worker;
+set session authorization regress_parallel_worker;
+select current_setting('session_authorization');
+     current_setting     
+-------------------------
+ regress_parallel_worker
+(1 row)
+
+set debug_parallel_query = 1;
+select current_setting('session_authorization');
+     current_setting     
+-------------------------
+ regress_parallel_worker
+(1 row)
+
+rollback;
+-- test that function option SET ROLE works in parallel workers.
+create role regress_parallel_worker;
+create function set_and_report_role() returns text as
+  $$ select current_setting('role') $$ language sql parallel safe
+  set role = regress_parallel_worker;
+create function set_role_and_error(int) returns int as
+  $$ select 1 / $1 $$ language sql parallel safe
+  set role = regress_parallel_worker;
+set debug_parallel_query = 0;
+select set_and_report_role();
+   set_and_report_role   
+-------------------------
+ regress_parallel_worker
+(1 row)
+
+select set_role_and_error(0);
+ERROR:  division by zero
+CONTEXT:  SQL function "set_role_and_error" statement 1
+set debug_parallel_query = 1;
+select set_and_report_role();
+   set_and_report_role   
+-------------------------
+ regress_parallel_worker
+(1 row)
+
+select set_role_and_error(0);
+ERROR:  division by zero
+CONTEXT:  SQL function "set_role_and_error" statement 1
+parallel worker
+reset debug_parallel_query;
+drop function set_and_report_role();
+drop function set_role_and_error(int);
+drop role regress_parallel_worker;
+-- don't freeze in ParallelFinish while holding an LWLock
+BEGIN;
+CREATE FUNCTION my_cmp (int4, int4)
+RETURNS int LANGUAGE sql AS
+$$
+	SELECT
+		CASE WHEN $1 < $2 THEN -1
+				WHEN $1 > $2 THEN  1
+				ELSE 0
+		END;
+$$;
+CREATE TABLE parallel_hang (i int4);
+INSERT INTO parallel_hang
+	(SELECT * FROM generate_series(1, 400) gs);
+CREATE OPERATOR CLASS int4_custom_ops FOR TYPE int4 USING btree AS
+	OPERATOR 1 < (int4, int4), OPERATOR 2 <= (int4, int4),
+	OPERATOR 3 = (int4, int4), OPERATOR 4 >= (int4, int4),
+	OPERATOR 5 > (int4, int4), FUNCTION 1 my_cmp(int4, int4);
+CREATE UNIQUE INDEX parallel_hang_idx
+					ON parallel_hang
+					USING btree (i int4_custom_ops);
+SET debug_parallel_query = on;
+DELETE FROM parallel_hang WHERE 380 <= i AND i <= 420;
+ROLLBACK;
+-- Check parallel worker stats
+select pg_stat_force_next_flush();
+ pg_stat_force_next_flush 
+--------------------------
+ 
+(1 row)
+
+select parallel_workers_to_launch > :'parallel_workers_to_launch_before'  AS wrk_to_launch,
+       parallel_workers_launched > :'parallel_workers_launched_before' AS wrk_launched
+  from pg_stat_database
+  where datname = current_database();
+ wrk_to_launch | wrk_launched 
+---------------+--------------
+ t             | t
+(1 row)
+

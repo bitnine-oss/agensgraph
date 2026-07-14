@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 # Tests targeting SSPI on Windows.
 
@@ -18,7 +18,7 @@ if (!$windows_os || $use_unix_sockets)
 # Initialize primary node
 my $node = PostgreSQL::Test::Cluster->new('primary');
 $node->init;
-$node->append_conf('postgresql.conf', "log_connections = on\n");
+$node->append_conf('postgresql.conf', "log_connections = authentication\n");
 $node->start;
 
 my $huge_pages_status =

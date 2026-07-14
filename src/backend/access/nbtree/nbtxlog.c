@@ -4,7 +4,7 @@
  *	  WAL replay logic for btrees.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -483,7 +483,7 @@ btree_xlog_dedup(XLogReaderState *record)
 		state->deduplicate = true;	/* unused */
 		state->nmaxitems = 0;	/* unused */
 		/* Conservatively use larger maxpostingsize than primary */
-		state->maxpostingsize = BTMaxItemSize(page);
+		state->maxpostingsize = BTMaxItemSize;
 		state->base = NULL;
 		state->baseoff = InvalidOffsetNumber;
 		state->basetupsize = 0;
@@ -634,10 +634,11 @@ btree_xlog_vacuum(XLogReaderState *record)
 			PageIndexMultiDelete(page, (OffsetNumber *) ptr, xlrec->ndeleted);
 
 		/*
-		 * Mark the page as not containing any LP_DEAD items --- see comments
-		 * in _bt_delitems_vacuum().
+		 * Clear the vacuum cycle ID, and mark the page as not containing any
+		 * LP_DEAD items
 		 */
 		opaque = BTPageGetOpaque(page);
+		opaque->btpo_cycleid = 0;
 		opaque->btpo_flags &= ~BTP_HAS_GARBAGE;
 
 		PageSetLSN(page, lsn);
@@ -698,7 +699,10 @@ btree_xlog_delete(XLogReaderState *record)
 		if (xlrec->ndeleted > 0)
 			PageIndexMultiDelete(page, (OffsetNumber *) ptr, xlrec->ndeleted);
 
-		/* Mark the page as not containing any LP_DEAD items */
+		/*
+		 * Do *not* clear the vacuum cycle ID, but do mark the page as not
+		 * containing any LP_DEAD items
+		 */
 		opaque = BTPageGetOpaque(page);
 		opaque->btpo_flags &= ~BTP_HAS_GARBAGE;
 
@@ -982,9 +986,9 @@ btree_xlog_newroot(XLogReaderState *record)
  * As far as any backend operating during original execution is concerned, the
  * FSM is a cache of recycle-safe pages; the mere presence of the page in the
  * FSM indicates that the page must already be safe to recycle (actually,
- * _bt_getbuf() verifies it's safe using BTPageIsRecyclable(), but that's just
- * because it would be unwise to completely trust the FSM, given its current
- * limitations).
+ * _bt_allocbuf() verifies it's safe using BTPageIsRecyclable(), but that's
+ * just because it would be unwise to completely trust the FSM, given its
+ * current limitations).
  *
  * This isn't sufficient to prevent similar concurrent recycling race
  * conditions during Hot Standby, though.  For that we need to log a

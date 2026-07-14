@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 tests += {
   'name': 'unsafe_tests',
@@ -7,9 +7,14 @@ tests += {
   'regress': {
     'sql': [
       'rolenames',
+      'setconfig',
       'alter_system_table',
       'guc_privs',
     ],
+    'regress_args': ['--create-role=regress_authenticated_user_db_sr',
+                     '--create-role=regress_authenticated_user_db_ssa',
+                     '--create-role=regress_authenticated_user_sr',
+                     '--create-role=regress_authenticated_user_ssa'],
     'runningcheck': false,
   },
 }

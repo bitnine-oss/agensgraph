@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2025, PostgreSQL Global Development Group
  *
  * src/bin/psql/startup.c
  */
@@ -205,6 +205,11 @@ main(int argc, char *argv[])
 	SetVariable(pset.vars, "PROMPT3", DEFAULT_PROMPT3);
 	SetVariableBool(pset.vars, "SHOW_ALL_RESULTS");
 
+	/* Initialize pipeline variables */
+	SetVariable(pset.vars, "PIPELINE_SYNC_COUNT", "0");
+	SetVariable(pset.vars, "PIPELINE_COMMAND_COUNT", "0");
+	SetVariable(pset.vars, "PIPELINE_RESULT_COUNT", "0");
+
 	parse_psql_options(argc, argv, &options);
 
 	/*
@@ -399,7 +404,7 @@ main(int argc, char *argv[])
 								cell->val, strlen(cell->val),
 								pset.encoding, standard_strings());
 				cond_stack = conditional_stack_create();
-				psql_scan_set_passthrough(scan_state, (void *) cond_stack);
+				psql_scan_set_passthrough(scan_state, cond_stack);
 
 				successResult = HandleSlashCmds(scan_state,
 												cond_stack,
@@ -947,6 +952,21 @@ histsize_hook(const char *newval)
 }
 
 static char *
+watch_interval_substitute_hook(char *newval)
+{
+	if (newval == NULL)
+		newval = pg_strdup(DEFAULT_WATCH_INTERVAL);
+	return newval;
+}
+
+static bool
+watch_interval_hook(const char *newval)
+{
+	return ParseVariableDouble(newval, "WATCH_INTERVAL", &pset.watch_interval,
+							   0, DEFAULT_WATCH_INTERVAL_MAX);
+}
+
+static char *
 ignoreeof_substitute_hook(char *newval)
 {
 	int			dummy;
@@ -1272,4 +1292,7 @@ EstablishVariableSpace(void)
 	SetVariableHooks(pset.vars, "HIDE_TABLEAM",
 					 bool_substitute_hook,
 					 hide_tableam_hook);
+	SetVariableHooks(pset.vars, "WATCH_INTERVAL",
+					 watch_interval_substitute_hook,
+					 watch_interval_hook);
 }

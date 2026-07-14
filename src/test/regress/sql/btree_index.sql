@@ -111,6 +111,85 @@ SELECT b.*
    WHERE b.seqno = '4500'::float8;
 
 --
+-- Add coverage of RowCompare quals whose row omits a column ("proargtypes")
+-- that's after the first column, but before the final column.  The scan's
+-- initial positioning strategy must become >= here (it's not the > strategy,
+-- since the absence of "proargtypes" makes that tighter constraint unsafe).
+--
+explain (costs off)
+SELECT proname, proargtypes, pronamespace
+   FROM pg_proc
+   WHERE (proname, pronamespace) > ('abs', 0)
+ORDER BY proname, proargtypes, pronamespace LIMIT 1;
+
+SELECT proname, proargtypes, pronamespace
+   FROM pg_proc
+   WHERE (proname, pronamespace) > ('abs', 0)
+ORDER BY proname, proargtypes, pronamespace LIMIT 1;
+
+--
+-- Similar to the previous test case, but this time it's a backwards scan
+-- using a < RowCompare.  Must use the <= strategy (and not the < strategy).
+--
+explain (costs off)
+SELECT proname, proargtypes, pronamespace
+   FROM pg_proc
+   WHERE (proname, pronamespace) < ('abs', 1_000_000)
+ORDER BY proname DESC, proargtypes DESC, pronamespace DESC LIMIT 1;
+
+SELECT proname, proargtypes, pronamespace
+   FROM pg_proc
+   WHERE (proname, pronamespace) < ('abs', 1_000_000)
+ORDER BY proname DESC, proargtypes DESC, pronamespace DESC LIMIT 1;
+
+--
+-- Add coverage for RowCompare quals whose rhs row has a NULL that ends scan
+--
+explain (costs off)
+SELECT proname, proargtypes, pronamespace
+   FROM pg_proc
+   WHERE proname = 'abs' AND (proname, proargtypes) < ('abs', NULL)
+ORDER BY proname, proargtypes, pronamespace;
+
+SELECT proname, proargtypes, pronamespace
+   FROM pg_proc
+   WHERE proname = 'abs' AND (proname, proargtypes) < ('abs', NULL)
+ORDER BY proname, proargtypes, pronamespace;
+
+--
+-- Add coverage for backwards scan RowCompare quals whose rhs row has a NULL
+-- that ends scan
+--
+explain (costs off)
+SELECT proname, proargtypes, pronamespace
+   FROM pg_proc
+   WHERE proname = 'abs' AND (proname, proargtypes) > ('abs', NULL)
+ORDER BY proname DESC, proargtypes DESC, pronamespace DESC;
+
+SELECT proname, proargtypes, pronamespace
+   FROM pg_proc
+   WHERE proname = 'abs' AND (proname, proargtypes) > ('abs', NULL)
+ORDER BY proname DESC, proargtypes DESC, pronamespace DESC;
+
+--
+-- Add coverage for recheck of > key following array advancement on previous
+-- (left sibling) page that used a high key whose attribute value corresponding
+-- to the > key was -inf (due to being truncated when the high key was created).
+--
+-- XXX This relies on the assumption that tenk1_thous_tenthous has a truncated
+-- high key "(183, -inf)" on the first page that we'll scan.  The test will only
+-- provide useful coverage when the default 8K BLCKSZ is in use.
+--
+explain (costs off)
+SELECT thousand, tenthous
+  FROM tenk1
+  WHERE thousand IN (182, 183) AND tenthous > 7550;
+
+SELECT thousand, tenthous
+  FROM tenk1
+  WHERE thousand IN (182, 183) AND tenthous > 7550;
+
+--
 -- Add coverage for optimization of backwards scan index descents
 --
 -- Here we expect _bt_search to descend straight to a leaf page containing a
@@ -248,6 +327,27 @@ alter table btree_tall_tbl alter COLUMN t set storage plain;
 create index btree_tall_idx on btree_tall_tbl (t, id) with (fillfactor = 10);
 insert into btree_tall_tbl select g, repeat('x', 250)
 from generate_series(1, 130) g;
+insert into btree_tall_tbl select g, NULL
+from generate_series(50, 60) g;
+
+--
+-- Test for skip scan with type that lacks skip support (text)
+--
+set enable_seqscan to false;
+set enable_bitmapscan to false;
+
+-- Forwards scan
+SELECT id FROM btree_tall_tbl WHERE id = 55 ORDER BY t, id;
+explain (costs off)
+SELECT id FROM btree_tall_tbl WHERE id = 55 ORDER BY t, id;
+
+-- Backwards scan
+SELECT id FROM btree_tall_tbl WHERE id = 55 ORDER BY t DESC, id DESC;
+explain (costs off)
+SELECT id FROM btree_tall_tbl WHERE id = 55 ORDER BY t DESC, id DESC;
+
+reset enable_seqscan;
+reset enable_bitmapscan;
 
 --
 -- Test for multilevel page deletion
@@ -271,6 +371,17 @@ INSERT INTO delete_test_table SELECT i, 1, 2, 3 FROM generate_series(1,1000) i;
 
 -- Test unsupported btree opclass parameters
 create index on btree_tall_tbl (id int4_ops(foo=1));
+
+-- test parallel build with immutable function.
+CREATE TABLE btree_test_expr (n int);
+CREATE FUNCTION btree_test_func() RETURNS int LANGUAGE sql IMMUTABLE RETURN 0;
+BEGIN;
+SET LOCAL min_parallel_table_scan_size = 0;
+SET LOCAL max_parallel_maintenance_workers = 4;
+CREATE INDEX btree_test_expr_idx ON btree_test_expr USING btree (btree_test_func());
+COMMIT;
+DROP TABLE btree_test_expr;
+DROP FUNCTION btree_test_func();
 
 -- Test case of ALTER INDEX with abuse of column names for indexes.
 -- This grammar is not officially supported, but the parser allows it.

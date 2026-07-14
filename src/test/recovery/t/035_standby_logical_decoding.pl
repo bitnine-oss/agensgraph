@@ -1,4 +1,4 @@
-# Copyright (c) 2023-2024, PostgreSQL Global Development Group
+# Copyright (c) 2023-2025, PostgreSQL Global Development Group
 
 # logical decoding on standby : test logical decoding,
 # recovery conflict and standby promotion.
@@ -10,10 +10,12 @@ use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
 
-my ($stdin, $stdout, $stderr,
-	$cascading_stdout, $cascading_stderr, $subscriber_stdin,
-	$subscriber_stdout, $subscriber_stderr, $ret,
-	$handle, $slot);
+if ($ENV{enable_injection_points} ne 'yes')
+{
+	plan skip_all => 'Injection points not supported by this build';
+}
+
+my ($stdout, $stderr, $cascading_stdout, $cascading_stderr, $handle);
 
 my $node_primary = PostgreSQL::Test::Cluster->new('primary');
 my $node_standby = PostgreSQL::Test::Cluster->new('standby');
@@ -78,18 +80,17 @@ sub make_slot_active
 	my $active_slot = $slot_prefix . 'activeslot';
 	$slot_user_handle = IPC::Run::start(
 		[
-			'pg_recvlogical', '-d',
-			$node->connstr('testdb'), '-S',
-			qq($active_slot), '-o',
-			'include-xids=0', '-o',
-			'skip-empty-xacts=1', '--no-loop',
-			'--start', '-f',
-			'-'
+			'pg_recvlogical',
+			'--dbname' => $node->connstr('testdb'),
+			'--slot' => $active_slot,
+			'--option' => 'include-xids=0',
+			'--option' => 'skip-empty-xacts=1',
+			'--file' => '-',
+			'--no-loop',
+			'--start',
 		],
-		'>',
-		$to_stdout,
-		'2>',
-		$to_stderr,
+		'>' => $to_stdout,
+		'2>' => $to_stderr,
 		IPC::Run::timeout($default_timeout));
 
 	if ($wait)
@@ -245,15 +246,18 @@ sub check_for_invalidation
 # VACUUM command, $sql the sql to launch before triggering the vacuum and
 # $to_vac the relation to vacuum.
 #
-# Note that pg_current_snapshot() is used to get the horizon.  It does
-# not generate a Transaction/COMMIT WAL record, decreasing the risk of
-# seeing a xl_running_xacts that would advance an active replication slot's
-# catalog_xmin.  Advancing the active replication slot's catalog_xmin
-# would break some tests that expect the active slot to conflict with
-# the catalog xmin horizon.
+# Note that the injection_point avoids seeing a xl_running_xacts that could
+# advance an active replication slot's catalog_xmin. Advancing the active
+# replication slot's catalog_xmin would break some tests that expect the
+# active slot to conflict with the catalog xmin horizon.
 sub wait_until_vacuum_can_remove
 {
 	my ($vac_option, $sql, $to_vac) = @_;
+
+	# Note that from this point the checkpointer and bgwriter will skip writing
+	# xl_running_xacts record.
+	$node_primary->safe_psql('testdb',
+		"SELECT injection_points_attach('skip-log-running-xacts', 'error');");
 
 	# Get the current xid horizon,
 	my $xid_horizon = $node_primary->safe_psql('testdb',
@@ -272,6 +276,12 @@ sub wait_until_vacuum_can_remove
 	$node_primary->safe_psql(
 		'testdb', qq[VACUUM $vac_option verbose $to_vac;
 										  INSERT INTO flush_wal DEFAULT VALUES;]);
+
+	$node_primary->wait_for_replay_catchup($node_standby);
+
+	# Resume generating the xl_running_xacts record
+	$node_primary->safe_psql('testdb',
+		"SELECT injection_points_detach('skip-log-running-xacts');");
 }
 
 ########################
@@ -288,6 +298,14 @@ autovacuum = off
 });
 $node_primary->dump_info;
 $node_primary->start;
+
+# Check if the extension injection_points is available, as it may be
+# possible that this script is run with installcheck, where the module
+# would not be installed by default.
+if (!$node_primary->check_extension('injection_points'))
+{
+	plan skip_all => 'Extension injection_points not installed';
+}
 
 $node_primary->psql('postgres', q[CREATE DATABASE testdb]);
 
@@ -336,14 +354,53 @@ my %psql_subscriber = (
 	'subscriber_stdout' => '',
 	'subscriber_stderr' => '');
 $psql_subscriber{run} = IPC::Run::start(
-	[ 'psql', '-XA', '-f', '-', '-d', $node_subscriber->connstr('postgres') ],
-	'<',
-	\$psql_subscriber{subscriber_stdin},
-	'>',
-	\$psql_subscriber{subscriber_stdout},
-	'2>',
-	\$psql_subscriber{subscriber_stderr},
+	[
+		'psql', '--no-psqlrc', '--no-align',
+		'--file' => '-',
+		'--dbname' => $node_subscriber->connstr('postgres')
+	],
+	'<' => \$psql_subscriber{subscriber_stdin},
+	'>' => \$psql_subscriber{subscriber_stdout},
+	'2>' => \$psql_subscriber{subscriber_stderr},
 	IPC::Run::timeout($default_timeout));
+
+##################################################
+# Test that the standby requires hot_standby to be
+# enabled for pre-existing logical slots.
+##################################################
+
+# create the logical slots
+$node_standby->create_logical_slot_on_standby($node_primary, 'restart_test');
+$node_standby->stop;
+$node_standby->append_conf('postgresql.conf', qq[hot_standby = off]);
+
+# Use run_log instead of $node_standby->start because this test expects
+# that the server ends with an error during startup.
+run_log(
+	[
+		'pg_ctl',
+		'--pgdata' => $node_standby->data_dir,
+		'--log' => $node_standby->logfile,
+		'start',
+	]);
+
+# wait for postgres to terminate
+foreach my $i (0 .. 10 * $PostgreSQL::Test::Utils::timeout_default)
+{
+	last if !-f $node_standby->data_dir . '/postmaster.pid';
+	usleep(100_000);
+}
+
+# Confirm that the server startup fails with an expected error
+my $logfile = slurp_file($node_standby->logfile());
+ok( $logfile =~
+	  qr/FATAL: .* logical replication slot ".*" exists on the standby, but "hot_standby" = "off"/,
+	"the standby ends with an error during startup because hot_standby was disabled"
+);
+$node_standby->adjust_conf('postgresql.conf', 'hot_standby', 'on');
+$node_standby->start;
+$node_standby->safe_psql('postgres',
+	qq[SELECT pg_drop_replication_slot('restart_test')]);
 
 ##################################################
 # Test that logical decoding on the standby
@@ -493,12 +550,16 @@ is($result, qq(10), 'check replicated inserts after subscription on standby');
 $node_subscriber->safe_psql('postgres', "DROP SUBSCRIPTION tap_sub");
 $node_subscriber->stop;
 
+# Create the injection_points extension
+$node_primary->safe_psql('testdb', 'CREATE EXTENSION injection_points;');
+
 ##################################################
 # Recovery conflict: Invalidate conflicting slots, including in-use slots
 # Scenario 1: hot_standby_feedback off and vacuum FULL
 #
 # In passing, ensure that replication slot stats are not removed when the
-# active slot is invalidated.
+# active slot is invalidated, and check that an error occurs when
+# attempting to alter the invalid slot.
 ##################################################
 
 # One way to produce recovery conflict is to create/drop a relation and
@@ -521,13 +582,22 @@ wait_until_vacuum_can_remove(
 	'full', 'CREATE TABLE conflict_test(x integer, y text);
 								 DROP TABLE conflict_test;', 'pg_class');
 
-$node_primary->wait_for_replay_catchup($node_standby);
-
 # Check invalidation in the logfile and in pg_stat_database_conflicts
 check_for_invalidation('vacuum_full_', 1, 'with vacuum FULL on pg_class');
 
 # Verify reason for conflict is 'rows_removed' in pg_replication_slots
 check_slots_conflict_reason('vacuum_full_', 'rows_removed');
+
+# Attempting to alter an invalidated slot should result in an error
+($result, $stdout, $stderr) = $node_standby->psql(
+	'postgres',
+	qq[ALTER_REPLICATION_SLOT vacuum_full_inactiveslot (failover);],
+	replication => 'database');
+ok( $stderr =~
+	  /ERROR:  can no longer access replication slot "vacuum_full_inactiveslot"/
+	  && $stderr =~
+	  /DETAIL:  This replication slot has been invalidated due to "rows_removed"./,
+	"invalidated slot cannot be altered");
 
 # Ensure that replication slot stats are not removed after invalidation.
 is( $node_standby->safe_psql(
@@ -542,8 +612,16 @@ $handle =
 
 # We are not able to read from the slot as it has been invalidated
 check_pg_recvlogical_stderr($handle,
-	"can no longer get changes from replication slot \"vacuum_full_activeslot\""
-);
+	"can no longer access replication slot \"vacuum_full_activeslot\"");
+
+# Attempt to copy an invalidated logical replication slot
+($result, $stdout, $stderr) = $node_standby->psql(
+	'postgres',
+	qq[select pg_copy_logical_replication_slot('vacuum_full_inactiveslot', 'vacuum_full_inactiveslot_copy');],
+	replication => 'database');
+ok( $stderr =~
+	  /ERROR:  cannot copy invalidated replication slot "vacuum_full_inactiveslot"/,
+	"invalidated slot cannot be copied");
 
 # Turn hot_standby_feedback back on
 change_hot_standby_feedback_and_wait_for_xmins(1, 1);
@@ -610,8 +688,6 @@ wait_until_vacuum_can_remove(
 	'', 'CREATE TABLE conflict_test(x integer, y text);
 							 DROP TABLE conflict_test;', 'pg_class');
 
-$node_primary->wait_for_replay_catchup($node_standby);
-
 # Check invalidation in the logfile and in pg_stat_database_conflicts
 check_for_invalidation('row_removal_', $logstart, 'with vacuum on pg_class');
 
@@ -623,8 +699,7 @@ $handle =
 
 # We are not able to read from the slot as it has been invalidated
 check_pg_recvlogical_stderr($handle,
-	"can no longer get changes from replication slot \"row_removal_activeslot\""
-);
+	"can no longer access replication slot \"row_removal_activeslot\"");
 
 ##################################################
 # Recovery conflict: Same as Scenario 2 but on a shared catalog table
@@ -645,8 +720,6 @@ wait_until_vacuum_can_remove(
 	'', 'CREATE ROLE create_trash;
 							 DROP ROLE create_trash;', 'pg_authid');
 
-$node_primary->wait_for_replay_catchup($node_standby);
-
 # Check invalidation in the logfile and in pg_stat_database_conflicts
 check_for_invalidation('shared_row_removal_', $logstart,
 	'with vacuum on pg_authid');
@@ -659,7 +732,7 @@ $handle = make_slot_active($node_standby, 'shared_row_removal_', 0, \$stdout,
 
 # We are not able to read from the slot as it has been invalidated
 check_pg_recvlogical_stderr($handle,
-	"can no longer get changes from replication slot \"shared_row_removal_activeslot\""
+	"can no longer access replication slot \"shared_row_removal_activeslot\""
 );
 
 ##################################################
@@ -678,8 +751,6 @@ wait_until_vacuum_can_remove(
 	'', 'CREATE TABLE conflict_test(x integer, y text);
 							 INSERT INTO conflict_test(x,y) SELECT s, s::text FROM generate_series(1,4) s;
 							 UPDATE conflict_test set x=1, y=1;', 'conflict_test');
-
-$node_primary->wait_for_replay_catchup($node_standby);
 
 # message should not be issued
 ok( !$node_standby->log_contains(
@@ -728,6 +799,13 @@ $logstart = -s $node_standby->logfile;
 reactive_slots_change_hfs_and_wait_for_xmins('no_conflict_', 'pruning_', 0,
 	0);
 
+# Injection point avoids seeing a xl_running_xacts. This is required because if
+# it is generated between the last two updates, then the catalog_xmin of the
+# active slot could be updated, and hence, the conflict won't occur. See
+# comments atop wait_until_vacuum_can_remove.
+$node_primary->safe_psql('testdb',
+	"SELECT injection_points_attach('skip-log-running-xacts', 'error');");
+
 # This should trigger the conflict
 $node_primary->safe_psql('testdb',
 	qq[CREATE TABLE prun(id integer, s char(2000)) WITH (fillfactor = 75, user_catalog_table = true);]
@@ -740,6 +818,10 @@ $node_primary->safe_psql('testdb', qq[UPDATE prun SET s = 'E';]);
 
 $node_primary->wait_for_replay_catchup($node_standby);
 
+# Resume generating the xl_running_xacts record
+$node_primary->safe_psql('testdb',
+	"SELECT injection_points_detach('skip-log-running-xacts');");
+
 # Check invalidation in the logfile and in pg_stat_database_conflicts
 check_for_invalidation('pruning_', $logstart, 'with on-access pruning');
 
@@ -750,7 +832,7 @@ $handle = make_slot_active($node_standby, 'pruning_', 0, \$stdout, \$stderr);
 
 # We are not able to read from the slot as it has been invalidated
 check_pg_recvlogical_stderr($handle,
-	"can no longer get changes from replication slot \"pruning_activeslot\"");
+	"can no longer access replication slot \"pruning_activeslot\"");
 
 # Turn hot_standby_feedback back on
 change_hot_standby_feedback_and_wait_for_xmins(1, 1);
@@ -809,11 +891,10 @@ $handle =
   make_slot_active($node_standby, 'wal_level_', 0, \$stdout, \$stderr);
 # as the slot has been invalidated we should not be able to read
 check_pg_recvlogical_stderr($handle,
-	"can no longer get changes from replication slot \"wal_level_activeslot\""
-);
+	"can no longer access replication slot \"wal_level_activeslot\"");
 
 ##################################################
-# DROP DATABASE should drops it's slots, including active slots.
+# DROP DATABASE should drop its slots, including active slots.
 ##################################################
 
 # drop the logical slots

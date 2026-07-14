@@ -3,7 +3,7 @@
  * _int_selfuncs.c
  *	  Functions for selectivity estimation of intarray operators
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -20,10 +20,9 @@
 #include "catalog/pg_statistic.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
-#include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
-#include "utils/syscache.h"
 
 PG_FUNCTION_INFO_V1(_int_overlap_sel);
 PG_FUNCTION_INFO_V1(_int_contains_sel);

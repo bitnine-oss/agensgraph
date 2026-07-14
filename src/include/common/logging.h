@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  * Logging framework for frontend programs
  *
- * Copyright (c) 2018-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2018-2025, PostgreSQL Global Development Group
  *
  * src/include/common/logging.h
  *
@@ -152,5 +152,12 @@ void		pg_log_generic_v(enum pg_log_level level, enum pg_log_part part,
 		pg_log_generic(PG_LOG_ERROR, PG_LOG_PRIMARY, __VA_ARGS__); \
 		exit(1); \
 	} while(0)
+
+/*
+ * Use these variants for "can't happen" cases, if it seems translating their
+ * messages would be a waste of effort.
+ */
+#define pg_log_error_internal(...) pg_log_error(__VA_ARGS__)
+#define pg_fatal_internal(...) pg_fatal(__VA_ARGS__)
 
 #endif							/* COMMON_LOGGING_H */

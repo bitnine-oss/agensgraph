@@ -3,7 +3,7 @@
  * pg_rewind.c
  *	  Synchronizes a PostgreSQL data directory to a new timeline
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
@@ -60,21 +60,21 @@ static ControlFileData ControlFile_target;
 static ControlFileData ControlFile_source;
 static ControlFileData ControlFile_source_after;
 
-const char *progname;
+static const char *progname;
 int			WalSegSz;
 
 /* Configuration options */
 char	   *datadir_target = NULL;
-char	   *datadir_source = NULL;
-char	   *connstr_source = NULL;
-char	   *restore_command = NULL;
-char	   *config_file = NULL;
+static char *datadir_source = NULL;
+static char *connstr_source = NULL;
+static char *restore_command = NULL;
+static char *config_file = NULL;
 
 static bool debug = false;
 bool		showprogress = false;
 bool		dry_run = false;
 bool		do_sync = true;
-bool		restore_wal = false;
+static bool restore_wal = false;
 DataDirSyncMethod sync_method = DATA_DIR_SYNC_METHOD_FSYNC;
 
 /* Target history */
@@ -328,7 +328,7 @@ main(int argc, char **argv)
 	 * need to make sure by themselves that the target cluster is in a clean
 	 * state.
 	 */
-	buffer = slurpFile(datadir_target, "global/pg_control", &size);
+	buffer = slurpFile(datadir_target, XLOG_CONTROL_FILE, &size);
 	digestControlFile(&ControlFile_target, buffer, size);
 	pg_free(buffer);
 
@@ -338,12 +338,12 @@ main(int argc, char **argv)
 	{
 		ensureCleanShutdown(argv[0]);
 
-		buffer = slurpFile(datadir_target, "global/pg_control", &size);
+		buffer = slurpFile(datadir_target, XLOG_CONTROL_FILE, &size);
 		digestControlFile(&ControlFile_target, buffer, size);
 		pg_free(buffer);
 	}
 
-	buffer = source->fetch_file(source, "global/pg_control", &size);
+	buffer = source->fetch_file(source, XLOG_CONTROL_FILE, &size);
 	digestControlFile(&ControlFile_source, buffer, size);
 	pg_free(buffer);
 
@@ -451,9 +451,13 @@ main(int argc, char **argv)
 		pg_log_info("no rewind required");
 		if (writerecoveryconf && !dry_run)
 			WriteRecoveryConfig(conn, datadir_target,
-								GenerateRecoveryConfig(conn, NULL, NULL));
+								GenerateRecoveryConfig(conn, NULL,
+													   GetDbnameFromConnectionOptions(connstr_source)));
 		exit(0);
 	}
+
+	/* Initialize hashtable that tracks WAL files protected from removal */
+	keepwal_init();
 
 	findLastCheckpoint(datadir_target, divergerec, lastcommontliIndex,
 					   &chkptrec, &chkpttli, &chkptredo, restore_command);
@@ -525,7 +529,8 @@ main(int argc, char **argv)
 	/* Also update the standby configuration, if requested. */
 	if (writerecoveryconf && !dry_run)
 		WriteRecoveryConfig(conn, datadir_target,
-							GenerateRecoveryConfig(conn, NULL, NULL));
+							GenerateRecoveryConfig(conn, NULL,
+												   GetDbnameFromConnectionOptions(connstr_source)));
 
 	/* don't need the source connection anymore */
 	source->destroy(source);
@@ -631,7 +636,7 @@ perform_rewind(filemap_t *filemap, rewind_source *source,
 	 * Fetch the control file from the source last. This ensures that the
 	 * minRecoveryPoint is up-to-date.
 	 */
-	buffer = source->fetch_file(source, "global/pg_control", &size);
+	buffer = source->fetch_file(source, XLOG_CONTROL_FILE, &size);
 	digestControlFile(&ControlFile_source_after, buffer, size);
 	pg_free(buffer);
 
@@ -882,6 +887,7 @@ getTimelineHistory(TimeLineID tli, bool is_source, int *nentries)
 		pg_free(histfile);
 	}
 
+	/* In debugging mode, print what we read */
 	if (debug)
 	{
 		int			i;
@@ -891,10 +897,7 @@ getTimelineHistory(TimeLineID tli, bool is_source, int *nentries)
 		else
 			pg_log_debug("Target timeline history:");
 
-		/*
-		 * Print the target timeline history.
-		 */
-		for (i = 0; i < targetNentries; i++)
+		for (i = 0; i < *nentries; i++)
 		{
 			TimeLineHistoryEntry *entry;
 
@@ -1006,7 +1009,7 @@ checkControlFile(ControlFileData *ControlFile)
 
 	/* Calculate CRC */
 	INIT_CRC32C(crc);
-	COMP_CRC32C(crc, (char *) ControlFile, offsetof(ControlFileData, crc));
+	COMP_CRC32C(crc, ControlFile, offsetof(ControlFileData, crc));
 	FIN_CRC32C(crc);
 
 	/* And simply compare it */
@@ -1106,7 +1109,7 @@ getRestoreCommand(const char *argv0)
 
 	restore_command = pipe_read_line(postgres_cmd->data);
 	if (restore_command == NULL)
-		pg_fatal("unable to read restore_command from target cluster");
+		pg_fatal("could not read \"restore_command\" from target cluster");
 
 	(void) pg_strip_crlf(restore_command);
 

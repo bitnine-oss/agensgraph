@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 # Test SCRAM authentication and TLS channel binding types
 
@@ -20,7 +20,7 @@ if ($ENV{with_ssl} ne 'openssl')
 {
 	plan skip_all => 'OpenSSL not supported by this build';
 }
-elsif (!$ENV{PG_TEST_EXTRA} || $ENV{PG_TEST_EXTRA} !~ /\bssl\b/)
+if (!$ENV{PG_TEST_EXTRA} || $ENV{PG_TEST_EXTRA} !~ /\bssl\b/)
 {
 	plan skip_all =>
 	  'Potentially unsafe test SSL not enabled in PG_TEST_EXTRA';
@@ -44,10 +44,16 @@ my $SERVERHOSTADDR = '127.0.0.1';
 # This is the pattern to use in pg_hba.conf to match incoming connections.
 my $SERVERHOSTCIDR = '127.0.0.1/32';
 
+# Determine whether this build uses OpenSSL or LibreSSL.
+my $libressl = $ssl_server->is_libressl;
+
 # Determine whether build supports detection of hash algorithms for
 # RSA-PSS certificates.
 my $supports_rsapss_certs =
   check_pg_config("#define HAVE_X509_GET_SIGNATURE_INFO 1");
+
+# As of 5/2025, LibreSSL doesn't actually work for RSA-PSS certificates.
+$supports_rsapss_certs = 0 if $libressl;
 
 # Allocation of base connection string shared among multiple tests.
 my $common_connstr;
@@ -71,8 +77,8 @@ my $md5_works = ($node->psql('postgres', "select md5('')") == 0);
 $ssl_server->configure_test_server_for_ssl(
 	$node, $SERVERHOSTADDR, $SERVERHOSTCIDR,
 	"scram-sha-256",
-	'password' => "pass",
-	'password_enc' => "scram-sha-256");
+	password => "pass",
+	password_enc => "scram-sha-256");
 switch_server_cert($node, certfile => 'server-cn-only');
 $ENV{PGPASSWORD} = "pass";
 $common_connstr =

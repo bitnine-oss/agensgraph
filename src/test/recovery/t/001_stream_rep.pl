@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 # Minimal test testing streaming replication
 use strict;
@@ -14,7 +14,7 @@ my $node_primary = PostgreSQL::Test::Cluster->new('primary');
 # and it needs proper authentication configuration.
 $node_primary->init(
 	allows_streaming => 1,
-	auth_extra => [ '--create-role', 'repl_role' ]);
+	auth_extra => [ '--create-role' => 'repl_role' ]);
 $node_primary->start;
 my $backup_name = 'my_backup';
 
@@ -41,6 +41,9 @@ my $node_standby_2 = PostgreSQL::Test::Cluster->new('standby_2');
 $node_standby_2->init_from_backup($node_standby_1, $backup_name,
 	has_streaming => 1);
 $node_standby_2->start;
+
+# Reset IO statistics, for the WAL sender check with pg_stat_io.
+$node_primary->safe_psql('postgres', "SELECT pg_stat_reset_shared('io')");
 
 # Create some content on primary and check its presence in standby nodes
 $node_primary->safe_psql('postgres',
@@ -146,9 +149,13 @@ sub test_target_session_attrs
 	# we connected to.  Note we must pass the SQL command via the command
 	# line not stdin, else Perl may spit up trying to write to stdin of
 	# an already-failed psql process.
-	my ($ret, $stdout, $stderr) =
-	  $node1->psql('postgres', undef,
-		extra_params => [ '-d', $connstr, '-c', 'SHOW port;' ]);
+	my ($ret, $stdout, $stderr) = $node1->psql(
+		'postgres',
+		undef,
+		extra_params => [
+			'--dbname' => $connstr,
+			'--command' => 'SHOW port;',
+		]);
 	if ($status == 0)
 	{
 		is( $status == $ret && $stdout eq $target_port,
@@ -257,26 +264,26 @@ my $connstr_db = "$connstr_common replication=database dbname=postgres";
 my ($ret, $stdout, $stderr) = $node_primary->psql(
 	'postgres', 'SHOW ALL;',
 	on_error_die => 1,
-	extra_params => [ '-d', $connstr_rep ]);
+	extra_params => [ '--dbname' => $connstr_rep ]);
 ok($ret == 0, "SHOW ALL with replication role and physical replication");
 ($ret, $stdout, $stderr) = $node_primary->psql(
 	'postgres', 'SHOW ALL;',
 	on_error_die => 1,
-	extra_params => [ '-d', $connstr_db ]);
+	extra_params => [ '--dbname' => $connstr_db ]);
 ok($ret == 0, "SHOW ALL with replication role and logical replication");
 
 # Test SHOW with a user-settable parameter
 ($ret, $stdout, $stderr) = $node_primary->psql(
 	'postgres', 'SHOW work_mem;',
 	on_error_die => 1,
-	extra_params => [ '-d', $connstr_rep ]);
+	extra_params => [ '--dbname' => $connstr_rep ]);
 ok( $ret == 0,
 	"SHOW with user-settable parameter, replication role and physical replication"
 );
 ($ret, $stdout, $stderr) = $node_primary->psql(
 	'postgres', 'SHOW work_mem;',
 	on_error_die => 1,
-	extra_params => [ '-d', $connstr_db ]);
+	extra_params => [ '--dbname' => $connstr_db ]);
 ok( $ret == 0,
 	"SHOW with user-settable parameter, replication role and logical replication"
 );
@@ -285,14 +292,14 @@ ok( $ret == 0,
 ($ret, $stdout, $stderr) = $node_primary->psql(
 	'postgres', 'SHOW primary_conninfo;',
 	on_error_die => 1,
-	extra_params => [ '-d', $connstr_rep ]);
+	extra_params => [ '--dbname' => $connstr_rep ]);
 ok( $ret == 0,
 	"SHOW with superuser-settable parameter, replication role and physical replication"
 );
 ($ret, $stdout, $stderr) = $node_primary->psql(
 	'postgres', 'SHOW primary_conninfo;',
 	on_error_die => 1,
-	extra_params => [ '-d', $connstr_db ]);
+	extra_params => [ '--dbname' => $connstr_db ]);
 ok( $ret == 0,
 	"SHOW with superuser-settable parameter, replication role and logical replication"
 );
@@ -304,7 +311,7 @@ my $slotname = 'test_read_replication_slot_physical';
 ($ret, $stdout, $stderr) = $node_primary->psql(
 	'postgres',
 	'READ_REPLICATION_SLOT non_existent_slot;',
-	extra_params => [ '-d', $connstr_rep ]);
+	extra_params => [ '--dbname' => $connstr_rep ]);
 ok($ret == 0, "READ_REPLICATION_SLOT exit code 0 on success");
 like($stdout, qr/^\|\|$/,
 	"READ_REPLICATION_SLOT returns NULL values if slot does not exist");
@@ -312,12 +319,12 @@ like($stdout, qr/^\|\|$/,
 $node_primary->psql(
 	'postgres',
 	"CREATE_REPLICATION_SLOT $slotname PHYSICAL RESERVE_WAL;",
-	extra_params => [ '-d', $connstr_rep ]);
+	extra_params => [ '--dbname' => $connstr_rep ]);
 
 ($ret, $stdout, $stderr) = $node_primary->psql(
 	'postgres',
 	"READ_REPLICATION_SLOT $slotname;",
-	extra_params => [ '-d', $connstr_rep ]);
+	extra_params => [ '--dbname' => $connstr_rep ]);
 ok($ret == 0, "READ_REPLICATION_SLOT success with existing slot");
 like($stdout, qr/^physical\|[^|]*\|1$/,
 	"READ_REPLICATION_SLOT returns tuple with slot information");
@@ -325,9 +332,22 @@ like($stdout, qr/^physical\|[^|]*\|1$/,
 $node_primary->psql(
 	'postgres',
 	"DROP_REPLICATION_SLOT $slotname;",
-	extra_params => [ '-d', $connstr_rep ]);
+	extra_params => [ '--dbname' => $connstr_rep ]);
 
 note "switching to physical replication slot";
+
+# Wait for the physical WAL sender to update its IO statistics.  This is
+# done before the next restart, which would force a flush of its stats, and
+# far enough from the reset done above to not impact the run time.
+$node_primary->poll_query_until(
+	'postgres',
+	qq[SELECT sum(reads) > 0
+       FROM pg_catalog.pg_stat_io
+       WHERE backend_type = 'walsender'
+       AND object = 'wal']
+  )
+  or die
+  "Timed out while waiting for the walsender to update its IO statistics";
 
 # Switch to using a physical replication slot. We can do this without a new
 # backup since physical slots can go backwards if needed. Do so on both
@@ -506,6 +526,13 @@ $node_standby_2->append_conf('postgresql.conf', "primary_slot_name = ''");
 $node_standby_2->enable_streaming($node_primary);
 $node_standby_2->reload;
 
+# The WAL receiver should have generated some IO statistics.
+my $stats_reads = $node_standby_1->safe_psql(
+	'postgres',
+	qq{SELECT sum(writes) > 0 FROM pg_stat_io
+   WHERE backend_type = 'walreceiver' AND object = 'wal'});
+is($stats_reads, 't', "WAL receiver generates statistics for WAL writes");
+
 # be sure do not streaming from cascade
 $node_standby_1->stop;
 
@@ -566,8 +593,11 @@ my $connstr = $node_primary->connstr('postgres') . " replication=database";
 # a replication command and a SQL command.
 $node_primary->command_fails_like(
 	[
-		'psql', '-X', '-c', "SELECT pg_backup_start('backup', true)",
-		'-c', 'BASE_BACKUP', '-d', $connstr
+		'psql',
+		'--no-psqlrc',
+		'--command' => "SELECT pg_backup_start('backup', true)",
+		'--command' => 'BASE_BACKUP',
+		'--dbname' => $connstr
 	],
 	qr/a backup is already in progress in this session/,
 	'BASE_BACKUP cannot run in session already running backup');
@@ -584,16 +614,14 @@ my $sigchld_bb_timeout =
 my ($sigchld_bb_stdin, $sigchld_bb_stdout, $sigchld_bb_stderr) = ('', '', '');
 my $sigchld_bb = IPC::Run::start(
 	[
-		'psql', '-X', '-c', "BASE_BACKUP (CHECKPOINT 'fast', MAX_RATE 32);",
-		'-c', 'SELECT pg_backup_stop()',
-		'-d', $connstr
+		'psql', '--no-psqlrc',
+		'--command' => "BASE_BACKUP (CHECKPOINT 'fast', MAX_RATE 32);",
+		'--command' => 'SELECT pg_backup_stop()',
+		'--dbname' => $connstr
 	],
-	'<',
-	\$sigchld_bb_stdin,
-	'>',
-	\$sigchld_bb_stdout,
-	'2>',
-	\$sigchld_bb_stderr,
+	'<' => \$sigchld_bb_stdin,
+	'>' => \$sigchld_bb_stdout,
+	'2>' => \$sigchld_bb_stderr,
 	$sigchld_bb_timeout);
 
 # The cancellation is issued once the database files are streamed and

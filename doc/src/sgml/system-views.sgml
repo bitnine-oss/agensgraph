@@ -52,6 +52,11 @@
 
     <tbody>
      <row>
+      <entry><link linkend="view-pg-aios"><structname>pg_aios</structname></link></entry>
+      <entry>In-use asynchronous IO handles</entry>
+     </row>
+
+     <row>
       <entry><link linkend="view-pg-available-extensions"><structname>pg_available_extensions</structname></link></entry>
       <entry>available extensions</entry>
      </row>
@@ -177,6 +182,11 @@
      </row>
 
      <row>
+      <entry><link linkend="view-pg-shmem-allocations-numa"><structname>pg_shmem_allocations_numa</structname></link></entry>
+      <entry>NUMA node mappings for shared memory allocations</entry>
+     </row>
+
+     <row>
       <entry><link linkend="view-pg-stats"><structname>pg_stats</structname></link></entry>
       <entry>planner statistics</entry>
      </row>
@@ -229,6 +239,295 @@
     </tbody>
    </tgroup>
   </table>
+ </sect1>
+
+ <sect1 id="view-pg-aios">
+  <title><structname>pg_aios</structname></title>
+
+  <indexterm zone="view-pg-aios">
+   <primary>pg_aios</primary>
+  </indexterm>
+
+  <para>
+   The <structname>pg_aios</structname> view lists all <xref
+   linkend="glossary-aio"/> handles that are currently in-use.  An I/O handle
+   is used to reference an I/O operation that is being prepared, executed or
+   is in the process of completing.  <structname>pg_aios</structname> contains
+   one row for each I/O handle.
+  </para>
+
+  <para>
+   This view is mainly useful for developers of
+   <productname>PostgreSQL</productname>, but may also be useful when tuning
+   <productname>PostgreSQL</productname>.
+  </para>
+
+  <table>
+   <title><structname>pg_aios</structname> Columns</title>
+   <tgroup cols="1">
+    <thead>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       Column Type
+      </para>
+      <para>
+       Description
+      </para></entry>
+     </row>
+    </thead>
+
+    <tbody>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>pid</structfield> <type>int4</type>
+      </para>
+      <para>
+       Process ID of the server process that is issuing this I/O.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>io_id</structfield> <type>int4</type>
+      </para>
+      <para>
+       Identifier of the I/O handle. Handles are reused once the I/O
+       completed (or if the handle is released before I/O is started). On reuse
+       <link linkend="view-pg-aios-io-generation">
+        <structname>pg_aios</structname>.<structfield>io_generation</structfield>
+       </link>
+       is incremented.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry" id="view-pg-aios-io-generation"><para role="column_definition">
+       <structfield>io_generation</structfield> <type>int8</type>
+      </para>
+      <para>
+       Generation of the I/O handle.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>state</structfield> <type>text</type>
+      </para>
+      <para>
+       State of the I/O handle:
+       <itemizedlist>
+        <listitem>
+         <para>
+          <literal>HANDED_OUT</literal>, referenced by code but not yet used
+         </para>
+        </listitem>
+        <listitem>
+         <para>
+          <literal>DEFINED</literal>, information necessary for execution is known
+         </para>
+        </listitem>
+        <listitem>
+         <para>
+          <literal>STAGED</literal>, ready for execution
+         </para>
+        </listitem>
+        <listitem>
+         <para>
+          <literal>SUBMITTED</literal>, submitted for execution
+         </para>
+        </listitem>
+        <listitem>
+         <para>
+          <literal>COMPLETED_IO</literal>, finished, but result has not yet been processed
+         </para>
+        </listitem>
+        <listitem>
+         <para>
+          <literal>COMPLETED_SHARED</literal>, shared completion processing completed
+         </para>
+        </listitem>
+        <listitem>
+         <para>
+          <literal>COMPLETED_LOCAL</literal>, backend local completion processing completed
+         </para>
+        </listitem>
+       </itemizedlist>
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>operation</structfield> <type>text</type>
+      </para>
+      <para>
+       Operation performed using the I/O handle:
+       <itemizedlist>
+        <listitem>
+         <para>
+          <literal>invalid</literal>, not yet known
+         </para>
+        </listitem>
+        <listitem>
+         <para>
+          <literal>readv</literal>, a vectored read
+         </para>
+        </listitem>
+        <listitem>
+         <para>
+          <literal>writev</literal>, a vectored write
+         </para>
+        </listitem>
+       </itemizedlist>
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>off</structfield> <type>int8</type>
+      </para>
+      <para>
+       Offset of the I/O operation.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>length</structfield> <type>int8</type>
+      </para>
+      <para>
+       Length of the I/O operation.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>target</structfield> <type>text</type>
+      </para>
+      <para>
+       What kind of object is the I/O targeting:
+       <itemizedlist spacing="compact">
+        <listitem>
+         <para>
+          <literal>smgr</literal>, I/O on relations
+         </para>
+        </listitem>
+       </itemizedlist>
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>handle_data_len</structfield> <type>int2</type>
+      </para>
+      <para>
+       Length of the data associated with the I/O operation. For I/O to/from
+       <xref linkend="guc-shared-buffers"/> and <xref
+       linkend="guc-temp-buffers"/>, this indicates the number of buffers the
+       I/O is operating on.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>raw_result</structfield> <type>int4</type>
+      </para>
+      <para>
+       Low-level result of the I/O operation, or NULL if the operation has not
+       yet completed.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>result</structfield> <type>text</type>
+      </para>
+      <para>
+       High-level result of the I/O operation:
+       <itemizedlist>
+        <listitem>
+         <para>
+          <literal>UNKNOWN</literal> means that the result of the
+          operation is not yet known.
+         </para>
+        </listitem>
+        <listitem>
+         <para>
+          <literal>OK</literal> means the I/O completed successfully.
+         </para>
+        </listitem>
+        <listitem>
+         <para>
+          <literal>PARTIAL</literal> means that the I/O completed without
+          error, but did not process all data. Commonly callers will need to
+          retry and perform the remainder of the work in a separate I/O.
+         </para>
+        </listitem>
+        <listitem>
+         <para>
+          <literal>WARNING</literal> means that the I/O completed without
+          error, but that execution of the IO triggered a warning. E.g. when
+          encountering a corrupted buffer with <xref
+          linkend="guc-zero-damaged-pages"/> enabled.
+         </para>
+        </listitem>
+        <listitem>
+         <para>
+          <literal>ERROR</literal> means the I/O failed with an error.
+         </para>
+        </listitem>
+       </itemizedlist>
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>target_desc</structfield> <type>text</type>
+      </para>
+      <para>
+       Description of what the I/O operation is targeting.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>f_sync</structfield> <type>bool</type>
+      </para>
+      <para>
+       Flag indicating whether the I/O is executed synchronously.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>f_localmem</structfield> <type>bool</type>
+      </para>
+      <para>
+       Flag indicating whether the I/O references process local memory.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>f_buffered</structfield> <type>bool</type>
+      </para>
+      <para>
+       Flag indicating whether the I/O is buffered I/O.
+      </para></entry>
+     </row>
+
+    </tbody>
+   </tgroup>
+  </table>
+
+  <para>
+   The <structname>pg_aios</structname> view is read-only.
+  </para>
+
+  <para>
+   By default, the <structname>pg_aios</structname> view can be read only by
+   superusers or roles with privileges of the
+   <literal>pg_read_all_stats</literal> role.
+  </para>
  </sect1>
 
  <sect1 id="view-pg-available-extensions">
@@ -483,10 +782,10 @@
 
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>parent</structfield> <type>text</type>
+       <structfield>type</structfield> <type>text</type>
       </para>
       <para>
-       Name of the parent of this memory context
+       Type of the memory context
       </para></entry>
      </row>
 
@@ -495,7 +794,22 @@
        <structfield>level</structfield> <type>int4</type>
       </para>
       <para>
-       Distance from TopMemoryContext in context tree
+       The 1-based level of the context in the memory context hierarchy. The
+       level of a context also shows the position of that context in the
+       <structfield>path</structfield> column.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>path</structfield> <type>int4[]</type>
+      </para>
+      <para>
+       Array of transient numerical identifiers to describe the memory
+       context hierarchy. The first element is for
+       <literal>TopMemoryContext</literal>, subsequent elements contain
+       intermediate parents and the final element contains the identifier for
+       the current context.
       </para></entry>
      </row>
 
@@ -551,6 +865,29 @@
    By default, the <structname>pg_backend_memory_contexts</structname> view can be
    read only by superusers or roles with the privileges of the
    <literal>pg_read_all_stats</literal> role.
+  </para>
+
+  <para>
+   Since memory contexts are created and destroyed during the running of a
+   query, the identifiers stored in the <structfield>path</structfield> column
+   can be unstable between multiple invocations of the view in the same query.
+   The example below demonstrates an effective usage of this column and
+   calculates the total number of bytes used by
+   <literal>CacheMemoryContext</literal> and all of its children:
+
+<programlisting>
+WITH memory_contexts AS (
+    SELECT * FROM pg_backend_memory_contexts
+)
+SELECT sum(c1.total_bytes)
+FROM memory_contexts c1, memory_contexts c2
+WHERE c2.name = 'CacheMemoryContext'
+AND c1.path[c2.level] = c2.path[c2.level];
+</programlisting>
+
+   The <link linkend="queries-with">Common Table Expression</link> is used
+   to ensure the context IDs in the <structfield>path</structfield> column
+   match between both evaluations of the view.
   </para>
  </sect1>
 
@@ -2397,7 +2734,7 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
        <structfield>active</structfield> <type>bool</type>
       </para>
       <para>
-       True if this slot is currently actively being used
+       True if this slot is currently being streamed
       </para></entry>
      </row>
 
@@ -2406,9 +2743,8 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
        <structfield>active_pid</structfield> <type>int4</type>
       </para>
       <para>
-       The process ID of the session using this slot if the slot
-       is currently actively being used. <literal>NULL</literal> if
-       inactive.
+       The process ID of the session streaming data for this slot.
+       <literal>NULL</literal> if inactive.
       </para></entry>
      </row>
 
@@ -2525,18 +2861,31 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
 
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>two_phase_at</structfield> <type>pg_lsn</type>
+      </para>
+      <para>
+       The address (<literal>LSN</literal>) from which the decoding of prepared
+       transactions is enabled. <literal>NULL</literal> for logical slots
+       where <structfield>two_phase</structfield> is false and for physical slots.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
        <structfield>inactive_since</structfield> <type>timestamptz</type>
       </para>
       <para>
-        The time since the slot has become inactive.
-        <literal>NULL</literal> if the slot is currently being used.
-        Note that for slots on the standby that are being synced from a
+        The time when the slot became inactive. <literal>NULL</literal> if the
+        slot is currently being streamed. If the slot becomes invalid,
+        this value will never be updated.
+        For standby slots that are being synced from a
         primary server (whose <structfield>synced</structfield> field is
-        <literal>true</literal>), the
-        <structfield>inactive_since</structfield> indicates the last
-        synchronization (see
-        <xref linkend="logicaldecoding-replication-slots-synchronization"/>)
-        time.
+        <literal>true</literal>), the <structfield>inactive_since</structfield>
+        indicates the time when slot synchronization (see <xref
+        linkend="logicaldecoding-replication-slots-synchronization"/>)
+        was most recently stopped.  <literal>NULL</literal> if the slot
+        has always been synchronized. This helps standby slots track when
+        synchronization was interrupted.
       </para></entry>
      </row>
 
@@ -2548,7 +2897,7 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
        True if this logical slot conflicted with recovery (and so is now
        invalidated). When this column is true, check
        <structfield>invalidation_reason</structfield> column for the conflict
-       reason. Always NULL for physical slots.
+       reason. Always <literal>NULL</literal> for physical slots.
       </para></entry>
      </row>
 
@@ -2578,6 +2927,13 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
           <literal>wal_level_insufficient</literal> means that the
           primary doesn't have a <xref linkend="guc-wal-level"/> sufficient to
           perform logical decoding.  It is set only for logical slots.
+         </para>
+        </listitem>
+        <listitem>
+         <para>
+          <literal>idle_timeout</literal> means that the slot has remained
+          idle longer than the configured
+          <xref linkend="guc-idle-replication-slot-timeout"/> duration.
          </para>
         </listitem>
        </itemizedlist>
@@ -3576,7 +3932,7 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
        <structfield>passwd</structfield> <type>text</type>
       </para>
       <para>
-       Password (possibly encrypted); null if none.  See
+       Encrypted password; null if none.  See
        <link linkend="catalog-pg-authid"><structname>pg_authid</structname></link>
        for details of how encrypted passwords are stored.
       </para></entry>
@@ -3695,6 +4051,96 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
 
   <para>
    By default, the <structname>pg_shmem_allocations</structname> view can be
+   read only by superusers or roles with privileges of the
+   <literal>pg_read_all_stats</literal> role.
+  </para>
+ </sect1>
+
+ <sect1 id="view-pg-shmem-allocations-numa">
+  <title><structname>pg_shmem_allocations_numa</structname></title>
+
+  <indexterm zone="view-pg-shmem-allocations-numa">
+   <primary>pg_shmem_allocations_numa</primary>
+  </indexterm>
+
+  <para>
+   The <structname>pg_shmem_allocations_numa</structname> shows how shared
+   memory allocations in the server's main shared memory segment are distributed
+   across NUMA nodes. This includes both memory allocated by
+   <productname>PostgreSQL</productname> itself and memory allocated
+   by extensions using the mechanisms detailed in
+   <xref linkend="xfunc-shared-addin" />. This view will output multiple rows
+   for each of the shared memory segments provided that they are spread across
+   multiple NUMA nodes. This view should not be queried by monitoring systems
+   as it is very slow and may end up allocating shared memory in case it was not
+   used earlier.
+   Current limitation for this view is that won't show anonymous shared memory
+   allocations.
+  </para>
+
+  <para>
+   Note that this view does not include memory allocated using the dynamic
+   shared memory infrastructure.
+  </para>
+
+  <warning>
+    <para>
+      When determining the <acronym>NUMA</acronym> node, the view touches
+      all memory pages for the shared memory segment. This will force
+      allocation of the shared memory, if it wasn't allocated already,
+      and the memory may get allocated in a single <acronym>NUMA</acronym>
+      node (depending on system configuration).
+    </para>
+  </warning>
+
+  <table>
+   <title><structname>pg_shmem_allocations_numa</structname> Columns</title>
+   <tgroup cols="1">
+    <thead>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       Column Type
+      </para>
+      <para>
+       Description
+      </para></entry>
+     </row>
+    </thead>
+
+    <tbody>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>name</structfield> <type>text</type>
+      </para>
+      <para>
+       The name of the shared memory allocation.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>numa_node</structfield> <type>int4</type>
+      </para>
+      <para>
+      ID of <acronym>NUMA</acronym> node
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>size</structfield> <type>int8</type>
+      </para>
+      <para>
+       Size of the allocation on this particular NUMA memory node in bytes
+      </para></entry>
+     </row>
+
+    </tbody>
+   </tgroup>
+  </table>
+
+  <para>
+   By default, the <structname>pg_shmem_allocations_numa</structname> view can be
    read only by superusers or roles with privileges of the
    <literal>pg_read_all_stats</literal> role.
   </para>
@@ -3907,7 +4353,7 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
        range type column. (Null for non-range types.)
       </para>
       <para>
-       This histogram is calculated using the <literal>subtype_diff</literal>
+       This histogram is calculated using the <function>subtype_diff</function>
        range function regardless of whether range bounds are inclusive.
       </para></entry>
      </row>
@@ -4526,7 +4972,9 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
    The view <structname>pg_timezone_abbrevs</structname> provides a list
    of time zone abbreviations that are currently recognized by the datetime
    input routines.  The contents of this view change when the
-   <xref linkend="guc-timezone-abbreviations"/> run-time parameter is modified.
+   <xref linkend="guc-timezone"/> or
+   <xref linkend="guc-timezone-abbreviations"/> run-time parameters are
+   modified.
   </para>
 
   <table>

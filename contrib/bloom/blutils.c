@@ -3,7 +3,7 @@
  * blutils.c
  *		Bloom index utilities.
  *
- * Portions Copyright (c) 2016-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2016-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1990-1993, Regents of the University of California
  *
  * IDENTIFICATION
@@ -17,14 +17,11 @@
 #include "access/generic_xlog.h"
 #include "access/reloptions.h"
 #include "bloom.h"
-#include "catalog/index.h"
 #include "commands/vacuum.h"
-#include "miscadmin.h"
 #include "storage/bufmgr.h"
-#include "storage/freespace.h"
 #include "storage/indexfsm.h"
-#include "storage/lmgr.h"
 #include "utils/memutils.h"
+#include "varatt.h"
 
 /* Signature dealing macros - note i is assumed to be of type int */
 #define GETWORD(x,i) ( *( (BloomSignatureWord *)(x) + ( (i) / SIGNWORDBITS ) ) )
@@ -112,6 +109,9 @@ blhandler(PG_FUNCTION_ARGS)
 	amroutine->amoptsprocnum = BLOOM_OPTIONS_PROC;
 	amroutine->amcanorder = false;
 	amroutine->amcanorderbyop = false;
+	amroutine->amcanhash = false;
+	amroutine->amconsistentequality = false;
+	amroutine->amconsistentordering = false;
 	amroutine->amcanbackward = false;
 	amroutine->amcanunique = false;
 	amroutine->amcanmulticol = true;
@@ -137,6 +137,7 @@ blhandler(PG_FUNCTION_ARGS)
 	amroutine->amvacuumcleanup = blvacuumcleanup;
 	amroutine->amcanreturn = NULL;
 	amroutine->amcostestimate = blcostestimate;
+	amroutine->amgettreeheight = NULL;
 	amroutine->amoptions = bloptions;
 	amroutine->amproperty = NULL;
 	amroutine->ambuildphasename = NULL;
@@ -152,6 +153,8 @@ blhandler(PG_FUNCTION_ARGS)
 	amroutine->amestimateparallelscan = NULL;
 	amroutine->aminitparallelscan = NULL;
 	amroutine->amparallelrescan = NULL;
+	amroutine->amtranslatestrategy = NULL;
+	amroutine->amtranslatecmptype = NULL;
 
 	PG_RETURN_POINTER(amroutine);
 }
@@ -201,7 +204,7 @@ initBloomState(BloomState *state, Relation index)
 
 		UnlockReleaseBuffer(buffer);
 
-		index->rd_amcache = (void *) opts;
+		index->rd_amcache = opts;
 	}
 
 	memcpy(&state->opts, index->rd_amcache, sizeof(state->opts));

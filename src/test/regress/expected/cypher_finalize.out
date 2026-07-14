@@ -5,3 +5,17 @@ CREATE ROLE another_user;
 CREATE USER another_user_01 WITH PASSWORD 'a';
 GRANT USAGE ON SCHEMA ddl TO another_user;
 ALTER DATABASE regression SET GRAPH_PATH TO ddl;
+-- teardown: leave the regression database self-contained so the pg_dump/
+-- pg_restore and pg_upgrade round-trips in src/bin/pg_upgrade can restore it
+-- into a freshly initialized cluster, which has none of the roles used here.
+-- This is the last graph test in the schedule, so it drops the ddl graph and
+-- graph_role that cypher_ddl leaves in place for this test, clears the
+-- database-level graph_path that points at ddl, and drops the roles created
+-- above.  Silence the cascade notices so the dropped-object list stays stable.
+ALTER DATABASE regression RESET GRAPH_PATH;
+SET client_min_messages = warning;
+DROP GRAPH ddl CASCADE;
+DROP ROLE graph_role;
+DROP ROLE another_user_01;
+DROP ROLE another_user;
+RESET client_min_messages;

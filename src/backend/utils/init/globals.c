@@ -3,7 +3,7 @@
  * globals.c
  *	  global variable declarations
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,7 +22,9 @@
 #include "libpq/libpq-be.h"
 #include "libpq/pqcomm.h"
 #include "miscadmin.h"
+#include "postmaster/postmaster.h"
 #include "storage/procnumber.h"
+#include "storage/procsignal.h"
 
 
 ProtocolVersion FrontendProtocol;
@@ -47,7 +49,8 @@ pg_time_t	MyStartTime;
 TimestampTz MyStartTimestamp;
 struct ClientSocket *MyClientSocket;
 struct Port *MyProcPort;
-int32		MyCancelKey;
+uint8		MyCancelKey[MAX_CANCEL_KEY_LENGTH];
+int			MyCancelKeyLength = 0;
 int			MyPMChildSlot;
 
 /*
@@ -152,10 +155,6 @@ int			VacuumCostPageMiss = 2;
 int			VacuumCostPageDirty = 20;
 int			VacuumCostLimit = 200;
 double		VacuumCostDelay = 0;
-
-int64		VacuumPageHit = 0;
-int64		VacuumPageMiss = 0;
-int64		VacuumPageDirty = 0;
 
 int			VacuumCostBalance = 0;	/* working state for vacuum */
 bool		VacuumCostActive = false;

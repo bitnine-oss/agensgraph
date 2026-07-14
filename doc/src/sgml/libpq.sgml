@@ -1,6 +1,6 @@
 <!-- doc/src/sgml/libpq.sgml -->
 
-<chapter id="libpq">
+<chapter id="libpq" xreflabel="libpq">
  <title><application>libpq</application> &mdash; C Library</title>
 
  <indexterm zone="libpq">
@@ -378,7 +378,7 @@ PostgresPollingStatusType PQconnectPoll(PGconn *conn);
       <para>
        At any time during connection, the status of the connection can be
        checked by calling <xref linkend="libpq-PQstatus"/>. If this call returns <symbol>CONNECTION_BAD</symbol>, then the
-       connection procedure has failed; if the call returns <function>CONNECTION_OK</function>, then the
+       connection procedure has failed; if the call returns <symbol>CONNECTION_OK</symbol>, then the
        connection is ready.  Both of these states are equally detectable
        from the return value of <function>PQconnectPoll</function>, described above. Other states might also occur
        during (and only during) an asynchronous connection procedure. These
@@ -522,7 +522,7 @@ switch(PQstatus(conn))
        sequence described in the documentation of
        <xref linkend="libpq-PQconnectStartParams"/>.
 <synopsis>
-typedef pg_int64 pg_usec_time_t;
+typedef int64_t pg_usec_time_t;
 
 int PQsocketPoll(int sock, int forRead, int forWrite,
                  pg_usec_time_t end_time);
@@ -545,9 +545,9 @@ int PQsocketPoll(int sock, int forRead, int forWrite,
        the Unix epoch (that is, <type>time_t</type> times 1 million).
        Timeout is infinite if <parameter>end_time</parameter>
        is <literal>-1</literal>.  Timeout is immediate (no blocking) if
-       end_time is <literal>0</literal> (or indeed, any time before now).
-       Timeout values can be calculated conveniently by adding the desired
-       number of microseconds to the result of
+       <parameter>end_time</parameter> is <literal>0</literal> (or indeed, any
+       time before now).  Timeout values can be calculated conveniently by
+       adding the desired number of microseconds to the result of
        <xref linkend="libpq-PQgetCurrentTimeUSec"/>.
        Note that the underlying system calls may have less than microsecond
        precision, so that the actual delay may be imprecise.
@@ -1341,6 +1341,15 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
            <para>
             The server must request MD5 hashed password authentication.
            </para>
+           <warning>
+            <para>
+             Support for MD5-encrypted passwords is deprecated and will be
+             removed in a future release of
+             <productname>PostgreSQL</productname>.  Refer to
+             <xref linkend="auth-password"/> for details about migrating to
+             another password type.
+            </para>
+           </warning>
           </listitem>
          </varlistentry>
 
@@ -1372,6 +1381,15 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
            <para>
             The server must successfully complete a SCRAM-SHA-256 authentication
             exchange with the client.
+           </para>
+          </listitem>
+         </varlistentry>
+
+         <varlistentry>
+          <term><literal>oauth</literal></term>
+          <listitem>
+           <para>
+            The server must request an OAuth bearer token from the client.
            </para>
           </listitem>
          </varlistentry>
@@ -1830,11 +1848,12 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
           <term><literal>direct</literal></term>
           <listitem>
            <para>
-             start SSL handshake directly after establishing the TCP/IP
-             connection.  This is only allowed with sslmode=require or higher,
-             because the weaker settings could lead to unintended fallback to
-             plaintext authentication when the server does not support direct
-             SSL handshake.
+            start SSL handshake directly after establishing the TCP/IP
+            connection.  This is only allowed with
+            <literal>sslmode=require</literal> or higher, because the weaker
+            settings could lead to unintended fallback to plaintext
+            authentication when the server does not support direct SSL
+            handshake.
            </para>
           </listitem>
          </varlistentry>
@@ -1899,6 +1918,30 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       </listitem>
      </varlistentry>
 
+     <varlistentry id="libpq-connect-sslkeylogfile" xreflabel="sslkeylogfile">
+      <term><literal>sslkeylogfile</literal></term>
+      <listitem>
+       <para>
+        This parameter specifies the location where <application>libpq</application>
+        will log keys used in this SSL context.  This is useful for debugging
+        <productname>PostgreSQL</productname> protocol interactions or client
+        connections using network inspection tools like
+        <productname>Wireshark</productname>.  This parameter is ignored if an
+        SSL connection is not made, or if <productname>LibreSSL</productname>
+        is used (<productname>LibreSSL</productname> does not support key
+        logging).  Keys are logged using the <productname>NSS</productname>
+        format.
+        <warning>
+         <para>
+          Key logging will expose potentially sensitive information in the
+          keylog file.  Keylog files should be handled with the same care as
+          <xref linkend="libpq-connect-sslkey" /> files.
+         </para>
+        </warning>
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="libpq-connect-sslpassword" xreflabel="sslpassword">
       <term><literal>sslpassword</literal></term>
       <listitem>
@@ -1913,7 +1956,7 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
         <literal>Enter PEM pass phrase:</literal>
         prompt that <productname>OpenSSL</productname> will emit by default
         when an encrypted client certificate key is provided to
-        <literal>libpq</literal>.
+        <application>libpq</application>.
        </para>
        <para>
         If the key is not encrypted this parameter is ignored. The parameter
@@ -1999,7 +2042,7 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
        </para>
        <para>
         The special value <literal>system</literal> may be specified instead, in
-        which case the system's trusted CA roots will be loaded. The exact
+        which case the trusted CA roots from the SSL implementation will be loaded. The exact
         locations of these root certificates differ by SSL implementation and
         platform. For <productname>OpenSSL</productname> in particular, the
         locations may be further modified by the <envar>SSL_CERT_DIR</envar>
@@ -2143,6 +2186,54 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       </listitem>
      </varlistentry>
 
+     <varlistentry id="libpq-connect-min-protocol-version" xreflabel="min_protocol_version">
+      <term><literal>min_protocol_version</literal></term>
+      <listitem>
+       <para>
+        Specifies the minimum protocol version to allow for the connection.
+        The default is to allow any version of the
+        <productname>PostgreSQL</productname> protocol supported by libpq,
+        which currently means <literal>3.0</literal>. If the server
+        does not support at least this protocol version the connection will be
+        closed.
+       </para>
+
+       <para>
+        The current supported values are
+        <literal>3.0</literal>, <literal>3.2</literal>,
+        and <literal>latest</literal>. The <literal>latest</literal> value is
+        equivalent to the latest protocol version supported by the libpq
+        version being used, which is currently <literal>3.2</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="libpq-connect-max-protocol-version" xreflabel="max_protocol_version">
+      <term><literal>max_protocol_version</literal></term>
+      <listitem>
+       <para>
+        Specifies the protocol version to request from the server.
+        The default is to use version <literal>3.0</literal> of the
+        <productname>PostgreSQL</productname> protocol, unless the connection
+        string specifies a feature that relies on a higher protocol version,
+        in which case the latest version supported by libpq is used. If the
+        server does not support the protocol version requested by the client,
+        the connection is automatically downgraded to a lower minor protocol
+        version that the server supports. After the connection attempt has
+        completed you can use <xref linkend="libpq-PQprotocolVersion"/> to
+        find out which exact protocol version was negotiated.
+       </para>
+
+       <para>
+        The current supported values are
+        <literal>3.0</literal>, <literal>3.2</literal>,
+        and <literal>latest</literal>. The <literal>latest</literal> value is
+        equivalent to the latest protocol version supported by the libpq
+        version being used, which is currently <literal>3.2</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="libpq-connect-krbsrvname" xreflabel="krbsrvname">
       <term><literal>krbsrvname</literal></term>
       <listitem>
@@ -2185,6 +2276,34 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
         <literal>0</literal> which means credentials will not be forwarded
         to the server.  Set this to <literal>1</literal> to have credentials
         forwarded when possible.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="libpq-connect-scram-client-key" xreflabel="scram_client_key">
+      <term><literal>scram_client_key</literal></term>
+      <listitem>
+       <para>
+        The base64-encoded SCRAM client key.  This can be used by foreign-data
+        wrappers or similar middleware to enable pass-through SCRAM
+        authentication. See <xref
+        linkend="postgres-fdw-options-connection-management"/> for one such
+        implementation.  It is not meant to be specified directly by users or
+        client applications.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="libpq-connect-scram-server-key" xreflabel="scram_server_key">
+      <term><literal>scram_server_key</literal></term>
+      <listitem>
+       <para>
+        The base64-encoded SCRAM server key.  This can be used by foreign-data
+        wrappers or similar middleware to enable pass-through SCRAM
+        authentication. See <xref
+        linkend="postgres-fdw-options-connection-management"/> for one such
+        implementation.  It is not meant to be specified directly by users or
+        client applications.
        </para>
       </listitem>
      </varlistentry>
@@ -2335,6 +2454,107 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
        </para>
       </listitem>
      </varlistentry>
+
+     <varlistentry id="libpq-connect-oauth-issuer" xreflabel="oauth_issuer">
+      <term><literal>oauth_issuer</literal></term>
+      <listitem>
+       <para>
+        The HTTPS URL of a trusted issuer to contact if the server requests an
+        OAuth token for the connection. This parameter is required for all OAuth
+        connections; it should exactly match the <literal>issuer</literal>
+        setting in <link linkend="auth-oauth">the server's HBA configuration</link>.
+       </para>
+       <para>
+        As part of the standard authentication handshake, <application>libpq</application>
+        will ask the server for a <emphasis>discovery document:</emphasis> a URL
+        providing a set of OAuth configuration parameters. The server must
+        provide a URL that is directly constructed from the components of the
+        <literal>oauth_issuer</literal>, and this value must exactly match the
+        issuer identifier that is declared in the discovery document itself, or
+        the connection will fail. This is required to prevent a class of
+        <ulink url="https://mailarchive.ietf.org/arch/msg/oauth/JIVxFBGsJBVtm7ljwJhPUm3Fr-w/">
+        "mix-up attacks"</ulink> on OAuth clients.
+       </para>
+       <para>
+        You may also explicitly set <literal>oauth_issuer</literal> to the
+        <literal>/.well-known/</literal> URI used for OAuth discovery. In this
+        case, if the server asks for a different URL, the connection will fail,
+        but a <link linkend="libpq-oauth-authdata-hooks">custom OAuth flow</link>
+        may be able to speed up the standard handshake by using previously
+        cached tokens. (In this case, it is recommended that
+        <xref linkend="libpq-connect-oauth-scope"/> be set as well, since the
+        client will not have a chance to ask the server for a correct scope
+        setting, and the default scopes for a token may not be sufficient to
+        connect.) <application>libpq</application> currently supports the
+        following well-known endpoints:
+        <itemizedlist spacing="compact">
+         <listitem><para><literal>/.well-known/openid-configuration</literal></para></listitem>
+         <listitem><para><literal>/.well-known/oauth-authorization-server</literal></para></listitem>
+        </itemizedlist>
+       </para>
+       <warning>
+        <para>
+         Issuers are highly privileged during the OAuth connection handshake. As
+         a rule of thumb, if you would not trust the operator of a URL to handle
+         access to your servers, or to impersonate you directly, that URL should
+         not be trusted as an <literal>oauth_issuer</literal>.
+        </para>
+       </warning>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="libpq-connect-oauth-client-id" xreflabel="oauth_client_id">
+      <term><literal>oauth_client_id</literal></term>
+      <listitem>
+       <para>
+        An OAuth 2.0 client identifier, as issued by the authorization server.
+        If the <productname>PostgreSQL</productname> server
+        <link linkend="auth-oauth">requests an OAuth token</link> for the
+        connection (and if no <link linkend="libpq-oauth-authdata-hooks">custom
+        OAuth hook</link> is installed to provide one), then this parameter must
+        be set; otherwise, the connection will fail.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="libpq-connect-oauth-client-secret" xreflabel="oauth_client_secret">
+      <term><literal>oauth_client_secret</literal></term>
+      <listitem>
+       <para>
+        The client password, if any, to use when contacting the OAuth
+        authorization server. Whether this parameter is required or not is
+        determined by the OAuth provider; "public" clients generally do not use
+        a secret, whereas "confidential" clients generally do.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="libpq-connect-oauth-scope" xreflabel="oauth_scope">
+      <term><literal>oauth_scope</literal></term>
+      <listitem>
+       <para>
+        The scope of the access request sent to the authorization server,
+        specified as a (possibly empty) space-separated list of OAuth scope
+        identifiers. This parameter is optional and intended for advanced usage.
+       </para>
+       <para>
+        Usually the client will obtain appropriate scope settings from the
+        <productname>PostgreSQL</productname> server. If this parameter is used,
+        the server's requested scope list will be ignored. This can prevent a
+        less-trusted server from requesting inappropriate access scopes from the
+        end user. However, if the client's scope setting does not contain the
+        server's required scopes, the server is likely to reject the issued
+        token, and the connection will fail.
+       </para>
+       <para>
+        The meaning of an empty scope list is provider-dependent. An OAuth
+        authorization server may choose to issue a token with "default scope",
+        whatever that happens to be, or it may reject the token request
+        entirely.
+       </para>
+      </listitem>
+     </varlistentry>
+
     </variablelist>
    </para>
   </sect2>
@@ -2520,6 +2740,26 @@ char *PQport(const PGconn *conn);
      </listitem>
     </varlistentry>
 
+    <varlistentry id="libpq-PQservice">
+     <term><function>PQservice</function><indexterm><primary>PQservice</primary></indexterm></term>
+
+     <listitem>
+      <para>
+       Returns the service of the active connection.
+
+<synopsis>
+char *PQservice(const PGconn *conn);
+</synopsis>
+      </para>
+
+      <para>
+       <xref linkend="libpq-PQservice"/> returns <symbol>NULL</symbol> if the
+       <parameter>conn</parameter> argument is <symbol>NULL</symbol>.
+       Otherwise, if there was no service provided, it returns an empty string.
+      </para>
+     </listitem>
+    </varlistentry>
+
     <varlistentry id="libpq-PQtty">
      <term><function>PQtty</function><indexterm><primary>PQtty</primary></indexterm></term>
 
@@ -2571,14 +2811,14 @@ ConnStatusType PQstatus(const PGconn *conn);
       <para>
        The status can be one of a number of values.  However, only two of
        these are seen outside of an asynchronous connection procedure:
-       <literal>CONNECTION_OK</literal> and
-       <literal>CONNECTION_BAD</literal>. A good connection to the database
-       has the status <literal>CONNECTION_OK</literal>.  A failed
+       <symbol>CONNECTION_OK</symbol> and
+       <symbol>CONNECTION_BAD</symbol>. A good connection to the database
+       has the status <symbol>CONNECTION_OK</symbol>.  A failed
        connection attempt is signaled by status
-       <literal>CONNECTION_BAD</literal>.  Ordinarily, an OK status will
+       <symbol>CONNECTION_BAD</symbol>.  Ordinarily, an OK status will
        remain so until <xref linkend="libpq-PQfinish"/>, but a communications
        failure might result in the status changing to
-       <literal>CONNECTION_BAD</literal> prematurely.  In that case the
+       <symbol>CONNECTION_BAD</symbol> prematurely.  In that case the
        application could try to recover by calling
        <xref linkend="libpq-PQreset"/>.
       </para>
@@ -2643,6 +2883,7 @@ const char *PQparameterStatus(const PGconn *conn, const char *paramName);
         <member><varname>IntervalStyle</varname></member>
         <member><varname>is_superuser</varname></member>
         <member><varname>scram_iterations</varname></member>
+        <member><varname>search_path</varname></member>
         <member><varname>server_encoding</varname></member>
         <member><varname>server_version</varname></member>
         <member><varname>session_authorization</varname></member>
@@ -2652,7 +2893,8 @@ const char *PQparameterStatus(const PGconn *conn, const char *paramName);
        (<varname>default_transaction_read_only</varname> and
        <varname>in_hot_standby</varname> were not reported by releases before
        14; <varname>scram_iterations</varname> was not reported by releases
-       before 16.)
+       before 16; <varname>search_path</varname> was not reported by releases
+       before 18.)
        Note that
        <varname>server_version</varname>,
        <varname>server_encoding</varname> and
@@ -2676,22 +2918,44 @@ const char *PQparameterStatus(const PGconn *conn, const char *paramName);
      </listitem>
     </varlistentry>
 
-    <varlistentry id="libpq-PQprotocolVersion">
-     <term><function>PQprotocolVersion</function><indexterm><primary>PQprotocolVersion</primary></indexterm></term>
+    <varlistentry id="libpq-PQfullProtocolVersion">
+     <term><function>PQfullProtocolVersion</function><indexterm><primary>PQfullProtocolVersion</primary></indexterm></term>
 
      <listitem>
       <para>
        Interrogates the frontend/backend protocol being used.
 <synopsis>
-int PQprotocolVersion(const PGconn *conn);
+int PQfullProtocolVersion(const PGconn *conn);
 </synopsis>
        Applications might wish to use this function to determine whether certain
-       features are supported.  Currently, the possible values are 3
-       (3.0 protocol), or zero (connection bad).  The protocol version will
-       not change after connection startup is complete, but it could
-       theoretically change during a connection reset.  The 3.0 protocol is
-       supported by <productname>PostgreSQL</productname> server versions 7.4
-       and above.
+       features are supported. The result is formed by multiplying the server's
+       major version number by 10000 and adding the minor version number. For
+       example, version 3.2 would be returned as 30002, and version 4.0 would
+       be returned as 40000. Zero is returned if the connection is bad. The 3.0
+       protocol is supported by <productname>PostgreSQL</productname> server
+       versions 7.4 and above.
+      </para>
+      <para>
+       The protocol version will not change after connection startup is
+       complete, but it could theoretically change during a connection reset.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry id="libpq-PQprotocolVersion">
+     <term><function>PQprotocolVersion</function><indexterm><primary>PQprotocolVersion</primary></indexterm></term>
+
+     <listitem>
+      <para>
+       Interrogates the frontend/backend protocol major version.
+<synopsis>
+int PQprotocolVersion(const PGconn *conn);
+</synopsis>
+       Unlike <xref linkend="libpq-PQfullProtocolVersion"/>, this returns only
+       the major protocol version in use, but it is supported by a wider range
+       of libpq releases back to version 7.4. Currently, the possible values are
+       3 (3.0 protocol), or zero (connection bad). Prior to release version
+       14.0, libpq could additionally return 2 (2.0 protocol).
       </para>
      </listitem>
     </varlistentry>
@@ -5070,7 +5334,7 @@ unsigned char *PQunescapeBytea(const unsigned char *from, size_t *to_length);
    <xref linkend="libpq-PQprepare"/>,
    <xref linkend="libpq-PQexecPrepared"/>,
    <xref linkend="libpq-PQdescribePrepared"/>,
-   <xref linkend="libpq-PQdescribePortal"/>
+   <xref linkend="libpq-PQdescribePortal"/>,
    <xref linkend="libpq-PQclosePrepared"/>, and
    <xref linkend="libpq-PQclosePortal"/>
    respectively.
@@ -5310,7 +5574,7 @@ PGresult *PQgetResult(PGconn *conn);
        <literal>PGRES_PIPELINE_SYNC</literal> will be returned.
        The result of the next query after the synchronization point follows
        immediately (that is, no null pointer is returned after
-       the synchronization point.)
+       the synchronization point).
       </para>
 
       <note>
@@ -6364,7 +6628,7 @@ PostgresPollingStatusType PQcancelPoll(PGcancelConn *cancelConn);
        checked by calling <xref linkend="libpq-PQcancelStatus"/>.
        If this call returns <symbol>CONNECTION_BAD</symbol>, then
        the cancel procedure has failed; if the call returns
-       <function>CONNECTION_OK</function>, then cancel request was
+       <symbol>CONNECTION_OK</symbol>, then cancel request was
        successfully dispatched.
        Both of these states are equally detectable from the return value of
        <function>PQcancelPoll</function>, described above.
@@ -6486,15 +6750,15 @@ ConnStatusType PQcancelStatus(const PGcancelConn *cancelConn);
       <para>
        The status can be one of a number of values.  However, only three of
        these are seen outside of an asynchronous cancel procedure:
-       <literal>CONNECTION_ALLOCATED</literal>,
-       <literal>CONNECTION_OK</literal> and
-       <literal>CONNECTION_BAD</literal>. The initial state of a
+       <symbol>CONNECTION_ALLOCATED</symbol>,
+       <symbol>CONNECTION_OK</symbol> and
+       <symbol>CONNECTION_BAD</symbol>. The initial state of a
        <function>PGcancelConn</function> that's successfully created using
-       <xref linkend="libpq-PQcancelCreate"/> is <literal>CONNECTION_ALLOCATED</literal>.
+       <xref linkend="libpq-PQcancelCreate"/> is <symbol>CONNECTION_ALLOCATED</symbol>.
        A cancel request that was successfully dispatched
-       has the status <literal>CONNECTION_OK</literal>.  A failed
+       has the status <symbol>CONNECTION_OK</symbol>.  A failed
        cancel attempt is signaled by status
-       <literal>CONNECTION_BAD</literal>.  An OK status will
+       <symbol>CONNECTION_BAD</symbol>.  An OK status will
        remain so until <xref linkend="libpq-PQcancelFinish"/> or
        <xref linkend="libpq-PQcancelReset"/> is called.
       </para>
@@ -7357,8 +7621,9 @@ int PQputline(PGconn *conn,
         <literal>\.</literal> as a final line to indicate to the server that it had
         finished sending <command>COPY</command> data.  While this still works, it is deprecated and the
         special meaning of <literal>\.</literal> can be expected to be removed in a
-        future release.  It is sufficient to call <xref linkend="libpq-PQendcopy"/> after
-        having sent the actual data.
+        future release.  (It already will misbehave in <literal>CSV</literal>
+        mode.)  It is sufficient to call <xref linkend="libpq-PQendcopy"/>
+        after having sent the actual data.
        </para>
       </note>
      </listitem>
@@ -8018,7 +8283,7 @@ size_t PQresultMemorySize(const PGresult *res);
 
     <listitem>
      <para>
-      Return the version of <productname>libpq</productname> that is being used.
+      Return the version of <application>libpq</application> that is being used.
 <synopsis>
 int PQlibVersion(void);
 </synopsis>
@@ -8269,7 +8534,7 @@ typedef struct
        <parameter>evtInfo</parameter> pointer should be cast to a
        <structname>PGEventRegister *</structname>.  This structure contains a
        <structname>PGconn</structname> that should be in the
-       <literal>CONNECTION_OK</literal> status; guaranteed if one calls
+       <symbol>CONNECTION_OK</symbol> status; guaranteed if one calls
        <xref linkend="libpq-PQregisterEventProc"/> right after obtaining a good
        <structname>PGconn</structname>.  When returning a failure code, all
        cleanup must be performed as no <literal>PGEVT_CONNDESTROY</literal>
@@ -9136,6 +9401,26 @@ myEventProc(PGEventId evtId, void *evtInfo, void *passThrough)
       linkend="libpq-connect-load-balance-hosts"/> connection parameter.
      </para>
     </listitem>
+
+    <listitem>
+     <para>
+      <indexterm>
+       <primary><envar>PGMINPROTOCOLVERSION</envar></primary>
+      </indexterm>
+      <envar>PGMINPROTOCOLVERSION</envar> behaves the same as the <xref
+      linkend="libpq-connect-min-protocol-version"/> connection parameter.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      <indexterm>
+       <primary><envar>PGMAXPROTOCOLVERSION</envar></primary>
+      </indexterm>
+      <envar>PGMAXPROTOCOLVERSION</envar> behaves the same as the <xref
+      linkend="libpq-connect-max-protocol-version"/> connection parameter.
+     </para>
+    </listitem>
    </itemizedlist>
   </para>
 
@@ -9230,7 +9515,9 @@ myEventProc(PGEventId evtId, void *evtInfo, void *passThrough)
    The file <filename>.pgpass</filename> in a user's home directory can
    contain passwords to
    be used if the connection requires a password (and no password has been
-   specified otherwise). On Microsoft Windows the file is named
+   specified otherwise). On Unix systems, the directory can be specified by
+   the <envar>HOME</envar> environment variable, or if undefined, the home
+   directory of the effective user.  On Microsoft Windows the file is named
    <filename>%APPDATA%\postgresql\pgpass.conf</filename> (where
    <filename>%APPDATA%</filename> refers to the Application Data subdirectory in
    the user's profile).
@@ -9293,7 +9580,8 @@ myEventProc(PGEventId evtId, void *evtInfo, void *passThrough)
   <para>
    The connection service file allows libpq connection parameters to be
    associated with a single service name. That service name can then be
-   specified in a libpq connection string, and the associated settings will be
+   specified using the <literal>service</literal> key word
+   in a libpq connection string, and the associated settings will be
    used. This allows connection parameters to be modified without requiring
    a recompile of the libpq-using application. The service name can also be
    specified using the <envar>PGSERVICE</envar> environment variable.
@@ -9556,7 +9844,7 @@ ldap://ldap.acme.com/cn=dbserver,cn=hosts?pgconnectinfo?base?(objectclass=*)
    <para>
     For backwards compatibility with earlier versions of PostgreSQL, if a
     root CA file exists, the behavior of
-    <literal>sslmode</literal>=<literal>require</literal> will be the same
+    <literal>sslmode=require</literal> will be the same
     as that of <literal>verify-ca</literal>, meaning the server certificate
     is validated against the CA. Relying on this behavior is discouraged,
     and applications that need certificate validation should always use
@@ -9863,15 +10151,21 @@ ldap://ldap.acme.com/cn=dbserver,cn=hosts?pgconnectinfo?base?(objectclass=*)
   <title>SSL Library Initialization</title>
 
   <para>
-   If your application initializes <literal>libssl</literal> and/or
-   <literal>libcrypto</literal> libraries and <application>libpq</application>
-   is built with <acronym>SSL</acronym> support, you should call
+   Applications which need to be compatible with older versions of
+   <productname>PostgreSQL</productname>, using <productname>OpenSSL</productname>
+   version 1.0.2 or older, need to initialize the SSL library before using it.
+   Applications which initialize <literal>libssl</literal> and/or
+   <literal>libcrypto</literal> libraries should call
    <xref linkend="libpq-PQinitOpenSSL"/> to tell <application>libpq</application>
    that the <literal>libssl</literal> and/or <literal>libcrypto</literal> libraries
    have been initialized by your application, so that
    <application>libpq</application> will not also initialize those libraries.
    However, this is unnecessary when using <productname>OpenSSL</productname>
    version 1.1.0 or later, as duplicate initializations are no longer problematic.
+  </para>
+  <para>
+   Refer to the documentation for the version of <productname>PostgreSQL</productname>
+   that you are targeting for details on their use.
   </para>
 
   <para>
@@ -9888,21 +10182,8 @@ void PQinitOpenSSL(int do_ssl, int do_crypto);
       </para>
 
       <para>
-       When <parameter>do_ssl</parameter> is non-zero, <application>libpq</application>
-       will initialize the <productname>OpenSSL</productname> library before first
-       opening a database connection.  When <parameter>do_crypto</parameter> is
-       non-zero, the <literal>libcrypto</literal> library will be initialized.  By
-       default (if <xref linkend="libpq-PQinitOpenSSL"/> is not called), both libraries
-       are initialized.  When SSL support is not compiled in, this function is
-       present but does nothing.
-      </para>
-
-      <para>
-       If your application uses and initializes either <productname>OpenSSL</productname>
-       or its underlying <literal>libcrypto</literal> library, you <emphasis>must</emphasis>
-       call this function with zeroes for the appropriate parameter(s)
-       before first opening a database connection.  Also be sure that you
-       have done that initialization before opening a database connection.
+       This function is deprecated and only present for backwards compatibility,
+       it does nothing.
       </para>
      </listitem>
     </varlistentry>
@@ -9919,11 +10200,14 @@ void PQinitSSL(int do_ssl);
       <para>
        This function is equivalent to
        <literal>PQinitOpenSSL(do_ssl, do_ssl)</literal>.
-       It is sufficient for applications that initialize both or neither
-       of <productname>OpenSSL</productname> and <literal>libcrypto</literal>.
+       This function is deprecated and only present for backwards compatibility,
+       it does nothing.
       </para>
 
       <para>
+       <xref linkend="libpq-PQinitSSL"/> and <xref linkend="libpq-PQinitOpenSSL"/>
+       are maintained for backwards compatibility, but are no longer required
+       since <productname>PostgreSQL</productname> 18.
        <xref linkend="libpq-PQinitSSL"/> has been present since
        <productname>PostgreSQL</productname> 8.0, while <xref linkend="libpq-PQinitOpenSSL"/>
        was added in <productname>PostgreSQL</productname> 8.4, so <xref linkend="libpq-PQinitSSL"/>
@@ -9936,6 +10220,343 @@ void PQinitSSL(int do_ssl);
   </para>
  </sect2>
 
+ </sect1>
+
+ <sect1 id="libpq-oauth">
+  <title>OAuth Support</title>
+
+  <para>
+   <application>libpq</application> implements support for the OAuth v2 Device Authorization client flow,
+   documented in
+   <ulink url="https://datatracker.ietf.org/doc/html/rfc8628">RFC 8628</ulink>,
+   as an optional module. See the <link linkend="configure-option-with-libcurl">
+   installation documentation</link> for information on how to enable support
+   for Device Authorization as a builtin flow.
+  </para>
+  <para>
+   When support is enabled and the optional module installed, <application>libpq</application>
+   will use the builtin flow by default if the server
+   <link linkend="auth-oauth">requests a bearer token</link> during
+   authentication. This flow can be utilized even if the system running the
+   client application does not have a usable web browser, for example when
+   running a client via <acronym>SSH</acronym>.
+  </para>
+  <para>
+   The builtin flow will, by default, print a URL to visit and a user code to
+   enter there:
+<programlisting>
+$ psql 'dbname=postgres oauth_issuer=https://example.com oauth_client_id=...'
+Visit https://example.com/device and enter the code: ABCD-EFGH
+</programlisting>
+   (This prompt may be
+   <link linkend="libpq-oauth-authdata-prompt-oauth-device">customized</link>.)
+   The user will then log into their OAuth provider, which will ask whether
+   to allow libpq and the server to perform actions on their behalf. It is always
+   a good idea to carefully review the URL and permissions displayed, to ensure
+   they match expectations, before continuing. Permissions should not be given
+   to untrusted third parties.
+  </para>
+  <para>
+   Client applications may implement their own flows to customize interaction
+   and integration with applications. See <xref linkend="libpq-oauth-authdata-hooks"/>
+   for more information on how add a custom flow to <application>libpq</application>.
+  </para>
+  <para>
+   For an OAuth client flow to be usable, the connection string must at minimum
+   contain <xref linkend="libpq-connect-oauth-issuer"/> and
+   <xref linkend="libpq-connect-oauth-client-id"/>. (These settings are
+   determined by your organization's OAuth provider.) The builtin flow
+   additionally requires the OAuth authorization server to publish a device
+   authorization endpoint.
+  </para>
+
+  <note>
+   <para>
+    The builtin Device Authorization flow is not currently supported on Windows.
+    Custom client flows may still be implemented.
+   </para>
+  </note>
+
+  <sect2 id="libpq-oauth-authdata-hooks">
+   <title>Authdata Hooks</title>
+
+   <para>
+    The behavior of the OAuth flow may be modified or replaced by a client using
+    the following hook API:
+
+    <variablelist>
+     <varlistentry id="libpq-PQsetAuthDataHook">
+      <term><function>PQsetAuthDataHook</function><indexterm><primary>PQsetAuthDataHook</primary></indexterm></term>
+
+      <listitem>
+       <para>
+        Sets the <symbol>PGauthDataHook</symbol>, overriding
+        <application>libpq</application>'s handling of one or more aspects of
+        its OAuth client flow.
+<synopsis>
+void PQsetAuthDataHook(PQauthDataHook_type hook);
+</synopsis>
+        If <replaceable>hook</replaceable> is <literal>NULL</literal>, the
+        default handler will be reinstalled. Otherwise, the application passes
+        a pointer to a callback function with the signature:
+<programlisting>
+int hook_fn(PGauthData type, PGconn *conn, void *data);
+</programlisting>
+        which <application>libpq</application> will call when an action is
+        required of the application. <replaceable>type</replaceable> describes
+        the request being made, <replaceable>conn</replaceable> is the
+        connection handle being authenticated, and <replaceable>data</replaceable>
+        points to request-specific metadata. The contents of this pointer are
+        determined by <replaceable>type</replaceable>; see
+        <xref linkend="libpq-oauth-authdata-hooks-types"/> for the supported
+        list.
+       </para>
+       <para>
+        Hooks can be chained together to allow cooperative and/or fallback
+        behavior. In general, a hook implementation should examine the incoming
+        <replaceable>type</replaceable> (and, potentially, the request metadata
+        and/or the settings for the particular <replaceable>conn</replaceable>
+        in use) to decide whether or not to handle a specific piece of authdata.
+        If not, it should delegate to the previous hook in the chain
+        (retrievable via <function>PQgetAuthDataHook</function>).
+       </para>
+       <para>
+        Success is indicated by returning an integer greater than zero.
+        Returning a negative integer signals an error condition and abandons the
+        connection attempt. (A zero value is reserved for the default
+        implementation.)
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="libpq-PQgetAuthDataHook">
+      <term><function>PQgetAuthDataHook</function><indexterm><primary>PQgetAuthDataHook</primary></indexterm></term>
+
+      <listitem>
+       <para>
+        Retrieves the current value of <symbol>PGauthDataHook</symbol>.
+<synopsis>
+PQauthDataHook_type PQgetAuthDataHook(void);
+</synopsis>
+        At initialization time (before the first call to
+        <function>PQsetAuthDataHook</function>), this function will return
+        <symbol>PQdefaultAuthDataHook</symbol>.
+       </para>
+      </listitem>
+     </varlistentry>
+    </variablelist>
+   </para>
+
+   <sect3 id="libpq-oauth-authdata-hooks-types">
+    <title>Hook Types</title>
+    <para>
+     The following <symbol>PGauthData</symbol> types and their corresponding
+     <replaceable>data</replaceable> structures are defined:
+
+     <variablelist>
+      <varlistentry id="libpq-oauth-authdata-prompt-oauth-device">
+       <term>
+        <symbol>PQAUTHDATA_PROMPT_OAUTH_DEVICE</symbol>
+        <indexterm><primary>PQAUTHDATA_PROMPT_OAUTH_DEVICE</primary></indexterm>
+       </term>
+       <listitem>
+        <para>
+         Replaces the default user prompt during the builtin device
+         authorization client flow. <replaceable>data</replaceable> points to
+         an instance of <symbol>PGpromptOAuthDevice</symbol>:
+<synopsis>
+typedef struct _PGpromptOAuthDevice
+{
+    const char *verification_uri;   /* verification URI to visit */
+    const char *user_code;          /* user code to enter */
+    const char *verification_uri_complete;  /* optional combination of URI and
+                                             * code, or NULL */
+    int         expires_in;         /* seconds until user code expires */
+} PGpromptOAuthDevice;
+</synopsis>
+        </para>
+        <para>
+         The OAuth Device Authorization flow which
+         <link linkend="configure-option-with-libcurl">can be included</link>
+         in <application>libpq</application>
+         requires the end user to visit a URL with a browser, then enter a code
+         which permits <application>libpq</application> to connect to the server
+         on their behalf. The default prompt simply prints the
+         <literal>verification_uri</literal> and <literal>user_code</literal>
+         on standard error. Replacement implementations may display this
+         information using any preferred method, for example with a GUI.
+        </para>
+        <para>
+         This callback is only invoked during the builtin device
+         authorization flow. If the application installs a
+         <link linkend="libpq-oauth-authdata-oauth-bearer-token">custom OAuth
+         flow</link>, or <application>libpq</application> was not built with
+         support for the builtin flow, this authdata type will not be used.
+        </para>
+        <para>
+         If a non-NULL <structfield>verification_uri_complete</structfield> is
+         provided, it may optionally be used for non-textual verification (for
+         example, by displaying a QR code). The URL and user code should still
+         be displayed to the end user in this case, because the code will be
+         manually confirmed by the provider, and the URL lets users continue
+         even if they can't use the non-textual method. For more information,
+         see section 3.3.1 in
+         <ulink url="https://datatracker.ietf.org/doc/html/rfc8628#section-3.3.1">RFC 8628</ulink>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="libpq-oauth-authdata-oauth-bearer-token">
+       <term>
+        <symbol>PQAUTHDATA_OAUTH_BEARER_TOKEN</symbol>
+        <indexterm><primary>PQAUTHDATA_OAUTH_BEARER_TOKEN</primary></indexterm>
+       </term>
+       <listitem>
+        <para>
+         Adds a custom implementation of a flow, replacing the builtin flow if
+         it is <link linkend="configure-option-with-libcurl">installed</link>.
+         The hook should either directly return a Bearer token for the current
+         user/issuer/scope combination, if one is available without blocking, or
+         else set up an asynchronous callback to retrieve one.
+        </para>
+        <para>
+         <replaceable>data</replaceable> points to an instance
+         of <symbol>PGoauthBearerRequest</symbol>, which should be filled in
+         by the implementation:
+<synopsis>
+typedef struct PGoauthBearerRequest
+{
+    /* Hook inputs (constant across all calls) */
+    const char *openid_configuration; /* OIDC discovery URL */
+    const char *scope;                /* required scope(s), or NULL */
+
+    /* Hook outputs */
+
+    /* Callback implementing a custom asynchronous OAuth flow. */
+    PostgresPollingStatusType (*async) (PGconn *conn,
+                                        struct PGoauthBearerRequest *request,
+                                        SOCKTYPE *altsock);
+
+    /* Callback to clean up custom allocations. */
+    void        (*cleanup) (PGconn *conn, struct PGoauthBearerRequest *request);
+
+    char       *token;   /* acquired Bearer token */
+    void       *user;    /* hook-defined allocated data */
+} PGoauthBearerRequest;
+</synopsis>
+        </para>
+        <para>
+         Two pieces of information are provided to the hook by
+         <application>libpq</application>:
+         <replaceable>openid_configuration</replaceable> contains the URL of an
+         OAuth discovery document describing the authorization server's
+         supported flows, and <replaceable>scope</replaceable> contains a
+         (possibly empty) space-separated list of OAuth scopes which are
+         required to access the server. Either or both may be
+         <literal>NULL</literal> to indicate that the information was not
+         discoverable. (In this case, implementations may be able to establish
+         the requirements using some other preconfigured knowledge, or they may
+         choose to fail.)
+        </para>
+        <para>
+         The final output of the hook is <replaceable>token</replaceable>, which
+         must point to a valid Bearer token for use on the connection. (This
+         token should be issued by the
+         <xref linkend="libpq-connect-oauth-issuer"/> and hold the requested
+         scopes, or the connection will be rejected by the server's validator
+         module.) The allocated token string must remain valid until
+         <application>libpq</application> is finished connecting; the hook
+         should set a <replaceable>cleanup</replaceable> callback which will be
+         called when <application>libpq</application> no longer requires it.
+        </para>
+        <para>
+         If an implementation cannot immediately produce a
+         <replaceable>token</replaceable> during the initial call to the hook,
+         it should set the <replaceable>async</replaceable> callback to handle
+         nonblocking communication with the authorization server.
+         <footnote>
+          <para>
+           Performing blocking operations during the
+           <symbol>PQAUTHDATA_OAUTH_BEARER_TOKEN</symbol> hook callback will
+           interfere with nonblocking connection APIs such as
+           <function>PQconnectPoll</function> and prevent concurrent connections
+           from making progress. Applications which only ever use the
+           synchronous connection primitives, such as
+           <function>PQconnectdb</function>, may synchronously retrieve a token
+           during the hook instead of implementing the
+           <replaceable>async</replaceable> callback, but they will necessarily
+           be limited to one connection at a time.
+          </para>
+         </footnote>
+         This will be called to begin the flow immediately upon return from the
+         hook. When the callback cannot make further progress without blocking,
+         it should return either <symbol>PGRES_POLLING_READING</symbol> or
+         <symbol>PGRES_POLLING_WRITING</symbol> after setting
+         <literal>*pgsocket</literal> to the file descriptor that will be marked
+         ready to read/write when progress can be made again. (This descriptor
+         is then provided to the top-level polling loop via
+         <function>PQsocket()</function>.) Return <symbol>PGRES_POLLING_OK</symbol>
+         after setting <replaceable>token</replaceable> when the flow is
+         complete, or <symbol>PGRES_POLLING_FAILED</symbol> to indicate failure.
+        </para>
+        <para>
+         Implementations may wish to store additional data for bookkeeping
+         across calls to the <replaceable>async</replaceable> and
+         <replaceable>cleanup</replaceable> callbacks. The
+         <replaceable>user</replaceable> pointer is provided for this purpose;
+         <application>libpq</application> will not touch its contents and the
+         application may use it at its convenience. (Remember to free any
+         allocations during token cleanup.)
+        </para>
+       </listitem>
+      </varlistentry>
+     </variablelist>
+    </para>
+   </sect3>
+  </sect2>
+
+  <sect2 id="libpq-oauth-debugging">
+   <title>Debugging and Developer Settings</title>
+
+   <para>
+    A "dangerous debugging mode" may be enabled by setting the environment
+    variable <envar>PGOAUTHDEBUG=UNSAFE</envar>. This functionality is provided
+    for ease of local development and testing only. It does several things that
+    you will not want a production system to do:
+
+    <itemizedlist spacing="compact">
+     <listitem>
+      <para>
+       permits the use of unencrypted HTTP during the OAuth provider exchange
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       allows the system's trusted CA list to be completely replaced using the
+       <envar>PGOAUTHCAFILE</envar> environment variable
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       prints HTTP traffic (containing several critical secrets) to standard
+       error during the OAuth flow
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       permits the use of zero-second retry intervals, which can cause the
+       client to busy-loop and pointlessly consume CPU
+      </para>
+     </listitem>
+    </itemizedlist>
+   </para>
+   <warning>
+    <para>
+     Do not share the output of the OAuth flow traffic with third parties. It
+     contains secrets that can be used to attack your clients and servers.
+    </para>
+   </warning>
+  </sect2>
  </sect1>
 
 
@@ -10009,6 +10630,18 @@ int PQisthreadsafe();
    function <function>PQregisterThreadLock</function> in the
    <application>libpq</application> source code for a way to do cooperative
    locking between <application>libpq</application> and your application.
+  </para>
+
+  <para>
+   Similarly, if you are using <productname>Curl</productname> inside your application,
+   <emphasis>and</emphasis> you do not already
+   <ulink url="https://curl.se/libcurl/c/curl_global_init.html">initialize
+   libcurl globally</ulink> before starting new threads, you will need to
+   cooperatively lock (again via <function>PQregisterThreadLock</function>)
+   around any code that may initialize libcurl. This restriction is lifted for
+   more recent versions of <productname>Curl</productname> that are built to support thread-safe
+   initialization; those builds can be identified by the advertisement of a
+   <literal>threadsafe</literal> feature in their version metadata.
   </para>
  </sect1>
 

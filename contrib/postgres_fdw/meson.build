@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 postgres_fdw_sources = files(
   'connection.c',
@@ -26,6 +26,7 @@ install_data(
   'postgres_fdw.control',
   'postgres_fdw--1.0.sql',
   'postgres_fdw--1.0--1.1.sql',
+  'postgres_fdw--1.1--1.2.sql',
   kwargs: contrib_data_args,
 )
 
@@ -36,7 +37,13 @@ tests += {
   'regress': {
     'sql': [
       'postgres_fdw',
+      'query_cancel',
     ],
     'regress_args': ['--dlpath', meson.build_root() / 'src/test/regress'],
+  },
+  'tap': {
+    'tests': [
+      't/001_auth_scram.pl',
+    ],
   },
 }

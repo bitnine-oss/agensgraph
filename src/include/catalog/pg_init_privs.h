@@ -21,7 +21,7 @@
  * are loaded near the end of initdb.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_init_privs.h
@@ -36,7 +36,7 @@
 #define PG_INIT_PRIVS_H
 
 #include "catalog/genbki.h"
-#include "catalog/pg_init_privs_d.h"
+#include "catalog/pg_init_privs_d.h"	/* IWYU pragma: export */
 
 /* ----------------
  *		pg_init_privs definition.  cpp turns this into

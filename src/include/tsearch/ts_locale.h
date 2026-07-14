@@ -3,7 +3,7 @@
  * ts_locale.h
  *		locale compatibility layer for tsearch
  *
- * Copyright (c) 1998-2024, PostgreSQL Global Development Group
+ * Copyright (c) 1998-2025, PostgreSQL Global Development Group
  *
  * src/include/tsearch/ts_locale.h
  *
@@ -39,14 +39,8 @@ typedef struct
 
 #define COPYCHAR(d,s)	memcpy(d, s, pg_mblen(s))
 
-extern int	t_isdigit(const char *ptr);
-extern int	t_isspace(const char *ptr);
 extern int	t_isalpha(const char *ptr);
 extern int	t_isalnum(const char *ptr);
-extern int	t_isprint(const char *ptr);
-
-extern char *lowerstr(const char *str);
-extern char *lowerstr_with_len(const char *str, int len);
 
 extern bool tsearch_readline_begin(tsearch_readline_state *stp,
 								   const char *filename);

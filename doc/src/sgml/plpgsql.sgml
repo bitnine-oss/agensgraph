@@ -1295,7 +1295,7 @@ $$ LANGUAGE plpgsql;
      On failure, this function might produce an error message such as
 <programlisting>
 ERROR:  query returned no rows
-DETAIL:  parameters: $1 = 'nosuchuser'
+DETAIL:  parameters: username = 'nosuchuser'
 CONTEXT:  PL/pgSQL function get_userid(text) line 6 at SQL statement
 </programlisting>
     </para>
@@ -3317,7 +3317,7 @@ OPEN curs1 FOR EXECUTE format('SELECT * FROM %I WHERE col1 = $1',tabname) USING 
      <title>Opening a Bound Cursor</title>
 
 <synopsis>
-OPEN <replaceable>bound_cursorvar</replaceable> <optional> ( <optional> <replaceable>argument_name</replaceable> := </optional> <replaceable>argument_value</replaceable> <optional>, ...</optional> ) </optional>;
+OPEN <replaceable>bound_cursorvar</replaceable> <optional> ( <optional> <replaceable>argument_name</replaceable> { := | =&gt; } </optional> <replaceable>argument_value</replaceable> <optional>, ...</optional> ) </optional>;
 </synopsis>
 
          <para>
@@ -3340,7 +3340,8 @@ OPEN <replaceable>bound_cursorvar</replaceable> <optional> ( <optional> <replace
           Argument values can be passed using either <firstterm>positional</firstterm>
           or <firstterm>named</firstterm> notation.  In positional
           notation, all arguments are specified in order.  In named notation,
-          each argument's name is specified using <literal>:=</literal> to
+          each argument's name is specified using <literal>:=</literal>
+          or <literal>=&gt;</literal> to
           separate it from the argument expression. Similar to calling
           functions, described in <xref linkend="sql-syntax-calling-funcs"/>, it
           is also allowed to mix positional and named notation.
@@ -3352,6 +3353,7 @@ OPEN <replaceable>bound_cursorvar</replaceable> <optional> ( <optional> <replace
 OPEN curs2;
 OPEN curs3(42);
 OPEN curs3(key := 42);
+OPEN curs3(key =&gt; 42);
 </programlisting>
          </para>
 
@@ -3409,13 +3411,16 @@ FETCH <optional> <replaceable>direction</replaceable> { FROM | IN } </optional> 
 </synopsis>
 
     <para>
-     <command>FETCH</command> retrieves the next row from the
+     <command>FETCH</command> retrieves the next row (in the indicated
+     direction) from the
      cursor into a target, which might be a row variable, a record
      variable, or a comma-separated list of simple variables, just like
-     <command>SELECT INTO</command>.  If there is no next row, the
+     <command>SELECT INTO</command>.  If there is no suitable row, the
      target is set to NULL(s).  As with <command>SELECT
      INTO</command>, the special variable <literal>FOUND</literal> can
-     be checked to see whether a row was obtained or not.
+     be checked to see whether a row was obtained or not.  If no row is
+     obtained, the cursor is positioned after the last row or before the
+     first row, depending on the movement direction.
     </para>
 
     <para>
@@ -3467,11 +3472,25 @@ MOVE <optional> <replaceable>direction</replaceable> { FROM | IN } </optional> <
 
     <para>
      <command>MOVE</command> repositions a cursor without retrieving
-     any data. <command>MOVE</command> works exactly like the
+     any data. <command>MOVE</command> works like the
      <command>FETCH</command> command, except it only repositions the
-     cursor and does not return the row moved to. As with <command>SELECT
+     cursor and does not return the row moved to.
+     The <replaceable>direction</replaceable> clause can be any of the
+     variants allowed in the SQL <xref linkend="sql-fetch"/>
+     command, including those that can fetch more than one row;
+     the cursor is positioned to the last such row.
+     (However, the case in which the <replaceable>direction</replaceable>
+     clause is simply a <replaceable>count</replaceable> expression with
+     no key word is deprecated in <application>PL/pgSQL</application>.
+     That syntax is ambiguous with the case where
+     the <replaceable>direction</replaceable> clause is omitted
+     altogether, and hence it may fail if
+     the <replaceable>count</replaceable> is not a constant.)
+     As with <command>SELECT
      INTO</command>, the special variable <literal>FOUND</literal> can
-     be checked to see whether there was a next row to move to.
+     be checked to see whether there was a row to move to.  If there is no
+     such row, the cursor is positioned after the last row or before the
+     first row, depending on the movement direction.
     </para>
 
     <para>
@@ -3655,7 +3674,7 @@ COMMIT;
 
 <synopsis>
 <optional> &lt;&lt;<replaceable>label</replaceable>&gt;&gt; </optional>
-FOR <replaceable>recordvar</replaceable> IN <replaceable>bound_cursorvar</replaceable> <optional> ( <optional> <replaceable>argument_name</replaceable> := </optional> <replaceable>argument_value</replaceable> <optional>, ...</optional> ) </optional> LOOP
+FOR <replaceable>recordvar</replaceable> IN <replaceable>bound_cursorvar</replaceable> <optional> ( <optional> <replaceable>argument_name</replaceable> { := | =&gt; } </optional> <replaceable>argument_value</replaceable> <optional>, ...</optional> ) </optional> LOOP
     <replaceable>statements</replaceable>
 END LOOP <optional> <replaceable>label</replaceable> </optional>;
 </synopsis>
@@ -3746,6 +3765,17 @@ CALL transaction_test1();
    </para>
 
    <para>
+    <application>PL/pgSQL</application> does not support savepoints
+    (<command>SAVEPOINT</command>/<command>ROLLBACK TO
+    SAVEPOINT</command>/<command>RELEASE SAVEPOINT</command> commands).
+    Typical usage patterns for savepoints can be replaced by blocks with
+    exception handlers (see <xref linkend="plpgsql-error-trapping"/>).
+    Under the hood, a block with exception handlers forms a
+    subtransaction, which means that transactions cannot be ended inside
+    such a block.
+   </para>
+
+   <para>
     Special considerations apply to cursor loops.  Consider this example:
 <programlisting>
 CREATE PROCEDURE transaction_test2()
@@ -3770,17 +3800,16 @@ CALL transaction_test2();
     evaluated at the first <command>COMMIT</command> or
     <command>ROLLBACK</command> rather than row by row.  The cursor is still
     removed automatically after the loop, so this is mostly invisible to the
-    user.
+    user.  But one must keep in mind that any table or row locks taken by
+    the cursor's query will no longer be held after the
+    first <command>COMMIT</command> or
+    <command>ROLLBACK</command>.
    </para>
 
    <para>
     Transaction commands are not allowed in cursor loops driven by commands
     that are not read-only (for example <command>UPDATE
     ... RETURNING</command>).
-   </para>
-
-   <para>
-    A transaction cannot be ended inside a block with exception handlers.
    </para>
   </sect1>
 
@@ -3805,10 +3834,10 @@ CALL transaction_test2();
     raise errors.
 
 <synopsis>
-RAISE <optional> <replaceable class="parameter">level</replaceable> </optional> '<replaceable class="parameter">format</replaceable>' <optional>, <replaceable class="parameter">expression</replaceable> <optional>, ... </optional></optional> <optional> USING <replaceable class="parameter">option</replaceable> = <replaceable class="parameter">expression</replaceable> <optional>, ... </optional> </optional>;
-RAISE <optional> <replaceable class="parameter">level</replaceable> </optional> <replaceable class="parameter">condition_name</replaceable> <optional> USING <replaceable class="parameter">option</replaceable> = <replaceable class="parameter">expression</replaceable> <optional>, ... </optional> </optional>;
-RAISE <optional> <replaceable class="parameter">level</replaceable> </optional> SQLSTATE '<replaceable class="parameter">sqlstate</replaceable>' <optional> USING <replaceable class="parameter">option</replaceable> = <replaceable class="parameter">expression</replaceable> <optional>, ... </optional> </optional>;
-RAISE <optional> <replaceable class="parameter">level</replaceable> </optional> USING <replaceable class="parameter">option</replaceable> = <replaceable class="parameter">expression</replaceable> <optional>, ... </optional>;
+RAISE <optional> <replaceable class="parameter">level</replaceable> </optional> '<replaceable class="parameter">format</replaceable>' <optional>, <replaceable class="parameter">expression</replaceable> <optional>, ... </optional></optional> <optional> USING <replaceable class="parameter">option</replaceable> { = | := } <replaceable class="parameter">expression</replaceable> <optional>, ... </optional> </optional>;
+RAISE <optional> <replaceable class="parameter">level</replaceable> </optional> <replaceable class="parameter">condition_name</replaceable> <optional> USING <replaceable class="parameter">option</replaceable> { = | := } <replaceable class="parameter">expression</replaceable> <optional>, ... </optional> </optional>;
+RAISE <optional> <replaceable class="parameter">level</replaceable> </optional> SQLSTATE '<replaceable class="parameter">sqlstate</replaceable>' <optional> USING <replaceable class="parameter">option</replaceable> { = | := } <replaceable class="parameter">expression</replaceable> <optional>, ... </optional> </optional>;
+RAISE <optional> <replaceable class="parameter">level</replaceable> </optional> USING <replaceable class="parameter">option</replaceable> { = | := } <replaceable class="parameter">expression</replaceable> <optional>, ... </optional>;
 RAISE ;
 </synopsis>
 
@@ -3830,8 +3859,9 @@ RAISE ;
    </para>
 
    <para>
-    After <replaceable class="parameter">level</replaceable> if any,
-    you can specify a <replaceable class="parameter">format</replaceable> string
+    In the first syntax variant,
+    after the <replaceable class="parameter">level</replaceable> if any,
+    write a <replaceable class="parameter">format</replaceable> string
     (which must be a simple string literal, not an expression).  The
     format string specifies the error message text to be reported.
     The format string can be followed
@@ -3853,7 +3883,27 @@ RAISE NOTICE 'Calling cs_create_job(%)', v_job_id;
    </para>
 
    <para>
-    You can attach additional information to the error report by writing
+    In the second and third syntax variants,
+    <replaceable class="parameter">condition_name</replaceable> and
+    <replaceable class="parameter">sqlstate</replaceable> specify an
+    error condition name or a five-character SQLSTATE code, respectively.
+    See <xref linkend="errcodes-appendix"/> for the valid error condition
+    names and the predefined SQLSTATE codes.
+   </para>
+
+   <para>
+    Here are examples
+    of <replaceable class="parameter">condition_name</replaceable>
+    and <replaceable class="parameter">sqlstate</replaceable> usage:
+<programlisting>
+RAISE division_by_zero;
+RAISE WARNING SQLSTATE '22012';
+</programlisting>
+   </para>
+
+   <para>
+    In any of these syntax variants,
+    you can attach additional information to the error report by writing
     <literal>USING</literal> followed by <replaceable
     class="parameter">option</replaceable> = <replaceable
     class="parameter">expression</replaceable> items.  Each
@@ -3866,8 +3916,7 @@ RAISE NOTICE 'Calling cs_create_job(%)', v_job_id;
       <term><literal>MESSAGE</literal></term>
       <listitem>
        <para>Sets the error message text.  This option can't be used in the
-        form of <command>RAISE</command> that includes a format string
-        before <literal>USING</literal>.</para>
+        first syntax variant, since the message is already supplied.</para>
       </listitem>
      </varlistentry>
 
@@ -3890,7 +3939,9 @@ RAISE NOTICE 'Calling cs_create_job(%)', v_job_id;
       <listitem>
        <para>Specifies the error code (SQLSTATE) to report, either by condition
         name, as shown in <xref linkend="errcodes-appendix"/>, or directly as a
-        five-character SQLSTATE code.</para>
+        five-character SQLSTATE code.  This option can't be used in the
+        second or third syntax variant, since the error code is already
+        supplied.</para>
       </listitem>
      </varlistentry>
 
@@ -3922,25 +3973,15 @@ RAISE EXCEPTION 'Nonexistent ID --> %', user_id
 RAISE 'Duplicate user ID: %', user_id USING ERRCODE = 'unique_violation';
 RAISE 'Duplicate user ID: %', user_id USING ERRCODE = '23505';
 </programlisting>
-   </para>
-
-   <para>
-    There is a second <command>RAISE</command> syntax in which the main argument
-    is the condition name or SQLSTATE to be reported, for example:
-<programlisting>
-RAISE division_by_zero;
-RAISE SQLSTATE '22012';
-</programlisting>
-    In this syntax, <literal>USING</literal> can be used to supply a custom
-    error message, detail, or hint.  Another way to do the earlier
-    example is
+    Another way to produce the same result is:
 <programlisting>
 RAISE unique_violation USING MESSAGE = 'Duplicate user ID: ' || user_id;
 </programlisting>
    </para>
 
    <para>
-    Still another variant is to write <literal>RAISE USING</literal> or <literal>RAISE
+    As shown in the fourth syntax variant, it is also possible to
+    write <literal>RAISE USING</literal> or <literal>RAISE
     <replaceable class="parameter">level</replaceable> USING</literal> and put
     everything else into the <literal>USING</literal> list.
    </para>

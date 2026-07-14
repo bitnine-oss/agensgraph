@@ -3,7 +3,7 @@
  * nodeFuncs.c
  *		Various general-purpose manipulations of Node trees
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -278,6 +278,9 @@ exprType(const Node *expr)
 
 				type = exprType((Node *) n->expr);
 			}
+			break;
+		case T_ReturningExpr:
+			type = exprType((Node *) ((const ReturningExpr *) expr)->retexpr);
 			break;
 		case T_PlaceHolderVar:
 			type = exprType((Node *) ((const PlaceHolderVar *) expr)->phexpr);
@@ -590,6 +593,8 @@ exprTypmod(const Node *expr)
 			return ((const CoerceToDomainValue *) expr)->typeMod;
 		case T_SetToDefault:
 			return ((const SetToDefault *) expr)->typeMod;
+		case T_ReturningExpr:
+			return exprTypmod((Node *) ((const ReturningExpr *) expr)->retexpr);
 		case T_PlaceHolderVar:
 			return exprTypmod((Node *) ((const PlaceHolderVar *) expr)->phexpr);
 
@@ -1122,6 +1127,9 @@ exprCollation(const Node *expr)
 		case T_InferenceElem:
 			coll = exprCollation((Node *) ((const InferenceElem *) expr)->expr);
 			break;
+		case T_ReturningExpr:
+			coll = exprCollation((Node *) ((const ReturningExpr *) expr)->retexpr);
+			break;
 		case T_PlaceHolderVar:
 			coll = exprCollation((Node *) ((const PlaceHolderVar *) expr)->phexpr);
 			break;
@@ -1205,7 +1213,7 @@ exprInputCollation(const Node *expr)
  *	  Assign collation information to an expression tree node.
  *
  * Note: since this is only used during parse analysis, we don't need to
- * worry about subplans or PlaceHolderVars.
+ * worry about subplans, PlaceHolderVars, or ReturningExprs.
  */
 void
 exprSetCollation(Node *expr, Oid collation)
@@ -1739,6 +1747,9 @@ exprLocation(const Node *expr)
 		case T_SetToDefault:
 			loc = ((const SetToDefault *) expr)->location;
 			break;
+		case T_ReturningExpr:
+			loc = exprLocation((Node *) ((const ReturningExpr *) expr)->retexpr);
+			break;
 		case T_TargetEntry:
 			/* just use argument's location */
 			loc = exprLocation((Node *) ((const TargetEntry *) expr)->expr);
@@ -1838,8 +1849,7 @@ exprLocation(const Node *expr)
 			loc = ((const Constraint *) expr)->location;
 			break;
 		case T_FunctionParameter:
-			/* just use typename's location */
-			loc = exprLocation((Node *) ((const FunctionParameter *) expr)->argType);
+			loc = ((const FunctionParameter *) expr)->location;
 			break;
 		case T_XmlSerialize:
 			/* XMLSERIALIZE keyword should always be the first thing */
@@ -2166,7 +2176,7 @@ check_functions_in_node(Node *node, check_function_callback checker,
  *			... do special actions for other node types
  *		}
  *		// for any node type not specially processed, do:
- *		return expression_tree_walker(node, my_walker, (void *) context);
+ *		return expression_tree_walker(node, my_walker, context);
  * }
  *
  * The "context" argument points to a struct that holds whatever context
@@ -2759,6 +2769,8 @@ expression_tree_walker_impl(Node *node,
 			return WALK(((PlaceHolderVar *) node)->phexpr);
 		case T_InferenceElem:
 			return WALK(((InferenceElem *) node)->expr);
+		case T_ReturningExpr:
+			return WALK(((ReturningExpr *) node)->retexpr);
 		case T_AppendRelInfo:
 			{
 				AppendRelInfo *appinfo = (AppendRelInfo *) node;
@@ -3097,6 +3109,11 @@ range_table_entry_walker_impl(RangeTblEntry *rte,
 		case RTE_RESULT:
 			/* nothing to do */
 			break;
+		case RTE_GROUP:
+			if (!(flags & QTW_IGNORE_GROUPEXPRS))
+				if (WALK(rte->groupexprs))
+					return true;
+			break;
 	}
 
 	if (WALK(rte->securityQuals))
@@ -3132,7 +3149,7 @@ range_table_entry_walker_impl(RangeTblEntry *rte,
  *			... do special transformations of other node types
  *		}
  *		// for any node type not specially processed, do:
- *		return expression_tree_mutator(node, my_mutator, (void *) context);
+ *		return expression_tree_mutator(node, my_mutator, context);
  * }
  *
  * The "context" argument points to a struct that holds whatever context
@@ -3234,7 +3251,7 @@ expression_tree_mutator_impl(Node *node,
 		case T_SortGroupClause:
 		case T_CTESearchClause:
 		case T_MergeSupportFunc:
-			return (Node *) copyObject(node);
+			return copyObject(node);
 		case T_WithCheckOption:
 			{
 				WithCheckOption *wco = (WithCheckOption *) node;
@@ -3693,6 +3710,16 @@ expression_tree_mutator_impl(Node *node,
 				return (Node *) newnode;
 			}
 			break;
+		case T_ReturningExpr:
+			{
+				ReturningExpr *rexpr = (ReturningExpr *) node;
+				ReturningExpr *newnode;
+
+				FLATCOPY(newnode, rexpr, ReturningExpr);
+				MUTATE(newnode->retexpr, rexpr->retexpr, Expr *);
+				return (Node *) newnode;
+			}
+			break;
 		case T_TargetEntry:
 			{
 				TargetEntry *targetentry = (TargetEntry *) node;
@@ -3842,7 +3869,7 @@ expression_tree_mutator_impl(Node *node,
 			break;
 		case T_PartitionPruneStepCombine:
 			/* no expression sub-nodes */
-			return (Node *) copyObject(node);
+			return copyObject(node);
 		case T_JoinExpr:
 			{
 				JoinExpr   *join = (JoinExpr *) node;
@@ -4229,6 +4256,15 @@ range_table_mutator_impl(List *rtable,
 			case RTE_RESULT:
 				/* nothing to do */
 				break;
+			case RTE_GROUP:
+				if (!(flags & QTW_IGNORE_GROUPEXPRS))
+					MUTATE(newrte->groupexprs, rte->groupexprs, List *);
+				else
+				{
+					/* else, copy grouping exprs as-is */
+					newrte->groupexprs = copyObject(rte->groupexprs);
+				}
+				break;
 		}
 		MUTATE(newrte->securityQuals, rte->securityQuals, List *);
 		newrt = lappend(newrt, newrte);
@@ -4330,6 +4366,7 @@ raw_expression_tree_walker_impl(Node *node,
 		case T_A_Const:
 		case T_A_Star:
 		case T_MergeSupportFunc:
+		case T_ReturningOption:
 			/* primitive node types with no subnodes */
 			break;
 		case T_Alias:
@@ -4558,7 +4595,7 @@ raw_expression_tree_walker_impl(Node *node,
 					return true;
 				if (WALK(stmt->onConflictClause))
 					return true;
-				if (WALK(stmt->returningList))
+				if (WALK(stmt->returningClause))
 					return true;
 				if (WALK(stmt->withClause))
 					return true;
@@ -4574,7 +4611,7 @@ raw_expression_tree_walker_impl(Node *node,
 					return true;
 				if (WALK(stmt->whereClause))
 					return true;
-				if (WALK(stmt->returningList))
+				if (WALK(stmt->returningClause))
 					return true;
 				if (WALK(stmt->withClause))
 					return true;
@@ -4592,7 +4629,7 @@ raw_expression_tree_walker_impl(Node *node,
 					return true;
 				if (WALK(stmt->fromClause))
 					return true;
-				if (WALK(stmt->returningList))
+				if (WALK(stmt->returningClause))
 					return true;
 				if (WALK(stmt->withClause))
 					return true;
@@ -4610,7 +4647,7 @@ raw_expression_tree_walker_impl(Node *node,
 					return true;
 				if (WALK(stmt->mergeWhenClauses))
 					return true;
-				if (WALK(stmt->returningList))
+				if (WALK(stmt->returningClause))
 					return true;
 				if (WALK(stmt->withClause))
 					return true;
@@ -4625,6 +4662,16 @@ raw_expression_tree_walker_impl(Node *node,
 				if (WALK(mergeWhenClause->targetList))
 					return true;
 				if (WALK(mergeWhenClause->values))
+					return true;
+			}
+			break;
+		case T_ReturningClause:
+			{
+				ReturningClause *returning = (ReturningClause *) node;
+
+				if (WALK(returning->options))
+					return true;
+				if (WALK(returning->exprs))
 					return true;
 			}
 			break;
@@ -5396,7 +5443,8 @@ raw_expression_tree_mutator_impl(Node *node,
 				MUTATE(newnode->selectStmt, stmt->selectStmt, Node *);
 				MUTATE(newnode->onConflictClause, stmt->onConflictClause,
 					   OnConflictClause *);
-				MUTATE(newnode->returningList, stmt->returningList, List *);
+				MUTATE(newnode->returningClause, stmt->returningClause,
+					   ReturningClause *);
 				MUTATE(newnode->withClause, stmt->withClause, WithClause *);
 				return (Node *) newnode;
 			}
@@ -5410,7 +5458,8 @@ raw_expression_tree_mutator_impl(Node *node,
 				MUTATE(newnode->relation, stmt->relation, RangeVar *);
 				MUTATE(newnode->usingClause, stmt->usingClause, List *);
 				MUTATE(newnode->whereClause, stmt->whereClause, Node *);
-				MUTATE(newnode->returningList, stmt->returningList, List *);
+				MUTATE(newnode->returningClause, stmt->returningClause,
+					   ReturningClause *);
 				MUTATE(newnode->withClause, stmt->withClause, WithClause *);
 				return (Node *) newnode;
 			}
@@ -5425,8 +5474,20 @@ raw_expression_tree_mutator_impl(Node *node,
 				MUTATE(newnode->targetList, stmt->targetList, List *);
 				MUTATE(newnode->whereClause, stmt->whereClause, Node *);
 				MUTATE(newnode->fromClause, stmt->fromClause, List *);
-				MUTATE(newnode->returningList, stmt->returningList, List *);
+				MUTATE(newnode->returningClause, stmt->returningClause,
+					   ReturningClause *);
 				MUTATE(newnode->withClause, stmt->withClause, WithClause *);
+				return (Node *) newnode;
+			}
+			break;
+		case T_ReturningClause:
+			{
+				ReturningClause *returning = (ReturningClause *) node;
+				ReturningClause *newnode;
+
+				FLATCOPY(newnode, returning, ReturningClause);
+				MUTATE(newnode->options, returning->options, List *);
+				MUTATE(newnode->exprs, returning->exprs, List *);
 				return (Node *) newnode;
 			}
 			break;

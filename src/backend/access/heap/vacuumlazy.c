@@ -3,6 +3,104 @@
  * vacuumlazy.c
  *	  Concurrent ("lazy") vacuuming.
  *
+ * Heap relations are vacuumed in three main phases. In phase I, vacuum scans
+ * relation pages, pruning and freezing tuples and saving dead tuples' TIDs in
+ * a TID store. If that TID store fills up or vacuum finishes scanning the
+ * relation, it progresses to phase II: index vacuuming. Index vacuuming
+ * deletes the dead index entries referenced in the TID store. In phase III,
+ * vacuum scans the blocks of the relation referred to by the TIDs in the TID
+ * store and reaps the corresponding dead items, freeing that space for future
+ * tuples.
+ *
+ * If there are no indexes or index scanning is disabled, phase II may be
+ * skipped. If phase I identified very few dead index entries or if vacuum's
+ * failsafe mechanism has triggered (to avoid transaction ID wraparound),
+ * vacuum may skip phases II and III.
+ *
+ * If the TID store fills up in phase I, vacuum suspends phase I and proceeds
+ * to phases II and III, cleaning up the dead tuples referenced in the current
+ * TID store. This empties the TID store, allowing vacuum to resume phase I.
+ *
+ * In a way, the phases are more like states in a state machine, but they have
+ * been referred to colloquially as phases for so long that they are referred
+ * to as such here.
+ *
+ * Manually invoked VACUUMs may scan indexes during phase II in parallel. For
+ * more information on this, see the comment at the top of vacuumparallel.c.
+ *
+ * In between phases, vacuum updates the freespace map (every
+ * VACUUM_FSM_EVERY_PAGES).
+ *
+ * After completing all three phases, vacuum may truncate the relation if it
+ * has emptied pages at the end. Finally, vacuum updates relation statistics
+ * in pg_class and the cumulative statistics subsystem.
+ *
+ * Relation Scanning:
+ *
+ * Vacuum scans the heap relation, starting at the beginning and progressing
+ * to the end, skipping pages as permitted by their visibility status, vacuum
+ * options, and various other requirements.
+ *
+ * Vacuums are either aggressive or normal. Aggressive vacuums must scan every
+ * unfrozen tuple in order to advance relfrozenxid and avoid transaction ID
+ * wraparound. Normal vacuums may scan otherwise skippable pages for one of
+ * two reasons:
+ *
+ * When page skipping is not disabled, a normal vacuum may scan pages that are
+ * marked all-visible (and even all-frozen) in the visibility map if the range
+ * of skippable pages is below SKIP_PAGES_THRESHOLD. This is primarily for the
+ * benefit of kernel readahead (see comment in heap_vac_scan_next_block()).
+ *
+ * A normal vacuum may also scan skippable pages in an effort to freeze them
+ * and decrease the backlog of all-visible but not all-frozen pages that have
+ * to be processed by the next aggressive vacuum. These are referred to as
+ * eagerly scanned pages. Pages scanned due to SKIP_PAGES_THRESHOLD do not
+ * count as eagerly scanned pages.
+ *
+ * Eagerly scanned pages that are set all-frozen in the VM are successful
+ * eager freezes and those not set all-frozen in the VM are failed eager
+ * freezes.
+ *
+ * Because we want to amortize the overhead of freezing pages over multiple
+ * vacuums, normal vacuums cap the number of successful eager freezes to
+ * MAX_EAGER_FREEZE_SUCCESS_RATE of the number of all-visible but not
+ * all-frozen pages at the beginning of the vacuum. Since eagerly frozen pages
+ * may be unfrozen before the next aggressive vacuum, capping the number of
+ * successful eager freezes also caps the downside of eager freezing:
+ * potentially wasted work.
+ *
+ * Once the success cap has been hit, eager scanning is disabled for the
+ * remainder of the vacuum of the relation.
+ *
+ * Success is capped globally because we don't want to limit our successes if
+ * old data happens to be concentrated in a particular part of the table. This
+ * is especially likely to happen for append-mostly workloads where the oldest
+ * data is at the beginning of the unfrozen portion of the relation.
+ *
+ * On the assumption that different regions of the table are likely to contain
+ * similarly aged data, normal vacuums use a localized eager freeze failure
+ * cap. The failure count is reset for each region of the table -- comprised
+ * of EAGER_SCAN_REGION_SIZE blocks. In each region, we tolerate
+ * vacuum_max_eager_freeze_failure_rate of EAGER_SCAN_REGION_SIZE failures
+ * before suspending eager scanning until the end of the region.
+ * vacuum_max_eager_freeze_failure_rate is configurable both globally and per
+ * table.
+ *
+ * Aggressive vacuums must examine every unfrozen tuple and thus are not
+ * subject to any of the limits imposed by the eager scanning algorithm.
+ *
+ * Once vacuum has decided to scan a given block, it must read the block and
+ * obtain a cleanup lock to prune tuples on the page. A non-aggressive vacuum
+ * may choose to skip pruning and freezing if it cannot acquire a cleanup lock
+ * on the buffer right away. In this case, it may miss cleaning up dead tuples
+ * and their associated index entries (though it is free to reap any existing
+ * dead items on the page).
+ *
+ * After pruning and freezing, pages that are newly all-visible and all-frozen
+ * are marked as such in the visibility map.
+ *
+ * Dead TID Storage:
+ *
  * The major space usage for vacuuming is storage for the dead tuple IDs that
  * are to be removed from indexes.  We want to ensure we can vacuum even the
  * very largest relations with finite memory space usage.  To do that, we set
@@ -20,7 +118,7 @@
  * that there only needs to be one call to lazy_vacuum, after the initial pass
  * completes.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -35,7 +133,6 @@
 
 #include "access/genam.h"
 #include "access/heapam.h"
-#include "access/heapam_xlog.h"
 #include "access/htup_details.h"
 #include "access/multixact.h"
 #include "access/tidstore.h"
@@ -47,6 +144,7 @@
 #include "commands/progress.h"
 #include "commands/vacuum.h"
 #include "common/int.h"
+#include "common/pg_prng.h"
 #include "executor/instrument.h"
 #include "miscadmin.h"
 #include "pgstat.h"
@@ -55,8 +153,8 @@
 #include "storage/bufmgr.h"
 #include "storage/freespace.h"
 #include "storage/lmgr.h"
+#include "storage/read_stream.h"
 #include "utils/lsyscache.h"
-#include "utils/memutils.h"
 #include "utils/pg_rusage.h"
 #include "utils/timestamp.h"
 
@@ -133,6 +231,31 @@ typedef enum
 	VACUUM_ERRCB_PHASE_TRUNCATE,
 } VacErrPhase;
 
+/*
+ * An eager scan of a page that is set all-frozen in the VM is considered
+ * "successful". To spread out freezing overhead across multiple normal
+ * vacuums, we limit the number of successful eager page freezes. The maximum
+ * number of eager page freezes is calculated as a ratio of the all-visible
+ * but not all-frozen pages at the beginning of the vacuum.
+ */
+#define MAX_EAGER_FREEZE_SUCCESS_RATE 0.2
+
+/*
+ * On the assumption that different regions of the table tend to have
+ * similarly aged data, once vacuum fails to freeze
+ * vacuum_max_eager_freeze_failure_rate of the blocks in a region of size
+ * EAGER_SCAN_REGION_SIZE, it suspends eager scanning until it has progressed
+ * to another region of the table with potentially older data.
+ */
+#define EAGER_SCAN_REGION_SIZE 4096
+
+/*
+ * heap_vac_scan_next_block() sets these flags to communicate information
+ * about the block it read to the caller.
+ */
+#define VAC_BLK_WAS_EAGER_SCANNED (1 << 0)
+#define VAC_BLK_ALL_VISIBLE_ACCORDING_TO_VM (1 << 1)
+
 typedef struct LVRelState
 {
 	/* Target heap relation and its indexes */
@@ -189,8 +312,30 @@ typedef struct LVRelState
 
 	BlockNumber rel_pages;		/* total number of pages */
 	BlockNumber scanned_pages;	/* # pages examined (not skipped via VM) */
+
+	/*
+	 * Count of all-visible blocks eagerly scanned (for logging only). This
+	 * does not include skippable blocks scanned due to SKIP_PAGES_THRESHOLD.
+	 */
+	BlockNumber eager_scanned_pages;
+
 	BlockNumber removed_pages;	/* # pages removed by relation truncation */
-	BlockNumber frozen_pages;	/* # pages with newly frozen tuples */
+	BlockNumber new_frozen_tuple_pages; /* # pages with newly frozen tuples */
+
+	/* # pages newly set all-visible in the VM */
+	BlockNumber vm_new_visible_pages;
+
+	/*
+	 * # pages newly set all-visible and all-frozen in the VM. This is a
+	 * subset of vm_new_visible_pages. That is, vm_new_visible_pages includes
+	 * all pages set all-visible, but vm_new_visible_frozen_pages includes
+	 * only those which were also set all-frozen.
+	 */
+	BlockNumber vm_new_visible_frozen_pages;
+
+	/* # all-visible pages newly set all-frozen in the VM */
+	BlockNumber vm_new_frozen_pages;
+
 	BlockNumber lpdead_item_pages;	/* # pages with LP_DEAD items */
 	BlockNumber missed_dead_pages;	/* # pages with missed dead tuples */
 	BlockNumber nonempty_pages; /* actually, last nonempty page + 1 */
@@ -215,8 +360,56 @@ typedef struct LVRelState
 	BlockNumber current_block;	/* last block returned */
 	BlockNumber next_unskippable_block; /* next unskippable block */
 	bool		next_unskippable_allvis;	/* its visibility status */
+	bool		next_unskippable_eager_scanned; /* if it was eagerly scanned */
 	Buffer		next_unskippable_vmbuffer;	/* buffer containing its VM bit */
+
+	/* State related to managing eager scanning of all-visible pages */
+
+	/*
+	 * A normal vacuum that has failed to freeze too many eagerly scanned
+	 * blocks in a region suspends eager scanning.
+	 * next_eager_scan_region_start is the block number of the first block
+	 * eligible for resumed eager scanning.
+	 *
+	 * When eager scanning is permanently disabled, either initially
+	 * (including for aggressive vacuum) or due to hitting the success cap,
+	 * this is set to InvalidBlockNumber.
+	 */
+	BlockNumber next_eager_scan_region_start;
+
+	/*
+	 * The remaining number of blocks a normal vacuum will consider eager
+	 * scanning when it is successful. When eager scanning is enabled, this is
+	 * initialized to MAX_EAGER_FREEZE_SUCCESS_RATE of the total number of
+	 * all-visible but not all-frozen pages. For each eager freeze success,
+	 * this is decremented. Once it hits 0, eager scanning is permanently
+	 * disabled. It is initialized to 0 if eager scanning starts out disabled
+	 * (including for aggressive vacuum).
+	 */
+	BlockNumber eager_scan_remaining_successes;
+
+	/*
+	 * The maximum number of blocks which may be eagerly scanned and not
+	 * frozen before eager scanning is temporarily suspended. This is
+	 * configurable both globally, via the
+	 * vacuum_max_eager_freeze_failure_rate GUC, and per table, with a table
+	 * storage parameter of the same name. It is calculated as
+	 * vacuum_max_eager_freeze_failure_rate of EAGER_SCAN_REGION_SIZE blocks.
+	 * It is 0 when eager scanning is disabled.
+	 */
+	BlockNumber eager_scan_max_fails_per_region;
+
+	/*
+	 * The number of eagerly scanned blocks vacuum failed to freeze (due to
+	 * age) in the current eager scan region. Vacuum resets it to
+	 * eager_scan_max_fails_per_region each time it enters a new region of the
+	 * relation. If eager_scan_remaining_fails hits 0, eager scanning is
+	 * suspended until the next region. It is also 0 if eager scanning has
+	 * been permanently disabled.
+	 */
+	BlockNumber eager_scan_remaining_fails;
 } LVRelState;
+
 
 /* Struct for saving and restoring vacuum error information. */
 typedef struct LVSavedErrInfo
@@ -229,8 +422,11 @@ typedef struct LVSavedErrInfo
 
 /* non-export function prototypes */
 static void lazy_scan_heap(LVRelState *vacrel);
-static bool heap_vac_scan_next_block(LVRelState *vacrel, BlockNumber *blkno,
-									 bool *all_visible_according_to_vm);
+static void heap_vacuum_eager_scan_setup(LVRelState *vacrel,
+										 VacuumParams *params);
+static BlockNumber heap_vac_scan_next_block(ReadStream *stream,
+											void *callback_private_data,
+											void *per_buffer_data);
 static void find_next_unskippable_block(LVRelState *vacrel, bool *skipsallvis);
 static bool lazy_scan_new_or_empty(LVRelState *vacrel, Buffer buf,
 								   BlockNumber blkno, Page page,
@@ -238,7 +434,7 @@ static bool lazy_scan_new_or_empty(LVRelState *vacrel, Buffer buf,
 static void lazy_scan_prune(LVRelState *vacrel, Buffer buf,
 							BlockNumber blkno, Page page,
 							Buffer vmbuffer, bool all_visible_according_to_vm,
-							bool *has_lpdead_items);
+							bool *has_lpdead_items, bool *vm_page_frozen);
 static bool lazy_scan_noprune(LVRelState *vacrel, Buffer buf,
 							  BlockNumber blkno, Page page,
 							  bool *has_lpdead_items);
@@ -280,6 +476,130 @@ static void restore_vacuum_error_info(LVRelState *vacrel,
 									  const LVSavedErrInfo *saved_vacrel);
 
 
+
+/*
+ * Helper to set up the eager scanning state for vacuuming a single relation.
+ * Initializes the eager scan management related members of the LVRelState.
+ *
+ * Caller provides whether or not an aggressive vacuum is required due to
+ * vacuum options or for relfrozenxid/relminmxid advancement.
+ */
+static void
+heap_vacuum_eager_scan_setup(LVRelState *vacrel, VacuumParams *params)
+{
+	uint32		randseed;
+	BlockNumber allvisible;
+	BlockNumber allfrozen;
+	float		first_region_ratio;
+	bool		oldest_unfrozen_before_cutoff = false;
+
+	/*
+	 * Initialize eager scan management fields to their disabled values.
+	 * Aggressive vacuums, normal vacuums of small tables, and normal vacuums
+	 * of tables without sufficiently old tuples disable eager scanning.
+	 */
+	vacrel->next_eager_scan_region_start = InvalidBlockNumber;
+	vacrel->eager_scan_max_fails_per_region = 0;
+	vacrel->eager_scan_remaining_fails = 0;
+	vacrel->eager_scan_remaining_successes = 0;
+
+	/* If eager scanning is explicitly disabled, just return. */
+	if (params->max_eager_freeze_failure_rate == 0)
+		return;
+
+	/*
+	 * The caller will have determined whether or not an aggressive vacuum is
+	 * required by either the vacuum parameters or the relative age of the
+	 * oldest unfrozen transaction IDs. An aggressive vacuum must scan every
+	 * all-visible page to safely advance the relfrozenxid and/or relminmxid,
+	 * so scans of all-visible pages are not considered eager.
+	 */
+	if (vacrel->aggressive)
+		return;
+
+	/*
+	 * Aggressively vacuuming a small relation shouldn't take long, so it
+	 * isn't worth amortizing. We use two times the region size as the size
+	 * cutoff because the eager scan start block is a random spot somewhere in
+	 * the first region, making the second region the first to be eager
+	 * scanned normally.
+	 */
+	if (vacrel->rel_pages < 2 * EAGER_SCAN_REGION_SIZE)
+		return;
+
+	/*
+	 * We only want to enable eager scanning if we are likely to be able to
+	 * freeze some of the pages in the relation.
+	 *
+	 * Tuples with XIDs older than OldestXmin or MXIDs older than OldestMxact
+	 * are technically freezable, but we won't freeze them unless the criteria
+	 * for opportunistic freezing is met. Only tuples with XIDs/MXIDs older
+	 * than the FreezeLimit/MultiXactCutoff are frozen in the common case.
+	 *
+	 * So, as a heuristic, we wait until the FreezeLimit has advanced past the
+	 * relfrozenxid or the MultiXactCutoff has advanced past the relminmxid to
+	 * enable eager scanning.
+	 */
+	if (TransactionIdIsNormal(vacrel->cutoffs.relfrozenxid) &&
+		TransactionIdPrecedes(vacrel->cutoffs.relfrozenxid,
+							  vacrel->cutoffs.FreezeLimit))
+		oldest_unfrozen_before_cutoff = true;
+
+	if (!oldest_unfrozen_before_cutoff &&
+		MultiXactIdIsValid(vacrel->cutoffs.relminmxid) &&
+		MultiXactIdPrecedes(vacrel->cutoffs.relminmxid,
+							vacrel->cutoffs.MultiXactCutoff))
+		oldest_unfrozen_before_cutoff = true;
+
+	if (!oldest_unfrozen_before_cutoff)
+		return;
+
+	/* We have met the criteria to eagerly scan some pages. */
+
+	/*
+	 * Our success cap is MAX_EAGER_FREEZE_SUCCESS_RATE of the number of
+	 * all-visible but not all-frozen blocks in the relation.
+	 */
+	visibilitymap_count(vacrel->rel, &allvisible, &allfrozen);
+
+	vacrel->eager_scan_remaining_successes =
+		(BlockNumber) (MAX_EAGER_FREEZE_SUCCESS_RATE *
+					   (allvisible - allfrozen));
+
+	/* If every all-visible page is frozen, eager scanning is disabled. */
+	if (vacrel->eager_scan_remaining_successes == 0)
+		return;
+
+	/*
+	 * Now calculate the bounds of the first eager scan region. Its end block
+	 * will be a random spot somewhere in the first EAGER_SCAN_REGION_SIZE
+	 * blocks. This affects the bounds of all subsequent regions and avoids
+	 * eager scanning and failing to freeze the same blocks each vacuum of the
+	 * relation.
+	 */
+	randseed = pg_prng_uint32(&pg_global_prng_state);
+
+	vacrel->next_eager_scan_region_start = randseed % EAGER_SCAN_REGION_SIZE;
+
+	Assert(params->max_eager_freeze_failure_rate > 0 &&
+		   params->max_eager_freeze_failure_rate <= 1);
+
+	vacrel->eager_scan_max_fails_per_region =
+		params->max_eager_freeze_failure_rate *
+		EAGER_SCAN_REGION_SIZE;
+
+	/*
+	 * The first region will be smaller than subsequent regions. As such,
+	 * adjust the eager freeze failures tolerated for this region.
+	 */
+	first_region_ratio = 1 - (float) vacrel->next_eager_scan_region_start /
+		EAGER_SCAN_REGION_SIZE;
+
+	vacrel->eager_scan_remaining_fails =
+		vacrel->eager_scan_max_fails_per_region *
+		first_region_ratio;
+}
+
 /*
  *	heap_vacuum_rel() -- perform VACUUM for one heap relation
  *
@@ -303,7 +623,8 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 				minmulti_updated;
 	BlockNumber orig_rel_pages,
 				new_rel_pages,
-				new_rel_allvisible;
+				new_rel_allvisible,
+				new_rel_allfrozen;
 	PGRUsage	ru0;
 	TimestampTz starttime = 0;
 	PgStat_Counter startreadtime = 0,
@@ -319,13 +640,15 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	if (instrument)
 	{
 		pg_rusage_init(&ru0);
-		starttime = GetCurrentTimestamp();
 		if (track_io_timing)
 		{
 			startreadtime = pgStatBlockReadTime;
 			startwritetime = pgStatBlockWriteTime;
 		}
 	}
+
+	/* Used for instrumentation and stats report */
+	starttime = GetCurrentTimestamp();
 
 	pgstat_progress_start_command(PROGRESS_COMMAND_VACUUM,
 								  RelationGetRelid(rel));
@@ -408,8 +731,9 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 
 	/* Initialize page counters explicitly (be tidy) */
 	vacrel->scanned_pages = 0;
+	vacrel->eager_scanned_pages = 0;
 	vacrel->removed_pages = 0;
-	vacrel->frozen_pages = 0;
+	vacrel->new_frozen_tuple_pages = 0;
 	vacrel->lpdead_item_pages = 0;
 	vacrel->missed_dead_pages = 0;
 	vacrel->nonempty_pages = 0;
@@ -430,6 +754,10 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	vacrel->recently_dead_tuples = 0;
 	vacrel->missed_dead_tuples = 0;
 
+	vacrel->vm_new_visible_pages = 0;
+	vacrel->vm_new_visible_frozen_pages = 0;
+	vacrel->vm_new_frozen_pages = 0;
+
 	/*
 	 * Get cutoffs that determine which deleted tuples are considered DEAD,
 	 * not just RECENTLY_DEAD, and which XIDs/MXIDs to freeze.  Then determine
@@ -438,20 +766,27 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 * as an upper bound on the XIDs stored in the pages we'll actually scan
 	 * (NewRelfrozenXid tracking must never be allowed to miss unfrozen XIDs).
 	 *
-	 * Next acquire vistest, a related cutoff that's used in pruning.  We
-	 * expect vistest will always make heap_page_prune_and_freeze() remove any
-	 * deleted tuple whose xmax is < OldestXmin.  lazy_scan_prune must never
-	 * become confused about whether a tuple should be frozen or removed.  (In
-	 * the future we might want to teach lazy_scan_prune to recompute vistest
-	 * from time to time, to increase the number of dead tuples it can prune
-	 * away.)
+	 * Next acquire vistest, a related cutoff that's used in pruning.  We use
+	 * vistest in combination with OldestXmin to ensure that
+	 * heap_page_prune_and_freeze() always removes any deleted tuple whose
+	 * xmax is < OldestXmin.  lazy_scan_prune must never become confused about
+	 * whether a tuple should be frozen or removed.  (In the future we might
+	 * want to teach lazy_scan_prune to recompute vistest from time to time,
+	 * to increase the number of dead tuples it can prune away.)
 	 */
 	vacrel->aggressive = vacuum_get_cutoffs(rel, params, &vacrel->cutoffs);
 	vacrel->rel_pages = orig_rel_pages = RelationGetNumberOfBlocks(rel);
 	vacrel->vistest = GlobalVisTestFor(rel);
+
 	/* Initialize state used to track oldest extant XID/MXID */
 	vacrel->NewRelfrozenXid = vacrel->cutoffs.OldestXmin;
 	vacrel->NewRelminMxid = vacrel->cutoffs.OldestMxact;
+
+	/*
+	 * Initialize state related to tracking all-visible page skipping. This is
+	 * very important to determine whether or not it is safe to advance the
+	 * relfrozenxid/relminmxid.
+	 */
 	vacrel->skippedallvis = false;
 	skipwithvm = true;
 	if (params->options & VACOPT_DISABLE_PAGE_SKIPPING)
@@ -465,6 +800,13 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	}
 
 	vacrel->skipwithvm = skipwithvm;
+
+	/*
+	 * Set up eager scan tracking state. This must happen after determining
+	 * whether or not the vacuum must be aggressive, because only normal
+	 * vacuums use the eager scan algorithm.
+	 */
+	heap_vacuum_eager_scan_setup(vacrel, params);
 
 	if (verbose)
 	{
@@ -558,9 +900,17 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 * pg_class.relpages to
 	 */
 	new_rel_pages = vacrel->rel_pages;	/* After possible rel truncation */
-	visibilitymap_count(rel, &new_rel_allvisible, NULL);
+	visibilitymap_count(rel, &new_rel_allvisible, &new_rel_allfrozen);
 	if (new_rel_allvisible > new_rel_pages)
 		new_rel_allvisible = new_rel_pages;
+
+	/*
+	 * An all-frozen block _must_ be all-visible. As such, clamp the count of
+	 * all-frozen blocks to the count of all-visible blocks. This matches the
+	 * clamping of relallvisible above.
+	 */
+	if (new_rel_allfrozen > new_rel_allvisible)
+		new_rel_allfrozen = new_rel_allvisible;
 
 	/*
 	 * Now actually update rel's pg_class entry.
@@ -570,7 +920,8 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 * scan every page that isn't skipped using the visibility map.
 	 */
 	vac_update_relstats(rel, new_rel_pages, vacrel->new_live_tuples,
-						new_rel_allvisible, vacrel->nindexes > 0,
+						new_rel_allvisible, new_rel_allfrozen,
+						vacrel->nindexes > 0,
 						vacrel->NewRelfrozenXid, vacrel->NewRelminMxid,
 						&frozenxid_updated, &minmulti_updated, false);
 
@@ -588,7 +939,8 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 						 rel->rd_rel->relisshared,
 						 Max(vacrel->new_live_tuples, 0),
 						 vacrel->recently_dead_tuples +
-						 vacrel->missed_dead_tuples);
+						 vacrel->missed_dead_tuples,
+						 starttime);
 	pgstat_progress_end_command();
 
 	if (instrument)
@@ -608,12 +960,22 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 			int32		diff;
 			double		read_rate = 0,
 						write_rate = 0;
+			int64		total_blks_hit;
+			int64		total_blks_read;
+			int64		total_blks_dirtied;
 
 			TimestampDifference(starttime, endtime, &secs_dur, &usecs_dur);
 			memset(&walusage, 0, sizeof(WalUsage));
 			WalUsageAccumDiff(&walusage, &pgWalUsage, &startwalusage);
 			memset(&bufferusage, 0, sizeof(BufferUsage));
 			BufferUsageAccumDiff(&bufferusage, &pgBufferUsage, &startbufferusage);
+
+			total_blks_hit = bufferusage.shared_blks_hit +
+				bufferusage.local_blks_hit;
+			total_blks_read = bufferusage.shared_blks_read +
+				bufferusage.local_blks_read;
+			total_blks_dirtied = bufferusage.shared_blks_dirtied +
+				bufferusage.local_blks_dirtied;
 
 			initStringInfo(&buf);
 			if (verbose)
@@ -650,21 +1012,23 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 							 vacrel->relnamespace,
 							 vacrel->relname,
 							 vacrel->num_index_scans);
-			appendStringInfo(&buf, _("pages: %u removed, %u remain, %u scanned (%.2f%% of total)\n"),
+			appendStringInfo(&buf, _("pages: %u removed, %u remain, %u scanned (%.2f%% of total), %u eagerly scanned\n"),
 							 vacrel->removed_pages,
 							 new_rel_pages,
 							 vacrel->scanned_pages,
 							 orig_rel_pages == 0 ? 100.0 :
-							 100.0 * vacrel->scanned_pages / orig_rel_pages);
+							 100.0 * vacrel->scanned_pages /
+							 orig_rel_pages,
+							 vacrel->eager_scanned_pages);
 			appendStringInfo(&buf,
-							 _("tuples: %lld removed, %lld remain, %lld are dead but not yet removable\n"),
-							 (long long) vacrel->tuples_deleted,
-							 (long long) vacrel->new_rel_tuples,
-							 (long long) vacrel->recently_dead_tuples);
+							 _("tuples: %" PRId64 " removed, %" PRId64 " remain, %" PRId64 " are dead but not yet removable\n"),
+							 vacrel->tuples_deleted,
+							 (int64) vacrel->new_rel_tuples,
+							 vacrel->recently_dead_tuples);
 			if (vacrel->missed_dead_tuples > 0)
 				appendStringInfo(&buf,
-								 _("tuples missed: %lld dead from %u pages not removed due to cleanup lock contention\n"),
-								 (long long) vacrel->missed_dead_tuples,
+								 _("tuples missed: %" PRId64 " dead from %u pages not removed due to cleanup lock contention\n"),
+								 vacrel->missed_dead_tuples,
 								 vacrel->missed_dead_pages);
 			diff = (int32) (ReadNextTransactionId() -
 							vacrel->cutoffs.OldestXmin);
@@ -687,11 +1051,19 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 								 _("new relminmxid: %u, which is %d MXIDs ahead of previous value\n"),
 								 vacrel->NewRelminMxid, diff);
 			}
-			appendStringInfo(&buf, _("frozen: %u pages from table (%.2f%% of total) had %lld tuples frozen\n"),
-							 vacrel->frozen_pages,
+			appendStringInfo(&buf, _("frozen: %u pages from table (%.2f%% of total) had %" PRId64 " tuples frozen\n"),
+							 vacrel->new_frozen_tuple_pages,
 							 orig_rel_pages == 0 ? 100.0 :
-							 100.0 * vacrel->frozen_pages / orig_rel_pages,
-							 (long long) vacrel->tuples_frozen);
+							 100.0 * vacrel->new_frozen_tuple_pages /
+							 orig_rel_pages,
+							 vacrel->tuples_frozen);
+
+			appendStringInfo(&buf,
+							 _("visibility map: %u pages set all-visible, %u pages set all-frozen (%u were all-visible)\n"),
+							 vacrel->vm_new_visible_pages,
+							 vacrel->vm_new_visible_frozen_pages +
+							 vacrel->vm_new_frozen_pages,
+							 vacrel->vm_new_frozen_pages);
 			if (vacrel->do_index_vacuuming)
 			{
 				if (vacrel->nindexes == 0 || vacrel->num_index_scans == 0)
@@ -699,7 +1071,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 				else
 					appendStringInfoString(&buf, _("index scan needed: "));
 
-				msgfmt = _("%u pages from table (%.2f%% of total) had %lld dead item identifiers removed\n");
+				msgfmt = _("%u pages from table (%.2f%% of total) had %" PRId64 " dead item identifiers removed\n");
 			}
 			else
 			{
@@ -708,13 +1080,13 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 				else
 					appendStringInfoString(&buf, _("index scan bypassed by failsafe: "));
 
-				msgfmt = _("%u pages from table (%.2f%% of total) have %lld dead item identifiers\n");
+				msgfmt = _("%u pages from table (%.2f%% of total) have %" PRId64 " dead item identifiers\n");
 			}
 			appendStringInfo(&buf, msgfmt,
 							 vacrel->lpdead_item_pages,
 							 orig_rel_pages == 0 ? 100.0 :
 							 100.0 * vacrel->lpdead_item_pages / orig_rel_pages,
-							 (long long) vacrel->lpdead_items);
+							 vacrel->lpdead_items);
 			for (int i = 0; i < vacrel->nindexes; i++)
 			{
 				IndexBulkDeleteResult *istat = vacrel->indstats[i];
@@ -730,6 +1102,17 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 								 istat->pages_deleted,
 								 istat->pages_free);
 			}
+			if (track_cost_delay_timing)
+			{
+				/*
+				 * We bypass the changecount mechanism because this value is
+				 * only updated by the calling process.  We also rely on the
+				 * above call to pgstat_progress_end_command() to not clear
+				 * the st_progress_param array.
+				 */
+				appendStringInfo(&buf, _("delay time: %.3f ms\n"),
+								 (double) MyBEEntry->st_progress_param[PROGRESS_VACUUM_DELAY_TIME] / 1000000.0);
+			}
 			if (track_io_timing)
 			{
 				double		read_ms = (double) (pgStatBlockReadTime - startreadtime) / 1000;
@@ -740,23 +1123,24 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 			}
 			if (secs_dur > 0 || usecs_dur > 0)
 			{
-				read_rate = (double) BLCKSZ * (bufferusage.shared_blks_read + bufferusage.local_blks_read) /
+				read_rate = (double) BLCKSZ * total_blks_read /
 					(1024 * 1024) / (secs_dur + usecs_dur / 1000000.0);
-				write_rate = (double) BLCKSZ * (bufferusage.shared_blks_dirtied + bufferusage.local_blks_dirtied) /
+				write_rate = (double) BLCKSZ * total_blks_dirtied /
 					(1024 * 1024) / (secs_dur + usecs_dur / 1000000.0);
 			}
 			appendStringInfo(&buf, _("avg read rate: %.3f MB/s, avg write rate: %.3f MB/s\n"),
 							 read_rate, write_rate);
 			appendStringInfo(&buf,
-							 _("buffer usage: %lld hits, %lld misses, %lld dirtied\n"),
-							 (long long) (bufferusage.shared_blks_hit + bufferusage.local_blks_hit),
-							 (long long) (bufferusage.shared_blks_read + bufferusage.local_blks_read),
-							 (long long) (bufferusage.shared_blks_dirtied + bufferusage.local_blks_dirtied));
+							 _("buffer usage: %" PRId64 " hits, %" PRId64 " reads, %" PRId64 " dirtied\n"),
+							 total_blks_hit,
+							 total_blks_read,
+							 total_blks_dirtied);
 			appendStringInfo(&buf,
-							 _("WAL usage: %lld records, %lld full page images, %llu bytes\n"),
-							 (long long) walusage.wal_records,
-							 (long long) walusage.wal_fpi,
-							 (unsigned long long) walusage.wal_bytes);
+							 _("WAL usage: %" PRId64 " records, %" PRId64 " full page images, %" PRIu64 " bytes, %" PRId64 " buffers full\n"),
+							 walusage.wal_records,
+							 walusage.wal_fpi,
+							 walusage.wal_bytes,
+							 walusage.wal_buffers_full);
 			appendStringInfo(&buf, _("system usage: %s"), pg_rusage_show(&ru0));
 
 			ereport(verbose ? INFO : LOG,
@@ -815,13 +1199,12 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 static void
 lazy_scan_heap(LVRelState *vacrel)
 {
+	ReadStream *stream;
 	BlockNumber rel_pages = vacrel->rel_pages,
-				blkno,
+				blkno = 0,
 				next_fsm_block_to_vacuum = 0;
-	bool		all_visible_according_to_vm;
-
-	TidStore   *dead_items = vacrel->dead_items;
-	VacDeadItemsInfo *dead_items_info = vacrel->dead_items_info;
+	BlockNumber orig_eager_scan_success_limit =
+		vacrel->eager_scan_remaining_successes; /* for logging */
 	Buffer		vmbuffer = InvalidBuffer;
 	const int	initprog_index[] = {
 		PROGRESS_VACUUM_PHASE,
@@ -833,30 +1216,41 @@ lazy_scan_heap(LVRelState *vacrel)
 	/* Report that we're scanning the heap, advertising total # of blocks */
 	initprog_val[0] = PROGRESS_VACUUM_PHASE_SCAN_HEAP;
 	initprog_val[1] = rel_pages;
-	initprog_val[2] = dead_items_info->max_bytes;
+	initprog_val[2] = vacrel->dead_items_info->max_bytes;
 	pgstat_progress_update_multi_param(3, initprog_index, initprog_val);
 
 	/* Initialize for the first heap_vac_scan_next_block() call */
 	vacrel->current_block = InvalidBlockNumber;
 	vacrel->next_unskippable_block = InvalidBlockNumber;
 	vacrel->next_unskippable_allvis = false;
+	vacrel->next_unskippable_eager_scanned = false;
 	vacrel->next_unskippable_vmbuffer = InvalidBuffer;
 
-	while (heap_vac_scan_next_block(vacrel, &blkno, &all_visible_according_to_vm))
+	/*
+	 * Set up the read stream for vacuum's first pass through the heap.
+	 *
+	 * This could be made safe for READ_STREAM_USE_BATCHING, but only with
+	 * explicit work in heap_vac_scan_next_block.
+	 */
+	stream = read_stream_begin_relation(READ_STREAM_MAINTENANCE,
+										vacrel->bstrategy,
+										vacrel->rel,
+										MAIN_FORKNUM,
+										heap_vac_scan_next_block,
+										vacrel,
+										sizeof(uint8));
+
+	while (true)
 	{
 		Buffer		buf;
 		Page		page;
+		uint8		blk_info = 0;
 		bool		has_lpdead_items;
+		void	   *per_buffer_data = NULL;
+		bool		vm_page_frozen = false;
 		bool		got_cleanup_lock = false;
 
-		vacrel->scanned_pages++;
-
-		/* Report as block scanned, update error traceback information */
-		pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLKS_SCANNED, blkno);
-		update_vacuum_error_info(vacrel, NULL, VACUUM_ERRCB_PHASE_SCAN_HEAP,
-								 blkno, InvalidOffsetNumber);
-
-		vacuum_delay_point();
+		vacuum_delay_point(false);
 
 		/*
 		 * Regularly check if wraparound failsafe should trigger.
@@ -867,16 +1261,20 @@ lazy_scan_heap(LVRelState *vacrel)
 		 * one-pass strategy, and the two-pass strategy with the index_cleanup
 		 * param set to 'off'.
 		 */
-		if (vacrel->scanned_pages % FAILSAFE_EVERY_PAGES == 0)
+		if (vacrel->scanned_pages > 0 &&
+			vacrel->scanned_pages % FAILSAFE_EVERY_PAGES == 0)
 			lazy_check_wraparound_failsafe(vacrel);
 
 		/*
 		 * Consider if we definitely have enough space to process TIDs on page
 		 * already.  If we are close to overrunning the available space for
 		 * dead_items TIDs, pause and do a cycle of vacuuming before we tackle
-		 * this page.
+		 * this page. However, let's force at least one page-worth of tuples
+		 * to be stored as to ensure we do at least some work when the memory
+		 * configured is so low that we run out before storing anything.
 		 */
-		if (TidStoreMemoryUsage(dead_items) > dead_items_info->max_bytes)
+		if (vacrel->dead_items_info->num_items > 0 &&
+			TidStoreMemoryUsage(vacrel->dead_items) > vacrel->dead_items_info->max_bytes)
 		{
 			/*
 			 * Before beginning index vacuuming, we release any pin we may
@@ -896,10 +1294,11 @@ lazy_scan_heap(LVRelState *vacrel)
 
 			/*
 			 * Vacuum the Free Space Map to make newly-freed space visible on
-			 * upper-level FSM pages.  Note we have not yet processed blkno.
+			 * upper-level FSM pages. Note that blkno is the previously
+			 * processed block.
 			 */
 			FreeSpaceMapVacuumRange(vacrel->rel, next_fsm_block_to_vacuum,
-									blkno);
+									blkno + 1);
 			next_fsm_block_to_vacuum = blkno;
 
 			/* Report that we are once again scanning the heap */
@@ -907,16 +1306,32 @@ lazy_scan_heap(LVRelState *vacrel)
 										 PROGRESS_VACUUM_PHASE_SCAN_HEAP);
 		}
 
+		buf = read_stream_next_buffer(stream, &per_buffer_data);
+
+		/* The relation is exhausted. */
+		if (!BufferIsValid(buf))
+			break;
+
+		blk_info = *((uint8 *) per_buffer_data);
+		CheckBufferIsPinnedOnce(buf);
+		page = BufferGetPage(buf);
+		blkno = BufferGetBlockNumber(buf);
+
+		vacrel->scanned_pages++;
+		if (blk_info & VAC_BLK_WAS_EAGER_SCANNED)
+			vacrel->eager_scanned_pages++;
+
+		/* Report as block scanned, update error traceback information */
+		pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLKS_SCANNED, blkno);
+		update_vacuum_error_info(vacrel, NULL, VACUUM_ERRCB_PHASE_SCAN_HEAP,
+								 blkno, InvalidOffsetNumber);
+
 		/*
 		 * Pin the visibility map page in case we need to mark the page
 		 * all-visible.  In most cases this will be very cheap, because we'll
 		 * already have the correct page pinned anyway.
 		 */
 		visibilitymap_pin(vacrel->rel, blkno, &vmbuffer);
-
-		buf = ReadBufferExtended(vacrel->rel, MAIN_FORKNUM, blkno, RBM_NORMAL,
-								 vacrel->bstrategy);
-		page = BufferGetPage(buf);
 
 		/*
 		 * We need a buffer cleanup lock to prune HOT chains and defragment
@@ -973,8 +1388,64 @@ lazy_scan_heap(LVRelState *vacrel)
 		 */
 		if (got_cleanup_lock)
 			lazy_scan_prune(vacrel, buf, blkno, page,
-							vmbuffer, all_visible_according_to_vm,
-							&has_lpdead_items);
+							vmbuffer,
+							blk_info & VAC_BLK_ALL_VISIBLE_ACCORDING_TO_VM,
+							&has_lpdead_items, &vm_page_frozen);
+
+		/*
+		 * Count an eagerly scanned page as a failure or a success.
+		 *
+		 * Only lazy_scan_prune() freezes pages, so if we didn't get the
+		 * cleanup lock, we won't have frozen the page. However, we only count
+		 * pages that were too new to require freezing as eager freeze
+		 * failures.
+		 *
+		 * We could gather more information from lazy_scan_noprune() about
+		 * whether or not there were tuples with XIDs or MXIDs older than the
+		 * FreezeLimit or MultiXactCutoff. However, for simplicity, we simply
+		 * exclude pages skipped due to cleanup lock contention from eager
+		 * freeze algorithm caps.
+		 */
+		if (got_cleanup_lock &&
+			(blk_info & VAC_BLK_WAS_EAGER_SCANNED))
+		{
+			/* Aggressive vacuums do not eager scan. */
+			Assert(!vacrel->aggressive);
+
+			if (vm_page_frozen)
+			{
+				if (vacrel->eager_scan_remaining_successes > 0)
+					vacrel->eager_scan_remaining_successes--;
+
+				if (vacrel->eager_scan_remaining_successes == 0)
+				{
+					/*
+					 * Report only once that we disabled eager scanning. We
+					 * may eagerly read ahead blocks in excess of the success
+					 * or failure caps before attempting to freeze them, so we
+					 * could reach here even after disabling additional eager
+					 * scanning.
+					 */
+					if (vacrel->eager_scan_max_fails_per_region > 0)
+						ereport(vacrel->verbose ? INFO : DEBUG2,
+								(errmsg("disabling eager scanning after freezing %u eagerly scanned blocks of relation \"%s.%s.%s\"",
+										orig_eager_scan_success_limit,
+										vacrel->dbname, vacrel->relnamespace,
+										vacrel->relname)));
+
+					/*
+					 * If we hit our success cap, permanently disable eager
+					 * scanning by setting the other eager scan management
+					 * fields to their disabled values.
+					 */
+					vacrel->eager_scan_remaining_fails = 0;
+					vacrel->next_eager_scan_region_start = InvalidBlockNumber;
+					vacrel->eager_scan_max_fails_per_region = 0;
+				}
+			}
+			else if (vacrel->eager_scan_remaining_fails > 0)
+				vacrel->eager_scan_remaining_fails--;
+		}
 
 		/*
 		 * Now drop the buffer lock and, potentially, update the FSM.
@@ -1026,8 +1497,12 @@ lazy_scan_heap(LVRelState *vacrel)
 	if (BufferIsValid(vmbuffer))
 		ReleaseBuffer(vmbuffer);
 
-	/* report that everything is now scanned */
-	pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLKS_SCANNED, blkno);
+	/*
+	 * Report that everything is now scanned. We never skip scanning the last
+	 * block in the relation, so we can pass rel_pages here.
+	 */
+	pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLKS_SCANNED,
+								 rel_pages);
 
 	/* now we can compute the new value for pg_class.reltuples */
 	vacrel->new_live_tuples = vac_estimate_reltuples(vacrel->rel, rel_pages,
@@ -1042,22 +1517,26 @@ lazy_scan_heap(LVRelState *vacrel)
 		Max(vacrel->new_live_tuples, 0) + vacrel->recently_dead_tuples +
 		vacrel->missed_dead_tuples;
 
+	read_stream_end(stream);
+
 	/*
 	 * Do index vacuuming (call each index's ambulkdelete routine), then do
 	 * related heap vacuuming
 	 */
-	if (dead_items_info->num_items > 0)
+	if (vacrel->dead_items_info->num_items > 0)
 		lazy_vacuum(vacrel);
 
 	/*
 	 * Vacuum the remainder of the Free Space Map.  We must do this whether or
 	 * not there were indexes, and whether or not we bypassed index vacuuming.
+	 * We can pass rel_pages here because we never skip scanning the last
+	 * block of the relation.
 	 */
-	if (blkno > next_fsm_block_to_vacuum)
-		FreeSpaceMapVacuumRange(vacrel->rel, next_fsm_block_to_vacuum, blkno);
+	if (rel_pages > next_fsm_block_to_vacuum)
+		FreeSpaceMapVacuumRange(vacrel->rel, next_fsm_block_to_vacuum, rel_pages);
 
 	/* report all blocks vacuumed */
-	pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLKS_VACUUMED, blkno);
+	pgstat_progress_update_param(PROGRESS_VACUUM_HEAP_BLKS_VACUUMED, rel_pages);
 
 	/* Do final index cleanup (call each index's amvacuumcleanup routine) */
 	if (vacrel->nindexes > 0 && vacrel->do_index_cleanup)
@@ -1065,28 +1544,37 @@ lazy_scan_heap(LVRelState *vacrel)
 }
 
 /*
- *	heap_vac_scan_next_block() -- get next block for vacuum to process
+ *	heap_vac_scan_next_block() -- read stream callback to get the next block
+ *	for vacuum to process
  *
- * lazy_scan_heap() calls here every time it needs to get the next block to
- * prune and vacuum.  The function uses the visibility map, vacuum options,
- * and various thresholds to skip blocks which do not need to be processed and
- * sets blkno to the next block to process.
+ * Every time lazy_scan_heap() needs a new block to process during its first
+ * phase, it invokes read_stream_next_buffer() with a stream set up to call
+ * heap_vac_scan_next_block() to get the next block.
  *
- * The block number and visibility status of the next block to process are set
- * in *blkno and *all_visible_according_to_vm.  The return value is false if
- * there are no further blocks to process.
+ * heap_vac_scan_next_block() uses the visibility map, vacuum options, and
+ * various thresholds to skip blocks which do not need to be processed and
+ * returns the next block to process or InvalidBlockNumber if there are no
+ * remaining blocks.
  *
- * vacrel is an in/out parameter here.  Vacuum options and information about
- * the relation are read.  vacrel->skippedallvis is set if we skip a block
- * that's all-visible but not all-frozen, to ensure that we don't update
- * relfrozenxid in that case.  vacrel also holds information about the next
- * unskippable block, as bookkeeping for this function.
+ * The visibility status of the next block to process and whether or not it
+ * was eager scanned is set in the per_buffer_data.
+ *
+ * callback_private_data contains a reference to the LVRelState, passed to the
+ * read stream API during stream setup. The LVRelState is an in/out parameter
+ * here (locally named `vacrel`). Vacuum options and information about the
+ * relation are read from it. vacrel->skippedallvis is set if we skip a block
+ * that's all-visible but not all-frozen (to ensure that we don't update
+ * relfrozenxid in that case). vacrel also holds information about the next
+ * unskippable block -- as bookkeeping for this function.
  */
-static bool
-heap_vac_scan_next_block(LVRelState *vacrel, BlockNumber *blkno,
-						 bool *all_visible_according_to_vm)
+static BlockNumber
+heap_vac_scan_next_block(ReadStream *stream,
+						 void *callback_private_data,
+						 void *per_buffer_data)
 {
 	BlockNumber next_block;
+	LVRelState *vacrel = callback_private_data;
+	uint8		blk_info = 0;
 
 	/* relies on InvalidBlockNumber + 1 overflowing to 0 on first call */
 	next_block = vacrel->current_block + 1;
@@ -1099,8 +1587,7 @@ heap_vac_scan_next_block(LVRelState *vacrel, BlockNumber *blkno,
 			ReleaseBuffer(vacrel->next_unskippable_vmbuffer);
 			vacrel->next_unskippable_vmbuffer = InvalidBuffer;
 		}
-		*blkno = vacrel->rel_pages;
-		return false;
+		return InvalidBlockNumber;
 	}
 
 	/*
@@ -1149,9 +1636,10 @@ heap_vac_scan_next_block(LVRelState *vacrel, BlockNumber *blkno,
 		 * but chose not to.  We know that they are all-visible in the VM,
 		 * otherwise they would've been unskippable.
 		 */
-		*blkno = vacrel->current_block = next_block;
-		*all_visible_according_to_vm = true;
-		return true;
+		vacrel->current_block = next_block;
+		blk_info |= VAC_BLK_ALL_VISIBLE_ACCORDING_TO_VM;
+		*((uint8 *) per_buffer_data) = blk_info;
+		return vacrel->current_block;
 	}
 	else
 	{
@@ -1161,9 +1649,13 @@ heap_vac_scan_next_block(LVRelState *vacrel, BlockNumber *blkno,
 		 */
 		Assert(next_block == vacrel->next_unskippable_block);
 
-		*blkno = vacrel->current_block = next_block;
-		*all_visible_according_to_vm = vacrel->next_unskippable_allvis;
-		return true;
+		vacrel->current_block = next_block;
+		if (vacrel->next_unskippable_allvis)
+			blk_info |= VAC_BLK_ALL_VISIBLE_ACCORDING_TO_VM;
+		if (vacrel->next_unskippable_eager_scanned)
+			blk_info |= VAC_BLK_WAS_EAGER_SCANNED;
+		*((uint8 *) per_buffer_data) = blk_info;
+		return vacrel->current_block;
 	}
 }
 
@@ -1186,17 +1678,31 @@ find_next_unskippable_block(LVRelState *vacrel, bool *skipsallvis)
 	BlockNumber rel_pages = vacrel->rel_pages;
 	BlockNumber next_unskippable_block = vacrel->next_unskippable_block + 1;
 	Buffer		next_unskippable_vmbuffer = vacrel->next_unskippable_vmbuffer;
+	bool		next_unskippable_eager_scanned = false;
 	bool		next_unskippable_allvis;
 
 	*skipsallvis = false;
 
-	for (;;)
+	for (;; next_unskippable_block++)
 	{
 		uint8		mapbits = visibilitymap_get_status(vacrel->rel,
 													   next_unskippable_block,
 													   &next_unskippable_vmbuffer);
 
 		next_unskippable_allvis = (mapbits & VISIBILITYMAP_ALL_VISIBLE) != 0;
+
+		/*
+		 * At the start of each eager scan region, normal vacuums with eager
+		 * scanning enabled reset the failure counter, allowing vacuum to
+		 * resume eager scanning if it had been suspended in the previous
+		 * region.
+		 */
+		if (next_unskippable_block >= vacrel->next_eager_scan_region_start)
+		{
+			vacrel->eager_scan_remaining_fails =
+				vacrel->eager_scan_max_fails_per_region;
+			vacrel->next_eager_scan_region_start += EAGER_SCAN_REGION_SIZE;
+		}
 
 		/*
 		 * A block is unskippable if it is not all visible according to the
@@ -1226,28 +1732,41 @@ find_next_unskippable_block(LVRelState *vacrel, bool *skipsallvis)
 			break;
 
 		/*
-		 * Aggressive VACUUM caller can't skip pages just because they are
-		 * all-visible.  They may still skip all-frozen pages, which can't
-		 * contain XIDs < OldestXmin (XIDs that aren't already frozen by now).
+		 * All-frozen pages cannot contain XIDs < OldestXmin (XIDs that aren't
+		 * already frozen by now), so this page can be skipped.
 		 */
-		if ((mapbits & VISIBILITYMAP_ALL_FROZEN) == 0)
-		{
-			if (vacrel->aggressive)
-				break;
+		if ((mapbits & VISIBILITYMAP_ALL_FROZEN) != 0)
+			continue;
 
-			/*
-			 * All-visible block is safe to skip in non-aggressive case.  But
-			 * remember that the final range contains such a block for later.
-			 */
-			*skipsallvis = true;
+		/*
+		 * Aggressive vacuums cannot skip any all-visible pages that are not
+		 * also all-frozen.
+		 */
+		if (vacrel->aggressive)
+			break;
+
+		/*
+		 * Normal vacuums with eager scanning enabled only skip all-visible
+		 * but not all-frozen pages if they have hit the failure limit for the
+		 * current eager scan region.
+		 */
+		if (vacrel->eager_scan_remaining_fails > 0)
+		{
+			next_unskippable_eager_scanned = true;
+			break;
 		}
 
-		next_unskippable_block++;
+		/*
+		 * All-visible blocks are safe to skip in a normal vacuum. But
+		 * remember that the final range contains such a block for later.
+		 */
+		*skipsallvis = true;
 	}
 
 	/* write the local variables back to vacrel */
 	vacrel->next_unskippable_block = next_unskippable_block;
 	vacrel->next_unskippable_allvis = next_unskippable_allvis;
+	vacrel->next_unskippable_eager_scanned = next_unskippable_eager_scanned;
 	vacrel->next_unskippable_vmbuffer = next_unskippable_vmbuffer;
 }
 
@@ -1278,6 +1797,12 @@ find_next_unskippable_block(LVRelState *vacrel, bool *skipsallvis)
  * lazy_scan_prune (or lazy_scan_noprune).  Otherwise returns true, indicating
  * that lazy_scan_heap is done processing the page, releasing lock on caller's
  * behalf.
+ *
+ * No vm_page_frozen output parameter (like that passed to lazy_scan_prune())
+ * is passed here because neither empty nor new pages can be eagerly frozen.
+ * New pages are never frozen. Empty pages are always set frozen in the VM at
+ * the same time that they are set all-visible, and we don't eagerly scan
+ * frozen pages.
  */
 static bool
 lazy_scan_new_or_empty(LVRelState *vacrel, Buffer buf, BlockNumber blkno,
@@ -1366,10 +1891,16 @@ lazy_scan_new_or_empty(LVRelState *vacrel, Buffer buf, BlockNumber blkno,
 				log_newpage_buffer(buf, true);
 
 			PageSetAllVisible(page);
-			visibilitymap_set(vacrel->rel, blkno, buf, InvalidXLogRecPtr,
+			visibilitymap_set(vacrel->rel, blkno, buf,
+							  InvalidXLogRecPtr,
 							  vmbuffer, InvalidTransactionId,
-							  VISIBILITYMAP_ALL_VISIBLE | VISIBILITYMAP_ALL_FROZEN);
+							  VISIBILITYMAP_ALL_VISIBLE |
+							  VISIBILITYMAP_ALL_FROZEN);
 			END_CRIT_SECTION();
+
+			/* Count the newly all-frozen pages for logging */
+			vacrel->vm_new_visible_pages++;
+			vacrel->vm_new_visible_frozen_pages++;
 		}
 
 		freespace = PageGetHeapFreeSpace(page);
@@ -1401,6 +1932,10 @@ cmpOffsetNumbers(const void *a, const void *b)
  *
  * *has_lpdead_items is set to true or false depending on whether, upon return
  * from this function, any LP_DEAD items are still present on the page.
+ *
+ * *vm_page_frozen is set to true if the page is newly set all-frozen in the
+ * VM. The caller currently only uses this for determining whether an eagerly
+ * scanned page was successfully set all-frozen.
  */
 static void
 lazy_scan_prune(LVRelState *vacrel,
@@ -1409,7 +1944,8 @@ lazy_scan_prune(LVRelState *vacrel,
 				Page page,
 				Buffer vmbuffer,
 				bool all_visible_according_to_vm,
-				bool *has_lpdead_items)
+				bool *has_lpdead_items,
+				bool *vm_page_frozen)
 {
 	Relation	rel = vacrel->rel;
 	PruneFreezeResult presult;
@@ -1447,11 +1983,12 @@ lazy_scan_prune(LVRelState *vacrel,
 	if (presult.nfrozen > 0)
 	{
 		/*
-		 * We don't increment the frozen_pages instrumentation counter when
-		 * nfrozen == 0, since it only counts pages with newly frozen tuples
-		 * (don't confuse that with pages newly set all-frozen in VM).
+		 * We don't increment the new_frozen_tuple_pages instrumentation
+		 * counter when nfrozen == 0, since it only counts pages with newly
+		 * frozen tuples (don't confuse that with pages newly set all-frozen
+		 * in VM).
 		 */
-		vacrel->frozen_pages++;
+		vacrel->new_frozen_tuple_pages++;
 	}
 
 	/*
@@ -1523,6 +2060,7 @@ lazy_scan_prune(LVRelState *vacrel,
 	 */
 	if (!all_visible_according_to_vm && presult.all_visible)
 	{
+		uint8		old_vmbits;
 		uint8		flags = VISIBILITYMAP_ALL_VISIBLE;
 
 		if (presult.all_frozen)
@@ -1546,9 +2084,30 @@ lazy_scan_prune(LVRelState *vacrel,
 		 */
 		PageSetAllVisible(page);
 		MarkBufferDirty(buf);
-		visibilitymap_set(vacrel->rel, blkno, buf, InvalidXLogRecPtr,
-						  vmbuffer, presult.vm_conflict_horizon,
-						  flags);
+		old_vmbits = visibilitymap_set(vacrel->rel, blkno, buf,
+									   InvalidXLogRecPtr,
+									   vmbuffer, presult.vm_conflict_horizon,
+									   flags);
+
+		/*
+		 * If the page wasn't already set all-visible and/or all-frozen in the
+		 * VM, count it as newly set for logging.
+		 */
+		if ((old_vmbits & VISIBILITYMAP_ALL_VISIBLE) == 0)
+		{
+			vacrel->vm_new_visible_pages++;
+			if (presult.all_frozen)
+			{
+				vacrel->vm_new_visible_frozen_pages++;
+				*vm_page_frozen = true;
+			}
+		}
+		else if ((old_vmbits & VISIBILITYMAP_ALL_FROZEN) == 0 &&
+				 presult.all_frozen)
+		{
+			vacrel->vm_new_frozen_pages++;
+			*vm_page_frozen = true;
+		}
 	}
 
 	/*
@@ -1598,6 +2157,8 @@ lazy_scan_prune(LVRelState *vacrel,
 	else if (all_visible_according_to_vm && presult.all_visible &&
 			 presult.all_frozen && !VM_ALL_FROZEN(vacrel->rel, blkno, &vmbuffer))
 	{
+		uint8		old_vmbits;
+
 		/*
 		 * Avoid relying on all_visible_according_to_vm as a proxy for the
 		 * page-level PD_ALL_VISIBLE bit being set, since it might have become
@@ -1617,10 +2178,35 @@ lazy_scan_prune(LVRelState *vacrel,
 		 * was logged when the page's tuples were frozen.
 		 */
 		Assert(!TransactionIdIsValid(presult.vm_conflict_horizon));
-		visibilitymap_set(vacrel->rel, blkno, buf, InvalidXLogRecPtr,
-						  vmbuffer, InvalidTransactionId,
-						  VISIBILITYMAP_ALL_VISIBLE |
-						  VISIBILITYMAP_ALL_FROZEN);
+		old_vmbits = visibilitymap_set(vacrel->rel, blkno, buf,
+									   InvalidXLogRecPtr,
+									   vmbuffer, InvalidTransactionId,
+									   VISIBILITYMAP_ALL_VISIBLE |
+									   VISIBILITYMAP_ALL_FROZEN);
+
+		/*
+		 * The page was likely already set all-visible in the VM. However,
+		 * there is a small chance that it was modified sometime between
+		 * setting all_visible_according_to_vm and checking the visibility
+		 * during pruning. Check the return value of old_vmbits anyway to
+		 * ensure the visibility map counters used for logging are accurate.
+		 */
+		if ((old_vmbits & VISIBILITYMAP_ALL_VISIBLE) == 0)
+		{
+			vacrel->vm_new_visible_pages++;
+			vacrel->vm_new_visible_frozen_pages++;
+			*vm_page_frozen = true;
+		}
+
+		/*
+		 * We already checked that the page was not set all-frozen in the VM
+		 * above, so we don't need to test the value of old_vmbits.
+		 */
+		else
+		{
+			vacrel->vm_new_frozen_pages++;
+			*vm_page_frozen = true;
+		}
 	}
 }
 
@@ -1924,7 +2510,7 @@ lazy_vacuum(LVRelState *vacrel)
 		 */
 		threshold = (double) vacrel->rel_pages * BYPASS_THRESHOLD_PAGES;
 		bypass = (vacrel->lpdead_item_pages < threshold &&
-				  (TidStoreMemoryUsage(vacrel->dead_items) < (32L * 1024L * 1024L)));
+				  TidStoreMemoryUsage(vacrel->dead_items) < 32 * 1024 * 1024);
 	}
 
 	if (bypass)
@@ -2081,6 +2667,34 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 }
 
 /*
+ * Read stream callback for vacuum's third phase (second pass over the heap).
+ * Gets the next block from the TID store and returns it or InvalidBlockNumber
+ * if there are no further blocks to vacuum.
+ *
+ * NB: Assumed to be safe to use with READ_STREAM_USE_BATCHING.
+ */
+static BlockNumber
+vacuum_reap_lp_read_stream_next(ReadStream *stream,
+								void *callback_private_data,
+								void *per_buffer_data)
+{
+	TidStoreIter *iter = callback_private_data;
+	TidStoreIterResult *iter_result;
+
+	iter_result = TidStoreIterateNext(iter);
+	if (iter_result == NULL)
+		return InvalidBlockNumber;
+
+	/*
+	 * Save the TidStoreIterResult for later, so we can extract the offsets.
+	 * It is safe to copy the result, according to TidStoreIterateNext().
+	 */
+	memcpy(per_buffer_data, iter_result, sizeof(*iter_result));
+
+	return iter_result->blkno;
+}
+
+/*
  *	lazy_vacuum_heap_rel() -- second pass over the heap for two pass strategy
  *
  * This routine marks LP_DEAD items in vacrel->dead_items as LP_UNUSED. Pages
@@ -2100,11 +2714,11 @@ lazy_vacuum_all_indexes(LVRelState *vacrel)
 static void
 lazy_vacuum_heap_rel(LVRelState *vacrel)
 {
+	ReadStream *stream;
 	BlockNumber vacuumed_pages = 0;
 	Buffer		vmbuffer = InvalidBuffer;
 	LVSavedErrInfo saved_err_info;
 	TidStoreIter *iter;
-	TidStoreIterResult *iter_result;
 
 	Assert(vacrel->do_index_vacuuming);
 	Assert(vacrel->do_index_cleanup);
@@ -2120,17 +2734,47 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 							 InvalidBlockNumber, InvalidOffsetNumber);
 
 	iter = TidStoreBeginIterate(vacrel->dead_items);
-	while ((iter_result = TidStoreIterateNext(iter)) != NULL)
+
+	/*
+	 * Set up the read stream for vacuum's second pass through the heap.
+	 *
+	 * It is safe to use batchmode, as vacuum_reap_lp_read_stream_next() does
+	 * not need to wait for IO and does not perform locking. Once we support
+	 * parallelism it should still be fine, as presumably the holder of locks
+	 * would never be blocked by IO while holding the lock.
+	 */
+	stream = read_stream_begin_relation(READ_STREAM_MAINTENANCE |
+										READ_STREAM_USE_BATCHING,
+										vacrel->bstrategy,
+										vacrel->rel,
+										MAIN_FORKNUM,
+										vacuum_reap_lp_read_stream_next,
+										iter,
+										sizeof(TidStoreIterResult));
+
+	while (true)
 	{
 		BlockNumber blkno;
 		Buffer		buf;
 		Page		page;
+		TidStoreIterResult *iter_result;
 		Size		freespace;
+		OffsetNumber offsets[MaxOffsetNumber];
+		int			num_offsets;
 
-		vacuum_delay_point();
+		vacuum_delay_point(false);
 
-		blkno = iter_result->blkno;
-		vacrel->blkno = blkno;
+		buf = read_stream_next_buffer(stream, (void **) &iter_result);
+
+		/* The relation is exhausted */
+		if (!BufferIsValid(buf))
+			break;
+
+		vacrel->blkno = blkno = BufferGetBlockNumber(buf);
+
+		Assert(iter_result);
+		num_offsets = TidStoreGetBlockOffsets(iter_result, offsets, lengthof(offsets));
+		Assert(num_offsets <= lengthof(offsets));
 
 		/*
 		 * Pin the visibility map page in case we need to mark the page
@@ -2140,11 +2784,9 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 		visibilitymap_pin(vacrel->rel, blkno, &vmbuffer);
 
 		/* We need a non-cleanup exclusive lock to mark dead_items unused */
-		buf = ReadBufferExtended(vacrel->rel, MAIN_FORKNUM, blkno, RBM_NORMAL,
-								 vacrel->bstrategy);
 		LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
-		lazy_vacuum_heap_page(vacrel, blkno, buf, iter_result->offsets,
-							  iter_result->num_offsets, vmbuffer);
+		lazy_vacuum_heap_page(vacrel, blkno, buf, offsets,
+							  num_offsets, vmbuffer);
 
 		/* Now that we've vacuumed the page, record its available space */
 		page = BufferGetPage(buf);
@@ -2154,6 +2796,8 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 		RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
 		vacuumed_pages++;
 	}
+
+	read_stream_end(stream);
 	TidStoreEndIterate(iter);
 
 	vacrel->blkno = InvalidBlockNumber;
@@ -2169,8 +2813,8 @@ lazy_vacuum_heap_rel(LVRelState *vacrel)
 			vacuumed_pages == vacrel->lpdead_item_pages));
 
 	ereport(DEBUG2,
-			(errmsg("table \"%s\": removed %lld dead item identifiers in %u pages",
-					vacrel->relname, (long long) vacrel->dead_items_info->num_items,
+			(errmsg("table \"%s\": removed %" PRId64 " dead item identifiers in %u pages",
+					vacrel->relname, vacrel->dead_items_info->num_items,
 					vacuumed_pages)));
 
 	/* Revert to the previous phase information for error traceback */
@@ -2270,8 +2914,15 @@ lazy_vacuum_heap_page(LVRelState *vacrel, BlockNumber blkno, Buffer buffer,
 		}
 
 		PageSetAllVisible(page);
-		visibilitymap_set(vacrel->rel, blkno, buffer, InvalidXLogRecPtr,
-						  vmbuffer, visibility_cutoff_xid, flags);
+		visibilitymap_set(vacrel->rel, blkno, buffer,
+						  InvalidXLogRecPtr,
+						  vmbuffer, visibility_cutoff_xid,
+						  flags);
+
+		/* Count the newly set VM page for logging */
+		vacrel->vm_new_visible_pages++;
+		if (all_frozen)
+			vacrel->vm_new_visible_frozen_pages++;
 	}
 
 	/* Revert to the previous phase information for error traceback */
@@ -2440,7 +3091,7 @@ lazy_vacuum_one_index(Relation indrel, IndexBulkDeleteResult *istat,
 							 InvalidBlockNumber, InvalidOffsetNumber);
 
 	/* Do bulk deletion */
-	istat = vac_bulkdel_one_index(&ivinfo, istat, (void *) vacrel->dead_items,
+	istat = vac_bulkdel_one_index(&ivinfo, istat, vacrel->dead_items,
 								  vacrel->dead_items_info);
 
 	/* Revert to the previous phase information for error traceback */
@@ -2868,7 +3519,7 @@ dead_items_alloc(LVRelState *vacrel, int nworkers)
 	 */
 
 	dead_items_info = (VacDeadItemsInfo *) palloc(sizeof(VacDeadItemsInfo));
-	dead_items_info->max_bytes = vac_work_mem * 1024L;
+	dead_items_info->max_bytes = vac_work_mem * (Size) 1024;
 	dead_items_info->num_items = 0;
 	vacrel->dead_items_info = dead_items_info;
 
@@ -2882,19 +3533,18 @@ static void
 dead_items_add(LVRelState *vacrel, BlockNumber blkno, OffsetNumber *offsets,
 			   int num_offsets)
 {
-	TidStore   *dead_items = vacrel->dead_items;
 	const int	prog_index[2] = {
 		PROGRESS_VACUUM_NUM_DEAD_ITEM_IDS,
 		PROGRESS_VACUUM_DEAD_TUPLE_BYTES
 	};
 	int64		prog_val[2];
 
-	TidStoreSetBlockOffsets(dead_items, blkno, offsets, num_offsets);
+	TidStoreSetBlockOffsets(vacrel->dead_items, blkno, offsets, num_offsets);
 	vacrel->dead_items_info->num_items += num_offsets;
 
 	/* update the progress information */
 	prog_val[0] = vacrel->dead_items_info->num_items;
-	prog_val[1] = TidStoreMemoryUsage(dead_items);
+	prog_val[1] = TidStoreMemoryUsage(vacrel->dead_items);
 	pgstat_progress_update_multi_param(2, prog_index, prog_val);
 }
 
@@ -2904,8 +3554,6 @@ dead_items_add(LVRelState *vacrel, BlockNumber blkno, OffsetNumber *offsets,
 static void
 dead_items_reset(LVRelState *vacrel)
 {
-	TidStore   *dead_items = vacrel->dead_items;
-
 	if (ParallelVacuumIsActive(vacrel))
 	{
 		parallel_vacuum_reset_dead_items(vacrel->pvs);
@@ -2913,7 +3561,7 @@ dead_items_reset(LVRelState *vacrel)
 	}
 
 	/* Recreate the tidstore with the same max_bytes limitation */
-	TidStoreDestroy(dead_items);
+	TidStoreDestroy(vacrel->dead_items);
 	vacrel->dead_items = TidStoreCreateLocal(vacrel->dead_items_info->max_bytes, true);
 
 	/* Reset the counter */
@@ -3085,7 +3733,7 @@ update_relstats_all_indexes(LVRelState *vacrel)
 		vac_update_relstats(indrel,
 							istat->num_pages,
 							istat->num_index_tuples,
-							0,
+							0, 0,
 							false,
 							InvalidTransactionId,
 							InvalidMultiXactId,

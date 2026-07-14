@@ -3,7 +3,7 @@
  * bool.c
  *	  Functions for the built-in type "bool".
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -17,6 +17,7 @@
 
 #include <ctype.h>
 
+#include "common/hashfn.h"
 #include "libpq/pqformat.h"
 #include "utils/builtins.h"
 
@@ -271,6 +272,18 @@ boolge(PG_FUNCTION_ARGS)
 	bool		arg2 = PG_GETARG_BOOL(1);
 
 	PG_RETURN_BOOL(arg1 >= arg2);
+}
+
+Datum
+hashbool(PG_FUNCTION_ARGS)
+{
+	return hash_uint32((int32) PG_GETARG_BOOL(0));
+}
+
+Datum
+hashboolextended(PG_FUNCTION_ARGS)
+{
+	return hash_uint32_extended((int32) PG_GETARG_BOOL(0), PG_GETARG_INT64(1));
 }
 
 /*

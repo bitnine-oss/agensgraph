@@ -12,7 +12,7 @@
  * only way to release memory allocated by this context type is to reset or
  * delete the context.
  *
- * Portions Copyright (c) 2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2024-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/mmgr/bump.c
@@ -316,7 +316,7 @@ BumpAllocLarge(MemoryContext context, Size size, int flags)
 
 	block = (BumpBlock *) malloc(blksize);
 	if (block == NULL)
-		return NULL;
+		return MemoryContextAllocationFailure(context, size, flags);
 
 	context->mem_allocated += blksize;
 

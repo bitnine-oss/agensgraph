@@ -4,7 +4,7 @@
  * src/backend/utils/adt/formatting.c
  *
  *
- *	 Portions Copyright (c) 1999-2024, PostgreSQL Global Development Group
+ *	 Portions Copyright (c) 1999-2025, PostgreSQL Global Development Group
  *
  *
  *	 TO_CHAR(); TO_TIMESTAMP(); TO_DATE(); TO_NUMBER();
@@ -49,7 +49,6 @@
  *	- better number building (formatting) / parsing, now it isn't
  *		  ideal code
  *	- use Assert()
- *	- add support for roman number to standard number conversion
  *	- add support for number spelling
  *	- add support for string to string formatting (we must be better
  *	  than Oracle :-),
@@ -77,6 +76,7 @@
 
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
+#include "common/int.h"
 #include "common/unicode_case.h"
 #include "common/unicode_category.h"
 #include "mb/pg_wchar.h"
@@ -256,12 +256,38 @@ static const char *const rm_months_lower[] =
 {"xii", "xi", "x", "ix", "viii", "vii", "vi", "v", "iv", "iii", "ii", "i", NULL};
 
 /* ----------
- * Roman numbers
+ * Roman numerals
  * ----------
  */
 static const char *const rm1[] = {"I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", NULL};
 static const char *const rm10[] = {"X", "XX", "XXX", "XL", "L", "LX", "LXX", "LXXX", "XC", NULL};
 static const char *const rm100[] = {"C", "CC", "CCC", "CD", "D", "DC", "DCC", "DCCC", "CM", NULL};
+
+/*
+ * MACRO: Check if the current and next characters form a valid subtraction
+ * combination for roman numerals.
+ */
+#define IS_VALID_SUB_COMB(curr, next) \
+	(((curr) == 'I' && ((next) == 'V' || (next) == 'X')) || \
+	 ((curr) == 'X' && ((next) == 'L' || (next) == 'C')) || \
+	 ((curr) == 'C' && ((next) == 'D' || (next) == 'M')))
+
+/*
+ * MACRO: Roman numeral value, or 0 if character isn't a roman numeral.
+ */
+#define ROMAN_VAL(r) \
+	((r) == 'I' ? 1 : \
+	 (r) == 'V' ? 5 : \
+	 (r) == 'X' ? 10 : \
+	 (r) == 'L' ? 50 : \
+	 (r) == 'C' ? 100 : \
+	 (r) == 'D' ? 500 : \
+	 (r) == 'M' ? 1000 : 0)
+
+/*
+ * 'MMMDCCCLXXXVIII' (3888) is the longest valid roman numeral (15 characters).
+ */
+#define MAX_ROMAN_LEN	15
 
 /* ----------
  * Ordinal postfixes
@@ -622,7 +648,7 @@ typedef enum
 	DCH_Day,
 	DCH_Dy,
 	DCH_D,
-	DCH_FF1,
+	DCH_FF1,					/* FFn codes must be consecutive */
 	DCH_FF2,
 	DCH_FF3,
 	DCH_FF4,
@@ -788,12 +814,12 @@ static const KeyWord DCH_keywords[] = {
 	{"Day", 3, DCH_Day, false, FROM_CHAR_DATE_NONE},
 	{"Dy", 2, DCH_Dy, false, FROM_CHAR_DATE_NONE},
 	{"D", 1, DCH_D, true, FROM_CHAR_DATE_GREGORIAN},
-	{"FF1", 3, DCH_FF1, false, FROM_CHAR_DATE_NONE},	/* F */
-	{"FF2", 3, DCH_FF2, false, FROM_CHAR_DATE_NONE},
-	{"FF3", 3, DCH_FF3, false, FROM_CHAR_DATE_NONE},
-	{"FF4", 3, DCH_FF4, false, FROM_CHAR_DATE_NONE},
-	{"FF5", 3, DCH_FF5, false, FROM_CHAR_DATE_NONE},
-	{"FF6", 3, DCH_FF6, false, FROM_CHAR_DATE_NONE},
+	{"FF1", 3, DCH_FF1, true, FROM_CHAR_DATE_NONE}, /* F */
+	{"FF2", 3, DCH_FF2, true, FROM_CHAR_DATE_NONE},
+	{"FF3", 3, DCH_FF3, true, FROM_CHAR_DATE_NONE},
+	{"FF4", 3, DCH_FF4, true, FROM_CHAR_DATE_NONE},
+	{"FF5", 3, DCH_FF5, true, FROM_CHAR_DATE_NONE},
+	{"FF6", 3, DCH_FF6, true, FROM_CHAR_DATE_NONE},
 	{"FX", 2, DCH_FX, false, FROM_CHAR_DATE_NONE},
 	{"HH24", 4, DCH_HH24, true, FROM_CHAR_DATE_NONE},	/* H */
 	{"HH12", 4, DCH_HH12, true, FROM_CHAR_DATE_NONE},
@@ -844,12 +870,12 @@ static const KeyWord DCH_keywords[] = {
 	{"dd", 2, DCH_DD, true, FROM_CHAR_DATE_GREGORIAN},
 	{"dy", 2, DCH_dy, false, FROM_CHAR_DATE_NONE},
 	{"d", 1, DCH_D, true, FROM_CHAR_DATE_GREGORIAN},
-	{"ff1", 3, DCH_FF1, false, FROM_CHAR_DATE_NONE},	/* f */
-	{"ff2", 3, DCH_FF2, false, FROM_CHAR_DATE_NONE},
-	{"ff3", 3, DCH_FF3, false, FROM_CHAR_DATE_NONE},
-	{"ff4", 3, DCH_FF4, false, FROM_CHAR_DATE_NONE},
-	{"ff5", 3, DCH_FF5, false, FROM_CHAR_DATE_NONE},
-	{"ff6", 3, DCH_FF6, false, FROM_CHAR_DATE_NONE},
+	{"ff1", 3, DCH_FF1, true, FROM_CHAR_DATE_NONE}, /* f */
+	{"ff2", 3, DCH_FF2, true, FROM_CHAR_DATE_NONE},
+	{"ff3", 3, DCH_FF3, true, FROM_CHAR_DATE_NONE},
+	{"ff4", 3, DCH_FF4, true, FROM_CHAR_DATE_NONE},
+	{"ff5", 3, DCH_FF5, true, FROM_CHAR_DATE_NONE},
+	{"ff6", 3, DCH_FF6, true, FROM_CHAR_DATE_NONE},
 	{"fx", 2, DCH_FX, false, FROM_CHAR_DATE_NONE},
 	{"hh24", 4, DCH_HH24, true, FROM_CHAR_DATE_NONE},	/* h */
 	{"hh12", 4, DCH_HH12, true, FROM_CHAR_DATE_NONE},
@@ -1027,6 +1053,15 @@ typedef struct NUMProc
 #define DCH_TIMED	0x02
 #define DCH_ZONED	0x04
 
+/*
+ * These macros are used in NUM_processor() and its subsidiary routines.
+ * OVERLOAD_TEST: true if we've reached end of input string
+ * AMOUNT_TEST(s): true if at least s bytes remain in string
+ */
+#define OVERLOAD_TEST	(Np->inout_p >= Np->inout + input_len)
+#define AMOUNT_TEST(s)	(Np->inout_p <= Np->inout + (input_len - (s)))
+
+
 /* ----------
  * Functions
  * ----------
@@ -1074,6 +1109,7 @@ static bool do_to_timestamp(text *date_txt, text *fmt, Oid collid, bool std,
 static char *fill_str(char *str, int c, int max);
 static FormatNode *NUM_cache(int len, NUMDesc *Num, text *pars_str, bool *shouldFree);
 static char *int_to_roman(int number);
+static int	roman_to_int(NUMProc *Np, int input_len);
 static void NUM_prepare_locale(NUMProc *Np);
 static char *get_last_relevant_decnum(char *num);
 static void NUM_numpart_from_char(NUMProc *Np, int id, int input_len);
@@ -1284,6 +1320,10 @@ NUMDesc_prepare(NUMDesc *num, FormatNode *n)
 
 		case NUM_rn:
 		case NUM_RN:
+			if (IS_ROMAN(num))
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("cannot use \"RN\" twice")));
 			num->flag |= NUM_F_ROMAN;
 			break;
 
@@ -1315,6 +1355,13 @@ NUMDesc_prepare(NUMDesc *num, FormatNode *n)
 			num->flag |= NUM_F_EEEE;
 			break;
 	}
+
+	if (IS_ROMAN(num) &&
+		(num->flag & ~(NUM_F_ROMAN | NUM_F_FILLMODE)) != 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("\"RN\" is incompatible with other formats"),
+				 errdetail("\"RN\" may only be used together with \"FM\".")));
 }
 
 /* ----------
@@ -1570,52 +1617,6 @@ str_numth(char *dest, char *num, int type)
  *			upper/lower/initcap functions
  *****************************************************************************/
 
-#ifdef USE_ICU
-
-typedef int32_t (*ICU_Convert_Func) (UChar *dest, int32_t destCapacity,
-									 const UChar *src, int32_t srcLength,
-									 const char *locale,
-									 UErrorCode *pErrorCode);
-
-static int32_t
-icu_convert_case(ICU_Convert_Func func, pg_locale_t mylocale,
-				 UChar **buff_dest, UChar *buff_source, int32_t len_source)
-{
-	UErrorCode	status;
-	int32_t		len_dest;
-
-	len_dest = len_source;		/* try first with same length */
-	*buff_dest = palloc(len_dest * sizeof(**buff_dest));
-	status = U_ZERO_ERROR;
-	len_dest = func(*buff_dest, len_dest, buff_source, len_source,
-					mylocale->info.icu.locale, &status);
-	if (status == U_BUFFER_OVERFLOW_ERROR)
-	{
-		/* try again with adjusted length */
-		pfree(*buff_dest);
-		*buff_dest = palloc(len_dest * sizeof(**buff_dest));
-		status = U_ZERO_ERROR;
-		len_dest = func(*buff_dest, len_dest, buff_source, len_source,
-						mylocale->info.icu.locale, &status);
-	}
-	if (U_FAILURE(status))
-		ereport(ERROR,
-				(errmsg("case conversion failed: %s", u_errorName(status))));
-	return len_dest;
-}
-
-static int32_t
-u_strToTitle_default_BI(UChar *dest, int32_t destCapacity,
-						const UChar *src, int32_t srcLength,
-						const char *locale,
-						UErrorCode *pErrorCode)
-{
-	return u_strToTitle(dest, destCapacity, src, srcLength,
-						NULL, locale, pErrorCode);
-}
-
-#endif							/* USE_ICU */
-
 /*
  * If the system provides the needed functions for wide-character manipulation
  * (which are all standardized by C99), then we implement upper/lower/initcap
@@ -1636,6 +1637,7 @@ char *
 str_tolower(const char *buff, size_t nbytes, Oid collid)
 {
 	char	   *result;
+	pg_locale_t mylocale;
 
 	if (!buff)
 		return NULL;
@@ -1653,122 +1655,37 @@ str_tolower(const char *buff, size_t nbytes, Oid collid)
 				 errhint("Use the COLLATE clause to set the collation explicitly.")));
 	}
 
+	mylocale = pg_newlocale_from_collation(collid);
+
 	/* C/POSIX collations use this path regardless of database encoding */
-	if (lc_ctype_is_c(collid))
+	if (mylocale->ctype_is_c)
 	{
 		result = asc_tolower(buff, nbytes);
 	}
 	else
 	{
-		pg_locale_t mylocale;
+		const char *src = buff;
+		size_t		srclen = nbytes;
+		size_t		dstsize;
+		char	   *dst;
+		size_t		needed;
 
-		mylocale = pg_newlocale_from_collation(collid);
+		/* first try buffer of equal size plus terminating NUL */
+		dstsize = srclen + 1;
+		dst = palloc(dstsize);
 
-#ifdef USE_ICU
-		if (mylocale && mylocale->provider == COLLPROVIDER_ICU)
+		needed = pg_strlower(dst, dstsize, src, srclen, mylocale);
+		if (needed + 1 > dstsize)
 		{
-			int32_t		len_uchar;
-			int32_t		len_conv;
-			UChar	   *buff_uchar;
-			UChar	   *buff_conv;
-
-			len_uchar = icu_to_uchar(&buff_uchar, buff, nbytes);
-			len_conv = icu_convert_case(u_strToLower, mylocale,
-										&buff_conv, buff_uchar, len_uchar);
-			icu_from_uchar(&result, buff_conv, len_conv);
-			pfree(buff_uchar);
-			pfree(buff_conv);
+			/* grow buffer if needed and retry */
+			dstsize = needed + 1;
+			dst = repalloc(dst, dstsize);
+			needed = pg_strlower(dst, dstsize, src, srclen, mylocale);
+			Assert(needed + 1 <= dstsize);
 		}
-		else
-#endif
-		if (mylocale && mylocale->provider == COLLPROVIDER_BUILTIN)
-		{
-			const char *src = buff;
-			size_t		srclen = nbytes;
-			size_t		dstsize;
-			char	   *dst;
-			size_t		needed;
 
-			Assert(GetDatabaseEncoding() == PG_UTF8);
-
-			/* first try buffer of equal size plus terminating NUL */
-			dstsize = srclen + 1;
-			dst = palloc(dstsize);
-
-			needed = unicode_strlower(dst, dstsize, src, srclen);
-			if (needed + 1 > dstsize)
-			{
-				/* grow buffer if needed and retry */
-				dstsize = needed + 1;
-				dst = repalloc(dst, dstsize);
-				needed = unicode_strlower(dst, dstsize, src, srclen);
-				Assert(needed + 1 == dstsize);
-			}
-
-			Assert(dst[needed] == '\0');
-			result = dst;
-		}
-		else
-		{
-			Assert(!mylocale || mylocale->provider == COLLPROVIDER_LIBC);
-
-			if (pg_database_encoding_max_length() > 1)
-			{
-				wchar_t    *workspace;
-				size_t		curr_char;
-				size_t		result_size;
-
-				/* Overflow paranoia */
-				if ((nbytes + 1) > (INT_MAX / sizeof(wchar_t)))
-					ereport(ERROR,
-							(errcode(ERRCODE_OUT_OF_MEMORY),
-							 errmsg("out of memory")));
-
-				/* Output workspace cannot have more codes than input bytes */
-				workspace = (wchar_t *) palloc((nbytes + 1) * sizeof(wchar_t));
-
-				char2wchar(workspace, nbytes + 1, buff, nbytes, mylocale);
-
-				for (curr_char = 0; workspace[curr_char] != 0; curr_char++)
-				{
-					if (mylocale)
-						workspace[curr_char] = towlower_l(workspace[curr_char], mylocale->info.lt);
-					else
-						workspace[curr_char] = towlower(workspace[curr_char]);
-				}
-
-				/*
-				 * Make result large enough; case change might change number
-				 * of bytes
-				 */
-				result_size = curr_char * pg_database_encoding_max_length() + 1;
-				result = palloc(result_size);
-
-				wchar2char(result, workspace, result_size, mylocale);
-				pfree(workspace);
-			}
-			else
-			{
-				char	   *p;
-
-				result = pnstrdup(buff, nbytes);
-
-				/*
-				 * Note: we assume that tolower_l() will not be so broken as
-				 * to need an isupper_l() guard test.  When using the default
-				 * collation, we apply the traditional Postgres behavior that
-				 * forces ASCII-style treatment of I/i, but in non-default
-				 * collations you get exactly what the collation says.
-				 */
-				for (p = result; *p; p++)
-				{
-					if (mylocale)
-						*p = tolower_l((unsigned char) *p, mylocale->info.lt);
-					else
-						*p = pg_tolower((unsigned char) *p);
-				}
-			}
-		}
+		Assert(dst[needed] == '\0');
+		result = dst;
 	}
 
 	return result;
@@ -1784,6 +1701,7 @@ char *
 str_toupper(const char *buff, size_t nbytes, Oid collid)
 {
 	char	   *result;
+	pg_locale_t mylocale;
 
 	if (!buff)
 		return NULL;
@@ -1801,166 +1719,40 @@ str_toupper(const char *buff, size_t nbytes, Oid collid)
 				 errhint("Use the COLLATE clause to set the collation explicitly.")));
 	}
 
+	mylocale = pg_newlocale_from_collation(collid);
+
 	/* C/POSIX collations use this path regardless of database encoding */
-	if (lc_ctype_is_c(collid))
+	if (mylocale->ctype_is_c)
 	{
 		result = asc_toupper(buff, nbytes);
 	}
 	else
 	{
-		pg_locale_t mylocale;
+		const char *src = buff;
+		size_t		srclen = nbytes;
+		size_t		dstsize;
+		char	   *dst;
+		size_t		needed;
 
-		mylocale = pg_newlocale_from_collation(collid);
+		/* first try buffer of equal size plus terminating NUL */
+		dstsize = srclen + 1;
+		dst = palloc(dstsize);
 
-#ifdef USE_ICU
-		if (mylocale && mylocale->provider == COLLPROVIDER_ICU)
+		needed = pg_strupper(dst, dstsize, src, srclen, mylocale);
+		if (needed + 1 > dstsize)
 		{
-			int32_t		len_uchar,
-						len_conv;
-			UChar	   *buff_uchar;
-			UChar	   *buff_conv;
-
-			len_uchar = icu_to_uchar(&buff_uchar, buff, nbytes);
-			len_conv = icu_convert_case(u_strToUpper, mylocale,
-										&buff_conv, buff_uchar, len_uchar);
-			icu_from_uchar(&result, buff_conv, len_conv);
-			pfree(buff_uchar);
-			pfree(buff_conv);
+			/* grow buffer if needed and retry */
+			dstsize = needed + 1;
+			dst = repalloc(dst, dstsize);
+			needed = pg_strupper(dst, dstsize, src, srclen, mylocale);
+			Assert(needed + 1 <= dstsize);
 		}
-		else
-#endif
-		if (mylocale && mylocale->provider == COLLPROVIDER_BUILTIN)
-		{
-			const char *src = buff;
-			size_t		srclen = nbytes;
-			size_t		dstsize;
-			char	   *dst;
-			size_t		needed;
 
-			Assert(GetDatabaseEncoding() == PG_UTF8);
-
-			/* first try buffer of equal size plus terminating NUL */
-			dstsize = srclen + 1;
-			dst = palloc(dstsize);
-
-			needed = unicode_strupper(dst, dstsize, src, srclen);
-			if (needed + 1 > dstsize)
-			{
-				/* grow buffer if needed and retry */
-				dstsize = needed + 1;
-				dst = repalloc(dst, dstsize);
-				needed = unicode_strupper(dst, dstsize, src, srclen);
-				Assert(needed + 1 == dstsize);
-			}
-
-			Assert(dst[needed] == '\0');
-			result = dst;
-		}
-		else
-		{
-			Assert(!mylocale || mylocale->provider == COLLPROVIDER_LIBC);
-
-			if (pg_database_encoding_max_length() > 1)
-			{
-				wchar_t    *workspace;
-				size_t		curr_char;
-				size_t		result_size;
-
-				/* Overflow paranoia */
-				if ((nbytes + 1) > (INT_MAX / sizeof(wchar_t)))
-					ereport(ERROR,
-							(errcode(ERRCODE_OUT_OF_MEMORY),
-							 errmsg("out of memory")));
-
-				/* Output workspace cannot have more codes than input bytes */
-				workspace = (wchar_t *) palloc((nbytes + 1) * sizeof(wchar_t));
-
-				char2wchar(workspace, nbytes + 1, buff, nbytes, mylocale);
-
-				for (curr_char = 0; workspace[curr_char] != 0; curr_char++)
-				{
-					if (mylocale)
-						workspace[curr_char] = towupper_l(workspace[curr_char], mylocale->info.lt);
-					else
-						workspace[curr_char] = towupper(workspace[curr_char]);
-				}
-
-				/*
-				 * Make result large enough; case change might change number
-				 * of bytes
-				 */
-				result_size = curr_char * pg_database_encoding_max_length() + 1;
-				result = palloc(result_size);
-
-				wchar2char(result, workspace, result_size, mylocale);
-				pfree(workspace);
-			}
-			else
-			{
-				char	   *p;
-
-				result = pnstrdup(buff, nbytes);
-
-				/*
-				 * Note: we assume that toupper_l() will not be so broken as
-				 * to need an islower_l() guard test.  When using the default
-				 * collation, we apply the traditional Postgres behavior that
-				 * forces ASCII-style treatment of I/i, but in non-default
-				 * collations you get exactly what the collation says.
-				 */
-				for (p = result; *p; p++)
-				{
-					if (mylocale)
-						*p = toupper_l((unsigned char) *p, mylocale->info.lt);
-					else
-						*p = pg_toupper((unsigned char) *p);
-				}
-			}
-		}
+		Assert(dst[needed] == '\0');
+		result = dst;
 	}
 
 	return result;
-}
-
-struct WordBoundaryState
-{
-	const char *str;
-	size_t		len;
-	size_t		offset;
-	bool		init;
-	bool		prev_alnum;
-};
-
-/*
- * Simple word boundary iterator that draws boundaries each time the result of
- * pg_u_isalnum() changes.
- */
-static size_t
-initcap_wbnext(void *state)
-{
-	struct WordBoundaryState *wbstate = (struct WordBoundaryState *) state;
-
-	while (wbstate->offset < wbstate->len &&
-		   wbstate->str[wbstate->offset] != '\0')
-	{
-		pg_wchar	u = utf8_to_unicode((unsigned char *) wbstate->str +
-										wbstate->offset);
-		bool		curr_alnum = pg_u_isalnum(u, true);
-
-		if (!wbstate->init || curr_alnum != wbstate->prev_alnum)
-		{
-			size_t		prev_offset = wbstate->offset;
-
-			wbstate->init = true;
-			wbstate->offset += unicode_utf8len(u);
-			wbstate->prev_alnum = curr_alnum;
-			return prev_offset;
-		}
-
-		wbstate->offset += unicode_utf8len(u);
-	}
-
-	return wbstate->len;
 }
 
 /*
@@ -1973,7 +1765,7 @@ char *
 str_initcap(const char *buff, size_t nbytes, Oid collid)
 {
 	char	   *result;
-	int			wasalnum = false;
+	pg_locale_t mylocale;
 
 	if (!buff)
 		return NULL;
@@ -1991,158 +1783,106 @@ str_initcap(const char *buff, size_t nbytes, Oid collid)
 				 errhint("Use the COLLATE clause to set the collation explicitly.")));
 	}
 
+	mylocale = pg_newlocale_from_collation(collid);
+
 	/* C/POSIX collations use this path regardless of database encoding */
-	if (lc_ctype_is_c(collid))
+	if (mylocale->ctype_is_c)
 	{
 		result = asc_initcap(buff, nbytes);
 	}
 	else
 	{
-		pg_locale_t mylocale;
+		const char *src = buff;
+		size_t		srclen = nbytes;
+		size_t		dstsize;
+		char	   *dst;
+		size_t		needed;
 
-		mylocale = pg_newlocale_from_collation(collid);
+		/* first try buffer of equal size plus terminating NUL */
+		dstsize = srclen + 1;
+		dst = palloc(dstsize);
 
-#ifdef USE_ICU
-		if (mylocale && mylocale->provider == COLLPROVIDER_ICU)
+		needed = pg_strtitle(dst, dstsize, src, srclen, mylocale);
+		if (needed + 1 > dstsize)
 		{
-			int32_t		len_uchar,
-						len_conv;
-			UChar	   *buff_uchar;
-			UChar	   *buff_conv;
-
-			len_uchar = icu_to_uchar(&buff_uchar, buff, nbytes);
-			len_conv = icu_convert_case(u_strToTitle_default_BI, mylocale,
-										&buff_conv, buff_uchar, len_uchar);
-			icu_from_uchar(&result, buff_conv, len_conv);
-			pfree(buff_uchar);
-			pfree(buff_conv);
+			/* grow buffer if needed and retry */
+			dstsize = needed + 1;
+			dst = repalloc(dst, dstsize);
+			needed = pg_strtitle(dst, dstsize, src, srclen, mylocale);
+			Assert(needed + 1 <= dstsize);
 		}
-		else
-#endif
-		if (mylocale && mylocale->provider == COLLPROVIDER_BUILTIN)
+
+		Assert(dst[needed] == '\0');
+		result = dst;
+	}
+
+	return result;
+}
+
+/*
+ * collation-aware, wide-character-aware case folding
+ *
+ * We pass the number of bytes so we can pass varlena and char*
+ * to this function.  The result is a palloc'd, null-terminated string.
+ */
+char *
+str_casefold(const char *buff, size_t nbytes, Oid collid)
+{
+	char	   *result;
+	pg_locale_t mylocale;
+
+	if (!buff)
+		return NULL;
+
+	if (!OidIsValid(collid))
+	{
+		/*
+		 * This typically means that the parser could not resolve a conflict
+		 * of implicit collations, so report it that way.
+		 */
+		ereport(ERROR,
+				(errcode(ERRCODE_INDETERMINATE_COLLATION),
+				 errmsg("could not determine which collation to use for %s function",
+						"lower()"),
+				 errhint("Use the COLLATE clause to set the collation explicitly.")));
+	}
+
+	if (GetDatabaseEncoding() != PG_UTF8)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("Unicode case folding can only be performed if server encoding is UTF8")));
+
+	mylocale = pg_newlocale_from_collation(collid);
+
+	/* C/POSIX collations use this path regardless of database encoding */
+	if (mylocale->ctype_is_c)
+	{
+		result = asc_tolower(buff, nbytes);
+	}
+	else
+	{
+		const char *src = buff;
+		size_t		srclen = nbytes;
+		size_t		dstsize;
+		char	   *dst;
+		size_t		needed;
+
+		/* first try buffer of equal size plus terminating NUL */
+		dstsize = srclen + 1;
+		dst = palloc(dstsize);
+
+		needed = pg_strfold(dst, dstsize, src, srclen, mylocale);
+		if (needed + 1 > dstsize)
 		{
-			const char *src = buff;
-			size_t		srclen = nbytes;
-			size_t		dstsize;
-			char	   *dst;
-			size_t		needed;
-			struct WordBoundaryState wbstate = {
-				.str = src,
-				.len = srclen,
-				.offset = 0,
-				.init = false,
-				.prev_alnum = false,
-			};
-
-			Assert(GetDatabaseEncoding() == PG_UTF8);
-
-			/* first try buffer of equal size plus terminating NUL */
-			dstsize = srclen + 1;
-			dst = palloc(dstsize);
-
-			needed = unicode_strtitle(dst, dstsize, src, srclen,
-									  initcap_wbnext, &wbstate);
-			if (needed + 1 > dstsize)
-			{
-				/* reset iterator */
-				wbstate.offset = 0;
-				wbstate.init = false;
-
-				/* grow buffer if needed and retry */
-				dstsize = needed + 1;
-				dst = repalloc(dst, dstsize);
-				needed = unicode_strtitle(dst, dstsize, src, srclen,
-										  initcap_wbnext, &wbstate);
-				Assert(needed + 1 == dstsize);
-			}
-
-			result = dst;
+			/* grow buffer if needed and retry */
+			dstsize = needed + 1;
+			dst = repalloc(dst, dstsize);
+			needed = pg_strfold(dst, dstsize, src, srclen, mylocale);
+			Assert(needed + 1 <= dstsize);
 		}
-		else
-		{
-			Assert(!mylocale || mylocale->provider == COLLPROVIDER_LIBC);
 
-			if (pg_database_encoding_max_length() > 1)
-			{
-				wchar_t    *workspace;
-				size_t		curr_char;
-				size_t		result_size;
-
-				/* Overflow paranoia */
-				if ((nbytes + 1) > (INT_MAX / sizeof(wchar_t)))
-					ereport(ERROR,
-							(errcode(ERRCODE_OUT_OF_MEMORY),
-							 errmsg("out of memory")));
-
-				/* Output workspace cannot have more codes than input bytes */
-				workspace = (wchar_t *) palloc((nbytes + 1) * sizeof(wchar_t));
-
-				char2wchar(workspace, nbytes + 1, buff, nbytes, mylocale);
-
-				for (curr_char = 0; workspace[curr_char] != 0; curr_char++)
-				{
-					if (mylocale)
-					{
-						if (wasalnum)
-							workspace[curr_char] = towlower_l(workspace[curr_char], mylocale->info.lt);
-						else
-							workspace[curr_char] = towupper_l(workspace[curr_char], mylocale->info.lt);
-						wasalnum = iswalnum_l(workspace[curr_char], mylocale->info.lt);
-					}
-					else
-					{
-						if (wasalnum)
-							workspace[curr_char] = towlower(workspace[curr_char]);
-						else
-							workspace[curr_char] = towupper(workspace[curr_char]);
-						wasalnum = iswalnum(workspace[curr_char]);
-					}
-				}
-
-				/*
-				 * Make result large enough; case change might change number
-				 * of bytes
-				 */
-				result_size = curr_char * pg_database_encoding_max_length() + 1;
-				result = palloc(result_size);
-
-				wchar2char(result, workspace, result_size, mylocale);
-				pfree(workspace);
-			}
-			else
-			{
-				char	   *p;
-
-				result = pnstrdup(buff, nbytes);
-
-				/*
-				 * Note: we assume that toupper_l()/tolower_l() will not be so
-				 * broken as to need guard tests.  When using the default
-				 * collation, we apply the traditional Postgres behavior that
-				 * forces ASCII-style treatment of I/i, but in non-default
-				 * collations you get exactly what the collation says.
-				 */
-				for (p = result; *p; p++)
-				{
-					if (mylocale)
-					{
-						if (wasalnum)
-							*p = tolower_l((unsigned char) *p, mylocale->info.lt);
-						else
-							*p = toupper_l((unsigned char) *p, mylocale->info.lt);
-						wasalnum = isalnum_l((unsigned char) *p, mylocale->info.lt);
-					}
-					else
-					{
-						if (wasalnum)
-							*p = pg_tolower((unsigned char) *p);
-						else
-							*p = pg_toupper((unsigned char) *p);
-						wasalnum = isalnum((unsigned char) *p);
-					}
-				}
-			}
-		}
+		Assert(dst[needed] == '\0');
+		result = dst;
 	}
 
 	return result;
@@ -2663,7 +2403,7 @@ seq_search_localized(const char *name, char **array, int *len, Oid collid)
 	 * Fold to upper case, then to lower case, so that we can match reliably
 	 * even in languages in which case conversions are not injective.
 	 */
-	upper_name = str_toupper(unconstify(char *, name), strlen(name), collid);
+	upper_name = str_toupper(name, strlen(name), collid);
 	lower_name = str_tolower(upper_name, strlen(upper_name), collid);
 	pfree(upper_name);
 
@@ -3850,8 +3590,16 @@ DCH_from_char(FormatNode *node, const char *in, TmFromChar *out,
 					if (matched < 2)
 						ereturn(escontext,,
 								(errcode(ERRCODE_INVALID_DATETIME_FORMAT),
-								 errmsg("invalid input string for \"Y,YYY\"")));
-					years += (millennia * 1000);
+								 errmsg("invalid value \"%s\" for \"%s\"",
+										s, "Y,YYY")));
+
+					/* years += (millennia * 1000); */
+					if (pg_mul_s32_overflow(millennia, 1000, &millennia) ||
+						pg_add_s32_overflow(years, millennia, &years))
+						ereturn(escontext,,
+								(errcode(ERRCODE_DATETIME_FIELD_OVERFLOW),
+								 errmsg("value for \"%s\" in source string is out of range", "Y,YYY")));
+
 					if (!from_char_set_int(&out->year, years, n, escontext))
 						return;
 					out->yysz = 4;
@@ -4810,10 +4558,35 @@ do_to_timestamp(text *date_txt, text *fmt, Oid collid, bool std,
 			tm->tm_year = tmfc.year % 100;
 			if (tm->tm_year)
 			{
+				int			tmp;
+
 				if (tmfc.cc >= 0)
-					tm->tm_year += (tmfc.cc - 1) * 100;
+				{
+					/* tm->tm_year += (tmfc.cc - 1) * 100; */
+					tmp = tmfc.cc - 1;
+					if (pg_mul_s32_overflow(tmp, 100, &tmp) ||
+						pg_add_s32_overflow(tm->tm_year, tmp, &tm->tm_year))
+					{
+						DateTimeParseError(DTERR_FIELD_OVERFLOW, NULL,
+										   text_to_cstring(date_txt), "timestamp",
+										   escontext);
+						goto fail;
+					}
+				}
 				else
-					tm->tm_year = (tmfc.cc + 1) * 100 - tm->tm_year + 1;
+				{
+					/* tm->tm_year = (tmfc.cc + 1) * 100 - tm->tm_year + 1; */
+					tmp = tmfc.cc + 1;
+					if (pg_mul_s32_overflow(tmp, 100, &tmp) ||
+						pg_sub_s32_overflow(tmp, tm->tm_year, &tmp) ||
+						pg_add_s32_overflow(tmp, 1, &tm->tm_year))
+					{
+						DateTimeParseError(DTERR_FIELD_OVERFLOW, NULL,
+										   text_to_cstring(date_txt), "timestamp",
+										   escontext);
+						goto fail;
+					}
+				}
 			}
 			else
 			{
@@ -4839,11 +4612,31 @@ do_to_timestamp(text *date_txt, text *fmt, Oid collid, bool std,
 		if (tmfc.bc)
 			tmfc.cc = -tmfc.cc;
 		if (tmfc.cc >= 0)
+		{
 			/* +1 because 21st century started in 2001 */
-			tm->tm_year = (tmfc.cc - 1) * 100 + 1;
+			/* tm->tm_year = (tmfc.cc - 1) * 100 + 1; */
+			if (pg_mul_s32_overflow(tmfc.cc - 1, 100, &tm->tm_year) ||
+				pg_add_s32_overflow(tm->tm_year, 1, &tm->tm_year))
+			{
+				DateTimeParseError(DTERR_FIELD_OVERFLOW, NULL,
+								   text_to_cstring(date_txt), "timestamp",
+								   escontext);
+				goto fail;
+			}
+		}
 		else
+		{
 			/* +1 because year == 599 is 600 BC */
-			tm->tm_year = tmfc.cc * 100 + 1;
+			/* tm->tm_year = tmfc.cc * 100 + 1; */
+			if (pg_mul_s32_overflow(tmfc.cc, 100, &tm->tm_year) ||
+				pg_add_s32_overflow(tm->tm_year, 1, &tm->tm_year))
+			{
+				DateTimeParseError(DTERR_FIELD_OVERFLOW, NULL,
+								   text_to_cstring(date_txt), "timestamp",
+								   escontext);
+				goto fail;
+			}
+		}
 		fmask |= DTK_M(YEAR);
 	}
 
@@ -4868,11 +4661,31 @@ do_to_timestamp(text *date_txt, text *fmt, Oid collid, bool std,
 			fmask |= DTK_DATE_M;
 		}
 		else
-			tmfc.ddd = (tmfc.ww - 1) * 7 + 1;
+		{
+			/* tmfc.ddd = (tmfc.ww - 1) * 7 + 1; */
+			if (pg_sub_s32_overflow(tmfc.ww, 1, &tmfc.ddd) ||
+				pg_mul_s32_overflow(tmfc.ddd, 7, &tmfc.ddd) ||
+				pg_add_s32_overflow(tmfc.ddd, 1, &tmfc.ddd))
+			{
+				DateTimeParseError(DTERR_FIELD_OVERFLOW, NULL,
+								   date_str, "timestamp", escontext);
+				goto fail;
+			}
+		}
 	}
 
 	if (tmfc.w)
-		tmfc.dd = (tmfc.w - 1) * 7 + 1;
+	{
+		/* tmfc.dd = (tmfc.w - 1) * 7 + 1; */
+		if (pg_sub_s32_overflow(tmfc.w, 1, &tmfc.dd) ||
+			pg_mul_s32_overflow(tmfc.dd, 7, &tmfc.dd) ||
+			pg_add_s32_overflow(tmfc.dd, 1, &tmfc.dd))
+		{
+			DateTimeParseError(DTERR_FIELD_OVERFLOW, NULL,
+							   date_str, "timestamp", escontext);
+			goto fail;
+		}
+	}
 	if (tmfc.dd)
 	{
 		tm->tm_mday = tmfc.dd;
@@ -4937,7 +4750,18 @@ do_to_timestamp(text *date_txt, text *fmt, Oid collid, bool std,
 	}
 
 	if (tmfc.ms)
-		*fsec += tmfc.ms * 1000;
+	{
+		int			tmp = 0;
+
+		/* *fsec += tmfc.ms * 1000; */
+		if (pg_mul_s32_overflow(tmfc.ms, 1000, &tmp) ||
+			pg_add_s32_overflow(*fsec, tmp, fsec))
+		{
+			DateTimeParseError(DTERR_FIELD_OVERFLOW, NULL,
+							   date_str, "timestamp", escontext);
+			goto fail;
+		}
+	}
 	if (tmfc.us)
 		*fsec += tmfc.us;
 	if (fprec)
@@ -5234,6 +5058,11 @@ NUM_cache(int len, NUMDesc *Num, text *pars_str, bool *shouldFree)
 }
 
 
+/*
+ * Convert integer to Roman numerals
+ * Result is upper-case and not blank-padded (NUM_processor converts as needed)
+ * If input is out-of-range, produce '###############'
+ */
 static char *
 int_to_roman(int number)
 {
@@ -5243,40 +5072,201 @@ int_to_roman(int number)
 			   *result,
 				numstr[12];
 
-	result = (char *) palloc(16);
+	result = (char *) palloc(MAX_ROMAN_LEN + 1);
 	*result = '\0';
 
+	/*
+	 * This range limit is the same as in Oracle(TM).  The difficulty with
+	 * handling 4000 or more is that we'd need to use more than 3 "M"'s, and
+	 * more than 3 of the same digit isn't considered a valid Roman string.
+	 */
 	if (number > 3999 || number < 1)
 	{
-		fill_str(result, '#', 15);
+		fill_str(result, '#', MAX_ROMAN_LEN);
 		return result;
 	}
+
+	/* Convert to decimal, then examine each digit */
 	len = snprintf(numstr, sizeof(numstr), "%d", number);
+	Assert(len > 0 && len <= 4);
 
 	for (p = numstr; *p != '\0'; p++, --len)
 	{
 		num = *p - ('0' + 1);
 		if (num < 0)
-			continue;
-
-		if (len > 3)
+			continue;			/* ignore zeroes */
+		/* switch on current column position */
+		switch (len)
 		{
-			while (num-- != -1)
-				strcat(result, "M");
-		}
-		else
-		{
-			if (len == 3)
+			case 4:
+				while (num-- >= 0)
+					strcat(result, "M");
+				break;
+			case 3:
 				strcat(result, rm100[num]);
-			else if (len == 2)
+				break;
+			case 2:
 				strcat(result, rm10[num]);
-			else if (len == 1)
+				break;
+			case 1:
 				strcat(result, rm1[num]);
+				break;
 		}
 	}
 	return result;
 }
 
+/*
+ * Convert a roman numeral (standard form) to an integer.
+ * Result is an integer between 1 and 3999.
+ * Np->inout_p is advanced past the characters consumed.
+ *
+ * If input is invalid, return -1.
+ */
+static int
+roman_to_int(NUMProc *Np, int input_len)
+{
+	int			result = 0;
+	int			len;
+	char		romanChars[MAX_ROMAN_LEN];
+	int			romanValues[MAX_ROMAN_LEN];
+	int			repeatCount = 1;
+	int			vCount = 0,
+				lCount = 0,
+				dCount = 0;
+	bool		subtractionEncountered = false;
+	int			lastSubtractedValue = 0;
+
+	/*
+	 * Skip any leading whitespace.  Perhaps we should limit the amount of
+	 * space skipped to MAX_ROMAN_LEN, but that seems unnecessarily picky.
+	 */
+	while (!OVERLOAD_TEST && isspace((unsigned char) *Np->inout_p))
+		Np->inout_p++;
+
+	/*
+	 * Collect and decode valid roman numerals, consuming at most
+	 * MAX_ROMAN_LEN characters.  We do this in a separate loop to avoid
+	 * repeated decoding and because the main loop needs to know when it's at
+	 * the last numeral.
+	 */
+	for (len = 0; len < MAX_ROMAN_LEN && !OVERLOAD_TEST; len++)
+	{
+		char		currChar = pg_ascii_toupper(*Np->inout_p);
+		int			currValue = ROMAN_VAL(currChar);
+
+		if (currValue == 0)
+			break;				/* Not a valid roman numeral. */
+		romanChars[len] = currChar;
+		romanValues[len] = currValue;
+		Np->inout_p++;
+	}
+
+	if (len == 0)
+		return -1;				/* No valid roman numerals. */
+
+	/* Check for valid combinations and compute the represented value. */
+	for (int i = 0; i < len; i++)
+	{
+		char		currChar = romanChars[i];
+		int			currValue = romanValues[i];
+
+		/*
+		 * Ensure no numeral greater than or equal to the subtracted numeral
+		 * appears after a subtraction.
+		 */
+		if (subtractionEncountered && currValue >= lastSubtractedValue)
+			return -1;
+
+		/*
+		 * V, L, and D should not appear before a larger numeral, nor should
+		 * they be repeated.
+		 */
+		if ((vCount && currValue >= ROMAN_VAL('V')) ||
+			(lCount && currValue >= ROMAN_VAL('L')) ||
+			(dCount && currValue >= ROMAN_VAL('D')))
+			return -1;
+		if (currChar == 'V')
+			vCount++;
+		else if (currChar == 'L')
+			lCount++;
+		else if (currChar == 'D')
+			dCount++;
+
+		if (i < len - 1)
+		{
+			/* Compare current numeral to next numeral. */
+			char		nextChar = romanChars[i + 1];
+			int			nextValue = romanValues[i + 1];
+
+			/*
+			 * If the current value is less than the next value, handle
+			 * subtraction. Verify valid subtractive combinations and update
+			 * the result accordingly.
+			 */
+			if (currValue < nextValue)
+			{
+				if (!IS_VALID_SUB_COMB(currChar, nextChar))
+					return -1;
+
+				/*
+				 * Reject cases where same numeral is repeated with
+				 * subtraction (e.g. 'MCCM' or 'DCCCD').
+				 */
+				if (repeatCount > 1)
+					return -1;
+
+				/*
+				 * We are going to skip nextChar, so first make checks needed
+				 * for V, L, and D.  These are the same as we'd have applied
+				 * if we reached nextChar without a subtraction.
+				 */
+				if ((vCount && nextValue >= ROMAN_VAL('V')) ||
+					(lCount && nextValue >= ROMAN_VAL('L')) ||
+					(dCount && nextValue >= ROMAN_VAL('D')))
+					return -1;
+				if (nextChar == 'V')
+					vCount++;
+				else if (nextChar == 'L')
+					lCount++;
+				else if (nextChar == 'D')
+					dCount++;
+
+				/*
+				 * Skip the next numeral as it is part of the subtractive
+				 * combination.
+				 */
+				i++;
+
+				/* Update state. */
+				repeatCount = 1;
+				subtractionEncountered = true;
+				lastSubtractedValue = currValue;
+				result += (nextValue - currValue);
+			}
+			else
+			{
+				/* For same numerals, check for repetition. */
+				if (currChar == nextChar)
+				{
+					repeatCount++;
+					if (repeatCount > 3)
+						return -1;
+				}
+				else
+					repeatCount = 1;
+				result += currValue;
+			}
+		}
+		else
+		{
+			/* This is the last numeral; just add it to the result. */
+			result += currValue;
+		}
+	}
+
+	return result;
+}
 
 
 /* ----------
@@ -5388,14 +5378,6 @@ get_last_relevant_decnum(char *num)
 
 	return result;
 }
-
-/*
- * These macros are used in NUM_processor() and its subsidiary routines.
- * OVERLOAD_TEST: true if we've reached end of input string
- * AMOUNT_TEST(s): true if at least s bytes remain in string
- */
-#define OVERLOAD_TEST	(Np->inout_p >= Np->inout + input_len)
-#define AMOUNT_TEST(s)	(Np->inout_p <= Np->inout + (input_len - (s)))
 
 /* ----------
  * Number extraction for TO_NUMBER()
@@ -5580,7 +5562,7 @@ NUM_numpart_from_char(NUMProc *Np, int id, int input_len)
 		}
 
 		/*
-		 * try read non-locale sign, it's happen only if format is not exact
+		 * try read non-locale sign, which happens only if format is not exact
 		 * and we cannot determine sign position of MI/PL/SG, an example:
 		 *
 		 * FM9.999999MI			   -> 5.01-
@@ -5854,29 +5836,6 @@ NUM_processor(FormatNode *node, NUMDesc *Num, char *inout,
 	}
 
 	/*
-	 * Roman correction
-	 */
-	if (IS_ROMAN(Np->Num))
-	{
-		if (!Np->is_to_char)
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("\"RN\" not supported for input")));
-
-		Np->Num->lsign = Np->Num->pre_lsign_num = Np->Num->post =
-			Np->Num->pre = Np->out_pre_spaces = Np->sign = 0;
-
-		if (IS_FILLMODE(Np->Num))
-		{
-			Np->Num->flag = 0;
-			Np->Num->flag |= NUM_F_FILLMODE;
-		}
-		else
-			Np->Num->flag = 0;
-		Np->Num->flag |= NUM_F_ROMAN;
-	}
-
-	/*
 	 * Sign
 	 */
 	if (is_to_char)
@@ -6126,28 +6085,35 @@ NUM_processor(FormatNode *node, NUMDesc *Num, char *inout,
 					break;
 
 				case NUM_RN:
-					if (IS_FILLMODE(Np->Num))
-					{
-						strcpy(Np->inout_p, Np->number_p);
-						Np->inout_p += strlen(Np->inout_p) - 1;
-					}
-					else
-					{
-						sprintf(Np->inout_p, "%15s", Np->number_p);
-						Np->inout_p += strlen(Np->inout_p) - 1;
-					}
-					break;
-
 				case NUM_rn:
-					if (IS_FILLMODE(Np->Num))
+					if (Np->is_to_char)
 					{
-						strcpy(Np->inout_p, asc_tolower_z(Np->number_p));
+						const char *number_p;
+
+						if (n->key->id == NUM_rn)
+							number_p = asc_tolower_z(Np->number_p);
+						else
+							number_p = Np->number_p;
+						if (IS_FILLMODE(Np->Num))
+							strcpy(Np->inout_p, number_p);
+						else
+							sprintf(Np->inout_p, "%15s", number_p);
 						Np->inout_p += strlen(Np->inout_p) - 1;
 					}
 					else
 					{
-						sprintf(Np->inout_p, "%15s", asc_tolower_z(Np->number_p));
-						Np->inout_p += strlen(Np->inout_p) - 1;
+						int			roman_result = roman_to_int(Np, input_len);
+						int			numlen;
+
+						if (roman_result < 0)
+							ereport(ERROR,
+									(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+									 errmsg("invalid Roman numeral")));
+						numlen = sprintf(Np->number_p, "%d", roman_result);
+						Np->number_p += numlen;
+						Np->Num->pre = numlen;
+						Np->Num->post = 0;
+						continue;	/* roman_to_int ate all the chars */
 					}
 					break;
 
@@ -6412,7 +6378,6 @@ numeric_to_char(PG_FUNCTION_ARGS)
 	char	   *numstr,
 			   *orgnum,
 			   *p;
-	Numeric		x;
 
 	NUM_TOCHAR_prepare;
 
@@ -6421,12 +6386,15 @@ numeric_to_char(PG_FUNCTION_ARGS)
 	 */
 	if (IS_ROMAN(&Num))
 	{
-		x = DatumGetNumeric(DirectFunctionCall2(numeric_round,
-												NumericGetDatum(value),
-												Int32GetDatum(0)));
-		numstr =
-			int_to_roman(DatumGetInt32(DirectFunctionCall1(numeric_int4,
-														   NumericGetDatum(x))));
+		int32		intvalue;
+		bool		err;
+
+		/* Round and convert to int */
+		intvalue = numeric_int4_opt_error(value, &err);
+		/* On overflow, just use PG_INT32_MAX; int_to_roman will cope */
+		if (err)
+			intvalue = PG_INT32_MAX;
+		numstr = int_to_roman(intvalue);
 	}
 	else if (IS_EEEE(&Num))
 	{
@@ -6466,6 +6434,7 @@ numeric_to_char(PG_FUNCTION_ARGS)
 	{
 		int			numstr_pre_len;
 		Numeric		val = value;
+		Numeric		x;
 
 		if (IS_MULTI(&Num))
 		{
@@ -6634,12 +6603,18 @@ int8_to_char(PG_FUNCTION_ARGS)
 	NUM_TOCHAR_prepare;
 
 	/*
-	 * On DateType depend part (int32)
+	 * On DateType depend part (int64)
 	 */
 	if (IS_ROMAN(&Num))
 	{
-		/* Currently don't support int8 conversion to roman... */
-		numstr = int_to_roman(DatumGetInt32(DirectFunctionCall1(int84, Int64GetDatum(value))));
+		int32		intvalue;
+
+		/* On overflow, just use PG_INT32_MAX; int_to_roman will cope */
+		if (value <= PG_INT32_MAX && value >= PG_INT32_MIN)
+			intvalue = (int32) value;
+		else
+			intvalue = PG_INT32_MAX;
+		numstr = int_to_roman(intvalue);
 	}
 	else if (IS_EEEE(&Num))
 	{
@@ -6740,7 +6715,18 @@ float4_to_char(PG_FUNCTION_ARGS)
 	NUM_TOCHAR_prepare;
 
 	if (IS_ROMAN(&Num))
-		numstr = int_to_roman((int) rint(value));
+	{
+		int32		intvalue;
+
+		/* See notes in ftoi4() */
+		value = rint(value);
+		/* On overflow, just use PG_INT32_MAX; int_to_roman will cope */
+		if (!isnan(value) && FLOAT4_FITS_IN_INT32(value))
+			intvalue = (int32) value;
+		else
+			intvalue = PG_INT32_MAX;
+		numstr = int_to_roman(intvalue);
+	}
 	else if (IS_EEEE(&Num))
 	{
 		if (isnan(value) || isinf(value))
@@ -6842,7 +6828,18 @@ float8_to_char(PG_FUNCTION_ARGS)
 	NUM_TOCHAR_prepare;
 
 	if (IS_ROMAN(&Num))
-		numstr = int_to_roman((int) rint(value));
+	{
+		int32		intvalue;
+
+		/* See notes in dtoi4() */
+		value = rint(value);
+		/* On overflow, just use PG_INT32_MAX; int_to_roman will cope */
+		if (!isnan(value) && FLOAT8_FITS_IN_INT32(value))
+			intvalue = (int32) value;
+		else
+			intvalue = PG_INT32_MAX;
+		numstr = int_to_roman(intvalue);
+	}
 	else if (IS_EEEE(&Num))
 	{
 		if (isnan(value) || isinf(value))

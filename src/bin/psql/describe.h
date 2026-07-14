@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2025, PostgreSQL Global Development Group
  *
  * src/bin/psql/describe.h
  */
@@ -149,11 +149,11 @@ extern bool listOpFamilyFunctions(const char *access_method_pattern,
 /* \dl or \lo_list */
 extern bool listLargeObjects(bool verbose);
 
-/* AgensGraph Commands */
-/* \dG */
-extern bool listGraphs(const char *pattern, bool verbose);
-
-/* \dGl, \dGv, \dGe */
-extern bool listLabels(const char *pattern, bool verbose, const char labkind);
+/*
+ * Helpers shared with the Cypher/graph describe code in cypher_describe.c.
+ */
+extern void printACLColumn(PQExpBuffer buf, const char *colname);
+extern void add_tablespace_footer(printTableContent *const cont, char relkind,
+								  Oid tablespace, const bool newline);
 
 #endif							/* DESCRIBE_H */

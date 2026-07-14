@@ -138,6 +138,8 @@ SELECT JSON_OBJECT('a': '1', 'b': NULL, 'c': 2);
 SELECT JSON_OBJECT('a': '1', 'b': NULL, 'c': 2 NULL ON NULL);
 SELECT JSON_OBJECT('a': '1', 'b': NULL, 'c': 2 ABSENT ON NULL);
 
+SELECT JSON_OBJECT(1: 1, '2': NULL, '3': 1, repeat('x', 1000): 1, 2: repeat('a', 100) WITH UNIQUE);
+
 SELECT JSON_OBJECT(1: 1, '1': NULL WITH UNIQUE);
 SELECT JSON_OBJECT(1: 1, '1': NULL ABSENT ON NULL WITH UNIQUE);
 SELECT JSON_OBJECT(1: 1, '1': NULL NULL ON NULL WITH UNIQUE RETURNING jsonb);
@@ -150,6 +152,17 @@ SELECT JSON_OBJECT(1: 1, '2': NULL, '1': 1 ABSENT ON NULL WITH UNIQUE RETURNING 
 SELECT JSON_OBJECT(1: 1, '2': NULL, '1': 1 ABSENT ON NULL WITHOUT UNIQUE RETURNING jsonb);
 SELECT JSON_OBJECT(1: 1, '2': NULL, '3': 1, 4: NULL, '5': 'a' ABSENT ON NULL WITH UNIQUE RETURNING jsonb);
 
+-- BUG: https://postgr.es/m/CADXhmgTJtJZK9A3Na_ry%2BXrq-ghjcejBRhcRMzWZvbd__QdgJA%40mail.gmail.com
+-- datum_to_jsonb_internal() didn't catch keys that are casts instead of a simple scalar
+CREATE TYPE mood AS ENUM ('happy', 'sad', 'neutral');
+CREATE FUNCTION mood_to_json(mood) RETURNS json AS $$
+  SELECT to_json($1::text);
+$$ LANGUAGE sql IMMUTABLE;
+CREATE CAST (mood AS json) WITH FUNCTION mood_to_json(mood) AS IMPLICIT;
+SELECT JSON_OBJECT('happy'::mood: '123'::jsonb);
+DROP CAST (mood AS json);
+DROP FUNCTION mood_to_json;
+DROP TYPE mood;
 
 -- JSON_ARRAY()
 SELECT JSON_ARRAY();
@@ -186,6 +199,8 @@ SELECT JSON_ARRAY(SELECT i FROM (VALUES (NULL::int[]), ('{1,2}'), (NULL), (NULL)
 --SELECT JSON_ARRAY(SELECT i FROM (VALUES (NULL::int[]), ('{1,2}'), (NULL), (NULL), ('{3,4}'), (NULL)) foo(i) NULL ON NULL);
 --SELECT JSON_ARRAY(SELECT i FROM (VALUES (NULL::int[]), ('{1,2}'), (NULL), (NULL), ('{3,4}'), (NULL)) foo(i) NULL ON NULL RETURNING jsonb);
 SELECT JSON_ARRAY(SELECT i FROM (VALUES (3), (1), (NULL), (2)) foo(i) ORDER BY i);
+SELECT JSON_ARRAY(WITH x AS (SELECT 1) VALUES (TRUE));
+
 -- Should fail
 SELECT JSON_ARRAY(SELECT FROM (VALUES (1)) foo(i));
 SELECT JSON_ARRAY(SELECT i, i FROM (VALUES (1)) foo(i));
@@ -282,6 +297,9 @@ FROM (VALUES (1, 1), (1, NULL), (2, 2)) foo(k, v);
 
 SELECT JSON_OBJECTAGG(k: v ABSENT ON NULL WITH UNIQUE KEYS RETURNING jsonb)
 FROM (VALUES (1, 1), (0, NULL),(4, null), (5, null),(6, null),(2, 2)) foo(k, v);
+
+SELECT JSON_OBJECTAGG(mod(i,100): (i)::text FORMAT JSON WITH UNIQUE)
+FROM generate_series(0, 199) i;
 
 -- Test JSON_OBJECT deparsing
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -475,3 +493,17 @@ SELECT JSON_OBJECTAGG(i: ('111' || i)::bytea FORMAT JSON WITH UNIQUE RETURNING v
 CREATE DOMAIN sqljson_char2 AS char(2) CHECK (VALUE NOT IN ('12'));
 SELECT JSON_SERIALIZE('123' RETURNING sqljson_char2);
 SELECT JSON_SERIALIZE('12' RETURNING sqljson_char2);
+
+-- Bug #18657: JsonValueExpr.raw_expr was not initialized in ExecInitExprRec()
+-- causing the Aggrefs contained in it to also not be initialized, which led
+-- to a crash in ExecBuildAggTrans() as mentioned in the bug report:
+-- https://postgr.es/m/18657-1b90ccce2b16bdb8@postgresql.org
+CREATE FUNCTION volatile_one() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql VOLATILE;
+CREATE FUNCTION stable_one() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql STABLE;
+EXPLAIN (VERBOSE, COSTS OFF) SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': volatile_one() RETURNING text) FORMAT JSON);
+SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': volatile_one() RETURNING text) FORMAT JSON);
+EXPLAIN (VERBOSE, COSTS OFF) SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': stable_one() RETURNING text) FORMAT JSON);
+SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': stable_one() RETURNING text) FORMAT JSON);
+EXPLAIN (VERBOSE, COSTS OFF) SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': 1 RETURNING text) FORMAT JSON);
+SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': 1 RETURNING text) FORMAT JSON);
+DROP FUNCTION volatile_one, stable_one;

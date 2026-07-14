@@ -3,7 +3,7 @@
  * be-fsstubs.c
  *	  Builtin functions for open/close/read/write operations on large objects
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -316,6 +316,11 @@ be_lo_unlink(PG_FUNCTION_ARGS)
 	Oid			lobjId = PG_GETARG_OID(0);
 
 	PreventCommandIfReadOnly("lo_unlink()");
+
+	if (!LargeObjectExists(lobjId))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("large object %u does not exist", lobjId)));
 
 	/*
 	 * Must be owner of the large object.  It would be cleaner to check this

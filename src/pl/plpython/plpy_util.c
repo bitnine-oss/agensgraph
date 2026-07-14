@@ -9,8 +9,6 @@
 #include "mb/pg_wchar.h"
 #include "plpy_elog.h"
 #include "plpy_util.h"
-#include "plpython.h"
-#include "utils/memutils.h"
 
 /*
  * Convert a Python unicode object to a Python string/bytes object in

@@ -6,6 +6,7 @@
 #include "btree_gist.h"
 #include "btree_utils_num.h"
 #include "utils/float.h"
+#include "utils/sortsupport.h"
 
 typedef struct float8key
 {
@@ -13,9 +14,7 @@ typedef struct float8key
 	float8		upper;
 } float8KEY;
 
-/*
-** float8 ops
-*/
+/* GiST support functions */
 PG_FUNCTION_INFO_V1(gbt_float8_compress);
 PG_FUNCTION_INFO_V1(gbt_float8_fetch);
 PG_FUNCTION_INFO_V1(gbt_float8_union);
@@ -24,6 +23,7 @@ PG_FUNCTION_INFO_V1(gbt_float8_consistent);
 PG_FUNCTION_INFO_V1(gbt_float8_distance);
 PG_FUNCTION_INFO_V1(gbt_float8_penalty);
 PG_FUNCTION_INFO_V1(gbt_float8_same);
+PG_FUNCTION_INFO_V1(gbt_float8_sortsupport);
 
 
 static bool
@@ -113,10 +113,10 @@ float8_dist(PG_FUNCTION_ARGS)
 	PG_RETURN_FLOAT8(fabs(r));
 }
 
-/**************************************************
- * float8 ops
- **************************************************/
 
+/**************************************************
+ * GiST support functions
+ **************************************************/
 
 Datum
 gbt_float8_compress(PG_FUNCTION_ARGS)
@@ -152,11 +152,10 @@ gbt_float8_consistent(PG_FUNCTION_ARGS)
 	key.lower = (GBT_NUMKEY *) &kkk->lower;
 	key.upper = (GBT_NUMKEY *) &kkk->upper;
 
-	PG_RETURN_BOOL(gbt_num_consistent(&key, (void *) &query, &strategy,
+	PG_RETURN_BOOL(gbt_num_consistent(&key, &query, &strategy,
 									  GIST_LEAF(entry), &tinfo,
 									  fcinfo->flinfo));
 }
-
 
 Datum
 gbt_float8_distance(PG_FUNCTION_ARGS)
@@ -171,10 +170,9 @@ gbt_float8_distance(PG_FUNCTION_ARGS)
 	key.lower = (GBT_NUMKEY *) &kkk->lower;
 	key.upper = (GBT_NUMKEY *) &kkk->upper;
 
-	PG_RETURN_FLOAT8(gbt_num_distance(&key, (void *) &query, GIST_LEAF(entry),
+	PG_RETURN_FLOAT8(gbt_num_distance(&key, &query, GIST_LEAF(entry),
 									  &tinfo, fcinfo->flinfo));
 }
-
 
 Datum
 gbt_float8_union(PG_FUNCTION_ARGS)
@@ -183,9 +181,8 @@ gbt_float8_union(PG_FUNCTION_ARGS)
 	void	   *out = palloc(sizeof(float8KEY));
 
 	*(int *) PG_GETARG_POINTER(1) = sizeof(float8KEY);
-	PG_RETURN_POINTER(gbt_num_union((void *) out, entryvec, &tinfo, fcinfo->flinfo));
+	PG_RETURN_POINTER(gbt_num_union(out, entryvec, &tinfo, fcinfo->flinfo));
 }
-
 
 Datum
 gbt_float8_penalty(PG_FUNCTION_ARGS)
@@ -216,4 +213,25 @@ gbt_float8_same(PG_FUNCTION_ARGS)
 
 	*result = gbt_num_same((void *) b1, (void *) b2, &tinfo, fcinfo->flinfo);
 	PG_RETURN_POINTER(result);
+}
+
+static int
+gbt_float8_ssup_cmp(Datum x, Datum y, SortSupport ssup)
+{
+	float8KEY  *arg1 = (float8KEY *) DatumGetPointer(x);
+	float8KEY  *arg2 = (float8KEY *) DatumGetPointer(y);
+
+	/* for leaf items we expect lower == upper, so only compare lower */
+	return float8_cmp_internal(arg1->lower, arg2->lower);
+}
+
+Datum
+gbt_float8_sortsupport(PG_FUNCTION_ARGS)
+{
+	SortSupport ssup = (SortSupport) PG_GETARG_POINTER(0);
+
+	ssup->comparator = gbt_float8_ssup_cmp;
+	ssup->ssup_extra = NULL;
+
+	PG_RETURN_VOID();
 }

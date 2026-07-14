@@ -1,4 +1,4 @@
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 use strict;
 use warnings FATAL => 'all';
@@ -29,7 +29,12 @@ EOM
 # Take a full backup.
 my $backup1path = $primary->backup_dir . '/backup1';
 $primary->command_ok(
-	[ 'pg_basebackup', '-D', $backup1path, '--no-sync', '-cfast' ],
+	[
+		'pg_basebackup',
+		'--pgdata' => $backup1path,
+		'--no-sync',
+		'--checkpoint' => 'fast'
+	],
 	"full backup");
 
 # Now make some database changes.
@@ -42,8 +47,11 @@ EOM
 my $backup2path = $primary->backup_dir . '/backup2';
 $primary->command_ok(
 	[
-		'pg_basebackup', '-D', $backup2path, '--no-sync', '-cfast',
-		'--incremental', $backup1path . '/backup_manifest'
+		'pg_basebackup',
+		'--pgdata' => $backup2path,
+		'--no-sync',
+		'--checkpoint' => 'fast',
+		'--incremental' => $backup1path . '/backup_manifest'
 	],
 	"incremental backup");
 

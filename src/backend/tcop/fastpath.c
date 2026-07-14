@@ -3,7 +3,7 @@
  * fastpath.c
  *	  routines to handle function requests from the frontend
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -26,7 +26,6 @@
 #include "libpq/protocol.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
-#include "port/pg_bswap.h"
 #include "tcop/fastpath.h"
 #include "tcop/tcopprot.h"
 #include "utils/acl.h"

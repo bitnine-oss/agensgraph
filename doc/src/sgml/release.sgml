@@ -16,24 +16,6 @@ pg_[A-Za-z0-9_]+                <application>, <structname>
 \<[a-z]+_[a-z_]+\>              <varname>, <structfield>
                                 <systemitem class="osname">
 
-non-ASCII characters            find using grep -P '[\x80-\xFF]' or
-                                  (remove 'X') grep -X-color='auto' -P -n "[\x80-\xFF]"
-                                convert to HTML4 named entity (&) escapes
-
-        official:      http://www.w3.org/TR/html4/sgml/entities.html
-        one page:      http://www.zipcon.net/~swhite/docs/computers/browsers/entities_page.html
-        other lists:   http://www.zipcon.net/~swhite/docs/computers/browsers/entities.html
-                       http://www.zipcon.net/~swhite/docs/computers/browsers/entities_page.html
-                       https://en.wikipedia.org/wiki/List_of_XML_and_HTML_character_entity_references
-
-        We cannot use UTF8 because rendering engines have to
-        support the referenced characters.
-
-        Do not use numeric _UTF_ numeric character escapes (&#nnn;),
-        we can only use Latin1.
-
-        Example: Alvaro Herrera is &Aacute;lvaro Herrera
-
 wrap long lines
 
 For new features, add links to the documentation sections.
@@ -69,6 +51,15 @@ For new features, add links to the documentation sections.
    review, so each item is truly a community effort.
   </para>
 
+  <para id="release-commit-links">
+   Section markers (&sect;) in the release notes link to <ulink
+   url="https://git.postgresql.org/gitweb/?p=postgresql.git"><application>gitweb</application></ulink>
+   pages which show the primary <application>git</application> commit
+   messages and source tree changes responsible for the release note item.
+   There might be additional <application>git</application> commits which
+   are not shown.
+  </para>
+
 <!--
   When beginning a new major-release series, create a new release-NN.sgml
   file, removing the previous one, and change the &-reference here.
@@ -79,7 +70,7 @@ For new features, add links to the documentation sections.
   All the active branches have to be edited concurrently when doing that.
 -->
 
-&release-17;
+&release-18;
 
  <sect1 id="release-prior">
   <title>Prior Releases</title>

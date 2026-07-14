@@ -10,7 +10,7 @@
  * backslash commands.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/fe_utils/psqlscan.h
@@ -86,5 +86,8 @@ extern void psql_scan_reset(PsqlScanState state);
 extern void psql_scan_reselect_sql_lexer(PsqlScanState state);
 
 extern bool psql_scan_in_quote(PsqlScanState state);
+
+extern void psql_scan_get_location(PsqlScanState state,
+								   int *lineno, int *offset);
 
 #endif							/* PSQLSCAN_H */

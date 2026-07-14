@@ -4,8 +4,10 @@
  *	  Efficiently and reliably populate a new relation
  *
  * The assumption is that no other backends access the relation while we are
- * loading it, so we can take some shortcuts.  Do not mix operations through
- * the regular buffer manager and the bulk loading interface!
+ * loading it, so we can take some shortcuts.  Pages already present in the
+ * indicated fork when the bulk write operation is started are not modified
+ * unless explicitly written to.  Do not mix operations through the regular
+ * buffer manager and the bulk loading interface!
  *
  * We bypass the buffer manager to avoid the locking overhead, and call
  * smgrextend() directly.  A downside is that the pages will need to be
@@ -23,7 +25,7 @@
  * even if a checkpoint happens concurrently.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -36,7 +38,6 @@
 
 #include "access/xloginsert.h"
 #include "access/xlogrecord.h"
-#include "storage/bufmgr.h"
 #include "storage/bufpage.h"
 #include "storage/bulk_write.h"
 #include "storage/proc.h"
@@ -45,7 +46,7 @@
 
 #define MAX_PENDING_WRITES XLR_MAX_BLOCK_ID
 
-static const PGIOAlignedBlock zero_buffer = {{0}};	/* worth BLCKSZ */
+static const PGIOAlignedBlock zero_buffer = {0};	/* worth BLCKSZ */
 
 typedef struct PendingWrite
 {
@@ -69,7 +70,7 @@ struct BulkWriteState
 	PendingWrite pending_writes[MAX_PENDING_WRITES];
 
 	/* Current size of the relation */
-	BlockNumber pages_written;
+	BlockNumber relsize;
 
 	/* The RedoRecPtr at the time that the bulk operation started */
 	XLogRecPtr	start_RedoRecPtr;
@@ -106,7 +107,7 @@ smgr_bulk_start_smgr(SMgrRelation smgr, ForkNumber forknum, bool use_wal)
 	state->use_wal = use_wal;
 
 	state->npending = 0;
-	state->pages_written = 0;
+	state->relsize = smgrnblocks(smgr, forknum);
 
 	state->start_RedoRecPtr = GetRedoRecPtr();
 
@@ -132,19 +133,69 @@ smgr_bulk_finish(BulkWriteState *bulkstate)
 	smgr_bulk_flush(bulkstate);
 
 	/*
-	 * When we wrote out the pages, we passed skipFsync=true to avoid the
-	 * overhead of registering all the writes with the checkpointer.  Register
-	 * the whole relation now.
-	 *
-	 * There is one hole in that idea: If a checkpoint occurred while we were
-	 * writing the pages, it already missed fsyncing the pages we had written
-	 * before the checkpoint started.  A crash later on would replay the WAL
-	 * starting from the checkpoint, therefore it wouldn't replay our earlier
-	 * WAL records.  So if a checkpoint started after the bulk write, fsync
-	 * the files now.
+	 * Fsync the relation, or register it for the next checkpoint, if
+	 * necessary.
 	 */
-	if (!SmgrIsTemp(bulkstate->smgr))
+	if (SmgrIsTemp(bulkstate->smgr))
 	{
+		/* Temporary relations don't need to be fsync'd, ever */
+	}
+	else if (!bulkstate->use_wal)
+	{
+		/*----------
+		 * This is either an unlogged relation, or a permanent relation but we
+		 * skipped WAL-logging because wal_level=minimal:
+		 *
+		 * A) Unlogged relation
+		 *
+		 *    Unlogged relations will go away on crash, but they need to be
+		 *    fsync'd on a clean shutdown. It's sufficient to call
+		 *    smgrregistersync(), that ensures that the checkpointer will
+		 *    flush it at the shutdown checkpoint. (It will flush it on the
+		 *    next online checkpoint too, which is not strictly necessary.)
+		 *
+		 *    Note that the init-fork of an unlogged relation is not
+		 *    considered unlogged for our purposes. It's treated like a
+		 *    regular permanent relation. The callers will pass use_wal=true
+		 *    for the init fork.
+		 *
+		 * B) Permanent relation, WAL-logging skipped because wal_level=minimal
+		 *
+		 *    This is a new relation, and we didn't WAL-log the pages as we
+		 *    wrote, but they need to be fsync'd before commit.
+		 *
+		 *    We don't need to do that here, however. The fsync() is done at
+		 *    commit, by smgrDoPendingSyncs() (*).
+		 *
+		 *    (*) smgrDoPendingSyncs() might decide to WAL-log the whole
+		 *    relation at commit instead of fsyncing it, if the relation was
+		 *    very small, but it's smgrDoPendingSyncs() responsibility in any
+		 *    case.
+		 *
+		 * We cannot distinguish the two here, so conservatively assume it's
+		 * an unlogged relation. A permanent relation with wal_level=minimal
+		 * would require no actions, see above.
+		 */
+		smgrregistersync(bulkstate->smgr, bulkstate->forknum);
+	}
+	else
+	{
+		/*
+		 * Permanent relation, WAL-logged normally.
+		 *
+		 * We already WAL-logged all the pages, so they will be replayed from
+		 * WAL on crash. However, when we wrote out the pages, we passed
+		 * skipFsync=true to avoid the overhead of registering all the writes
+		 * with the checkpointer.  Register the whole relation now.
+		 *
+		 * There is one hole in that idea: If a checkpoint occurred while we
+		 * were writing the pages, it already missed fsyncing the pages we had
+		 * written before the checkpoint started.  A crash later on would
+		 * replay the WAL starting from the checkpoint, therefore it wouldn't
+		 * replay our earlier WAL records.  So if a checkpoint started after
+		 * the bulk write, fsync the files now.
+		 */
+
 		/*
 		 * Prevent a checkpoint from starting between the GetRedoRecPtr() and
 		 * smgrregistersync() calls.
@@ -230,7 +281,7 @@ smgr_bulk_flush(BulkWriteState *bulkstate)
 
 		PageSetChecksumInplace(page, blkno);
 
-		if (blkno >= bulkstate->pages_written)
+		if (blkno >= bulkstate->relsize)
 		{
 			/*
 			 * If we have to write pages nonsequentially, fill in the space
@@ -239,17 +290,18 @@ smgr_bulk_flush(BulkWriteState *bulkstate)
 			 * space will read as zeroes anyway), but it should help to avoid
 			 * fragmentation.  The dummy pages aren't WAL-logged though.
 			 */
-			while (blkno > bulkstate->pages_written)
+			while (blkno > bulkstate->relsize)
 			{
 				/* don't set checksum for all-zero page */
 				smgrextend(bulkstate->smgr, bulkstate->forknum,
-						   bulkstate->pages_written++,
+						   bulkstate->relsize,
 						   &zero_buffer,
 						   true);
+				bulkstate->relsize++;
 			}
 
 			smgrextend(bulkstate->smgr, bulkstate->forknum, blkno, page, true);
-			bulkstate->pages_written = pending_writes[i].blkno + 1;
+			bulkstate->relsize++;
 		}
 		else
 			smgrwrite(bulkstate->smgr, bulkstate->forknum, blkno, page, true);

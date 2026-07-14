@@ -12,6 +12,13 @@ SELECT '"\v"'::json;			-- ERROR, not a valid JSON escape
 SELECT ('"'||repeat('.', 12)||'abc"')::json; -- OK
 SELECT ('"'||repeat('.', 12)||'abc\n"')::json; -- OK, legal escapes
 
+-- Test various lengths of strings to validate SIMD processing to escape
+-- special chars in the JSON.
+SELECT row_to_json(j)::jsonb FROM (
+  SELECT left(E'abcdefghijklmnopqrstuv"\twxyz012345678', a) AS a
+  FROM generate_series(0,37) a
+) j;
+
 -- see json_encoding test for input with unicode escapes
 
 -- Numbers.
@@ -748,6 +755,8 @@ select json_object('{a,b,NULL,"d e f"}','{1,2,3,"a b c"}');
 
 select json_object('{a,b,"","d e f"}','{1,2,3,"a b c"}');
 
+-- json_object_agg_unique requires unique keys
+select json_object_agg_unique(mod(i,100), i) from generate_series(0, 199) i;
 
 -- json_to_record and json_to_recordset
 
@@ -804,6 +813,25 @@ select json_strip_nulls('[1,{"a":1,"b":null,"c":2},3]');
 
 -- an empty object is not null and should not be stripped
 select json_strip_nulls('{"a": {"b": null, "c": null}, "d": {} }');
+
+-- json_strip_nulls (strip_in_arrays=true)
+
+select json_strip_nulls(null, true);
+
+select json_strip_nulls('1', true);
+
+select json_strip_nulls('"a string"', true);
+
+select json_strip_nulls('null', true);
+
+select json_strip_nulls('[1,2,null,3,4]', true);
+
+select json_strip_nulls('{"a":1,"b":null,"c":[2,null,3],"d":{"e":4,"f":null}}', true);
+
+select json_strip_nulls('[1,{"a":1,"b":null,"c":2},3]', true);
+
+-- an empty object is not null and should not be stripped
+select json_strip_nulls('{"a": {"b": null, "c": null}, "d": {} }', true);
 
 -- json to tsvector
 select to_tsvector('{"a": "aaa bbb ddd ccc", "b": ["eee fff ggg"], "c": {"d": "hhh iii"}}'::json);

@@ -3,7 +3,7 @@
  * slotfuncs.c
  *	   Support functions for replication slots
  *
- * Copyright (c) 2012-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/slotfuncs.c
@@ -17,16 +17,12 @@
 #include "access/xlogrecovery.h"
 #include "access/xlogutils.h"
 #include "funcapi.h"
-#include "miscadmin.h"
-#include "replication/decode.h"
 #include "replication/logical.h"
 #include "replication/slot.h"
 #include "replication/slotsync.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
-#include "utils/inval.h"
 #include "utils/pg_lsn.h"
-#include "utils/resowner.h"
 
 /*
  * Helper function for creating a new physical replication slot with
@@ -239,7 +235,7 @@ pg_drop_replication_slot(PG_FUNCTION_ARGS)
 Datum
 pg_get_replication_slots(PG_FUNCTION_ARGS)
 {
-#define PG_GET_REPLICATION_SLOTS_COLS 19
+#define PG_GET_REPLICATION_SLOTS_COLS 20
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 	XLogRecPtr	currlsn;
 	int			slotno;
@@ -410,6 +406,12 @@ pg_get_replication_slots(PG_FUNCTION_ARGS)
 
 		values[i++] = BoolGetDatum(slot_contents.data.two_phase);
 
+		if (slot_contents.data.two_phase &&
+			!XLogRecPtrIsInvalid(slot_contents.data.two_phase_at))
+			values[i++] = LSNGetDatum(slot_contents.data.two_phase_at);
+		else
+			nulls[i++] = true;
+
 		if (slot_contents.inactive_since > 0)
 			values[i++] = TimestampTzGetDatum(slot_contents.inactive_since);
 		else
@@ -435,7 +437,7 @@ pg_get_replication_slots(PG_FUNCTION_ARGS)
 		if (cause == RS_INVAL_NONE)
 			nulls[i++] = true;
 		else
-			values[i++] = CStringGetTextDatum(SlotInvalidationCauses[cause]);
+			values[i++] = CStringGetTextDatum(GetSlotInvalidationCauseName(cause));
 
 		values[i++] = BoolGetDatum(slot_contents.data.failover);
 
@@ -523,7 +525,8 @@ pg_replication_slot_advance(PG_FUNCTION_ARGS)
 
 	if (XLogRecPtrIsInvalid(moveto))
 		ereport(ERROR,
-				(errmsg("invalid target WAL LSN")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid target WAL LSN")));
 
 	/* Build a tuple descriptor for our result type */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
@@ -539,7 +542,7 @@ pg_replication_slot_advance(PG_FUNCTION_ARGS)
 		moveto = Min(moveto, GetXLogReplayRecPtr(NULL));
 
 	/* Acquire the slot so we "own" it */
-	ReplicationSlotAcquire(NameStr(*slotname), true);
+	ReplicationSlotAcquire(NameStr(*slotname), true, true);
 
 	/* A slot whose restart_lsn has never been reserved cannot be advanced */
 	if (XLogRecPtrIsInvalid(MyReplicationSlot->data.restart_lsn))
@@ -681,6 +684,13 @@ copy_replication_slot(FunctionCallInfo fcinfo, bool logical_slot)
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("cannot copy a replication slot that doesn't reserve WAL")));
 
+	/* Cannot copy an invalidated replication slot */
+	if (first_slot_contents.data.invalidated != RS_INVAL_NONE)
+		ereport(ERROR,
+				errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				errmsg("cannot copy invalidated replication slot \"%s\"",
+					   NameStr(*src_name)));
+
 	/* Overwrite params from optional arguments */
 	if (PG_NARGS() >= 3)
 		temporary = PG_GETARG_BOOL(2);
@@ -698,13 +708,18 @@ copy_replication_slot(FunctionCallInfo fcinfo, bool logical_slot)
 		 * hence pass find_startpoint false.  confirmed_flush will be set
 		 * below, by copying from the source slot.
 		 *
-		 * To avoid potential issues with the slot synchronization where the
-		 * restart_lsn of a replication slot can go backward, we set the
-		 * failover option to false here.  This situation occurs when a slot
-		 * on the primary server is dropped and immediately replaced with a
-		 * new slot of the same name, created by copying from another existing
-		 * slot.  However, the slot synchronization will only observe the
-		 * restart_lsn of the same slot going backward.
+		 * We don't copy the failover option to prevent potential issues with
+		 * slot synchronization. For instance, if a slot was synchronized to
+		 * the standby, then dropped on the primary, and immediately recreated
+		 * by copying from another existing slot with much earlier restart_lsn
+		 * and confirmed_flush_lsn, the slot synchronization would only
+		 * observe the LSN of the same slot moving backward. As slot
+		 * synchronization does not copy the restart_lsn and
+		 * confirmed_flush_lsn backward (see update_local_synced_slot() for
+		 * details), if a failover happens before the primary's slot catches
+		 * up, logical replication cannot continue using the synchronized slot
+		 * on the promoted standby because the slot retains the restart_lsn
+		 * and confirmed_flush_lsn that are much later than expected.
 		 */
 		create_logical_replication_slot(NameStr(*dst_name),
 										plugin,
@@ -776,6 +791,20 @@ copy_replication_slot(FunctionCallInfo fcinfo, bool logical_slot)
 					 errmsg("cannot copy unfinished logical replication slot \"%s\"",
 							NameStr(*src_name)),
 					 errhint("Retry when the source replication slot's confirmed_flush_lsn is valid.")));
+
+		/*
+		 * Copying an invalid slot doesn't make sense. Note that the source
+		 * slot can become invalid after we create the new slot and copy the
+		 * data of source slot. This is possible because the operations in
+		 * InvalidateObsoleteReplicationSlots() are not serialized with this
+		 * function. Even though we can't detect such a case here, the copied
+		 * slot will become invalid in the next checkpoint cycle.
+		 */
+		if (second_slot_contents.data.invalidated != RS_INVAL_NONE)
+			ereport(ERROR,
+					errmsg("cannot copy replication slot \"%s\"",
+						   NameStr(*src_name)),
+					errdetail("The source replication slot was invalidated during the copy operation."));
 
 		/* Install copied values again */
 		SpinLockAcquire(&MyReplicationSlot->mutex);
@@ -897,7 +926,8 @@ pg_sync_replication_slots(PG_FUNCTION_ARGS)
 	if (!wrconn)
 		ereport(ERROR,
 				errcode(ERRCODE_CONNECTION_FAILURE),
-				errmsg("could not connect to the primary server: %s", err));
+				errmsg("synchronization worker \"%s\" could not connect to the primary server: %s",
+					   app_name.data, err));
 
 	SyncReplicationSlots(wrconn);
 

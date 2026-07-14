@@ -2,7 +2,7 @@
  *
  * dropuser
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/scripts/dropuser.c
@@ -143,7 +143,8 @@ main(int argc, char *argv[])
 
 	initPQExpBuffer(&sql);
 	appendPQExpBuffer(&sql, "DROP ROLE %s%s;",
-					  (if_exists ? "IF EXISTS " : ""), fmtId(dropuser));
+					  (if_exists ? "IF EXISTS " : ""),
+					  fmtIdEnc(dropuser, PQclientEncoding(conn)));
 
 	if (echo)
 		printf("%s\n", sql.data);

@@ -8,7 +8,7 @@
  *
  * See src/include/libpq/sasl.h for the backend counterpart.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/interfaces/libpq/fe-auth-sasl.h
@@ -30,12 +30,13 @@ typedef enum
 	SASL_COMPLETE = 0,
 	SASL_FAILED,
 	SASL_CONTINUE,
+	SASL_ASYNC,
 } SASLStatus;
 
 /*
  * Frontend SASL mechanism callbacks.
  *
- * To implement a frontend mechanism, declare a pg_be_sasl_mech struct with
+ * To implement a frontend mechanism, declare a pg_fe_sasl_mech struct with
  * appropriate callback implementations, then hook it into conn->sasl during
  * pg_SASL_init()'s mechanism negotiation.
  */
@@ -77,6 +78,8 @@ typedef struct pg_fe_sasl_mech
 	 *
 	 *	state:	   The opaque mechanism state returned by init()
 	 *
+	 *	final:	   true if the server has sent a final exchange outcome
+	 *
 	 *	input:	   The challenge data sent by the server, or NULL when
 	 *			   generating a client-first initial response (that is, when
 	 *			   the server expects the client to send a message to start
@@ -101,12 +104,18 @@ typedef struct pg_fe_sasl_mech
 	 *
 	 *	SASL_CONTINUE:	The output buffer is filled with a client response.
 	 *					Additional server challenge is expected
+	 *	SASL_ASYNC:		Some asynchronous processing external to the
+	 *					connection needs to be done before a response can be
+	 *					generated. The mechanism is responsible for setting up
+	 *					conn->async_auth/cleanup_async_auth appropriately
+	 *					before returning.
 	 *	SASL_COMPLETE:	The SASL exchange has completed successfully.
 	 *	SASL_FAILED:	The exchange has failed and the connection should be
 	 *					dropped.
 	 *--------
 	 */
-	SASLStatus	(*exchange) (void *state, char *input, int inputlen,
+	SASLStatus	(*exchange) (void *state, bool final,
+							 char *input, int inputlen,
 							 char **output, int *outputlen);
 
 	/*--------

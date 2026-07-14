@@ -34,7 +34,7 @@
  * happen, it would tie up KnownAssignedXids indefinitely, so we protect
  * ourselves by pruning the array when a valid list of running XIDs arrives.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -185,7 +185,7 @@ typedef struct ComputeXidHorizonsResult
 	FullTransactionId latest_completed;
 
 	/*
-	 * The same for procArray->replication_slot_xmin and.
+	 * The same for procArray->replication_slot_xmin and
 	 * procArray->replication_slot_catalog_xmin.
 	 */
 	TransactionId slot_xmin;
@@ -370,7 +370,7 @@ static inline FullTransactionId FullXidRelativeTo(FullTransactionId rel,
 static void GlobalVisUpdateApply(ComputeXidHorizonsResult *horizons);
 
 /*
- * Report shared-memory space needed by CreateSharedProcArray.
+ * Report shared-memory space needed by ProcArrayShmemInit
  */
 Size
 ProcArrayShmemSize(void)
@@ -415,7 +415,7 @@ ProcArrayShmemSize(void)
  * Initialize the shared PGPROC array during postmaster startup.
  */
 void
-CreateSharedProcArray(void)
+ProcArrayShmemInit(void)
 {
 	bool		found;
 
@@ -2135,8 +2135,6 @@ GetSnapshotDataReuse(Snapshot snapshot)
 	snapshot->active_count = 0;
 	snapshot->regd_count = 0;
 	snapshot->copied = false;
-	snapshot->lsn = InvalidXLogRecPtr;
-	snapshot->whenTaken = 0;
 
 	return true;
 }
@@ -2516,8 +2514,6 @@ GetSnapshotData(Snapshot snapshot)
 	snapshot->active_count = 0;
 	snapshot->regd_count = 0;
 	snapshot->copied = false;
-	snapshot->lsn = InvalidXLogRecPtr;
-	snapshot->whenTaken = 0;
 
 	return snapshot;
 }
@@ -2753,8 +2749,6 @@ GetRunningTransactionData(void)
 	 */
 	for (index = 0; index < arrayP->numProcs; index++)
 	{
-		int			pgprocno = arrayP->pgprocnos[index];
-		PGPROC	   *proc = &allProcs[pgprocno];
 		TransactionId xid;
 
 		/* Fetch xid just once - see GetNewTransactionId */
@@ -2776,11 +2770,18 @@ GetRunningTransactionData(void)
 			oldestRunningXid = xid;
 
 		/*
-		 * Also, update the oldest running xid within the current database.
+		 * Also, update the oldest running xid within the current database. As
+		 * fetching pgprocno and PGPROC could cause cache misses, we do cheap
+		 * TransactionId comparison first.
 		 */
-		if (proc->databaseId == MyDatabaseId &&
-			TransactionIdPrecedes(xid, oldestRunningXid))
-			oldestDatabaseRunningXid = xid;
+		if (TransactionIdPrecedes(xid, oldestDatabaseRunningXid))
+		{
+			int			pgprocno = arrayP->pgprocnos[index];
+			PGPROC	   *proc = &allProcs[pgprocno];
+
+			if (proc->databaseId == MyDatabaseId)
+				oldestDatabaseRunningXid = xid;
+		}
 
 		if (ProcGlobal->subxidStates[index].overflowed)
 			suboverflowed = true;
@@ -3621,8 +3622,7 @@ CountDBBackends(Oid databaseid)
 }
 
 /*
- * CountDBConnections --- counts database backends ignoring any background
- *		worker processes
+ * CountDBConnections --- counts database backends (only regular backends)
  */
 int
 CountDBConnections(Oid databaseid)
@@ -3640,8 +3640,8 @@ CountDBConnections(Oid databaseid)
 
 		if (proc->pid == 0)
 			continue;			/* do not count prepared xacts */
-		if (proc->isBackgroundWorker)
-			continue;			/* do not count background workers */
+		if (!proc->isRegularBackend)
+			continue;			/* count only regular backend processes */
 		if (!OidIsValid(databaseid) ||
 			proc->databaseId == databaseid)
 			count++;
@@ -3694,6 +3694,7 @@ CancelDBBackends(Oid databaseid, ProcSignalReason sigmode, bool conflictPending)
 
 /*
  * CountUserBackends --- count backends that are used by specified user
+ * (only regular backends, not any type of background worker)
  */
 int
 CountUserBackends(Oid roleid)
@@ -3711,8 +3712,8 @@ CountUserBackends(Oid roleid)
 
 		if (proc->pid == 0)
 			continue;			/* do not count prepared xacts */
-		if (proc->isBackgroundWorker)
-			continue;			/* do not count background workers */
+		if (!proc->isRegularBackend)
+			continue;			/* count only regular backend processes */
 		if (proc->roleId == roleid)
 			count++;
 	}
@@ -4496,8 +4497,22 @@ ExpireTreeKnownAssignedTransactionIds(TransactionId xid, int nsubxids,
 void
 ExpireAllKnownAssignedTransactionIds(void)
 {
+	FullTransactionId latestXid;
+
 	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
 	KnownAssignedXidsRemovePreceding(InvalidTransactionId);
+
+	/* Reset latestCompletedXid to nextXid - 1 */
+	Assert(FullTransactionIdIsValid(TransamVariables->nextXid));
+	latestXid = TransamVariables->nextXid;
+	FullTransactionIdRetreat(&latestXid);
+	TransamVariables->latestCompletedXid = latestXid;
+
+	/*
+	 * Any transactions that were in-progress were effectively aborted, so
+	 * advance xactCompletionCount.
+	 */
+	TransamVariables->xactCompletionCount++;
 
 	/*
 	 * Reset lastOverflowedXid.  Currently, lastOverflowedXid has no use after
@@ -4516,7 +4531,17 @@ ExpireAllKnownAssignedTransactionIds(void)
 void
 ExpireOldKnownAssignedTransactionIds(TransactionId xid)
 {
+	TransactionId latestXid;
+
 	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
+
+	/* As in ProcArrayEndTransaction, advance latestCompletedXid */
+	latestXid = xid;
+	TransactionIdRetreat(latestXid);
+	MaintainLatestCompletedXidRecovery(latestXid);
+
+	/* ... and xactCompletionCount */
+	TransamVariables->xactCompletionCount++;
 
 	/*
 	 * Reset lastOverflowedXid if we know all transactions that have been

@@ -5,7 +5,7 @@
  *	  (pg_auth_members).
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_auth_members.h
@@ -20,7 +20,7 @@
 #define PG_AUTH_MEMBERS_H
 
 #include "catalog/genbki.h"
-#include "catalog/pg_auth_members_d.h"
+#include "catalog/pg_auth_members_d.h"	/* IWYU pragma: export */
 
 /* ----------------
  *		pg_auth_members definition.  cpp turns this into

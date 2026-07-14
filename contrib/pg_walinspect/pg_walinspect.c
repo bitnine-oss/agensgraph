@@ -3,7 +3,7 @@
  * pg_walinspect.c
  *		  Functions to inspect contents of PostgreSQL Write-Ahead Log
  *
- * Copyright (c) 2022-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2022-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/pg_walinspect/pg_walinspect.c
@@ -29,7 +29,10 @@
  * give a thought about doing the same in pg_waldump tool as well.
  */
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "pg_walinspect",
+					.version = PG_VERSION
+);
 
 PG_FUNCTION_INFO_V1(pg_get_wal_block_info);
 PG_FUNCTION_INFO_V1(pg_get_wal_record_info);
@@ -101,7 +104,8 @@ InitXLogReaderState(XLogRecPtr lsn)
 	 */
 	if (lsn < XLOG_BLCKSZ)
 		ereport(ERROR,
-				(errmsg("could not read WAL at LSN %X/%X",
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("could not read WAL at LSN %X/%X",
 						LSN_FORMAT_ARGS(lsn))));
 
 	private_data = (ReadLocalXLogPageNoWaitPrivate *)

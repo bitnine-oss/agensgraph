@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 pg_dump_common_sources = files(
   'compress_gzip.c',
@@ -6,6 +6,7 @@ pg_dump_common_sources = files(
   'compress_lz4.c',
   'compress_none.c',
   'compress_zstd.c',
+  'connectdb.c',
   'dumputils.c',
   'filter.c',
   'parallel.c',
@@ -101,6 +102,7 @@ tests += {
       't/003_pg_dump_with_server.pl',
       't/004_pg_dump_parallel.pl',
       't/005_pg_dump_filterfile.pl',
+      't/006_pg_dumpall.pl',
       't/010_dump_connstr.pl',
     ],
   },

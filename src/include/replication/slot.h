@@ -2,7 +2,7 @@
  * slot.h
  *	   Replication slot management.
  *
- * Copyright (c) 2012-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2025, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
@@ -16,6 +16,9 @@
 #include "storage/shmem.h"
 #include "storage/spin.h"
 #include "replication/walreceiver.h"
+
+/* directory to store replication slot data in */
+#define PG_REPLSLOT_DIR     "pg_replslot"
 
 /*
  * Behaviour of replication slots, upon release or crash.
@@ -41,21 +44,25 @@ typedef enum ReplicationSlotPersistency
  * Slots can be invalidated, e.g. due to max_slot_wal_keep_size. If so, the
  * 'invalidated' field is set to a value other than _NONE.
  *
- * When adding a new invalidation cause here, remember to update
- * SlotInvalidationCauses and RS_INVAL_MAX_CAUSES.
+ * When adding a new invalidation cause here, the value must be powers of 2
+ * (e.g., 1, 2, 4...) for proper bitwise operations. Also, remember to update
+ * RS_INVAL_MAX_CAUSES below, and SlotInvalidationCauses in slot.c.
  */
 typedef enum ReplicationSlotInvalidationCause
 {
-	RS_INVAL_NONE,
+	RS_INVAL_NONE = 0,
 	/* required WAL has been removed */
-	RS_INVAL_WAL_REMOVED,
+	RS_INVAL_WAL_REMOVED = (1 << 0),
 	/* required rows have been removed */
-	RS_INVAL_HORIZON,
+	RS_INVAL_HORIZON = (1 << 1),
 	/* wal_level insufficient for slot */
-	RS_INVAL_WAL_LEVEL,
+	RS_INVAL_WAL_LEVEL = (1 << 2),
+	/* idle slot timeout has occurred */
+	RS_INVAL_IDLE_TIMEOUT = (1 << 3),
 } ReplicationSlotInvalidationCause;
 
-extern PGDLLIMPORT const char *const SlotInvalidationCauses[];
+/* Maximum number of invalidation causes */
+#define	RS_INVAL_MAX_CAUSES 4
 
 /*
  * On-Disk data of a replication slot, preserved across restarts.
@@ -202,8 +209,20 @@ typedef struct ReplicationSlot
 	 */
 	XLogRecPtr	last_saved_confirmed_flush;
 
-	/* The time since the slot has become inactive */
+	/*
+	 * The time when the slot became inactive. For synced slots on a standby
+	 * server, it represents the time when slot synchronization was most
+	 * recently stopped.
+	 */
 	TimestampTz inactive_since;
+
+	/*
+	 * Latest restart_lsn that has been flushed to disk. For persistent slots
+	 * the flushed LSN should be taken into account when calculating the
+	 * oldest LSN for WAL segments removal.
+	 */
+	XLogRecPtr	last_saved_restart_lsn;
+
 } ReplicationSlot;
 
 #define SlotIsPhysical(slot) ((slot)->data.database == InvalidOid)
@@ -222,6 +241,23 @@ typedef struct ReplicationSlotCtlData
 } ReplicationSlotCtlData;
 
 /*
+ * Set slot's inactive_since property unless it was previously invalidated.
+ */
+static inline void
+ReplicationSlotSetInactiveSince(ReplicationSlot *s, TimestampTz ts,
+								bool acquire_lock)
+{
+	if (acquire_lock)
+		SpinLockAcquire(&s->mutex);
+
+	if (s->data.invalidated == RS_INVAL_NONE)
+		s->inactive_since = ts;
+
+	if (acquire_lock)
+		SpinLockRelease(&s->mutex);
+}
+
+/*
  * Pointers to shared memory
  */
 extern PGDLLIMPORT ReplicationSlotCtlData *ReplicationSlotCtl;
@@ -229,7 +265,8 @@ extern PGDLLIMPORT ReplicationSlot *MyReplicationSlot;
 
 /* GUCs */
 extern PGDLLIMPORT int max_replication_slots;
-extern PGDLLIMPORT char *standby_slot_names;
+extern PGDLLIMPORT char *synchronized_standby_slots;
+extern PGDLLIMPORT int idle_replication_slot_timeout_mins;
 
 /* shmem initialization functions */
 extern Size ReplicationSlotsShmemSize(void);
@@ -243,9 +280,11 @@ extern void ReplicationSlotCreate(const char *name, bool db_specific,
 extern void ReplicationSlotPersist(void);
 extern void ReplicationSlotDrop(const char *name, bool nowait);
 extern void ReplicationSlotDropAcquired(void);
-extern void ReplicationSlotAlter(const char *name, bool failover);
+extern void ReplicationSlotAlter(const char *name, const bool *failover,
+								 const bool *two_phase);
 
-extern void ReplicationSlotAcquire(const char *name, bool nowait);
+extern void ReplicationSlotAcquire(const char *name, bool nowait,
+								   bool error_if_invalid);
 extern void ReplicationSlotRelease(void);
 extern void ReplicationSlotCleanup(bool synced_only);
 extern void ReplicationSlotSave(void);
@@ -260,7 +299,7 @@ extern void ReplicationSlotsComputeRequiredLSN(void);
 extern XLogRecPtr ReplicationSlotsComputeLogicalRestartLSN(void);
 extern bool ReplicationSlotsCountDBSlots(Oid dboid, int *nslots, int *nactive);
 extern void ReplicationSlotsDropDBSlots(Oid dboid);
-extern bool InvalidateObsoleteReplicationSlots(ReplicationSlotInvalidationCause cause,
+extern bool InvalidateObsoleteReplicationSlots(uint32 possible_causes,
 											   XLogSegNo oldestSegno,
 											   Oid dboid,
 											   TransactionId snapshotConflictHorizon);
@@ -276,9 +315,10 @@ extern void CheckPointReplicationSlots(bool is_shutdown);
 extern void CheckSlotRequirements(void);
 extern void CheckSlotPermissions(void);
 extern ReplicationSlotInvalidationCause
-			GetSlotInvalidationCause(const char *invalidation_reason);
+			GetSlotInvalidationCause(const char *cause_name);
+extern const char *GetSlotInvalidationCauseName(ReplicationSlotInvalidationCause cause);
 
-extern bool SlotExistsInStandbySlotNames(const char *slot_name);
+extern bool SlotExistsInSyncStandbySlots(const char *slot_name);
 extern bool StandbySlotsHaveCaughtup(XLogRecPtr wait_for_lsn, int elevel);
 extern void WaitForStandbyConfirmation(XLogRecPtr wait_for_lsn);
 

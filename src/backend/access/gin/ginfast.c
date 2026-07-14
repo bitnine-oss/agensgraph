@@ -7,7 +7,7 @@
  *	  transfer pending entries into the regular index structure.  This
  *	  wins because bulk insertion is much more efficient than retail.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -39,7 +39,7 @@
 int			gin_pending_list_limit = 0;
 
 #define GIN_PAGE_FREESIZE \
-	( BLCKSZ - MAXALIGN(SizeOfPageHeaderData) - MAXALIGN(sizeof(GinPageOpaqueData)) )
+	( (Size) BLCKSZ - MAXALIGN(SizeOfPageHeaderData) - MAXALIGN(sizeof(GinPageOpaqueData)) )
 
 typedef struct KeyArray
 {
@@ -122,7 +122,7 @@ writeListPage(Relation index, Buffer buffer,
 		data.ntuples = ntuples;
 
 		XLogBeginInsert();
-		XLogRegisterData((char *) &data, sizeof(ginxlogInsertListPage));
+		XLogRegisterData(&data, sizeof(ginxlogInsertListPage));
 
 		XLogRegisterBuffer(0, buffer, REGBUF_WILL_INIT);
 		XLogRegisterBufData(0, workspace.data, size);
@@ -431,7 +431,7 @@ ginHeapTupleFastInsert(GinState *ginstate, GinTupleCollector *collector)
 		memcpy(&data.metadata, metadata, sizeof(GinMetaPageData));
 
 		XLogRegisterBuffer(0, metabuffer, REGBUF_WILL_INIT | REGBUF_STANDARD);
-		XLogRegisterData((char *) &data, sizeof(ginxlogUpdateMeta));
+		XLogRegisterData(&data, sizeof(ginxlogUpdateMeta));
 
 		recptr = XLogInsert(RM_GIN_ID, XLOG_GIN_UPDATE_META_PAGE);
 		PageSetLSN(metapage, recptr);
@@ -456,7 +456,7 @@ ginHeapTupleFastInsert(GinState *ginstate, GinTupleCollector *collector)
 	 * ginInsertCleanup() should not be called inside our CRIT_SECTION.
 	 */
 	cleanupSize = GinGetPendingListCleanupSize(index);
-	if (metadata->nPendingPages * GIN_PAGE_FREESIZE > cleanupSize * 1024L)
+	if (metadata->nPendingPages * GIN_PAGE_FREESIZE > cleanupSize * (Size) 1024)
 		needCleanup = true;
 
 	UnlockReleaseBuffer(metabuffer);
@@ -646,7 +646,7 @@ shiftList(Relation index, Buffer metabuffer, BlockNumber newHead,
 
 			memcpy(&data.metadata, metadata, sizeof(GinMetaPageData));
 
-			XLogRegisterData((char *) &data,
+			XLogRegisterData(&data,
 							 sizeof(ginxlogDeleteListPages));
 
 			recptr = XLogInsert(RM_GIN_ID, XLOG_GIN_DELETE_LISTPAGE);
@@ -795,7 +795,7 @@ ginInsertCleanup(GinState *ginstate, bool full_clean,
 				blknoFinish;
 	bool		cleanupFinish = false;
 	bool		fsm_vac = false;
-	Size		workMemory;
+	int			workMemory;
 
 	/*
 	 * We would like to prevent concurrent cleanup process. For that we will
@@ -892,7 +892,7 @@ ginInsertCleanup(GinState *ginstate, bool full_clean,
 		 */
 		processPendingPage(&accum, &datums, page, FirstOffsetNumber);
 
-		vacuum_delay_point();
+		vacuum_delay_point(false);
 
 		/*
 		 * Is it time to flush memory to disk?	Flush if we are at the end of
@@ -901,7 +901,7 @@ ginInsertCleanup(GinState *ginstate, bool full_clean,
 		 */
 		if (GinPageGetOpaque(page)->rightlink == InvalidBlockNumber ||
 			(GinPageHasFullRow(page) &&
-			 (accum.allocatedMemory >= workMemory * 1024L)))
+			 accum.allocatedMemory >= workMemory * (Size) 1024))
 		{
 			ItemPointerData *list;
 			uint32		nlist;
@@ -929,7 +929,7 @@ ginInsertCleanup(GinState *ginstate, bool full_clean,
 			{
 				ginEntryInsert(ginstate, attnum, key, category,
 							   list, nlist, NULL);
-				vacuum_delay_point();
+				vacuum_delay_point(false);
 			}
 
 			/*
@@ -1002,7 +1002,7 @@ ginInsertCleanup(GinState *ginstate, bool full_clean,
 		/*
 		 * Read next page in pending list
 		 */
-		vacuum_delay_point();
+		vacuum_delay_point(false);
 		buffer = ReadBuffer(index, blkno);
 		LockBuffer(buffer, GIN_SHARE);
 		page = BufferGetPage(buffer);

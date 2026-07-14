@@ -3,7 +3,7 @@
  * nodeMemoize.c
  *	  Routines to handle caching of results from parameterized nodes
  *
- * Portions Copyright (c) 2021-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2021-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -175,10 +175,10 @@ MemoizeHash_hash(struct memoize_hash *tb, const MemoizeKey *key)
 
 			if (!pslot->tts_isnull[i])	/* treat nulls as having hash key 0 */
 			{
-				FormData_pg_attribute *attr;
+				CompactAttribute *attr;
 				uint32		hkey;
 
-				attr = &pslot->tts_tupleDescriptor->attrs[i];
+				attr = TupleDescCompactAttr(pslot->tts_tupleDescriptor, i);
 
 				hkey = datum_image_hash(pslot->tts_values[i], attr->attbyval, attr->attlen);
 
@@ -242,7 +242,7 @@ MemoizeHash_equal(struct memoize_hash *tb, const MemoizeKey *key1,
 
 		for (int i = 0; i < numkeys; i++)
 		{
-			FormData_pg_attribute *attr;
+			CompactAttribute *attr;
 
 			if (tslot->tts_isnull[i] != pslot->tts_isnull[i])
 			{
@@ -255,7 +255,7 @@ MemoizeHash_equal(struct memoize_hash *tb, const MemoizeKey *key1,
 				continue;
 
 			/* perform binary comparison on the two datums */
-			attr = &tslot->tts_tupleDescriptor->attrs[i];
+			attr = TupleDescCompactAttr(tslot->tts_tupleDescriptor, i);
 			if (!datum_image_eq(tslot->tts_values[i], pslot->tts_values[i],
 								attr->attbyval, attr->attlen))
 			{

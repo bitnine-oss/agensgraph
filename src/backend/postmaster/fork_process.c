@@ -4,7 +4,7 @@
  *	 EXEC_BACKEND case; it might be extended to do so, but it would be
  *	 considerably more complex.
  *
- * Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Copyright (c) 1996-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/postmaster/fork_process.c
@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include "libpq/pqsignal.h"
+#include "miscadmin.h"
 #include "postmaster/fork_process.h"
 
 #ifndef WIN32
@@ -66,6 +67,7 @@ fork_process(void)
 	if (result == 0)
 	{
 		/* fork succeeded, in child */
+		MyProcPid = getpid();
 #ifdef LINUX_PROFILE
 		setitimer(ITIMER_PROF, &prof_itimer, NULL);
 #endif

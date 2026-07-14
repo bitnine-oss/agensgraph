@@ -145,3 +145,12 @@ DROP VLABEL piv9;
 -- teardown
 
 RESET ROLE;
+
+-- Drop the test role and everything it still owns, so the regression database
+-- does not carry objects owned by a role a freshly initialized cluster lacks
+-- (which would break the pg_dump/pg_restore and pg_upgrade round-trips exercised
+-- by src/bin/pg_upgrade).  Silence the cascade notices for stable output.
+SET client_min_messages = warning;
+DROP GRAPH propidx CASCADE;
+DROP ROLE regressrole;
+RESET client_min_messages;

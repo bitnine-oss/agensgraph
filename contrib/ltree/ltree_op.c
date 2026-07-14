@@ -7,15 +7,16 @@
 
 #include <ctype.h>
 
-#include "access/htup_details.h"
-#include "catalog/pg_statistic.h"
 #include "common/hashfn.h"
 #include "ltree.h"
 #include "utils/builtins.h"
-#include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
+#include "varatt.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "ltree",
+					.version = PG_VERSION
+);
 
 /* compare functions */
 PG_FUNCTION_INFO_V1(ltree_cmp);

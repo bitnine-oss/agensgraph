@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 # Tests for handling a corrupted pg_control
 
@@ -31,7 +31,7 @@ print $fh pack("x[$size]");
 close $fh;
 
 command_checks_all(
-	[ 'pg_resetwal', '-n', $node->data_dir ],
+	[ 'pg_resetwal', '--dry-run', $node->data_dir ],
 	0,
 	[qr/pg_control version number/],
 	[
@@ -47,7 +47,7 @@ print $fh $data, pack("x[" . ($size - 16) . "]");
 close $fh;
 
 command_checks_all(
-	[ 'pg_resetwal', '-n', $node->data_dir ],
+	[ 'pg_resetwal', '--dry-run', $node->data_dir ],
 	0,
 	[qr/pg_control version number/],
 	[
@@ -60,7 +60,8 @@ command_fails_like(
 	[ 'pg_resetwal', $node->data_dir ],
 	qr/not proceeding because control file values were guessed/,
 	'does not run when control file values were guessed');
-command_ok([ 'pg_resetwal', '-f', $node->data_dir ],
+command_ok(
+	[ 'pg_resetwal', '--force', $node->data_dir ],
 	'runs with force when control file values were guessed');
 
 done_testing();

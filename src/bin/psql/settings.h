@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2025, PostgreSQL Global Development Group
  *
  * src/bin/psql/settings.h
  */
@@ -27,6 +27,12 @@
 #define DEFAULT_PROMPT2 "%/%R%x%# "
 #define DEFAULT_PROMPT3 ">> "
 
+#define DEFAULT_WATCH_INTERVAL "2"
+/*
+ * Limit the max default setting to a value which should be safe for the
+ * itimer call, yet large enough to cover all realistic usecases.
+ */
+#define DEFAULT_WATCH_INTERVAL_MAX (1000*1000)
 /*
  * Note: these enums should generally be chosen so that zero corresponds
  * to the default behavior.
@@ -64,6 +70,21 @@ typedef enum
 
 typedef enum
 {
+	PSQL_SEND_QUERY,
+	PSQL_SEND_EXTENDED_CLOSE,
+	PSQL_SEND_EXTENDED_PARSE,
+	PSQL_SEND_EXTENDED_QUERY_PARAMS,
+	PSQL_SEND_EXTENDED_QUERY_PREPARED,
+	PSQL_SEND_PIPELINE_SYNC,
+	PSQL_SEND_START_PIPELINE_MODE,
+	PSQL_SEND_END_PIPELINE_MODE,
+	PSQL_SEND_FLUSH,
+	PSQL_SEND_FLUSH_REQUEST,
+	PSQL_SEND_GET_RESULTS,
+} PSQL_SEND_MODE;
+
+typedef enum
+{
 	hctl_none = 0,
 	hctl_ignorespace = 1,
 	hctl_ignoredups = 2,
@@ -96,10 +117,18 @@ typedef struct _psqlSettings
 	char	   *gset_prefix;	/* one-shot prefix argument for \gset */
 	bool		gdesc_flag;		/* one-shot request to describe query result */
 	bool		gexec_flag;		/* one-shot request to execute query result */
-	bool		bind_flag;		/* one-shot request to use extended query
-								 * protocol */
+	PSQL_SEND_MODE send_mode;	/* one-shot request to send query with normal
+								 * or extended query protocol */
 	int			bind_nparams;	/* number of parameters */
 	char	  **bind_params;	/* parameters for extended query protocol call */
+	char	   *stmtName;		/* prepared statement name used for extended
+								 * query protocol commands */
+	int			piped_commands; /* number of piped commands */
+	int			piped_syncs;	/* number of piped syncs */
+	int			available_results;	/* number of results available to get */
+	int			requested_results;	/* number of requested results, including
+									 * sync messages.  Used to read a limited
+									 * subset of the available_results. */
 	bool		crosstab_flag;	/* one-shot request to crosstab result */
 	char	   *ctv_args[4];	/* \crosstabview arguments */
 
@@ -143,6 +172,7 @@ typedef struct _psqlSettings
 	int			fetch_count;
 	int			histsize;
 	int			ignoreeof;
+	double		watch_interval;
 	PSQL_ECHO	echo;
 	PSQL_ECHO_HIDDEN echo_hidden;
 	PSQL_ERROR_ROLLBACK on_error_rollback;

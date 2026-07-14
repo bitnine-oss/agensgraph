@@ -7,7 +7,7 @@
  *	  constants, you probably also need to update the views based on them
  *	  in system_views.sql.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/progress.h
@@ -28,6 +28,7 @@
 #define PROGRESS_VACUUM_NUM_DEAD_ITEM_IDS		7
 #define PROGRESS_VACUUM_INDEXES_TOTAL			8
 #define PROGRESS_VACUUM_INDEXES_PROCESSED		9
+#define PROGRESS_VACUUM_DELAY_TIME				10
 
 /* Phases of vacuum (as advertised via PROGRESS_VACUUM_PHASE) */
 #define PROGRESS_VACUUM_PHASE_SCAN_HEAP			1
@@ -46,6 +47,7 @@
 #define PROGRESS_ANALYZE_CHILD_TABLES_TOTAL			5
 #define PROGRESS_ANALYZE_CHILD_TABLES_DONE			6
 #define PROGRESS_ANALYZE_CURRENT_CHILD_TABLE_RELID	7
+#define PROGRESS_ANALYZE_DELAY_TIME					8
 
 /* Phases of analyze (as advertised via PROGRESS_ANALYZE_PHASE) */
 #define PROGRESS_ANALYZE_PHASE_ACQUIRE_SAMPLE_ROWS		1

@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 use strict;
 use warnings FATAL => 'all';
@@ -39,7 +39,7 @@ $node->start;
 
 # set up a few database objects
 $node->safe_psql('postgres',
-		"CREATE TABLE tab1 (c1 int primary key, c2 text);\n"
+	"CREATE TABLE tab1 (c1 int primary key constraint foo not null, c2 text);\n"
 	  . "CREATE TABLE mytab123 (f1 int, f2 text);\n"
 	  . "CREATE TABLE mytab246 (f1 int, f2 text);\n"
 	  . "CREATE TABLE \"mixedName\" (f1 int, f2 text);\n"
@@ -167,26 +167,18 @@ check_completion(
 	qr/"mytab123" +"mytab246"/,
 	"offer multiple quoted table choices");
 
-# note: broken versions of libedit want to backslash the closing quote;
-# not much we can do about that
-check_completion("2\t", qr/246\\?" /,
+check_completion("2\t", qr/246" /,
 	"finish completion of one of multiple quoted table choices");
 
-# note: broken versions of libedit may leave us in a state where psql
-# thinks there's an unclosed double quote, so that we have to use
-# clear_line not clear_query here
-clear_line();
+clear_query();
 
 # check handling of mixed-case names
-# note: broken versions of libedit want to backslash the closing quote;
-# not much we can do about that
 check_completion(
 	"select * from \"mi\t",
-	qr/"mixedName\\?" /,
+	qr/"mixedName" /,
 	"complete a mixed-case name");
 
-# as above, must use clear_line not clear_query here
-clear_line();
+clear_query();
 
 # check case folding
 check_completion("select * from TAB\t", qr/tab1 /, "automatically fold case");
@@ -198,8 +190,7 @@ clear_query();
 # differently, so just check that the replacement comes out correctly
 check_completion("\\DRD\t", qr/drds /, "complete \\DRD<tab> to \\drds");
 
-# broken versions of libedit require clear_line not clear_query here
-clear_line();
+clear_query();
 
 # check completion of a schema-qualified name
 check_completion("select * from pub\t",
@@ -218,21 +209,21 @@ clear_query();
 
 # check interpretation of referenced names
 check_completion(
-	"alter table tab1 drop constraint \t",
+	"alter table tab1 drop constraint t\t",
 	qr/tab1_pkey /,
 	"complete index name for referenced table");
 
 clear_query();
 
 check_completion(
-	"alter table TAB1 drop constraint \t",
+	"alter table TAB1 drop constraint t\t",
 	qr/tab1_pkey /,
 	"complete index name for referenced table, with downcasing");
 
 clear_query();
 
 check_completion(
-	"alter table public.\"tab1\" drop constraint \t",
+	"alter table public.\"tab1\" drop constraint t\t",
 	qr/tab1_pkey /,
 	"complete index name for referenced table, with schema and quoting");
 
@@ -261,18 +252,16 @@ check_completion(
 	qr|tab_comp_dir/af\a?ile|,
 	"filename completion with multiple possibilities");
 
-# broken versions of libedit require clear_line not clear_query here
+# here we are inside a string literal 'afile*', so must use clear_line().
 clear_line();
 
 # COPY requires quoting
-# note: broken versions of libedit want to backslash the closing quote;
-# not much we can do about that
 check_completion(
 	"COPY foo FROM tab_comp_dir/some\t",
-	qr|'tab_comp_dir/somefile\\?' |,
+	qr|'tab_comp_dir/somefile' |,
 	"quoted filename completion with one possibility");
 
-clear_line();
+clear_query();
 
 check_completion(
 	"COPY foo FROM tab_comp_dir/af\t",

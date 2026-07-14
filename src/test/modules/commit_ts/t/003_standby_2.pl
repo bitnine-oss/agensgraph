@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 # Test primary/standby scenario where the track_commit_timestamp GUC is
 # repeatedly toggled on and off.
@@ -57,7 +57,7 @@ $primary->restart;
 $primary->append_conf('postgresql.conf', 'track_commit_timestamp = off');
 $primary->restart;
 
-system_or_bail('pg_ctl', '-D', $standby->data_dir, 'promote');
+system_or_bail('pg_ctl', '--pgdata' => $standby->data_dir, 'promote');
 
 $standby->safe_psql('postgres', "create table t11()");
 my $standby_ts = $standby->safe_psql('postgres',

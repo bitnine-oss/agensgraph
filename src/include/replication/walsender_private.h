@@ -3,7 +3,7 @@
  * walsender_private.h
  *	  Private definitions from replication/walsender.c.
  *
- * Portions Copyright (c) 2010-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2025, PostgreSQL Global Development Group
  *
  * src/include/replication/walsender_private.h
  *
@@ -18,7 +18,6 @@
 #include "nodes/replnodes.h"
 #include "replication/syncrep.h"
 #include "storage/condition_variable.h"
-#include "storage/latch.h"
 #include "storage/shmem.h"
 #include "storage/spin.h"
 
@@ -72,12 +71,6 @@ typedef struct WalSnd
 	slock_t		mutex;
 
 	/*
-	 * Pointer to the walsender's latch. Used by backends to wake up this
-	 * walsender when it has work to do. NULL if the walsender isn't active.
-	 */
-	Latch	   *latch;
-
-	/*
 	 * Timestamp of the last message received from standby.
 	 */
 	TimestampTz replyTime;
@@ -103,11 +96,11 @@ typedef struct
 	XLogRecPtr	lsn[NUM_SYNC_REP_WAIT_MODE];
 
 	/*
-	 * Are any sync standbys defined?  Waiting backends can't reload the
-	 * config file safely, so checkpointer updates this value as needed.
-	 * Protected by SyncRepLock.
+	 * Status of data related to the synchronous standbys.  Waiting backends
+	 * can't reload the config file safely, so checkpointer updates this value
+	 * as needed. Protected by SyncRepLock.
 	 */
-	bool		sync_standbys_defined;
+	bits8		sync_standbys_status;
 
 	/* used as a registry of physical / logical walsenders to wake */
 	ConditionVariable wal_flush_cv;
@@ -115,13 +108,28 @@ typedef struct
 
 	/*
 	 * Used by physical walsenders holding slots specified in
-	 * standby_slot_names to wake up logical walsenders holding logical
-	 * failover slots when a walreceiver confirms the receipt of LSN.
+	 * synchronized_standby_slots to wake up logical walsenders holding
+	 * logical failover slots when a walreceiver confirms the receipt of LSN.
 	 */
 	ConditionVariable wal_confirm_rcv_cv;
 
 	WalSnd		walsnds[FLEXIBLE_ARRAY_MEMBER];
 } WalSndCtlData;
+
+/* Flags for WalSndCtlData->sync_standbys_status */
+
+/*
+ * Is the synchronous standby data initialized from the GUC?  This is set the
+ * first time synchronous_standby_names is processed by the checkpointer.
+ */
+#define SYNC_STANDBY_INIT			(1 << 0)
+
+/*
+ * Is the synchronous standby data defined?  This is set when
+ * synchronous_standby_names has some data, after being processed by the
+ * checkpointer.
+ */
+#define SYNC_STANDBY_DEFINED		(1 << 1)
 
 extern PGDLLIMPORT WalSndCtlData *WalSndCtl;
 
@@ -132,13 +140,16 @@ extern void WalSndSetState(WalSndState state);
  * Internal functions for parsing the replication grammar, in repl_gram.y and
  * repl_scanner.l
  */
-extern int	replication_yyparse(void);
-extern int	replication_yylex(void);
-extern void replication_yyerror(const char *message) pg_attribute_noreturn();
-extern void replication_scanner_init(const char *str);
-extern void replication_scanner_finish(void);
-extern bool replication_scanner_is_replication_command(void);
-
-extern PGDLLIMPORT Node *replication_parse_result;
+union YYSTYPE;
+#ifndef YY_TYPEDEF_YY_SCANNER_T
+#define YY_TYPEDEF_YY_SCANNER_T
+typedef void *yyscan_t;
+#endif
+extern int	replication_yyparse(Node **replication_parse_result_p, yyscan_t yyscanner);
+extern int	replication_yylex(union YYSTYPE *yylval_param, yyscan_t yyscanner);
+pg_noreturn extern void replication_yyerror(Node **replication_parse_result_p, yyscan_t yyscanner, const char *message);
+extern void replication_scanner_init(const char *str, yyscan_t *yyscannerp);
+extern void replication_scanner_finish(yyscan_t yyscanner);
+extern bool replication_scanner_is_replication_command(yyscan_t yyscanner);
 
 #endif							/* _WALSENDER_PRIVATE_H */

@@ -12,7 +12,7 @@
  * XLOG records for these events and will re-perform the status update on
  * redo; so we need make no additional XLOG entry here.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/commit_ts.c
@@ -989,7 +989,7 @@ static void
 WriteZeroPageXlogRec(int64 pageno)
 {
 	XLogBeginInsert();
-	XLogRegisterData((char *) (&pageno), sizeof(pageno));
+	XLogRegisterData(&pageno, sizeof(pageno));
 	(void) XLogInsert(RM_COMMIT_TS_ID, COMMIT_TS_ZEROPAGE);
 }
 
@@ -1005,7 +1005,7 @@ WriteTruncateXlogRec(int64 pageno, TransactionId oldestXid)
 	xlrec.oldestXid = oldestXid;
 
 	XLogBeginInsert();
-	XLogRegisterData((char *) (&xlrec), SizeOfCommitTsTruncate);
+	XLogRegisterData(&xlrec, SizeOfCommitTsTruncate);
 	(void) XLogInsert(RM_COMMIT_TS_ID, COMMIT_TS_TRUNCATE);
 }
 

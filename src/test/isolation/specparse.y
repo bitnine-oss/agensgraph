@@ -4,7 +4,7 @@
  * specparse.y
  *	  bison grammar for the isolation test file format
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *-------------------------------------------------------------------------
@@ -13,7 +13,11 @@
 #include "postgres_fe.h"
 
 #include "isolationtester.h"
+#include "specparse.h"
 
+/* silence -Wmissing-variable-declarations */
+extern int spec_yychar;
+extern int spec_yynerrs;
 
 TestSpec		parseresult;			/* result of parsing is left here */
 

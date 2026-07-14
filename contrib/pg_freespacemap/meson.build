@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 pg_freespacemap_sources = files(
   'pg_freespacemap.c',
@@ -20,6 +20,7 @@ install_data(
   'pg_freespacemap--1.0--1.1.sql',
   'pg_freespacemap--1.1--1.2.sql',
   'pg_freespacemap--1.1.sql',
+  'pg_freespacemap--1.2--1.3.sql',
   'pg_freespacemap.control',
   kwargs: contrib_data_args,
 )

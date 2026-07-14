@@ -4,7 +4,7 @@
  *	  delete & vacuum routines for the postgres GIN
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -19,7 +19,6 @@
 #include "access/xloginsert.h"
 #include "commands/vacuum.h"
 #include "miscadmin.h"
-#include "postmaster/autovacuum.h"
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
@@ -217,7 +216,7 @@ ginDeletePage(GinVacuumState *gvs, BlockNumber deleteBlkno, BlockNumber leftBlkn
 		data.rightLink = GinPageGetOpaque(page)->rightlink;
 		data.deleteXid = GinPageGetDeleteXid(page);
 
-		XLogRegisterData((char *) &data, sizeof(ginxlogDeletePage));
+		XLogRegisterData(&data, sizeof(ginxlogDeletePage));
 
 		recptr = XLogInsert(RM_GIN_ID, XLOG_GIN_DELETE_PAGE);
 		PageSetLSN(page, recptr);
@@ -663,12 +662,12 @@ ginbulkdelete(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 			UnlockReleaseBuffer(buffer);
 		}
 
-		vacuum_delay_point();
+		vacuum_delay_point(false);
 
 		for (i = 0; i < nRoot; i++)
 		{
 			ginVacuumPostingTree(&gvs, rootOfPostingTree[i]);
-			vacuum_delay_point();
+			vacuum_delay_point(false);
 		}
 
 		if (blkno == InvalidBlockNumber)	/* rightmost page */
@@ -749,7 +748,7 @@ ginvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 		Buffer		buffer;
 		Page		page;
 
-		vacuum_delay_point();
+		vacuum_delay_point(false);
 
 		buffer = ReadBufferExtended(index, MAIN_FORKNUM, blkno,
 									RBM_NORMAL, info->strategy);

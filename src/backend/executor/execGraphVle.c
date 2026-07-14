@@ -621,7 +621,7 @@ open_depth_scan(GraphVLEState *vle_state, VLEDepthCtx *vle_depth_ctx,
 					GraphidGetDatum(key));
 		vle_depth_ctx->iss = index_beginscan(heap_rel, index_rel,
 											 vle_state->ps.state->es_snapshot,
-											 1, 0);
+											 NULL, 1, 0);
 		index_rescan(vle_depth_ctx->iss, &scan_key_data, 1, NULL, 0);
 	}
 	else

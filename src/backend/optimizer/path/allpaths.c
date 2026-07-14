@@ -3,7 +3,7 @@
  * allpaths.c
  *	  Routines to find possible search paths for processing a query
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -731,6 +731,10 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 		case RTE_RESULT:
 			/* RESULT RTEs, in themselves, are no problem. */
 			break;
+		case RTE_GROUP:
+			/* Shouldn't happen; we're only considering baserels here. */
+			Assert(false);
+			return;
 	}
 
 	/*
@@ -772,6 +776,17 @@ set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	 */
 	required_outer = rel->lateral_relids;
 
+	/*
+	 * Consider TID scans.
+	 *
+	 * If create_tidscan_paths returns true, then a TID scan path is forced.
+	 * This happens when rel->baserestrictinfo contains CurrentOfExpr, because
+	 * the executor can't handle any other type of path for such queries.
+	 * Hence, we return without adding any other paths.
+	 */
+	if (create_tidscan_paths(root, rel))
+		return;
+
 	/* Consider sequential scan */
 	add_path(rel, create_seqscan_path(root, rel, required_outer, 0));
 
@@ -781,9 +796,6 @@ set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 
 	/* Consider index scans */
 	create_index_paths(root, rel);
-
-	/* Consider TID scans */
-	create_tidscan_paths(root, rel);
 }
 
 /*
@@ -946,6 +958,7 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 {
 	int			parentRTindex = rti;
 	bool		has_live_children;
+	double		parent_tuples;
 	double		parent_rows;
 	double		parent_size;
 	double	   *parent_attrsizes;
@@ -971,6 +984,15 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 	/*
 	 * Initialize to compute size estimates for whole append relation.
 	 *
+	 * We handle tuples estimates by setting "tuples" to the total number of
+	 * tuples accumulated from each live child, rather than using "rows".
+	 * Although an appendrel itself doesn't directly enforce any quals, its
+	 * child relations may.  Therefore, setting "tuples" equal to "rows" for
+	 * an appendrel isn't always appropriate, and can lead to inaccurate cost
+	 * estimates.  For example, when estimating the number of distinct values
+	 * from an appendrel, we would be unable to adjust the estimate based on
+	 * the restriction selectivity (see estimate_num_groups).
+	 *
 	 * We handle width estimates by weighting the widths of different child
 	 * rels proportionally to their number of rows.  This is sensible because
 	 * the use of width estimates is mainly to compute the total relation
@@ -983,6 +1005,7 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 	 * have zero rows and/or width, if they were excluded by constraints.
 	 */
 	has_live_children = false;
+	parent_tuples = 0;
 	parent_rows = 0;
 	parent_size = 0;
 	nattrs = rel->max_attr - rel->min_attr + 1;
@@ -1149,6 +1172,7 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 		 */
 		Assert(childrel->rows > 0);
 
+		parent_tuples += childrel->tuples;
 		parent_rows += childrel->rows;
 		parent_size += childrel->reltarget->width * childrel->rows;
 
@@ -1195,16 +1219,11 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 		int			i;
 
 		Assert(parent_rows > 0);
+		rel->tuples = parent_tuples;
 		rel->rows = parent_rows;
 		rel->reltarget->width = rint(parent_size / parent_rows);
 		for (i = 0; i < nattrs; i++)
 			rel->attr_widths[i] = rint(parent_attrsizes[i] / parent_rows);
-
-		/*
-		 * Set "raw tuples" count equal to "rows" for the appendrel; needed
-		 * because some places assume rel->tuples is valid for any baserel.
-		 */
-		rel->tuples = parent_rows;
 
 		/*
 		 * Note that we leave rel->pages as zero; this is important to avoid
@@ -1352,9 +1371,23 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 		 */
 		if (rel->consider_startup && childrel->cheapest_startup_path != NULL)
 		{
+			Path	   *cheapest_path;
+
+			/*
+			 * With an indication of how many tuples the query should provide,
+			 * the optimizer tries to choose the path optimal for that
+			 * specific number of tuples.
+			 */
+			if (root->tuple_fraction > 0.0)
+				cheapest_path =
+					get_cheapest_fractional_path(childrel,
+												 root->tuple_fraction);
+			else
+				cheapest_path = childrel->cheapest_startup_path;
+
 			/* cheapest_startup_path must not be a parameterized path. */
-			Assert(childrel->cheapest_startup_path->param_info == NULL);
-			accumulate_append_subpath(childrel->cheapest_startup_path,
+			Assert(cheapest_path->param_info == NULL);
+			accumulate_append_subpath(cheapest_path,
 									  &startup_subpaths,
 									  NULL);
 		}
@@ -1858,7 +1891,17 @@ generate_orderedappend_paths(PlannerInfo *root, RelOptInfo *rel,
 			 */
 			if (root->tuple_fraction > 0)
 			{
-				double		path_fraction = (1.0 / root->tuple_fraction);
+				double		path_fraction = root->tuple_fraction;
+
+				/*
+				 * Merge Append considers only live children relations.  Dummy
+				 * relations must be filtered out before.
+				 */
+				Assert(childrel->rows > 0);
+
+				/* Convert absolute limit to a path fraction */
+				if (path_fraction >= 1.0)
+					path_fraction /= childrel->rows;
 
 				cheapest_fractional =
 					get_cheapest_fractional_path_for_pathkeys(childrel->pathlist,
@@ -2280,16 +2323,15 @@ find_window_run_conditions(Query *subquery, RangeTblEntry *rte, Index rti,
 
 	runopexpr = NULL;
 	runoperator = InvalidOid;
-	opinfos = get_op_btree_interpretation(opexpr->opno);
+	opinfos = get_op_index_interpretation(opexpr->opno);
 
 	foreach(lc, opinfos)
 	{
-		OpBtreeInterpretation *opinfo = (OpBtreeInterpretation *) lfirst(lc);
-		int			strategy = opinfo->strategy;
+		OpIndexInterpretation *opinfo = (OpIndexInterpretation *) lfirst(lc);
+		CompareType cmptype = opinfo->cmptype;
 
 		/* handle < / <= */
-		if (strategy == BTLessStrategyNumber ||
-			strategy == BTLessEqualStrategyNumber)
+		if (cmptype == COMPARE_LT || cmptype == COMPARE_LE)
 		{
 			/*
 			 * < / <= is supported for monotonically increasing functions in
@@ -2306,8 +2348,7 @@ find_window_run_conditions(Query *subquery, RangeTblEntry *rte, Index rti,
 			break;
 		}
 		/* handle > / >= */
-		else if (strategy == BTGreaterStrategyNumber ||
-				 strategy == BTGreaterEqualStrategyNumber)
+		else if (cmptype == COMPARE_GT || cmptype == COMPARE_GE)
 		{
 			/*
 			 * > / >= is supported for monotonically decreasing functions in
@@ -2324,9 +2365,9 @@ find_window_run_conditions(Query *subquery, RangeTblEntry *rte, Index rti,
 			break;
 		}
 		/* handle = */
-		else if (strategy == BTEqualStrategyNumber)
+		else if (cmptype == COMPARE_EQ)
 		{
-			int16		newstrategy;
+			CompareType newcmptype;
 
 			/*
 			 * When both monotonically increasing and decreasing then the
@@ -2350,19 +2391,19 @@ find_window_run_conditions(Query *subquery, RangeTblEntry *rte, Index rti,
 			 * below the value in the equality condition.
 			 */
 			if (res->monotonic & MONOTONICFUNC_INCREASING)
-				newstrategy = wfunc_left ? BTLessEqualStrategyNumber : BTGreaterEqualStrategyNumber;
+				newcmptype = wfunc_left ? COMPARE_LE : COMPARE_GE;
 			else
-				newstrategy = wfunc_left ? BTGreaterEqualStrategyNumber : BTLessEqualStrategyNumber;
+				newcmptype = wfunc_left ? COMPARE_GE : COMPARE_LE;
 
 			/* We must keep the original equality qual */
 			*keep_original = true;
 			runopexpr = opexpr;
 
 			/* determine the operator to use for the WindowFuncRunCondition */
-			runoperator = get_opfamily_member(opinfo->opfamily_id,
-											  opinfo->oplefttype,
-											  opinfo->oprighttype,
-											  newstrategy);
+			runoperator = get_opfamily_member_for_cmptype(opinfo->opfamily_id,
+														  opinfo->oplefttype,
+														  opinfo->oprighttype,
+														  newcmptype);
 			break;
 		}
 	}
@@ -3072,8 +3113,7 @@ generate_gather_paths(PlannerInfo *root, RelOptInfo *rel, bool override_rows)
 	 * of partial_pathlist because of the way add_partial_path works.
 	 */
 	cheapest_partial_path = linitial(rel->partial_pathlist);
-	rows =
-		cheapest_partial_path->rows * cheapest_partial_path->parallel_workers;
+	rows = compute_gather_rows(cheapest_partial_path);
 	simple_gather_path = (Path *)
 		create_gather_path(root, rel, cheapest_partial_path, rel->reltarget,
 						   NULL, rowsp);
@@ -3091,7 +3131,7 @@ generate_gather_paths(PlannerInfo *root, RelOptInfo *rel, bool override_rows)
 		if (subpath->pathkeys == NIL)
 			continue;
 
-		rows = subpath->rows * subpath->parallel_workers;
+		rows = compute_gather_rows(subpath);
 		path = create_gather_merge_path(root, rel, subpath, rel->reltarget,
 										subpath->pathkeys, NULL, rowsp);
 		add_path(rel, &path->path);
@@ -3275,7 +3315,6 @@ generate_useful_gather_paths(PlannerInfo *root, RelOptInfo *rel, bool override_r
 													subpath,
 													useful_pathkeys,
 													-1.0);
-				rows = subpath->rows * subpath->parallel_workers;
 			}
 			else
 				subpath = (Path *) create_incremental_sort_path(root,
@@ -3284,6 +3323,7 @@ generate_useful_gather_paths(PlannerInfo *root, RelOptInfo *rel, bool override_r
 																useful_pathkeys,
 																presorted_keys,
 																-1);
+			rows = compute_gather_rows(subpath);
 			path = create_gather_merge_path(root, rel,
 											subpath,
 											rel->reltarget,
@@ -3975,6 +4015,7 @@ subquery_push_qual(Query *subquery, RangeTblEntry *rte, Index rti, Node *qual)
 		 */
 		qual = ReplaceVarsFromTargetList(qual, rti, 0, rte,
 										 subquery->targetList,
+										 subquery->resultRelation,
 										 REPLACEVARS_REPORT_ERROR, 0,
 										 &subquery->hasSubLinks);
 

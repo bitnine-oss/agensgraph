@@ -3,7 +3,7 @@
  * committsdesc.c
  *	  rmgr descriptor routines for access/transam/commit_ts.c
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -28,14 +28,14 @@ commit_ts_desc(StringInfo buf, XLogReaderState *record)
 		int64		pageno;
 
 		memcpy(&pageno, rec, sizeof(pageno));
-		appendStringInfo(buf, "%lld", (long long) pageno);
+		appendStringInfo(buf, "%" PRId64, pageno);
 	}
 	else if (info == COMMIT_TS_TRUNCATE)
 	{
 		xl_commit_ts_truncate *trunc = (xl_commit_ts_truncate *) rec;
 
-		appendStringInfo(buf, "pageno %lld, oldestXid %u",
-						 (long long) trunc->pageno, trunc->oldestXid);
+		appendStringInfo(buf, "pageno %" PRId64 ", oldestXid %u",
+						 trunc->pageno, trunc->oldestXid);
 	}
 }
 

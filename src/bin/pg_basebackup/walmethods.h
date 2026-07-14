@@ -2,7 +2,7 @@
  *
  * walmethods.h
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/walmethods.h
@@ -17,7 +17,7 @@ typedef struct WalWriteMethod WalWriteMethod;
 typedef struct
 {
 	WalWriteMethod *wwmethod;
-	off_t		currpos;
+	pgoff_t		currpos;
 	char	   *pathname;
 
 	/*

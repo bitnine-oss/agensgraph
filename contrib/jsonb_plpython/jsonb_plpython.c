@@ -2,12 +2,15 @@
 
 #include "plpy_elog.h"
 #include "plpy_typeio.h"
-#include "plpython.h"
+#include "plpy_util.h"
 #include "utils/fmgrprotos.h"
 #include "utils/jsonb.h"
 #include "utils/numeric.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "jsonb_plpython",
+					.version = PG_VERSION
+);
 
 /* for PLyObject_AsString in plpy_typeio.c */
 typedef char *(*PLyObject_AsString_t) (PyObject *plrv);

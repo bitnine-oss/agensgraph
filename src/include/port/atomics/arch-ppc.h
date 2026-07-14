@@ -3,7 +3,7 @@
  * arch-ppc.h
  *	  Atomic operations considerations specific to PowerPC
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES:
@@ -172,6 +172,8 @@ pg_atomic_compare_exchange_u64_impl(volatile pg_atomic_uint64 *ptr,
 	uint64 found;
 	uint32 condition_register;
 	bool ret;
+
+	AssertPointerAlignment(expected, 8);
 
 	/* Like u32, but s/lwarx/ldarx/; s/stwcx/stdcx/; s/cmpw/cmpd/ */
 #ifdef HAVE_I_CONSTRAINT__BUILTIN_CONSTANT_P

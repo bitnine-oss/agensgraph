@@ -4,7 +4,7 @@
  *	  utilities routines for the postgres GiST index access method.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -21,6 +21,7 @@
 #include "common/pg_prng.h"
 #include "storage/indexfsm.h"
 #include "utils/float.h"
+#include "utils/fmgrprotos.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
@@ -1054,4 +1055,57 @@ gistGetFakeLSN(Relation rel)
 		Assert(rel->rd_rel->relpersistence == RELPERSISTENCE_UNLOGGED);
 		return GetFakeLSNForUnloggedRel();
 	}
+}
+
+/*
+ * This is a stratnum translation support function for GiST opclasses that use
+ * the RT*StrategyNumber constants.
+ */
+Datum
+gist_translate_cmptype_common(PG_FUNCTION_ARGS)
+{
+	CompareType cmptype = PG_GETARG_INT32(0);
+
+	switch (cmptype)
+	{
+		case COMPARE_EQ:
+			PG_RETURN_UINT16(RTEqualStrategyNumber);
+		case COMPARE_LT:
+			PG_RETURN_UINT16(RTLessStrategyNumber);
+		case COMPARE_LE:
+			PG_RETURN_UINT16(RTLessEqualStrategyNumber);
+		case COMPARE_GT:
+			PG_RETURN_UINT16(RTGreaterStrategyNumber);
+		case COMPARE_GE:
+			PG_RETURN_UINT16(RTGreaterEqualStrategyNumber);
+		case COMPARE_OVERLAP:
+			PG_RETURN_UINT16(RTOverlapStrategyNumber);
+		case COMPARE_CONTAINED_BY:
+			PG_RETURN_UINT16(RTContainedByStrategyNumber);
+		default:
+			PG_RETURN_UINT16(InvalidStrategy);
+	}
+}
+
+/*
+ * Returns the opclass's private stratnum used for the given compare type.
+ *
+ * Calls the opclass's GIST_TRANSLATE_CMPTYPE_PROC support function, if any,
+ * and returns the result.  Returns InvalidStrategy if the function is not
+ * defined.
+ */
+StrategyNumber
+gisttranslatecmptype(CompareType cmptype, Oid opfamily)
+{
+	Oid			funcid;
+	Datum		result;
+
+	/* Check whether the function is provided. */
+	funcid = get_opfamily_proc(opfamily, ANYOID, ANYOID, GIST_TRANSLATE_CMPTYPE_PROC);
+	if (!OidIsValid(funcid))
+		return InvalidStrategy;
+
+	/* Ask the translation function */
+	result = OidFunctionCall1Coll(funcid, InvalidOid, Int32GetDatum(cmptype));
+	return DatumGetUInt16(result);
 }

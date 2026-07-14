@@ -2388,7 +2388,7 @@ begin
 end $$ language plpgsql;
 select namedparmcursor_test7();
 ERROR:  division by zero
-CONTEXT:  SQL expression "42/0 AS p1, 77 AS p2"
+CONTEXT:  PL/pgSQL expression "42/0 AS p1, 77 AS p2"
 PL/pgSQL function namedparmcursor_test7() line 6 at OPEN
 -- check that line comments work correctly within the argument list
 -- (this used to require a special hack in the code; it no longer does,
@@ -2419,7 +2419,8 @@ declare
   p2 int4 := 1006;
   n int4;
 begin
-  open c1 (p1 := p1, p2 := p2, debug := 2);
+  -- use both supported syntaxes for named arguments
+  open c1 (p1 := p1, p2 => p2, debug => 2);
   fetch c1 into n;
   return n;
 end $$ language plpgsql;
@@ -3487,7 +3488,8 @@ begin
     raise notice '% from %', r.i, c;
   end loop;
   -- again, to test if cursor was closed properly
-  for r in c(9,10) loop
+  -- (and while we're at it, test named-parameter notation)
+  for r in c(r2 := 10, r1 => 9) loop
     raise notice '% from %', r.i, c;
   end loop;
   -- and test a parameterless cursor
@@ -3777,7 +3779,7 @@ end;
 $$ language plpgsql;
 select compos();
 ERROR:  returned record type does not match expected record type
-DETAIL:  Returned type unknown does not match expected type character varying in column 2.
+DETAIL:  Returned type unknown does not match expected type character varying in column "y" (position 2).
 CONTEXT:  PL/pgSQL function compos() while casting return value to function's return type
 -- ... but this does
 create or replace function compos() returns compostype as $$
@@ -4563,11 +4565,11 @@ end
 $$;
 select fail();
 ERROR:  division by zero
-CONTEXT:  SQL expression "1/0"
+CONTEXT:  PL/pgSQL expression "1/0"
 PL/pgSQL function fail() line 3 at RETURN
 select fail();
 ERROR:  division by zero
-CONTEXT:  SQL expression "1/0"
+CONTEXT:  PL/pgSQL expression "1/0"
 PL/pgSQL function fail() line 3 at RETURN
 drop function fail();
 -- Test handling of string literals.

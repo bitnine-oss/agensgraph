@@ -3,7 +3,7 @@
  *
  * repl_gram.y				- Parser for the replication commands
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,9 +22,7 @@
 #include "replication/walsender.h"
 #include "replication/walsender_private.h"
 
-
-/* Result of the parsing is returned here */
-Node *replication_parse_result;
+#include "repl_gram.h"
 
 
 /*
@@ -37,6 +35,10 @@ Node *replication_parse_result;
 
 %}
 
+%parse-param {Node **replication_parse_result_p}
+%parse-param {yyscan_t yyscanner}
+%lex-param   {yyscan_t yyscanner}
+%pure-parser
 %expect 0
 %name-prefix="replication_yy"
 
@@ -99,7 +101,9 @@ Node *replication_parse_result;
 
 firstcmd: command opt_semicolon
 				{
-					replication_parse_result = $1;
+					*replication_parse_result_p = $1;
+
+					(void) yynerrs; /* suppress compiler warning */
 				}
 			;
 

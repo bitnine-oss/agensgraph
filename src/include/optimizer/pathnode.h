@@ -4,7 +4,7 @@
  *	  prototypes for pathnode.c, relnode.c.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/pathnode.h
@@ -27,11 +27,12 @@ extern int	compare_fractional_path_costs(Path *path1, Path *path2,
 										  double fraction);
 extern void set_cheapest(RelOptInfo *parent_rel);
 extern void add_path(RelOptInfo *parent_rel, Path *new_path);
-extern bool add_path_precheck(RelOptInfo *parent_rel,
+extern bool add_path_precheck(RelOptInfo *parent_rel, int disabled_nodes,
 							  Cost startup_cost, Cost total_cost,
 							  List *pathkeys, Relids required_outer);
 extern void add_partial_path(RelOptInfo *parent_rel, Path *new_path);
 extern bool add_partial_path_precheck(RelOptInfo *parent_rel,
+									  int disabled_nodes,
 									  Cost total_cost, List *pathkeys);
 
 extern Path *create_seqscan_path(PlannerInfo *root, RelOptInfo *rel,
@@ -124,7 +125,8 @@ extern Path *create_worktablescan_path(PlannerInfo *root, RelOptInfo *rel,
 									   Relids required_outer);
 extern ForeignPath *create_foreignscan_path(PlannerInfo *root, RelOptInfo *rel,
 											PathTarget *target,
-											double rows, Cost startup_cost, Cost total_cost,
+											double rows, int disabled_nodes,
+											Cost startup_cost, Cost total_cost,
 											List *pathkeys,
 											Relids required_outer,
 											Path *fdw_outerpath,
@@ -132,7 +134,8 @@ extern ForeignPath *create_foreignscan_path(PlannerInfo *root, RelOptInfo *rel,
 											List *fdw_private);
 extern ForeignPath *create_foreign_join_path(PlannerInfo *root, RelOptInfo *rel,
 											 PathTarget *target,
-											 double rows, Cost startup_cost, Cost total_cost,
+											 double rows, int disabled_nodes,
+											 Cost startup_cost, Cost total_cost,
 											 List *pathkeys,
 											 Relids required_outer,
 											 Path *fdw_outerpath,
@@ -140,7 +143,8 @@ extern ForeignPath *create_foreign_join_path(PlannerInfo *root, RelOptInfo *rel,
 											 List *fdw_private);
 extern ForeignPath *create_foreign_upper_path(PlannerInfo *root, RelOptInfo *rel,
 											  PathTarget *target,
-											  double rows, Cost startup_cost, Cost total_cost,
+											  double rows, int disabled_nodes,
+											  Cost startup_cost, Cost total_cost,
 											  List *pathkeys,
 											  Path *fdw_outerpath,
 											  List *fdw_restrictinfo,
@@ -175,7 +179,8 @@ extern MergePath *create_mergejoin_path(PlannerInfo *root,
 										Relids required_outer,
 										List *mergeclauses,
 										List *outersortkeys,
-										List *innersortkeys);
+										List *innersortkeys,
+										int outer_presorted_keys);
 
 extern HashPath *create_hashjoin_path(PlannerInfo *root,
 									  RelOptInfo *joinrel,
@@ -256,12 +261,11 @@ extern WindowAggPath *create_windowagg_path(PlannerInfo *root,
 											bool topwindow);
 extern SetOpPath *create_setop_path(PlannerInfo *root,
 									RelOptInfo *rel,
-									Path *subpath,
+									Path *leftpath,
+									Path *rightpath,
 									SetOpCmd cmd,
 									SetOpStrategy strategy,
-									List *distinctList,
-									AttrNumber flagColIdx,
-									int firstFlag,
+									List *groupList,
 									double numGroups,
 									double outputRows);
 extern RecursiveUnionPath *create_recursiveunion_path(PlannerInfo *root,
@@ -346,7 +350,8 @@ extern Bitmapset *get_param_path_clause_serials(Path *path);
 extern RelOptInfo *build_child_join_rel(PlannerInfo *root,
 										RelOptInfo *outer_rel, RelOptInfo *inner_rel,
 										RelOptInfo *parent_joinrel, List *restrictlist,
-										SpecialJoinInfo *sjinfo);
+										SpecialJoinInfo *sjinfo,
+										int nappinfos, AppendRelInfo **appinfos);
 
 /* for agensgraph */
 extern ShortestpathPath *create_shortestpath_path(PlannerInfo *root,

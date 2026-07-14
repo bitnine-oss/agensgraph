@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 # OVERVIEW
 # --------
@@ -107,7 +107,7 @@ $node->append_conf(
 listen_addresses = '$hostaddr'
 
 # Capturing the EVENTS that occur during tests requires these settings
-log_connections = on
+log_connections = 'receipt,authentication,authorization'
 log_disconnections = on
 trace_connection_negotiation = on
 lc_messages = 'C'
@@ -149,12 +149,21 @@ if ($ssl_supported != 0)
 
 $node->start;
 
+# Check if the extension injection_points is available, as it may be
+# possible that this script is run with installcheck, where the module
+# would not be installed by default.
+my $injection_points_supported = $node->check_extension('injection_points');
+
 $node->safe_psql('postgres', 'CREATE USER localuser;');
 $node->safe_psql('postgres', 'CREATE USER testuser;');
 $node->safe_psql('postgres', 'CREATE USER ssluser;');
 $node->safe_psql('postgres', 'CREATE USER nossluser;');
 $node->safe_psql('postgres', 'CREATE USER gssuser;');
 $node->safe_psql('postgres', 'CREATE USER nogssuser;');
+if ($injection_points_supported != 0)
+{
+	$node->safe_psql('postgres', 'CREATE EXTENSION injection_points;');
+}
 
 my $unixdir = $node->safe_psql('postgres', 'SHOW unix_socket_directories;');
 chomp($unixdir);
@@ -215,11 +224,6 @@ my @all_gssencmodes = ('disable', 'prefer', 'require');
 my @all_sslmodes = ('disable', 'allow', 'prefer', 'require');
 my @all_sslnegotiations = ('postgres', 'direct');
 
-my $server_config = {
-	server_ssl => 0,
-	server_gss => 0,
-};
-
 ###
 ### Run tests with GSS and SSL disabled in the server
 ###
@@ -239,7 +243,7 @@ testuser    disable      disable      postgres       connect, authok            
 .           .            require      postgres       connect, sslreject          -> fail
 .           .            .            direct         connect, directsslreject    -> fail
 
-# sslnegotiation=direct is not acccepted unless sslmode=require or stronger
+# sslnegotiation=direct is not accepted unless sslmode=require or stronger
 *           *            disable      direct         -     -> fail
 *           *            allow        direct         -     -> fail
 *           *            prefer       direct         -     -> fail
@@ -272,7 +276,7 @@ testuser    require      *            *              - -> fail
 };
 
 note("Running tests with SSL and GSS disabled in the server");
-test_matrix($node, $server_config,
+test_matrix($node,
 	['testuser'], \@all_gssencmodes, \@all_sslmodes, \@all_sslnegotiations,
 	parse_table($test_table));
 
@@ -302,7 +306,7 @@ nossluser   .            disable      postgres       connect, authok            
 .           .            require      postgres       connect, sslaccept, authfail                    -> fail
 .           .            require      direct         connect, directsslaccept, authfail              -> fail
 
-# sslnegotiation=direct is not acccepted unless sslmode=require or stronger
+# sslnegotiation=direct is not accepted unless sslmode=require or stronger
 *           *            disable      direct         -     -> fail
 *           *            allow        direct         -     -> fail
 *           *            prefer       direct         -     -> fail
@@ -311,19 +315,48 @@ nossluser   .            disable      postgres       connect, authok            
 	# Enable SSL in the server
 	$node->adjust_conf('postgresql.conf', 'ssl', 'on');
 	$node->reload;
-	$server_config->{server_ssl} = 1;
 
 	note("Running tests with SSL enabled in server");
-	test_matrix(
-		$node, $server_config,
-		[ 'testuser', 'ssluser', 'nossluser' ], ['disable'],
-		\@all_sslmodes, \@all_sslnegotiations,
+	test_matrix($node, [ 'testuser', 'ssluser', 'nossluser' ],
+		['disable'], \@all_sslmodes, \@all_sslnegotiations,
 		parse_table($test_table));
+
+	if ($injection_points_supported != 0)
+	{
+		$node->safe_psql(
+			'postgres',
+			"SELECT injection_points_attach('backend-initialize', 'error');",
+			connstr => "user=localuser host=$unixdir");
+		connect_test(
+			$node,
+			"user=testuser sslmode=prefer",
+			'connect, backenderror -> fail');
+		$node->restart;
+
+		$node->safe_psql(
+			'postgres',
+			"SELECT injection_points_attach('backend-initialize-v2-error', 'error');",
+			connstr => "user=localuser host=$unixdir");
+		connect_test(
+			$node,
+			"user=testuser sslmode=prefer",
+			'connect, v2error -> fail');
+		$node->restart;
+
+		$node->safe_psql(
+			'postgres',
+			"SELECT injection_points_attach('backend-ssl-startup', 'error');",
+			connstr => "user=localuser host=$unixdir");
+		connect_test(
+			$node,
+			"user=testuser sslmode=prefer",
+			'connect, sslaccept, backenderror, reconnect, authok -> plain');
+		$node->restart;
+	}
 
 	# Disable SSL again
 	$node->adjust_conf('postgresql.conf', 'ssl', 'off');
 	$node->reload;
-	$server_config->{server_ssl} = 0;
 }
 
 ###
@@ -336,7 +369,6 @@ SKIP:
 
 	$krb->create_principal('gssuser', $gssuser_password);
 	$krb->create_ticket('gssuser', $gssuser_password);
-	$server_config->{server_gss} = 1;
 
 	$test_table = q{
 # USER      GSSENCMODE   SSLMODE      SSLNEGOTIATION EVENTS                       -> OUTCOME
@@ -376,7 +408,7 @@ nogssuser   disable      disable      postgres       connect, authok            
 .           .            require      postgres       connect, gssaccept, authfail -> fail   # If both GSSAPI and sslmode are required, and GSS is not available -> fail
 .           .            .            direct         connect, gssaccept, authfail -> fail   # If both GSSAPI and sslmode are required, and GSS is not available -> fail
 
-# sslnegotiation=direct is not acccepted unless sslmode=require or stronger
+# sslnegotiation=direct is not accepted unless sslmode=require or stronger
 *           *            disable      direct         -     -> fail
 *           *            allow        direct         -     -> fail
 *           *            prefer       direct         -     -> fail
@@ -400,9 +432,42 @@ nogssuser   disable      disable      postgres       connect, authok            
 	}
 
 	note("Running tests with GSS enabled in server");
-	test_matrix($node, $server_config, [ 'testuser', 'gssuser', 'nogssuser' ],
+	test_matrix($node, [ 'testuser', 'gssuser', 'nogssuser' ],
 		\@all_gssencmodes, $sslmodes, $sslnegotiations,
 		parse_table($test_table));
+
+	if ($injection_points_supported != 0)
+	{
+		$node->safe_psql(
+			'postgres',
+			"SELECT injection_points_attach('backend-initialize', 'error');",
+			connstr => "user=localuser host=$unixdir");
+		connect_test(
+			$node,
+			"user=testuser gssencmode=prefer sslmode=disable",
+			'connect, backenderror, reconnect, backenderror -> fail');
+		$node->restart;
+
+		$node->safe_psql(
+			'postgres',
+			"SELECT injection_points_attach('backend-initialize-v2-error', 'error');",
+			connstr => "user=localuser host=$unixdir");
+		connect_test(
+			$node,
+			"user=testuser gssencmode=prefer sslmode=disable",
+			'connect, v2error, reconnect, v2error -> fail');
+		$node->restart;
+
+		$node->safe_psql(
+			'postgres',
+			"SELECT injection_points_attach('backend-gssapi-startup', 'error');",
+			connstr => "user=localuser host=$unixdir");
+		connect_test(
+			$node,
+			"user=testuser gssencmode=prefer sslmode=disable",
+			'connect, gssaccept, backenderror, reconnect, authok -> plain');
+		$node->restart;
+	}
 }
 
 ###
@@ -423,7 +488,6 @@ SKIP:
 	# Enable SSL
 	$node->adjust_conf('postgresql.conf', 'ssl', 'on');
 	$node->reload;
-	$server_config->{server_ssl} = 1;
 
 	$test_table = q{
 # USER      GSSENCMODE   SSLMODE      SSLNEGOTIATION EVENTS                       -> OUTCOME
@@ -501,7 +565,7 @@ nossluser   disable      disable      postgres       connect, authok            
 .           require      *            postgres       connect, gssaccept, authok   -> gss
 .           .            require      direct         connect, gssaccept, authok   -> gss
 
-# sslnegotiation=direct is not acccepted unless sslmode=require or stronger
+# sslnegotiation=direct is not accepted unless sslmode=require or stronger
 *           *            disable      direct         -     -> fail
 *           *            allow        direct         -     -> fail
 *           *            prefer       direct         -     -> fail
@@ -510,7 +574,6 @@ nossluser   disable      disable      postgres       connect, authok            
 	note("Running tests with both GSS and SSL enabled in server");
 	test_matrix(
 		$node,
-		$server_config,
 		[ 'testuser', 'gssuser', 'ssluser', 'nogssuser', 'nossluser' ],
 		\@all_gssencmodes,
 		\@all_sslmodes,
@@ -546,8 +609,8 @@ sub test_matrix
 {
 	local $Test::Builder::Level = $Test::Builder::Level + 1;
 
-	my ($pg_node, $node_conf,
-		$test_users, $gssencmodes, $sslmodes, $sslnegotiations, %expected)
+	my ($pg_node, $test_users, $gssencmodes, $sslmodes, $sslnegotiations,
+		%expected)
 	  = @_;
 
 	foreach my $test_user (@{$test_users})
@@ -610,7 +673,9 @@ sub connect_test
 	my ($ret, $stdout, $stderr) = $node->psql(
 		'postgres',
 		'',
-		extra_params => [ '-w', '-c', 'SELECT current_enc()' ],
+		extra_params => [
+			'--no-password', '--command' => 'SELECT current_enc()',
+		],
 		connstr => "$connstr_full",
 		on_error_stop => 0);
 
@@ -750,6 +815,10 @@ sub parse_log_events
 		push @events, "gssreject" if $line =~ /GSSENCRequest rejected/;
 		push @events, "authfail" if $line =~ /no pg_hba.conf entry/;
 		push @events, "authok" if $line =~ /connection authenticated/;
+		push @events, "backenderror"
+		  if $line =~ /error triggered for injection point backend-/;
+		push @events, "v2error"
+		  if $line =~ /protocol version 2 error triggered/;
 	}
 
 	# No events at all is represented by "-"

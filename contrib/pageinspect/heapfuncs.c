@@ -15,7 +15,7 @@
  * there's hardly any use case for using these without superuser-rights
  * anyway.
  *
- * Copyright (c) 2007-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2007-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/pageinspect/heapfuncs.c
@@ -32,7 +32,6 @@
 #include "funcapi.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
-#include "pageinspect.h"
 #include "port/pg_bitutils.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
@@ -43,13 +42,14 @@
  * was used to upgrade from an older version, tuples might still have an
  * oid. Seems worthwhile to display that.
  */
-#define HeapTupleHeaderGetOidOld(tup) \
-( \
-	((tup)->t_infomask & HEAP_HASOID_OLD) ? \
-	   *((Oid *) ((char *)(tup) + (tup)->t_hoff - sizeof(Oid))) \
-	: \
-		InvalidOid \
-)
+static inline Oid
+HeapTupleHeaderGetOidOld(const HeapTupleHeaderData *tup)
+{
+	if (tup->t_infomask & HEAP_HASOID_OLD)
+		return *((Oid *) ((char *) (tup) + (tup)->t_hoff - sizeof(Oid)));
+	else
+		return InvalidOid;
+}
 
 
 /*
@@ -212,11 +212,8 @@ heap_page_items(PG_FUNCTION_ARGS)
 			lp_offset + lp_len <= raw_page_size)
 		{
 			HeapTupleHeader tuphdr;
-			bytea	   *tuple_data_bytea;
-			int			tuple_data_len;
 
 			/* Extract information from the tuple header */
-
 			tuphdr = (HeapTupleHeader) PageGetItem(page, id);
 
 			values[4] = UInt32GetDatum(HeapTupleHeaderGetRawXmin(tuphdr));
@@ -228,31 +225,32 @@ heap_page_items(PG_FUNCTION_ARGS)
 			values[9] = UInt32GetDatum(tuphdr->t_infomask);
 			values[10] = UInt8GetDatum(tuphdr->t_hoff);
 
-			/* Copy raw tuple data into bytea attribute */
-			tuple_data_len = lp_len - tuphdr->t_hoff;
-			tuple_data_bytea = (bytea *) palloc(tuple_data_len + VARHDRSZ);
-			SET_VARSIZE(tuple_data_bytea, tuple_data_len + VARHDRSZ);
-			memcpy(VARDATA(tuple_data_bytea), (char *) tuphdr + tuphdr->t_hoff,
-				   tuple_data_len);
-			values[13] = PointerGetDatum(tuple_data_bytea);
-
 			/*
 			 * We already checked that the item is completely within the raw
 			 * page passed to us, with the length given in the line pointer.
-			 * Let's check that t_hoff doesn't point over lp_len, before using
-			 * it to access t_bits and oid.
+			 * But t_hoff could be out of range, so check it before relying on
+			 * it to fetch additional info.
 			 */
 			if (tuphdr->t_hoff >= SizeofHeapTupleHeader &&
 				tuphdr->t_hoff <= lp_len &&
 				tuphdr->t_hoff == MAXALIGN(tuphdr->t_hoff))
 			{
+				int			tuple_data_len;
+				bytea	   *tuple_data_bytea;
+
+				/* Copy null bitmask and OID, if present */
 				if (tuphdr->t_infomask & HEAP_HASNULL)
 				{
-					int			bits_len;
+					int			bitmaplen;
 
-					bits_len =
-						BITMAPLEN(HeapTupleHeaderGetNatts(tuphdr)) * BITS_PER_BYTE;
-					values[11] = CStringGetTextDatum(bits_to_text(tuphdr->t_bits, bits_len));
+					bitmaplen = BITMAPLEN(HeapTupleHeaderGetNatts(tuphdr));
+					/* better range-check the attribute count, too */
+					if (bitmaplen <= tuphdr->t_hoff - SizeofHeapTupleHeader)
+						values[11] =
+							CStringGetTextDatum(bits_to_text(tuphdr->t_bits,
+															 bitmaplen * BITS_PER_BYTE));
+					else
+						nulls[11] = true;
 				}
 				else
 					nulls[11] = true;
@@ -261,11 +259,22 @@ heap_page_items(PG_FUNCTION_ARGS)
 					values[12] = HeapTupleHeaderGetOidOld(tuphdr);
 				else
 					nulls[12] = true;
+
+				/* Copy raw tuple data into bytea attribute */
+				tuple_data_len = lp_len - tuphdr->t_hoff;
+				tuple_data_bytea = (bytea *) palloc(tuple_data_len + VARHDRSZ);
+				SET_VARSIZE(tuple_data_bytea, tuple_data_len + VARHDRSZ);
+				if (tuple_data_len > 0)
+					memcpy(VARDATA(tuple_data_bytea),
+						   (char *) tuphdr + tuphdr->t_hoff,
+						   tuple_data_len);
+				values[13] = PointerGetDatum(tuple_data_bytea);
 			}
 			else
 			{
 				nulls[11] = true;
 				nulls[12] = true;
+				nulls[13] = true;
 			}
 		}
 		else
@@ -320,7 +329,11 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 	raw_attrs = initArrayResult(BYTEAOID, CurrentMemoryContext, false);
 	nattrs = tupdesc->natts;
 
-	if (rel->rd_rel->relam != HEAP_TABLE_AM_OID)
+	/*
+	 * Sequences always use heap AM, but they don't show that in the catalogs.
+	 */
+	if (rel->rd_rel->relkind != RELKIND_SEQUENCE &&
+		rel->rd_rel->relam != HEAP_TABLE_AM_OID)
 		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						errmsg("only heap AM is supported")));
 
@@ -331,11 +344,11 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 
 	for (i = 0; i < nattrs; i++)
 	{
-		Form_pg_attribute attr;
+		CompactAttribute *attr;
 		bool		is_null;
 		bytea	   *attr_data = NULL;
 
-		attr = TupleDescAttr(tupdesc, i);
+		attr = TupleDescCompactAttr(tupdesc, i);
 
 		/*
 		 * Tuple header can specify fewer attributes than tuple descriptor as
@@ -354,8 +367,8 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 
 			if (attr->attlen == -1)
 			{
-				off = att_align_pointer(off, attr->attalign, -1,
-										tupdata + off);
+				off = att_pointer_alignby(off, attr->attalignby, -1,
+										  tupdata + off);
 
 				/*
 				 * As VARSIZE_ANY throws an exception if it can't properly
@@ -373,7 +386,7 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 			}
 			else
 			{
-				off = att_align_nominal(off, attr->attalign);
+				off = att_nominal_alignby(off, attr->attalignby);
 				len = attr->attlen;
 			}
 

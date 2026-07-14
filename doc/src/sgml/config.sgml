@@ -140,7 +140,7 @@
      An example of what this file might look like is:
 <programlisting>
 # This is a comment
-log_connections = yes
+log_connections = all
 log_destination = 'syslog'
 search_path = '"$user", public'
 shared_buffers = 128MB
@@ -337,7 +337,7 @@ UPDATE pg_settings SET setting = reset_val WHERE name = 'configuration_parameter
        <option>-c name=value</option> command-line parameter, or its equivalent
        <option>--name=value</option> variation.  For example,
 <programlisting>
-postgres -c log_connections=yes --log-destination='syslog'
+postgres -c log_connections=all --log-destination='syslog'
 </programlisting>
        Settings provided in this way override those set via
        <filename>postgresql.conf</filename> or <command>ALTER SYSTEM</command>,
@@ -708,7 +708,7 @@ include_dir 'conf.d'
        </para>
 
        <para>
-        PostgreSQL sizes certain resources based directly on the value of
+        <productname>PostgreSQL</productname> sizes certain resources based directly on the value of
         <varname>max_connections</varname>. Increasing its value leads to
         higher allocation of those resources, including shared memory.
        </para>
@@ -731,7 +731,7 @@ include_dir 'conf.d'
        <para>
         Determines the number of connection <quote>slots</quote> that are
         reserved for connections by roles with privileges of the
-        <link linkend="predefined-roles-table"><literal>pg_use_reserved_connections</literal></link>
+        <xref linkend="predefined-role-pg-use-reserved-connections"/>
         role.  Whenever the number of free connection slots is greater than
         <xref linkend="guc-superuser-reserved-connections"/> but less than or
         equal to the sum of <varname>superuser_reserved_connections</varname>
@@ -1124,6 +1124,14 @@ include_dir 'conf.d'
         mechanism, and hence not work with passwords encrypted with
         SCRAM-SHA-256.  See <xref linkend="auth-password"/> for more details.
        </para>
+       <warning>
+        <para>
+         Support for MD5-encrypted passwords is deprecated and will be removed
+         in a future release of <productname>PostgreSQL</productname>.  Refer
+         to <xref linkend="auth-password"/> for details about migrating to
+         another password type.
+        </para>
+       </warning>
       </listitem>
      </varlistentry>
 
@@ -1143,6 +1151,22 @@ include_dir 'conf.d'
         encrypted with SCRAM-SHA-256 as the iteration count is fixed at the
         time of encryption. In order to make use of a changed value, a new
         password must be set.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-md5-password-warnings" xreflabel="md5_password_warnings">
+      <term><varname>md5_password_warnings</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>md5_password_warnings</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Controls whether a <literal>WARNING</literal> about MD5 password
+        deprecation is produced when a <command>CREATE ROLE</command> or
+        <command>ALTER ROLE</command> statement sets an MD5-encrypted password.
+        The default value is <literal>on</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -1198,6 +1222,32 @@ include_dir 'conf.d'
         <emphasis>not</emphasis> be accepted.  Changing this to <literal>on</literal> will make the server
         accept credentials delegated to it from the client. This parameter can only be
         set in the <filename>postgresql.conf</filename> file or on the server command line.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-oauth-validator-libraries" xreflabel="oauth_validator_libraries">
+      <term><varname>oauth_validator_libraries</varname> (<type>string</type>)
+      <indexterm>
+       <primary><varname>oauth_validator_libraries</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        The library/libraries to use for validating OAuth connection tokens. If
+        only one validator library is provided, it will be used by default for
+        any OAuth connections; otherwise, all
+        <link linkend="auth-oauth"><literal>oauth</literal> HBA entries</link>
+        must explicitly set a <literal>validator</literal> chosen from this
+        list. If set to an empty string (the default), OAuth connections will be
+        refused. This parameter can only be set in the
+        <filename>postgresql.conf</filename> file.
+       </para>
+       <para>
+        Validator modules must be implemented/obtained separately;
+        <productname>PostgreSQL</productname> does not ship with any default
+        implementations. For more information on implementing OAuth validators,
+        see <xref linkend="oauth-validators" />.
        </para>
       </listitem>
      </varlistentry>
@@ -1340,6 +1390,28 @@ include_dir 'conf.d'
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-ssl-tls13-ciphers" xreflabel="ssl_tls13_ciphers">
+      <term><varname>ssl_tls13_ciphers</varname> (<type>string</type>)
+      <indexterm>
+       <primary><varname>ssl_tls13_ciphers</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Specifies a list of cipher suites that are allowed by connections using
+        <acronym>TLS</acronym> version 1.3.  Multiple cipher suites can be
+        specified by using a colon separated list. If left blank, the default
+        set of cipher suites in <productname>OpenSSL</productname> will be used.
+       </para>
+
+       <para>
+        This parameter can only be set in the
+        <filename>postgresql.conf</filename> file or on the server command
+        line.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-ssl-ciphers" xreflabel="ssl_ciphers">
       <term><varname>ssl_ciphers</varname> (<type>string</type>)
       <indexterm>
@@ -1348,15 +1420,13 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        Specifies a list of <acronym>SSL</acronym> cipher suites that are
-        allowed to be used by SSL connections.  See the
-        <citerefentry><refentrytitle>ciphers</refentrytitle></citerefentry>
+        Specifies a list of <acronym>SSL</acronym> ciphers that are allowed by
+        connections using TLS version 1.2 and lower, see
+        <xref linkend="guc-ssl-tls13-ciphers"/> for TLS version 1.3 connections. See
+        the <citerefentry><refentrytitle>ciphers</refentrytitle></citerefentry>
         manual page in the <productname>OpenSSL</productname> package for the
-        syntax of this setting and a list of supported values.  Only
-        connections using TLS version 1.2 and lower are affected.  There is
-        currently no setting that controls the cipher choices used by TLS
-        version 1.3 connections.  The default value is
-        <literal>HIGH:MEDIUM:+3DES:!aNULL</literal>.  The default is usually a
+        syntax of this setting and a list of supported values.  The default value
+        is <literal>HIGH:MEDIUM:+3DES:!aNULL</literal>.  The default is usually a
         reasonable choice unless you have specific security requirements.
        </para>
 
@@ -1443,30 +1513,30 @@ include_dir 'conf.d'
        </para>
 
        <para>
-        Older PostgreSQL versions do not have this setting and always use the
-        client's preferences.  This setting is mainly for backward
-        compatibility with those versions.  Using the server's preferences is
-        usually better because it is more likely that the server is appropriately
-        configured.
+        <productname>PostgreSQL</productname> versions before 9.4 do not have
+        this setting and always use the client's preferences.  This setting is
+        mainly for backward compatibility with those versions.  Using the
+        server's preferences is usually better because it is more likely that
+        the server is appropriately configured.
        </para>
       </listitem>
      </varlistentry>
 
-     <varlistentry id="guc-ssl-ecdh-curve" xreflabel="ssl_ecdh_curve">
-      <term><varname>ssl_ecdh_curve</varname> (<type>string</type>)
+     <varlistentry id="guc-ssl-groups" xreflabel="ssl_groups">
+      <term><varname>ssl_groups</varname> (<type>string</type>)
       <indexterm>
-       <primary><varname>ssl_ecdh_curve</varname> configuration parameter</primary>
+       <primary><varname>ssl_groups</varname> configuration parameter</primary>
       </indexterm>
       </term>
       <listitem>
        <para>
         Specifies the name of the curve to use in <acronym>ECDH</acronym> key
         exchange.  It needs to be supported by all clients that connect.
+        Multiple curves can be specified by using a colon-separated list.
         It does not need to be the same curve used by the server's Elliptic
-        Curve key.
-        This parameter can only be set in the <filename>postgresql.conf</filename>
-        file or on the server command line.
-        The default is <literal>prime256v1</literal>.
+        Curve key.  This parameter can only be set in the
+        <filename>postgresql.conf</filename> file or on the server command line.
+        The default is <literal>X25519:prime256v1</literal>.
        </para>
 
        <para>
@@ -1475,9 +1545,16 @@ include_dir 'conf.d'
         <literal>prime256v1</literal> (NIST P-256),
         <literal>secp384r1</literal> (NIST P-384),
         <literal>secp521r1</literal> (NIST P-521).
-        The full list of available curves can be shown with the command
-        <command>openssl ecparam -list_curves</command>.  Not all of them
-        are usable in <acronym>TLS</acronym> though.
+        An incomplete list of available groups can be shown with the command
+        <command>openssl ecparam -list_curves</command>.  Not all of them are
+        usable with <acronym>TLS</acronym> though, and many supported group
+        names and aliases are omitted.
+       </para>
+
+       <para>
+        In <productname>PostgreSQL</productname> versions before 18.0 this
+        setting was named <literal>ssl_ecdh_curve</literal> and only accepted
+        a single value.
        </para>
       </listitem>
      </varlistentry>
@@ -2286,6 +2363,44 @@ include_dir 'conf.d'
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-file-copy-method" xreflabel="file_copy_method">
+      <term><varname>file_copy_method</varname> (<type>enum</type>)
+      <indexterm>
+       <primary><varname>file_copy_method</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Specifies the method used to copy files.
+        Possible values are <literal>COPY</literal> (default) and
+        <literal>CLONE</literal> (if operating support is available).
+       </para>
+
+       <para>
+       This parameter affects:
+       </para>
+       <itemizedlist>
+        <listitem>
+        <para>
+         <literal><command>CREATE DATABASE ... STRATEGY=FILE_COPY</command></literal>
+        </para>
+        </listitem>
+        <listitem>
+        <para>
+         <command>ALTER DATABASE ... SET TABLESPACE ...</command>
+        </para>
+        </listitem>
+       </itemizedlist>
+
+       <para>
+        <literal>CLONE</literal> uses the <function>copy_file_range()</function>
+        (Linux, FreeBSD) or <function>copyfile</function>
+        (macOS) system calls, giving the kernel the opportunity to share disk
+        blocks or push work down to lower layers on some file systems.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-max-notify-queue-pages" xreflabel="max_notify_queue_pages">
       <term><varname>max_notify_queue_pages</varname> (<type>integer</type>)
       <indexterm>
@@ -2317,8 +2432,13 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        Sets the maximum number of simultaneously open files allowed to each
-        server subprocess. The default is one thousand files. If the kernel is enforcing
+        Sets the maximum number of open files each server subprocess is
+        allowed to open simultaneously;  files already opened in the
+        postmaster are not counted toward this limit. The default is one
+        thousand files.
+       </para>
+       <para>
+        If the kernel is enforcing
         a safe per-process limit, you don't need to worry about this setting.
         But on some platforms (notably, most BSD systems), the kernel will
         allow individual processes to open many more files than the system
@@ -2332,149 +2452,6 @@ include_dir 'conf.d'
      </variablelist>
     </sect2>
 
-    <sect2 id="runtime-config-resource-vacuum-cost">
-     <title>Cost-based Vacuum Delay</title>
-
-     <para>
-      During the execution of <xref linkend="sql-vacuum"/>
-      and <xref linkend="sql-analyze"/>
-      commands, the system maintains an
-      internal counter that keeps track of the estimated cost of the
-      various I/O operations that are performed.  When the accumulated
-      cost reaches a limit (specified by
-      <varname>vacuum_cost_limit</varname>), the process performing
-      the operation will sleep for a short period of time, as specified by
-      <varname>vacuum_cost_delay</varname>. Then it will reset the
-      counter and continue execution.
-     </para>
-
-     <para>
-      The intent of this feature is to allow administrators to reduce
-      the I/O impact of these commands on concurrent database
-      activity. There are many situations where it is not
-      important that maintenance commands like
-      <command>VACUUM</command> and <command>ANALYZE</command> finish
-      quickly; however, it is usually very important that these
-      commands do not significantly interfere with the ability of the
-      system to perform other database operations. Cost-based vacuum
-      delay provides a way for administrators to achieve this.
-     </para>
-
-     <para>
-      This feature is disabled by default for manually issued
-      <command>VACUUM</command> commands. To enable it, set the
-      <varname>vacuum_cost_delay</varname> variable to a nonzero
-      value.
-     </para>
-
-     <variablelist>
-      <varlistentry id="guc-vacuum-cost-delay" xreflabel="vacuum_cost_delay">
-       <term><varname>vacuum_cost_delay</varname> (<type>floating point</type>)
-       <indexterm>
-        <primary><varname>vacuum_cost_delay</varname> configuration parameter</primary>
-       </indexterm>
-       </term>
-       <listitem>
-        <para>
-         The amount of time that the process will sleep
-         when the cost limit has been exceeded.
-         If this value is specified without units, it is taken as milliseconds.
-         The default value is zero, which disables the cost-based vacuum
-         delay feature.  Positive values enable cost-based vacuuming.
-        </para>
-
-        <para>
-         When using cost-based vacuuming, appropriate values for
-         <varname>vacuum_cost_delay</varname> are usually quite small, perhaps
-         less than 1 millisecond.  While <varname>vacuum_cost_delay</varname>
-         can be set to fractional-millisecond values, such delays may not be
-         measured accurately on older platforms.  On such platforms,
-         increasing <command>VACUUM</command>'s throttled resource consumption
-         above what you get at 1ms will require changing the other vacuum cost
-         parameters.  You should, nonetheless,
-         keep <varname>vacuum_cost_delay</varname> as small as your platform
-         will consistently measure; large delays are not helpful.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry id="guc-vacuum-cost-page-hit" xreflabel="vacuum_cost_page_hit">
-       <term><varname>vacuum_cost_page_hit</varname> (<type>integer</type>)
-       <indexterm>
-        <primary><varname>vacuum_cost_page_hit</varname> configuration parameter</primary>
-       </indexterm>
-       </term>
-       <listitem>
-        <para>
-         The estimated cost for vacuuming a buffer found in the shared buffer
-         cache. It represents the cost to lock the buffer pool, lookup
-         the shared hash table and scan the content of the page. The
-         default value is one.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry id="guc-vacuum-cost-page-miss" xreflabel="vacuum_cost_page_miss">
-       <term><varname>vacuum_cost_page_miss</varname> (<type>integer</type>)
-       <indexterm>
-        <primary><varname>vacuum_cost_page_miss</varname> configuration parameter</primary>
-       </indexterm>
-       </term>
-       <listitem>
-        <para>
-         The estimated cost for vacuuming a buffer that has to be read from
-         disk.  This represents the effort to lock the buffer pool,
-         lookup the shared hash table, read the desired block in from
-         the disk and scan its content. The default value is 2.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry id="guc-vacuum-cost-page-dirty" xreflabel="vacuum_cost_page_dirty">
-       <term><varname>vacuum_cost_page_dirty</varname> (<type>integer</type>)
-       <indexterm>
-        <primary><varname>vacuum_cost_page_dirty</varname> configuration parameter</primary>
-       </indexterm>
-       </term>
-       <listitem>
-        <para>
-         The estimated cost charged when vacuum modifies a block that was
-         previously clean. It represents the extra I/O required to
-         flush the dirty block out to disk again. The default value is
-         20.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry id="guc-vacuum-cost-limit" xreflabel="vacuum_cost_limit">
-       <term><varname>vacuum_cost_limit</varname> (<type>integer</type>)
-       <indexterm>
-        <primary><varname>vacuum_cost_limit</varname> configuration parameter</primary>
-       </indexterm>
-       </term>
-       <listitem>
-        <para>
-         This is the accumulated cost that will cause the vacuuming process to sleep
-         for <varname>vacuum_cost_delay</varname>.  The default is 200.
-        </para>
-       </listitem>
-      </varlistentry>
-     </variablelist>
-
-     <note>
-      <para>
-       There are certain operations that hold critical locks and should
-       therefore complete as quickly as possible.  Cost-based vacuum
-       delays do not occur during such operations.  Therefore it is
-       possible that the cost accumulates far higher than the specified
-       limit.  To avoid uselessly long delays in such cases, the actual
-       delay is calculated as <varname>vacuum_cost_delay</varname> *
-       <varname>accumulated_balance</varname> /
-       <varname>vacuum_cost_limit</varname> with a maximum of
-       <varname>vacuum_cost_delay</varname> * 4.
-      </para>
-     </note>
-    </sect2>
 
     <sect2 id="runtime-config-resource-background-writer">
      <title>Background Writer</title>
@@ -2614,8 +2591,8 @@ include_dir 'conf.d'
      </para>
     </sect2>
 
-    <sect2 id="runtime-config-resource-async-behavior">
-     <title>Asynchronous Behavior</title>
+    <sect2 id="runtime-config-resource-io">
+     <title>I/O</title>
 
      <variablelist>
       <varlistentry id="guc-backend-flush-after" xreflabel="backend_flush_after">
@@ -2656,41 +2633,33 @@ include_dir 'conf.d'
        </term>
        <listitem>
         <para>
-         Sets the number of concurrent disk I/O operations that
+         Sets the number of concurrent storage I/O operations that
          <productname>PostgreSQL</productname> expects can be executed
          simultaneously.  Raising this value will increase the number of I/O
-         operations that any individual <productname>PostgreSQL</productname> session
-         attempts to initiate in parallel.  The allowed range is 1 to 1000,
-         or zero to disable issuance of asynchronous I/O requests. Currently,
-         this setting only affects bitmap heap scans.
+         operations that any individual <productname>PostgreSQL</productname>
+         session attempts to initiate in parallel.  The allowed range is
+         <literal>1</literal> to <literal>1000</literal>, or
+         <literal>0</literal> to disable issuance of asynchronous I/O requests.
+         The default is <literal>16</literal>.
         </para>
 
         <para>
-         For magnetic drives, a good starting point for this setting is the
-         number of separate
-         drives comprising a RAID 0 stripe or RAID 1 mirror being used for the
-         database.  (For RAID 5 the parity drive should not be counted.)
-         However, if the database is often busy with multiple queries issued in
-         concurrent sessions, lower values may be sufficient to keep the disk
-         array busy.  A value higher than needed to keep the disks busy will
-         only result in extra CPU overhead.
-         SSDs and other memory-based storage can often process many
-         concurrent requests, so the best value might be in the hundreds.
+         Higher values will have the most impact on higher latency storage
+         where queries otherwise experience noticeable I/O stalls and on
+         devices with high IOPs. Unnecessarily high values may increase I/O
+         latency for all queries on the system
         </para>
 
         <para>
-         Asynchronous I/O depends on an effective <function>posix_fadvise</function>
-         function, which some operating systems lack.  If the function is not
-         present then setting this parameter to anything but zero will result
-         in an error.  On some operating systems (e.g., Solaris), the function
-         is present but does not actually do anything.
+         On systems with prefetch advice support,
+         <varname>effective_io_concurrency</varname> also controls the
+         prefetch distance.
         </para>
 
         <para>
-         The default is 1 on supported systems, otherwise 0.  This value can
-         be overridden for tables in a particular tablespace by setting the
-         tablespace parameter of the same name (see
-         <xref linkend="sql-altertablespace"/>).
+         This value can be overridden for tables in a particular tablespace by
+         setting the tablespace parameter of the same name (see <xref
+         linkend="sql-altertablespace"/>).
         </para>
        </listitem>
       </varlistentry>
@@ -2707,10 +2676,30 @@ include_dir 'conf.d'
          for maintenance work that is done on behalf of many client sessions.
         </para>
         <para>
-         The default is 10 on supported systems, otherwise 0.  This value can
-         be overridden for tables in a particular tablespace by setting the
-         tablespace parameter of the same name (see
-         <xref linkend="sql-altertablespace"/>).
+         The default is <literal>16</literal>.  This value can be overridden
+         for tables in a particular tablespace by setting the tablespace
+         parameter of the same name (see <xref
+         linkend="sql-altertablespace"/>).
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-io-max-combine-limit" xreflabel="io_max_combine_limit">
+       <term><varname>io_max_combine_limit</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>io_max_combine_limit</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Controls the largest I/O size in operations that combine I/O, and silently
+         limits the user-settable parameter <varname>io_combine_limit</varname>.
+         This parameter can only be set in
+         the <filename>postgresql.conf</filename> file or on the server
+         command line.
+         The maximum possible size depends on the operating system and block
+         size, but is typically 1MB on Unix and 128kB on Windows.
+         The default is 128kB.
         </para>
        </listitem>
       </varlistentry>
@@ -2723,12 +2712,107 @@ include_dir 'conf.d'
        </term>
        <listitem>
         <para>
-         Controls the largest I/O size in operations that combine I/O.
+         Controls the largest I/O size in operations that combine I/O.  If set
+         higher than the <varname>io_max_combine_limit</varname> parameter, the
+         lower value will silently be used instead, so both may need to be raised
+         to increase the I/O size.
+         The maximum possible size depends on the operating system and block
+         size, but is typically 1MB on Unix and 128kB on Windows.
          The default is 128kB.
         </para>
        </listitem>
       </varlistentry>
 
+      <varlistentry id="guc-io-max-concurrency" xreflabel="io_max_concurrency">
+       <term><varname>io_max_concurrency</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>io_max_concurrency</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Controls the maximum number of I/O operations that one process can
+         execute simultaneously.
+        </para>
+        <para>
+         The default setting of <literal>-1</literal> selects a number based
+         on <xref linkend="guc-shared-buffers"/> and the maximum number of
+         processes (<xref linkend="guc-max-connections"/>, <xref
+         linkend="guc-autovacuum-worker-slots"/>, <xref
+         linkend="guc-max-worker-processes"/> and <xref
+         linkend="guc-max-wal-senders"/>), but not more than
+         <literal>64</literal>.
+        </para>
+        <para>
+         This parameter can only be set at server start.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-io-method" xreflabel="io_method">
+       <term><varname>io_method</varname> (<type>enum</type>)
+       <indexterm>
+        <primary><varname>io_method</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Selects the method for executing asynchronous I/O.
+         Possible values are:
+         <itemizedlist>
+          <listitem>
+           <para>
+            <literal>worker</literal> (execute asynchronous I/O using worker processes)
+           </para>
+          </listitem>
+          <listitem>
+           <para>
+            <literal>io_uring</literal> (execute asynchronous I/O using
+            io_uring, requires a build with
+            <link linkend="configure-option-with-liburing"><option>--with-liburing</option></link> /
+            <link linkend="configure-with-liburing-meson"><option>-Dliburing</option></link>)
+           </para>
+          </listitem>
+          <listitem>
+           <para>
+            <literal>sync</literal> (execute asynchronous-eligible I/O synchronously)
+           </para>
+          </listitem>
+         </itemizedlist>
+         The default is <literal>worker</literal>.
+        </para>
+        <para>
+         This parameter can only be set at server start.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-io-workers" xreflabel="io_workers">
+       <term><varname>io_workers</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>io_workers</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Selects the number of I/O worker processes to use. The default is
+         3. This parameter can only be set in the
+         <filename>postgresql.conf</filename> file or on the server command
+         line.
+        </para>
+        <para>
+         Only has an effect if <xref linkend="guc-io-method"/> is set to
+         <literal>worker</literal>.
+        </para>
+       </listitem>
+      </varlistentry>
+     </variablelist>
+    </sect2>
+
+    <sect2 id="runtime-config-resource-worker-processes">
+     <title>Worker Processes</title>
+
+     <variablelist>
       <varlistentry id="guc-max-worker-processes" xreflabel="max_worker_processes">
        <term><varname>max_worker_processes</varname> (<type>integer</type>)
        <indexterm>
@@ -2810,7 +2894,8 @@ include_dir 'conf.d'
          Sets the maximum number of parallel workers that can be
          started by a single utility command.  Currently, the parallel
          utility commands that support the use of parallel workers are
-         <command>CREATE INDEX</command> only when building a B-tree index,
+         <command>CREATE INDEX</command> when building a B-tree,
+         GIN, or BRIN index,
          and <command>VACUUM</command> without <literal>FULL</literal>
          option.  Parallel workers are taken from the pool of processes
          established by <xref linkend="guc-max-worker-processes"/>, limited
@@ -3852,10 +3937,8 @@ include_dir 'conf.d'
         <literal>off</literal>, <literal>on</literal> and
         <literal>try</literal> (the default).  The setting
         <literal>try</literal> enables
-        prefetching only if the operating system provides the
-        <function>posix_fadvise</function> function, which is currently used
-        to implement prefetching.  Note that some operating systems provide the
-        function, but it doesn't do anything.
+        prefetching only if the operating system provides support for issuing
+        read-ahead advice.
        </para>
        <para>
         Prefetching blocks that will soon be needed can reduce I/O wait times
@@ -4318,11 +4401,17 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
      <listitem>
       <para>
        Enables the WAL summarizer process. Note that WAL summarization can
-       be enabled either on a primary or on a standby. WAL summarization
-       cannot be enabled when <varname>wal_level</varname> is set to
-       <literal>minimal</literal>.  This parameter can only be set in the
-       <filename>postgresql.conf</filename> file or on the server command line.
-       The default is <literal>off</literal>.
+       be enabled either on a primary or on a standby.  This parameter can only
+       be set in the <filename>postgresql.conf</filename> file or on the server
+       command line.  The default is <literal>off</literal>.
+      </para>
+      <para>
+       The server cannot be started with <literal>summarize_wal=on</literal>
+       if <literal>wal_level</literal> is set to <literal>minimal</literal>. If
+       <literal>summarize_wal=on</literal> is configured after server startup
+       while <literal>wal_level=minimal</literal>, the summarizer will run
+       but refuse to generate summary files for any WAL generated with
+       <literal>wal_level=minimal</literal>.
       </para>
       </listitem>
      </varlistentry>
@@ -4441,7 +4530,6 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
        <term><varname>max_replication_slots</varname> (<type>integer</type>)
        <indexterm>
         <primary><varname>max_replication_slots</varname> configuration parameter</primary>
-        <secondary>in a sending server</secondary>
        </indexterm>
        </term>
        <listitem>
@@ -4455,11 +4543,6 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
          Also, <varname>wal_level</varname> must be set
          to <literal>replica</literal> or higher to allow replication slots to
          be used.
-        </para>
-
-        <para>
-         Note that this parameter also applies on the subscriber side, but with
-         a different meaning.
         </para>
        </listitem>
       </varlistentry>
@@ -4527,6 +4610,46 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
        </listitem>
       </varlistentry>
 
+     <varlistentry id="guc-idle-replication-slot-timeout" xreflabel="idle_replication_slot_timeout">
+      <term><varname>idle_replication_slot_timeout</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>idle_replication_slot_timeout</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Invalidate replication slots that have remained idle longer than this
+        duration. If this value is specified without units, it is taken as
+        minutes. A value of zero (the default) disables the idle timeout
+        invalidation mechanism. This parameter can only be set in the
+        <filename>postgresql.conf</filename> file or on the server command
+        line.
+       </para>
+
+       <para>
+        Slot invalidation due to idle timeout occurs during checkpoint.
+        Because checkpoints happen at <varname>checkpoint_timeout</varname>
+        intervals, there can be some lag between when the
+        <varname>idle_replication_slot_timeout</varname> was exceeded and when
+        the slot invalidation is triggered at the next checkpoint.
+        To avoid such lags, users can force a checkpoint to promptly invalidate
+        inactive slots. The duration of slot inactivity is calculated using the
+        slot's <link linkend="view-pg-replication-slots">pg_replication_slots</link>.<structfield>inactive_since</structfield>
+        value.
+       </para>
+
+       <para>
+        Note that the idle timeout invalidation mechanism is not applicable
+        for slots that do not reserve WAL or for slots on the standby server
+        that are being synced from the primary server (i.e., standby slots
+        having <link linkend="view-pg-replication-slots">pg_replication_slots</link>.<structfield>synced</structfield>
+        value <literal>true</literal>). Synced slots are always considered to
+        be inactive because they don't perform logical decoding to produce
+        changes.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-wal-sender-timeout" xreflabel="wal_sender_timeout">
       <term><varname>wal_sender_timeout</varname> (<type>integer</type>)
       <indexterm>
@@ -4569,10 +4692,10 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
       </listitem>
      </varlistentry>
 
-     <varlistentry id="guc-standby-slot-names" xreflabel="standby_slot_names">
-      <term><varname>standby_slot_names</varname> (<type>string</type>)
+     <varlistentry id="guc-synchronized-standby-slots" xreflabel="synchronized_standby_slots">
+      <term><varname>synchronized_standby_slots</varname> (<type>string</type>)
       <indexterm>
-       <primary><varname>standby_slot_names</varname> configuration parameter</primary>
+       <primary><varname>synchronized_standby_slots</varname> configuration parameter</primary>
       </indexterm>
       </term>
       <listitem>
@@ -4587,7 +4710,7 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
         after the standby is promoted, the physical replication slot for the
         standby should be listed here. Note that logical replication will not
         proceed if the slots specified in the
-        <varname>standby_slot_names</varname> do not exist or are invalidated.
+        <varname>synchronized_standby_slots</varname> do not exist or are invalidated.
         Additionally, the replication management functions
         <link linkend="pg-replication-slot-advance">
         <function>pg_replication_slot_advance</function></link>,
@@ -4596,12 +4719,12 @@ restore_command = 'copy "C:\\server\\archivedir\\%f" "%p"'  # Windows
         <link linkend="pg-logical-slot-peek-changes">
         <function>pg_logical_slot_peek_changes</function></link>,
         when used with logical failover slots, will block until all
-        physical slots specified in <varname>standby_slot_names</varname> have
+        physical slots specified in <varname>synchronized_standby_slots</varname> have
         confirmed WAL receipt.
        </para>
        <para>
         The standbys corresponding to the physical replication slots in
-        <varname>standby_slot_names</varname> must configure
+        <varname>synchronized_standby_slots</varname> must configure
         <literal>sync_replication_slots = true</literal> so they can receive
         logical failover slot changes from the primary.
        </para>
@@ -4676,6 +4799,8 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         wait for replies from,
         and <replaceable class="parameter">standby_name</replaceable>
         is the name of a standby server.
+        <replaceable class="parameter">num_sync</replaceable>
+        must be an integer value greater than zero.
         <literal>FIRST</literal> and <literal>ANY</literal> specify the method to choose
         synchronous standbys from the listed servers.
        </para>
@@ -4999,6 +5124,13 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         until it eventually reaches the primary.  Standbys make no other use
         of feedback they receive other than to pass upstream.
        </para>
+       <para>
+        Note that if the clock on standby is moved ahead or backward, the
+        feedback message might not be sent at the required interval.  In
+        extreme cases, this can lead to a prolonged risk of not removing dead
+        rows on the primary for extended periods, as the feedback mechanism is
+        based on timestamps.
+       </para>
       </listitem>
      </varlistentry>
 
@@ -5055,7 +5187,8 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
        </para>
        <para>
         In logical replication, this parameter also limits how often a failing
-        replication apply worker will be respawned.
+        replication apply worker or table synchronization worker will be
+        respawned.
        </para>
       </listitem>
      </varlistentry>
@@ -5163,11 +5296,10 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
 
      <variablelist>
 
-     <varlistentry id="guc-max-replication-slots-subscriber" xreflabel="max_replication_slots">
-      <term><varname>max_replication_slots</varname> (<type>integer</type>)
+     <varlistentry id="guc-max-active-replication-origins" xreflabel="max_active_replication_origins">
+      <term><varname>max_active_replication_origins</varname> (<type>integer</type>)
        <indexterm>
-        <primary><varname>max_replication_slots</varname> configuration parameter</primary>
-        <secondary>in a subscriber</secondary>
+        <primary><varname>max_active_replication_origins</varname> configuration parameter</primary>
        </indexterm>
       </term>
       <listitem>
@@ -5178,15 +5310,12 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         be created on the server. Setting it to a lower value than the current
         number of tracked replication origins (reflected in
         <link linkend="view-pg-replication-origin-status">pg_replication_origin_status</link>)
-        will prevent the server from starting.
-        <literal>max_replication_slots</literal> must be set to at least the
+        will prevent the server from starting. It defaults to 10. This parameter
+        can only be set at server start.
+
+        <literal>max_active_replication_origins</literal> must be set to at least the
         number of subscriptions that will be added to the subscriber, plus some
         reserve for table synchronization.
-       </para>
-
-       <para>
-        Note that this parameter also applies on a sending server, but with
-        a different meaning.
        </para>
       </listitem>
      </varlistentry>
@@ -5327,6 +5456,20 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-enable-distinct-reordering" xreflabel="enable_distinct_reordering">
+      <term><varname>enable_distinct_reordering</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>enable_distinct_reordering</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Enables or disables the query planner's ability to reorder DISTINCT
+        keys to match the input path's pathkeys. The default is <literal>on</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-enable-gathermerge" xreflabel="enable_gathermerge">
       <term><varname>enable_gathermerge</varname> (<type>boolean</type>)
       <indexterm>
@@ -5413,8 +5556,9 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </term>
       <listitem>
        <para>
-        Enables or disables the query planner's use of index-scan plan
-        types. The default is <literal>on</literal>.
+        Enables or disables the query planner's use of index-scan and
+        index-only-scan plan types.  The default is <literal>on</literal>.
+        Also see <xref linkend="guc-enable-indexonlyscan"/>.
        </para>
       </listitem>
      </varlistentry>
@@ -5429,7 +5573,9 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
        <para>
         Enables or disables the query planner's use of index-only-scan plan
         types (see <xref linkend="indexes-index-only-scans"/>).
-        The default is <literal>on</literal>.
+        The default is <literal>on</literal>.  The
+        <xref linkend="guc-enable-indexscan"/> setting must also be
+        enabled to have the query planner consider index-only-scans.
        </para>
       </listitem>
      </varlistentry>
@@ -5561,9 +5707,13 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         joining the matching partitions.  Partitionwise join currently applies
         only when the join conditions include all the partition keys, which
         must be of the same data type and have one-to-one matching sets of
-        child partitions.  Because partitionwise join planning can use
-        significantly more CPU time and memory during planning, the default is
-        <literal>off</literal>.
+        child partitions.  With this setting enabled, the number of nodes
+        whose memory usage is restricted by <varname>work_mem</varname>
+        appearing in the final plan can increase linearly according to the
+        number of partitions being scanned.  This can result in a large
+        increase in overall memory consumption during the execution of the
+        query.  Query planning also becomes significantly more expensive in
+        terms of memory and CPU.  The default value is <literal>off</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -5581,9 +5731,13 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         tables to be performed separately for each partition.  If the
         <literal>GROUP BY</literal> clause does not include the partition
         keys, only partial aggregation can be performed on a per-partition
-        basis, and finalization must be performed later.  Because
-        partitionwise grouping or aggregation can use significantly more CPU
-        time and memory during planning, the default is
+        basis, and finalization must be performed later.  With this setting
+        enabled, the number of nodes whose memory usage is restricted by
+        <varname>work_mem</varname> appearing in the final plan can increase
+        linearly according to the number of partitions being scanned.  This
+        can result in a large increase in overall memory consumption during
+        the execution of the query.  Query planning also becomes significantly
+        more expensive in terms of memory and CPU.  The default value is
         <literal>off</literal>.
        </para>
       </listitem>
@@ -5608,6 +5762,22 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         which provides input to the aggregate functions which is presorted in
         the order they require for aggregation.  The default value is
         <literal>on</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-enable-self-join-elimination" xreflabel="enable_self_join_elimination">
+      <term><varname>enable_self_join_elimination</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>enable_self_join_elimination</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Enables or disables the query planner's optimization which analyses
+        the query tree and replaces self joins with semantically equivalent
+        single scans.  Takes into consideration only plain tables.
+        The default is <literal>on</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -6412,7 +6582,7 @@ SELECT * FROM parent WHERE key = 2400;
        </para>
        <para>
         If <systemitem>csvlog</systemitem> is included in <varname>log_destination</varname>,
-        log entries are output in <quote>comma separated
+        log entries are output in <quote>comma-separated
         value</quote> (<acronym>CSV</acronym>) format, which is convenient for
         loading logs into programs.
         See <xref linkend="runtime-config-logging-csvlog"/> for details.
@@ -7301,20 +7471,105 @@ local0.*    /var/log/postgresql
      </varlistentry>
 
      <varlistentry id="guc-log-connections" xreflabel="log_connections">
-      <term><varname>log_connections</varname> (<type>boolean</type>)
+      <term><varname>log_connections</varname> (<type>string</type>)
       <indexterm>
        <primary><varname>log_connections</varname> configuration parameter</primary>
       </indexterm>
       </term>
       <listitem>
        <para>
-        Causes each attempted connection to the server to be logged,
-        as well as successful completion of both client authentication (if
-        necessary) and authorization.
+        Causes aspects of each connection to the server to be logged.
+        The default is the empty string, <literal>''</literal>, which
+        disables all connection logging. The following options may be
+        specified alone or in a comma-separated list:
+       </para>
+
+       <table id="log-connections-options">
+        <title>Log Connection Options</title>
+        <tgroup cols="2">
+         <colspec colname="col1" colwidth="1*"/>
+         <colspec colname="col2" colwidth="2*"/>
+         <thead>
+          <row>
+           <entry>Name</entry>
+           <entry>Description</entry>
+          </row>
+         </thead>
+         <tbody>
+          <row>
+           <entry><literal>receipt</literal></entry>
+           <entry>Logs receipt of a connection.</entry>
+          </row>
+
+          <row>
+           <entry><literal>authentication</literal></entry>
+           <entry>
+            Logs the original identity used by an authentication method
+            to identify a user. In most cases, the identity string
+            matches the <productname>PostgreSQL</productname> username,
+            but some third-party authentication methods may alter the
+            original user identifier before the server stores it. Failed
+            authentication is always logged regardless of the value of
+            this setting.
+           </entry>
+          </row>
+
+          <row>
+           <entry><literal>authorization</literal></entry>
+           <entry>
+            Logs successful completion of authorization. At this point
+            the connection has been established but the backend is not
+            yet fully set up. The log message includes the authorized
+            username as well as the database name and application name,
+            if applicable.
+           </entry>
+          </row>
+
+          <row>
+           <entry><literal>setup_durations</literal></entry>
+           <entry>
+            Logs the time spent establishing the connection and setting up the
+            backend until the connection is ready to execute its first
+            query. The log message includes three durations:  the total
+            setup duration (starting from the postmaster accepting the
+            incoming connection and ending when the connection is ready
+            for query), the time it took to fork the new backend, and
+            the time it took to authenticate the user.
+           </entry>
+          </row>
+
+          <row>
+           <entry><literal>all</literal></entry>
+           <entry>
+            A convenience alias equivalent to specifying all options. If
+            <literal>all</literal> is specified in a list of other
+            options, all connection aspects will be logged.
+           </entry>
+          </row>
+
+         </tbody>
+        </tgroup>
+       </table>
+
+       <para>
+        Disconnection logging is separately controlled by <xref
+        linkend="guc-log-disconnections"/>.
+       </para>
+
+       <para>
+        For the purposes of backwards compatibility, <literal>on</literal>,
+        <literal>off</literal>, <literal>true</literal>,
+        <literal>false</literal>, <literal>yes</literal>,
+        <literal>no</literal>, <literal>1</literal>, and <literal>0</literal>
+        are still supported. The positive values are equivalent to specifying
+        the <literal>receipt</literal>, <literal>authentication</literal>, and
+        <literal>authorization</literal> options.
+       </para>
+
+       <para>
         Only superusers and users with the appropriate <literal>SET</literal>
         privilege can change this parameter at session start,
         and it cannot be changed at all within a session.
-        The default is <literal>off</literal>.
        </para>
 
        <note>
@@ -7487,6 +7742,12 @@ local0.*    /var/log/postgresql
             <row>
              <entry><literal>%h</literal></entry>
              <entry>Remote host name or IP address</entry>
+             <entry>yes</entry>
+            </row>
+            <row>
+             <entry><literal>%L</literal></entry>
+             <entry>Local address (the IP address on the server that the
+             client connected to)</entry>
              <entry>yes</entry>
             </row>
             <row>
@@ -7663,6 +7924,26 @@ log_line_prefix = '%m [%p] %q%u@%d/%a '
        </para>
       </listitem>
      </varlistentry>
+
+     <varlistentry id="guc-log-lock-failures" xreflabel="log_lock_failures">
+      <term><varname>log_lock_failures</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>log_lock_failures</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Controls whether a detailed log message is produced
+        when a lock acquisition fails.  This is useful for analyzing
+        the causes of lock failures.  Currently, only lock failures
+        due to <literal>SELECT NOWAIT</literal> is supported.
+        The default is <literal>off</literal>.  Only superusers and
+        users with the appropriate <literal>SET</literal> privilege
+        can change this setting.
+       </para>
+      </listitem>
+     </varlistentry>
+
 
      <varlistentry id="guc-log-recovery-conflict-waits" xreflabel="log_recovery_conflict_waits">
       <term><varname>log_recovery_conflict_waits</varname> (<type>boolean</type>)
@@ -8192,7 +8473,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         various purposes.  The cluster name appears in the process title for
         all server processes in this cluster.  Moreover, it is the default
         application name for a standby connection (see <xref
-        linkend="guc-synchronous-standby-names"/>.)
+        linkend="guc-synchronous-standby-names"/>).
        </para>
 
        <para>
@@ -8304,6 +8585,34 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-track-cost-delay-timing" xreflabel="track_cost_delay_timing">
+      <term><varname>track_cost_delay_timing</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>track_cost_delay_timing</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Enables timing of cost-based vacuum delay (see
+        <xref linkend="runtime-config-resource-vacuum-cost"/>).  This parameter
+        is off by default, as it will repeatedly query the operating system for
+        the current time, which may cause significant overhead on some
+        platforms.  You can use the <xref linkend="pgtesttiming"/> tool to
+        measure the overhead of timing on your system.  Cost-based vacuum delay
+        timing information is displayed in
+        <link linkend="vacuum-progress-reporting"><structname>pg_stat_progress_vacuum</structname></link>,
+        <link linkend="analyze-progress-reporting"><structname>pg_stat_progress_analyze</structname></link>,
+        in the output of <xref linkend="sql-vacuum"/> and
+        <xref linkend="sql-analyze"/> when the
+        <literal>VERBOSE</literal> option is used, and by autovacuum for
+        auto-vacuums and auto-analyzes when
+        <xref linkend="guc-log-autovacuum-min-duration"/> is set.
+        Only superusers and users with the appropriate <literal>SET</literal>
+        privilege can change this setting.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-track-io-timing" xreflabel="track_io_timing">
       <term><varname>track_io_timing</varname> (<type>boolean</type>)
       <indexterm>
@@ -8312,16 +8621,22 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </term>
       <listitem>
        <para>
-        Enables timing of database I/O calls.  This parameter is off by
+        Enables timing of database I/O waits.  This parameter is off by
         default, as it will repeatedly query the operating system for
         the current time, which may cause significant overhead on some
         platforms.  You can use the <xref linkend="pgtesttiming"/> tool to
         measure the overhead of timing on your system.
         I/O timing information is
         displayed in <link linkend="monitoring-pg-stat-database-view">
-        <structname>pg_stat_database</structname></link>, in the output of
-        <xref linkend="sql-explain"/> when the <literal>BUFFERS</literal> option
-        is used, in the output of <xref linkend="sql-vacuum"/> when
+        <structname>pg_stat_database</structname></link>,
+        <link linkend="monitoring-pg-stat-io-view">
+        <structname>pg_stat_io</structname></link> (if <varname>object</varname>
+        is not <literal>wal</literal>), in the output of the
+        <link linkend="pg-stat-get-backend-io">
+        <function>pg_stat_get_backend_io()</function></link> function (if
+        <varname>object</varname> is not <literal>wal</literal>), in the
+        output of <xref linkend="sql-explain"/> when the <literal>BUFFERS</literal>
+        option is used, in the output of <xref linkend="sql-vacuum"/> when
         the <literal>VERBOSE</literal> option is used, by autovacuum
         for auto-vacuums and auto-analyzes, when <xref
         linkend="guc-log-autovacuum-min-duration"/> is set and by
@@ -8340,14 +8655,18 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </term>
       <listitem>
        <para>
-        Enables timing of WAL I/O calls. This parameter is off by default,
+        Enables timing of WAL I/O waits. This parameter is off by default,
         as it will repeatedly query the operating system for the current time,
         which may cause significant overhead on some platforms.
         You can use the <application>pg_test_timing</application> tool to
         measure the overhead of timing on your system.
-        I/O timing information is
-        displayed in <link linkend="monitoring-pg-stat-wal-view">
-        <structname>pg_stat_wal</structname></link>.
+        I/O timing information is displayed in
+        <link linkend="monitoring-pg-stat-io-view">
+        <structname>pg_stat_io</structname></link> for the
+        <varname>object</varname> <literal>wal</literal> and in the output of
+        the <link linkend="pg-stat-get-backend-io">
+        <function>pg_stat_get_backend_io()</function></link> function for the
+        <varname>object</varname> <literal>wal</literal>.
         Only superusers and users with the appropriate <literal>SET</literal>
         privilege can change this setting.
        </para>
@@ -8502,13 +8821,21 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
     </sect2>
    </sect1>
 
-   <sect1 id="runtime-config-autovacuum">
-    <title>Automatic Vacuuming</title>
+   <sect1 id="runtime-config-vacuum">
+    <title>Vacuuming</title>
 
     <indexterm>
-     <primary>autovacuum</primary>
+     <primary>vacuum</primary>
      <secondary>configuration parameters</secondary>
     </indexterm>
+
+    <para>
+     These parameters control vacuuming behavior. For more information on the
+     purpose and responsibilities of vacuum, see <xref linkend="routine-vacuuming"/>.
+    </para>
+
+    <sect2 id="runtime-config-autovacuum">
+     <title>Automatic Vacuuming</title>
 
      <para>
       These settings control the behavior of the <firstterm>autovacuum</firstterm>
@@ -8517,298 +8844,747 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       basis; see <xref linkend="sql-createtable-storage-parameters"/>.
      </para>
 
-    <variablelist>
+     <variablelist>
 
-     <varlistentry id="guc-autovacuum" xreflabel="autovacuum">
-      <term><varname>autovacuum</varname> (<type>boolean</type>)
-      <indexterm>
-       <primary><varname>autovacuum</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Controls whether the server should run the
-        autovacuum launcher daemon.  This is on by default; however,
-        <xref linkend="guc-track-counts"/> must also be enabled for
-        autovacuum to work.
-        This parameter can only be set in the <filename>postgresql.conf</filename>
-        file or on the server command line; however, autovacuuming can be
-        disabled for individual tables by changing table storage parameters.
-       </para>
-       <para>
-        Note that even when this parameter is disabled, the system
-        will launch autovacuum processes if necessary to
-        prevent transaction ID wraparound.  See <xref
-        linkend="vacuum-for-wraparound"/> for more information.
-       </para>
-      </listitem>
-     </varlistentry>
+      <varlistentry id="guc-autovacuum" xreflabel="autovacuum">
+       <term><varname>autovacuum</varname> (<type>boolean</type>)
+       <indexterm>
+        <primary><varname>autovacuum</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Controls whether the server should run the
+         autovacuum launcher daemon.  This is on by default; however,
+         <xref linkend="guc-track-counts"/> must also be enabled for
+         autovacuum to work.
+         This parameter can only be set in the <filename>postgresql.conf</filename>
+         file or on the server command line; however, autovacuuming can be
+         disabled for individual tables by changing table storage parameters.
+        </para>
+        <para>
+         Note that even when this parameter is disabled, the system
+         will launch autovacuum processes if necessary to
+         prevent transaction ID wraparound.  See <xref
+         linkend="vacuum-for-wraparound"/> for more information.
+        </para>
+       </listitem>
+      </varlistentry>
 
-     <varlistentry id="guc-autovacuum-max-workers" xreflabel="autovacuum_max_workers">
-      <term><varname>autovacuum_max_workers</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>autovacuum_max_workers</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies the maximum number of autovacuum processes (other than the
-        autovacuum launcher) that may be running at any one time.  The default
-        is three.  This parameter can only be set at server start.
-       </para>
-      </listitem>
-     </varlistentry>
+      <varlistentry id="guc-autovacuum-worker-slots" xreflabel="autovacuum_worker_slots">
+       <term><varname>autovacuum_worker_slots</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>autovacuum_worker_slots</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies the number of backend slots to reserve for autovacuum worker
+         processes.  The default is typically 16 slots, but might be less if
+         your kernel settings will not support it (as determined during initdb).
+         This parameter can only be set at server start.
+        </para>
+        <para>
+         When changing this value, consider also adjusting
+         <xref linkend="guc-autovacuum-max-workers"/>.
+        </para>
+       </listitem>
+      </varlistentry>
 
-     <varlistentry id="guc-autovacuum-naptime" xreflabel="autovacuum_naptime">
-      <term><varname>autovacuum_naptime</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>autovacuum_naptime</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies the minimum delay between autovacuum runs on any given
-        database.  In each round the daemon examines the
-        database and issues <command>VACUUM</command> and <command>ANALYZE</command> commands
-        as needed for tables in that database.
-        If this value is specified without units, it is taken as seconds.
-        The default is one minute (<literal>1min</literal>).
-        This parameter can only be set in the <filename>postgresql.conf</filename>
-        file or on the server command line.
-       </para>
-      </listitem>
-     </varlistentry>
+      <varlistentry id="guc-autovacuum-max-workers" xreflabel="autovacuum_max_workers">
+       <term><varname>autovacuum_max_workers</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>autovacuum_max_workers</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies the maximum number of autovacuum processes (other than the
+         autovacuum launcher) that may be running at any one time.  The default
+         is <literal>3</literal>.  This parameter can only be set in the
+         <filename>postgresql.conf</filename> file or on the server command line.
+        </para>
+        <para>
+         Note that a setting for this value which is higher than
+         <xref linkend="guc-autovacuum-worker-slots"/> will have no effect,
+         since autovacuum workers are taken from the pool of slots established
+         by that setting.
+        </para>
+       </listitem>
+      </varlistentry>
 
-     <varlistentry id="guc-autovacuum-vacuum-threshold" xreflabel="autovacuum_vacuum_threshold">
-      <term><varname>autovacuum_vacuum_threshold</varname> (<type>integer</type>)
+      <varlistentry id="guc-autovacuum-naptime" xreflabel="autovacuum_naptime">
+       <term><varname>autovacuum_naptime</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>autovacuum_naptime</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies the minimum delay between autovacuum runs on any given
+         database.  In each round the daemon examines the
+         database and issues <command>VACUUM</command> and <command>ANALYZE</command> commands
+         as needed for tables in that database.
+         If this value is specified without units, it is taken as seconds.
+         The default is one minute (<literal>1min</literal>).
+         This parameter can only be set in the <filename>postgresql.conf</filename>
+         file or on the server command line.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-autovacuum-vacuum-threshold" xreflabel="autovacuum_vacuum_threshold">
+       <term><varname>autovacuum_vacuum_threshold</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>autovacuum_vacuum_threshold</varname></primary>
+        <secondary>configuration parameter</secondary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies the minimum number of updated or deleted tuples needed
+         to trigger a <command>VACUUM</command> in any one table.
+         The default is 50 tuples.
+         This parameter can only be set in the <filename>postgresql.conf</filename>
+         file or on the server command line;
+         but the setting can be overridden for individual tables by
+         changing table storage parameters.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-autovacuum-vacuum-insert-threshold" xreflabel="autovacuum_vacuum_insert_threshold">
+       <term><varname>autovacuum_vacuum_insert_threshold</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>autovacuum_vacuum_insert_threshold</varname></primary>
+        <secondary>configuration parameter</secondary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies the number of inserted tuples needed to trigger a
+         <command>VACUUM</command> in any one table.
+         The default is 1000 tuples.  If -1 is specified, autovacuum will not
+         trigger a <command>VACUUM</command> operation on any tables based on
+         the number of inserts.
+         This parameter can only be set in the <filename>postgresql.conf</filename>
+         file or on the server command line;
+         but the setting can be overridden for individual tables by
+         changing table storage parameters.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-autovacuum-analyze-threshold" xreflabel="autovacuum_analyze_threshold">
+       <term><varname>autovacuum_analyze_threshold</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>autovacuum_analyze_threshold</varname></primary>
+        <secondary>configuration parameter</secondary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies the minimum number of inserted, updated or deleted tuples
+         needed to trigger an <command>ANALYZE</command> in any one table.
+         The default is 50 tuples.
+         This parameter can only be set in the <filename>postgresql.conf</filename>
+         file or on the server command line;
+         but the setting can be overridden for individual tables by
+         changing table storage parameters.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-autovacuum-vacuum-scale-factor" xreflabel="autovacuum_vacuum_scale_factor">
+       <term><varname>autovacuum_vacuum_scale_factor</varname> (<type>floating point</type>)
+       <indexterm>
+        <primary><varname>autovacuum_vacuum_scale_factor</varname></primary>
+        <secondary>configuration parameter</secondary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies a fraction of the table size to add to
+         <varname>autovacuum_vacuum_threshold</varname>
+         when deciding whether to trigger a <command>VACUUM</command>.
+         The default is <literal>0.2</literal> (20% of table size).
+         This parameter can only be set in the <filename>postgresql.conf</filename>
+         file or on the server command line;
+         but the setting can be overridden for individual tables by
+         changing table storage parameters.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-autovacuum-vacuum-insert-scale-factor" xreflabel="autovacuum_vacuum_insert_scale_factor">
+       <term><varname>autovacuum_vacuum_insert_scale_factor</varname> (<type>floating point</type>)
+       <indexterm>
+        <primary><varname>autovacuum_vacuum_insert_scale_factor</varname></primary>
+        <secondary>configuration parameter</secondary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies a fraction of the unfrozen pages in the table to add to
+         <varname>autovacuum_vacuum_insert_threshold</varname> when deciding
+         whether to trigger a <command>VACUUM</command>. The default is
+         <literal>0.2</literal> (20% of unfrozen pages in table). This
+         parameter can only be set in the <filename>postgresql.conf</filename>
+         file or on the server command line; but the setting can be overridden
+         for individual tables by changing table storage parameters.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-autovacuum-analyze-scale-factor" xreflabel="autovacuum_analyze_scale_factor">
+       <term><varname>autovacuum_analyze_scale_factor</varname> (<type>floating point</type>)
+       <indexterm>
+        <primary><varname>autovacuum_analyze_scale_factor</varname></primary>
+        <secondary>configuration parameter</secondary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies a fraction of the table size to add to
+         <varname>autovacuum_analyze_threshold</varname>
+         when deciding whether to trigger an <command>ANALYZE</command>.
+         The default is <literal>0.1</literal> (10% of table size).
+         This parameter can only be set in the <filename>postgresql.conf</filename>
+         file or on the server command line;
+         but the setting can be overridden for individual tables by
+         changing table storage parameters.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-autovacuum-vacuum-max-threshold" xreflabel="autovacuum_vacuum_max_threshold">
+       <term><varname>autovacuum_vacuum_max_threshold</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>autovacuum_vacuum_max_threshold</varname></primary>
+        <secondary>configuration parameter</secondary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies the maximum number of updated or deleted tuples needed to
+         trigger a <command>VACUUM</command> in any one table, i.e., a limit on
+         the value calculated with
+         <varname>autovacuum_vacuum_threshold</varname> and
+         <varname>autovacuum_vacuum_scale_factor</varname>.  The default is
+         100,000,000 tuples.  If -1 is specified, autovacuum will not enforce a
+         maximum number of updated or deleted tuples that will trigger a
+         <command>VACUUM</command> operation.  This parameter can only be set
+         in the <filename>postgresql.conf</filename> file or on the server
+         command line; but the setting can be overridden for individual tables
+         by changing storage parameters.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-autovacuum-freeze-max-age" xreflabel="autovacuum_freeze_max_age">
+       <term><varname>autovacuum_freeze_max_age</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>autovacuum_freeze_max_age</varname></primary>
+        <secondary>configuration parameter</secondary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies the maximum age (in transactions) that a table's
+         <structname>pg_class</structname>.<structfield>relfrozenxid</structfield> field can
+         attain before a <command>VACUUM</command> operation is forced
+         to prevent transaction ID wraparound within the table.
+         Note that the system will launch autovacuum processes to
+         prevent wraparound even when autovacuum is otherwise disabled.
+        </para>
+
+        <para>
+         Vacuum also allows removal of old files from the
+         <filename>pg_xact</filename> subdirectory, which is why the default
+         is a relatively low 200 million transactions.
+         This parameter can only be set at server start, but the setting
+         can be reduced for individual tables by
+         changing table storage parameters.
+         For more information see <xref linkend="vacuum-for-wraparound"/>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-autovacuum-multixact-freeze-max-age" xreflabel="autovacuum_multixact_freeze_max_age">
+       <term><varname>autovacuum_multixact_freeze_max_age</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>autovacuum_multixact_freeze_max_age</varname></primary>
+        <secondary>configuration parameter</secondary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies the maximum age (in multixacts) that a table's
+         <structname>pg_class</structname>.<structfield>relminmxid</structfield> field can
+         attain before a <command>VACUUM</command> operation is forced to
+         prevent multixact ID wraparound within the table.
+         Note that the system will launch autovacuum processes to
+         prevent wraparound even when autovacuum is otherwise disabled.
+        </para>
+
+        <para>
+         Vacuuming multixacts also allows removal of old files from the
+         <filename>pg_multixact/members</filename> and <filename>pg_multixact/offsets</filename>
+         subdirectories, which is why the default is a relatively low
+         400 million multixacts.
+         This parameter can only be set at server start, but the setting can
+         be reduced for individual tables by changing table storage parameters.
+         For more information see <xref linkend="vacuum-for-multixact-wraparound"/>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-autovacuum-vacuum-cost-delay" xreflabel="autovacuum_vacuum_cost_delay">
+       <term><varname>autovacuum_vacuum_cost_delay</varname> (<type>floating point</type>)
+       <indexterm>
+        <primary><varname>autovacuum_vacuum_cost_delay</varname></primary>
+        <secondary>configuration parameter</secondary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies the cost delay value that will be used in automatic
+         <command>VACUUM</command> operations.  If -1 is specified, the regular
+         <xref linkend="guc-vacuum-cost-delay"/> value will be used.
+         If this value is specified without units, it is taken as milliseconds.
+         The default value is 2 milliseconds.
+         This parameter can only be set in the <filename>postgresql.conf</filename>
+         file or on the server command line;
+         but the setting can be overridden for individual tables by
+         changing table storage parameters.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-autovacuum-vacuum-cost-limit" xreflabel="autovacuum_vacuum_cost_limit">
+       <term><varname>autovacuum_vacuum_cost_limit</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>autovacuum_vacuum_cost_limit</varname></primary>
+        <secondary>configuration parameter</secondary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies the cost limit value that will be used in automatic
+         <command>VACUUM</command> operations.  If <literal>-1</literal>
+         is specified (which is the default), the regular
+         <xref linkend="guc-vacuum-cost-limit"/> value will be used.  Note that
+         the value is distributed proportionally among the running autovacuum
+         workers, if there is more than one, so that the sum of the limits for
+         each worker does not exceed the value of this variable.
+         This parameter can only be set in the <filename>postgresql.conf</filename>
+         file or on the server command line;
+         but the setting can be overridden for individual tables by
+         changing table storage parameters.
+        </para>
+       </listitem>
+      </varlistentry>
+
+     </variablelist>
+    </sect2>
+
+    <sect2 id="runtime-config-resource-vacuum-cost">
+     <title>Cost-based Vacuum Delay</title>
+
+     <para>
+      During the execution of <xref linkend="sql-vacuum"/>
+      and <xref linkend="sql-analyze"/>
+      commands, the system maintains an
+      internal counter that keeps track of the estimated cost of the
+      various I/O operations that are performed.  When the accumulated
+      cost reaches a limit (specified by
+      <varname>vacuum_cost_limit</varname>), the process performing
+      the operation will sleep for a short period of time, as specified by
+      <varname>vacuum_cost_delay</varname>. Then it will reset the
+      counter and continue execution.
+     </para>
+
+     <para>
+      The intent of this feature is to allow administrators to reduce
+      the I/O impact of these commands on concurrent database
+      activity. There are many situations where it is not
+      important that maintenance commands like
+      <command>VACUUM</command> and <command>ANALYZE</command> finish
+      quickly; however, it is usually very important that these
+      commands do not significantly interfere with the ability of the
+      system to perform other database operations. Cost-based vacuum
+      delay provides a way for administrators to achieve this.
+     </para>
+
+     <para>
+      This feature is disabled by default for manually issued
+      <command>VACUUM</command> commands. To enable it, set the
+      <varname>vacuum_cost_delay</varname> variable to a nonzero
+      value.
+     </para>
+
+     <variablelist>
+      <varlistentry id="guc-vacuum-cost-delay" xreflabel="vacuum_cost_delay">
+       <term><varname>vacuum_cost_delay</varname> (<type>floating point</type>)
+       <indexterm>
+        <primary><varname>vacuum_cost_delay</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         The amount of time that the process will sleep when the cost
+         limit has been exceeded. If this value is specified without
+         units, it is taken as milliseconds. The default value is
+         <literal>0</literal>, which disables the cost-based vacuum delay
+         feature.  Positive values enable cost-based vacuuming.
+        </para>
+
+        <para>
+         When using cost-based vacuuming, appropriate values for
+         <varname>vacuum_cost_delay</varname> are usually quite small, perhaps
+         less than 1 millisecond.  While <varname>vacuum_cost_delay</varname>
+         can be set to fractional-millisecond values, such delays may not be
+         measured accurately on older platforms.  On such platforms,
+         increasing <command>VACUUM</command>'s throttled resource consumption
+         above what you get at 1ms will require changing the other vacuum cost
+         parameters.  You should, nonetheless,
+         keep <varname>vacuum_cost_delay</varname> as small as your platform
+         will consistently measure; large delays are not helpful.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-vacuum-cost-page-hit" xreflabel="vacuum_cost_page_hit">
+       <term><varname>vacuum_cost_page_hit</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>vacuum_cost_page_hit</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         The estimated cost for vacuuming a buffer found in the shared
+         buffer cache. It represents the cost to lock the buffer pool,
+         lookup the shared hash table and scan the content of the page.
+         The default value is <literal>1</literal>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-vacuum-cost-page-miss" xreflabel="vacuum_cost_page_miss">
+       <term><varname>vacuum_cost_page_miss</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>vacuum_cost_page_miss</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         The estimated cost for vacuuming a buffer that has to be read from
+         disk.  This represents the effort to lock the buffer pool,
+         lookup the shared hash table, read the desired block in from
+         the disk and scan its content. The default value is
+         <literal>2</literal>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-vacuum-cost-page-dirty" xreflabel="vacuum_cost_page_dirty">
+       <term><varname>vacuum_cost_page_dirty</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>vacuum_cost_page_dirty</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         The estimated cost charged when vacuum modifies a block that was
+         previously clean. It represents the extra I/O required to
+         flush the dirty block out to disk again. The default value is
+         <literal>20</literal>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-vacuum-cost-limit" xreflabel="vacuum_cost_limit">
+       <term><varname>vacuum_cost_limit</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>vacuum_cost_limit</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         This is the accumulated cost that will cause the vacuuming
+         process to sleep for <varname>vacuum_cost_delay</varname>.  The
+         default is <literal>200</literal>.
+        </para>
+       </listitem>
+      </varlistentry>
+     </variablelist>
+
+     <note>
+      <para>
+       There are certain operations that hold critical locks and should
+       therefore complete as quickly as possible.  Cost-based vacuum
+       delays do not occur during such operations.  Therefore it is
+       possible that the cost accumulates far higher than the specified
+       limit.  To avoid uselessly long delays in such cases, the actual
+       delay is calculated as <varname>vacuum_cost_delay</varname> *
+       <varname>accumulated_balance</varname> /
+       <varname>vacuum_cost_limit</varname> with a maximum of
+       <varname>vacuum_cost_delay</varname> * 4.
+      </para>
+     </note>
+    </sect2>
+
+    <sect2 id="runtime-config-vacuum-default">
+     <title>Default Behavior</title>
+
+     <variablelist>
+      <varlistentry id="guc-vacuum-truncate" xreflabel="vacuum_truncate">
+       <term><varname>vacuum_truncate</varname> (<type>boolean</type>)
+       <indexterm>
+        <primary><varname>vacuum_truncate</varname></primary>
+        <secondary>configuration parameter</secondary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Enables or disables vacuum to try to truncate off any empty pages at
+         the end of the table.  The default value is <literal>true</literal>.
+         If <literal>true</literal>, <command>VACUUM</command> and autovacuum
+         do the truncation and the disk space for the truncated pages is
+         returned to the operating system.  Note that the truncation requires
+         an <literal>ACCESS EXCLUSIVE</literal> lock on the table.  The
+         <literal>TRUNCATE</literal> parameter of
+         <link linkend="sql-vacuum"><command>VACUUM</command></link>, if
+         specified, overrides the value of this parameter.  The setting can
+         also be overridden for individual tables by changing table storage
+         parameters.
+        </para>
+       </listitem>
+      </varlistentry>
+     </variablelist>
+    </sect2>
+
+    <sect2 id="runtime-config-vacuum-freezing">
+     <title>Freezing</title>
+
+     <para>
+      To maintain correctness even after transaction IDs wrap around,
+      <productname>PostgreSQL</productname> marks rows that are sufficiently
+      old as <emphasis>frozen</emphasis>. These rows are visible to everyone;
+      other transactions do not need to examine their inserting XID to
+      determine visibility. <command>VACUUM</command> is responsible for
+      marking rows as frozen. The following settings control
+      <command>VACUUM</command>'s freezing behavior and should be tuned based
+      on the XID consumption rate of the system and data access patterns of the
+      dominant workloads. See <xref linkend="vacuum-for-wraparound"/> for more
+      information on transaction ID wraparound and tuning these parameters.
+     </para>
+
+     <variablelist>
+      <varlistentry id="guc-vacuum-freeze-table-age" xreflabel="vacuum_freeze_table_age">
+       <term><varname>vacuum_freeze_table_age</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>vacuum_freeze_table_age</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         <command>VACUUM</command> performs an aggressive scan if the table's
+         <structname>pg_class</structname>.<structfield>relfrozenxid</structfield> field has reached
+         the age specified by this setting.  An aggressive scan differs from
+         a regular <command>VACUUM</command> in that it visits every page that might
+         contain unfrozen XIDs or MXIDs, not just those that might contain dead
+         tuples.  The default is 150 million transactions.  Although users can
+         set this value anywhere from zero to two billion, <command>VACUUM</command>
+         will silently limit the effective value to 95% of
+         <xref linkend="guc-autovacuum-freeze-max-age"/>, so that a
+         periodic manual <command>VACUUM</command> has a chance to run before an
+         anti-wraparound autovacuum is launched for the table. For more
+         information see
+         <xref linkend="vacuum-for-wraparound"/>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-vacuum-freeze-min-age" xreflabel="vacuum_freeze_min_age">
+       <term><varname>vacuum_freeze_min_age</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>vacuum_freeze_min_age</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies the cutoff age (in transactions) that
+         <command>VACUUM</command> should use to decide whether to
+         trigger freezing of pages that have an older XID.
+         The default is 50 million transactions.  Although
+         users can set this value anywhere from zero to one billion,
+         <command>VACUUM</command> will silently limit the effective value to half
+         the value of <xref linkend="guc-autovacuum-freeze-max-age"/>, so
+         that there is not an unreasonably short time between forced
+         autovacuums.  For more information see <xref
+         linkend="vacuum-for-wraparound"/>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-vacuum-failsafe-age" xreflabel="vacuum_failsafe_age">
+       <term><varname>vacuum_failsafe_age</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>vacuum_failsafe_age</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies the maximum age (in transactions) that a table's
+         <structname>pg_class</structname>.<structfield>relfrozenxid</structfield>
+         field can attain before <command>VACUUM</command> takes
+         extraordinary measures to avoid system-wide transaction ID
+         wraparound failure.  This is <command>VACUUM</command>'s
+         strategy of last resort.  The failsafe typically triggers
+         when an autovacuum to prevent transaction ID wraparound has
+         already been running for some time, though it's possible for
+         the failsafe to trigger during any <command>VACUUM</command>.
+        </para>
+        <para>
+         When the failsafe is triggered, any cost-based delay that is
+         in effect will no longer be applied, further non-essential
+         maintenance tasks (such as index vacuuming) are bypassed, and any
+         <glossterm linkend="glossary-buffer-access-strategy">Buffer Access Strategy</glossterm>
+         in use will be disabled resulting in <command>VACUUM</command> being
+         free to make use of all of
+         <glossterm linkend="glossary-shared-memory">shared buffers</glossterm>.
+        </para>
+        <para>
+         The default is 1.6 billion transactions.  Although users can
+         set this value anywhere from zero to 2.1 billion,
+         <command>VACUUM</command> will silently adjust the effective
+         value to no less than 105% of <xref
+          linkend="guc-autovacuum-freeze-max-age"/>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-vacuum-multixact-freeze-table-age" xreflabel="vacuum_multixact_freeze_table_age">
+       <term><varname>vacuum_multixact_freeze_table_age</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>vacuum_multixact_freeze_table_age</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         <command>VACUUM</command> performs an aggressive scan if the table's
+         <structname>pg_class</structname>.<structfield>relminmxid</structfield> field has reached
+         the age specified by this setting.  An aggressive scan differs from
+         a regular <command>VACUUM</command> in that it visits every page that might
+         contain unfrozen XIDs or MXIDs, not just those that might contain dead
+         tuples.  The default is 150 million multixacts.
+         Although users can set this value anywhere from zero to two billion,
+         <command>VACUUM</command> will silently limit the effective value to 95% of
+         <xref linkend="guc-autovacuum-multixact-freeze-max-age"/>, so that a
+         periodic manual <command>VACUUM</command> has a chance to run before an
+         anti-wraparound is launched for the table.
+         For more information see <xref linkend="vacuum-for-multixact-wraparound"/>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-vacuum-multixact-freeze-min-age" xreflabel="vacuum_multixact_freeze_min_age">
+       <term><varname>vacuum_multixact_freeze_min_age</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>vacuum_multixact_freeze_min_age</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies the cutoff age (in multixacts) that <command>VACUUM</command>
+         should use to decide whether to trigger freezing of pages with
+         an older multixact ID.  The default is 5 million multixacts.
+         Although users can set this value anywhere from zero to one billion,
+         <command>VACUUM</command> will silently limit the effective value to half
+         the value of <xref linkend="guc-autovacuum-multixact-freeze-max-age"/>,
+         so that there is not an unreasonably short time between forced
+         autovacuums.
+         For more information see <xref linkend="vacuum-for-multixact-wraparound"/>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-vacuum-multixact-failsafe-age" xreflabel="vacuum_multixact_failsafe_age">
+       <term><varname>vacuum_multixact_failsafe_age</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>vacuum_multixact_failsafe_age</varname> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Specifies the maximum age (in multixacts) that a table's
+         <structname>pg_class</structname>.<structfield>relminmxid</structfield>
+         field can attain before <command>VACUUM</command> takes
+         extraordinary measures to avoid system-wide multixact ID
+         wraparound failure.  This is <command>VACUUM</command>'s
+         strategy of last resort.  The failsafe typically triggers when
+         an autovacuum to prevent transaction ID wraparound has already
+         been running for some time, though it's possible for the
+         failsafe to trigger during any <command>VACUUM</command>.
+        </para>
+        <para>
+         When the failsafe is triggered, any cost-based delay that is
+         in effect will no longer be applied, and further non-essential
+         maintenance tasks (such as index vacuuming) are bypassed.
+        </para>
+        <para>
+         The default is 1.6 billion multixacts.  Although users can set
+         this value anywhere from zero to 2.1 billion,
+         <command>VACUUM</command> will silently adjust the effective
+         value to no less than 105% of <xref
+          linkend="guc-autovacuum-multixact-freeze-max-age"/>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+     <varlistentry id="guc-vacuum-max-eager-freeze-failure-rate" xreflabel="vacuum_max_eager_freeze_failure_rate">
+      <term><varname>vacuum_max_eager_freeze_failure_rate</varname> (<type>floating point</type>)
       <indexterm>
-       <primary><varname>autovacuum_vacuum_threshold</varname></primary>
+       <primary><varname>vacuum_max_eager_freeze_failure_rate</varname></primary>
        <secondary>configuration parameter</secondary>
       </indexterm>
       </term>
       <listitem>
        <para>
-        Specifies the minimum number of updated or deleted tuples needed
-        to trigger a <command>VACUUM</command> in any one table.
-        The default is 50 tuples.
-        This parameter can only be set in the <filename>postgresql.conf</filename>
-        file or on the server command line;
-        but the setting can be overridden for individual tables by
-        changing table storage parameters.
+        Specifies the maximum number of pages (as a fraction of total pages in
+        the relation) that <command>VACUUM</command> may scan and
+        <emphasis>fail</emphasis> to set all-frozen in the visibility map
+        before disabling eager scanning. A value of <literal>0</literal>
+        disables eager scanning altogether. The default is
+        <literal>0.03</literal> (3%).
+       </para>
+
+       <para>
+        Note that when eager scanning is enabled, only freeze failures
+        count against the cap, not successful freezing. Successful page
+        freezes are capped internally at 20% of the all-visible but not
+        all-frozen pages in the relation. Capping successful page freezes helps
+        amortize the overhead across multiple normal vacuums and limits the
+        potential downside of wasted eager freezes of pages that are modified
+        again before the next aggressive vacuum.
+       </para>
+
+       <para>
+        This parameter can only be set in the
+        <filename>postgresql.conf</filename> file or on the server command
+        line; but the setting can be overridden for individual tables by
+        changing the
+        <link linkend="reloption-vacuum-max-eager-freeze-failure-rate">
+        corresponding table storage parameter</link>.
+        For more information on tuning vacuum's freezing behavior,
+        see <xref linkend="vacuum-for-wraparound"/>.
        </para>
       </listitem>
      </varlistentry>
 
-     <varlistentry id="guc-autovacuum-vacuum-insert-threshold" xreflabel="autovacuum_vacuum_insert_threshold">
-      <term><varname>autovacuum_vacuum_insert_threshold</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>autovacuum_vacuum_insert_threshold</varname></primary>
-       <secondary>configuration parameter</secondary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies the number of inserted tuples needed to trigger a
-        <command>VACUUM</command> in any one table.
-        The default is 1000 tuples.  If -1 is specified, autovacuum will not
-        trigger a <command>VACUUM</command> operation on any tables based on
-        the number of inserts.
-        This parameter can only be set in the <filename>postgresql.conf</filename>
-        file or on the server command line;
-        but the setting can be overridden for individual tables by
-        changing table storage parameters.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-autovacuum-analyze-threshold" xreflabel="autovacuum_analyze_threshold">
-      <term><varname>autovacuum_analyze_threshold</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>autovacuum_analyze_threshold</varname></primary>
-       <secondary>configuration parameter</secondary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies the minimum number of inserted, updated or deleted tuples
-        needed to trigger an <command>ANALYZE</command> in any one table.
-        The default is 50 tuples.
-        This parameter can only be set in the <filename>postgresql.conf</filename>
-        file or on the server command line;
-        but the setting can be overridden for individual tables by
-        changing table storage parameters.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-autovacuum-vacuum-scale-factor" xreflabel="autovacuum_vacuum_scale_factor">
-      <term><varname>autovacuum_vacuum_scale_factor</varname> (<type>floating point</type>)
-      <indexterm>
-       <primary><varname>autovacuum_vacuum_scale_factor</varname></primary>
-       <secondary>configuration parameter</secondary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies a fraction of the table size to add to
-        <varname>autovacuum_vacuum_threshold</varname>
-        when deciding whether to trigger a <command>VACUUM</command>.
-        The default is 0.2 (20% of table size).
-        This parameter can only be set in the <filename>postgresql.conf</filename>
-        file or on the server command line;
-        but the setting can be overridden for individual tables by
-        changing table storage parameters.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-autovacuum-vacuum-insert-scale-factor" xreflabel="autovacuum_vacuum_insert_scale_factor">
-      <term><varname>autovacuum_vacuum_insert_scale_factor</varname> (<type>floating point</type>)
-      <indexterm>
-       <primary><varname>autovacuum_vacuum_insert_scale_factor</varname></primary>
-       <secondary>configuration parameter</secondary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies a fraction of the table size to add to
-        <varname>autovacuum_vacuum_insert_threshold</varname>
-        when deciding whether to trigger a <command>VACUUM</command>.
-        The default is 0.2 (20% of table size).
-        This parameter can only be set in the <filename>postgresql.conf</filename>
-        file or on the server command line;
-        but the setting can be overridden for individual tables by
-        changing table storage parameters.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-autovacuum-analyze-scale-factor" xreflabel="autovacuum_analyze_scale_factor">
-      <term><varname>autovacuum_analyze_scale_factor</varname> (<type>floating point</type>)
-      <indexterm>
-       <primary><varname>autovacuum_analyze_scale_factor</varname></primary>
-       <secondary>configuration parameter</secondary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies a fraction of the table size to add to
-        <varname>autovacuum_analyze_threshold</varname>
-        when deciding whether to trigger an <command>ANALYZE</command>.
-        The default is 0.1 (10% of table size).
-        This parameter can only be set in the <filename>postgresql.conf</filename>
-        file or on the server command line;
-        but the setting can be overridden for individual tables by
-        changing table storage parameters.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-autovacuum-freeze-max-age" xreflabel="autovacuum_freeze_max_age">
-      <term><varname>autovacuum_freeze_max_age</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>autovacuum_freeze_max_age</varname></primary>
-       <secondary>configuration parameter</secondary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies the maximum age (in transactions) that a table's
-        <structname>pg_class</structname>.<structfield>relfrozenxid</structfield> field can
-        attain before a <command>VACUUM</command> operation is forced
-        to prevent transaction ID wraparound within the table.
-        Note that the system will launch autovacuum processes to
-        prevent wraparound even when autovacuum is otherwise disabled.
-       </para>
-
-       <para>
-        Vacuum also allows removal of old files from the
-        <filename>pg_xact</filename> subdirectory, which is why the default
-        is a relatively low 200 million transactions.
-        This parameter can only be set at server start, but the setting
-        can be reduced for individual tables by
-        changing table storage parameters.
-        For more information see <xref linkend="vacuum-for-wraparound"/>.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-autovacuum-multixact-freeze-max-age" xreflabel="autovacuum_multixact_freeze_max_age">
-      <term><varname>autovacuum_multixact_freeze_max_age</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>autovacuum_multixact_freeze_max_age</varname></primary>
-       <secondary>configuration parameter</secondary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies the maximum age (in multixacts) that a table's
-        <structname>pg_class</structname>.<structfield>relminmxid</structfield> field can
-        attain before a <command>VACUUM</command> operation is forced to
-        prevent multixact ID wraparound within the table.
-        Note that the system will launch autovacuum processes to
-        prevent wraparound even when autovacuum is otherwise disabled.
-       </para>
-
-       <para>
-        Vacuuming multixacts also allows removal of old files from the
-        <filename>pg_multixact/members</filename> and <filename>pg_multixact/offsets</filename>
-        subdirectories, which is why the default is a relatively low
-        400 million multixacts.
-        This parameter can only be set at server start, but the setting can
-        be reduced for individual tables by changing table storage parameters.
-        For more information see <xref linkend="vacuum-for-multixact-wraparound"/>.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-autovacuum-vacuum-cost-delay" xreflabel="autovacuum_vacuum_cost_delay">
-      <term><varname>autovacuum_vacuum_cost_delay</varname> (<type>floating point</type>)
-      <indexterm>
-       <primary><varname>autovacuum_vacuum_cost_delay</varname></primary>
-       <secondary>configuration parameter</secondary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies the cost delay value that will be used in automatic
-        <command>VACUUM</command> operations.  If -1 is specified, the regular
-        <xref linkend="guc-vacuum-cost-delay"/> value will be used.
-        If this value is specified without units, it is taken as milliseconds.
-        The default value is 2 milliseconds.
-        This parameter can only be set in the <filename>postgresql.conf</filename>
-        file or on the server command line;
-        but the setting can be overridden for individual tables by
-        changing table storage parameters.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-autovacuum-vacuum-cost-limit" xreflabel="autovacuum_vacuum_cost_limit">
-      <term><varname>autovacuum_vacuum_cost_limit</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>autovacuum_vacuum_cost_limit</varname></primary>
-       <secondary>configuration parameter</secondary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies the cost limit value that will be used in automatic
-        <command>VACUUM</command> operations.  If -1 is specified (which is the
-        default), the regular
-        <xref linkend="guc-vacuum-cost-limit"/> value will be used.  Note that
-        the value is distributed proportionally among the running autovacuum
-        workers, if there is more than one, so that the sum of the limits for
-        each worker does not exceed the value of this variable.
-        This parameter can only be set in the <filename>postgresql.conf</filename>
-        file or on the server command line;
-        but the setting can be overridden for individual tables by
-        changing table storage parameters.
-       </para>
-      </listitem>
-     </varlistentry>
-
-    </variablelist>
+     </variablelist>
+    </sect2>
    </sect1>
 
    <sect1 id="runtime-config-client">
@@ -9368,7 +10144,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
        <para>
         If <varname>transaction_timeout</varname> is shorter or equal to
         <varname>idle_in_transaction_session_timeout</varname> or <varname>statement_timeout</varname>
-        then the longer timeout is ignored.
+        then the longer timeout is ignored.
        </para>
 
        <para>
@@ -9476,168 +10252,6 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
         may not react well to unexpected connection closure.  It may be
         helpful to enable this timeout only for interactive sessions,
         perhaps by applying it only to particular users.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-vacuum-freeze-table-age" xreflabel="vacuum_freeze_table_age">
-      <term><varname>vacuum_freeze_table_age</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>vacuum_freeze_table_age</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        <command>VACUUM</command> performs an aggressive scan if the table's
-        <structname>pg_class</structname>.<structfield>relfrozenxid</structfield> field has reached
-        the age specified by this setting.  An aggressive scan differs from
-        a regular <command>VACUUM</command> in that it visits every page that might
-        contain unfrozen XIDs or MXIDs, not just those that might contain dead
-        tuples.  The default is 150 million transactions.  Although users can
-        set this value anywhere from zero to two billion, <command>VACUUM</command>
-        will silently limit the effective value to 95% of
-        <xref linkend="guc-autovacuum-freeze-max-age"/>, so that a
-        periodic manual <command>VACUUM</command> has a chance to run before an
-        anti-wraparound autovacuum is launched for the table. For more
-        information see
-        <xref linkend="vacuum-for-wraparound"/>.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-vacuum-freeze-min-age" xreflabel="vacuum_freeze_min_age">
-      <term><varname>vacuum_freeze_min_age</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>vacuum_freeze_min_age</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies the cutoff age (in transactions) that
-        <command>VACUUM</command> should use to decide whether to
-        trigger freezing of pages that have an older XID.
-        The default is 50 million transactions.  Although
-        users can set this value anywhere from zero to one billion,
-        <command>VACUUM</command> will silently limit the effective value to half
-        the value of <xref linkend="guc-autovacuum-freeze-max-age"/>, so
-        that there is not an unreasonably short time between forced
-        autovacuums.  For more information see <xref
-        linkend="vacuum-for-wraparound"/>.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-vacuum-failsafe-age" xreflabel="vacuum_failsafe_age">
-      <term><varname>vacuum_failsafe_age</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>vacuum_failsafe_age</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies the maximum age (in transactions) that a table's
-        <structname>pg_class</structname>.<structfield>relfrozenxid</structfield>
-        field can attain before <command>VACUUM</command> takes
-        extraordinary measures to avoid system-wide transaction ID
-        wraparound failure.  This is <command>VACUUM</command>'s
-        strategy of last resort.  The failsafe typically triggers
-        when an autovacuum to prevent transaction ID wraparound has
-        already been running for some time, though it's possible for
-        the failsafe to trigger during any <command>VACUUM</command>.
-       </para>
-       <para>
-        When the failsafe is triggered, any cost-based delay that is
-        in effect will no longer be applied, further non-essential
-        maintenance tasks (such as index vacuuming) are bypassed, and any
-        <glossterm linkend="glossary-buffer-access-strategy">Buffer Access Strategy</glossterm>
-        in use will be disabled resulting in <command>VACUUM</command> being
-        free to make use of all of
-        <glossterm linkend="glossary-shared-memory">shared buffers</glossterm>.
-       </para>
-       <para>
-        The default is 1.6 billion transactions.  Although users can
-        set this value anywhere from zero to 2.1 billion,
-        <command>VACUUM</command> will silently adjust the effective
-        value to no less than 105% of <xref
-         linkend="guc-autovacuum-freeze-max-age"/>.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-vacuum-multixact-freeze-table-age" xreflabel="vacuum_multixact_freeze_table_age">
-      <term><varname>vacuum_multixact_freeze_table_age</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>vacuum_multixact_freeze_table_age</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        <command>VACUUM</command> performs an aggressive scan if the table's
-        <structname>pg_class</structname>.<structfield>relminmxid</structfield> field has reached
-        the age specified by this setting.  An aggressive scan differs from
-        a regular <command>VACUUM</command> in that it visits every page that might
-        contain unfrozen XIDs or MXIDs, not just those that might contain dead
-        tuples.  The default is 150 million multixacts.
-        Although users can set this value anywhere from zero to two billion,
-        <command>VACUUM</command> will silently limit the effective value to 95% of
-        <xref linkend="guc-autovacuum-multixact-freeze-max-age"/>, so that a
-        periodic manual <command>VACUUM</command> has a chance to run before an
-        anti-wraparound is launched for the table.
-        For more information see <xref linkend="vacuum-for-multixact-wraparound"/>.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-vacuum-multixact-freeze-min-age" xreflabel="vacuum_multixact_freeze_min_age">
-      <term><varname>vacuum_multixact_freeze_min_age</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>vacuum_multixact_freeze_min_age</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies the cutoff age (in multixacts) that <command>VACUUM</command>
-        should use to decide whether to trigger freezing of pages with
-        an older multixact ID.  The default is 5 million multixacts.
-        Although users can set this value anywhere from zero to one billion,
-        <command>VACUUM</command> will silently limit the effective value to half
-        the value of <xref linkend="guc-autovacuum-multixact-freeze-max-age"/>,
-        so that there is not an unreasonably short time between forced
-        autovacuums.
-        For more information see <xref linkend="vacuum-for-multixact-wraparound"/>.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="guc-vacuum-multixact-failsafe-age" xreflabel="vacuum_multixact_failsafe_age">
-      <term><varname>vacuum_multixact_failsafe_age</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>vacuum_multixact_failsafe_age</varname> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies the maximum age (in multixacts) that a table's
-        <structname>pg_class</structname>.<structfield>relminmxid</structfield>
-        field can attain before <command>VACUUM</command> takes
-        extraordinary measures to avoid system-wide multixact ID
-        wraparound failure.  This is <command>VACUUM</command>'s
-        strategy of last resort.  The failsafe typically triggers when
-        an autovacuum to prevent transaction ID wraparound has already
-        been running for some time, though it's possible for the
-        failsafe to trigger during any <command>VACUUM</command>.
-       </para>
-       <para>
-        When the failsafe is triggered, any cost-based delay that is
-        in effect will no longer be applied, and further non-essential
-        maintenance tasks (such as index vacuuming) are bypassed.
-       </para>
-       <para>
-        The default is 1.6 billion multixacts.  Although users can set
-        this value anywhere from zero to 2.1 billion,
-        <command>VACUUM</command> will silently adjust the effective
-        value to no less than 105% of <xref
-         linkend="guc-autovacuum-multixact-freeze-max-age"/>.
        </para>
       </listitem>
      </varlistentry>
@@ -9797,6 +10411,23 @@ SET XML OPTION { DOCUMENT | CONTENT };
      </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-restrict-nonsystem-relation-kind" xreflabel="restrict_nonsystem_relation_kind">
+      <term><varname>restrict_nonsystem_relation_kind</varname> (<type>string</type>)
+      <indexterm>
+       <primary><varname>restrict_nonsystem_relation_kind</varname></primary>
+       <secondary>configuration parameter</secondary>
+     </indexterm>
+     </term>
+     <listitem>
+      <para>
+       Set relation kinds for which access to non-system relations is prohibited.
+       The value takes the form of a comma-separated list of relation kinds.
+       Currently, the supported relation kinds are <literal>view</literal> and
+       <literal>foreign-table</literal>.
+      </para>
+     </listitem>
+     </varlistentry>
+
      </variablelist>
     </sect2>
      <sect2 id="runtime-config-client-format">
@@ -9890,8 +10521,10 @@ SET XML OPTION { DOCUMENT | CONTENT };
       </term>
       <listitem>
        <para>
-        Sets the collection of time zone abbreviations that will be accepted
-        by the server for datetime input.  The default is <literal>'Default'</literal>,
+        Sets the collection of additional time zone abbreviations that
+        will be accepted by the server for datetime input (beyond any
+        abbreviations defined by the current <varname>TimeZone</varname>
+        setting).  The default is <literal>'Default'</literal>,
         which is a collection that works in most of the world; there are
         also <literal>'Australia'</literal> and <literal>'India'</literal>,
         and other collections can be defined for a particular installation.
@@ -10375,6 +11008,75 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-extension-control-path" xreflabel="extension_control_path">
+      <term><varname>extension_control_path</varname> (<type>string</type>)
+      <indexterm>
+       <primary><varname>extension_control_path</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        A path to search for extensions, specifically extension control files
+        (<filename><replaceable>name</replaceable>.control</filename>).  The
+        remaining extension script and secondary control files are then loaded
+        from the same directory where the primary control file was found.
+        See <xref linkend="extend-extensions-files"/> for details.
+       </para>
+
+       <para>
+        The value for <varname>extension_control_path</varname> must be a
+        list of absolute directory paths separated by colons (or semi-colons
+        on Windows).  If a list element starts
+        with the special string <literal>$system</literal>, the
+        compiled-in <productname>PostgreSQL</productname> extension
+        directory is substituted for <literal>$system</literal>; this
+        is where the extensions provided by the standard
+        <productname>PostgreSQL</productname> distribution are installed.
+        (Use <literal>pg_config --sharedir</literal> to find out the name of
+        this directory.) For example:
+<programlisting>
+extension_control_path = '/usr/local/share/postgresql:/home/my_project/share:$system'
+</programlisting>
+        or, in a Windows environment:
+<programlisting>
+extension_control_path = 'C:\tools\postgresql;H:\my_project\share;$system'
+</programlisting>
+        Note that the specified paths elements are expected to have a
+        subdirectory <filename>extension</filename> which will contain the
+        <filename>.control</filename> and <filename>.sql</filename> files; the
+        <filename>extension</filename> suffix is automatically appended to
+        each path element.
+       </para>
+
+       <para>
+        The default value for this parameter is
+        <literal>'$system'</literal>. If the value is set to an empty
+        string, the default <literal>'$system'</literal> is also assumed.
+       </para>
+
+       <para>
+        This parameter can be changed at run time by superusers and users
+        with the appropriate <literal>SET</literal> privilege, but a
+        setting done that way will only persist until the end of the
+        client connection, so this method should be reserved for
+        development purposes. The recommended way to set this parameter
+        is in the <filename>postgresql.conf</filename> configuration
+        file.
+       </para>
+
+       <para>
+        Note that if you set this parameter to be able to load extensions from
+        nonstandard locations, you will most likely also need to set <xref
+        linkend="guc-dynamic-library-path"/> to a correspondent location, for
+        example,
+<programlisting>
+extension_control_path = '/usr/local/share/postgresql:$system'
+dynamic_library_path = '/usr/local/lib/postgresql:$libdir'
+</programlisting>
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-gin-fuzzy-search-limit" xreflabel="gin_fuzzy_search_limit">
       <term><varname>gin_fuzzy_search_limit</varname> (<type>integer</type>)
       <indexterm>
@@ -10809,7 +11511,7 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         Turning this setting off is intended for environments where the
         configuration of <productname>PostgreSQL</productname> is managed by
         some external tool.
-        In such environments, a well intentioned superuser might
+        In such environments, a well-intentioned superuser might
         <emphasis>mistakenly</emphasis> use <command>ALTER SYSTEM</command>
         to change the configuration instead of using the external tool.
         This might result in unintended behavior, such as the external tool
@@ -11013,7 +11715,9 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         had at server startup.
         (On Microsoft Windows this parameter will always display
         <literal>0700</literal>.) See
-        <xref linkend="app-initdb-allow-group-access"/> for more information.
+        <link linkend="app-initdb-allow-group-access">the
+        <application>initdb</application> <option>-g</option> option</link>
+        for more information.
        </para>
       </listitem>
      </varlistentry>
@@ -11133,6 +11837,24 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         Reports the maximum number of index keys. It is determined by
         the value of <literal>INDEX_MAX_KEYS</literal> when building the server. The
         default value is 32 keys.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-num-os-semaphores" xreflabel="num_os_semaphores">
+      <term><varname>num_os_semaphores</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>num_os_semaphores</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Reports the number of semaphores that are needed for the server based
+        on the configured number of allowed connections
+        (<xref linkend="guc-max-connections"/>), allowed autovacuum worker
+        processes (<xref linkend="guc-autovacuum-max-workers"/>), allowed WAL
+        sender processes (<xref linkend="guc-max-wal-senders"/>), allowed
+        background processes (<xref linkend="guc-max-worker-processes"/>), etc.
        </para>
       </listitem>
      </varlistentry>
@@ -11391,6 +12113,29 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-debug-copy-parse-plan-trees" xreflabel="debug_copy_parse_plan_trees">
+      <term><varname>debug_copy_parse_plan_trees</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>debug_copy_parse_plan_trees</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Enabling this forces all parse and plan trees to be passed through
+        <function>copyObject()</function>, to facilitate catching errors and
+        omissions in <function>copyObject()</function>.  The default is off.
+       </para>
+
+       <para>
+        This parameter is only available when
+        <symbol>DEBUG_NODE_TESTS_ENABLED</symbol> was defined at compile time
+        (which happens automatically when using the
+        <application>configure</application> option
+        <option>--enable-cassert</option>).
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-debug-discard-caches" xreflabel="debug_discard_caches">
       <term><varname>debug_discard_caches</varname> (<type>integer</type>)
       <indexterm>
@@ -11506,6 +12251,54 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-debug-raw-expression-coverage-test" xreflabel="debug_raw_expression_coverage_test">
+      <term><varname>debug_raw_expression_coverage_test</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>debug_raw_expression_coverage_test</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Enabling this forces all raw parse trees for DML statements to be
+        scanned by <function>raw_expression_tree_walker()</function>, to
+        facilitate catching errors and omissions in that function.  The
+        default is off.
+       </para>
+
+       <para>
+        This parameter is only available when
+        <symbol>DEBUG_NODE_TESTS_ENABLED</symbol> was defined at compile time
+        (which happens automatically when using the
+        <application>configure</application> option
+        <option>--enable-cassert</option>).
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-debug-write-read-parse-plan-trees" xreflabel="debug_write_read_parse_plan_trees">
+      <term><varname>debug_write_read_parse_plan_trees</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>debug_write_read_parse_plan_trees</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Enabling this forces all parse and plan trees to be passed through
+        <filename>outfuncs.c</filename>/<filename>readfuncs.c</filename>, to
+        facilitate catching errors and omissions in those modules.  The
+        default is off.
+       </para>
+
+       <para>
+        This parameter is only available when
+        <symbol>DEBUG_NODE_TESTS_ENABLED</symbol> was defined at compile time
+        (which happens automatically when using the
+        <application>configure</application> option
+        <option>--enable-cassert</option>).
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-ignore-system-indexes" xreflabel="ignore_system_indexes">
       <term><varname>ignore_system_indexes</varname> (<type>boolean</type>)
       <indexterm>
@@ -11589,9 +12382,6 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
       <listitem>
        <para>
         If on, emit information about resource usage during sort operations.
-        This parameter is only available if the <symbol>TRACE_SORT</symbol> macro
-        was defined when <productname>PostgreSQL</productname> was compiled.
-        (However, <symbol>TRACE_SORT</symbol> is currently defined by default.)
        </para>
       </listitem>
      </varlistentry>

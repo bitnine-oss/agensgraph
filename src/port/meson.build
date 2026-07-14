@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 pgport_sources = [
   'bsearch_arg.c',
@@ -7,6 +7,10 @@ pgport_sources = [
   'noblock.c',
   'path.c',
   'pg_bitutils.c',
+  'pg_localeconv_r.c',
+  'pg_numa.c',
+  'pg_popcount_aarch64.c',
+  'pg_popcount_avx512.c',
   'pg_strong_random.c',
   'pgcheckdir.c',
   'pgmkdirp.c',
@@ -20,7 +24,6 @@ pgport_sources = [
   'snprintf.c',
   'strerror.c',
   'tar.c',
-  'user.c',
 ]
 
 if host_system == 'windows'
@@ -70,6 +73,8 @@ replace_funcs_neg = [
   ['strlcat'],
   ['strlcpy'],
   ['strnlen'],
+  ['strsep'],
+  ['timingsafe_bcmp'],
 ]
 
 if host_system != 'windows'
@@ -81,11 +86,10 @@ endif
 replace_funcs_pos = [
   # x86/x64
   ['pg_crc32c_sse42', 'USE_SSE42_CRC32C'],
-  ['pg_crc32c_sse42', 'USE_SSE42_CRC32C_WITH_RUNTIME_CHECK', 'crc'],
+  ['pg_crc32c_sse42', 'USE_SSE42_CRC32C_WITH_RUNTIME_CHECK'],
+  ['pg_crc32c_sse42_choose', 'USE_SSE42_CRC32C'],
   ['pg_crc32c_sse42_choose', 'USE_SSE42_CRC32C_WITH_RUNTIME_CHECK'],
   ['pg_crc32c_sb8', 'USE_SSE42_CRC32C_WITH_RUNTIME_CHECK'],
-  ['pg_popcount_avx512', 'USE_AVX512_POPCNT_WITH_RUNTIME_CHECK', 'popcnt'],
-  ['pg_popcount_avx512_choose', 'USE_AVX512_POPCNT_WITH_RUNTIME_CHECK', 'xsave'],
 
   # arm / aarch64
   ['pg_crc32c_armv8', 'USE_ARMV8_CRC32C'],
@@ -100,8 +104,8 @@ replace_funcs_pos = [
   ['pg_crc32c_sb8', 'USE_SLICING_BY_8_CRC32C'],
 ]
 
-pgport_cflags = {'crc': cflags_crc, 'popcnt': cflags_popcnt, 'xsave': cflags_xsave}
-pgport_sources_cflags = {'crc': [], 'popcnt': [], 'xsave': []}
+pgport_cflags = {'crc': cflags_crc}
+pgport_sources_cflags = {'crc': []}
 
 foreach f : replace_funcs_neg
   func = f.get(0)
@@ -185,6 +189,7 @@ foreach name, opts : pgport_variants
   lib = static_library('libpgport@0@'.format(name),
       pgport_sources,
       link_with: cflag_libs,
+      link_whole: cflag_libs,
       c_pch: pch_c_h,
       kwargs: opts + {
         'dependencies': opts['dependencies'] + [ssl],

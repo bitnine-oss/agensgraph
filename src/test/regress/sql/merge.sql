@@ -235,7 +235,7 @@ WHEN NOT MATCHED BY SOURCE THEN
 	DELETE
 WHEN NOT MATCHED BY TARGET THEN
 	INSERT VALUES (s.sid, s.delta)
-RETURNING merge_action(), t.*;
+RETURNING merge_action(), old, new, t.*;
 SELECT * FROM target ORDER BY tid;
 ROLLBACK;
 
@@ -677,7 +677,7 @@ WHEN NOT MATCHED BY SOURCE AND tid = 1 THEN
 	UPDATE SET balance = 0
 WHEN NOT MATCHED BY SOURCE THEN
 	DELETE
-RETURNING merge_action(), t.*;
+RETURNING merge_action(), old, new, t.*;
 SELECT * FROM target ORDER BY tid;
 ROLLBACK;
 
@@ -930,7 +930,9 @@ WHEN MATCHED AND tid < 2 THEN
     DELETE
 RETURNING (SELECT abbrev FROM merge_actions
             WHERE action = merge_action()) AS action,
-          t.*,
+          old.tid AS old_tid, old.balance AS old_balance,
+          new.tid AS new_tid, new.balance AS new_balance,
+          (SELECT new.balance - old.balance AS delta_balance), t.*,
           CASE merge_action()
               WHEN 'INSERT' THEN 'Inserted '||t
               WHEN 'UPDATE' THEN 'Added '||delta||' to balance'
@@ -956,7 +958,7 @@ WITH m AS (
         INSERT (balance, tid) VALUES (balance + delta, sid)
     WHEN MATCHED AND tid < 2 THEN
         DELETE
-    RETURNING merge_action() AS action, t.*,
+    RETURNING merge_action() AS action, old AS old_data, new AS new_data, t.*,
               CASE merge_action()
                   WHEN 'INSERT' THEN 'Inserted '||t
                   WHEN 'UPDATE' THEN 'Added '||delta||' to balance'
@@ -970,7 +972,7 @@ WITH m AS (
         UPDATE SET last_change = description
     WHEN NOT MATCHED THEN
         INSERT VALUES (m.tid, description)
-    RETURNING action, merge_action() AS log_action, l.*
+    RETURNING m.*, merge_action() AS log_action, old AS old_log, new AS new_log, l.*
 )
 SELECT * FROM m2;
 SELECT * FROM sq_target_merge_log ORDER BY tid;
@@ -988,7 +990,7 @@ COPY (
         INSERT (balance, tid) VALUES (balance + delta, sid)
     WHEN MATCHED AND tid < 2 THEN
         DELETE
-    RETURNING merge_action(), t.*
+    RETURNING merge_action(), old.*, new.*
 ) TO stdout;
 ROLLBACK;
 
@@ -1072,7 +1074,7 @@ $$
 DECLARE ln text;
 BEGIN
     FOR ln IN
-        EXECUTE 'explain (analyze, timing off, summary off, costs off) ' ||
+        EXECUTE 'explain (analyze, timing off, summary off, costs off, buffers off) ' ||
 		  query
     LOOP
         ln := regexp_replace(ln, '(Memory( Usage)?|Buckets|Batches): \S*',  '\1: xxx', 'g');
@@ -1265,8 +1267,21 @@ MERGE INTO pa_target t
   ON t.tid = s.sid AND t.tid = 1
   WHEN MATCHED THEN
     UPDATE SET tid = tid + 1, balance = balance + delta, val = val || ' updated by merge'
-  RETURNING merge_action(), t.*;
+  RETURNING merge_action(), old, new, t.*;
 SELECT * FROM pa_target ORDER BY tid;
+ROLLBACK;
+
+-- bug #18871: ExecInitPartitionInfo()'s handling of DO NOTHING actions
+BEGIN;
+TRUNCATE pa_target;
+MERGE INTO pa_target t
+  USING (VALUES (10, 100)) AS s(sid, delta)
+  ON t.tid = s.sid
+  WHEN NOT MATCHED THEN
+    INSERT VALUES (1, 10, 'inserted by merge')
+  WHEN MATCHED THEN
+    DO NOTHING;
+SELECT * FROM pa_target ORDER BY tid, val;
 ROLLBACK;
 
 DROP TABLE pa_target CASCADE;
@@ -1456,7 +1471,7 @@ MERGE INTO pa_target t
     UPDATE SET balance = balance + delta, val = val || ' updated by merge'
   WHEN NOT MATCHED THEN
     INSERT VALUES (slogts::timestamp, sid, delta, 'inserted by merge')
-  RETURNING merge_action(), t.*;
+  RETURNING merge_action(), old, new, t.*;
 SELECT * FROM pa_target ORDER BY tid;
 ROLLBACK;
 
@@ -1707,8 +1722,96 @@ WHEN MATCHED THEN DELETE;
 
 SELECT * FROM new_measurement ORDER BY city_id, logdate;
 
+-- MERGE into inheritance root table
+DROP TRIGGER insert_measurement_trigger ON measurement;
+ALTER TABLE measurement ADD CONSTRAINT mcheck CHECK (city_id = 0) NO INHERIT;
+
+EXPLAIN (COSTS OFF)
+MERGE INTO measurement m
+ USING (VALUES (1, '01-17-2007'::date)) nm(city_id, logdate) ON
+      (m.city_id = nm.city_id and m.logdate=nm.logdate)
+WHEN NOT MATCHED THEN INSERT
+     (city_id, logdate, peaktemp, unitsales)
+   VALUES (city_id - 1, logdate, 25, 100);
+
+BEGIN;
+MERGE INTO measurement m
+ USING (VALUES (1, '01-17-2007'::date)) nm(city_id, logdate) ON
+      (m.city_id = nm.city_id and m.logdate=nm.logdate)
+WHEN NOT MATCHED THEN INSERT
+     (city_id, logdate, peaktemp, unitsales)
+   VALUES (city_id - 1, logdate, 25, 100);
+SELECT * FROM ONLY measurement ORDER BY city_id, logdate;
+ROLLBACK;
+
+ALTER TABLE measurement ENABLE ROW LEVEL SECURITY;
+ALTER TABLE measurement FORCE ROW LEVEL SECURITY;
+CREATE POLICY measurement_p ON measurement USING (peaktemp IS NOT NULL);
+
+MERGE INTO measurement m
+ USING (VALUES (1, '01-17-2007'::date)) nm(city_id, logdate) ON
+      (m.city_id = nm.city_id and m.logdate=nm.logdate)
+WHEN NOT MATCHED THEN INSERT
+     (city_id, logdate, peaktemp, unitsales)
+   VALUES (city_id - 1, logdate, NULL, 100); -- should fail
+
+MERGE INTO measurement m
+ USING (VALUES (1, '01-17-2007'::date)) nm(city_id, logdate) ON
+      (m.city_id = nm.city_id and m.logdate=nm.logdate)
+WHEN NOT MATCHED THEN INSERT
+     (city_id, logdate, peaktemp, unitsales)
+   VALUES (city_id - 1, logdate, 25, 100); -- ok
+SELECT * FROM ONLY measurement ORDER BY city_id, logdate;
+
+MERGE INTO measurement m
+ USING (VALUES (1, '01-18-2007'::date)) nm(city_id, logdate) ON
+      (m.city_id = nm.city_id and m.logdate=nm.logdate)
+WHEN NOT MATCHED THEN INSERT
+     (city_id, logdate, peaktemp, unitsales)
+   VALUES (city_id - 1, logdate, 25, 200)
+RETURNING merge_action(), m.*;
+
 DROP TABLE measurement, new_measurement CASCADE;
 DROP FUNCTION measurement_insert_trigger();
+
+--
+-- test non-strict join clause
+--
+CREATE TABLE src (a int, b text);
+INSERT INTO src VALUES (1, 'src row');
+
+CREATE TABLE tgt (a int, b text);
+INSERT INTO tgt VALUES (NULL, 'tgt row');
+
+MERGE INTO tgt USING src ON tgt.a IS NOT DISTINCT FROM src.a
+  WHEN MATCHED THEN UPDATE SET a = src.a, b = src.b
+  WHEN NOT MATCHED BY SOURCE THEN DELETE
+  RETURNING merge_action(), src.*, tgt.*;
+
+SELECT * FROM tgt;
+
+DROP TABLE src, tgt;
+
+--
+-- test for bug #18634 (wrong varnullingrels error)
+--
+CREATE TABLE bug18634t (a int, b int, c text);
+INSERT INTO bug18634t VALUES(1, 10, 'tgt1'), (2, 20, 'tgt2');
+CREATE VIEW bug18634v AS
+  SELECT * FROM bug18634t WHERE EXISTS (SELECT 1 FROM bug18634t);
+
+CREATE TABLE bug18634s (a int, b int, c text);
+INSERT INTO bug18634s VALUES (1, 2, 'src1');
+
+MERGE INTO bug18634v t USING bug18634s s ON s.a = t.a
+  WHEN MATCHED THEN UPDATE SET b = s.b
+  WHEN NOT MATCHED BY SOURCE THEN DELETE
+  RETURNING merge_action(), s.c, t.*;
+
+SELECT * FROM bug18634t;
+
+DROP TABLE bug18634t CASCADE;
+DROP TABLE bug18634s;
 
 -- prepare
 

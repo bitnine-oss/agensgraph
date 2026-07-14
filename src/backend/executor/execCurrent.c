@@ -3,7 +3,7 @@
  * execCurrent.c
  *	  executor support for WHERE CURRENT OF cursor
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/executor/execCurrent.c
@@ -200,7 +200,7 @@ execCurrentOf(CurrentOfExpr *cexpr,
 			/*
 			 * For IndexOnlyScan, the tuple stored in ss_ScanTupleSlot may be
 			 * a virtual tuple that does not have the ctid column, so we have
-			 * to get the TID from xs_ctup.t_self.
+			 * to get the TID from xs_heaptid.
 			 */
 			IndexScanDesc scan = ((IndexOnlyScanState *) scanstate)->ioss_ScanDesc;
 

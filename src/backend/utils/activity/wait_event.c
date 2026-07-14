@@ -2,7 +2,7 @@
  * wait_event.c
  *	  Wait event reporting infrastructure.
  *
- * Copyright (c) 2001-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2025, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -22,7 +22,6 @@
  */
 #include "postgres.h"
 
-#include "port/pg_bitutils.h"
 #include "storage/lmgr.h"		/* for GetLockNameFromTagType */
 #include "storage/lwlock.h"		/* for GetLWLockIdentifier */
 #include "storage/spin.h"

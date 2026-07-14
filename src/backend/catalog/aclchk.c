@@ -3,7 +3,7 @@
  * aclchk.c
  *	  Routines to check access control permissions.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -77,6 +77,7 @@
 #include "nodes/makefuncs.h"
 #include "parser/parse_func.h"
 #include "parser/parse_type.h"
+#include "storage/lmgr.h"
 #include "utils/acl.h"
 #include "utils/aclchk_internal.h"
 #include "utils/builtins.h"
@@ -660,147 +661,77 @@ ExecGrantStmt_oids(InternalGrant *istmt)
  * objectNamesToOids
  *
  * Turn a list of object names of a given type into an Oid list.
- *
- * XXX: This function doesn't take any sort of locks on the objects whose
- * names it looks up.  In the face of concurrent DDL, we might easily latch
- * onto an old version of an object, causing the GRANT or REVOKE statement
- * to fail.
  */
 static List *
 objectNamesToOids(ObjectType objtype, List *objnames, bool is_grant)
 {
 	List	   *objects = NIL;
 	ListCell   *cell;
+	const LOCKMODE lockmode = AccessShareLock;
 
 	Assert(objnames != NIL);
 
 	switch (objtype)
 	{
+		default:
+
+			/*
+			 * For most object types, we use get_object_address() directly.
+			 */
+			foreach(cell, objnames)
+			{
+				ObjectAddress address;
+
+				address = get_object_address(objtype, lfirst(cell), NULL, lockmode, false);
+				objects = lappend_oid(objects, address.objectId);
+			}
+			break;
+
 		case OBJECT_TABLE:
 		case OBJECT_SEQUENCE:
+
+			/*
+			 * Here, we don't use get_object_address().  It requires that the
+			 * specified object type match the actual type of the object, but
+			 * in GRANT/REVOKE, all table-like things are addressed as TABLE.
+			 */
 			foreach(cell, objnames)
 			{
 				RangeVar   *relvar = (RangeVar *) lfirst(cell);
 				Oid			relOid;
 
-				relOid = RangeVarGetRelid(relvar, NoLock, false);
+				relOid = RangeVarGetRelid(relvar, lockmode, false);
 				objects = lappend_oid(objects, relOid);
 			}
 			break;
-		case OBJECT_DATABASE:
-			foreach(cell, objnames)
-			{
-				char	   *dbname = strVal(lfirst(cell));
-				Oid			dbid;
 
-				dbid = get_database_oid(dbname, false);
-				objects = lappend_oid(objects, dbid);
-			}
-			break;
 		case OBJECT_DOMAIN:
 		case OBJECT_TYPE:
+
+			/*
+			 * The parse representation of types and domains in privilege
+			 * targets is different from that expected by get_object_address()
+			 * (for parse conflict reasons), so we have to do a bit of
+			 * conversion here.
+			 */
 			foreach(cell, objnames)
 			{
 				List	   *typname = (List *) lfirst(cell);
-				Oid			oid;
+				TypeName   *tn = makeTypeNameFromNameList(typname);
+				ObjectAddress address;
+				Relation	relation;
 
-				oid = typenameTypeId(NULL, makeTypeNameFromNameList(typname));
-				objects = lappend_oid(objects, oid);
+				address = get_object_address(objtype, (Node *) tn, &relation, lockmode, false);
+				Assert(relation == NULL);
+				objects = lappend_oid(objects, address.objectId);
 			}
 			break;
-		case OBJECT_FUNCTION:
-			foreach(cell, objnames)
-			{
-				ObjectWithArgs *func = (ObjectWithArgs *) lfirst(cell);
-				Oid			funcid;
 
-				funcid = LookupFuncWithArgs(OBJECT_FUNCTION, func, false);
-				objects = lappend_oid(objects, funcid);
-			}
-			break;
-		case OBJECT_LANGUAGE:
-			foreach(cell, objnames)
-			{
-				char	   *langname = strVal(lfirst(cell));
-				Oid			oid;
-
-				oid = get_language_oid(langname, false);
-				objects = lappend_oid(objects, oid);
-			}
-			break;
-		case OBJECT_LARGEOBJECT:
-			foreach(cell, objnames)
-			{
-				Oid			lobjOid = oidparse(lfirst(cell));
-
-				if (!LargeObjectExists(lobjOid))
-					ereport(ERROR,
-							(errcode(ERRCODE_UNDEFINED_OBJECT),
-							 errmsg("large object %u does not exist",
-									lobjOid)));
-
-				objects = lappend_oid(objects, lobjOid);
-			}
-			break;
-		case OBJECT_SCHEMA:
-			foreach(cell, objnames)
-			{
-				char	   *nspname = strVal(lfirst(cell));
-				Oid			oid;
-
-				oid = get_namespace_oid(nspname, false);
-				objects = lappend_oid(objects, oid);
-			}
-			break;
-		case OBJECT_PROCEDURE:
-			foreach(cell, objnames)
-			{
-				ObjectWithArgs *func = (ObjectWithArgs *) lfirst(cell);
-				Oid			procid;
-
-				procid = LookupFuncWithArgs(OBJECT_PROCEDURE, func, false);
-				objects = lappend_oid(objects, procid);
-			}
-			break;
-		case OBJECT_ROUTINE:
-			foreach(cell, objnames)
-			{
-				ObjectWithArgs *func = (ObjectWithArgs *) lfirst(cell);
-				Oid			routid;
-
-				routid = LookupFuncWithArgs(OBJECT_ROUTINE, func, false);
-				objects = lappend_oid(objects, routid);
-			}
-			break;
-		case OBJECT_TABLESPACE:
-			foreach(cell, objnames)
-			{
-				char	   *spcname = strVal(lfirst(cell));
-				Oid			spcoid;
-
-				spcoid = get_tablespace_oid(spcname, false);
-				objects = lappend_oid(objects, spcoid);
-			}
-			break;
-		case OBJECT_FDW:
-			foreach(cell, objnames)
-			{
-				char	   *fdwname = strVal(lfirst(cell));
-				Oid			fdwid = get_foreign_data_wrapper_oid(fdwname, false);
-
-				objects = lappend_oid(objects, fdwid);
-			}
-			break;
-		case OBJECT_FOREIGN_SERVER:
-			foreach(cell, objnames)
-			{
-				char	   *srvname = strVal(lfirst(cell));
-				Oid			srvid = get_foreign_server_oid(srvname, false);
-
-				objects = lappend_oid(objects, srvid);
-			}
-			break;
 		case OBJECT_PARAMETER_ACL:
+
+			/*
+			 * Parameters are handled completely differently.
+			 */
 			foreach(cell, objnames)
 			{
 				/*
@@ -831,9 +762,6 @@ objectNamesToOids(ObjectType objtype, List *objnames, bool is_grant)
 					objects = lappend_oid(objects, parameterId);
 			}
 			break;
-		default:
-			elog(ERROR, "unrecognized GrantStmt.objtype: %d",
-				 (int) objtype);
 	}
 
 	return objects;
@@ -1079,6 +1007,10 @@ ExecAlterDefaultPrivilegesStmt(ParseState *pstate, AlterDefaultPrivilegesStmt *s
 			all_privileges = ACL_ALL_RIGHTS_SCHEMA;
 			errormsg = gettext_noop("invalid privilege type %s for schema");
 			break;
+		case OBJECT_LARGEOBJECT:
+			all_privileges = ACL_ALL_RIGHTS_LARGEOBJECT;
+			errormsg = gettext_noop("invalid privilege type %s for large object");
+			break;
 		default:
 			elog(ERROR, "unrecognized GrantStmt.objtype: %d",
 				 (int) action->objtype);
@@ -1268,6 +1200,16 @@ SetDefaultACL(InternalDefaultACL *iacls)
 			objtype = DEFACLOBJ_NAMESPACE;
 			if (iacls->all_privs && this_privileges == ACL_NO_RIGHTS)
 				this_privileges = ACL_ALL_RIGHTS_SCHEMA;
+			break;
+
+		case OBJECT_LARGEOBJECT:
+			if (OidIsValid(iacls->nspid))
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_GRANT_OPERATION),
+						 errmsg("cannot use IN SCHEMA clause when using GRANT/REVOKE ON LARGE OBJECTS")));
+			objtype = DEFACLOBJ_LARGEOBJECT;
+			if (iacls->all_privs && this_privileges == ACL_NO_RIGHTS)
+				this_privileges = ACL_ALL_RIGHTS_LARGEOBJECT;
 			break;
 
 		default:
@@ -1512,6 +1454,9 @@ RemoveRoleFromObjectACL(Oid roleid, Oid classid, Oid objid)
 				break;
 			case DEFACLOBJ_NAMESPACE:
 				iacls.objtype = OBJECT_SCHEMA;
+				break;
+			case DEFACLOBJ_LARGEOBJECT:
+				iacls.objtype = OBJECT_LARGEOBJECT;
 				break;
 			default:
 				/* Shouldn't get here */
@@ -1850,7 +1795,7 @@ ExecGrant_Relation(InternalGrant *istmt)
 		HeapTuple	tuple;
 		ListCell   *cell_colprivs;
 
-		tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(relOid));
+		tuple = SearchSysCacheLocked1(RELOID, ObjectIdGetDatum(relOid));
 		if (!HeapTupleIsValid(tuple))
 			elog(ERROR, "cache lookup failed for relation %u", relOid);
 		pg_class_tuple = (Form_pg_class) GETSTRUCT(tuple);
@@ -2062,6 +2007,7 @@ ExecGrant_Relation(InternalGrant *istmt)
 										 values, nulls, replaces);
 
 			CatalogTupleUpdate(relation, &newtuple->t_self, newtuple);
+			UnlockTuple(relation, &tuple->t_self, InplaceUpdateTupleLock);
 
 			/* Update initial privileges for extensions */
 			recordExtensionInitPriv(relOid, RelationRelationId, 0, new_acl);
@@ -2074,6 +2020,8 @@ ExecGrant_Relation(InternalGrant *istmt)
 
 			pfree(new_acl);
 		}
+		else
+			UnlockTuple(relation, &tuple->t_self, InplaceUpdateTupleLock);
 
 		/*
 		 * Handle column-level privileges, if any were specified or implied.
@@ -2187,7 +2135,7 @@ ExecGrant_common(InternalGrant *istmt, Oid classid, AclMode default_privs,
 		Oid		   *oldmembers;
 		Oid		   *newmembers;
 
-		tuple = SearchSysCache1(cacheid, ObjectIdGetDatum(objectid));
+		tuple = SearchSysCacheLocked1(cacheid, ObjectIdGetDatum(objectid));
 		if (!HeapTupleIsValid(tuple))
 			elog(ERROR, "cache lookup failed for %s %u", get_object_class_descr(classid), objectid);
 
@@ -2263,6 +2211,7 @@ ExecGrant_common(InternalGrant *istmt, Oid classid, AclMode default_privs,
 									 nulls, replaces);
 
 		CatalogTupleUpdate(relation, &newtuple->t_self, newtuple);
+		UnlockTuple(relation, &tuple->t_self, InplaceUpdateTupleLock);
 
 		/* Update initial privileges for extensions */
 		recordExtensionInitPriv(objectid, classid, 0, new_acl);
@@ -2455,14 +2404,6 @@ ExecGrant_Type_check(InternalGrant *istmt, HeapTuple tuple)
 				(errcode(ERRCODE_INVALID_GRANT_OPERATION),
 				 errmsg("cannot set privileges of multirange types"),
 				 errhint("Set the privileges of the range type instead.")));
-
-	/* Used GRANT DOMAIN on a non-domain? */
-	if (istmt->objtype == OBJECT_DOMAIN &&
-		pg_type_tuple->typtype != TYPTYPE_DOMAIN)
-		ereport(ERROR,
-				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("\"%s\" is not a domain",
-						NameStr(pg_type_tuple->typname))));
 }
 
 static void
@@ -2643,8 +2584,6 @@ string_to_privilege(const char *privname)
 		return ACL_ALTER_SYSTEM;
 	if (strcmp(privname, "maintain") == 0)
 		return ACL_MAINTAIN;
-	if (strcmp(privname, "rule") == 0)
-		return 0;				/* ignore old RULE privileges */
 	ereport(ERROR,
 			(errcode(ERRCODE_SYNTAX_ERROR),
 			 errmsg("unrecognized privilege type \"%s\"", privname)));
@@ -3108,10 +3047,6 @@ pg_aclmask(ObjectType objtype, Oid object_oid, AttrNumber attnum, Oid roleid,
  * Exported routines for examining a user's privileges for various objects
  *
  * See aclmask() for a description of the common API for these functions.
- *
- * Note: we give lookup failure the full ereport treatment because the
- * has_xxx_privilege() family of functions allow users to pass any random
- * OID to these functions.
  * ****************************************************************
  */
 
@@ -3178,10 +3113,8 @@ object_aclmask_ext(Oid classid, Oid objectid, Oid roleid,
 			return 0;
 		}
 		else
-			ereport(ERROR,
-					(errcode(ERRCODE_UNDEFINED_OBJECT),
-					 errmsg("%s with OID %u does not exist",
-							get_object_class_descr(classid), objectid)));
+			elog(ERROR, "cache lookup failed for %s %u",
+				 get_object_class_descr(classid), objectid);
 	}
 
 	ownerId = DatumGetObjectId(SysCacheGetAttrNotNull(cacheid,
@@ -3472,7 +3405,7 @@ pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
 	 * Check if ACL_MAINTAIN is being checked and, if so, and not already set
 	 * as part of the result, then check if the user is a member of the
 	 * pg_maintain role, which allows VACUUM, ANALYZE, CLUSTER, REFRESH
-	 * MATERIALIZED VIEW, and REINDEX on all relations.
+	 * MATERIALIZED VIEW, REINDEX, and LOCK TABLE on all relations.
 	 */
 	if (mask & ACL_MAINTAIN &&
 		!(result & ACL_MAINTAIN) &&
@@ -4186,9 +4119,8 @@ object_ownercheck(Oid classid, Oid objectid, Oid roleid)
 
 		tuple = SearchSysCache1(cacheid, ObjectIdGetDatum(objectid));
 		if (!HeapTupleIsValid(tuple))
-			ereport(ERROR,
-					(errcode(ERRCODE_UNDEFINED_OBJECT),
-					 errmsg("%s with OID %u does not exist", get_object_class_descr(classid), objectid)));
+			elog(ERROR, "cache lookup failed for %s %u",
+				 get_object_class_descr(classid), objectid);
 
 		ownerId = DatumGetObjectId(SysCacheGetAttrNotNull(cacheid,
 														  tuple,
@@ -4217,9 +4149,8 @@ object_ownercheck(Oid classid, Oid objectid, Oid roleid)
 
 		tuple = systable_getnext(scan);
 		if (!HeapTupleIsValid(tuple))
-			ereport(ERROR,
-					(errcode(ERRCODE_UNDEFINED_OBJECT),
-					 errmsg("%s with OID %u does not exist", get_object_class_descr(classid), objectid)));
+			elog(ERROR, "could not find tuple for %s %u",
+				 get_object_class_descr(classid), objectid);
 
 		ownerId = DatumGetObjectId(heap_getattr(tuple,
 												get_object_attnum_owner(classid),
@@ -4360,6 +4291,10 @@ get_user_default_acl(ObjectType objtype, Oid ownerId, Oid nsp_oid)
 
 		case OBJECT_SCHEMA:
 			defaclobjtype = DEFACLOBJ_NAMESPACE;
+			break;
+
+		case OBJECT_LARGEOBJECT:
+			defaclobjtype = DEFACLOBJ_LARGEOBJECT;
 			break;
 
 		default:

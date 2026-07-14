@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 # Set of tests for pg_upgrade, including cross-version checks.
 use strict;
@@ -7,16 +7,19 @@ use warnings FATAL => 'all';
 use Cwd            qw(abs_path);
 use File::Basename qw(dirname);
 use File::Compare;
-use File::Find qw(find);
-use File::Path qw(rmtree);
+use File::Find     qw(find);
+use File::Path     qw(rmtree);
 
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
+use PostgreSQL::Test::AdjustDump;
 use PostgreSQL::Test::AdjustUpgrade;
 use Test::More;
 
 # Can be changed to test the other modes.
 my $mode = $ENV{PG_TEST_PG_UPGRADE_MODE} || '--copy';
+
+my $tempdir = PostgreSQL::Test::Utils::tempdir;
 
 # Generate a database with a name made of a range of ASCII characters.
 sub generate_db
@@ -36,8 +39,8 @@ sub generate_db
 		"created database with ASCII characters from $from_char to $to_char");
 }
 
-# Filter the contents of a dump before its use in a content comparison.
-# This returns the path to the filtered dump.
+# Filter the contents of a dump before its use in a content comparison for
+# upgrade testing. This returns the path to the filtered dump.
 sub filter_dump
 {
 	my ($is_old, $old_version, $dump_file) = @_;
@@ -61,6 +64,40 @@ sub filter_dump
 	return $dump_file_filtered;
 }
 
+# Dump database db from the given node in plain format and adjust it for
+# comparing dumps from the original and the restored database.
+#
+# file_prefix is used to create unique names for all dump files so that they
+# remain available for debugging in case the test fails.
+#
+# adjust_child_columns is passed to adjust_regress_dumpfile() which actually
+# adjusts the dump output.
+#
+# The name of the file containing adjusted dump is returned.
+sub get_dump_for_comparison
+{
+	my ($node, $db, $file_prefix, $adjust_child_columns) = @_;
+
+	my $dumpfile = $tempdir . '/' . $file_prefix . '.sql';
+	my $dump_adjusted = "${dumpfile}_adjusted";
+
+	open(my $dh, '>', $dump_adjusted)
+	  || die "could not open $dump_adjusted for writing $!";
+
+	$node->run_log(
+		[
+			'pg_dump', '--no-sync',
+			'-d' => $node->connstr($db),
+			'-f' => $dumpfile
+		]);
+
+	print $dh adjust_regress_dumpfile(slurp_file($dumpfile),
+		$adjust_child_columns);
+	close($dh);
+
+	return $dump_adjusted;
+}
+
 # The test of pg_upgrade requires two clusters, an old one and a new one
 # that gets upgraded.  Before running the upgrade, a logical dump of the
 # old cluster is taken, and a second logical dump of the new one is taken
@@ -81,7 +118,6 @@ if (   (defined($ENV{olddump}) && !defined($ENV{oldinstall}))
 }
 
 # Paths to the dumps taken during the tests.
-my $tempdir = PostgreSQL::Test::Utils::tempdir;
 my $dump1_file = "$tempdir/dump1.sql";
 my $dump2_file = "$tempdir/dump2.sql";
 
@@ -92,7 +128,7 @@ my $oldnode =
   PostgreSQL::Test::Cluster->new('old_node',
 	install_path => $ENV{oldinstall});
 
-my %node_params = ();
+my %old_node_params = ();
 
 # To increase coverage of non-standard segment size and group access without
 # increasing test runtime, run these tests with a custom setting.
@@ -158,30 +194,37 @@ else
 my %encodings = ('UTF-8' => 6, 'SQL_ASCII' => 0);
 my $original_encoding = $encodings{$original_enc_name};
 
-my @initdb_params = @custom_opts;
+my @old_initdb_params = @custom_opts;
 
-push @initdb_params, ('--encoding', $original_enc_name);
-push @initdb_params, ('--lc-collate', $original_datcollate);
-push @initdb_params, ('--lc-ctype', $original_datctype);
+push @old_initdb_params, ('--encoding', $original_enc_name);
+push @old_initdb_params, ('--lc-collate', $original_datcollate);
+push @old_initdb_params, ('--lc-ctype', $original_datctype);
 
 # add --locale-provider, if supported
 my %provider_name = ('b' => 'builtin', 'i' => 'icu', 'c' => 'libc');
 if ($oldnode->pg_version >= 15)
 {
-	push @initdb_params,
+	push @old_initdb_params,
 	  ('--locale-provider', $provider_name{$original_provider});
 	if ($original_provider eq 'b')
 	{
-		push @initdb_params, ('--builtin-locale', $original_datlocale);
+		push @old_initdb_params, ('--builtin-locale', $original_datlocale);
 	}
 	elsif ($original_provider eq 'i')
 	{
-		push @initdb_params, ('--icu-locale', $original_datlocale);
+		push @old_initdb_params, ('--icu-locale', $original_datlocale);
 	}
 }
 
-$node_params{extra} = \@initdb_params;
-$oldnode->init(%node_params);
+# Since checksums are now enabled by default, and weren't before 18,
+# pass '-k' to initdb on old versions so that upgrades work.
+push @old_initdb_params, '-k' if $oldnode->pg_version < 18;
+
+$old_node_params{extra} = \@old_initdb_params;
+$oldnode->init(%old_node_params);
+# Override log_statement=all set by Cluster.pm.  This avoids large amounts
+# of log traffic that slow this test down even more when run under valgrind.
+$oldnode->append_conf('postgresql.conf', 'log_statement = none');
 $oldnode->start;
 
 my $result;
@@ -205,7 +248,8 @@ if (defined($ENV{olddump}))
 
 	# Load the dump using the "postgres" database as "regression" does
 	# not exist yet, and we are done here.
-	$oldnode->command_ok([ 'psql', '-X', '-f', $olddumpfile, 'postgres' ],
+	$oldnode->command_ok(
+		[ 'psql', '--no-psqlrc', '--file' => $olddumpfile, 'postgres' ],
 		'loaded old dump file');
 }
 else
@@ -263,17 +307,20 @@ else
 # Initialize a new node for the upgrade.
 my $newnode = PostgreSQL::Test::Cluster->new('new_node');
 
-# Reset to original parameters.
-@initdb_params = @custom_opts;
-
 # The new cluster will be initialized with different locale settings,
 # but these settings will be overwritten with those of the original
 # cluster.
-push @initdb_params, ('--encoding', 'SQL_ASCII');
-push @initdb_params, ('--locale-provider', 'libc');
+my %new_node_params = %old_node_params;
+my @new_initdb_params = @custom_opts;
+push @new_initdb_params, ('--encoding', 'SQL_ASCII');
+push @new_initdb_params, ('--locale-provider', 'libc');
+$new_node_params{extra} = \@new_initdb_params;
+$newnode->init(%new_node_params);
+# Avoid unnecessary log noise
+$newnode->append_conf('postgresql.conf', 'log_statement = none');
 
-$node_params{extra} = \@initdb_params;
-$newnode->init(%node_params);
+# Stabilize stats for comparison.
+$newnode->append_conf('postgresql.conf', 'autovacuum = off');
 
 my $newbindir = $newnode->config_data('--bindir');
 my $oldbindir = $oldnode->config_data('--bindir');
@@ -297,25 +344,89 @@ if (defined($ENV{oldinstall}))
 		my @command_args = ();
 		for my $upcmd (@{ $adjust_cmds->{$updb} })
 		{
-			push @command_args, '-c', $upcmd;
+			push @command_args, '--command' => $upcmd;
 		}
 
 		# For simplicity, use the newer version's psql to issue the commands.
 		$newnode->command_ok(
 			[
-				'psql', '-X', '-v', 'ON_ERROR_STOP=1',
-				'-d', $oldnode->connstr($updb),
+				'psql', '--no-psqlrc',
+				'--set' => 'ON_ERROR_STOP=1',
+				'--dbname' => $oldnode->connstr($updb),
 				@command_args,
 			],
 			"ran version adaptation commands for database $updb");
 	}
 }
 
+# Stabilize stats before pg_dump / pg_dumpall. Doing it after initializing
+# the new node gives enough time for autovacuum to update statistics on the
+# old node.
+$oldnode->append_conf('postgresql.conf', 'autovacuum = off');
+$oldnode->restart;
+
+# Test that dump/restore of the regression database roundtrips cleanly.  This
+# doesn't work well when the nodes are different versions, so skip it in that
+# case.  Note that this isn't a pg_upgrade test, but it's convenient to do it
+# here because we've gone to the trouble of creating the regression database.
+#
+# Do this while the old cluster is running before it is shut down by the
+# upgrade test but after turning its autovacuum off for stable statistics.
+SKIP:
+{
+	my $dstnode = PostgreSQL::Test::Cluster->new('dst_node');
+
+	skip "different Postgres versions"
+	  if ($oldnode->pg_version != $dstnode->pg_version);
+	skip "source node not using default install"
+	  if (defined $oldnode->install_path);
+
+	# Setup destination database cluster with the same configuration as the
+	# source cluster to avoid any differences between dumps taken from both the
+	# clusters caused by differences in their configurations.
+	$dstnode->init(%old_node_params);
+	# Avoid unnecessary log noise
+	$dstnode->append_conf('postgresql.conf', 'log_statement = none');
+	# Stabilize stats for comparison.
+	$dstnode->append_conf('postgresql.conf', 'autovacuum = off');
+	$dstnode->start;
+
+	# Use --create in dump and restore commands so that the restored
+	# database has the same configurable variable settings as the original
+	# database so that the dumps taken from both databases taken do not
+	# differ because of locale changes. Additionally this provides test
+	# coverage for --create option.
+	#
+	# Use directory format so that we can use parallel dump/restore.
+	my $dump_file = "$tempdir/regression.dump";
+	$oldnode->command_ok(
+		[
+			'pg_dump', '-Fd', '-j2', '--no-sync',
+			'-d' => $oldnode->connstr('regression'),
+			'--create', '-f' => $dump_file
+		],
+		'pg_dump on source instance');
+
+	$dstnode->command_ok(
+		[ 'pg_restore', '--create', '-j2', '-d' => 'postgres', $dump_file ],
+		'pg_restore to destination instance');
+
+	# Dump original and restored database for comparison.
+	my $src_dump =
+	  get_dump_for_comparison($oldnode, 'regression', 'src_dump', 1);
+	my $dst_dump =
+	  get_dump_for_comparison($dstnode, 'regression', 'dest_dump', 0);
+
+	compare_files($src_dump, $dst_dump,
+		'dump outputs from original and restored regression databases match');
+}
+
 # Take a dump before performing the upgrade as a base comparison. Note
 # that we need to use pg_dumpall from the new node here.
 my @dump_command = (
-	'pg_dumpall', '--no-sync', '-d', $oldnode->connstr('postgres'),
-	'-f', $dump1_file);
+	'pg_dumpall', '--no-sync',
+	'--dbname' => $oldnode->connstr('postgres'),
+	'--file' => $dump1_file);
 # --extra-float-digits is needed when upgrading from a version older than 11.
 push(@dump_command, '--extra-float-digits', '0')
   if ($oldnode->pg_version < 12);
@@ -403,18 +514,21 @@ $oldnode->stop;
 # Cause a failure at the start of pg_upgrade, this should create the logging
 # directory pg_upgrade_output.d but leave it around.  Keep --check for an
 # early exit.
-command_fails(
+command_checks_all(
 	[
 		'pg_upgrade', '--no-sync',
-		'-d', $oldnode->data_dir,
-		'-D', $newnode->data_dir,
-		'-b', $oldbindir . '/does/not/exist/',
-		'-B', $newbindir,
-		'-s', $newnode->host,
-		'-p', $oldnode->port,
-		'-P', $newnode->port,
+		'--old-datadir' => $oldnode->data_dir,
+		'--new-datadir' => $newnode->data_dir,
+		'--old-bindir' => $oldbindir . '/does/not/exist/',
+		'--new-bindir' => $newbindir,
+		'--socketdir' => $newnode->host,
+		'--old-port' => $oldnode->port,
+		'--new-port' => $newnode->port,
 		$mode, '--check',
 	],
+	1,
+	[qr{check for ".*?does/not/exist" failed}],
+	[],
 	'run of pg_upgrade --check for new instance with incorrect binary path');
 ok(-d $newnode->data_dir . "/pg_upgrade_output.d",
 	"pg_upgrade_output.d/ not removed after pg_upgrade failure");
@@ -431,17 +545,17 @@ SKIP:
 	command_checks_all(
 		[
 			'pg_upgrade', '--no-sync',
-			'-d', $oldnode->data_dir,
-			'-D', $newnode->data_dir,
-			'-b', $oldbindir,
-			'-B', $newbindir,
-			'-s', $newnode->host,
-			'-p', $oldnode->port,
-			'-P', $newnode->port,
+			'--old-datadir' => $oldnode->data_dir,
+			'--new-datadir' => $newnode->data_dir,
+			'--old-bindir' => $oldbindir,
+			'--new-bindir' => $newbindir,
+			'--socketdir' => $newnode->host,
+			'--old-port' => $oldnode->port,
+			'--new-port' => $newnode->port,
 			$mode, '--check',
 		],
 		1,
-		[qr/invalid/],    # pg_upgrade prints errors on stdout :(
+		[qr/datconnlimit/],
 		[qr/^$/],
 		'invalid database causes failure');
 	rmtree($newnode->data_dir . "/pg_upgrade_output.d");
@@ -455,10 +569,14 @@ $oldnode->stop;
 # --check command works here, cleans up pg_upgrade_output.d.
 command_ok(
 	[
-		'pg_upgrade', '--no-sync', '-d', $oldnode->data_dir,
-		'-D', $newnode->data_dir, '-b', $oldbindir,
-		'-B', $newbindir, '-s', $newnode->host,
-		'-p', $oldnode->port, '-P', $newnode->port,
+		'pg_upgrade', '--no-sync',
+		'--old-datadir' => $oldnode->data_dir,
+		'--new-datadir' => $newnode->data_dir,
+		'--old-bindir' => $oldbindir,
+		'--new-bindir' => $newbindir,
+		'--socketdir' => $newnode->host,
+		'--old-port' => $oldnode->port,
+		'--new-port' => $newnode->port,
 		$mode, '--check',
 	],
 	'run of pg_upgrade --check for new instance');
@@ -468,10 +586,14 @@ ok(!-d $newnode->data_dir . "/pg_upgrade_output.d",
 # Actual run, pg_upgrade_output.d is removed at the end.
 command_ok(
 	[
-		'pg_upgrade', '--no-sync', '-d', $oldnode->data_dir,
-		'-D', $newnode->data_dir, '-b', $oldbindir,
-		'-B', $newbindir, '-s', $newnode->host,
-		'-p', $oldnode->port, '-P', $newnode->port,
+		'pg_upgrade', '--no-sync',
+		'--old-datadir' => $oldnode->data_dir,
+		'--new-datadir' => $newnode->data_dir,
+		'--old-bindir' => $oldbindir,
+		'--new-bindir' => $newbindir,
+		'--socketdir' => $newnode->host,
+		'--old-port' => $oldnode->port,
+		'--new-port' => $newnode->port,
 		$mode,
 	],
 	'run of pg_upgrade for new instance');
@@ -492,9 +614,14 @@ if (-d $log_path)
 			  if $File::Find::name =~ m/.*\.log/;
 		},
 		$newnode->data_dir . "/pg_upgrade_output.d");
+
+	my $test_logfile = $PostgreSQL::Test::Utils::test_logfile;
+
+	note "=== pg_upgrade logs found - appending to $test_logfile ===\n";
 	foreach my $log (@log_files)
 	{
-		note "=== contents of $log ===\n";
+		note "=== appending $log ===\n";
+		print "=== contents of $log ===\n";
 		print slurp_file($log);
 		print "=== EOF ===\n";
 	}
@@ -511,10 +638,11 @@ is( $result,
 
 # Second dump from the upgraded instance.
 @dump_command = (
-	'pg_dumpall', '--no-sync', '-d', $newnode->connstr('postgres'),
-	'-f', $dump2_file);
+	'pg_dumpall', '--no-sync',
+	'--dbname' => $newnode->connstr('postgres'),
+	'--file' => $dump2_file);
 # --extra-float-digits is needed when upgrading from a version older than 11.
-push(@dump_command, '--extra-float-digits', '0')
+push(@dump_command, '--extra-float-digits' => '0')
   if ($oldnode->pg_version < 12);
 $newnode->command_ok(\@dump_command, 'dump after running pg_upgrade');
 
@@ -540,21 +668,8 @@ $newnode->command_ok(
 );
 
 # Compare the two dumps, there should be no differences.
-my $compare_res = compare($dump1_filtered, $dump2_filtered);
-is($compare_res, 0, 'old and new dumps match after pg_upgrade');
-
-# Provide more context if the dumps do not match.
-if ($compare_res != 0)
-{
-	my ($stdout, $stderr) =
-	  run_command([ 'diff', '-u', $dump1_filtered, $dump2_filtered ]);
-	print "=== diff of $dump1_filtered and $dump2_filtered\n";
-	print "=== stdout ===\n";
-	print $stdout;
-	print "=== stderr ===\n";
-	print $stderr;
-	print "=== EOF ===\n";
-}
+compare_files($dump1_filtered, $dump2_filtered,
+	'old and new dumps match after pg_upgrade');
 
 # Compare the two dumps, there should be no differences.
 my $compare_res_meta = compare("$tempdir/meta1.out", "$tempdir/meta2.out");

@@ -272,7 +272,7 @@ SELECT pg_typeof(JSON_SERIALIZE(NULL));
 
 -- only string types or bytea allowed
 SELECT JSON_SERIALIZE('{ "a" : 1 } ' RETURNING jsonb);
-ERROR:  cannot use RETURNING type jsonb in JSON_SERIALIZE()
+ERROR:  cannot use type jsonb in RETURNING clause of JSON_SERIALIZE()
 HINT:  Try returning a string type or bytea.
 EXPLAIN (VERBOSE, COSTS OFF) SELECT JSON_SERIALIZE('{}');
                      QUERY PLAN                      
@@ -337,6 +337,8 @@ LINE 1: SELECT JSON_OBJECT(RETURNING text FORMAT JSON ENCODING UTF8)...
                                           ^
 SELECT JSON_OBJECT(RETURNING text FORMAT JSON ENCODING INVALID_ENCODING);
 ERROR:  unrecognized JSON encoding: invalid_encoding
+LINE 1: ...T JSON_OBJECT(RETURNING text FORMAT JSON ENCODING INVALID_EN...
+                                                             ^
 SELECT JSON_OBJECT(RETURNING bytea);
  json_object 
 -------------
@@ -537,6 +539,8 @@ SELECT JSON_OBJECT('a': '1', 'b': NULL, 'c': 2 ABSENT ON NULL);
  {"a" : "1", "c" : 2}
 (1 row)
 
+SELECT JSON_OBJECT(1: 1, '2': NULL, '3': 1, repeat('x', 1000): 1, 2: repeat('a', 100) WITH UNIQUE);
+ERROR:  duplicate JSON object key value: "2"
 SELECT JSON_OBJECT(1: 1, '1': NULL WITH UNIQUE);
 ERROR:  duplicate JSON object key value: "1"
 SELECT JSON_OBJECT(1: 1, '1': NULL ABSENT ON NULL WITH UNIQUE);
@@ -569,6 +573,18 @@ SELECT JSON_OBJECT(1: 1, '2': NULL, '3': 1, 4: NULL, '5': 'a' ABSENT ON NULL WIT
  {"1": 1, "3": 1, "5": "a"}
 (1 row)
 
+-- BUG: https://postgr.es/m/CADXhmgTJtJZK9A3Na_ry%2BXrq-ghjcejBRhcRMzWZvbd__QdgJA%40mail.gmail.com
+-- datum_to_jsonb_internal() didn't catch keys that are casts instead of a simple scalar
+CREATE TYPE mood AS ENUM ('happy', 'sad', 'neutral');
+CREATE FUNCTION mood_to_json(mood) RETURNS json AS $$
+  SELECT to_json($1::text);
+$$ LANGUAGE sql IMMUTABLE;
+CREATE CAST (mood AS json) WITH FUNCTION mood_to_json(mood) AS IMPLICIT;
+SELECT JSON_OBJECT('happy'::mood: '123'::jsonb);
+ERROR:  key value must be scalar, not array, composite, or json
+DROP CAST (mood AS json);
+DROP FUNCTION mood_to_json;
+DROP TYPE mood;
 -- JSON_ARRAY()
 SELECT JSON_ARRAY();
  json_array 
@@ -618,6 +634,8 @@ LINE 1: SELECT JSON_ARRAY(RETURNING text FORMAT JSON ENCODING UTF8);
                                          ^
 SELECT JSON_ARRAY(RETURNING text FORMAT JSON ENCODING INVALID_ENCODING);
 ERROR:  unrecognized JSON encoding: invalid_encoding
+LINE 1: ...CT JSON_ARRAY(RETURNING text FORMAT JSON ENCODING INVALID_EN...
+                                                             ^
 SELECT JSON_ARRAY(RETURNING bytea);
  json_array 
 ------------
@@ -733,6 +751,12 @@ SELECT JSON_ARRAY(SELECT i FROM (VALUES (3), (1), (NULL), (2)) foo(i) ORDER BY i
  [1, 2, 3]
 (1 row)
 
+SELECT JSON_ARRAY(WITH x AS (SELECT 1) VALUES (TRUE));
+ json_array 
+------------
+ [true]
+(1 row)
+
 -- Should fail
 SELECT JSON_ARRAY(SELECT FROM (VALUES (1)) foo(i));
 ERROR:  subquery must return only one column
@@ -815,22 +839,22 @@ SELECT
 FROM
 	(VALUES (NULL), (3), (1), (NULL), (NULL), (5), (2), (4), (NULL)) foo(bar);
 -[ RECORD 1 ]--------------------+-------------------------------------------------------------------------------------------------------------------------
-no_options                       | [1, 2, 3, 4, 5]
-returning_jsonb                  | [1, 2, 3, 4, 5]
-absent_on_null                   | [1, 2, 3, 4, 5]
-absentonnull_returning_jsonb     | [1, 2, 3, 4, 5]
-null_on_null                     | [1, 2, 3, 4, 5, null, null, null, null]
-nullonnull_returning_jsonb       | [1, 2, 3, 4, 5, null, null, null, null]
-row_no_options                   | [{"bar":1},                                                                                                             +
-                                 |  {"bar":2},                                                                                                             +
+no_options                       | [3, 1, 5, 2, 4]
+returning_jsonb                  | [3, 1, 5, 2, 4]
+absent_on_null                   | [3, 1, 5, 2, 4]
+absentonnull_returning_jsonb     | [3, 1, 5, 2, 4]
+null_on_null                     | [null, 3, 1, null, null, 5, 2, 4, null]
+nullonnull_returning_jsonb       | [null, 3, 1, null, null, 5, 2, 4, null]
+row_no_options                   | [{"bar":null},                                                                                                          +
                                  |  {"bar":3},                                                                                                             +
-                                 |  {"bar":4},                                                                                                             +
+                                 |  {"bar":1},                                                                                                             +
+                                 |  {"bar":null},                                                                                                          +
+                                 |  {"bar":null},                                                                                                          +
                                  |  {"bar":5},                                                                                                             +
-                                 |  {"bar":null},                                                                                                          +
-                                 |  {"bar":null},                                                                                                          +
-                                 |  {"bar":null},                                                                                                          +
+                                 |  {"bar":2},                                                                                                             +
+                                 |  {"bar":4},                                                                                                             +
                                  |  {"bar":null}]
-row_returning_jsonb              | [{"bar": 1}, {"bar": 2}, {"bar": 3}, {"bar": 4}, {"bar": 5}, {"bar": null}, {"bar": null}, {"bar": null}, {"bar": null}]
+row_returning_jsonb              | [{"bar": null}, {"bar": 3}, {"bar": 1}, {"bar": null}, {"bar": null}, {"bar": 5}, {"bar": 2}, {"bar": 4}, {"bar": null}]
 row_filtered_agg                 | [{"bar":3},                                                                                                             +
                                  |  {"bar":4},                                                                                                             +
                                  |  {"bar":5}]
@@ -921,6 +945,9 @@ FROM (VALUES (1, 1), (0, NULL),(4, null), (5, null),(6, null),(2, 2)) foo(k, v);
  {"1": 1, "2": 2}
 (1 row)
 
+SELECT JSON_OBJECTAGG(mod(i,100): (i)::text FORMAT JSON WITH UNIQUE)
+FROM generate_series(0, 199) i;
+ERROR:  duplicate JSON object key value: "0"
 -- Test JSON_OBJECT deparsing
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT JSON_OBJECT('foo' : '1' FORMAT JSON, 'bar' : 'baz' RETURNING json);
@@ -1002,17 +1029,18 @@ FROM generate_series(1,5) i;
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT JSON_OBJECTAGG(i: ('111' || i)::bytea FORMAT JSON WITH UNIQUE RETURNING text) OVER (PARTITION BY i % 2)
 FROM generate_series(1,5) i;
-                                                            QUERY PLAN                                                             
------------------------------------------------------------------------------------------------------------------------------------
+                                                            QUERY PLAN                                                            
+----------------------------------------------------------------------------------------------------------------------------------
  WindowAgg
-   Output: JSON_OBJECTAGG(i : (('111'::text || (i)::text))::bytea FORMAT JSON WITH UNIQUE KEYS RETURNING text) OVER (?), ((i % 2))
+   Output: JSON_OBJECTAGG(i : (('111'::text || (i)::text))::bytea FORMAT JSON WITH UNIQUE KEYS RETURNING text) OVER w1, ((i % 2))
+   Window: w1 AS (PARTITION BY ((i.i % 2)))
    ->  Sort
          Output: ((i % 2)), i
          Sort Key: ((i.i % 2))
          ->  Function Scan on pg_catalog.generate_series i
                Output: (i % 2), i
                Function Call: generate_series(1, 5)
-(8 rows)
+(9 rows)
 
 CREATE VIEW json_objectagg_view AS
 SELECT JSON_OBJECTAGG(i: ('111' || i)::bytea FORMAT JSON WITH UNIQUE RETURNING text) FILTER (WHERE i > 3)
@@ -1038,17 +1066,18 @@ FROM generate_series(1,5) i;
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT JSON_ARRAYAGG(('111' || i)::bytea FORMAT JSON NULL ON NULL RETURNING text) OVER (PARTITION BY i % 2)
 FROM generate_series(1,5) i;
-                                                        QUERY PLAN                                                        
---------------------------------------------------------------------------------------------------------------------------
+                                                       QUERY PLAN                                                        
+-------------------------------------------------------------------------------------------------------------------------
  WindowAgg
-   Output: JSON_ARRAYAGG((('111'::text || (i)::text))::bytea FORMAT JSON NULL ON NULL RETURNING text) OVER (?), ((i % 2))
+   Output: JSON_ARRAYAGG((('111'::text || (i)::text))::bytea FORMAT JSON NULL ON NULL RETURNING text) OVER w1, ((i % 2))
+   Window: w1 AS (PARTITION BY ((i.i % 2)))
    ->  Sort
          Output: ((i % 2)), i
          Sort Key: ((i.i % 2))
          ->  Function Scan on pg_catalog.generate_series i
                Output: (i % 2), i
                Function Call: generate_series(1, 5)
-(8 rows)
+(9 rows)
 
 CREATE VIEW json_arrayagg_view AS
 SELECT JSON_ARRAYAGG(('111' || i)::bytea FORMAT JSON NULL ON NULL RETURNING text) FILTER (WHERE i > 3)
@@ -1295,3 +1324,52 @@ SELECT JSON_SERIALIZE('123' RETURNING sqljson_char2);
 ERROR:  value too long for type character(2)
 SELECT JSON_SERIALIZE('12' RETURNING sqljson_char2);
 ERROR:  value for domain sqljson_char2 violates check constraint "sqljson_char2_check"
+-- Bug #18657: JsonValueExpr.raw_expr was not initialized in ExecInitExprRec()
+-- causing the Aggrefs contained in it to also not be initialized, which led
+-- to a crash in ExecBuildAggTrans() as mentioned in the bug report:
+-- https://postgr.es/m/18657-1b90ccce2b16bdb8@postgresql.org
+CREATE FUNCTION volatile_one() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql VOLATILE;
+CREATE FUNCTION stable_one() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql STABLE;
+EXPLAIN (VERBOSE, COSTS OFF) SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': volatile_one() RETURNING text) FORMAT JSON);
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: JSON_OBJECT('a' : JSON_OBJECTAGG('b' : volatile_one() RETURNING text) FORMAT JSON RETURNING json)
+   ->  Result
+(3 rows)
+
+SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': volatile_one() RETURNING text) FORMAT JSON);
+     json_object     
+---------------------
+ {"a" : { "b" : 1 }}
+(1 row)
+
+EXPLAIN (VERBOSE, COSTS OFF) SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': stable_one() RETURNING text) FORMAT JSON);
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: JSON_OBJECT('a' : JSON_OBJECTAGG('b' : stable_one() RETURNING text) FORMAT JSON RETURNING json)
+   ->  Result
+(3 rows)
+
+SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': stable_one() RETURNING text) FORMAT JSON);
+     json_object     
+---------------------
+ {"a" : { "b" : 1 }}
+(1 row)
+
+EXPLAIN (VERBOSE, COSTS OFF) SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': 1 RETURNING text) FORMAT JSON);
+                                           QUERY PLAN                                           
+------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: JSON_OBJECT('a' : JSON_OBJECTAGG('b' : 1 RETURNING text) FORMAT JSON RETURNING json)
+   ->  Result
+(3 rows)
+
+SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': 1 RETURNING text) FORMAT JSON);
+     json_object     
+---------------------
+ {"a" : { "b" : 1 }}
+(1 row)
+
+DROP FUNCTION volatile_one, stable_one;

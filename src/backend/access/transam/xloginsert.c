@@ -9,7 +9,7 @@
  * of XLogRecData structs by a call to XLogRecordAssemble(). See
  * access/transam/README for details.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/xloginsert.c
@@ -72,7 +72,7 @@ typedef struct
 	RelFileLocator rlocator;	/* identifies the relation and block */
 	ForkNumber	forkno;
 	BlockNumber block;
-	Page		page;			/* page content */
+	const PageData *page;		/* page content */
 	uint32		rdata_len;		/* total length of data in rdata chain */
 	XLogRecData *rdata_head;	/* head of the chain of data registered with
 								 * this block */
@@ -138,8 +138,8 @@ static XLogRecData *XLogRecordAssemble(RmgrId rmid, uint8 info,
 									   XLogRecPtr RedoRecPtr, bool doPageWrites,
 									   XLogRecPtr *fpw_lsn, int *num_fpi,
 									   bool *topxid_included);
-static bool XLogCompressBackupBlock(char *page, uint16 hole_offset,
-									uint16 hole_length, char *dest, uint16 *dlen);
+static bool XLogCompressBackupBlock(const PageData *page, uint16 hole_offset,
+									uint16 hole_length, void *dest, uint16 *dlen);
 
 /*
  * Begin constructing a WAL record. This must be called before the
@@ -307,7 +307,7 @@ XLogRegisterBuffer(uint8 block_id, Buffer buffer, uint8 flags)
  */
 void
 XLogRegisterBlock(uint8 block_id, RelFileLocator *rlocator, ForkNumber forknum,
-				  BlockNumber blknum, Page page, uint8 flags)
+				  BlockNumber blknum, const PageData *page, uint8 flags)
 {
 	registered_buffer *regbuf;
 
@@ -361,7 +361,7 @@ XLogRegisterBlock(uint8 block_id, RelFileLocator *rlocator, ForkNumber forknum,
  * XLogRecGetData().
  */
 void
-XLogRegisterData(char *data, uint32 len)
+XLogRegisterData(const void *data, uint32 len)
 {
 	XLogRecData *rdata;
 
@@ -402,7 +402,7 @@ XLogRegisterData(char *data, uint32 len)
  * limited)
  */
 void
-XLogRegisterBufData(uint8 block_id, char *data, uint32 len)
+XLogRegisterBufData(uint8 block_id, const void *data, uint32 len)
 {
 	registered_buffer *regbuf;
 	XLogRecData *rdata;
@@ -648,7 +648,7 @@ XLogRecordAssemble(RmgrId rmid, uint8 info,
 
 		if (include_image)
 		{
-			Page		page = regbuf->page;
+			const PageData *page = regbuf->page;
 			uint16		compressed_len = 0;
 
 			/*
@@ -869,8 +869,8 @@ XLogRecordAssemble(RmgrId rmid, uint8 info,
 			if (mainrdata_len > PG_UINT32_MAX)
 				ereport(ERROR,
 						(errmsg_internal("too much WAL data"),
-						 errdetail_internal("Main data length is %llu bytes for a maximum of %u bytes.",
-											(unsigned long long) mainrdata_len,
+						 errdetail_internal("Main data length is %" PRIu64 " bytes for a maximum of %u bytes.",
+											mainrdata_len,
 											PG_UINT32_MAX)));
 
 			mainrdata_len_4b = (uint32) mainrdata_len;
@@ -915,8 +915,8 @@ XLogRecordAssemble(RmgrId rmid, uint8 info,
 	if (total_len > XLogRecordMaxSize)
 		ereport(ERROR,
 				(errmsg_internal("oversized WAL record"),
-				 errdetail_internal("WAL record would be %llu bytes (of maximum %u bytes); rmid %u flags %u.",
-									(unsigned long long) total_len, XLogRecordMaxSize, rmid, info)));
+				 errdetail_internal("WAL record would be %" PRIu64 " bytes (of maximum %u bytes); rmid %u flags %u.",
+									total_len, XLogRecordMaxSize, rmid, info)));
 
 	/*
 	 * Fill in the fields in the record header. Prev-link is filled in later,
@@ -941,23 +941,23 @@ XLogRecordAssemble(RmgrId rmid, uint8 info,
  * the length of compressed block image.
  */
 static bool
-XLogCompressBackupBlock(char *page, uint16 hole_offset, uint16 hole_length,
-						char *dest, uint16 *dlen)
+XLogCompressBackupBlock(const PageData *page, uint16 hole_offset, uint16 hole_length,
+						void *dest, uint16 *dlen)
 {
 	int32		orig_len = BLCKSZ - hole_length;
 	int32		len = -1;
 	int32		extra_bytes = 0;
-	char	   *source;
+	const void *source;
 	PGAlignedBlock tmp;
 
 	if (hole_length != 0)
 	{
 		/* must skip the hole */
-		source = tmp.data;
-		memcpy(source, page, hole_offset);
-		memcpy(source + hole_offset,
+		memcpy(tmp.data, page, hole_offset);
+		memcpy(tmp.data + hole_offset,
 			   page + (hole_offset + hole_length),
 			   BLCKSZ - (hole_length + hole_offset));
+		source = tmp.data;
 
 		/*
 		 * Extra data needs to be stored in WAL record for the compressed

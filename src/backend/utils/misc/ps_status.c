@@ -7,7 +7,7 @@
  *
  * src/backend/utils/misc/ps_status.c
  *
- * Copyright (c) 2000-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2025, PostgreSQL Global Development Group
  * various details abducted from various places
  *--------------------------------------------------------------------
  */
@@ -23,7 +23,9 @@
 #include "utils/guc.h"
 #include "utils/ps_status.h"
 
+#if !defined(WIN32) || defined(_MSC_VER)
 extern char **environ;
+#endif
 
 /* GUC variable */
 bool		update_process_title = DEFAULT_UPDATE_PROCESS_TITLE;

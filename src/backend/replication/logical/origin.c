@@ -3,7 +3,7 @@
  * origin.c
  *	  Logical replication progress tracking support.
  *
- * Copyright (c) 2013-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/origin.c
@@ -90,10 +90,18 @@
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
+#include "utils/guc.h"
 #include "utils/pg_lsn.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+
+/* paths for replication origin checkpoint files */
+#define PG_REPLORIGIN_CHECKPOINT_FILENAME PG_LOGICAL_DIR "/replorigin_checkpoint"
+#define PG_REPLORIGIN_CHECKPOINT_TMPFILE PG_REPLORIGIN_CHECKPOINT_FILENAME ".tmp"
+
+/* GUC variables */
+int			max_active_replication_origins = 10;
 
 /*
  * Replay progress of a single remote node.
@@ -147,7 +155,7 @@ typedef struct ReplicationStateCtl
 {
 	/* Tranche to use for per-origin LWLocks */
 	int			tranche_id;
-	/* Array of length max_replication_slots */
+	/* Array of length max_active_replication_origins */
 	ReplicationState states[FLEXIBLE_ARRAY_MEMBER];
 } ReplicationStateCtl;
 
@@ -158,10 +166,7 @@ TimestampTz replorigin_session_origin_timestamp = 0;
 
 /*
  * Base address into a shared memory array of replication states of size
- * max_replication_slots.
- *
- * XXX: Should we use a separate variable to size this rather than
- * max_replication_slots?
+ * max_active_replication_origins.
  */
 static ReplicationState *replication_states;
 
@@ -182,12 +187,12 @@ static ReplicationState *session_replication_state = NULL;
 #define REPLICATION_STATE_MAGIC ((uint32) 0x1257DADE)
 
 static void
-replorigin_check_prerequisites(bool check_slots, bool recoveryOK)
+replorigin_check_prerequisites(bool check_origins, bool recoveryOK)
 {
-	if (check_slots && max_replication_slots == 0)
+	if (check_origins && max_active_replication_origins == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-				 errmsg("cannot query or manipulate replication origin when \"max_replication_slots\" is 0")));
+				 errmsg("cannot query or manipulate replication origin when \"max_active_replication_origins\" is 0")));
 
 	if (!recoveryOK && RecoveryInProgress())
 		ereport(ERROR,
@@ -259,6 +264,18 @@ replorigin_create(const char *roname)
 	SysScanDesc scan;
 	ScanKeyData key;
 
+	/*
+	 * To avoid needing a TOAST table for pg_replication_origin, we limit
+	 * replication origin names to 512 bytes.  This should be more than enough
+	 * for all practical use.
+	 */
+	if (strlen(roname) > MAX_RONAME_LEN)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("replication origin name is too long"),
+				 errdetail("Replication origin names must be no longer than %d bytes.",
+						   MAX_RONAME_LEN)));
+
 	roname_d = CStringGetTextDatum(roname);
 
 	Assert(IsTransactionState());
@@ -281,6 +298,17 @@ replorigin_create(const char *roname)
 	InitDirtySnapshot(SnapshotDirty);
 
 	rel = table_open(ReplicationOriginRelationId, ExclusiveLock);
+
+	/*
+	 * We want to be able to access pg_replication_origin without setting up a
+	 * snapshot.  To make that safe, it needs to not have a TOAST table, since
+	 * TOASTed data cannot be fetched without a snapshot.  As of this writing,
+	 * its only varlena column is roname, which we limit to 512 bytes to avoid
+	 * needing out-of-line storage.  If you add a TOAST table to this catalog,
+	 * be sure to set up a snapshot everywhere it might be needed.  For more
+	 * information, see https://postgr.es/m/ZvMSUPOqUU-VNADN%40nathan.
+	 */
+	Assert(!OidIsValid(rel->rd_rel->reltoastrelid));
 
 	for (roident = InvalidOid + 1; roident < PG_UINT16_MAX; roident++)
 	{
@@ -348,7 +376,7 @@ replorigin_state_clear(RepOriginId roident, bool nowait)
 restart:
 	LWLockAcquire(ReplicationOriginLock, LW_EXCLUSIVE);
 
-	for (i = 0; i < max_replication_slots; i++)
+	for (i = 0; i < max_active_replication_origins; i++)
 	{
 		ReplicationState *state = &replication_states[i];
 
@@ -387,7 +415,7 @@ restart:
 
 				xlrec.node_id = roident;
 				XLogBeginInsert();
-				XLogRegisterData((char *) (&xlrec), sizeof(xlrec));
+				XLogRegisterData(&xlrec, sizeof(xlrec));
 				XLogInsert(RM_REPLORIGIN_ID, XLOG_REPLORIGIN_DROP);
 			}
 
@@ -507,18 +535,13 @@ ReplicationOriginShmemSize(void)
 {
 	Size		size = 0;
 
-	/*
-	 * XXX: max_replication_slots is arguably the wrong thing to use, as here
-	 * we keep the replay state of *remote* transactions. But for now it seems
-	 * sufficient to reuse it, rather than introduce a separate GUC.
-	 */
-	if (max_replication_slots == 0)
+	if (max_active_replication_origins == 0)
 		return size;
 
 	size = add_size(size, offsetof(ReplicationStateCtl, states));
 
 	size = add_size(size,
-					mul_size(max_replication_slots, sizeof(ReplicationState)));
+					mul_size(max_active_replication_origins, sizeof(ReplicationState)));
 	return size;
 }
 
@@ -527,7 +550,7 @@ ReplicationOriginShmemInit(void)
 {
 	bool		found;
 
-	if (max_replication_slots == 0)
+	if (max_active_replication_origins == 0)
 		return;
 
 	replication_states_ctl = (ReplicationStateCtl *)
@@ -544,7 +567,7 @@ ReplicationOriginShmemInit(void)
 
 		replication_states_ctl->tranche_id = LWTRANCHE_REPLICATION_ORIGIN_STATE;
 
-		for (i = 0; i < max_replication_slots; i++)
+		for (i = 0; i < max_active_replication_origins; i++)
 		{
 			LWLockInitialize(&replication_states[i].lock,
 							 replication_states_ctl->tranche_id);
@@ -566,20 +589,20 @@ ReplicationOriginShmemInit(void)
  *
  * So its just the magic, followed by the statically sized
  * ReplicationStateOnDisk structs. Note that the maximum number of
- * ReplicationState is determined by max_replication_slots.
+ * ReplicationState is determined by max_active_replication_origins.
  * ---------------------------------------------------------------------------
  */
 void
 CheckPointReplicationOrigin(void)
 {
-	const char *tmppath = "pg_logical/replorigin_checkpoint.tmp";
-	const char *path = "pg_logical/replorigin_checkpoint";
+	const char *tmppath = PG_REPLORIGIN_CHECKPOINT_TMPFILE;
+	const char *path = PG_REPLORIGIN_CHECKPOINT_FILENAME;
 	int			tmpfd;
 	int			i;
 	uint32		magic = REPLICATION_STATE_MAGIC;
 	pg_crc32c	crc;
 
-	if (max_replication_slots == 0)
+	if (max_active_replication_origins == 0)
 		return;
 
 	INIT_CRC32C(crc);
@@ -621,7 +644,7 @@ CheckPointReplicationOrigin(void)
 	LWLockAcquire(ReplicationOriginLock, LW_SHARED);
 
 	/* write actual data */
-	for (i = 0; i < max_replication_slots; i++)
+	for (i = 0; i < max_active_replication_origins; i++)
 	{
 		ReplicationStateOnDisk disk_state;
 		ReplicationState *curstate = &replication_states[i];
@@ -698,7 +721,7 @@ CheckPointReplicationOrigin(void)
 void
 StartupReplicationOrigin(void)
 {
-	const char *path = "pg_logical/replorigin_checkpoint";
+	const char *path = PG_REPLORIGIN_CHECKPOINT_FILENAME;
 	int			fd;
 	int			readBytes;
 	uint32		magic = REPLICATION_STATE_MAGIC;
@@ -714,7 +737,7 @@ StartupReplicationOrigin(void)
 	already_started = true;
 #endif
 
-	if (max_replication_slots == 0)
+	if (max_active_replication_origins == 0)
 		return;
 
 	INIT_CRC32C(crc);
@@ -724,8 +747,8 @@ StartupReplicationOrigin(void)
 	fd = OpenTransientFile(path, O_RDONLY | PG_BINARY);
 
 	/*
-	 * might have had max_replication_slots == 0 last run, or we just brought
-	 * up a standby.
+	 * might have had max_active_replication_origins == 0 last run, or we just
+	 * brought up a standby.
 	 */
 	if (fd < 0 && errno == ENOENT)
 		return;
@@ -792,10 +815,10 @@ StartupReplicationOrigin(void)
 
 		COMP_CRC32C(crc, &disk_state, sizeof(disk_state));
 
-		if (last_state == max_replication_slots)
+		if (last_state == max_active_replication_origins)
 			ereport(PANIC,
 					(errcode(ERRCODE_CONFIGURATION_LIMIT_EXCEEDED),
-					 errmsg("could not find free replication state, increase \"max_replication_slots\"")));
+					 errmsg("could not find free replication state, increase \"max_active_replication_origins\"")));
 
 		/* copy data to shared memory */
 		replication_states[last_state].roident = disk_state.roident;
@@ -848,7 +871,7 @@ replorigin_redo(XLogReaderState *record)
 
 				xlrec = (xl_replorigin_drop *) XLogRecGetData(record);
 
-				for (i = 0; i < max_replication_slots; i++)
+				for (i = 0; i < max_active_replication_origins; i++)
 				{
 					ReplicationState *state = &replication_states[i];
 
@@ -913,7 +936,7 @@ replorigin_advance(RepOriginId node,
 	 * Search for either an existing slot for the origin, or a free one we can
 	 * use.
 	 */
-	for (i = 0; i < max_replication_slots; i++)
+	for (i = 0; i < max_active_replication_origins; i++)
 	{
 		ReplicationState *curstate = &replication_states[i];
 
@@ -954,7 +977,7 @@ replorigin_advance(RepOriginId node,
 				(errcode(ERRCODE_CONFIGURATION_LIMIT_EXCEEDED),
 				 errmsg("could not find free replication state slot for replication origin with ID %d",
 						node),
-				 errhint("Increase \"max_replication_slots\" and try again.")));
+				 errhint("Increase \"max_active_replication_origins\" and try again.")));
 
 	if (replication_state == NULL)
 	{
@@ -982,7 +1005,7 @@ replorigin_advance(RepOriginId node,
 		xlrec.force = go_backward;
 
 		XLogBeginInsert();
-		XLogRegisterData((char *) (&xlrec), sizeof(xlrec));
+		XLogRegisterData(&xlrec, sizeof(xlrec));
 
 		XLogInsert(RM_REPLORIGIN_ID, XLOG_REPLORIGIN_SET);
 	}
@@ -1020,7 +1043,7 @@ replorigin_get_progress(RepOriginId node, bool flush)
 	/* prevent slots from being concurrently dropped */
 	LWLockAcquire(ReplicationOriginLock, LW_SHARED);
 
-	for (i = 0; i < max_replication_slots; i++)
+	for (i = 0; i < max_active_replication_origins; i++)
 	{
 		ReplicationState *state;
 
@@ -1106,7 +1129,7 @@ replorigin_session_setup(RepOriginId node, int acquired_by)
 		registered_cleanup = true;
 	}
 
-	Assert(max_replication_slots > 0);
+	Assert(max_active_replication_origins > 0);
 
 	if (session_replication_state != NULL)
 		ereport(ERROR,
@@ -1120,7 +1143,7 @@ replorigin_session_setup(RepOriginId node, int acquired_by)
 	 * Search for either an existing slot for the origin, or a free one we can
 	 * use.
 	 */
-	for (i = 0; i < max_replication_slots; i++)
+	for (i = 0; i < max_active_replication_origins; i++)
 	{
 		ReplicationState *curstate = &replication_states[i];
 
@@ -1155,7 +1178,7 @@ replorigin_session_setup(RepOriginId node, int acquired_by)
 				(errcode(ERRCODE_CONFIGURATION_LIMIT_EXCEEDED),
 				 errmsg("could not find free replication state slot for replication origin with ID %d",
 						node),
-				 errhint("Increase \"max_replication_slots\" and try again.")));
+				 errhint("Increase \"max_active_replication_origins\" and try again.")));
 	else if (session_replication_state == NULL)
 	{
 		/* initialize new slot */
@@ -1191,7 +1214,7 @@ replorigin_session_reset(void)
 {
 	ConditionVariable *cv;
 
-	Assert(max_replication_slots != 0);
+	Assert(max_active_replication_origins != 0);
 
 	if (session_replication_state == NULL)
 		ereport(ERROR,
@@ -1532,7 +1555,7 @@ pg_show_replication_origin_status(PG_FUNCTION_ARGS)
 	 * filled. Note that we do not take any locks, so slightly corrupted/out
 	 * of date values are a possibility.
 	 */
-	for (i = 0; i < max_replication_slots; i++)
+	for (i = 0; i < max_active_replication_origins; i++)
 	{
 		ReplicationState *state;
 		Datum		values[REPLICATION_ORIGIN_PROGRESS_COLS];

@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 # Demonstrate that logical can follow timeline switches.
 #
@@ -94,8 +94,8 @@ is( $node_replica->safe_psql(
 		'postgres', q[SELECT 1 FROM pg_database WHERE datname = 'dropme']),
 	'',
 	'dropped DB dropme on standby');
-is($node_primary->slot('dropme_slot')->{'slot_name'},
-	undef, 'logical slot was actually dropped on standby');
+is($node_replica->slot('dropme_slot')->{'plugin'},
+	'', 'logical slot was actually dropped on standby');
 
 # Back to testing failover...
 $node_primary->safe_psql('postgres',

@@ -16,7 +16,7 @@
  * bitcode.
  *
  *
- * Copyright (c) 2016-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/jit/llvm/llvmjit_types.c
@@ -117,11 +117,9 @@ ExecEvalBoolSubroutineTemplate(ExprState *state,
 }
 
 /*
- * Clang represents stdbool.h style booleans that are returned by functions
- * differently (as i1) than stored ones (as i8). Therefore we do not just need
- * TypeBool (above), but also a way to determine the width of a returned
- * integer. This allows us to keep compatible with non-stdbool using
- * architectures.
+ * Clang represents bool returned by functions differently (as i1) than stored
+ * ones (as i8).  Therefore we do not just need TypeStorageBool (above), but
+ * also a way to determine the width of a returned integer.
  */
 extern bool FunctionReturningBool(void);
 bool
@@ -170,6 +168,7 @@ void	   *referenced_functions[] =
 	ExecEvalNextValueExpr,
 	ExecEvalParamExec,
 	ExecEvalParamExtern,
+	ExecEvalParamSet,
 	ExecEvalRow,
 	ExecEvalRowNotNull,
 	ExecEvalRowNull,

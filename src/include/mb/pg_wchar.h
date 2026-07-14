@@ -3,7 +3,7 @@
  * pg_wchar.h
  *	  multibyte-character support
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/mb/pg_wchar.h
@@ -662,7 +662,10 @@ extern int	pg_valid_server_encoding_id(int encoding);
  * (in addition to the ones just above).  The constant tables declared
  * earlier in this file are also available from libpgcommon.
  */
+extern void pg_encoding_set_invalid(int encoding, char *dst);
 extern int	pg_encoding_mblen(int encoding, const char *mbstr);
+extern int	pg_encoding_mblen_or_incomplete(int encoding, const char *mbstr,
+											size_t remaining);
 extern int	pg_encoding_mblen_bounded(int encoding, const char *mbstr);
 extern int	pg_encoding_dsplen(int encoding, const char *mbstr);
 extern int	pg_encoding_verifymbchar(int encoding, const char *mbstr, int len);
@@ -767,9 +770,9 @@ extern void check_encoding_conversion_args(int src_encoding,
 										   int expected_src_encoding,
 										   int expected_dest_encoding);
 
-extern void report_invalid_encoding(int encoding, const char *mbstr, int len) pg_attribute_noreturn();
-extern void report_untranslatable_char(int src_encoding, int dest_encoding,
-									   const char *mbstr, int len) pg_attribute_noreturn();
+pg_noreturn extern void report_invalid_encoding(int encoding, const char *mbstr, int len);
+pg_noreturn extern void report_untranslatable_char(int src_encoding, int dest_encoding,
+												   const char *mbstr, int len);
 
 extern int	local2local(const unsigned char *l, unsigned char *p, int len,
 						int src_encoding, int dest_encoding,

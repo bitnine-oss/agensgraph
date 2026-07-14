@@ -4,7 +4,7 @@
  *
  * Entrypoints of the hooks in PostgreSQL, and dispatches the callbacks.
  *
- * Copyright (c) 2010-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2025, PostgreSQL Global Development Group
  *
  * -------------------------------------------------------------------------
  */
@@ -25,7 +25,10 @@
 #include "utils/guc.h"
 #include "utils/queryenvironment.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "sepgsql",
+					.version = PG_VERSION
+);
 
 /*
  * Declarations
@@ -394,7 +397,7 @@ sepgsql_utility_command(PlannedStmt *pstmt,
 }
 
 /*
- * Module load/unload callback
+ * Module load callback
  */
 void
 _PG_init(void)

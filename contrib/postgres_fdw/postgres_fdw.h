@@ -3,7 +3,7 @@
  * postgres_fdw.h
  *		  Foreign-data wrapper for remote PostgreSQL servers
  *
- * Portions Copyright (c) 2012-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/postgres_fdw.h
@@ -62,6 +62,7 @@ typedef struct PgFdwRelationInfo
 	/* Estimated size and cost for a scan, join, or grouping/aggregation. */
 	double		rows;
 	int			width;
+	int			disabled_nodes;
 	Cost		startup_cost;
 	Cost		total_cost;
 

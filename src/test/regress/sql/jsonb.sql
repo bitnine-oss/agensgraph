@@ -204,6 +204,7 @@ select '[{"b": "c"}, {"b": "cc"}]'::jsonb -> 'z';
 select '{"a": "c", "b": null}'::jsonb -> 'b';
 select '"foo"'::jsonb -> 1;
 select '"foo"'::jsonb -> 'z';
+select '[]'::jsonb -> -2147483648;
 
 select '{"a": [{"b": "c"}, {"b": "cc"}]}'::jsonb ->> null::text;
 select '{"a": [{"b": "c"}, {"b": "cc"}]}'::jsonb ->> null::int;
@@ -216,6 +217,7 @@ select '[{"b": "c"}, {"b": "cc"}]'::jsonb ->> 'z';
 select '{"a": "c", "b": null}'::jsonb ->> 'b';
 select '"foo"'::jsonb ->> 1;
 select '"foo"'::jsonb ->> 'z';
+select '[]'::jsonb ->> -2147483648;
 
 -- equality and inequality
 SELECT '{"x":"y"}'::jsonb = '{"x":"y"}'::jsonb;
@@ -1100,6 +1102,24 @@ select jsonb_strip_nulls('[1,{"a":1,"b":null,"c":2},3]');
 -- an empty object is not null and should not be stripped
 select jsonb_strip_nulls('{"a": {"b": null, "c": null}, "d": {} }');
 
+-- jsonb_strip_nulls (strip_in_arrays=true)
+
+select jsonb_strip_nulls(null, true);
+
+select jsonb_strip_nulls('1', true);
+
+select jsonb_strip_nulls('"a string"', true);
+
+select jsonb_strip_nulls('null', true);
+
+select jsonb_strip_nulls('[1,2,null,3,4]', true);
+
+select jsonb_strip_nulls('{"a":1,"b":null,"c":[2,null,3],"d":{"e":4,"f":null}}', true);
+
+select jsonb_strip_nulls('[1,{"a":1,"b":null,"c":2},3]', true);
+
+-- an empty object is not null and should not be stripped
+select jsonb_strip_nulls('{"a": {"b": null, "c": null}, "d": {} }', true);
 
 select jsonb_pretty('{"a": "test", "b": [1, 2, 3], "c": "test3", "d":{"dd": "test4", "dd2":{"ddd": "test5"}}}');
 select jsonb_pretty('[{"f1":1,"f2":null},2,null,[[{"x":true},6,7],8],3]');
@@ -1185,6 +1205,7 @@ select jsonb_set('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::j
 select jsonb_delete_path('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}', '{n}');
 select jsonb_delete_path('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}', '{b,-1}');
 select jsonb_delete_path('{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}', '{d,1,0}');
+select jsonb_delete_path('{"a":[]}', '{"a",-2147483648}');
 
 select '{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::jsonb #- '{n}';
 select '{"n":null, "a":1, "b":[1,2], "c":{"1":2}, "d":{"1":[2,3]}}'::jsonb #- '{b,-1}';
@@ -1537,12 +1558,25 @@ select ts_headline('[]'::jsonb, tsquery('aaa & bbb'));
 
 -- casts
 select 'true'::jsonb::bool;
+select 'null'::jsonb::bool;
 select '[]'::jsonb::bool;
 select '1.0'::jsonb::float;
+select 'null'::jsonb::float;
 select '[1.0]'::jsonb::float;
+select '1.0'::jsonb::float4;
+select 'null'::jsonb::float4;
+select '[1.0]'::jsonb::float4;
+select '12345'::jsonb::int2;
+select 'null'::jsonb::int2;
+select '"hello"'::jsonb::int2;
 select '12345'::jsonb::int4;
+select 'null'::jsonb::int4;
 select '"hello"'::jsonb::int4;
+select '12345'::jsonb::int8;
+select 'null'::jsonb::int8;
+select '"hello"'::jsonb::int8;
 select '12345'::jsonb::numeric;
+select 'null'::jsonb::numeric;
 select '{}'::jsonb::numeric;
 select '12345.05'::jsonb::numeric;
 select '12345.05'::jsonb::float4;

@@ -3,7 +3,7 @@
  * ts_utils.c
  *		various support functions
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -16,6 +16,7 @@
 
 #include <ctype.h>
 
+#include "catalog/pg_collation_d.h"
 #include "miscadmin.h"
 #include "tsearch/ts_locale.h"
 #include "tsearch/ts_public.h"
@@ -65,7 +66,7 @@ get_tsearch_config_filename(const char *basename,
  * or palloc a new version.
  */
 void
-readstoplist(const char *fname, StopList *s, char *(*wordop) (const char *))
+readstoplist(const char *fname, StopList *s, char *(*wordop) (const char *, size_t, Oid))
 {
 	char	  **stop = NULL;
 
@@ -88,7 +89,7 @@ readstoplist(const char *fname, StopList *s, char *(*wordop) (const char *))
 			char	   *pbuf = line;
 
 			/* Trim trailing space */
-			while (*pbuf && !t_isspace(pbuf))
+			while (*pbuf && !isspace((unsigned char) *pbuf))
 				pbuf += pg_mblen(pbuf);
 			*pbuf = '\0';
 
@@ -115,7 +116,7 @@ readstoplist(const char *fname, StopList *s, char *(*wordop) (const char *))
 
 			if (wordop)
 			{
-				stop[s->len] = wordop(line);
+				stop[s->len] = wordop(line, strlen(line), DEFAULT_COLLATION_OID);
 				if (stop[s->len] != line)
 					pfree(line);
 			}

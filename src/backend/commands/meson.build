@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 backend_sources += files(
   'aggregatecmds.c',
@@ -22,6 +22,9 @@ backend_sources += files(
   'dropcmds.c',
   'event_trigger.c',
   'explain.c',
+  'explain_dr.c',
+  'explain_format.c',
+  'explain_state.c',
   'extension.c',
   'foreigncmds.c',
   'functioncmds.c',

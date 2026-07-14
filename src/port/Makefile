@@ -38,13 +38,16 @@ LIBS += $(PTHREAD_LIBS)
 OBJS = \
 	$(LIBOBJS) \
 	$(PG_CRC32C_OBJS) \
-	$(PG_POPCNT_OBJS) \
 	bsearch_arg.o \
 	chklocale.o \
 	inet_net_ntop.o \
 	noblock.o \
 	path.o \
 	pg_bitutils.o \
+	pg_localeconv_r.o \
+	pg_numa.o \
+	pg_popcount_aarch64.o \
+	pg_popcount_avx512.o \
 	pg_strong_random.o \
 	pgcheckdir.o \
 	pgmkdirp.o \
@@ -57,8 +60,7 @@ OBJS = \
 	quotes.o \
 	snprintf.o \
 	strerror.o \
-	tar.o \
-	user.o
+	tar.o
 
 # libpgport.a, libpgport_shlib.a, and libpgport_srv.a contain the same files
 # foo.o, foo_shlib.o, and foo_srv.o are all built from foo.c
@@ -83,25 +85,10 @@ libpgport.a: $(OBJS)
 	rm -f $@
 	$(AR) $(AROPT) $@ $^
 
-# all versions of pg_crc32c_sse42.o need CFLAGS_CRC
-pg_crc32c_sse42.o: CFLAGS+=$(CFLAGS_CRC)
-pg_crc32c_sse42_shlib.o: CFLAGS+=$(CFLAGS_CRC)
-pg_crc32c_sse42_srv.o: CFLAGS+=$(CFLAGS_CRC)
-
 # all versions of pg_crc32c_armv8.o need CFLAGS_CRC
 pg_crc32c_armv8.o: CFLAGS+=$(CFLAGS_CRC)
 pg_crc32c_armv8_shlib.o: CFLAGS+=$(CFLAGS_CRC)
 pg_crc32c_armv8_srv.o: CFLAGS+=$(CFLAGS_CRC)
-
-# all versions of pg_popcount_avx512_choose.o need CFLAGS_XSAVE
-pg_popcount_avx512_choose.o: CFLAGS+=$(CFLAGS_XSAVE)
-pg_popcount_avx512_choose_shlib.o: CFLAGS+=$(CFLAGS_XSAVE)
-pg_popcount_avx512_choose_srv.o: CFLAGS+=$(CFLAGS_XSAVE)
-
-# all versions of pg_popcount_avx512.o need CFLAGS_POPCNT
-pg_popcount_avx512.o: CFLAGS+=$(CFLAGS_POPCNT)
-pg_popcount_avx512_shlib.o: CFLAGS+=$(CFLAGS_POPCNT)
-pg_popcount_avx512_srv.o: CFLAGS+=$(CFLAGS_POPCNT)
 
 #
 # Shared library versions of object files

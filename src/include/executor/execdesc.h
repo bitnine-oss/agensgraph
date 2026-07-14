@@ -5,7 +5,7 @@
  *	  and related modules.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/executor/execdesc.h
@@ -48,7 +48,7 @@ typedef struct QueryDesc
 	EState	   *estate;			/* executor's query-wide state */
 	PlanState  *planstate;		/* tree of per-plan-node state */
 
-	/* This field is set by ExecutorRun */
+	/* This field is set by ExecutePlan */
 	bool		already_executed;	/* true if previously executed */
 
 	/* This is always set NULL by the core system, but plugins can change it */

@@ -4,7 +4,7 @@
  *
  *	Parallel support for pg_dump and pg_restore
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -63,7 +63,9 @@
 #include "fe_utils/string_utils.h"
 #include "parallel.h"
 #include "pg_backup_utils.h"
+#ifdef WIN32
 #include "port/pg_bswap.h"
+#endif
 
 /* Mnemonic macros for indexing the fd array returned by pipe(2) */
 #define PIPE_READ							0
@@ -329,6 +331,16 @@ on_exit_close_archive(Archive *AHX)
 {
 	shutdown_info.AHX = AHX;
 	on_exit_nicely(archive_close_connection, &shutdown_info);
+}
+
+/*
+ * When pg_restore restores multiple databases, then update already added entry
+ * into array for cleanup.
+ */
+void
+replace_on_exit_close_archive(Archive *AHX)
+{
+	shutdown_info.AHX = AHX;
 }
 
 /*

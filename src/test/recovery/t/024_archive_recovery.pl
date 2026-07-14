@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 # Test for archive recovery of WAL generated with wal_level=minimal
 use strict;
@@ -76,9 +76,10 @@ sub test_recovery_wal_level_minimal
 	# that the server ends with an error during recovery.
 	run_log(
 		[
-			'pg_ctl', '-D',
-			$recovery_node->data_dir, '-l',
-			$recovery_node->logfile, 'start'
+			'pg_ctl',
+			'--pgdata' => $recovery_node->data_dir,
+			'--log' => $recovery_node->logfile,
+			'start',
 		]);
 
 	# wait for postgres to terminate

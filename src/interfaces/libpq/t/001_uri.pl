@@ -1,4 +1,4 @@
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 use strict;
 use warnings FATAL => 'all';
 
@@ -85,6 +85,24 @@ my @tests = (
 		q{postgresql://host?user=uri-user},
 		q{user='uri-user' host='host' (inet)},
 		q{},
+	],
+	[
+		# Leading and trailing spaces, works.
+		q{postgresql://host?  user = uri-user & port  = 12345 },
+		q{user='uri-user' host='host' port='12345' (inet)},
+		q{},
+	],
+	[
+		# Trailing data in parameter.
+		q{postgresql://host?  user user  =  uri  & port = 12345 12 },
+		q{},
+		q{libpq_uri_regress: unexpected spaces found in "  user user  ", use percent-encoded spaces (%20) instead},
+	],
+	[
+		# Trailing data in value.
+		q{postgresql://host?  user  =  uri-user  & port = 12345 12 },
+		q{},
+		q{libpq_uri_regress: unexpected spaces found in " 12345 12 ", use percent-encoded spaces (%20) instead},
 	],
 	[ q{postgresql://host?}, q{host='host' (inet)}, q{}, ],
 	[
@@ -250,8 +268,9 @@ sub test_uri
 	%ENV = (%ENV, %envvars);
 
 	my $cmd = [ 'libpq_uri_regress', $uri ];
-	$result{exit} = IPC::Run::run $cmd, '>', \$result{stdout}, '2>',
-	  \$result{stderr};
+	$result{exit} = IPC::Run::run $cmd,
+	  '>' => \$result{stdout},
+	  '2>' => \$result{stderr};
 
 	chomp($result{stdout});
 	chomp($result{stderr});

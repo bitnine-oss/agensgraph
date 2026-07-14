@@ -1,4 +1,4 @@
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 #
 # This test aims to validate that pg_combinebackup works in the degenerate
 # case where it is invoked on a single full backup and that it can produce
@@ -25,7 +25,12 @@ $node->start;
 # Take a full backup.
 my $original_backup_path = $node->backup_dir . '/original';
 $node->command_ok(
-	[ 'pg_basebackup', '-D', $original_backup_path, '--no-sync', '-cfast' ],
+	[
+		'pg_basebackup',
+		'--pgdata' => $original_backup_path,
+		'--no-sync',
+		'--checkpoint' => 'fast',
+	],
 	"full backup");
 
 # Verify the full backup.
@@ -39,9 +44,11 @@ sub combine_and_test_one_backup
 	my $revised_backup_path = $node->backup_dir . '/' . $backup_name;
 	$node->command_ok(
 		[
-			'pg_combinebackup', $original_backup_path,
-			'-o', $revised_backup_path,
-			'--no-sync', @extra_options
+			'pg_combinebackup',
+			$original_backup_path,
+			'--output' => $revised_backup_path,
+			'--no-sync',
+			@extra_options,
 		],
 		"pg_combinebackup with @extra_options");
 	if (defined $failure_pattern)

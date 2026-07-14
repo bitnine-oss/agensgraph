@@ -241,6 +241,17 @@ select jsonb_path_query('{"a": [2, 3, 4]}', 'lax -$.a');
 select jsonb_path_query('{"a": [1, 2]}', 'lax $.a * 3');
 select jsonb_path_query('{"a": [1, 2]}', 'lax $.a * 3', silent => true);
 
+-- any key on arrays with and without unwrapping.
+select jsonb_path_query('{"a": [1,2,3], "b": [3,4,5]}', '$.*');
+select jsonb_path_query('[1,2,3]', '$.*');
+select jsonb_path_query('[1,2,3,{"b": [3,4,5]}]', 'lax $.*');
+select jsonb_path_query('[1,2,3,{"b": [3,4,5]}]', 'strict $.*');
+select jsonb_path_query('[1,2,3,{"b": [3,4,5]}]', 'strict $.*', NULL, true);
+select jsonb '{"a": [1,2,3], "b": [3,4,5]}' @? '$.*';
+select jsonb '[1,2,3]' @? '$.*';
+select jsonb '[1,2,3,{"b": [3,4,5]}]' @? 'lax $.*';
+select jsonb '[1,2,3,{"b": [3,4,5]}]' @? 'strict $.*';
+
 -- extension: boolean expressions
 select jsonb_path_query('2', '$ > 1');
 select jsonb_path_query('2', '$ <= 1');
@@ -587,10 +598,30 @@ select jsonb_path_query('1234', '$.string()');
 select jsonb_path_query('true', '$.string()');
 select jsonb_path_query('1234', '$.string().type()');
 select jsonb_path_query('[2, true]', '$.string()');
-select jsonb_path_query('"2023-08-15 12:34:56 +5:30"', '$.timestamp().string()');
-select jsonb_path_query_tz('"2023-08-15 12:34:56 +5:30"', '$.timestamp().string()'); -- should work
 select jsonb_path_query_array('[1.23, "yes", false]', '$[*].string()');
 select jsonb_path_query_array('[1.23, "yes", false]', '$[*].string().type()');
+select jsonb_path_query('"2023-08-15 12:34:56 +5:30"', '$.timestamp().string()');
+select jsonb_path_query_tz('"2023-08-15 12:34:56 +5:30"', '$.timestamp().string()'); -- should work
+select jsonb_path_query('"2023-08-15 12:34:56"', '$.timestamp_tz().string()');
+select jsonb_path_query_tz('"2023-08-15 12:34:56"', '$.timestamp_tz().string()'); -- should work
+select jsonb_path_query('"2023-08-15 12:34:56 +5:30"', '$.timestamp_tz().string()');
+select jsonb_path_query('"2023-08-15 12:34:56"', '$.timestamp().string()');
+select jsonb_path_query('"12:34:56 +5:30"', '$.time_tz().string()');
+-- this timetz usage will absorb the UTC offset of the current timezone setting
+begin;
+set local timezone = 'UTC-10';
+select jsonb_path_query_tz('"12:34:56"', '$.time_tz().string()');
+rollback;
+select jsonb_path_query('"12:34:56"', '$.time().string()');
+select jsonb_path_query('"2023-08-15"', '$.date().string()');
+
+-- .string() does not react to timezone or datestyle
+begin;
+set local timezone = 'UTC';
+set local datestyle = 'German';
+select jsonb_path_query('"2023-08-15 12:34:56 +5:30"', '$.timestamp_tz().string()');
+select jsonb_path_query('"2023-08-15 12:34:56"', '$.timestamp().string()');
+rollback;
 
 -- Test .time()
 select jsonb_path_query('null', '$.time()');

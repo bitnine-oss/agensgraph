@@ -175,7 +175,7 @@ FROM json_table_test vals
  [1, 1.23, "2", "aaaaaaa", "foo", null, false, true, {"aaa": 123}, "[1,2]", "\"str\""] |  6 | f       |       0 |         | false
  [1, 1.23, "2", "aaaaaaa", "foo", null, false, true, {"aaa": 123}, "[1,2]", "\"str\""] |  7 | f       |       0 |         | false
  [1, 1.23, "2", "aaaaaaa", "foo", null, false, true, {"aaa": 123}, "[1,2]", "\"str\""] |  8 | f       |       0 |         | false
- [1, 1.23, "2", "aaaaaaa", "foo", null, false, true, {"aaa": 123}, "[1,2]", "\"str\""] |  9 | t       |       0 |         | true
+ [1, 1.23, "2", "aaaaaaa", "foo", null, false, true, {"aaa": 123}, "[1,2]", "\"str\""] |  9 | t       |       1 |       1 | true
  [1, 1.23, "2", "aaaaaaa", "foo", null, false, true, {"aaa": 123}, "[1,2]", "\"str\""] | 10 | f       |       0 |         | false
  [1, 1.23, "2", "aaaaaaa", "foo", null, false, true, {"aaa": 123}, "[1,2]", "\"str\""] | 11 | f       |       0 |         | false
 (14 rows)
@@ -227,7 +227,8 @@ SELECT * FROM JSON_TABLE(jsonb '{"d1": "H"}', '$'
 
 SELECT * FROM JSON_TABLE(jsonb '{"d1": "H"}', '$'
     COLUMNS (js1 jsonb_test_domain PATH '$.a2' DEFAULT 'foo'::jsonb_test_domain ON EMPTY));
-ERROR:  value for domain jsonb_test_domain violates check constraint "jsonb_test_domain_check"
+ERROR:  could not coerce ON EMPTY expression (DEFAULT) to the RETURNING type
+DETAIL:  value for domain jsonb_test_domain violates check constraint "jsonb_test_domain_check"
 SELECT * FROM JSON_TABLE(jsonb '{"d1": "H"}', '$'
     COLUMNS (js1 jsonb_test_domain PATH '$.a2' DEFAULT 'foo1'::jsonb_test_domain ON EMPTY));
  js1  
@@ -473,6 +474,7 @@ SELECT * FROM
        "Async Capable": false,                                                                                                                                                                              +
        "Table Function Name": "json_table",                                                                                                                                                                 +
        "Alias": "json_table_func",                                                                                                                                                                          +
+       "Disabled": false,                                                                                                                                                                                   +
        "Output": ["id", "\"int\"", "text"],                                                                                                                                                                 +
        "Table Function Call": "JSON_TABLE('null'::jsonb, '$[*]' AS json_table_path_0 PASSING 3 AS a, '\"foo\"'::jsonb AS \"b c\" COLUMNS (id FOR ORDINALITY, \"int\" integer PATH '$', text text PATH '$'))"+
      }                                                                                                                                                                                                      +
@@ -488,7 +490,7 @@ DROP VIEW jsonb_table_view6;
 DROP DOMAIN jsonb_test_domain;
 -- JSON_TABLE: only one FOR ORDINALITY columns allowed
 SELECT * FROM JSON_TABLE(jsonb '1', '$' COLUMNS (id FOR ORDINALITY, id2 FOR ORDINALITY, a int PATH '$.a' ERROR ON EMPTY)) jt;
-ERROR:  cannot use more than one FOR ORDINALITY column
+ERROR:  only one FOR ORDINALITY column is allowed
 LINE 1: ..._TABLE(jsonb '1', '$' COLUMNS (id FOR ORDINALITY, id2 FOR OR...
                                                              ^
 SELECT * FROM JSON_TABLE(jsonb '1', '$' COLUMNS (id FOR ORDINALITY, a int PATH '$' ERROR ON EMPTY)) jt;
@@ -548,28 +550,75 @@ SELECT * FROM JSON_TABLE(jsonb '"a"', '$' COLUMNS (a int PATH 'lax $.a' DEFAULT 
 (1 row)
 
 -- JSON_TABLE: EXISTS PATH types
-SELECT * FROM JSON_TABLE(jsonb '"a"', '$' COLUMNS (a int4 EXISTS PATH '$.a'));
+SELECT * FROM JSON_TABLE(jsonb '"a"', '$' COLUMNS (a int4 EXISTS PATH '$.a' ERROR ON ERROR));	-- ok; can cast to int4
  a 
 ---
  0
 (1 row)
 
+SELECT * FROM JSON_TABLE(jsonb '"a"', '$' COLUMNS (a int4 EXISTS PATH '$' ERROR ON ERROR));	-- ok; can cast to int4
+ a 
+---
+ 1
+(1 row)
+
 SELECT * FROM JSON_TABLE(jsonb '"a"', '$' COLUMNS (a int2 EXISTS PATH '$.a'));
-ERROR:  cannot cast behavior expression of type boolean to smallint
+ERROR:  could not coerce ON ERROR expression (FALSE) to the RETURNING type
+DETAIL:  invalid input syntax for type smallint: "false"
 SELECT * FROM JSON_TABLE(jsonb '"a"', '$' COLUMNS (a int8 EXISTS PATH '$.a'));
-ERROR:  cannot cast behavior expression of type boolean to bigint
+ERROR:  could not coerce ON ERROR expression (FALSE) to the RETURNING type
+DETAIL:  invalid input syntax for type bigint: "false"
 SELECT * FROM JSON_TABLE(jsonb '"a"', '$' COLUMNS (a float4 EXISTS PATH '$.a'));
-ERROR:  cannot cast behavior expression of type boolean to real
-SELECT * FROM JSON_TABLE(jsonb '"a"', '$' COLUMNS (a char(5) EXISTS PATH '$.a'));
+ERROR:  could not coerce ON ERROR expression (FALSE) to the RETURNING type
+DETAIL:  invalid input syntax for type real: "false"
+-- Default FALSE (ON ERROR) doesn't fit char(3)
+SELECT * FROM JSON_TABLE(jsonb '"a"', '$' COLUMNS (a char(3) EXISTS PATH '$.a'));
+ERROR:  could not coerce ON ERROR expression (FALSE) to the RETURNING type
+DETAIL:  value too long for type character(3)
+SELECT * FROM JSON_TABLE(jsonb '"a"', '$' COLUMNS (a char(3) EXISTS PATH '$.a' ERROR ON ERROR));
+ERROR:  value too long for type character(3)
+SELECT * FROM JSON_TABLE(jsonb '"a"', '$' COLUMNS (a char(5) EXISTS PATH '$.a' ERROR ON ERROR));
    a   
 -------
  false
 (1 row)
 
 SELECT * FROM JSON_TABLE(jsonb '"a"', '$' COLUMNS (a json EXISTS PATH '$.a'));
-ERROR:  cannot cast behavior expression of type boolean to json
+   a   
+-------
+ false
+(1 row)
+
 SELECT * FROM JSON_TABLE(jsonb '"a"', '$' COLUMNS (a jsonb EXISTS PATH '$.a'));
-ERROR:  cannot cast behavior expression of type boolean to jsonb
+   a   
+-------
+ false
+(1 row)
+
+-- EXISTS PATH domain over int
+CREATE DOMAIN dint4 AS int;
+CREATE DOMAIN dint4_0 AS int CHECK (VALUE <> 0 );
+SELECT a, a::bool FROM JSON_TABLE(jsonb '"a"', '$' COLUMNS (a dint4 EXISTS PATH '$.a' ));
+ a | a 
+---+---
+ 0 | f
+(1 row)
+
+SELECT a, a::bool FROM JSON_TABLE(jsonb '{"a":1}', '$' COLUMNS (a dint4_0 EXISTS PATH '$.b'));
+ERROR:  could not coerce ON ERROR expression (FALSE) to the RETURNING type
+DETAIL:  value for domain dint4_0 violates check constraint "dint4_0_check"
+SELECT a, a::bool FROM JSON_TABLE(jsonb '{"a":1}', '$' COLUMNS (a dint4_0 EXISTS PATH '$.b' ERROR ON ERROR));
+ERROR:  value for domain dint4_0 violates check constraint "dint4_0_check"
+SELECT a, a::bool FROM JSON_TABLE(jsonb '{"a":1}', '$' COLUMNS (a dint4_0 EXISTS PATH '$.b' FALSE ON ERROR));
+ERROR:  could not coerce ON ERROR expression (FALSE) to the RETURNING type
+DETAIL:  value for domain dint4_0 violates check constraint "dint4_0_check"
+SELECT a, a::bool FROM JSON_TABLE(jsonb '{"a":1}', '$' COLUMNS (a dint4_0 EXISTS PATH '$.b' TRUE ON ERROR));
+ a | a 
+---+---
+ 1 | t
+(1 row)
+
+DROP DOMAIN dint4, dint4_0;
 -- JSON_TABLE: WRAPPER/QUOTES clauses on scalar columns
 SELECT * FROM JSON_TABLE(jsonb '"world"', '$' COLUMNS (item text PATH '$' KEEP QUOTES ON SCALAR STRING));
   item   
@@ -661,8 +710,8 @@ LINE 1: SELECT * FROM JSON_TABLE(jsonb '{"a": 123}', '$' || '.' || '...
                                                      ^
 -- JsonPathQuery() error message mentioning column name
 SELECT * FROM JSON_TABLE('{"a": [{"b": "1"}, {"b": "2"}]}', '$' COLUMNS (b json path '$.a[*].b' ERROR ON ERROR));
-ERROR:  JSON path expression for column "b" should return single item without wrapper
-HINT:  Use WITH WRAPPER clause to wrap SQL/JSON items into array.
+ERROR:  JSON path expression for column "b" must return single item when no wrapper is requested
+HINT:  Use the WITH WRAPPER clause to wrap SQL/JSON items into an array.
 -- JSON_TABLE: nested paths
 -- Duplicate path names
 SELECT * FROM JSON_TABLE(
@@ -1078,9 +1127,54 @@ SELECT * FROM JSON_TABLE(jsonb '1', '$' COLUMNS (a int omit quotes true on error
 ERROR:  invalid ON ERROR behavior for column "a"
 LINE 1: ...N_TABLE(jsonb '1', '$' COLUMNS (a int omit quotes true on er...
                                                              ^
-DETAIL:  Only ERROR, NULL, EMPTY [ ARRAY ], EMPTY OBJECT, or DEFAULT expression is allowed in ON ERROR for formatted columns.
+DETAIL:  Only ERROR, NULL, EMPTY ARRAY, EMPTY OBJECT, or DEFAULT expression is allowed in ON ERROR for formatted columns.
 SELECT * FROM JSON_TABLE(jsonb '1', '$' COLUMNS (a int exists empty object on error));
 ERROR:  invalid ON ERROR behavior for column "a"
 LINE 1: ...M JSON_TABLE(jsonb '1', '$' COLUMNS (a int exists empty obje...
                                                              ^
 DETAIL:  Only ERROR, TRUE, FALSE, or UNKNOWN is allowed in ON ERROR for EXISTS columns.
+-- Test JSON_TABLE() column deparsing -- don't emit default ON ERROR / EMPTY
+-- behavior
+CREATE VIEW json_table_view8 AS SELECT * from JSON_TABLE('"a"', '$' COLUMNS (a text PATH '$'));
+\sv json_table_view8;
+CREATE OR REPLACE VIEW public.json_table_view8 AS
+ SELECT a
+   FROM JSON_TABLE(
+            '"a"'::text, '$' AS json_table_path_0
+            COLUMNS (
+                a text PATH '$'
+            )
+        )
+CREATE VIEW json_table_view9 AS SELECT * from JSON_TABLE('"a"', '$' COLUMNS (a text PATH '$') ERROR ON ERROR);
+\sv json_table_view9;
+CREATE OR REPLACE VIEW public.json_table_view9 AS
+ SELECT a
+   FROM JSON_TABLE(
+            '"a"'::text, '$' AS json_table_path_0
+            COLUMNS (
+                a text PATH '$'
+            ) ERROR ON ERROR
+        )
+DROP VIEW json_table_view8, json_table_view9;
+-- Test JSON_TABLE() deparsing -- don't emit default ON ERROR behavior
+CREATE VIEW json_table_view8 AS SELECT * from JSON_TABLE('"a"', '$' COLUMNS (a text PATH '$') EMPTY ON ERROR);
+\sv json_table_view8;
+CREATE OR REPLACE VIEW public.json_table_view8 AS
+ SELECT a
+   FROM JSON_TABLE(
+            '"a"'::text, '$' AS json_table_path_0
+            COLUMNS (
+                a text PATH '$'
+            )
+        )
+CREATE VIEW json_table_view9 AS SELECT * from JSON_TABLE('"a"', '$' COLUMNS (a text PATH '$') EMPTY ARRAY ON ERROR);
+\sv json_table_view9;
+CREATE OR REPLACE VIEW public.json_table_view9 AS
+ SELECT a
+   FROM JSON_TABLE(
+            '"a"'::text, '$' AS json_table_path_0
+            COLUMNS (
+                a text PATH '$'
+            )
+        )
+DROP VIEW json_table_view8, json_table_view9;

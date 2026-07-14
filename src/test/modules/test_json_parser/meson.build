@@ -1,4 +1,4 @@
-# Copyright (c) 2024, PostgreSQL Global Development Group
+# Copyright (c) 2024-2025, PostgreSQL Global Development Group
 
 test_json_parser_incremental_sources = files(
   'test_json_parser_incremental.c',
@@ -14,6 +14,18 @@ endif
 test_json_parser_incremental = executable('test_json_parser_incremental',
   test_json_parser_incremental_sources,
   dependencies: [frontend_code],
+  kwargs: default_bin_args + {
+    'install': false,
+  },
+)
+
+# A second version of test_json_parser_incremental, this time compiled against
+# the shared-library flavor of jsonapi.
+test_json_parser_incremental_shlib = executable('test_json_parser_incremental_shlib',
+  test_json_parser_incremental_sources,
+  dependencies: [frontend_shlib_code, libpq],
+  c_args: ['-DJSONAPI_SHLIB_ALLOC'],
+  link_with: [common_excluded_shlib],
   kwargs: default_bin_args + {
     'install': false,
   },
@@ -48,6 +60,11 @@ tests += {
       't/002_inline.pl',
       't/003_test_semantic.pl',
       't/004_test_parser_perf.pl'
+    ],
+    'deps': [
+      test_json_parser_incremental,
+      test_json_parser_incremental_shlib,
+      test_json_parser_perf,
     ],
   },
 }

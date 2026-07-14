@@ -2,7 +2,7 @@
 /*
  * Scanner for the configuration file
  *
- * Copyright (c) 2000-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2025, PostgreSQL Global Development Group
  *
  * src/backend/utils/misc/guc-file.l
  */
@@ -57,6 +57,7 @@ static int	GUC_flex_fatal(const char *msg);
 
 %}
 
+%option reentrant
 %option 8bit
 %option never-interactive
 %option nodefault
@@ -301,7 +302,7 @@ record_config_file_error(const char *errmsg,
 /*
  * Flex fatal errors bring us here.  Stash the error message and jump back to
  * ParseConfigFp().  Assume all msg arguments point to string constants; this
- * holds for flex 2.5.35 (earliest we support). Otherwise, we would need to
+ * holds for all currently known flex versions. Otherwise, we would need to
  * copy the message.
  *
  * We return "int" since this takes the place of calls to fprintf().
@@ -353,6 +354,8 @@ ParseConfigFp(FILE *fp, const char *config_file, int depth, int elevel,
 	unsigned int save_ConfigFileLineno = ConfigFileLineno;
 	sigjmp_buf *save_GUC_flex_fatal_jmp = GUC_flex_fatal_jmp;
 	sigjmp_buf	flex_fatal_jmp;
+	yyscan_t	scanner;
+	struct yyguts_t *yyg;		/* needed for yytext macro */
 	volatile YY_BUFFER_STATE lex_buffer = NULL;
 	int			errorcount;
 	int			token;
@@ -381,11 +384,15 @@ ParseConfigFp(FILE *fp, const char *config_file, int depth, int elevel,
 	ConfigFileLineno = 1;
 	errorcount = 0;
 
-	lex_buffer = yy_create_buffer(fp, YY_BUF_SIZE);
-	yy_switch_to_buffer(lex_buffer);
+	if (yylex_init(&scanner) != 0)
+		elog(elevel, "yylex_init() failed: %m");
+	yyg = (struct yyguts_t *) scanner;
+
+	lex_buffer = yy_create_buffer(fp, YY_BUF_SIZE, scanner);
+	yy_switch_to_buffer(lex_buffer, scanner);
 
 	/* This loop iterates once per logical line */
-	while ((token = yylex()))
+	while ((token = yylex(scanner)))
 	{
 		char	   *opt_name = NULL;
 		char	   *opt_value = NULL;
@@ -400,9 +407,9 @@ ParseConfigFp(FILE *fp, const char *config_file, int depth, int elevel,
 		opt_name = pstrdup(yytext);
 
 		/* next we have an optional equal sign; discard if present */
-		token = yylex();
+		token = yylex(scanner);
 		if (token == GUC_EQUALS)
-			token = yylex();
+			token = yylex(scanner);
 
 		/* now we must have the option value */
 		if (token != GUC_ID &&
@@ -417,7 +424,7 @@ ParseConfigFp(FILE *fp, const char *config_file, int depth, int elevel,
 			opt_value = pstrdup(yytext);
 
 		/* now we'd like an end of line, or possibly EOF */
-		token = yylex();
+		token = yylex(scanner);
 		if (token != GUC_EOL)
 		{
 			if (token != 0)
@@ -438,7 +445,7 @@ ParseConfigFp(FILE *fp, const char *config_file, int depth, int elevel,
 									  depth + 1, elevel,
 									  head_p, tail_p))
 				OK = false;
-			yy_switch_to_buffer(lex_buffer);
+			yy_switch_to_buffer(lex_buffer, scanner);
 			pfree(opt_name);
 			pfree(opt_value);
 		}
@@ -453,7 +460,7 @@ ParseConfigFp(FILE *fp, const char *config_file, int depth, int elevel,
 								 depth + 1, elevel,
 								 head_p, tail_p))
 				OK = false;
-			yy_switch_to_buffer(lex_buffer);
+			yy_switch_to_buffer(lex_buffer, scanner);
 			pfree(opt_name);
 			pfree(opt_value);
 		}
@@ -468,7 +475,7 @@ ParseConfigFp(FILE *fp, const char *config_file, int depth, int elevel,
 								 depth + 1, elevel,
 								 head_p, tail_p))
 				OK = false;
-			yy_switch_to_buffer(lex_buffer);
+			yy_switch_to_buffer(lex_buffer, scanner);
 			pfree(opt_name);
 			pfree(opt_value);
 		}
@@ -508,8 +515,8 @@ parse_error:
 		{
 			ereport(elevel,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-			  errmsg("syntax error in file \"%s\" line %u, near end of line",
-					 config_file, ConfigFileLineno - 1)));
+					 errmsg("syntax error in file \"%s\" line %u, near end of line",
+							config_file, ConfigFileLineno - 1)));
 			record_config_file_error("syntax error",
 									 config_file, ConfigFileLineno - 1,
 									 head_p, tail_p);
@@ -518,8 +525,8 @@ parse_error:
 		{
 			ereport(elevel,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-			 errmsg("syntax error in file \"%s\" line %u, near token \"%s\"",
-					config_file, ConfigFileLineno, yytext)));
+					 errmsg("syntax error in file \"%s\" line %u, near token \"%s\"",
+							config_file, ConfigFileLineno, yytext)));
 			record_config_file_error("syntax error",
 									 config_file, ConfigFileLineno,
 									 head_p, tail_p);
@@ -538,21 +545,22 @@ parse_error:
 		{
 			ereport(elevel,
 					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-			   errmsg("too many syntax errors found, abandoning file \"%s\"",
-					  config_file)));
+					 errmsg("too many syntax errors found, abandoning file \"%s\"",
+							config_file)));
 			break;
 		}
 
 		/* resync to next end-of-line or EOF */
 		while (token != GUC_EOL && token != 0)
-			token = yylex();
+			token = yylex(scanner);
 		/* break out of loop on EOF */
 		if (token == 0)
 			break;
 	}
 
 cleanup:
-	yy_delete_buffer(lex_buffer);
+	yy_delete_buffer(lex_buffer, scanner);
+	yylex_destroy(scanner);
 	/* Each recursion level must save and restore these static variables. */
 	ConfigFileLineno = save_ConfigFileLineno;
 	GUC_flex_fatal_jmp = save_GUC_flex_fatal_jmp;
@@ -581,7 +589,7 @@ ParseConfigDirectory(const char *includedir,
 	int			num_filenames;
 
 	filenames = GetConfFilesInDir(includedir, calling_file, elevel,
-							   &num_filenames, &err_msg);
+								  &num_filenames, &err_msg);
 
 	if (!filenames)
 	{

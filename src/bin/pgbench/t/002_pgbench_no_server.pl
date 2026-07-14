@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 #
 # pgbench tests which do not need a server
@@ -50,7 +50,7 @@ sub pgbench_scripts
 			# cleanup from prior runs
 			unlink $filename;
 			append_to_file($filename, $$files{$fn});
-			push @cmd, '-f', $filename;
+			push @cmd, '--file' => $filename;
 		}
 	}
 	command_checks_all(\@cmd, $stat, $out, $err, $name);

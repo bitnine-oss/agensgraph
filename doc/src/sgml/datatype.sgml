@@ -2245,24 +2245,27 @@ TIMESTAMP '2004-10-19 10:23:54+02'
 <programlisting>
 TIMESTAMP WITH TIME ZONE '2004-10-19 10:23:54+02'
 </programlisting>
-
-      In a literal that has been determined to be <type>timestamp without time
-      zone</type>, <productname>PostgreSQL</productname> will silently ignore
-      any time zone indication.
-      That is, the resulting value is derived from the date/time
-      fields in the input value, and is not adjusted for time zone.
      </para>
 
      <para>
-      For <type>timestamp with time zone</type>, the internally stored
-      value is always in UTC (Universal
-      Coordinated Time, traditionally known as Greenwich Mean Time,
-      <acronym>GMT</acronym>).  An input value that has an explicit
-      time zone specified is converted to UTC using the appropriate offset
+      In a value that has been determined to be <type>timestamp without time
+      zone</type>, <productname>PostgreSQL</productname> will silently ignore
+      any time zone indication.
+      That is, the resulting value is derived from the date/time
+      fields in the input string, and is not adjusted for time zone.
+     </para>
+
+     <para>
+      For <type>timestamp with time zone</type> values, an input string
+      that includes an explicit time zone will be converted to UTC
+      (<glossterm linkend="glossary-utc">Universal Coordinated
+      Time</glossterm>) using the appropriate offset
       for that time zone.  If no time zone is stated in the input string,
       then it is assumed to be in the time zone indicated by the system's
       <xref linkend="guc-timezone"/> parameter, and is converted to UTC using the
       offset for the <varname>timezone</varname> zone.
+      In either case, the value is stored internally as UTC, and the
+      originally stated or assumed time zone is not retained.
      </para>
 
      <para>
@@ -2534,6 +2537,10 @@ TIMESTAMP WITH TIME ZONE '2004-10-19 10:23:54+02'
      abbreviation if one is in common use in the current zone.  Otherwise
      it appears as a signed numeric offset in ISO 8601 basic format
      (<replaceable>hh</replaceable> or <replaceable>hhmm</replaceable>).
+     The alphabetic abbreviations shown in these styles are taken from the
+     IANA time zone database entry currently selected by the
+     <xref linkend="guc-timezone"/> run-time parameter; they are not
+     affected by the <xref linkend="guc-timezone-abbreviations"/> setting.
     </para>
 
     <para>
@@ -2674,6 +2681,14 @@ TIMESTAMP WITH TIME ZONE '2004-10-19 10:23:54+02'
      noon Eastern Standard Time (UTC-5), regardless of whether daylight
      savings was nominally in effect on that date.
     </para>
+
+    <note>
+     <para>
+      The sign in POSIX-style time zone specifications has the opposite meaning
+      of the sign in ISO-8601 datetime values.  For example, the POSIX time zone
+      for <literal>2014-06-04 12:00+04</literal> would be UTC-4.
+     </para>
+    </note>
 
     <para>
      To complicate matters, some jurisdictions have used the same timezone
@@ -3369,7 +3384,7 @@ SELECT person.name, holidays.num_weeks FROM person, holidays
        </row>
        <row>
         <entry><type>line</type></entry>
-        <entry>32 bytes</entry>
+        <entry>24 bytes</entry>
         <entry>Infinite line</entry>
         <entry>{A,B,C}</entry>
        </row>
@@ -3412,6 +3427,11 @@ SELECT person.name, holidays.num_weeks FROM person, holidays
       </tbody>
      </tgroup>
     </table>
+
+   <para>
+    In all these types, the individual coordinates are stored as
+    <type>double precision</type> (<type>float8</type>) numbers.
+   </para>
 
    <para>
     A rich set of functions and operators is available to perform various geometric
@@ -3603,8 +3623,16 @@ SELECT person.name, holidays.num_weeks FROM person, holidays
     <para>
      Polygons are represented by lists of points (the vertices of the
      polygon). Polygons are very similar to closed paths; the essential
-     difference is that a polygon is considered to include the area
-     within it, while a path is not.
+     semantic difference is that a polygon is considered to include the
+     area within it, while a path is not.
+    </para>
+
+    <para>
+     An important implementation difference between polygons and
+     paths is that the stored representation of a polygon includes its
+     smallest bounding box.  This speeds up certain search operations,
+     although computing the bounding box adds overhead while constructing
+     new polygons.
     </para>
 
     <para>
@@ -4367,7 +4395,7 @@ SELECT to_tsvector( 'postgraduate' ), to_tsquery( 'postgres:*' );
 
    <para>
     The data type <type>uuid</type> stores Universally Unique Identifiers
-    (UUID) as defined by <ulink url="https://datatracker.ietf.org/doc/html/rfc4122">RFC 4122</ulink>,
+    (UUID) as defined by <ulink url="https://datatracker.ietf.org/doc/html/rfc9562">RFC 9562</ulink>,
     ISO/IEC 9834-8:2005, and related standards.
     (Some systems refer to this data type as a globally unique identifier, or
     GUID,<indexterm><primary>GUID</primary></indexterm> instead.)  This
@@ -4377,6 +4405,15 @@ SELECT to_tsvector( 'postgraduate' ), to_tsquery( 'postgres:*' );
     for distributed systems, these identifiers provide a better uniqueness
     guarantee than sequence generators, which
     are only unique within a single database.
+   </para>
+
+   <para>
+    RFC 9562 defines 8 different UUID versions.  Each version has specific requirements
+    for generating new UUID values, and each version provides distinct benefits and drawbacks.
+    <productname>PostgreSQL</productname> provides native support for generating UUIDs
+    using the UUIDv4 and UUIDv7 algorithms.  Alternatively, UUID values can be generated
+    outside of the database using any algorithm.  The data type <type>uuid</type> can be used
+    to store any UUID, regardless of the origin and the UUID version.
    </para>
 
    <para>

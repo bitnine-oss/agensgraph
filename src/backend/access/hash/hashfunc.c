@@ -3,7 +3,7 @@
  * hashfunc.c
  *	  Support functions for hash access method.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -268,7 +268,7 @@ hashtext(PG_FUNCTION_ARGS)
 {
 	text	   *key = PG_GETARG_TEXT_PP(0);
 	Oid			collid = PG_GET_COLLATION();
-	pg_locale_t mylocale = 0;
+	pg_locale_t mylocale;
 	Datum		result;
 
 	if (!collid)
@@ -277,10 +277,9 @@ hashtext(PG_FUNCTION_ARGS)
 				 errmsg("could not determine which collation to use for string hashing"),
 				 errhint("Use the COLLATE clause to set the collation explicitly.")));
 
-	if (!lc_collate_is_c(collid))
-		mylocale = pg_newlocale_from_collation(collid);
+	mylocale = pg_newlocale_from_collation(collid);
 
-	if (pg_locale_deterministic(mylocale))
+	if (mylocale->deterministic)
 	{
 		result = hash_any((unsigned char *) VARDATA_ANY(key),
 						  VARSIZE_ANY_EXHDR(key));
@@ -298,7 +297,9 @@ hashtext(PG_FUNCTION_ARGS)
 		buf = palloc(bsize + 1);
 
 		rsize = pg_strnxfrm(buf, bsize + 1, keydata, keylen, mylocale);
-		if (rsize != bsize)
+
+		/* the second call may return a smaller value than the first */
+		if (rsize > bsize)
 			elog(ERROR, "pg_strnxfrm() returned unexpected result");
 
 		/*
@@ -322,7 +323,7 @@ hashtextextended(PG_FUNCTION_ARGS)
 {
 	text	   *key = PG_GETARG_TEXT_PP(0);
 	Oid			collid = PG_GET_COLLATION();
-	pg_locale_t mylocale = 0;
+	pg_locale_t mylocale;
 	Datum		result;
 
 	if (!collid)
@@ -331,10 +332,9 @@ hashtextextended(PG_FUNCTION_ARGS)
 				 errmsg("could not determine which collation to use for string hashing"),
 				 errhint("Use the COLLATE clause to set the collation explicitly.")));
 
-	if (!lc_collate_is_c(collid))
-		mylocale = pg_newlocale_from_collation(collid);
+	mylocale = pg_newlocale_from_collation(collid);
 
-	if (pg_locale_deterministic(mylocale))
+	if (mylocale->deterministic)
 	{
 		result = hash_any_extended((unsigned char *) VARDATA_ANY(key),
 								   VARSIZE_ANY_EXHDR(key),
@@ -352,7 +352,9 @@ hashtextextended(PG_FUNCTION_ARGS)
 		buf = palloc(bsize + 1);
 
 		rsize = pg_strnxfrm(buf, bsize + 1, keydata, keylen, mylocale);
-		if (rsize != bsize)
+
+		/* the second call may return a smaller value than the first */
+		if (rsize > bsize)
 			elog(ERROR, "pg_strnxfrm() returned unexpected result");
 
 		/*
@@ -374,6 +376,11 @@ hashtextextended(PG_FUNCTION_ARGS)
 /*
  * hashvarlena() can be used for any varlena datatype in which there are
  * no non-significant bits, ie, distinct bitpatterns never compare as equal.
+ *
+ * (However, you need to define an SQL-level wrapper function around it with
+ * the concrete input data type; otherwise hashvalidate() won't accept it.
+ * Moreover, at least for built-in types, a C-level wrapper function is also
+ * recommended; otherwise, the opr_sanity test will get upset.)
  */
 Datum
 hashvarlena(PG_FUNCTION_ARGS)
@@ -403,4 +410,16 @@ hashvarlenaextended(PG_FUNCTION_ARGS)
 	PG_FREE_IF_COPY(key, 0);
 
 	return result;
+}
+
+Datum
+hashbytea(PG_FUNCTION_ARGS)
+{
+	return hashvarlena(fcinfo);
+}
+
+Datum
+hashbyteaextended(PG_FUNCTION_ARGS)
+{
+	return hashvarlenaextended(fcinfo);
 }

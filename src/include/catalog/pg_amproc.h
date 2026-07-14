@@ -18,7 +18,7 @@
  * some don't pay attention to non-default functions at all.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_amproc.h
@@ -33,7 +33,7 @@
 #define PG_AMPROC_H
 
 #include "catalog/genbki.h"
-#include "catalog/pg_amproc_d.h"
+#include "catalog/pg_amproc_d.h"	/* IWYU pragma: export */
 
 /* ----------------
  *		pg_amproc definition.  cpp turns this into

@@ -9,7 +9,7 @@
  * could be easily added here, another module, or even an extension.
  *
  *
- * Copyright (c) 2022-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2022-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/sort/tuplesortvariants.c
@@ -20,10 +20,12 @@
 #include "postgres.h"
 
 #include "access/brin_tuple.h"
+#include "access/gin_tuple.h"
 #include "access/hash.h"
 #include "access/htup_details.h"
 #include "access/nbtree.h"
 #include "catalog/index.h"
+#include "catalog/pg_collation.h"
 #include "executor/executor.h"
 #include "pg_trace.h"
 #include "utils/datum.h"
@@ -46,6 +48,8 @@ static void removeabbrev_index(Tuplesortstate *state, SortTuple *stups,
 							   int count);
 static void removeabbrev_index_brin(Tuplesortstate *state, SortTuple *stups,
 									int count);
+static void removeabbrev_index_gin(Tuplesortstate *state, SortTuple *stups,
+								   int count);
 static void removeabbrev_datum(Tuplesortstate *state, SortTuple *stups,
 							   int count);
 static int	comparetup_heap(const SortTuple *a, const SortTuple *b,
@@ -74,6 +78,8 @@ static int	comparetup_index_hash_tiebreak(const SortTuple *a, const SortTuple *b
 										   Tuplesortstate *state);
 static int	comparetup_index_brin(const SortTuple *a, const SortTuple *b,
 								  Tuplesortstate *state);
+static int	comparetup_index_gin(const SortTuple *a, const SortTuple *b,
+								 Tuplesortstate *state);
 static void writetup_index(Tuplesortstate *state, LogicalTape *tape,
 						   SortTuple *stup);
 static void readtup_index(Tuplesortstate *state, SortTuple *stup,
@@ -82,6 +88,10 @@ static void writetup_index_brin(Tuplesortstate *state, LogicalTape *tape,
 								SortTuple *stup);
 static void readtup_index_brin(Tuplesortstate *state, SortTuple *stup,
 							   LogicalTape *tape, unsigned int len);
+static void writetup_index_gin(Tuplesortstate *state, LogicalTape *tape,
+							   SortTuple *stup);
+static void readtup_index_gin(Tuplesortstate *state, SortTuple *stup,
+							  LogicalTape *tape, unsigned int len);
 static int	comparetup_datum(const SortTuple *a, const SortTuple *b,
 							 Tuplesortstate *state);
 static int	comparetup_datum_tiebreak(const SortTuple *a, const SortTuple *b,
@@ -181,12 +191,10 @@ tuplesort_begin_heap(TupleDesc tupDesc,
 
 	Assert(nkeys > 0);
 
-#ifdef TRACE_SORT
 	if (trace_sort)
 		elog(LOG,
 			 "begin tuple sort: nkeys = %d, workMem = %d, randomAccess = %c",
 			 nkeys, workMem, sortopt & TUPLESORT_RANDOMACCESS ? 't' : 'f');
-#endif
 
 	base->nKeys = nkeys;
 
@@ -258,13 +266,11 @@ tuplesort_begin_cluster(TupleDesc tupDesc,
 	oldcontext = MemoryContextSwitchTo(base->maincontext);
 	arg = (TuplesortClusterArg *) palloc0(sizeof(TuplesortClusterArg));
 
-#ifdef TRACE_SORT
 	if (trace_sort)
 		elog(LOG,
 			 "begin tuple sort: nkeys = %d, workMem = %d, randomAccess = %c",
 			 RelationGetNumberOfAttributes(indexRel),
 			 workMem, sortopt & TUPLESORT_RANDOMACCESS ? 't' : 'f');
-#endif
 
 	base->nKeys = IndexRelationGetNumberOfKeyAttributes(indexRel);
 
@@ -323,7 +329,7 @@ tuplesort_begin_cluster(TupleDesc tupDesc,
 	{
 		SortSupport sortKey = base->sortKeys + i;
 		ScanKey		scanKey = indexScanKey->scankeys + i;
-		int16		strategy;
+		bool		reverse;
 
 		sortKey->ssup_cxt = CurrentMemoryContext;
 		sortKey->ssup_collation = scanKey->sk_collation;
@@ -335,10 +341,9 @@ tuplesort_begin_cluster(TupleDesc tupDesc,
 
 		Assert(sortKey->ssup_attno != 0);
 
-		strategy = (scanKey->sk_flags & SK_BT_DESC) != 0 ?
-			BTGreaterStrategyNumber : BTLessStrategyNumber;
+		reverse = (scanKey->sk_flags & SK_BT_DESC) != 0;
 
-		PrepareSortSupportFromIndexRel(indexRel, strategy, sortKey);
+		PrepareSortSupportFromIndexRel(indexRel, reverse, sortKey);
 	}
 
 	pfree(indexScanKey);
@@ -368,13 +373,11 @@ tuplesort_begin_index_btree(Relation heapRel,
 	oldcontext = MemoryContextSwitchTo(base->maincontext);
 	arg = (TuplesortIndexBTreeArg *) palloc(sizeof(TuplesortIndexBTreeArg));
 
-#ifdef TRACE_SORT
 	if (trace_sort)
 		elog(LOG,
 			 "begin index sort: unique = %c, workMem = %d, randomAccess = %c",
 			 enforceUnique ? 't' : 'f',
 			 workMem, sortopt & TUPLESORT_RANDOMACCESS ? 't' : 'f');
-#endif
 
 	base->nKeys = IndexRelationGetNumberOfKeyAttributes(indexRel);
 
@@ -408,7 +411,7 @@ tuplesort_begin_index_btree(Relation heapRel,
 	{
 		SortSupport sortKey = base->sortKeys + i;
 		ScanKey		scanKey = indexScanKey->scankeys + i;
-		int16		strategy;
+		bool		reverse;
 
 		sortKey->ssup_cxt = CurrentMemoryContext;
 		sortKey->ssup_collation = scanKey->sk_collation;
@@ -420,10 +423,9 @@ tuplesort_begin_index_btree(Relation heapRel,
 
 		Assert(sortKey->ssup_attno != 0);
 
-		strategy = (scanKey->sk_flags & SK_BT_DESC) != 0 ?
-			BTGreaterStrategyNumber : BTLessStrategyNumber;
+		reverse = (scanKey->sk_flags & SK_BT_DESC) != 0;
 
-		PrepareSortSupportFromIndexRel(indexRel, strategy, sortKey);
+		PrepareSortSupportFromIndexRel(indexRel, reverse, sortKey);
 	}
 
 	pfree(indexScanKey);
@@ -452,7 +454,6 @@ tuplesort_begin_index_hash(Relation heapRel,
 	oldcontext = MemoryContextSwitchTo(base->maincontext);
 	arg = (TuplesortIndexHashArg *) palloc(sizeof(TuplesortIndexHashArg));
 
-#ifdef TRACE_SORT
 	if (trace_sort)
 		elog(LOG,
 			 "begin index sort: high_mask = 0x%x, low_mask = 0x%x, "
@@ -462,7 +463,6 @@ tuplesort_begin_index_hash(Relation heapRel,
 			 max_buckets,
 			 workMem,
 			 sortopt & TUPLESORT_RANDOMACCESS ? 't' : 'f');
-#endif
 
 	base->nKeys = 1;			/* Only one sort column, the hash code */
 
@@ -503,12 +503,10 @@ tuplesort_begin_index_gist(Relation heapRel,
 	oldcontext = MemoryContextSwitchTo(base->maincontext);
 	arg = (TuplesortIndexBTreeArg *) palloc(sizeof(TuplesortIndexBTreeArg));
 
-#ifdef TRACE_SORT
 	if (trace_sort)
 		elog(LOG,
 			 "begin index sort: workMem = %d, randomAccess = %c",
 			 workMem, sortopt & TUPLESORT_RANDOMACCESS ? 't' : 'f');
-#endif
 
 	base->nKeys = IndexRelationGetNumberOfKeyAttributes(indexRel);
 
@@ -560,13 +558,11 @@ tuplesort_begin_index_brin(int workMem,
 												   sortopt);
 	TuplesortPublic *base = TuplesortstateGetPublic(state);
 
-#ifdef TRACE_SORT
 	if (trace_sort)
 		elog(LOG,
 			 "begin index sort: workMem = %d, randomAccess = %c",
 			 workMem,
 			 sortopt & TUPLESORT_RANDOMACCESS ? 't' : 'f');
-#endif
 
 	base->nKeys = 1;			/* Only one sort column, the block number */
 
@@ -576,6 +572,77 @@ tuplesort_begin_index_brin(int workMem,
 	base->readtup = readtup_index_brin;
 	base->haveDatum1 = true;
 	base->arg = NULL;
+
+	return state;
+}
+
+Tuplesortstate *
+tuplesort_begin_index_gin(Relation heapRel,
+						  Relation indexRel,
+						  int workMem, SortCoordinate coordinate,
+						  int sortopt)
+{
+	Tuplesortstate *state = tuplesort_begin_common(workMem, coordinate,
+												   sortopt);
+	TuplesortPublic *base = TuplesortstateGetPublic(state);
+	MemoryContext oldcontext;
+	int			i;
+	TupleDesc	desc = RelationGetDescr(indexRel);
+
+	oldcontext = MemoryContextSwitchTo(base->maincontext);
+
+#ifdef TRACE_SORT
+	if (trace_sort)
+		elog(LOG,
+			 "begin index sort: workMem = %d, randomAccess = %c",
+			 workMem,
+			 sortopt & TUPLESORT_RANDOMACCESS ? 't' : 'f');
+#endif
+
+	/*
+	 * Multi-column GIN indexes expand the row into a separate index entry for
+	 * attribute, and that's what we write into the tuplesort. But we still
+	 * need to initialize sortsupport for all the attributes.
+	 */
+	base->nKeys = IndexRelationGetNumberOfKeyAttributes(indexRel);
+
+	/* Prepare SortSupport data for each column */
+	base->sortKeys = (SortSupport) palloc0(base->nKeys *
+										   sizeof(SortSupportData));
+
+	for (i = 0; i < base->nKeys; i++)
+	{
+		SortSupport sortKey = base->sortKeys + i;
+		Form_pg_attribute att = TupleDescAttr(desc, i);
+		TypeCacheEntry *typentry;
+
+		sortKey->ssup_cxt = CurrentMemoryContext;
+		sortKey->ssup_collation = indexRel->rd_indcollation[i];
+		sortKey->ssup_nulls_first = false;
+		sortKey->ssup_attno = i + 1;
+		sortKey->abbreviate = false;
+
+		Assert(sortKey->ssup_attno != 0);
+
+		if (!OidIsValid(sortKey->ssup_collation))
+			sortKey->ssup_collation = DEFAULT_COLLATION_OID;
+
+		/*
+		 * Look for a ordering for the index key data type, and then the sort
+		 * support function.
+		 */
+		typentry = lookup_type_cache(att->atttypid, TYPECACHE_LT_OPR);
+		PrepareSortSupportFromOrderingOp(typentry->lt_opr, sortKey);
+	}
+
+	base->removeabbrev = removeabbrev_index_gin;
+	base->comparetup = comparetup_index_gin;
+	base->writetup = writetup_index_gin;
+	base->readtup = readtup_index_gin;
+	base->haveDatum1 = false;
+	base->arg = NULL;
+
+	MemoryContextSwitchTo(oldcontext);
 
 	return state;
 }
@@ -596,12 +663,10 @@ tuplesort_begin_datum(Oid datumType, Oid sortOperator, Oid sortCollation,
 	oldcontext = MemoryContextSwitchTo(base->maincontext);
 	arg = (TuplesortDatumArg *) palloc(sizeof(TuplesortDatumArg));
 
-#ifdef TRACE_SORT
 	if (trace_sort)
 		elog(LOG,
 			 "begin datum sort: workMem = %d, randomAccess = %c",
 			 workMem, sortopt & TUPLESORT_RANDOMACCESS ? 't' : 'f');
-#endif
 
 	base->nKeys = 1;			/* always a one-column sort */
 
@@ -678,7 +743,7 @@ tuplesort_puttupleslot(Tuplesortstate *state, TupleTableSlot *slot)
 
 	/* copy the tuple into sort storage */
 	tuple = ExecCopySlotMinimalTuple(slot);
-	stup.tuple = (void *) tuple;
+	stup.tuple = tuple;
 	/* set up first-column key value */
 	htup.t_len = tuple->t_len + MINIMAL_TUPLE_OFFSET;
 	htup.t_data = (HeapTupleHeader) ((char *) tuple - MINIMAL_TUPLE_OFFSET);
@@ -716,7 +781,7 @@ tuplesort_putheaptuple(Tuplesortstate *state, HeapTuple tup)
 
 	/* copy the tuple into sort storage */
 	tup = heap_copytuple(tup);
-	stup.tuple = (void *) tup;
+	stup.tuple = tup;
 
 	/*
 	 * set up first-column key value, and potentially abbreviate, if it's a
@@ -817,6 +882,37 @@ tuplesort_putbrintuple(Tuplesortstate *state, BrinTuple *tuple, Size size)
 	MemoryContextSwitchTo(oldcontext);
 }
 
+void
+tuplesort_putgintuple(Tuplesortstate *state, GinTuple *tuple, Size size)
+{
+	SortTuple	stup;
+	GinTuple   *ctup;
+	TuplesortPublic *base = TuplesortstateGetPublic(state);
+	MemoryContext oldcontext = MemoryContextSwitchTo(base->tuplecontext);
+	Size		tuplen;
+
+	/* copy the GinTuple into the right memory context */
+	ctup = palloc(size);
+	memcpy(ctup, tuple, size);
+
+	stup.tuple = ctup;
+	stup.datum1 = (Datum) 0;
+	stup.isnull1 = false;
+
+	/* GetMemoryChunkSpace is not supported for bump contexts */
+	if (TupleSortUseBumpTupleCxt(base->sortopt))
+		tuplen = MAXALIGN(size);
+	else
+		tuplen = GetMemoryChunkSpace(ctup);
+
+	tuplesort_puttuple_common(state, &stup,
+							  base->sortKeys &&
+							  base->sortKeys->abbrev_converter &&
+							  !stup.isnull1, tuplen);
+
+	MemoryContextSwitchTo(oldcontext);
+}
+
 /*
  * Accept one Datum while collecting input data for sort.
  *
@@ -906,7 +1002,7 @@ tuplesort_gettupleslot(Tuplesortstate *state, bool forward, bool copy,
 			*abbrev = stup.datum1;
 
 		if (copy)
-			stup.tuple = heap_copy_minimal_tuple((MinimalTuple) stup.tuple);
+			stup.tuple = heap_copy_minimal_tuple((MinimalTuple) stup.tuple, 0);
 
 		ExecStoreMinimalTuple((MinimalTuple) stup.tuple, slot, copy);
 		return true;
@@ -987,6 +1083,29 @@ tuplesort_getbrintuple(Tuplesortstate *state, Size *len, bool forward)
 	*len = btup->tuplen;
 
 	return &btup->tuple;
+}
+
+GinTuple *
+tuplesort_getgintuple(Tuplesortstate *state, Size *len, bool forward)
+{
+	TuplesortPublic *base = TuplesortstateGetPublic(state);
+	MemoryContext oldcontext = MemoryContextSwitchTo(base->sortcontext);
+	SortTuple	stup;
+	GinTuple   *tup;
+
+	if (!tuplesort_gettuple_common(state, forward, &stup))
+		stup.tuple = NULL;
+
+	MemoryContextSwitchTo(oldcontext);
+
+	if (!stup.tuple)
+		return NULL;
+
+	tup = (GinTuple *) stup.tuple;
+
+	*len = tup->tuplen;
+
+	return tup;
 }
 
 /*
@@ -1189,7 +1308,7 @@ readtup_heap(Tuplesortstate *state, SortTuple *stup,
 	LogicalTapeReadExact(tape, tupbody, tupbodylen);
 	if (base->sortopt & TUPLESORT_RANDOMACCESS) /* need trailing length word? */
 		LogicalTapeReadExact(tape, &tuplen, sizeof(tuplen));
-	stup->tuple = (void *) tuple;
+	stup->tuple = tuple;
 	/* set up first-column key value */
 	htup.t_len = tuple->t_len + MINIMAL_TUPLE_OFFSET;
 	htup.t_data = (HeapTupleHeader) ((char *) tuple - MINIMAL_TUPLE_OFFSET);
@@ -1386,7 +1505,7 @@ readtup_cluster(Tuplesortstate *state, SortTuple *stup,
 	LogicalTapeReadExact(tape, tuple->t_data, tuple->t_len);
 	if (base->sortopt & TUPLESORT_RANDOMACCESS) /* need trailing length word? */
 		LogicalTapeReadExact(tape, &tuplen, sizeof(tuplen));
-	stup->tuple = (void *) tuple;
+	stup->tuple = tuple;
 	/* set up first-column key value, if it's a simple column */
 	if (base->haveDatum1)
 		stup->datum1 = heap_getattr(tuple,
@@ -1695,7 +1814,7 @@ readtup_index(Tuplesortstate *state, SortTuple *stup,
 	LogicalTapeReadExact(tape, tuple, tuplen);
 	if (base->sortopt & TUPLESORT_RANDOMACCESS) /* need trailing length word? */
 		LogicalTapeReadExact(tape, &tuplen, sizeof(tuplen));
-	stup->tuple = (void *) tuple;
+	stup->tuple = tuple;
 	/* set up first-column key value */
 	stup->datum1 = index_getattr(tuple,
 								 1,
@@ -1771,10 +1890,73 @@ readtup_index_brin(Tuplesortstate *state, SortTuple *stup,
 	LogicalTapeReadExact(tape, &tuple->tuple, tuplen);
 	if (base->sortopt & TUPLESORT_RANDOMACCESS) /* need trailing length word? */
 		LogicalTapeReadExact(tape, &tuplen, sizeof(tuplen));
-	stup->tuple = (void *) tuple;
+	stup->tuple = tuple;
 
 	/* set up first-column key value, which is block number */
 	stup->datum1 = tuple->tuple.bt_blkno;
+}
+
+/*
+ * Routines specialized for GIN case
+ */
+
+static void
+removeabbrev_index_gin(Tuplesortstate *state, SortTuple *stups, int count)
+{
+	Assert(false);
+	elog(ERROR, "removeabbrev_index_gin not implemented");
+}
+
+static int
+comparetup_index_gin(const SortTuple *a, const SortTuple *b,
+					 Tuplesortstate *state)
+{
+	TuplesortPublic *base = TuplesortstateGetPublic(state);
+
+	Assert(!TuplesortstateGetPublic(state)->haveDatum1);
+
+	return _gin_compare_tuples((GinTuple *) a->tuple,
+							   (GinTuple *) b->tuple,
+							   base->sortKeys);
+}
+
+static void
+writetup_index_gin(Tuplesortstate *state, LogicalTape *tape, SortTuple *stup)
+{
+	TuplesortPublic *base = TuplesortstateGetPublic(state);
+	GinTuple   *tuple = (GinTuple *) stup->tuple;
+	unsigned int tuplen = tuple->tuplen;
+
+	tuplen = tuplen + sizeof(tuplen);
+	LogicalTapeWrite(tape, &tuplen, sizeof(tuplen));
+	LogicalTapeWrite(tape, tuple, tuple->tuplen);
+	if (base->sortopt & TUPLESORT_RANDOMACCESS) /* need trailing length word? */
+		LogicalTapeWrite(tape, &tuplen, sizeof(tuplen));
+}
+
+static void
+readtup_index_gin(Tuplesortstate *state, SortTuple *stup,
+				  LogicalTape *tape, unsigned int len)
+{
+	GinTuple   *tuple;
+	TuplesortPublic *base = TuplesortstateGetPublic(state);
+	unsigned int tuplen = len - sizeof(unsigned int);
+
+	/*
+	 * Allocate space for the GIN sort tuple, which already has the proper
+	 * length included in the header.
+	 */
+	tuple = (GinTuple *) tuplesort_readtup_alloc(state, tuplen);
+
+	tuple->tuplen = tuplen;
+
+	LogicalTapeReadExact(tape, tuple, tuplen);
+	if (base->sortopt & TUPLESORT_RANDOMACCESS) /* need trailing length word? */
+		LogicalTapeReadExact(tape, &tuplen, sizeof(tuplen));
+	stup->tuple = (void *) tuple;
+
+	/* no abbreviations (FIXME maybe use attrnum for this?) */
+	stup->datum1 = (Datum) 0;
 }
 
 /*

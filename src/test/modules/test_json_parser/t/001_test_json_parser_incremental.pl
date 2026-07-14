@@ -1,5 +1,5 @@
 
-# Copyright (c) 2024, PostgreSQL Global Development Group
+# Copyright (c) 2024-2025, PostgreSQL Global Development Group
 
 # Test the incremental (table-driven) json parser.
 
@@ -13,20 +13,28 @@ use FindBin;
 
 my $test_file = "$FindBin::RealBin/../tiny.json";
 
-my $exe = "test_json_parser_incremental";
+my @exes = (
+	[ "test_json_parser_incremental", ],
+	[ "test_json_parser_incremental", "-o", ],
+	[ "test_json_parser_incremental_shlib", ],
+	[ "test_json_parser_incremental_shlib", "-o", ]);
 
-# Test the  usage error
-my ($stdout, $stderr) = run_command([ $exe, "-c", 10 ]);
-like($stderr, qr/Usage:/, 'error message if not enough arguments');
-
-# Test that we get success for small chunk sizes from 64 down to 1.
-
-for (my $size = 64; $size > 0; $size--)
+foreach my $exe (@exes)
 {
-	($stdout, $stderr) = run_command([ $exe, "-c", $size, $test_file ]);
+	note "testing executable @$exe";
 
-	like($stdout, qr/SUCCESS/, "chunk size $size: test succeeds");
-	is($stderr, "", "chunk size $size: no error output");
+	# Test the  usage error
+	my ($stdout, $stderr) = run_command([ @$exe, "-c", 10 ]);
+	like($stderr, qr/Usage:/, 'error message if not enough arguments');
+
+	# Test that we get success for small chunk sizes from 64 down to 1.
+	for (my $size = 64; $size > 0; $size--)
+	{
+		($stdout, $stderr) = run_command([ @$exe, "-c", $size, $test_file ]);
+
+		like($stdout, qr/SUCCESS/, "chunk size $size: test succeeds");
+		is($stderr, "", "chunk size $size: no error output");
+	}
 }
 
 done_testing();

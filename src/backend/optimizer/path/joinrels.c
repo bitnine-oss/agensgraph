@@ -3,7 +3,7 @@
  * joinrels.c
  *	  Routines to determine which relations should be joined
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -46,7 +46,8 @@ static void try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1,
 static SpecialJoinInfo *build_child_join_sjinfo(PlannerInfo *root,
 												SpecialJoinInfo *parent_sjinfo,
 												Relids left_relids, Relids right_relids);
-static void free_child_join_sjinfo(SpecialJoinInfo *sjinfo);
+static void free_child_join_sjinfo(SpecialJoinInfo *child_sjinfo,
+								   SpecialJoinInfo *parent_sjinfo);
 static void compute_partition_bounds(PlannerInfo *root, RelOptInfo *rel1,
 									 RelOptInfo *rel2, RelOptInfo *joinrel,
 									 SpecialJoinInfo *parent_sjinfo,
@@ -594,9 +595,6 @@ join_is_legal(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 		 * Also, if the lateral reference is only indirect, we should reject
 		 * the join; whatever rel(s) the reference chain goes through must be
 		 * joined to first.
-		 *
-		 * Another case that might keep us from building a valid plan is the
-		 * implementation restriction described by have_dangerous_phv().
 		 */
 		lateral_fwd = bms_overlap(rel1->relids, rel2->lateral_relids);
 		lateral_rev = bms_overlap(rel2->relids, rel1->lateral_relids);
@@ -613,9 +611,6 @@ join_is_legal(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 			/* check there is a direct reference from rel2 to rel1 */
 			if (!bms_overlap(rel1->relids, rel2->direct_lateral_relids))
 				return false;	/* only indirect refs, so reject */
-			/* check we won't have a dangerous PHV */
-			if (have_dangerous_phv(root, rel1->relids, rel2->lateral_relids))
-				return false;	/* might be unable to handle required PHV */
 		}
 		else if (lateral_rev)
 		{
@@ -628,9 +623,6 @@ join_is_legal(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 			/* check there is a direct reference from rel1 to rel2 */
 			if (!bms_overlap(rel2->relids, rel1->direct_lateral_relids))
 				return false;	/* only indirect refs, so reject */
-			/* check we won't have a dangerous PHV */
-			if (have_dangerous_phv(root, rel2->relids, rel1->lateral_relids))
-				return false;	/* might be unable to handle required PHV */
 		}
 
 		/*
@@ -1021,6 +1013,9 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 				add_paths_to_joinrel(root, joinrel, rel1, rel2,
 									 JOIN_SEMI, sjinfo,
 									 restrictlist);
+				add_paths_to_joinrel(root, joinrel, rel2, rel1,
+									 JOIN_RIGHT_SEMI, sjinfo,
+									 restrictlist);
 			}
 
 			/*
@@ -1331,57 +1326,6 @@ has_legal_joinclause(PlannerInfo *root, RelOptInfo *rel)
 
 
 /*
- * There's a pitfall for creating parameterized nestloops: suppose the inner
- * rel (call it A) has a parameter that is a PlaceHolderVar, and that PHV's
- * minimum eval_at set includes the outer rel (B) and some third rel (C).
- * We might think we could create a B/A nestloop join that's parameterized by
- * C.  But we would end up with a plan in which the PHV's expression has to be
- * evaluated as a nestloop parameter at the B/A join; and the executor is only
- * set up to handle simple Vars as NestLoopParams.  Rather than add complexity
- * and overhead to the executor for such corner cases, it seems better to
- * forbid the join.  (Note that we can still make use of A's parameterized
- * path with pre-joined B+C as the outer rel.  have_join_order_restriction()
- * ensures that we will consider making such a join even if there are not
- * other reasons to do so.)
- *
- * So we check whether any PHVs used in the query could pose such a hazard.
- * We don't have any simple way of checking whether a risky PHV would actually
- * be used in the inner plan, and the case is so unusual that it doesn't seem
- * worth working very hard on it.
- *
- * This needs to be checked in two places.  If the inner rel's minimum
- * parameterization would trigger the restriction, then join_is_legal() should
- * reject the join altogether, because there will be no workable paths for it.
- * But joinpath.c has to check again for every proposed nestloop path, because
- * the inner path might have more than the minimum parameterization, causing
- * some PHV to be dangerous for it that otherwise wouldn't be.
- */
-bool
-have_dangerous_phv(PlannerInfo *root,
-				   Relids outer_relids, Relids inner_params)
-{
-	ListCell   *lc;
-
-	foreach(lc, root->placeholder_list)
-	{
-		PlaceHolderInfo *phinfo = (PlaceHolderInfo *) lfirst(lc);
-
-		if (!bms_is_subset(phinfo->ph_eval_at, inner_params))
-			continue;			/* ignore, could not be a nestloop param */
-		if (!bms_overlap(phinfo->ph_eval_at, outer_relids))
-			continue;			/* ignore, not relevant to this join */
-		if (bms_is_subset(phinfo->ph_eval_at, outer_relids))
-			continue;			/* safe, it can be eval'd within outerrel */
-		/* Otherwise, it's potentially unsafe, so reject the join */
-		return true;
-	}
-
-	/* OK to perform the join */
-	return false;
-}
-
-
-/*
  * is_dummy_rel --- has relation been proven empty?
  */
 bool
@@ -1600,6 +1544,7 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 		RelOptInfo *child_joinrel;
 		AppendRelInfo **appinfos;
 		int			nappinfos;
+		Relids		child_relids;
 
 		if (joinrel->partbounds_merged)
 		{
@@ -1695,9 +1640,8 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 											   child_rel2->relids);
 
 		/* Find the AppendRelInfo structures */
-		appinfos = find_appinfos_by_relids(root,
-										   bms_union(child_rel1->relids,
-													 child_rel2->relids),
+		child_relids = bms_union(child_rel1->relids, child_rel2->relids);
+		appinfos = find_appinfos_by_relids(root, child_relids,
 										   &nappinfos);
 
 		/*
@@ -1715,7 +1659,7 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 		{
 			child_joinrel = build_child_join_rel(root, child_rel1, child_rel2,
 												 joinrel, child_restrictlist,
-												 child_sjinfo);
+												 child_sjinfo, nappinfos, appinfos);
 			joinrel->part_rels[cnt_parts] = child_joinrel;
 			joinrel->live_parts = bms_add_member(joinrel->live_parts, cnt_parts);
 			joinrel->all_partrels = bms_add_members(joinrel->all_partrels,
@@ -1732,8 +1676,15 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 									child_joinrel, child_sjinfo,
 									child_restrictlist);
 
+		/*
+		 * When there are thousands of partitions involved, this loop will
+		 * accumulate a significant amount of memory usage from objects that
+		 * are only needed within the loop.  Free these local objects eagerly
+		 * at the end of each iteration.
+		 */
 		pfree(appinfos);
-		free_child_join_sjinfo(child_sjinfo);
+		bms_free(child_relids);
+		free_child_join_sjinfo(child_sjinfo, parent_sjinfo);
 	}
 }
 
@@ -1800,18 +1751,33 @@ build_child_join_sjinfo(PlannerInfo *root, SpecialJoinInfo *parent_sjinfo,
  * SpecialJoinInfo are freed here.
  */
 static void
-free_child_join_sjinfo(SpecialJoinInfo *sjinfo)
+free_child_join_sjinfo(SpecialJoinInfo *child_sjinfo,
+					   SpecialJoinInfo *parent_sjinfo)
 {
 	/*
 	 * Dummy SpecialJoinInfos of inner joins do not have any translated fields
 	 * and hence no fields that to be freed.
 	 */
-	if (sjinfo->jointype != JOIN_INNER)
+	if (child_sjinfo->jointype != JOIN_INNER)
 	{
-		bms_free(sjinfo->min_lefthand);
-		bms_free(sjinfo->min_righthand);
-		bms_free(sjinfo->syn_lefthand);
-		bms_free(sjinfo->syn_righthand);
+		if (child_sjinfo->min_lefthand != parent_sjinfo->min_lefthand)
+			bms_free(child_sjinfo->min_lefthand);
+
+		if (child_sjinfo->min_righthand != parent_sjinfo->min_righthand)
+			bms_free(child_sjinfo->min_righthand);
+
+		if (child_sjinfo->syn_lefthand != parent_sjinfo->syn_lefthand)
+			bms_free(child_sjinfo->syn_lefthand);
+
+		if (child_sjinfo->syn_righthand != parent_sjinfo->syn_righthand)
+			bms_free(child_sjinfo->syn_righthand);
+
+		Assert(child_sjinfo->commute_above_l == parent_sjinfo->commute_above_l);
+		Assert(child_sjinfo->commute_above_r == parent_sjinfo->commute_above_r);
+		Assert(child_sjinfo->commute_below_l == parent_sjinfo->commute_below_l);
+		Assert(child_sjinfo->commute_below_r == parent_sjinfo->commute_below_r);
+
+		Assert(child_sjinfo->semi_operators == parent_sjinfo->semi_operators);
 
 		/*
 		 * semi_rhs_exprs may in principle be freed, but a simple pfree() does
@@ -1819,7 +1785,7 @@ free_child_join_sjinfo(SpecialJoinInfo *sjinfo)
 		 */
 	}
 
-	pfree(sjinfo);
+	pfree(child_sjinfo);
 }
 
 /*

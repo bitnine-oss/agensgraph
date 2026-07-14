@@ -13,7 +13,7 @@
 # No output if everything is OK, else compiler errors.
 #
 # src/tools/pginclude/headerscheck
-# Copyright (c) 2009-2024, PostgreSQL Global Development Group
+# Copyright (c) 2009-2025, PostgreSQL Global Development Group
 
 # option to check for C++ compatibility
 if [ "$1" = "--cplusplus" ]; then
@@ -107,12 +107,10 @@ do
 	# Likewise, these files are platform-specific, and the one
 	# relevant to our platform will be included by atomics.h.
 	test "$f" = src/include/port/atomics/arch-arm.h && continue
-	test "$f" = src/include/port/atomics/arch-hppa.h && continue
 	test "$f" = src/include/port/atomics/arch-ppc.h && continue
 	test "$f" = src/include/port/atomics/arch-x86.h && continue
 	test "$f" = src/include/port/atomics/fallback.h && continue
 	test "$f" = src/include/port/atomics/generic.h && continue
-	test "$f" = src/include/port/atomics/generic-acc.h && continue
 	test "$f" = src/include/port/atomics/generic-gcc.h && continue
 	test "$f" = src/include/port/atomics/generic-msvc.h && continue
 	test "$f" = src/include/port/atomics/generic-sunpro.h && continue
@@ -140,6 +138,12 @@ do
 	test "$f" = src/pl/tcl/pltclerrcodes.h && continue
 
 	# Also not meant to be included standalone.
+	test "$f" = contrib/isn/EAN13.h && continue
+	test "$f" = contrib/isn/ISBN.h && continue
+	test "$f" = contrib/isn/ISMN.h && continue
+	test "$f" = contrib/isn/ISSN.h && continue
+	test "$f" = contrib/isn/UPC.h && continue
+
 	test "$f" = src/include/common/unicode_nonspacing_table.h && continue
 	test "$f" = src/include/common/unicode_east_asian_fw_table.h && continue
 
@@ -163,6 +167,9 @@ do
 
 	# This produces a "no previous prototype" warning.
 	! $cplusplus && test "$f" = src/include/storage/checksum_impl.h && continue
+
+	# SectionMemoryManager.h is C++
+	test "$f" = src/include/jit/SectionMemoryManager.h && continue
 
 	# ppport.h is not under our control, so we can't make it standalone.
 	test "$f" = src/pl/plperl/ppport.h && continue

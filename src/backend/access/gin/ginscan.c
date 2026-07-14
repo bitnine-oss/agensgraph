@@ -4,7 +4,7 @@
  *	  routines to manage scans of inverted index relations
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -68,8 +68,13 @@ ginFillScanEntry(GinScanOpaque so, OffsetNumber attnum,
 	 *
 	 * Entries with non-null extra_data are never considered identical, since
 	 * we can't know exactly what the opclass might be doing with that.
+	 *
+	 * Also, give up de-duplication once we have 100 entries.  That avoids
+	 * spending O(N^2) time on probably-fruitless de-duplication of large
+	 * search-key sets.  The threshold of 100 is arbitrary but matches
+	 * predtest.c's threshold for what's a large array.
 	 */
-	if (extra_data == NULL)
+	if (extra_data == NULL && so->totalentries < 100)
 	{
 		for (i = 0; i < so->totalentries; i++)
 		{
@@ -106,7 +111,8 @@ ginFillScanEntry(GinScanOpaque so, OffsetNumber attnum,
 	ItemPointerSetMin(&scanEntry->curItem);
 	scanEntry->matchBitmap = NULL;
 	scanEntry->matchIterator = NULL;
-	scanEntry->matchResult = NULL;
+	scanEntry->matchResult.blockno = InvalidBlockNumber;
+	scanEntry->matchNtuples = -1;
 	scanEntry->list = NULL;
 	scanEntry->nlist = 0;
 	scanEntry->offset = InvalidOffsetNumber;
@@ -246,7 +252,7 @@ ginFreeScanKeys(GinScanOpaque so)
 		if (entry->list)
 			pfree(entry->list);
 		if (entry->matchIterator)
-			tbm_end_iterate(entry->matchIterator);
+			tbm_end_private_iterate(entry->matchIterator);
 		if (entry->matchBitmap)
 			tbm_free(entry->matchBitmap);
 	}
@@ -436,6 +442,8 @@ ginNewScanKey(IndexScanDesc scan)
 	MemoryContextSwitchTo(oldCtx);
 
 	pgstat_count_index_scan(scan->indexRelation);
+	if (scan->instrument)
+		scan->instrument->nsearches++;
 }
 
 void
@@ -447,10 +455,7 @@ ginrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
 	ginFreeScanKeys(so);
 
 	if (scankey && scan->numberOfKeys > 0)
-	{
-		memmove(scan->keyData, scankey,
-				scan->numberOfKeys * sizeof(ScanKeyData));
-	}
+		memcpy(scan->keyData, scankey, scan->numberOfKeys * sizeof(ScanKeyData));
 }
 
 

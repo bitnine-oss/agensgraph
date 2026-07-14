@@ -3,7 +3,7 @@
  * event_trigger.h
  *	  Declarations for command trigger handling.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/event_trigger.h
@@ -31,6 +31,12 @@ typedef struct EventTriggerData
 
 extern PGDLLIMPORT bool event_triggers;
 
+/*
+ * Reasons for relation rewrites.
+ *
+ * pg_event_trigger_table_rewrite_reason() uses these values, so make sure to
+ * update the documentation when changing this list.
+ */
 #define AT_REWRITE_ALTER_PERSISTENCE	0x01
 #define AT_REWRITE_DEFAULT_VAL			0x02
 #define AT_REWRITE_COLUMN_REWRITE		0x04

@@ -3,7 +3,7 @@
  *
  *	execution functions
  *
- *	Copyright (c) 2010-2024, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2025, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/exec.c
  */
 
@@ -350,7 +350,7 @@ check_data_dir(ClusterInfo *cluster)
 	check_single_dir(pg_data, "global");
 	check_single_dir(pg_data, "pg_multixact");
 	check_single_dir(pg_data, "pg_subtrans");
-	check_single_dir(pg_data, "pg_tblspc");
+	check_single_dir(pg_data, PG_TBLSPC_DIR);
 	check_single_dir(pg_data, "pg_twophase");
 
 	/* pg_xlog has been renamed to pg_wal in v10 */

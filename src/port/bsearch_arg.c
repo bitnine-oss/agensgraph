@@ -1,7 +1,7 @@
 /*
  * bsearch_arg.c: bsearch variant with a user-supplied pointer
  *
- * Copyright (c) 2021-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2021-2025, PostgreSQL Global Development Group
  * Copyright (c) 1990 Regents of the University of California.
  * All rights reserved.
  *
@@ -58,8 +58,8 @@ bsearch_arg(const void *key, const void *base0,
 			void *arg)
 {
 	const char *base = (const char *) base0;
-	int			lim,
-				cmp;
+	size_t		lim;
+	int			cmp;
 	const void *p;
 
 	for (lim = nmemb; lim != 0; lim >>= 1)

@@ -3,7 +3,7 @@
  * jsonb.c
  *		I/O routines for jsonb type
  *
- * Copyright (c) 2014-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2014-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/adt/jsonb.c
@@ -257,7 +257,7 @@ jsonb_from_cstring(char *json, int len, bool unique_keys, Node *escontext)
 
 	state.unique_keys = unique_keys;
 	state.escontext = escontext;
-	sem.semstate = (void *) &state;
+	sem.semstate = &state;
 
 	sem.object_start = jsonb_in_object_start;
 	sem.array_start = jsonb_in_array_start;
@@ -354,7 +354,7 @@ jsonb_put_escaped_value(StringInfo out, JsonbValue *scalarVal)
 			appendBinaryStringInfo(out, "null", 4);
 			break;
 		case jbvString:
-			escape_json(out, pnstrdup(scalarVal->val.string.val, scalarVal->val.string.len));
+			escape_json_with_len(out, scalarVal->val.string.val, scalarVal->val.string.len);
 			break;
 		case jbvNumeric:
 			appendStringInfoString(out,
@@ -657,7 +657,7 @@ datum_to_jsonb_internal(Datum val, bool is_null, JsonbInState *result,
 			  tcategory == JSONTYPE_COMPOSITE ||
 			  tcategory == JSONTYPE_JSON ||
 			  tcategory == JSONTYPE_JSONB ||
-			  tcategory == JSONTYPE_JSON))
+			  tcategory == JSONTYPE_CAST))
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -758,7 +758,7 @@ datum_to_jsonb_internal(Datum val, bool is_null, JsonbInState *result,
 
 					memset(&sem, 0, sizeof(sem));
 
-					sem.semstate = (void *) result;
+					sem.semstate = result;
 
 					sem.object_start = jsonb_in_object_start;
 					sem.array_start = jsonb_in_array_start;
@@ -2040,7 +2040,16 @@ jsonb_bool(PG_FUNCTION_ARGS)
 	Jsonb	   *in = PG_GETARG_JSONB_P(0);
 	JsonbValue	v;
 
-	if (!JsonbExtractScalar(&in->root, &v) || v.type != jbvBool)
+	if (!JsonbExtractScalar(&in->root, &v))
+		cannotCastJsonbValue(v.type, "boolean");
+
+	if (v.type == jbvNull)
+	{
+		PG_FREE_IF_COPY(in, 0);
+		PG_RETURN_NULL();
+	}
+
+	if (v.type != jbvBool)
 		cannotCastJsonbValue(v.type, "boolean");
 
 	PG_FREE_IF_COPY(in, 0);
@@ -2055,7 +2064,16 @@ jsonb_numeric(PG_FUNCTION_ARGS)
 	JsonbValue	v;
 	Numeric		retValue;
 
-	if (!JsonbExtractScalar(&in->root, &v) || v.type != jbvNumeric)
+	if (!JsonbExtractScalar(&in->root, &v))
+		cannotCastJsonbValue(v.type, "numeric");
+
+	if (v.type == jbvNull)
+	{
+		PG_FREE_IF_COPY(in, 0);
+		PG_RETURN_NULL();
+	}
+
+	if (v.type != jbvNumeric)
 		cannotCastJsonbValue(v.type, "numeric");
 
 	/*
@@ -2076,7 +2094,16 @@ jsonb_int2(PG_FUNCTION_ARGS)
 	JsonbValue	v;
 	Datum		retValue;
 
-	if (!JsonbExtractScalar(&in->root, &v) || v.type != jbvNumeric)
+	if (!JsonbExtractScalar(&in->root, &v))
+		cannotCastJsonbValue(v.type, "smallint");
+
+	if (v.type == jbvNull)
+	{
+		PG_FREE_IF_COPY(in, 0);
+		PG_RETURN_NULL();
+	}
+
+	if (v.type != jbvNumeric)
 		cannotCastJsonbValue(v.type, "smallint");
 
 	retValue = DirectFunctionCall1(numeric_int2,
@@ -2094,7 +2121,16 @@ jsonb_int4(PG_FUNCTION_ARGS)
 	JsonbValue	v;
 	Datum		retValue;
 
-	if (!JsonbExtractScalar(&in->root, &v) || v.type != jbvNumeric)
+	if (!JsonbExtractScalar(&in->root, &v))
+		cannotCastJsonbValue(v.type, "integer");
+
+	if (v.type == jbvNull)
+	{
+		PG_FREE_IF_COPY(in, 0);
+		PG_RETURN_NULL();
+	}
+
+	if (v.type != jbvNumeric)
 		cannotCastJsonbValue(v.type, "integer");
 
 	retValue = DirectFunctionCall1(numeric_int4,
@@ -2112,7 +2148,16 @@ jsonb_int8(PG_FUNCTION_ARGS)
 	JsonbValue	v;
 	Datum		retValue;
 
-	if (!JsonbExtractScalar(&in->root, &v) || v.type != jbvNumeric)
+	if (!JsonbExtractScalar(&in->root, &v))
+		cannotCastJsonbValue(v.type, "bigint");
+
+	if (v.type == jbvNull)
+	{
+		PG_FREE_IF_COPY(in, 0);
+		PG_RETURN_NULL();
+	}
+
+	if (v.type != jbvNumeric)
 		cannotCastJsonbValue(v.type, "bigint");
 
 	retValue = DirectFunctionCall1(numeric_int8,
@@ -2130,7 +2175,16 @@ jsonb_float4(PG_FUNCTION_ARGS)
 	JsonbValue	v;
 	Datum		retValue;
 
-	if (!JsonbExtractScalar(&in->root, &v) || v.type != jbvNumeric)
+	if (!JsonbExtractScalar(&in->root, &v))
+		cannotCastJsonbValue(v.type, "real");
+
+	if (v.type == jbvNull)
+	{
+		PG_FREE_IF_COPY(in, 0);
+		PG_RETURN_NULL();
+	}
+
+	if (v.type != jbvNumeric)
 		cannotCastJsonbValue(v.type, "real");
 
 	retValue = DirectFunctionCall1(numeric_float4,
@@ -2148,7 +2202,16 @@ jsonb_float8(PG_FUNCTION_ARGS)
 	JsonbValue	v;
 	Datum		retValue;
 
-	if (!JsonbExtractScalar(&in->root, &v) || v.type != jbvNumeric)
+	if (!JsonbExtractScalar(&in->root, &v))
+		cannotCastJsonbValue(v.type, "double precision");
+
+	if (v.type == jbvNull)
+	{
+		PG_FREE_IF_COPY(in, 0);
+		PG_RETURN_NULL();
+	}
+
+	if (v.type != jbvNumeric)
 		cannotCastJsonbValue(v.type, "double precision");
 
 	retValue = DirectFunctionCall1(numeric_float8,

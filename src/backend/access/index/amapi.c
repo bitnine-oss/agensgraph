@@ -3,7 +3,7 @@
  * amapi.c
  *	  Support routines for API for Postgres index access methods.
  *
- * Copyright (c) 2015-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2015-2025, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -106,6 +106,66 @@ GetIndexAmRoutineByAmId(Oid amoid, bool noerror)
 	return GetIndexAmRoutine(amhandler);
 }
 
+
+/*
+ * IndexAmTranslateStrategy - given an access method and strategy, get the
+ * corresponding compare type.
+ *
+ * If missing_ok is false, throw an error if no compare type is found.  If
+ * true, just return COMPARE_INVALID.
+ */
+CompareType
+IndexAmTranslateStrategy(StrategyNumber strategy, Oid amoid, Oid opfamily, bool missing_ok)
+{
+	CompareType result;
+	IndexAmRoutine *amroutine;
+
+	/* shortcut for common case */
+	if (amoid == BTREE_AM_OID &&
+		(strategy > InvalidStrategy && strategy <= BTMaxStrategyNumber))
+		return (CompareType) strategy;
+
+	amroutine = GetIndexAmRoutineByAmId(amoid, false);
+	if (amroutine->amtranslatestrategy)
+		result = amroutine->amtranslatestrategy(strategy, opfamily);
+	else
+		result = COMPARE_INVALID;
+
+	if (!missing_ok && result == COMPARE_INVALID)
+		elog(ERROR, "could not translate strategy number %d for index AM %u", strategy, amoid);
+
+	return result;
+}
+
+/*
+ * IndexAmTranslateCompareType - given an access method and compare type, get
+ * the corresponding strategy number.
+ *
+ * If missing_ok is false, throw an error if no strategy is found correlating
+ * to the given cmptype.  If true, just return InvalidStrategy.
+ */
+StrategyNumber
+IndexAmTranslateCompareType(CompareType cmptype, Oid amoid, Oid opfamily, bool missing_ok)
+{
+	StrategyNumber result;
+	IndexAmRoutine *amroutine;
+
+	/* shortcut for common case */
+	if (amoid == BTREE_AM_OID &&
+		(cmptype > COMPARE_INVALID && cmptype <= COMPARE_GT))
+		return (StrategyNumber) cmptype;
+
+	amroutine = GetIndexAmRoutineByAmId(amoid, false);
+	if (amroutine->amtranslatecmptype)
+		result = amroutine->amtranslatecmptype(cmptype, opfamily);
+	else
+		result = InvalidStrategy;
+
+	if (!missing_ok && result == InvalidStrategy)
+		elog(ERROR, "could not translate compare type %u for index AM %u", cmptype, amoid);
+
+	return result;
+}
 
 /*
  * Ask appropriate access method to validate the specified opclass.

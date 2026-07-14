@@ -36,7 +36,7 @@
  * to look like NO SCROLL cursors.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/portal.h
@@ -145,7 +145,6 @@ typedef struct PortalData
 	/* Features/options */
 	PortalStrategy strategy;	/* see above */
 	int			cursorOptions;	/* DECLARE CURSOR option bits */
-	bool		run_once;		/* portal will only be run once */
 
 	/* Status data */
 	PortalStatus status;		/* see above */
@@ -170,9 +169,9 @@ typedef struct PortalData
 	Snapshot	portalSnapshot; /* active snapshot, or NULL if none */
 
 	/*
-	 * Where we store tuples for a held cursor or a PORTAL_ONE_RETURNING or
-	 * PORTAL_UTIL_SELECT query.  (A cursor held past the end of its
-	 * transaction no longer has any active executor state.)
+	 * Where we store tuples for a held cursor or a PORTAL_ONE_RETURNING,
+	 * PORTAL_ONE_MOD_WITH, or PORTAL_UTIL_SELECT query.  (A cursor held past
+	 * the end of its transaction no longer has any active executor state.)
 	 */
 	Tuplestorestate *holdStore; /* store for holdable cursors */
 	MemoryContext holdContext;	/* memory containing holdStore */

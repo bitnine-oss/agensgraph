@@ -3,7 +3,7 @@
  * detoast.c
  *	  Retrieve compressed or external variable size attributes.
  *
- * Copyright (c) 2000-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/access/common/detoast.c
@@ -88,7 +88,7 @@ detoast_external_attr(struct varlena *attr)
 		eoh = DatumGetEOHP(PointerGetDatum(attr));
 		resultsize = EOH_get_flat_size(eoh);
 		result = (struct varlena *) palloc(resultsize);
-		EOH_flatten_into(eoh, (void *) result, resultsize);
+		EOH_flatten_into(eoh, result, resultsize);
 	}
 	else
 	{

@@ -59,56 +59,15 @@ AC_SUBST(BISONFLAGS)
 # PGAC_PATH_FLEX
 # --------------
 # Look for Flex, set the output variable FLEX to its path if found.
-# Reject versions before 2.5.35 (the earliest version in the buildfarm
-# as of 2022). Also find Flex if its installed under `lex', but do not
-# accept other Lex programs.
 
 AC_DEFUN([PGAC_PATH_FLEX],
-[AC_CACHE_CHECK([for flex], pgac_cv_path_flex,
-[# Let the user override the test
-if test -n "$FLEX"; then
-  pgac_cv_path_flex=$FLEX
-else
-  pgac_save_IFS=$IFS
-  IFS=$PATH_SEPARATOR
-  for pgac_dir in $PATH; do
-    IFS=$pgac_save_IFS
-    if test -z "$pgac_dir" || test x"$pgac_dir" = x"."; then
-      pgac_dir=`pwd`
-    fi
-    for pgac_prog in flex lex; do
-      pgac_candidate="$pgac_dir/$pgac_prog"
-      if test -f "$pgac_candidate" \
-        && $pgac_candidate --version </dev/null >/dev/null 2>&1
-      then
-        echo '%%'  > conftest.l
-        if $pgac_candidate -t conftest.l 2>/dev/null | grep FLEX_SCANNER >/dev/null 2>&1; then
-          pgac_flex_version=`$pgac_candidate --version 2>/dev/null`
-          if echo "$pgac_flex_version" | sed ['s/[.a-z]/ /g'] | $AWK '{ if ([$]1 == 2 && ([$]2 > 5 || ([$]2 == 5 && [$]3 >= 35))) exit 0; else exit 1;}'
-          then
-            pgac_cv_path_flex=$pgac_candidate
-            break 2
-          else
-            AC_MSG_ERROR([
-*** The installed version of Flex, $pgac_candidate, is too old to use with PostgreSQL.
-*** Flex version 2.5.35 or later is required, but this is $pgac_flex_version.])
-          fi
-        fi
-      fi
-    done
-  done
-  rm -f conftest.l lex.yy.c
-  : ${pgac_cv_path_flex=no}
-fi
-])[]dnl AC_CACHE_CHECK
-
-if test x"$pgac_cv_path_flex" = x"no"; then
+[PGAC_PATH_PROGS(FLEX, flex)
+if test -z "$FLEX"; then
   AC_MSG_ERROR([flex not found])
-else
-  FLEX=$pgac_cv_path_flex
-  pgac_flex_version=`$FLEX --version 2>/dev/null`
-  AC_MSG_NOTICE([using $pgac_flex_version])
 fi
+
+pgac_flex_version=`$FLEX --version 2>/dev/null`
+AC_MSG_NOTICE([using $pgac_flex_version])
 
 AC_SUBST(FLEX)
 AC_SUBST(FLEXFLAGS)
@@ -315,3 +274,83 @@ AC_DEFUN([PGAC_CHECK_STRIP],
   AC_SUBST(STRIP_STATIC_LIB)
   AC_SUBST(STRIP_SHARED_LIB)
 ])# PGAC_CHECK_STRIP
+
+
+
+# PGAC_CHECK_LIBCURL
+# ------------------
+# Check for required libraries and headers, and test to see whether the current
+# installation of libcurl is thread-safe.
+
+AC_DEFUN([PGAC_CHECK_LIBCURL],
+[
+  AC_CHECK_HEADER(curl/curl.h, [],
+				  [AC_MSG_ERROR([header file <curl/curl.h> is required for --with-libcurl])])
+  AC_CHECK_LIB(curl, curl_multi_init, [
+				 AC_DEFINE([HAVE_LIBCURL], [1], [Define to 1 if you have the `curl' library (-lcurl).])
+				 AC_SUBST(LIBCURL_LDLIBS, -lcurl)
+			   ],
+			   [AC_MSG_ERROR([library 'curl' does not provide curl_multi_init])])
+
+  pgac_save_CPPFLAGS=$CPPFLAGS
+  pgac_save_LDFLAGS=$LDFLAGS
+  pgac_save_LIBS=$LIBS
+
+  CPPFLAGS="$LIBCURL_CPPFLAGS $CPPFLAGS"
+  LDFLAGS="$LIBCURL_LDFLAGS $LDFLAGS"
+  LIBS="$LIBCURL_LDLIBS $LIBS"
+
+  # Check to see whether the current platform supports threadsafe Curl
+  # initialization.
+  AC_CACHE_CHECK([for curl_global_init thread safety], [pgac_cv__libcurl_threadsafe_init],
+  [AC_RUN_IFELSE([AC_LANG_PROGRAM([
+#include <curl/curl.h>
+],[
+    curl_version_info_data *info;
+
+    if (curl_global_init(CURL_GLOBAL_ALL))
+        return -1;
+
+    info = curl_version_info(CURLVERSION_NOW);
+#ifdef CURL_VERSION_THREADSAFE
+    if (info->features & CURL_VERSION_THREADSAFE)
+        return 0;
+#endif
+
+    return 1;
+])],
+  [pgac_cv__libcurl_threadsafe_init=yes],
+  [pgac_cv__libcurl_threadsafe_init=no],
+  [pgac_cv__libcurl_threadsafe_init=unknown])])
+  if test x"$pgac_cv__libcurl_threadsafe_init" = xyes ; then
+    AC_DEFINE(HAVE_THREADSAFE_CURL_GLOBAL_INIT, 1,
+              [Define to 1 if curl_global_init() is guaranteed to be thread-safe.])
+  fi
+
+  # Fail if a thread-friendly DNS resolver isn't built.
+  AC_CACHE_CHECK([for curl support for asynchronous DNS], [pgac_cv__libcurl_async_dns],
+  [AC_RUN_IFELSE([AC_LANG_PROGRAM([
+#include <curl/curl.h>
+],[
+    curl_version_info_data *info;
+
+    if (curl_global_init(CURL_GLOBAL_ALL))
+        return -1;
+
+    info = curl_version_info(CURLVERSION_NOW);
+    return (info->features & CURL_VERSION_ASYNCHDNS) ? 0 : 1;
+])],
+  [pgac_cv__libcurl_async_dns=yes],
+  [pgac_cv__libcurl_async_dns=no],
+  [pgac_cv__libcurl_async_dns=unknown])])
+  if test x"$pgac_cv__libcurl_async_dns" = xno ; then
+    AC_MSG_ERROR([
+*** The installed version of libcurl does not support asynchronous DNS
+*** lookups. Rebuild libcurl with the AsynchDNS feature enabled in order
+*** to use it with libpq.])
+  fi
+
+  CPPFLAGS=$pgac_save_CPPFLAGS
+  LDFLAGS=$pgac_save_LDFLAGS
+  LIBS=$pgac_save_LIBS
+])# PGAC_CHECK_LIBCURL

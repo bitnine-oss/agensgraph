@@ -254,17 +254,11 @@ ERROR:  invalid XML content
 DETAIL:  line 1: xmlParseEntityRef: no name
 <invalidentity>&</invalidentity>
                 ^
-line 1: chunk is not well balanced
-<invalidentity>&</invalidentity>
-                                ^
 SELECT xmlparse(content '<undefinedentity>&idontexist;</undefinedentity>');
 ERROR:  invalid XML content
 DETAIL:  line 1: Entity 'idontexist' not defined
 <undefinedentity>&idontexist;</undefinedentity>
                              ^
-line 1: chunk is not well balanced
-<undefinedentity>&idontexist;</undefinedentity>
-                                               ^
 SELECT xmlparse(content '<invalidns xmlns=''&lt;''/>');
          xmlparse          
 ---------------------------
@@ -283,9 +277,6 @@ DETAIL:  line 1: Entity 'idontexist' not defined
 <twoerrors>&idontexist;</unbalanced>
                        ^
 line 1: Opening and ending tag mismatch: twoerrors line 1 and unbalanced
-<twoerrors>&idontexist;</unbalanced>
-                                    ^
-line 1: chunk is not well balanced
 <twoerrors>&idontexist;</unbalanced>
                                     ^
 SELECT xmlparse(content '<nosuchprefix:tag/>');
@@ -494,8 +485,7 @@ SELECT xmlserialize(DOCUMENT '<foo><bar><val x="y">42</val></bar></foo>' AS text
    <bar>                +
      <val x="y">42</val>+
    </bar>               +
- </foo>                 +
- 
+ </foo>
 (1 row)
 
 SELECT xmlserialize(CONTENT  '<foo><bar><val x="y">42</val></bar></foo>' AS text INDENT);
@@ -555,8 +545,7 @@ SELECT xmlserialize(DOCUMENT '<foo><bar><val x="y">42</val><val x="y">text node<
      <val x="y">42</val>                    +
      <val x="y">text node<val>73</val></val>+
    </bar>                                   +
- </foo>                                     +
- 
+ </foo>
 (1 row)
 
 SELECT xmlserialize(CONTENT  '<foo><bar><val x="y">42</val><val x="y">text node<val>73</val></val></bar></foo>' AS text INDENT);
@@ -610,8 +599,7 @@ SELECT xmlserialize(DOCUMENT '<?xml version="1.0" encoding="UTF-8"?><foo><bar><v
    <bar>                               +
      <val>73</val>                     +
    </bar>                              +
- </foo>                                +
- 
+ </foo>
 (1 row)
 
 SELECT xmlserialize(CONTENT  '<?xml version="1.0" encoding="UTF-8"?><foo><bar><val>73</val></bar></foo>' AS text INDENT);
@@ -629,8 +617,7 @@ SELECT xmlserialize(DOCUMENT '<!DOCTYPE a><a/>' AS text INDENT);
  xmlserialize 
 --------------
  <!DOCTYPE a>+
- <a/>        +
- 
+ <a/>
 (1 row)
 
 SELECT xmlserialize(CONTENT  '<!DOCTYPE a><a/>' AS text INDENT);
@@ -647,8 +634,7 @@ SELECT xmlserialize(DOCUMENT '<foo><bar></bar></foo>' AS text INDENT);
 --------------
  <foo>       +
    <bar/>    +
- </foo>      +
- 
+ </foo>
 (1 row)
 
 SELECT xmlserialize(CONTENT  '<foo><bar></bar></foo>' AS text INDENT);
@@ -670,6 +656,24 @@ SELECT xmlserialize(CONTENT  '<foo><bar><val x="y">42</val></bar></foo>' AS text
  ?column? 
 ----------
  t
+(1 row)
+
+-- indent xml strings containing blank nodes
+SELECT xmlserialize(DOCUMENT '<foo>   <bar></bar>    </foo>' AS text INDENT);
+ xmlserialize 
+--------------
+ <foo>       +
+   <bar/>    +
+ </foo>
+(1 row)
+
+SELECT xmlserialize(CONTENT  'text node<foo>    <bar></bar>   </foo>' AS text INDENT);
+ xmlserialize 
+--------------
+ text node   +
+ <foo>       +
+   <bar/>    +
+ </foo>
 (1 row)
 
 SELECT xml '<foo>bar</foo>' IS DOCUMENT;
@@ -818,21 +822,25 @@ CREATE VIEW xmlview6 AS SELECT xmlpi(name foo, 'bar');
 CREATE VIEW xmlview7 AS SELECT xmlroot(xml '<foo/>', version no value, standalone yes);
 CREATE VIEW xmlview8 AS SELECT xmlserialize(content 'good' as char(10));
 CREATE VIEW xmlview9 AS SELECT xmlserialize(content 'good' as text);
+CREATE VIEW xmlview10 AS SELECT xmlserialize(document '<foo><bar>42</bar></foo>' AS text indent);
+CREATE VIEW xmlview11 AS SELECT xmlserialize(document '<foo><bar>42</bar></foo>' AS character varying no indent);
 SELECT table_name, view_definition FROM information_schema.views
   WHERE table_name LIKE 'xmlview%' ORDER BY 1;
- table_name |                                              view_definition                                               
-------------+------------------------------------------------------------------------------------------------------------
+ table_name |                                                            view_definition                                                            
+------------+---------------------------------------------------------------------------------------------------------------------------------------
  xmlview1   |  SELECT xmlcomment('test'::text) AS xmlcomment;
+ xmlview10  |  SELECT XMLSERIALIZE(DOCUMENT '<foo><bar>42</bar></foo>'::xml AS text INDENT) AS "xmlserialize";
+ xmlview11  |  SELECT (XMLSERIALIZE(DOCUMENT '<foo><bar>42</bar></foo>'::xml AS character varying NO INDENT))::character varying AS "xmlserialize";
  xmlview2   |  SELECT XMLCONCAT('hello'::xml, 'you'::xml) AS "xmlconcat";
  xmlview3   |  SELECT XMLELEMENT(NAME element, XMLATTRIBUTES(1 AS ":one:", 'deuce' AS two), 'content&') AS "xmlelement";
- xmlview4   |  SELECT XMLELEMENT(NAME employee, XMLFOREST(name AS name, age AS age, salary AS pay)) AS "xmlelement"     +
+ xmlview4   |  SELECT XMLELEMENT(NAME employee, XMLFOREST(name AS name, age AS age, salary AS pay)) AS "xmlelement"                                +
             |    FROM emp;
  xmlview5   |  SELECT XMLPARSE(CONTENT '<abc>x</abc>'::text STRIP WHITESPACE) AS "xmlparse";
  xmlview6   |  SELECT XMLPI(NAME foo, 'bar'::text) AS "xmlpi";
  xmlview7   |  SELECT XMLROOT('<foo/>'::xml, VERSION NO VALUE, STANDALONE YES) AS "xmlroot";
- xmlview8   |  SELECT (XMLSERIALIZE(CONTENT 'good'::xml AS character(10)))::character(10) AS "xmlserialize";
- xmlview9   |  SELECT XMLSERIALIZE(CONTENT 'good'::xml AS text) AS "xmlserialize";
-(9 rows)
+ xmlview8   |  SELECT (XMLSERIALIZE(CONTENT 'good'::xml AS character(10) NO INDENT))::character(10) AS "xmlserialize";
+ xmlview9   |  SELECT XMLSERIALIZE(CONTENT 'good'::xml AS text NO INDENT) AS "xmlserialize";
+(11 rows)
 
 -- Text XPath expressions evaluation
 SELECT xpath('/value', data) FROM xmltest;
@@ -1365,6 +1373,10 @@ EXPLAIN (COSTS OFF, VERBOSE) SELECT * FROM xmltableview1;
 -- errors
 SELECT * FROM XMLTABLE (ROW () PASSING null COLUMNS v1 timestamp) AS f (v1, v2);
 ERROR:  XMLTABLE function has 1 columns available but 2 columns specified
+SELECT * FROM XMLTABLE (ROW () PASSING null COLUMNS v1 timestamp __pg__is_not_null 1) AS f (v1);
+ERROR:  option name "__pg__is_not_null" cannot be used in XMLTABLE
+LINE 1: ...MLTABLE (ROW () PASSING null COLUMNS v1 timestamp __pg__is_n...
+                                                             ^
 -- XMLNAMESPACES tests
 SELECT * FROM XMLTABLE(XMLNAMESPACES('http://x.y' AS zz),
                       '/zz:rows/zz:row'
@@ -1375,16 +1387,20 @@ SELECT * FROM XMLTABLE(XMLNAMESPACES('http://x.y' AS zz),
  10
 (1 row)
 
-CREATE VIEW xmltableview2 AS SELECT * FROM XMLTABLE(XMLNAMESPACES('http://x.y' AS zz),
-                      '/zz:rows/zz:row'
+CREATE VIEW xmltableview2 AS SELECT * FROM XMLTABLE(XMLNAMESPACES('http://x.y' AS "Zz"),
+                      '/Zz:rows/Zz:row'
                       PASSING '<rows xmlns="http://x.y"><row><a>10</a></row></rows>'
-                      COLUMNS a int PATH 'zz:a');
+                      COLUMNS a int PATH 'Zz:a');
 SELECT * FROM xmltableview2;
  a  
 ----
  10
 (1 row)
 
+\sv xmltableview2
+CREATE OR REPLACE VIEW public.xmltableview2 AS
+ SELECT a
+   FROM XMLTABLE(XMLNAMESPACES ('http://x.y'::text AS "Zz"), ('/Zz:rows/Zz:row'::text) PASSING ('<rows xmlns="http://x.y"><row><a>10</a></row></rows>'::xml) COLUMNS a integer PATH ('Zz:a'::text))
 SELECT * FROM XMLTABLE(XMLNAMESPACES(DEFAULT 'http://x.y'),
                       '/rows/row'
                       PASSING '<rows xmlns="http://x.y"><row><a>10</a></row></rows>'
@@ -1573,6 +1589,7 @@ SELECT f.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COU
        "Parallel Aware": false,                                                                                                                                                                 +
        "Async Capable": false,                                                                                                                                                                  +
        "Join Type": "Inner",                                                                                                                                                                    +
+       "Disabled": false,                                                                                                                                                                       +
        "Output": ["f.\"COUNTRY_NAME\"", "f.\"REGION_ID\""],                                                                                                                                     +
        "Inner Unique": false,                                                                                                                                                                   +
        "Plans": [                                                                                                                                                                               +
@@ -1584,6 +1601,7 @@ SELECT f.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COU
            "Relation Name": "xmldata",                                                                                                                                                          +
            "Schema": "public",                                                                                                                                                                  +
            "Alias": "xmldata",                                                                                                                                                                  +
+           "Disabled": false,                                                                                                                                                                   +
            "Output": ["xmldata.data"]                                                                                                                                                           +
          },                                                                                                                                                                                     +
          {                                                                                                                                                                                      +
@@ -1593,6 +1611,7 @@ SELECT f.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COU
            "Async Capable": false,                                                                                                                                                              +
            "Table Function Name": "xmltable",                                                                                                                                                   +
            "Alias": "f",                                                                                                                                                                        +
+           "Disabled": false,                                                                                                                                                                   +
            "Output": ["f.\"COUNTRY_NAME\"", "f.\"REGION_ID\""],                                                                                                                                 +
            "Table Function Call": "XMLTABLE(('/ROWS/ROW[COUNTRY_NAME=\"Japan\" or COUNTRY_NAME=\"India\"]'::text) PASSING (xmldata.data) COLUMNS \"COUNTRY_NAME\" text, \"REGION_ID\" integer)",+
            "Filter": "(f.\"COUNTRY_NAME\" = 'Japan'::text)"                                                                                                                                     +

@@ -3,7 +3,7 @@
  * user.c
  *	  Commands for manipulating roles (formerly called users).
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/commands/user.c
@@ -30,6 +30,7 @@
 #include "commands/defrem.h"
 #include "commands/seclabel.h"
 #include "commands/user.h"
+#include "lib/qunique.h"
 #include "libpq/crypt.h"
 #include "miscadmin.h"
 #include "storage/lmgr.h"
@@ -84,8 +85,8 @@ typedef struct
 /* GUC parameters */
 int			Password_encryption = PASSWORD_TYPE_SCRAM_SHA_256;
 char	   *createrole_self_grant = "";
-bool		createrole_self_grant_enabled = false;
-GrantRoleOptions createrole_self_grant_options;
+static bool createrole_self_grant_enabled = false;
+static GrantRoleOptions createrole_self_grant_options;
 
 /* Hook to check passwords in CreateRole() and AlterRole() */
 check_password_hook_type check_password_hook = NULL;
@@ -489,8 +490,7 @@ CreateRole(ParseState *pstate, CreateRoleStmt *stmt)
 	 * Advance command counter so we can see new record; else tests in
 	 * AddRoleMems may fail.
 	 */
-	if (addroleto || adminmembers || rolemembers)
-		CommandCounterIncrement();
+	CommandCounterIncrement();
 
 	/* Default grant. */
 	InitGrantRoleOptions(&popt);
@@ -817,12 +817,12 @@ AlterRole(ParseState *pstate, AlterRoleStmt *stmt)
 							   "BYPASSRLS", "BYPASSRLS")));
 	}
 
-	/* To add members to a role, you need ADMIN OPTION. */
+	/* To add or drop members, you need ADMIN OPTION. */
 	if (drolemembers && !is_admin_of_role(currentUserId, roleid))
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("permission denied to alter role"),
-				 errdetail("Only roles with the %s option on role \"%s\" may add members.",
+				 errdetail("Only roles with the %s option on role \"%s\" may add or drop members.",
 						   "ADMIN", rolename)));
 
 	/* Convert validuntil to internal form */
@@ -1730,6 +1730,7 @@ AddRoleMems(Oid currentUserId, const char *rolename, Oid roleid,
 		 */
 		if (memberid == ROLE_PG_DATABASE_OWNER)
 			ereport(ERROR,
+					errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					errmsg("role \"%s\" cannot be a member of any role",
 						   get_rolespec_name(memberRole)));
 
@@ -1903,7 +1904,8 @@ AddRoleMems(Oid currentUserId, const char *rolename, Oid roleid,
 		else
 		{
 			Oid			objectId;
-			Oid		   *newmembers = palloc(sizeof(Oid));
+			Oid		   *newmembers = (Oid *) palloc(3 * sizeof(Oid));
+			int			nnewmembers;
 
 			/*
 			 * The values for these options can be taken directly from 'popt'.
@@ -1945,12 +1947,22 @@ AddRoleMems(Oid currentUserId, const char *rolename, Oid roleid,
 									new_record, new_record_nulls);
 			CatalogTupleInsert(pg_authmem_rel, tuple);
 
-			/* updateAclDependencies wants to pfree array inputs */
-			newmembers[0] = grantorId;
+			/*
+			 * Record dependencies on the roleid, member, and grantor, as if a
+			 * pg_auth_members entry were an object ACL.
+			 * updateAclDependencies() requires an input array that is
+			 * palloc'd (it will free it), sorted, and de-duped.
+			 */
+			newmembers[0] = roleid;
+			newmembers[1] = memberid;
+			newmembers[2] = grantorId;
+			qsort(newmembers, 3, sizeof(Oid), oid_cmp);
+			nnewmembers = qunique(newmembers, 3, sizeof(Oid), oid_cmp);
+
 			updateAclDependencies(AuthMemRelationId, objectId,
 								  0, InvalidOid,
 								  0, NULL,
-								  1, newmembers);
+								  nnewmembers, newmembers);
 		}
 
 		/* CCI after each change, in case there are duplicates in list */
@@ -2121,6 +2133,7 @@ check_role_membership_authorization(Oid currentUserId, Oid roleid,
 	 */
 	if (is_grant && roleid == ROLE_PG_DATABASE_OWNER)
 		ereport(ERROR,
+				errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				errmsg("role \"%s\" cannot have explicit members",
 					   GetUserNameFromId(roleid, false)));
 
@@ -2553,6 +2566,8 @@ check_createrole_self_grant(char **newval, void **extra, GucSource source)
 	list_free(elemlist);
 
 	result = (unsigned *) guc_malloc(LOG, sizeof(unsigned));
+	if (!result)
+		return false;
 	*result = options;
 	*extra = result;
 

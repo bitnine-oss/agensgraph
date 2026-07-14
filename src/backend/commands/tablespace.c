@@ -35,7 +35,7 @@
  * and munge the system catalogs of the new database.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -363,9 +363,9 @@ CreateTableSpace(CreateTableSpaceStmt *stmt)
 		xlrec.ts_id = tablespaceoid;
 
 		XLogBeginInsert();
-		XLogRegisterData((char *) &xlrec,
+		XLogRegisterData(&xlrec,
 						 offsetof(xl_tblspc_create_rec, ts_path));
-		XLogRegisterData((char *) location, strlen(location) + 1);
+		XLogRegisterData(location, strlen(location) + 1);
 
 		(void) XLogInsert(RM_TBLSPC_ID, XLOG_TBLSPC_CREATE);
 	}
@@ -533,7 +533,7 @@ DropTableSpace(DropTableSpaceStmt *stmt)
 		xlrec.ts_id = tablespaceoid;
 
 		XLogBeginInsert();
-		XLogRegisterData((char *) &xlrec, sizeof(xl_tblspc_drop_rec));
+		XLogRegisterData(&xlrec, sizeof(xl_tblspc_drop_rec));
 
 		(void) XLogInsert(RM_TBLSPC_ID, XLOG_TBLSPC_DROP);
 	}
@@ -576,7 +576,7 @@ create_tablespace_directories(const char *location, const Oid tablespaceoid)
 	struct stat st;
 	bool		in_place;
 
-	linkloc = psprintf("pg_tblspc/%u", tablespaceoid);
+	linkloc = psprintf("%s/%u", PG_TBLSPC_DIR, tablespaceoid);
 
 	/*
 	 * If we're asked to make an 'in place' tablespace, create the directory
@@ -692,7 +692,7 @@ destroy_tablespace_directories(Oid tablespaceoid, bool redo)
 	char	   *subfile;
 	struct stat st;
 
-	linkloc_with_version_dir = psprintf("pg_tblspc/%u/%s", tablespaceoid,
+	linkloc_with_version_dir = psprintf("%s/%u/%s", PG_TBLSPC_DIR, tablespaceoid,
 										TABLESPACE_VERSION_DIRECTORY);
 
 	/*
@@ -1290,7 +1290,7 @@ check_temp_tablespaces(char **newval, void **extra, GucSource source)
 			return false;
 		myextra->numSpcs = numSpcs;
 		memcpy(myextra->tblSpcs, tblSpcs, numSpcs * sizeof(Oid));
-		*extra = (void *) myextra;
+		*extra = myextra;
 
 		pfree(tblSpcs);
 	}

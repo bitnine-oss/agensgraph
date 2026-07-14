@@ -4,7 +4,7 @@
  *	  various support functions for SP-GiST
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -50,6 +50,9 @@ spghandler(PG_FUNCTION_ARGS)
 	amroutine->amoptsprocnum = SPGIST_OPTIONS_PROC;
 	amroutine->amcanorder = false;
 	amroutine->amcanorderbyop = true;
+	amroutine->amcanhash = false;
+	amroutine->amconsistentequality = false;
+	amroutine->amconsistentordering = false;
 	amroutine->amcanbackward = false;
 	amroutine->amcanunique = false;
 	amroutine->amcanmulticol = false;
@@ -76,6 +79,7 @@ spghandler(PG_FUNCTION_ARGS)
 	amroutine->amvacuumcleanup = spgvacuumcleanup;
 	amroutine->amcanreturn = spgcanreturn;
 	amroutine->amcostestimate = spgcostestimate;
+	amroutine->amgettreeheight = NULL;
 	amroutine->amoptions = spgoptions;
 	amroutine->amproperty = spgproperty;
 	amroutine->ambuildphasename = NULL;
@@ -91,6 +95,8 @@ spghandler(PG_FUNCTION_ARGS)
 	amroutine->amestimateparallelscan = NULL;
 	amroutine->aminitparallelscan = NULL;
 	amroutine->amparallelrescan = NULL;
+	amroutine->amtranslatestrategy = NULL;
+	amroutine->amtranslatecmptype = NULL;
 
 	PG_RETURN_POINTER(amroutine);
 }
@@ -278,7 +284,7 @@ spgGetCache(Relation index)
 			UnlockReleaseBuffer(metabuffer);
 		}
 
-		index->rd_amcache = (void *) cache;
+		index->rd_amcache = cache;
 	}
 	else
 	{
@@ -330,7 +336,9 @@ getSpGistTupleDesc(Relation index, SpGistTypeDesc *keyType)
 		att->attcollation = InvalidOid;
 		/* In case we changed typlen, we'd better reset following offsets */
 		for (int i = spgFirstIncludeColumn; i < outTupDesc->natts; i++)
-			TupleDescAttr(outTupDesc, i)->attcacheoff = -1;
+			TupleDescCompactAttr(outTupDesc, i)->attcacheoff = -1;
+
+		populate_compact_attribute(outTupDesc, spgKeyColumn);
 	}
 	return outTupDesc;
 }

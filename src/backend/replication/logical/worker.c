@@ -2,7 +2,7 @@
  * worker.c
  *	   PostgreSQL logical replication worker (apply)
  *
- * Copyright (c) 2016-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/worker.c
@@ -109,13 +109,6 @@
  * If ever a user needs to be aware of the tri-state value, they can fetch it
  * from the pg_subscription catalog (see column subtwophasestate).
  *
- * We don't allow to toggle two_phase option of a subscription because it can
- * lead to an inconsistent replica. Consider, initially, it was on and we have
- * received some prepare then we turn it off, now at commit time the server
- * will send the entire transaction data along with the commit. With some more
- * analysis, we can allow changing this option from off to on but not sure if
- * that alone would be useful.
- *
  * Finally, to avoid problems mentioned in previous paragraphs from any
  * subsequent (not READY) tablesyncs (need to toggle two_phase option from 'on'
  * to 'off' and then again back to 'on') there is a restriction for
@@ -167,6 +160,7 @@
 #include "postmaster/bgworker.h"
 #include "postmaster/interrupt.h"
 #include "postmaster/walwriter.h"
+#include "replication/conflict.h"
 #include "replication/logicallauncher.h"
 #include "replication/logicalproto.h"
 #include "replication/logicalrelation.h"
@@ -275,7 +269,7 @@ typedef enum
 } TransApplyAction;
 
 /* errcontext tracker */
-ApplyErrorCallbackArg apply_error_callback_arg =
+static ApplyErrorCallbackArg apply_error_callback_arg =
 {
 	.command = 0,
 	.rel = NULL,
@@ -401,9 +395,6 @@ static void apply_handle_tuple_routing(ApplyExecutionData *edata,
 									   LogicalRepTupleData *newtup,
 									   CmdType operation);
 
-/* Compute GID for two_phase transactions */
-static void TwoPhaseTransactionGid(Oid subid, TransactionId xid, char *gid, int szgid);
-
 /* Functions for skipping changes */
 static void maybe_start_skipping_changes(XLogRecPtr finish_lsn);
 static void stop_skipping_changes(void);
@@ -415,6 +406,8 @@ static inline void reset_apply_error_context_info(void);
 
 static TransApplyAction get_transaction_apply_action(TransactionId xid,
 													 ParallelApplyWorkerInfo **winfo);
+
+static void replorigin_reset(int code, Datum arg);
 
 /*
  * Form the origin name for the subscription.
@@ -670,7 +663,8 @@ create_edata_for_relation(LogicalRepRelMapEntry *rel)
 
 	addRTEPermissionInfo(&perminfos, rte);
 
-	ExecInitRangeTable(estate, list_make1(rte), perminfos);
+	ExecInitRangeTable(estate, list_make1(rte), perminfos,
+					   bms_make_singleton(1));
 
 	edata->targetRelInfo = resultRelInfo = makeNode(ResultRelInfo);
 
@@ -1136,7 +1130,17 @@ apply_handle_prepare(StringInfo s)
 	CommitTransactionCommand();
 	pgstat_report_stat(false);
 
-	store_flush_position(prepare_data.end_lsn, XactLastCommitEnd);
+	/*
+	 * It is okay not to set the local_end LSN for the prepare because we
+	 * always flush the prepare record. So, we can send the acknowledgment of
+	 * the remote_end LSN as soon as prepare is finished.
+	 *
+	 * XXX For the sake of consistency with commit, we could have set it with
+	 * the LSN of prepare but as of now we don't track that value similar to
+	 * XactLastCommitEnd, and adding it for this purpose doesn't seems worth
+	 * it.
+	 */
+	store_flush_position(prepare_data.end_lsn, InvalidXLogRecPtr);
 
 	in_remote_transaction = false;
 
@@ -1254,7 +1258,12 @@ apply_handle_rollback_prepared(StringInfo s)
 
 	pgstat_report_stat(false);
 
-	store_flush_position(rollback_data.rollback_end_lsn, XactLastCommitEnd);
+	/*
+	 * It is okay not to set the local_end LSN for the rollback of prepared
+	 * transaction because we always flush the WAL record for it. See
+	 * apply_handle_prepare.
+	 */
+	store_flush_position(rollback_data.rollback_end_lsn, InvalidXLogRecPtr);
 	in_remote_transaction = false;
 
 	/* Process any tables that are being synchronized in parallel. */
@@ -1309,7 +1318,11 @@ apply_handle_stream_prepare(StringInfo s)
 
 			CommitTransactionCommand();
 
-			store_flush_position(prepare_data.end_lsn, XactLastCommitEnd);
+			/*
+			 * It is okay not to set the local_end LSN for the prepare because
+			 * we always flush the prepare record. See apply_handle_prepare.
+			 */
+			store_flush_position(prepare_data.end_lsn, InvalidXLogRecPtr);
 
 			in_remote_transaction = false;
 
@@ -1367,7 +1380,11 @@ apply_handle_stream_prepare(StringInfo s)
 
 			CommitTransactionCommand();
 
-			MyParallelShared->last_commit_end = XactLastCommitEnd;
+			/*
+			 * It is okay not to set the local_end LSN for the prepare because
+			 * we always flush the prepare record. See apply_handle_prepare.
+			 */
+			MyParallelShared->last_commit_end = InvalidXLogRecPtr;
 
 			pa_set_xact_state(MyParallelShared, PARALLEL_TRANS_FINISHED);
 			pa_unlock_transaction(MyParallelShared->xid, AccessExclusiveLock);
@@ -2432,8 +2449,13 @@ apply_handle_insert(StringInfo s)
 		apply_handle_tuple_routing(edata,
 								   remoteslot, NULL, CMD_INSERT);
 	else
-		apply_handle_insert_internal(edata, edata->targetRelInfo,
-									 remoteslot);
+	{
+		ResultRelInfo *relinfo = edata->targetRelInfo;
+
+		ExecOpenIndices(relinfo, false);
+		apply_handle_insert_internal(edata, relinfo, remoteslot);
+		ExecCloseIndices(relinfo);
+	}
 
 	finish_edata(edata);
 
@@ -2460,15 +2482,18 @@ apply_handle_insert_internal(ApplyExecutionData *edata,
 {
 	EState	   *estate = edata->estate;
 
-	/* We must open indexes here. */
-	ExecOpenIndices(relinfo, false);
+	/* Caller should have opened indexes already. */
+	Assert(relinfo->ri_IndexRelationDescs != NULL ||
+		   !relinfo->ri_RelationDesc->rd_rel->relhasindex ||
+		   RelationGetIndexList(relinfo->ri_RelationDesc) == NIL);
+
+	/* Caller will not have done this bit. */
+	Assert(relinfo->ri_onConflictArbiterIndexes == NIL);
+	InitConflictIndexes(relinfo);
 
 	/* Do the insert. */
 	TargetPrivilegesCheck(relinfo->ri_RelationDesc, ACL_INSERT);
 	ExecSimpleRelationInsert(relinfo, estate, remoteslot);
-
-	/* Cleanup. */
-	ExecCloseIndices(relinfo);
 }
 
 /*
@@ -2644,7 +2669,8 @@ apply_handle_update_internal(ApplyExecutionData *edata,
 	LogicalRepRelMapEntry *relmapentry = edata->targetRel;
 	Relation	localrel = relinfo->ri_RelationDesc;
 	EPQState	epqstate;
-	TupleTableSlot *localslot;
+	TupleTableSlot *localslot = NULL;
+	ConflictTupleInfo conflicttuple = {0};
 	bool		found;
 	MemoryContext oldctx;
 
@@ -2655,7 +2681,6 @@ apply_handle_update_internal(ApplyExecutionData *edata,
 									&relmapentry->remoterel,
 									localindexoid,
 									remoteslot, &localslot);
-	ExecClearTuple(remoteslot);
 
 	/*
 	 * Tuple found.
@@ -2664,12 +2689,35 @@ apply_handle_update_internal(ApplyExecutionData *edata,
 	 */
 	if (found)
 	{
+		/*
+		 * Report the conflict if the tuple was modified by a different
+		 * origin.
+		 */
+		if (GetTupleTransactionInfo(localslot, &conflicttuple.xmin,
+									&conflicttuple.origin, &conflicttuple.ts) &&
+			conflicttuple.origin != replorigin_session_origin)
+		{
+			TupleTableSlot *newslot;
+
+			/* Store the new tuple for conflict reporting */
+			newslot = table_slot_create(localrel, &estate->es_tupleTable);
+			slot_store_data(newslot, relmapentry, newtup);
+
+			conflicttuple.slot = localslot;
+
+			ReportApplyConflict(estate, relinfo, LOG, CT_UPDATE_ORIGIN_DIFFERS,
+								remoteslot, newslot,
+								list_make1(&conflicttuple));
+		}
+
 		/* Process and store remote tuple in the slot */
 		oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 		slot_modify_data(remoteslot, localslot, relmapentry, newtup);
 		MemoryContextSwitchTo(oldctx);
 
 		EvalPlanQualSetSlot(&epqstate, remoteslot);
+
+		InitConflictIndexes(relinfo);
 
 		/* Do the actual update. */
 		TargetPrivilegesCheck(relinfo->ri_RelationDesc, ACL_UPDATE);
@@ -2678,16 +2726,17 @@ apply_handle_update_internal(ApplyExecutionData *edata,
 	}
 	else
 	{
+		TupleTableSlot *newslot = localslot;
+
+		/* Store the new tuple for conflict reporting */
+		slot_store_data(newslot, relmapentry, newtup);
+
 		/*
 		 * The tuple to be updated could not be found.  Do nothing except for
 		 * emitting a log message.
-		 *
-		 * XXX should this be promoted to ereport(LOG) perhaps?
 		 */
-		elog(DEBUG1,
-			 "logical replication did not find row to be updated "
-			 "in replication target relation \"%s\"",
-			 RelationGetRelationName(localrel));
+		ReportApplyConflict(estate, relinfo, LOG, CT_UPDATE_MISSING,
+							remoteslot, newslot, list_make1(&conflicttuple));
 	}
 
 	/* Cleanup. */
@@ -2767,8 +2816,14 @@ apply_handle_delete(StringInfo s)
 		apply_handle_tuple_routing(edata,
 								   remoteslot, NULL, CMD_DELETE);
 	else
-		apply_handle_delete_internal(edata, edata->targetRelInfo,
+	{
+		ResultRelInfo *relinfo = edata->targetRelInfo;
+
+		ExecOpenIndices(relinfo, false);
+		apply_handle_delete_internal(edata, relinfo,
 									 remoteslot, rel->localindexoid);
+		ExecCloseIndices(relinfo);
+	}
 
 	finish_edata(edata);
 
@@ -2799,10 +2854,15 @@ apply_handle_delete_internal(ApplyExecutionData *edata,
 	LogicalRepRelation *remoterel = &edata->targetRel->remoterel;
 	EPQState	epqstate;
 	TupleTableSlot *localslot;
+	ConflictTupleInfo conflicttuple = {0};
 	bool		found;
 
 	EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1, NIL);
-	ExecOpenIndices(relinfo, false);
+
+	/* Caller should have opened indexes already. */
+	Assert(relinfo->ri_IndexRelationDescs != NULL ||
+		   !localrel->rd_rel->relhasindex ||
+		   RelationGetIndexList(localrel) == NIL);
 
 	found = FindReplTupleInLocalRel(edata, localrel, remoterel, localindexoid,
 									remoteslot, &localslot);
@@ -2810,6 +2870,20 @@ apply_handle_delete_internal(ApplyExecutionData *edata,
 	/* If found delete it. */
 	if (found)
 	{
+		/*
+		 * Report the conflict if the tuple was modified by a different
+		 * origin.
+		 */
+		if (GetTupleTransactionInfo(localslot, &conflicttuple.xmin,
+									&conflicttuple.origin, &conflicttuple.ts) &&
+			conflicttuple.origin != replorigin_session_origin)
+		{
+			conflicttuple.slot = localslot;
+			ReportApplyConflict(estate, relinfo, LOG, CT_DELETE_ORIGIN_DIFFERS,
+								remoteslot, NULL,
+								list_make1(&conflicttuple));
+		}
+
 		EvalPlanQualSetSlot(&epqstate, localslot);
 
 		/* Do the actual delete. */
@@ -2821,17 +2895,12 @@ apply_handle_delete_internal(ApplyExecutionData *edata,
 		/*
 		 * The tuple to be deleted could not be found.  Do nothing except for
 		 * emitting a log message.
-		 *
-		 * XXX should this be promoted to ereport(LOG) perhaps?
 		 */
-		elog(DEBUG1,
-			 "logical replication did not find row to be deleted "
-			 "in replication target relation \"%s\"",
-			 RelationGetRelationName(localrel));
+		ReportApplyConflict(estate, relinfo, LOG, CT_DELETE_MISSING,
+							remoteslot, NULL, list_make1(&conflicttuple));
 	}
 
 	/* Cleanup. */
-	ExecCloseIndices(relinfo);
 	EvalPlanQualEnd(&epqstate);
 }
 
@@ -2869,9 +2938,10 @@ FindReplTupleInLocalRel(ApplyExecutionData *edata, Relation localrel,
 		Relation	idxrel = index_open(localidxoid, AccessShareLock);
 
 		/* Index must be PK, RI, or usable for REPLICA IDENTITY FULL tables */
-		Assert(GetRelationIdentityOrPK(idxrel) == localidxoid ||
-			   IsIndexUsableForReplicaIdentityFull(BuildIndexInfo(idxrel),
-												   edata->targetRel->attrmap));
+		Assert(GetRelationIdentityOrPK(localrel) == localidxoid ||
+			   (remoterel->replident == REPLICA_IDENTITY_FULL &&
+				IsIndexUsableForReplicaIdentityFull(idxrel,
+													edata->targetRel->attrmap)));
 		index_close(idxrel, AccessShareLock);
 #endif
 
@@ -2994,6 +3064,8 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 				ResultRelInfo *partrelinfo_new;
 				Relation	partrel_new;
 				bool		found;
+				EPQState	epqstate;
+				ConflictTupleInfo conflicttuple = {0};
 
 				/* Get the matching local tuple from the partition. */
 				found = FindReplTupleInLocalRel(edata, partrel,
@@ -3002,17 +3074,42 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 												remoteslot_part, &localslot);
 				if (!found)
 				{
+					TupleTableSlot *newslot = localslot;
+
+					/* Store the new tuple for conflict reporting */
+					slot_store_data(newslot, part_entry, newtup);
+
 					/*
 					 * The tuple to be updated could not be found.  Do nothing
 					 * except for emitting a log message.
-					 *
-					 * XXX should this be promoted to ereport(LOG) perhaps?
 					 */
-					elog(DEBUG1,
-						 "logical replication did not find row to be updated "
-						 "in replication target relation's partition \"%s\"",
-						 RelationGetRelationName(partrel));
+					ReportApplyConflict(estate, partrelinfo, LOG,
+										CT_UPDATE_MISSING, remoteslot_part,
+										newslot, list_make1(&conflicttuple));
+
 					return;
+				}
+
+				/*
+				 * Report the conflict if the tuple was modified by a
+				 * different origin.
+				 */
+				if (GetTupleTransactionInfo(localslot, &conflicttuple.xmin,
+											&conflicttuple.origin,
+											&conflicttuple.ts) &&
+					conflicttuple.origin != replorigin_session_origin)
+				{
+					TupleTableSlot *newslot;
+
+					/* Store the new tuple for conflict reporting */
+					newslot = table_slot_create(partrel, &estate->es_tupleTable);
+					slot_store_data(newslot, part_entry, newtup);
+
+					conflicttuple.slot = localslot;
+
+					ReportApplyConflict(estate, partrelinfo, LOG, CT_UPDATE_ORIGIN_DIFFERS,
+										remoteslot_part, newslot,
+										list_make1(&conflicttuple));
 				}
 
 				/*
@@ -3023,6 +3120,8 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 				slot_modify_data(remoteslot_part, localslot, part_entry,
 								 newtup);
 				MemoryContextSwitchTo(oldctx);
+
+				EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1, NIL);
 
 				/*
 				 * Does the updated tuple still satisfy the current
@@ -3039,18 +3138,13 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 					 * work already done above to find the local tuple in the
 					 * partition.
 					 */
-					EPQState	epqstate;
-
-					EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1, NIL);
-					ExecOpenIndices(partrelinfo, false);
+					InitConflictIndexes(partrelinfo);
 
 					EvalPlanQualSetSlot(&epqstate, remoteslot_part);
 					TargetPrivilegesCheck(partrelinfo->ri_RelationDesc,
 										  ACL_UPDATE);
 					ExecSimpleRelationUpdate(partrelinfo, estate, &epqstate,
 											 localslot, remoteslot_part);
-					ExecCloseIndices(partrelinfo);
-					EvalPlanQualEnd(&epqstate);
 				}
 				else
 				{
@@ -3094,9 +3188,9 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 											 RelationGetRelationName(partrel_new));
 
 					/* DELETE old tuple found in the old partition. */
-					apply_handle_delete_internal(edata, partrelinfo,
-												 localslot,
-												 part_entry->localindexoid);
+					EvalPlanQualSetSlot(&epqstate, localslot);
+					TargetPrivilegesCheck(partrelinfo->ri_RelationDesc, ACL_DELETE);
+					ExecSimpleRelationDelete(partrelinfo, estate, &epqstate, localslot);
 
 					/* INSERT new tuple into the new partition. */
 
@@ -3126,6 +3220,8 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 					apply_handle_insert_internal(edata, partrelinfo_new,
 												 remoteslot_part);
 				}
+
+				EvalPlanQualEnd(&epqstate);
 			}
 			break;
 
@@ -3856,7 +3952,10 @@ apply_worker_exit(void)
 }
 
 /*
- * Reread subscription info if needed. Most changes will be exit.
+ * Reread subscription info if needed.
+ *
+ * For significant changes, we react by exiting the current process; a new
+ * one will be launched afterwards if needed.
  */
 void
 maybe_reread_subscription(void)
@@ -3911,7 +4010,7 @@ maybe_reread_subscription(void)
 	/* !slotname should never happen when enabled is true. */
 	Assert(newsub->slotname);
 
-	/* two-phase should not be altered */
+	/* two-phase cannot be altered while the worker is running */
 	Assert(newsub->twophasestate == MySubscription->twophasestate);
 
 	/*
@@ -3997,7 +4096,7 @@ subscription_change_cb(Datum arg, int cacheid, uint32 hashvalue)
  * subxact_info_write
  *	  Store information about subxacts for a toplevel transaction.
  *
- * For each subxact we store offset of it's first change in the main file.
+ * For each subxact we store offset of its first change in the main file.
  * The file is always over-written as a whole.
  *
  * XXX We should only store subxacts that were not aborted yet.
@@ -4397,24 +4496,6 @@ cleanup_subxact_info()
 }
 
 /*
- * Form the prepared transaction GID for two_phase transactions.
- *
- * Return the GID in the supplied buffer.
- */
-static void
-TwoPhaseTransactionGid(Oid subid, TransactionId xid, char *gid, int szgid)
-{
-	Assert(subid != InvalidRepOriginId);
-
-	if (!TransactionIdIsValid(xid))
-		ereport(ERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg_internal("invalid two-phase transaction ID")));
-
-	snprintf(gid, szgid, "pg_gid_%u_%u", subid, xid);
-}
-
-/*
  * Common function to run the apply loop with error handling. Disable the
  * subscription, if necessary.
  *
@@ -4430,6 +4511,14 @@ start_apply(XLogRecPtr origin_startpos)
 	}
 	PG_CATCH();
 	{
+		/*
+		 * Reset the origin state to prevent the advancement of origin
+		 * progress if we fail to apply. Otherwise, this will result in
+		 * transaction loss as that transaction won't be sent again by the
+		 * server.
+		 */
+		replorigin_reset(0, (Datum) 0);
+
 		if (MySubscription->disableonerr)
 			DisableSubscriptionAndExit();
 		else
@@ -4500,7 +4589,8 @@ run_apply_worker()
 	if (LogRepWorkerWalRcvConn == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_CONNECTION_FAILURE),
-				 errmsg("could not connect to the publisher: %s", err)));
+				 errmsg("apply worker for subscription \"%s\" could not connect to the publisher: %s",
+						MySubscription->name, err)));
 
 	/*
 	 * We don't really use the output identify_system for anything but it does
@@ -4529,8 +4619,16 @@ run_apply_worker()
 		walrcv_startstreaming(LogRepWorkerWalRcvConn, &options);
 
 		StartTransactionCommand();
+
+		/*
+		 * Updating pg_subscription might involve TOAST table access, so
+		 * ensure we have a valid snapshot.
+		 */
+		PushActiveSnapshot(GetTransactionSnapshot());
+
 		UpdateTwoPhaseState(MySubscription->oid, LOGICALREP_TWOPHASE_STATE_ENABLED);
 		MySubscription->twophasestate = LOGICALREP_TWOPHASE_STATE_ENABLED;
+		PopActiveSnapshot();
 		CommitTransactionCommand();
 	}
 	else
@@ -4639,6 +4737,17 @@ InitializeLogRepWorker(void)
 	CommitTransactionCommand();
 }
 
+/*
+ * Reset the origin state.
+ */
+static void
+replorigin_reset(int code, Datum arg)
+{
+	replorigin_session_origin = InvalidRepOriginId;
+	replorigin_session_origin_lsn = InvalidXLogRecPtr;
+	replorigin_session_origin_timestamp = 0;
+}
+
 /* Common function to setup the leader apply or tablesync worker. */
 void
 SetupApplyOrSyncWorker(int worker_slot)
@@ -4666,6 +4775,19 @@ SetupApplyOrSyncWorker(int worker_slot)
 	load_file("libpqwalreceiver", false);
 
 	InitializeLogRepWorker();
+
+	/*
+	 * Register a callback to reset the origin state before aborting any
+	 * pending transaction during shutdown (see ShutdownPostgres()). This will
+	 * avoid origin advancement for an in-complete transaction which could
+	 * otherwise lead to its loss as such a transaction won't be sent by the
+	 * server again.
+	 *
+	 * Note that even a LOG or DEBUG statement placed after setting the origin
+	 * state may process a shutdown signal before committing the current apply
+	 * operation. So, it is important to register such a callback here.
+	 */
+	before_shmem_exit(replorigin_reset, (Datum) 0);
 
 	/* Connect to the origin and start the replication. */
 	elog(DEBUG1, "connecting to publisher using connection string \"%s\"",
@@ -4722,7 +4844,15 @@ DisableSubscriptionAndExit(void)
 
 	/* Disable the subscription */
 	StartTransactionCommand();
+
+	/*
+	 * Updating pg_subscription might involve TOAST table access, so ensure we
+	 * have a valid snapshot.
+	 */
+	PushActiveSnapshot(GetTransactionSnapshot());
+
 	DisableSubscription(MySubscription->oid);
+	PopActiveSnapshot();
 	CommitTransactionCommand();
 
 	/* Ensure we remove no-longer-useful entry for worker's start time */
@@ -4827,6 +4957,12 @@ clear_subscription_skip_lsn(XLogRecPtr finish_lsn)
 	}
 
 	/*
+	 * Updating pg_subscription might involve TOAST table access, so ensure we
+	 * have a valid snapshot.
+	 */
+	PushActiveSnapshot(GetTransactionSnapshot());
+
+	/*
 	 * Protect subskiplsn of pg_subscription from being concurrently updated
 	 * while clearing it.
 	 */
@@ -4883,6 +5019,8 @@ clear_subscription_skip_lsn(XLogRecPtr finish_lsn)
 
 	heap_freetuple(tup);
 	table_close(rel, NoLock);
+
+	PopActiveSnapshot();
 
 	if (started_tx)
 		CommitTransactionCommand();
@@ -5013,7 +5151,7 @@ AtEOXact_LogicalRepWorkers(bool isCommit)
 			List	   *workers;
 			ListCell   *lc2;
 
-			workers = logicalrep_workers_find(subid, true);
+			workers = logicalrep_workers_find(subid, true, false);
 			foreach(lc2, workers)
 			{
 				LogicalRepWorker *worker = (LogicalRepWorker *) lfirst(lc2);

@@ -236,6 +236,24 @@ SELECT E'De\\678dBeEf'::bytea;
 ERROR:  invalid input syntax for type bytea
 LINE 1: SELECT E'De\\678dBeEf'::bytea;
                ^
+SELECT reverse(''::bytea);
+ reverse 
+---------
+ \x
+(1 row)
+
+SELECT reverse('\xaa'::bytea);
+ reverse 
+---------
+ \xaa
+(1 row)
+
+SELECT reverse('\xabcd'::bytea);
+ reverse 
+---------
+ \xcdab
+(1 row)
+
 SET bytea_output TO escape;
 SELECT E'\\xDeAdBeEf'::bytea;
       bytea       
@@ -596,6 +614,73 @@ SELECT 'abcdefg' SIMILAR TO '_bcd%' ESCAPE NULL AS null;
 SELECT 'abcdefg' SIMILAR TO '_bcd#%' ESCAPE '##' AS error;
 ERROR:  invalid escape string
 HINT:  Escape string must be empty or one character.
+-- Characters that should be left alone in character classes when a
+-- SIMILAR TO regexp pattern is converted to POSIX style.
+-- Underscore "_"
+EXPLAIN (COSTS OFF) SELECT * FROM TEXT_TBL WHERE f1 SIMILAR TO '_[_[:alpha:]_]_';
+                   QUERY PLAN                   
+------------------------------------------------
+ Seq Scan on text_tbl
+   Filter: (f1 ~ '^(?:.[_[:alpha:]_].)$'::text)
+(2 rows)
+
+-- Percentage "%"
+EXPLAIN (COSTS OFF) SELECT * FROM TEXT_TBL WHERE f1 SIMILAR TO '%[%[:alnum:]%]%';
+                    QUERY PLAN                    
+--------------------------------------------------
+ Seq Scan on text_tbl
+   Filter: (f1 ~ '^(?:.*[%[:alnum:]%].*)$'::text)
+(2 rows)
+
+-- Dot "."
+EXPLAIN (COSTS OFF) SELECT * FROM TEXT_TBL WHERE f1 SIMILAR TO '.[.[:alnum:].].';
+                    QUERY PLAN                    
+--------------------------------------------------
+ Seq Scan on text_tbl
+   Filter: (f1 ~ '^(?:\.[.[:alnum:].]\.)$'::text)
+(2 rows)
+
+-- Dollar "$"
+EXPLAIN (COSTS OFF) SELECT * FROM TEXT_TBL WHERE f1 SIMILAR TO '$[$[:alnum:]$]$';
+                    QUERY PLAN                    
+--------------------------------------------------
+ Seq Scan on text_tbl
+   Filter: (f1 ~ '^(?:\$[$[:alnum:]$]\$)$'::text)
+(2 rows)
+
+-- Opening parenthesis "("
+EXPLAIN (COSTS OFF) SELECT * FROM TEXT_TBL WHERE f1 SIMILAR TO '()[([:alnum:](]()';
+                      QUERY PLAN                      
+------------------------------------------------------
+ Seq Scan on text_tbl
+   Filter: (f1 ~ '^(?:(?:)[([:alnum:](](?:))$'::text)
+(2 rows)
+
+-- Caret "^"
+EXPLAIN (COSTS OFF) SELECT * FROM TEXT_TBL WHERE f1 SIMILAR TO '^[^[:alnum:]^[^^][[^^]][\^][[\^]]\^]^';
+                               QUERY PLAN                               
+------------------------------------------------------------------------
+ Seq Scan on text_tbl
+   Filter: (f1 ~ '^(?:\^[^[:alnum:]^[^^][[^^]][\^][[\^]]\^]\^)$'::text)
+(2 rows)
+
+-- Closing square bracket "]" at the beginning of character class
+EXPLAIN (COSTS OFF) SELECT * FROM TEXT_TBL WHERE f1 SIMILAR TO '[]%][^]%][^%]%';
+                   QUERY PLAN                   
+------------------------------------------------
+ Seq Scan on text_tbl
+   Filter: (f1 ~ '^(?:[]%][^]%][^%].*)$'::text)
+(2 rows)
+
+-- Closing square bracket effective after two carets at the beginning
+-- of character class.
+EXPLAIN (COSTS OFF) SELECT * FROM TEXT_TBL WHERE f1 SIMILAR TO '[^^]^';
+              QUERY PLAN               
+---------------------------------------
+ Seq Scan on text_tbl
+   Filter: (f1 ~ '^(?:[^^]\^)$'::text)
+(2 rows)
+
 -- Test backslash escapes in regexp_replace's replacement string
 SELECT regexp_replace('1112223333', E'(\\d{3})(\\d{3})(\\d{4})', E'(\\1) \\2-\\3');
  regexp_replace 
@@ -1331,6 +1416,36 @@ SELECT POSITION('4' IN '1234567890') = '4' AS "4";
 
 SELECT POSITION('5' IN '1234567890') = '5' AS "5";
  5 
+---
+ t
+(1 row)
+
+SELECT POSITION('\x11'::bytea IN ''::bytea) = 0 AS "0";
+ 0 
+---
+ t
+(1 row)
+
+SELECT POSITION('\x33'::bytea IN '\x1122'::bytea) = 0 AS "0";
+ 0 
+---
+ t
+(1 row)
+
+SELECT POSITION(''::bytea IN '\x1122'::bytea) = 1 AS "1";
+ 1 
+---
+ t
+(1 row)
+
+SELECT POSITION('\x22'::bytea IN '\x1122'::bytea) = 2 AS "2";
+ 2 
+---
+ t
+(1 row)
+
+SELECT POSITION('\x5678'::bytea IN '\x1234567890'::bytea) = 3 AS "3";
+ 3 
 ---
  t
 (1 row)
@@ -2256,6 +2371,57 @@ SELECT sha512('The quick brown fox jumps over the lazy dog.');
 (1 row)
 
 --
+-- CRC
+--
+SELECT crc32('');
+ crc32 
+-------
+     0
+(1 row)
+
+SELECT crc32('The quick brown fox jumps over the lazy dog.');
+   crc32    
+------------
+ 1368401385
+(1 row)
+
+SELECT crc32c('');
+ crc32c 
+--------
+      0
+(1 row)
+
+SELECT crc32c('The quick brown fox jumps over the lazy dog.');
+  crc32c   
+-----------
+ 419469235
+(1 row)
+
+SELECT crc32c(repeat('A', 127)::bytea);
+  crc32c   
+-----------
+ 291820082
+(1 row)
+
+SELECT crc32c(repeat('A', 128)::bytea);
+  crc32c   
+-----------
+ 816091258
+(1 row)
+
+SELECT crc32c(repeat('A', 129)::bytea);
+   crc32c   
+------------
+ 4213642571
+(1 row)
+
+SELECT crc32c(repeat('A', 800)::bytea);
+   crc32c   
+------------
+ 3134039419
+(1 row)
+
+--
 -- encode/decode
 --
 SELECT encode('\x1234567890abcdef00', 'hex');
@@ -2331,6 +2497,108 @@ SELECT set_byte('\x1234567890abcdef00'::bytea, 7, 11);
 
 SELECT set_byte('\x1234567890abcdef00'::bytea, 99, 11);  -- error
 ERROR:  index 99 out of valid range, 0..8
+--
+-- conversions between bytea and integer types
+--
+SELECT 0x1234::int2::bytea AS "\x1234", (-0x1234)::int2::bytea AS "\xedcc";
+ \x1234 | \xedcc 
+--------+--------
+ \x1234 | \xedcc
+(1 row)
+
+SELECT 0x12345678::int4::bytea AS "\x12345678", (-0x12345678)::int4::bytea AS "\xedcba988";
+ \x12345678 | \xedcba988 
+------------+------------
+ \x12345678 | \xedcba988
+(1 row)
+
+SELECT 0x1122334455667788::int8::bytea AS "\x1122334455667788",
+       (-0x1122334455667788)::int8::bytea AS "\xeeddccbbaa998878";
+ \x1122334455667788 | \xeeddccbbaa998878 
+--------------------+--------------------
+ \x1122334455667788 | \xeeddccbbaa998878
+(1 row)
+
+SELECT ''::bytea::int2 AS "0";
+ 0 
+---
+ 0
+(1 row)
+
+SELECT '\x12'::bytea::int2 AS "18";
+ 18 
+----
+ 18
+(1 row)
+
+SELECT '\x1234'::bytea::int2 AS "4460";
+ 4460 
+------
+ 4660
+(1 row)
+
+SELECT '\x123456'::bytea::int2; -- error
+ERROR:  smallint out of range
+SELECT ''::bytea::int4 AS "0";
+ 0 
+---
+ 0
+(1 row)
+
+SELECT '\x12'::bytea::int4 AS "18";
+ 18 
+----
+ 18
+(1 row)
+
+SELECT '\x12345678'::bytea::int4 AS "305419896";
+ 305419896 
+-----------
+ 305419896
+(1 row)
+
+SELECT '\x123456789A'::bytea::int4; -- error
+ERROR:  integer out of range
+SELECT ''::bytea::int8 AS "0";
+ 0 
+---
+ 0
+(1 row)
+
+SELECT '\x12'::bytea::int8 AS "18";
+ 18 
+----
+ 18
+(1 row)
+
+SELECT '\x1122334455667788'::bytea::int8 AS "1234605616436508552";
+ 1234605616436508552 
+---------------------
+ 1234605616436508552
+(1 row)
+
+SELECT '\x112233445566778899'::bytea::int8; -- error
+ERROR:  bigint out of range
+-- min/max integer values
+SELECT '\x8000'::bytea::int2 AS "-32768", '\x7FFF'::bytea::int2 AS "32767";
+ -32768 | 32767 
+--------+-------
+ -32768 | 32767
+(1 row)
+
+SELECT '\x80000000'::bytea::int4 AS "-2147483648", '\x7FFFFFFF'::bytea::int4 AS "2147483647";
+ -2147483648 | 2147483647 
+-------------+------------
+ -2147483648 | 2147483647
+(1 row)
+
+SELECT '\x8000000000000000'::bytea::int8 AS "-9223372036854775808",
+       '\x7FFFFFFFFFFFFFFF'::bytea::int8 AS "9223372036854775807";
+ -9223372036854775808 | 9223372036854775807 
+----------------------+---------------------
+ -9223372036854775808 | 9223372036854775807
+(1 row)
+
 --
 -- test behavior of escape_string_warning and standard_conforming_strings options
 --

@@ -13,9 +13,6 @@
 #ifndef CHAR_BIT
 #include <limits.h>
 #endif
-#ifdef LOCALE_T_IN_XLOCALE
-#include <xlocale.h>
-#endif
 
 enum COMPAT_MODE
 {
@@ -80,7 +77,7 @@ struct statement
 	locale_t	oldlocale;
 #else
 	char	   *oldlocale;
-#ifdef HAVE__CONFIGTHREADLOCALE
+#ifdef WIN32
 	int			oldthreadlocale;
 #endif
 #endif

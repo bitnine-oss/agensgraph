@@ -9,7 +9,7 @@
  * shorn of features like subselects, inheritance, aggregates, grouping,
  * and so on.  (Those are the things planner.c deals with.)
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -170,6 +170,9 @@ query_planner(PlannerInfo *root,
 	 */
 	add_base_rels_to_query(root, (Node *) parse->jointree);
 
+	/* Remove any redundant GROUP BY columns */
+	remove_useless_groupby_columns(root);
+
 	/*
 	 * Examine the targetlist and join tree, adding entries to baserel
 	 * targetlists for all referenced Vars, and generating PlaceHolderInfo
@@ -230,6 +233,11 @@ query_planner(PlannerInfo *root,
 	 * Likewise, this can't be done until now for lack of needed info.
 	 */
 	reduce_unique_semijoins(root);
+
+	/*
+	 * Remove self joins on a unique column.
+	 */
+	joinlist = remove_useless_self_joins(root, joinlist);
 
 	/*
 	 * Now distribute "placeholders" to base rels as needed.  This has to be

@@ -587,7 +587,7 @@ CREATE MATERIALIZED VIEW drop_idx_matview AS
 NOTICE:  index "mvtest_drop_idx" does not exist, skipping
 CREATE UNIQUE INDEX mvtest_drop_idx ON drop_idx_matview (i);
 REFRESH MATERIALIZED VIEW CONCURRENTLY drop_idx_matview;
-ERROR:  could not find suitable unique index on materialized view
+ERROR:  could not find suitable unique index on materialized view "drop_idx_matview"
 DROP MATERIALIZED VIEW drop_idx_matview; -- clean up
 RESET search_path;
 -- make sure that create WITH NO DATA works via SPI
@@ -624,19 +624,19 @@ GRANT ALL ON SCHEMA matview_schema TO public;
 SET SESSION AUTHORIZATION regress_matview_user;
 CREATE MATERIALIZED VIEW matview_schema.mv_withdata1 (a) AS
   SELECT generate_series(1, 10) WITH DATA;
-EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
   CREATE MATERIALIZED VIEW matview_schema.mv_withdata2 (a) AS
   SELECT generate_series(1, 10) WITH DATA;
-              QUERY PLAN              
---------------------------------------
- ProjectSet (actual rows=10 loops=1)
-   ->  Result (actual rows=1 loops=1)
+               QUERY PLAN                
+-----------------------------------------
+ ProjectSet (actual rows=10.00 loops=1)
+   ->  Result (actual rows=1.00 loops=1)
 (2 rows)
 
 REFRESH MATERIALIZED VIEW matview_schema.mv_withdata2;
 CREATE MATERIALIZED VIEW matview_schema.mv_nodata1 (a) AS
   SELECT generate_series(1, 10) WITH NO DATA;
-EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
   CREATE MATERIALIZED VIEW matview_schema.mv_nodata2 (a) AS
   SELECT generate_series(1, 10) WITH NO DATA;
           QUERY PLAN           
@@ -669,11 +669,11 @@ ERROR:  relation "matview_ine_tab" already exists
 CREATE MATERIALIZED VIEW IF NOT EXISTS matview_ine_tab AS
   SELECT 1 / 0 WITH NO DATA; -- ok
 NOTICE:  relation "matview_ine_tab" already exists, skipping
-EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
   CREATE MATERIALIZED VIEW matview_ine_tab AS
     SELECT 1 / 0; -- error
 ERROR:  relation "matview_ine_tab" already exists
-EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
   CREATE MATERIALIZED VIEW IF NOT EXISTS matview_ine_tab AS
     SELECT 1 / 0; -- ok
 NOTICE:  relation "matview_ine_tab" already exists, skipping
@@ -681,11 +681,11 @@ NOTICE:  relation "matview_ine_tab" already exists, skipping
 ------------
 (0 rows)
 
-EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
   CREATE MATERIALIZED VIEW matview_ine_tab AS
     SELECT 1 / 0 WITH NO DATA; -- error
 ERROR:  relation "matview_ine_tab" already exists
-EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
   CREATE MATERIALIZED VIEW IF NOT EXISTS matview_ine_tab AS
     SELECT 1 / 0 WITH NO DATA; -- ok
 NOTICE:  relation "matview_ine_tab" already exists, skipping

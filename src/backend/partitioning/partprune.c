@@ -25,7 +25,7 @@
  *
  * See gen_partprune_steps_internal() for more details on step generation.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -207,16 +207,20 @@ static void partkey_datum_from_expr(PartitionPruneContext *context,
 
 /*
  * make_partition_pruneinfo
- *		Builds a PartitionPruneInfo which can be used in the executor to allow
- *		additional partition pruning to take place.  Returns NULL when
- *		partition pruning would be useless.
+ *		Checks if the given set of quals can be used to build pruning steps
+ *		that the executor can use to prune away unneeded partitions.  If
+ *		suitable quals are found then a PartitionPruneInfo is built and tagged
+ *		onto the PlannerInfo's partPruneInfos list.
+ *
+ * The return value is the 0-based index of the item added to the
+ * partPruneInfos list or -1 if nothing was added.
  *
  * 'parentrel' is the RelOptInfo for an appendrel, and 'subpaths' is the list
  * of scan paths for its child rels.
  * 'prunequal' is a list of potential pruning quals (i.e., restriction
  * clauses that are applicable to the appendrel).
  */
-PartitionPruneInfo *
+int
 make_partition_pruneinfo(PlannerInfo *root, RelOptInfo *parentrel,
 						 List *subpaths,
 						 List *prunequal)
@@ -330,10 +334,11 @@ make_partition_pruneinfo(PlannerInfo *root, RelOptInfo *parentrel,
 	 * quals, then we can just not bother with run-time pruning.
 	 */
 	if (prunerelinfos == NIL)
-		return NULL;
+		return -1;
 
 	/* Else build the result data structure */
 	pruneinfo = makeNode(PartitionPruneInfo);
+	pruneinfo->relids = bms_copy(parentrel->relids);
 	pruneinfo->prune_infos = prunerelinfos;
 
 	/*
@@ -356,7 +361,9 @@ make_partition_pruneinfo(PlannerInfo *root, RelOptInfo *parentrel,
 	else
 		pruneinfo->other_subplans = NULL;
 
-	return pruneinfo;
+	root->partPruneInfos = lappend(root->partPruneInfos, pruneinfo);
+
+	return list_length(root->partPruneInfos) - 1;
 }
 
 /*
@@ -638,6 +645,7 @@ make_partitionedrel_pruneinfo(PlannerInfo *root, RelOptInfo *parentrel,
 		int		   *subplan_map;
 		int		   *subpart_map;
 		Oid		   *relid_map;
+		int		   *leafpart_rti_map;
 
 		/*
 		 * Construct the subplan and subpart maps for this partitioning level.
@@ -650,6 +658,7 @@ make_partitionedrel_pruneinfo(PlannerInfo *root, RelOptInfo *parentrel,
 		subpart_map = (int *) palloc(nparts * sizeof(int));
 		memset(subpart_map, -1, nparts * sizeof(int));
 		relid_map = (Oid *) palloc0(nparts * sizeof(Oid));
+		leafpart_rti_map = (int *) palloc0(nparts * sizeof(int));
 		present_parts = NULL;
 
 		i = -1;
@@ -664,9 +673,28 @@ make_partitionedrel_pruneinfo(PlannerInfo *root, RelOptInfo *parentrel,
 			subplan_map[i] = subplanidx = relid_subplan_map[partrel->relid] - 1;
 			subpart_map[i] = subpartidx = relid_subpart_map[partrel->relid] - 1;
 			relid_map[i] = planner_rt_fetch(partrel->relid, root)->relid;
+
+			/*
+			 * Track the RT indexes of "leaf" partitions so they can be
+			 * included in the PlannerGlobal.prunableRelids set, indicating
+			 * relations that may be pruned during executor startup.
+			 *
+			 * Only leaf partitions with a valid subplan that are prunable
+			 * using initial pruning are added to prunableRelids. So
+			 * partitions without a subplan due to constraint exclusion will
+			 * remain in PlannedStmt.unprunableRelids.
+			 */
 			if (subplanidx >= 0)
 			{
 				present_parts = bms_add_member(present_parts, i);
+
+				/*
+				 * Non-leaf partitions may appear here when they use an
+				 * unflattened Append or MergeAppend. These should not be
+				 * included in prunableRelids.
+				 */
+				if (partrel->nparts == -1)
+					leafpart_rti_map[i] = (int) partrel->relid;
 
 				/* Record finding this subplan  */
 				subplansfound = bms_add_member(subplansfound, subplanidx);
@@ -688,6 +716,7 @@ make_partitionedrel_pruneinfo(PlannerInfo *root, RelOptInfo *parentrel,
 		pinfo->subplan_map = subplan_map;
 		pinfo->subpart_map = subpart_map;
 		pinfo->relid_map = relid_map;
+		pinfo->leafpart_rti_map = leafpart_rti_map;
 	}
 
 	pfree(relid_subpart_map);
@@ -3365,8 +3394,7 @@ pull_exec_paramids_walker(Node *node, Bitmapset **context)
 			*context = bms_add_member(*context, param->paramid);
 		return false;
 	}
-	return expression_tree_walker(node, pull_exec_paramids_walker,
-								  (void *) context);
+	return expression_tree_walker(node, pull_exec_paramids_walker, context);
 }
 
 /*
@@ -3777,13 +3805,8 @@ partkey_datum_from_expr(PartitionPruneContext *context,
 		/*
 		 * We should never see a non-Const in a step unless the caller has
 		 * passed a valid ExprContext.
-		 *
-		 * When context->planstate is valid, context->exprcontext is same as
-		 * context->planstate->ps_ExprContext.
 		 */
-		Assert(context->planstate != NULL || context->exprcontext != NULL);
-		Assert(context->planstate == NULL ||
-			   (context->exprcontext == context->planstate->ps_ExprContext));
+		Assert(context->exprcontext != NULL);
 
 		exprstate = context->exprstates[stateidx];
 		ectx = context->exprcontext;

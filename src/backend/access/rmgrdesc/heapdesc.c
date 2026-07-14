@@ -3,7 +3,7 @@
  * heapdesc.c
  *	  rmgr descriptor routines for access/heap/heapam.c
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -16,6 +16,7 @@
 
 #include "access/heapam_xlog.h"
 #include "access/rmgrdesc_utils.h"
+#include "storage/standbydefs.h"
 
 /*
  * NOTE: "keyname" argument cannot have trailing spaces or punctuation
@@ -253,6 +254,9 @@ heap_desc(StringInfo buf, XLogReaderState *record)
 		xl_heap_inplace *xlrec = (xl_heap_inplace *) rec;
 
 		appendStringInfo(buf, "off: %u", xlrec->offnum);
+		standby_desc_invalidations(buf, xlrec->nmsgs, xlrec->msgs,
+								   xlrec->dbId, xlrec->tsId,
+								   xlrec->relcacheInitFileInval);
 	}
 }
 

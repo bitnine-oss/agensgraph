@@ -9,7 +9,7 @@
  * into a lot of low-level code.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/reloptions.h
@@ -152,6 +152,19 @@ typedef struct
 	const char *optname;		/* option's name */
 	relopt_type opttype;		/* option's datatype */
 	int			offset;			/* offset of field in result struct */
+
+	/*
+	 * isset_offset is an optional offset of a field in the result struct that
+	 * stores whether the option is explicitly set for the relation or if it
+	 * just picked up the default value.  In most cases, this can be
+	 * accomplished by giving the reloption a special out-of-range default
+	 * value (e.g., some integer reloptions use -2), but this isn't always
+	 * possible.  For example, a Boolean reloption cannot be given an
+	 * out-of-range default, so we need another way to discover the source of
+	 * its value.  This offset is only used if given a value greater than
+	 * zero.
+	 */
+	int			isset_offset;
 } relopt_parse_elt;
 
 /* Local reloption definition */
@@ -220,7 +233,7 @@ extern void add_local_string_reloption(local_relopts *relopts, const char *name,
 									   fill_string_relopt filler, int offset);
 
 extern Datum transformRelOptions(Datum oldOptions, List *defList,
-								 const char *namspace, char *validnsps[],
+								 const char *namspace, const char *const validnsps[],
 								 bool acceptOidsOff, bool isReset);
 extern List *untransformRelOptions(Datum options);
 extern bytea *extractRelOptions(HeapTuple tuple, TupleDesc tupdesc,

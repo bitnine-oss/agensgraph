@@ -24,7 +24,7 @@
  * See psqlscan_int.h for additional commentary.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -52,12 +52,6 @@
  */
 typedef int YYSTYPE;
 
-/*
- * Set the type of yyextra; we use it as a pointer back to the containing
- * PsqlScanState.
- */
-#define YY_EXTRA_TYPE PsqlScanState
-
 
 /* Return values from yylex() */
 #define LEXRES_EOL			0	/* end of input */
@@ -66,15 +60,6 @@ typedef int YYSTYPE;
 
 
 #define ECHO psqlscan_emit(cur_state, yytext, yyleng)
-
-/*
- * Work around a bug in flex 2.5.35: it emits a couple of functions that
- * it forgets to emit declarations for.  Since we use -Wmissing-prototypes,
- * this would cause warnings.  Providing our own declarations should be
- * harmless even when the bug gets fixed.
- */
-extern int	psql_yyget_column(yyscan_t yyscanner);
-extern void psql_yyset_column(int column_no, yyscan_t yyscanner);
 
 %}
 
@@ -88,6 +73,12 @@ extern void psql_yyset_column(int column_no, yyscan_t yyscanner);
 %option noyywrap
 %option warn
 %option prefix="psql_yy"
+
+/*
+ * Set the type of yyextra; we use it as a pointer back to the containing
+ * PsqlScanState.
+ */
+%option extra-type="PsqlScanState"
 
 /*
  * All of the following definitions and rules should exactly match
@@ -348,16 +339,30 @@ numericfail		{decinteger}\.\.
 real			({decinteger}|{numeric})[Ee][-+]?{decinteger}
 realfail		({decinteger}|{numeric})[Ee][-+]
 
-decinteger_junk	{decinteger}{ident_start}
-hexinteger_junk	{hexinteger}{ident_start}
-octinteger_junk	{octinteger}{ident_start}
-bininteger_junk	{bininteger}{ident_start}
-numeric_junk	{numeric}{ident_start}
-real_junk		{real}{ident_start}
-
 /* Positional parameters don't accept underscores. */
 param			\${decdigit}+
-param_junk		\${decdigit}+{ident_start}
+
+/*
+ * An identifier immediately following an integer literal is disallowed because
+ * in some cases it's ambiguous what is meant: for example, 0x1234 could be
+ * either a hexinteger or a decinteger "0" and an identifier "x1234".  We can
+ * detect such problems by seeing if integer_junk matches a longer substring
+ * than any of the XXXinteger patterns (decinteger, hexinteger, octinteger,
+ * bininteger).  One "junk" pattern is sufficient because
+ * {decinteger}{identifier} will match all the same strings we'd match with
+ * {hexinteger}{identifier} etc.
+ *
+ * Note that the rule for integer_junk must appear after the ones for
+ * XXXinteger to make this work correctly: 0x1234 will match both hexinteger
+ * and integer_junk, and we need hexinteger to be chosen in that case.
+ *
+ * Also disallow strings matched by numeric_junk, real_junk and param_junk
+ * for consistency.
+ */
+integer_junk	{decinteger}{identifier}
+numeric_junk	{numeric}{identifier}
+real_junk		{real}{identifier}
+param_junk		\${decdigit}+{identifier}
 
 /* psql-specific: characters allowed in variable names */
 variable_char	[A-Za-z\200-\377_0-9]
@@ -898,16 +903,7 @@ other			.
 {realfail}		{
 					ECHO;
 				}
-{decinteger_junk}	{
-					ECHO;
-				}
-{hexinteger_junk}	{
-					ECHO;
-				}
-{octinteger_junk}	{
-					ECHO;
-				}
-{bininteger_junk}	{
+{integer_junk}	{
 					ECHO;
 				}
 {numeric_junk}	{
@@ -1083,6 +1079,10 @@ psql_scan_setup(PsqlScanState state,
 	/* Set lookaside data in case we have to map unsafe encoding */
 	state->curline = state->scanbuf;
 	state->refline = state->scanline;
+
+	/* Initialize state for psql_scan_get_location() */
+	state->cur_line_no = 0;		/* yylex not called yet */
+	state->cur_line_ptr = state->scanbuf;
 }
 
 /*
@@ -1139,6 +1139,10 @@ psql_scan(PsqlScanState state,
 
 	/* And lex. */
 	lexresult = yylex(NULL, state->scanner);
+
+	/* Notify psql_scan_get_location() that a yylex call has been made. */
+	if (state->cur_line_no == 0)
+		state->cur_line_no = 1;
 
 	/*
 	 * Check termination state and return appropriate result info.
@@ -1312,7 +1316,53 @@ bool
 psql_scan_in_quote(PsqlScanState state)
 {
 	return state->start_state != INITIAL &&
-			state->start_state != xqs;
+		state->start_state != xqs;
+}
+
+/*
+ * Return the current scanning location (end+1 of last scanned token),
+ * as a line number counted from 1 and an offset from string start.
+ *
+ * This considers only the outermost input string, and therefore is of
+ * limited use for programs that use psqlscan_push_new_buffer().
+ *
+ * It would be a bit easier probably to use "%option yylineno" to count
+ * lines, but the flex manual says that has a performance cost, and only
+ * a minority of programs using psqlscan have need for this functionality.
+ * So we implement it ourselves without adding overhead to the lexer itself.
+ */
+void
+psql_scan_get_location(PsqlScanState state,
+					   int *lineno, int *offset)
+{
+	const char *line_end;
+
+	/*
+	 * We rely on flex's having stored a NUL after the current token in
+	 * scanbuf.  Therefore we must specially handle the state before yylex()
+	 * has been called, when obviously that won't have happened yet.
+	 */
+	if (state->cur_line_no == 0)
+	{
+		*lineno = 1;
+		*offset = 0;
+		return;
+	}
+
+	/*
+	 * Advance cur_line_no/cur_line_ptr past whatever has been lexed so far.
+	 * Doing this prevents repeated calls from being O(N^2) for long inputs.
+	 */
+	while ((line_end = strchr(state->cur_line_ptr, '\n')) != NULL)
+	{
+		state->cur_line_no++;
+		state->cur_line_ptr = line_end + 1;
+	}
+	state->cur_line_ptr += strlen(state->cur_line_ptr);
+
+	/* Report current location. */
+	*lineno = state->cur_line_no;
+	*offset = state->cur_line_ptr - state->scanbuf;
 }
 
 /*
@@ -1563,8 +1613,8 @@ psqlscan_escape_variable(PsqlScanState state, const char *txt, int len,
 void
 psqlscan_test_variable(PsqlScanState state, const char *txt, int len)
 {
-	char	*varname;
-	char	*value;
+	char	   *varname;
+	char	   *value;
 
 	varname = psqlscan_extract_substring(state, txt + 3, len - 4);
 	if (state->callbacks->get_variable)
@@ -1576,11 +1626,11 @@ psqlscan_test_variable(PsqlScanState state, const char *txt, int len)
 
 	if (value != NULL)
 	{
-		psqlscan_emit(state, "TRUE", 4);
+		appendPQExpBufferStr(state->output_buf, "TRUE");
 		free(value);
 	}
 	else
 	{
-		psqlscan_emit(state, "FALSE", 5);
+		appendPQExpBufferStr(state->output_buf, "FALSE");
 	}
 }

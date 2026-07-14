@@ -4,7 +4,7 @@
  *	  Support for finding the values associated with Param nodes.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -55,7 +55,7 @@ makeParamList(int numParams)
 	retval->paramCompile = NULL;
 	retval->paramCompileArg = NULL;
 	retval->parserSetup = paramlist_parser_setup;
-	retval->parserSetupArg = (void *) retval;
+	retval->parserSetupArg = retval;
 	retval->paramValuesStr = NULL;
 	retval->numParams = numParams;
 

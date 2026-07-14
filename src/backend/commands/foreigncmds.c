@@ -3,7 +3,7 @@
  * foreigncmds.c
  *	  foreign-data wrapper/server creation/manipulation commands
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -71,15 +71,26 @@ optionListToArray(List *options)
 	foreach(cell, options)
 	{
 		DefElem    *def = lfirst(cell);
+		const char *name;
 		const char *value;
 		Size		len;
 		text	   *t;
 
+		name = def->defname;
 		value = defGetString(def);
-		len = VARHDRSZ + strlen(def->defname) + 1 + strlen(value);
+
+		/* Insist that name not contain "=", else "a=b=c" is ambiguous */
+		if (strchr(name, '=') != NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("invalid option name \"%s\": must not contain \"=\"",
+							name)));
+
+		len = VARHDRSZ + strlen(name) + 1 + strlen(value);
+		/* +1 leaves room for sprintf's trailing null */
 		t = palloc(len + 1);
 		SET_VARSIZE(t, len);
-		sprintf(VARDATA(t), "%s=%s", def->defname, value);
+		sprintf(VARDATA(t), "%s=%s", name, value);
 
 		astate = accumArrayResult(astate, PointerGetDatum(t),
 								  false, TEXTOID,
@@ -1532,7 +1543,7 @@ ImportForeignSchema(ImportForeignSchemaStmt *stmt)
 		callback_arg.tablename = NULL;	/* not known yet */
 		callback_arg.cmd = cmd;
 		sqlerrcontext.callback = import_error_callback;
-		sqlerrcontext.arg = (void *) &callback_arg;
+		sqlerrcontext.arg = &callback_arg;
 		sqlerrcontext.previous = error_context_stack;
 		error_context_stack = &sqlerrcontext;
 

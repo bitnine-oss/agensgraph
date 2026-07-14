@@ -16,7 +16,7 @@
  * dropped while shut down, which is addressed by not restoring stats for
  * slots that cannot be found by name when starting up.
  *
- * Copyright (c) 2001-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/activity/pgstat_replslot.c
@@ -193,9 +193,9 @@ pgstat_replslot_to_serialized_name_cb(const PgStat_HashKey *key, const PgStatSha
 	 * isn't allowed to change at this point, we can assume that a slot exists
 	 * at the offset.
 	 */
-	if (!ReplicationSlotName(key->objoid, name))
-		elog(ERROR, "could not find name for replication slot index %u",
-			 key->objoid);
+	if (!ReplicationSlotName(key->objid, name))
+		elog(ERROR, "could not find name for replication slot index %" PRIu64,
+			 key->objid);
 }
 
 bool
@@ -209,7 +209,7 @@ pgstat_replslot_from_serialized_name_cb(const NameData *name, PgStat_HashKey *ke
 
 	key->kind = PGSTAT_KIND_REPLSLOT;
 	key->dboid = InvalidOid;
-	key->objoid = idx;
+	key->objid = idx;
 
 	return true;
 }

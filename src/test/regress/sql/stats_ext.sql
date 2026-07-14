@@ -45,6 +45,20 @@ CREATE STATISTICS tst ON (y) FROM ext_stats_test; -- single column reference
 CREATE STATISTICS tst ON y + z FROM ext_stats_test; -- missing parentheses
 CREATE STATISTICS tst ON (x, y) FROM ext_stats_test; -- tuple expression
 DROP TABLE ext_stats_test;
+-- statistics on virtual generated column not allowed
+CREATE TABLE ext_stats_test1 (x int, y int, z int GENERATED ALWAYS AS (x+y) VIRTUAL, w xid);
+CREATE STATISTICS tst on z from ext_stats_test1;
+CREATE STATISTICS tst on (z) from ext_stats_test1;
+CREATE STATISTICS tst on (z+1) from ext_stats_test1;
+CREATE STATISTICS tst (ndistinct) ON z from ext_stats_test1;
+-- statistics on system column not allowed
+CREATE STATISTICS tst on tableoid from ext_stats_test1;
+CREATE STATISTICS tst on (tableoid) from ext_stats_test1;
+CREATE STATISTICS tst on (tableoid::int+1) from ext_stats_test1;
+CREATE STATISTICS tst (ndistinct) ON xmin from ext_stats_test1;
+-- statistics without a less-than operator not supported
+CREATE STATISTICS tst (ndistinct) ON w from ext_stats_test1;
+DROP TABLE ext_stats_test1;
 
 -- Ensure stats are dropped sanely, and test IF NOT EXISTS while at it
 CREATE TABLE ab1 (a INTEGER, b INTEGER, c INTEGER);
@@ -1634,6 +1648,7 @@ CREATE FUNCTION op_leak(int, int) RETURNS bool
 CREATE OPERATOR <<< (procedure = op_leak, leftarg = int, rightarg = int,
                      restrict = scalarltsel);
 SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
+SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 OR b <<< 0;
 DELETE FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
 
 -- Grant access via a security barrier view, but hide all data
@@ -1645,6 +1660,7 @@ GRANT SELECT, DELETE ON tststats.priv_test_view TO regress_stats_user1;
 -- Should now have access via the view, but see nothing and leak nothing
 SET SESSION AUTHORIZATION regress_stats_user1;
 SELECT * FROM tststats.priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_view WHERE a <<< 0 OR b <<< 0; -- Should not leak
 DELETE FROM tststats.priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
 
 -- Grant table access, but hide all data with RLS
@@ -1655,6 +1671,7 @@ GRANT SELECT, DELETE ON tststats.priv_test_tbl TO regress_stats_user1;
 -- Should now have direct table access, but see nothing and leak nothing
 SET SESSION AUTHORIZATION regress_stats_user1;
 SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
+SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 OR b <<< 0;
 DELETE FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
 
 -- privilege checks for pg_stats_ext and pg_stats_ext_exprs
@@ -1690,3 +1707,55 @@ RESET SESSION AUTHORIZATION;
 DROP TABLE stats_ext_tbl;
 DROP SCHEMA tststats CASCADE;
 DROP USER regress_stats_user1;
+
+CREATE TABLE grouping_unique (x integer);
+INSERT INTO grouping_unique (x) SELECT gs FROM generate_series(1,1000) AS gs;
+ANALYZE grouping_unique;
+
+-- Optimiser treat GROUP-BY operator as an 'uniqueser' of the input
+SELECT * FROM check_estimated_rows('
+  SELECT * FROM generate_series(1, 1) t1 LEFT JOIN (
+    SELECT x FROM grouping_unique t2 GROUP BY x) AS q1
+  ON t1.t1 = q1.x;
+');
+DROP TABLE grouping_unique;
+
+--
+-- Extended statistics on sb_2 (x, y, z) improve a bucket size estimation,
+-- and the optimizer may choose hash join.
+--
+CREATE TABLE sb_1 AS
+  SELECT gs % 10 AS x, gs % 10 AS y, gs % 10 AS z
+  FROM generate_series(1, 1e4) AS gs;
+CREATE TABLE sb_2 AS
+  SELECT gs % 49 AS x, gs % 51 AS y, gs % 73 AS z, 'abc' || gs AS payload
+  FROM generate_series(1, 1e4) AS gs;
+ANALYZE sb_1, sb_2;
+
+-- During hash join estimation, the number of distinct values on each column
+-- is calculated. The optimizer selects the smallest number of distinct values
+-- and the largest hash bucket size. The optimizer decides that the hash
+-- bucket size is quite big because there are possibly many correlations.
+EXPLAIN (COSTS OFF) -- Choose merge join
+SELECT * FROM sb_1 a, sb_2 b WHERE a.x = b.x AND a.y = b.y AND a.z = b.z;
+
+-- The ndistinct extended statistics on (x, y, z) provides more reliable value
+-- of bucket size.
+CREATE STATISTICS extstat_sb_2 (ndistinct) ON x, y, z FROM sb_2;
+ANALYZE sb_2;
+
+EXPLAIN (COSTS OFF) -- Choose hash join
+SELECT * FROM sb_1 a, sb_2 b WHERE a.x = b.x AND a.y = b.y AND a.z = b.z;
+
+-- Check that the Hash Join bucket size estimator detects equal clauses correctly.
+SET enable_nestloop = 'off';
+SET enable_mergejoin = 'off';
+EXPLAIN (COSTS OFF)
+SELECT FROM sb_1 LEFT JOIN sb_2 ON (sb_2.x=sb_1.x) AND (sb_1.x=sb_2.x);
+EXPLAIN (COSTS OFF)
+SELECT FROM sb_1 LEFT JOIN sb_2
+   ON (sb_2.x=sb_1.x) AND (sb_1.x=sb_2.x) AND (sb_1.y=sb_2.y);
+RESET enable_nestloop;
+RESET enable_mergejoin;
+
+DROP TABLE sb_1, sb_2 CASCADE;

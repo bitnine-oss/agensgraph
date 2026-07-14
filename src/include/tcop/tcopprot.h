@@ -4,7 +4,7 @@
  *	  prototypes for postgres.c.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/tcop/tcopprot.h
@@ -22,12 +22,8 @@
 #include "utils/queryenvironment.h"
 
 
-/* Required daylight between max_stack_depth and the kernel limit, in bytes */
-#define STACK_DEPTH_SLOP (512 * 1024L)
-
 extern PGDLLIMPORT CommandDest whereToSendOutput;
 extern PGDLLIMPORT const char *debug_query_string;
-extern PGDLLIMPORT int max_stack_depth;
 extern PGDLLIMPORT int PostAuthDelay;
 extern PGDLLIMPORT int client_connection_check_interval;
 extern PGDLLIMPORT GraphWriteStats graphWriteStats;
@@ -42,7 +38,14 @@ typedef enum
 	LOGSTMT_ALL,				/* log all statements */
 } LogStmtLevel;
 
+extern PGDLLIMPORT bool Log_disconnections;
 extern PGDLLIMPORT int log_statement;
+
+/* Flags for restrict_nonsystem_relation_kind value */
+#define RESTRICT_RELKIND_VIEW			0x01
+#define RESTRICT_RELKIND_FOREIGN_TABLE	0x02
+
+extern PGDLLIMPORT int restrict_nonsystem_relation_kind;
 
 extern List *pg_parse_query(const char *query_string);
 extern List *pg_rewrite_query(Query *query);
@@ -68,20 +71,19 @@ extern List *pg_plan_queries(List *querytrees, const char *query_string,
 							 ParamListInfo boundParams);
 
 extern void die(SIGNAL_ARGS);
-extern void quickdie(SIGNAL_ARGS) pg_attribute_noreturn();
+pg_noreturn extern void quickdie(SIGNAL_ARGS);
 extern void StatementCancelHandler(SIGNAL_ARGS);
-extern void FloatExceptionHandler(SIGNAL_ARGS) pg_attribute_noreturn();
+pg_noreturn extern void FloatExceptionHandler(SIGNAL_ARGS);
 extern void HandleRecoveryConflictInterrupt(ProcSignalReason reason);
 extern void ProcessClientReadInterrupt(bool blocked);
 extern void ProcessClientWriteInterrupt(bool blocked);
 
 extern void process_postgres_switches(int argc, char *argv[],
 									  GucContext ctx, const char **dbname);
-extern void PostgresSingleUserMain(int argc, char *argv[],
-								   const char *username) pg_attribute_noreturn();
-extern void PostgresMain(const char *dbname,
-						 const char *username) pg_attribute_noreturn();
-extern long get_stack_depth_rlimit(void);
+pg_noreturn extern void PostgresSingleUserMain(int argc, char *argv[],
+											   const char *username);
+pg_noreturn extern void PostgresMain(const char *dbname,
+									 const char *username);
 extern void ResetUsage(void);
 extern void ShowUsage(const char *title);
 extern int	check_log_duration(char *msec_str, bool was_logged);

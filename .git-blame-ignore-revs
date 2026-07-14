@@ -20,6 +20,66 @@
 14b7befef6b574376e59454f5e33a2ce29e4d07a # 2025-06-23 12:03:10 +0500
 # Run pgindent prior to branching v2.16
 
+b27644bade0348d0dafd3036c47880a349fe9332 # 2025-06-15 13:04:24 -0400
+# Sync typedefs.list with the buildfarm.
+
+4672b6223910687b2aab075bcd2dd54ce90d5171 # 2025-06-01 14:55:24 -0400
+# Run pgindent on the previous commit.
+
+918e7287ed20eb1fe280ab6c4056ccf94dcd53a8 # 2025-04-30 19:18:30 +1200
+# Fix broken indentation
+
+e1a8b1ad587112e67fdc5aa7b388631dde4dbdda # 2025-04-04 09:38:22 -0500
+# Re-pgindent pg_largeobject.c after commit 0d6c477664.
+
+796bdda484c838313959f65e2b700f14ac7c0e66 # 2025-03-18 09:02:36 -0400
+# Fix indentation again.
+
+203c1b4cc49455364b6bcab8034900d1c016b9cd # 2025-03-17 16:06:17 -0400
+# Fix indentation.
+
+b955df443405e056fd9047ef819a1465654f9d79 # 2025-03-13 12:41:44 +1300
+# Fix indentation issue
+
+76aa615943049c04efd36ab4765c06eda89cdfea # 2025-01-31 16:44:24 +0900
+# Fix bad indentation introduced in commit d47cbf474
+
+6e826278f1ebd9967c0f8adda29c8960a812e344 # 2025-01-13 11:27:32 +0900
+# Fix pgindent damage
+
+301de6a6f609cb3ad2d9d31fd8db9ae6c71e6dea # 2024-12-25 17:55:42 +0100
+# Partial pgindent of .l and .y files
+
+53dcba9be5746cc126bdb949bf81c29ea2cfc24d # 2024-11-21 21:40:17 +0100
+# pgindent run
+
+a7f2f6adc240a2823c2344b89e90bb630dea8803 # 2024-10-16 12:21:13 -0700
+# Whitespace fixup from generated unicode tables.
+
+7f7474a8e4002ac9fd4979cc7b16b50b70b70c28 # 2024-09-27 11:14:31 -0400
+# Reindent pg_verifybackup.c.
+
+7229ebe011dff3f418251a4836f6d098923aa1e1 # 2024-08-26 16:16:12 -0700
+# Fix identation.
+
+2b03cfeea47834913ff769124f4deba88140f662 # 2024-08-21 09:58:11 -0400
+# Fix pgindent damage
+
+97add39c038bbdb9082b416ddf04cd20b0d20bf5 # 2024-08-15 11:41:46 -0400
+# Clean up indentation and whitespace inconsistencies in ecpg.
+
+8de5ca1dc9fa809102acd1983ee19159d0bc469f # 2024-08-12 10:57:03 +0300
+# Fix bad indentation introduced in commit f011e82c2c
+
+c883453cb29cb40c1e59c3c54d159c5e744da8a9 # 2024-07-26 12:00:04 -0400
+# Fix indentation.
+
+47ecbfdfcc71e41d7dcc35f0be04f8adbe88397f # 2024-07-15 15:17:04 -0700
+# Fix bad indentation introduced in 43cd30bcd1c
+
+b48f275f18d7da4f4863888ad047cbd699698880 # 2024-06-28 10:51:05 -0400
+# pgindent, because I forgot to do that.
+
 da256a4a7fdcca35fe7ca808686ad3de6ee22306 # 2024-05-14 16:34:50 -0400
 # Pre-beta mechanical code beautification.
 

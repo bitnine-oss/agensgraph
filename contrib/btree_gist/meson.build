@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 btree_gist_sources = files(
   'btree_bit.c',
@@ -50,6 +50,8 @@ install_data(
   'btree_gist--1.4--1.5.sql',
   'btree_gist--1.5--1.6.sql',
   'btree_gist--1.6--1.7.sql',
+  'btree_gist--1.7--1.8.sql',
+  'btree_gist--1.8--1.9.sql',
   kwargs: contrib_data_args,
 )
 
@@ -89,6 +91,8 @@ tests += {
       'enum',
       'bool',
       'partitions',
+      'stratnum',
+      'without_overlaps',
     ],
   },
 }

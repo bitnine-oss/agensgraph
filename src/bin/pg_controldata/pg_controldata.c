@@ -1,7 +1,7 @@
 /*
  * pg_controldata
  *
- * reads the data from $PGDATA/global/pg_control
+ * reads the data from the control file located at $PGDATA/XLOG_CONTROL_FILE.
  *
  * copyright (c) Oliver Elphick <olly@lfix.co.uk>, 2001;
  * license: BSD
@@ -97,6 +97,7 @@ main(int argc, char *argv[])
 	bool		crc_ok;
 	char	   *DataDir = NULL;
 	time_t		time_tmp;
+	struct tm  *tm_tmp;
 	char		pgctime_str[128];
 	char		ckpttime_str[128];
 	char		mock_auth_nonce_str[MOCK_AUTH_NONCE_LEN * 2 + 1];
@@ -196,20 +197,30 @@ main(int argc, char *argv[])
 	 * about %c
 	 */
 	time_tmp = (time_t) ControlFile->time;
-	strftime(pgctime_str, sizeof(pgctime_str), strftime_fmt,
-			 localtime(&time_tmp));
+	tm_tmp = localtime(&time_tmp);
+
+	if (tm_tmp != NULL)
+		strftime(pgctime_str, sizeof(pgctime_str), strftime_fmt, tm_tmp);
+	else
+		snprintf(pgctime_str, sizeof(pgctime_str), _("???"));
+
 	time_tmp = (time_t) ControlFile->checkPointCopy.time;
-	strftime(ckpttime_str, sizeof(ckpttime_str), strftime_fmt,
-			 localtime(&time_tmp));
+	tm_tmp = localtime(&time_tmp);
+
+	if (tm_tmp != NULL)
+		strftime(ckpttime_str, sizeof(ckpttime_str), strftime_fmt, tm_tmp);
+	else
+		snprintf(ckpttime_str, sizeof(ckpttime_str), _("???"));
 
 	/*
 	 * Calculate name of the WAL file containing the latest checkpoint's REDO
 	 * start point.
 	 *
-	 * A corrupted control file could report a WAL segment size of 0, and to
-	 * guard against division by zero, we need to treat that specially.
+	 * A corrupted control file could report a WAL segment size of 0 or
+	 * negative value, and to guard against division by zero, we need to treat
+	 * that specially.
 	 */
-	if (WalSegSz != 0)
+	if (WalSegSz > 0)
 	{
 		XLogSegNo	segno;
 
@@ -228,8 +239,8 @@ main(int argc, char *argv[])
 		   ControlFile->pg_control_version);
 	printf(_("Catalog version number:               %u\n"),
 		   ControlFile->catalog_version_no);
-	printf(_("Database system identifier:           %llu\n"),
-		   (unsigned long long) ControlFile->system_identifier);
+	printf(_("Database system identifier:           %" PRIu64 "\n"),
+		   ControlFile->system_identifier);
 	printf(_("Database cluster state:               %s\n"),
 		   dbState(ControlFile->state));
 	printf(_("pg_control last modified:             %s\n"),
@@ -325,6 +336,8 @@ main(int argc, char *argv[])
 		   (ControlFile->float8ByVal ? _("by value") : _("by reference")));
 	printf(_("Data page checksum version:           %u\n"),
 		   ControlFile->data_checksum_version);
+	printf(_("Default char data signedness:         %s\n"),
+		   (ControlFile->default_char_signedness ? _("signed") : _("unsigned")));
 	printf(_("Mock authentication nonce:            %s\n"),
 		   mock_auth_nonce_str);
 	return 0;

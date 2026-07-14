@@ -24,7 +24,7 @@
  * with collations that match the remote table's columns, which we can
  * consider to be user error.
  *
- * Portions Copyright (c) 2012-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/deparse.c
@@ -47,8 +47,6 @@
 #include "catalog/pg_ts_dict.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
-#include "commands/tablecmds.h"
-#include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/plannodes.h"
 #include "optimizer/optimizer.h"
@@ -3971,17 +3969,17 @@ appendOrderByClause(List *pathkeys, bool has_final_sort,
 			appendStringInfoString(buf, ", ");
 
 		/*
-		 * Lookup the operator corresponding to the strategy in the opclass.
-		 * The datatype used by the opfamily is not necessarily the same as
-		 * the expression type (for array types for example).
+		 * Lookup the operator corresponding to the compare type in the
+		 * opclass. The datatype used by the opfamily is not necessarily the
+		 * same as the expression type (for array types for example).
 		 */
-		oprid = get_opfamily_member(pathkey->pk_opfamily,
-									em->em_datatype,
-									em->em_datatype,
-									pathkey->pk_strategy);
+		oprid = get_opfamily_member_for_cmptype(pathkey->pk_opfamily,
+												em->em_datatype,
+												em->em_datatype,
+												pathkey->pk_cmptype);
 		if (!OidIsValid(oprid))
 			elog(ERROR, "missing operator %d(%u,%u) in opfamily %u",
-				 pathkey->pk_strategy, em->em_datatype, em->em_datatype,
+				 pathkey->pk_cmptype, em->em_datatype, em->em_datatype,
 				 pathkey->pk_opfamily);
 
 		deparseExpr(em_expr, context);

@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 backend_sources += files(
   'analyze.c',
@@ -30,7 +30,7 @@ parser_sources = files('parser.c')
 backend_scanner = custom_target('scan',
   input: 'scan.l',
   output: 'scan.c',
-  command: [flex_cmd, '--no-backup', '--fix-warnings', '--', '-CF', '-p', '-p'],
+  command: [flex_cmd, '--no-backup', '--', '-CF', '-p', '-p'],
 )
 generated_sources += backend_scanner
 parser_sources += backend_scanner

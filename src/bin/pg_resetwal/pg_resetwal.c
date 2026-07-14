@@ -19,7 +19,7 @@
  * step 2 ...
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pg_resetwal/pg_resetwal.c
@@ -75,6 +75,7 @@ static TimeLineID minXlogTli = 0;
 static XLogSegNo minXlogSegNo = 0;
 static int	WalSegSz;
 static int	set_wal_segsize;
+static int	set_char_signedness = -1;
 
 static void CheckDataVersion(void);
 static bool read_controlfile(void);
@@ -106,6 +107,7 @@ main(int argc, char *argv[])
 		{"oldest-transaction-id", required_argument, NULL, 'u'},
 		{"next-transaction-id", required_argument, NULL, 'x'},
 		{"wal-segsize", required_argument, NULL, 1},
+		{"char-signedness", required_argument, NULL, 2},
 		{NULL, 0, NULL, 0}
 	};
 
@@ -302,6 +304,23 @@ main(int argc, char *argv[])
 					break;
 				}
 
+			case 2:
+				{
+					errno = 0;
+
+					if (pg_strcasecmp(optarg, "signed") == 0)
+						set_char_signedness = 1;
+					else if (pg_strcasecmp(optarg, "unsigned") == 0)
+						set_char_signedness = 0;
+					else
+					{
+						pg_log_error("invalid argument for option %s", "--char-signedness");
+						pg_log_error_hint("Try \"%s --help\" for more information.", progname);
+						exit(1);
+					}
+					break;
+				}
+
 			default:
 				/* getopt_long already emitted a complaint */
 				pg_log_error_hint("Try \"%s --help\" for more information.", progname);
@@ -455,6 +474,9 @@ main(int argc, char *argv[])
 
 	if (set_wal_segsize != 0)
 		ControlFile.xlog_seg_size = WalSegSz;
+
+	if (set_char_signedness != -1)
+		ControlFile.default_char_signedness = (set_char_signedness == 1);
 
 	if (minXlogSegNo > newXlogSegNo)
 		newXlogSegNo = minXlogSegNo;
@@ -724,8 +746,8 @@ PrintControlValues(bool guessed)
 		   ControlFile.pg_control_version);
 	printf(_("Catalog version number:               %u\n"),
 		   ControlFile.catalog_version_no);
-	printf(_("Database system identifier:           %llu\n"),
-		   (unsigned long long) ControlFile.system_identifier);
+	printf(_("Database system identifier:           %" PRIu64 "\n"),
+		   ControlFile.system_identifier);
 	printf(_("Latest checkpoint's TimeLineID:       %u\n"),
 		   ControlFile.checkPointCopy.ThisTimeLineID);
 	printf(_("Latest checkpoint's full_page_writes: %s\n"),
@@ -779,6 +801,8 @@ PrintControlValues(bool guessed)
 		   (ControlFile.float8ByVal ? _("by value") : _("by reference")));
 	printf(_("Data page checksum version:           %u\n"),
 		   ControlFile.data_checksum_version);
+	printf(_("Default char data signedness:         %s\n"),
+		   (ControlFile.default_char_signedness ? _("signed") : _("unsigned")));
 }
 
 
@@ -1188,6 +1212,7 @@ usage(void)
 	printf(_("  -O, --multixact-offset=OFFSET    set next multitransaction offset\n"));
 	printf(_("  -u, --oldest-transaction-id=XID  set oldest transaction ID\n"));
 	printf(_("  -x, --next-transaction-id=XID    set next transaction ID\n"));
+	printf(_("      --char-signedness=OPTION     set char signedness to \"signed\" or \"unsigned\"\n"));
 	printf(_("      --wal-segsize=SIZE           size of WAL segments, in megabytes\n"));
 
 	printf(_("\nReport bugs to <%s>.\n"), PACKAGE_BUGREPORT);

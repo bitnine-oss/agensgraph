@@ -3,7 +3,7 @@
  * waitfuncs.c
  *		Functions for SQL access to syntheses of multiple contention types.
  *
- * Copyright (c) 2002-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/backend/utils/adt/waitfuncs.c
@@ -17,7 +17,7 @@
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "utils/array.h"
-#include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
 #include "utils/wait_event.h"
 
 #define UINT32_ACCESS_ONCE(var)		 ((uint32)(*((volatile uint32 *)&(var))))

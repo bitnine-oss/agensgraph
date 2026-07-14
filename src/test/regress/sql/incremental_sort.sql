@@ -21,7 +21,7 @@ declare
   line text;
 begin
   for line in
-    execute 'explain (analyze, costs off, summary off, timing off) ' || query
+    execute 'explain (analyze, costs off, summary off, timing off, buffers off) ' || query
   loop
     out_line := regexp_replace(line, '\d+kB', 'NNkB', 'g');
     return next;
@@ -38,7 +38,7 @@ declare
   element jsonb;
   matching_nodes jsonb := '[]'::jsonb;
 begin
-  execute 'explain (analyze, costs off, summary off, timing off, format ''json'') ' || query into strict elements;
+  execute 'explain (analyze, costs off, summary off, timing off, buffers off, format ''json'') ' || query into strict elements;
   while jsonb_array_length(elements) > 0 loop
     element := elements->0;
     elements := elements - 0;
@@ -292,3 +292,9 @@ create index point_table_a_idx on point_table using gist(a);
 -- Ensure we get an incremental sort plan for both of the following queries
 explain (costs off) select a, b, a <-> point(5, 5) dist from point_table order by dist, b limit 1;
 explain (costs off) select a, b, a <-> point(5, 5) dist from point_table order by dist, b desc limit 1;
+
+-- Ensure we get an incremental sort on the outer side of the mergejoin
+explain (costs off)
+select * from
+  (select * from tenk1 order by four) t1 join tenk1 t2 on t1.four = t2.four and t1.two = t2.two
+order by t1.four, t1.two limit 1;

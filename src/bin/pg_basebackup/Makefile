@@ -2,7 +2,7 @@
 #
 # Makefile for src/bin/pg_basebackup
 #
-# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/bin/pg_basebackup/Makefile
@@ -37,12 +37,7 @@ OBJS = \
 
 BBOBJS = \
 	pg_basebackup.o \
-	bbstreamer_file.o \
-	bbstreamer_gzip.o \
-	bbstreamer_inject.o \
-	bbstreamer_lz4.o \
-	bbstreamer_tar.o \
-	bbstreamer_zstd.o
+	astreamer_inject.o
 
 all: pg_basebackup pg_createsubscriber pg_receivewal pg_recvlogical
 

@@ -3,7 +3,7 @@
  * ts_locale.c
  *		locale compatibility layer for tsearch
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -30,36 +30,6 @@ static void tsearch_readline_callback(void *arg);
  * always return false for characters outside the Basic Multilingual Plane.
  */
 #define WC_BUF_LEN  3
-
-int
-t_isdigit(const char *ptr)
-{
-	int			clen = pg_mblen(ptr);
-	wchar_t		character[WC_BUF_LEN];
-	pg_locale_t mylocale = 0;	/* TODO */
-
-	if (clen == 1 || database_ctype_is_c)
-		return isdigit(TOUCHAR(ptr));
-
-	char2wchar(character, WC_BUF_LEN, ptr, clen, mylocale);
-
-	return iswdigit((wint_t) character[0]);
-}
-
-int
-t_isspace(const char *ptr)
-{
-	int			clen = pg_mblen(ptr);
-	wchar_t		character[WC_BUF_LEN];
-	pg_locale_t mylocale = 0;	/* TODO */
-
-	if (clen == 1 || database_ctype_is_c)
-		return isspace(TOUCHAR(ptr));
-
-	char2wchar(character, WC_BUF_LEN, ptr, clen, mylocale);
-
-	return iswspace((wint_t) character[0]);
-}
 
 int
 t_isalpha(const char *ptr)
@@ -89,21 +59,6 @@ t_isalnum(const char *ptr)
 	char2wchar(character, WC_BUF_LEN, ptr, clen, mylocale);
 
 	return iswalnum((wint_t) character[0]);
-}
-
-int
-t_isprint(const char *ptr)
-{
-	int			clen = pg_mblen(ptr);
-	wchar_t		character[WC_BUF_LEN];
-	pg_locale_t mylocale = 0;	/* TODO */
-
-	if (clen == 1 || database_ctype_is_c)
-		return isprint(TOUCHAR(ptr));
-
-	char2wchar(character, WC_BUF_LEN, ptr, clen, mylocale);
-
-	return iswprint((wint_t) character[0]);
 }
 
 
@@ -142,7 +97,7 @@ tsearch_readline_begin(tsearch_readline_state *stp,
 	stp->curline = NULL;
 	/* Setup error traceback support for ereport() */
 	stp->cb.callback = tsearch_readline_callback;
-	stp->cb.arg = (void *) stp;
+	stp->cb.arg = stp;
 	stp->cb.previous = error_context_stack;
 	error_context_stack = &stp->cb;
 	return true;
@@ -241,93 +196,4 @@ tsearch_readline_callback(void *arg)
 		errcontext("line %d of configuration file \"%s\"",
 				   stp->lineno,
 				   stp->filename);
-}
-
-
-/*
- * lowerstr --- fold null-terminated string to lower case
- *
- * Returned string is palloc'd
- */
-char *
-lowerstr(const char *str)
-{
-	return lowerstr_with_len(str, strlen(str));
-}
-
-/*
- * lowerstr_with_len --- fold string to lower case
- *
- * Input string need not be null-terminated.
- *
- * Returned string is palloc'd
- */
-char *
-lowerstr_with_len(const char *str, int len)
-{
-	char	   *out;
-	pg_locale_t mylocale = 0;	/* TODO */
-
-	if (len == 0)
-		return pstrdup("");
-
-	/*
-	 * Use wide char code only when max encoding length > 1 and ctype != C.
-	 * Some operating systems fail with multi-byte encodings and a C locale.
-	 * Also, for a C locale there is no need to process as multibyte. From
-	 * backend/utils/adt/oracle_compat.c Teodor
-	 */
-	if (pg_database_encoding_max_length() > 1 && !database_ctype_is_c)
-	{
-		wchar_t    *wstr,
-				   *wptr;
-		int			wlen;
-
-		/*
-		 * alloc number of wchar_t for worst case, len contains number of
-		 * bytes >= number of characters and alloc 1 wchar_t for 0, because
-		 * wchar2char wants zero-terminated string
-		 */
-		wptr = wstr = (wchar_t *) palloc(sizeof(wchar_t) * (len + 1));
-
-		wlen = char2wchar(wstr, len + 1, str, len, mylocale);
-		Assert(wlen <= len);
-
-		while (*wptr)
-		{
-			*wptr = towlower((wint_t) *wptr);
-			wptr++;
-		}
-
-		/*
-		 * Alloc result string for worst case + '\0'
-		 */
-		len = pg_database_encoding_max_length() * wlen + 1;
-		out = (char *) palloc(len);
-
-		wlen = wchar2char(out, wstr, len, mylocale);
-
-		pfree(wstr);
-
-		if (wlen < 0)
-			ereport(ERROR,
-					(errcode(ERRCODE_CHARACTER_NOT_IN_REPERTOIRE),
-					 errmsg("conversion from wchar_t to server encoding failed: %m")));
-		Assert(wlen < len);
-	}
-	else
-	{
-		const char *ptr = str;
-		char	   *outptr;
-
-		outptr = out = (char *) palloc(sizeof(char) * (len + 1));
-		while ((ptr - str) < len && *ptr)
-		{
-			*outptr++ = tolower(TOUCHAR(ptr));
-			ptr++;
-		}
-		*outptr = '\0';
-	}
-
-	return out;
 }

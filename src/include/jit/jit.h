@@ -2,7 +2,7 @@
  * jit.h
  *	  Provider independent JIT infrastructure.
  *
- * Copyright (c) 2016-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2025, PostgreSQL Global Development Group
  *
  * src/include/jit/jit.h
  *
@@ -58,8 +58,6 @@ typedef struct JitContext
 {
 	/* see PGJIT_* above */
 	int			flags;
-
-	ResourceOwner resowner;
 
 	JitInstrumentation instr;
 } JitContext;

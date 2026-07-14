@@ -266,7 +266,7 @@ CREATE INDEX ON my_table USING GIST (my_inet_column inet_ops);
 
  <para>
    There are five methods that an index operator class for
-   <acronym>GiST</acronym> must provide, and six that are optional.
+   <acronym>GiST</acronym> must provide, and seven that are optional.
    Correctness of the index is ensured
    by proper implementation of the <function>same</function>, <function>consistent</function>
    and <function>union</function> methods, while efficiency (size and speed) of the
@@ -289,6 +289,11 @@ CREATE INDEX ON my_table USING GIST (my_inet_column inet_ops);
    user-specified parameters.
    The optional eleventh method <function>sortsupport</function> is used to
    speed up building a <acronym>GiST</acronym> index.
+   The optional twelfth method <function>stratnum</function> is used to
+   translate compare types (from
+   <filename>src/include/nodes/primnodes.h</filename>) into strategy numbers
+   used by the operator class.  This lets the core code look up operators for
+   temporal constraint indexes.
  </para>
 
  <variablelist>
@@ -1022,7 +1027,7 @@ fill_my_string_relopt(const char *value, void *ptr)
     int     len = strlen(tmp);
 
     if (ptr)
-        strcpy((char *) ptr, tmp);
+        strcpy(ptr, tmp);
 
     pfree(tmp);
     return len + 1;
@@ -1160,6 +1165,90 @@ my_sortsupport(PG_FUNCTION_ARGS)
   PG_RETURN_VOID();
 }
 </programlisting>
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><function>translate_cmptype</function></term>
+     <listitem>
+      <para>
+       Given a <literal>CompareType</literal> value from
+       <filename>src/include/nodes/primnodes.h</filename>, returns a strategy
+       number used by this operator class for matching functionality.  The
+       function should return <literal>InvalidStrategy</literal> if the
+       operator class has no matching strategy.
+      </para>
+
+      <para>
+       This is used for temporal index constraints (i.e., <literal>PRIMARY
+       KEY</literal> and <literal>UNIQUE</literal>).  If the operator class
+       provides this function and it returns results for
+       <literal>COMPARE_EQ</literal>, it can be used in the
+       non-<literal>WITHOUT OVERLAPS</literal> part(s) of an index constraint.
+      </para>
+
+      <para>
+       This support function corresponds to the index access method callback
+       function <structfield>amtranslatecmptype</structfield> (see <xref
+       linkend="index-functions"/>).  The
+       <structfield>amtranslatecmptype</structfield> callback function for
+       GiST indexes merely calls down to the
+       <function>translate_cmptype</function> support function of the
+       respective operator family, since the GiST index access method has no
+       fixed strategy numbers itself.
+      </para>
+
+      <para>
+       The <acronym>SQL</acronym> declaration of the function must look like
+       this:
+
+<programlisting>
+CREATE OR REPLACE FUNCTION my_translate_cmptype(integer)
+RETURNS smallint
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+</programlisting>
+
+       And the operator family registration must look like this:
+<programlisting>
+ALTER OPERATOR FAMILY my_opfamily USING gist ADD
+    FUNCTION 12 ("any", "any") my_translate_cmptype(int);
+</programlisting>
+      </para>
+
+       <para>
+        The matching code in the C module could then follow this skeleton:
+
+<programlisting>
+PG_FUNCTION_INFO_V1(my_translate_cmptype);
+
+Datum
+my_translate_cmptype(PG_FUNCTION_ARGS)
+{
+    CompareType cmptype = PG_GETARG_INT32(0);
+    StrategyNumber ret = InvalidStrategy;
+
+    switch (cmptype)
+    {
+        case COMPARE_EQ:
+            ret = BTEqualStrategyNumber;
+    }
+
+    PG_RETURN_UINT16(ret);
+}
+</programlisting>
+      </para>
+
+      <para>
+       One translation function is provided by
+       <productname>PostgreSQL</productname>:
+       <literal>gist_translate_cmptype_common</literal> is for operator classes that
+       use the <literal>RT*StrategyNumber</literal> constants.
+       The <literal>btree_gist</literal>
+       extension defines a second translation function,
+       <literal>gist_translate_cmptype_btree</literal>, for operator classes that use
+       the <literal>BT*StrategyNumber</literal> constants.
       </para>
      </listitem>
     </varlistentry>

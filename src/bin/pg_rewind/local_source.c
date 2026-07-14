@@ -3,7 +3,7 @@
  * local_source.c
  *	  Functions for using a local data directory as the source.
  *
- * Portions Copyright (c) 2013-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2013-2025, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
@@ -12,10 +12,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include "datapagemap.h"
+#include "common/logging.h"
 #include "file_ops.h"
-#include "filemap.h"
-#include "pg_rewind.h"
 #include "rewind_source.h"
 
 typedef struct

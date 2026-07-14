@@ -2,7 +2,7 @@
  *
  * Load data from a backup manifest into memory.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pg_combinebackup/load_manifest.h
@@ -23,7 +23,7 @@ typedef struct manifest_file
 {
 	uint32		status;			/* hash status */
 	const char *pathname;
-	size_t		size;
+	uint64		size;
 	pg_checksum_type checksum_type;
 	int			checksum_length;
 	uint8	   *checksum_payload;

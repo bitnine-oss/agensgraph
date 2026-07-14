@@ -3,7 +3,7 @@
  * pg_iovec.h
  *	  Header for vectored I/O functions, to use in place of <sys/uio.h>.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/port/pg_iovec.h
@@ -16,7 +16,7 @@
 #ifndef WIN32
 
 #include <limits.h>
-#include <sys/uio.h>
+#include <sys/uio.h>			/* IWYU pragma: export */
 #include <unistd.h>
 
 #else
@@ -33,8 +33,12 @@ struct iovec
 
 #endif
 
-/* Define a reasonable maximum that is safe to use on the stack. */
-#define PG_IOV_MAX Min(IOV_MAX, 32)
+/*
+ * Define a reasonable maximum that is safe to use on the stack in arrays of
+ * struct iovec and other small types.  The operating system could limit us to
+ * a number as low as 16, but most systems have 1024.
+ */
+#define PG_IOV_MAX Min(IOV_MAX, 128)
 
 /*
  * Like preadv(), but with a prefix to remind us of a side-effect: on Windows
@@ -68,7 +72,7 @@ pg_preadv(int fd, const struct iovec *iov, int iovcnt, off_t offset)
 		}
 		sum += part;
 		offset += part;
-		if (part < iov[i].iov_len)
+		if ((size_t) part < iov[i].iov_len)
 			return sum;
 	}
 	return sum;
@@ -107,7 +111,7 @@ pg_pwritev(int fd, const struct iovec *iov, int iovcnt, off_t offset)
 		}
 		sum += part;
 		offset += part;
-		if (part < iov[i].iov_len)
+		if ((size_t) part < iov[i].iov_len)
 			return sum;
 	}
 	return sum;

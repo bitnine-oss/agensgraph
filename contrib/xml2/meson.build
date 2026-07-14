@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 if not libxml.found()
   subdir_done()
@@ -27,6 +27,7 @@ contrib_targets += xml2
 install_data(
   'xml2--1.0--1.1.sql',
   'xml2--1.1.sql',
+  'xml2--1.1--1.2.sql',
   'xml2.control',
   kwargs: contrib_data_args,
 )

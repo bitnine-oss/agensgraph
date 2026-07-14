@@ -5,7 +5,7 @@
  *
  * These definitions are used by both frontend and backend code.
  *
- * Copyright (c) 2003-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2003-2025, PostgreSQL Global Development Group
  *
  * src/include/common/ip.h
  *
@@ -17,7 +17,7 @@
 #include <netdb.h>
 #include <sys/socket.h>
 
-#include "libpq/pqcomm.h"		/* pgrminclude ignore */
+#include "libpq/pqcomm.h"
 
 
 extern int	pg_getaddrinfo_all(const char *hostname, const char *servname,

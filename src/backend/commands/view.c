@@ -3,7 +3,7 @@
  * view.c
  *	  use rewrite rules to construct views
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -47,7 +47,6 @@ DefineVirtualRelation(RangeVar *relation, List *tlist, bool replace,
 {
 	Oid			viewOid;
 	LOCKMODE	lockmode;
-	CreateStmt *createStmt = makeNode(CreateStmt);
 	List	   *attrList;
 	ListCell   *t;
 
@@ -223,6 +222,7 @@ DefineVirtualRelation(RangeVar *relation, List *tlist, bool replace,
 	}
 	else
 	{
+		CreateStmt *createStmt = makeNode(CreateStmt);
 		ObjectAddress address;
 
 		/*

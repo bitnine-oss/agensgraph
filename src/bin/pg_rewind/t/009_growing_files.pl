@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 use strict;
 use warnings FATAL => 'all';
@@ -52,12 +52,11 @@ append_to_file "$standby_pgdata/tst_both_dir/file1", 'a';
 my $ret = run_log(
 	[
 		'pg_rewind', '--debug',
-		'--source-pgdata', $standby_pgdata,
-		'--target-pgdata', $primary_pgdata,
+		'--source-pgdata' => $standby_pgdata,
+		'--target-pgdata' => $primary_pgdata,
 		'--no-sync',
 	],
-	'2>>',
-	"$standby_pgdata/tst_both_dir/file1");
+	'2>>' => "$standby_pgdata/tst_both_dir/file1");
 ok(!$ret, 'Error out on copying growing file');
 
 # Ensure that the files are of different size, the final error message should

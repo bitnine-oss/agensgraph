@@ -4,7 +4,7 @@
  *	  definition of the "inherits" system catalog (pg_inherits)
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_inherits.h
@@ -19,7 +19,7 @@
 #define PG_INHERITS_H
 
 #include "catalog/genbki.h"
-#include "catalog/pg_inherits_d.h"
+#include "catalog/pg_inherits_d.h"	/* IWYU pragma: export */
 
 #include "nodes/pg_list.h"
 #include "storage/lock.h"

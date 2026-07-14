@@ -3,7 +3,7 @@
  * connection.c
  *		  Connection management functions for postgres_fdw
  *
- * Portions Copyright (c) 2012-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/connection.c
@@ -12,10 +12,14 @@
  */
 #include "postgres.h"
 
-#include "access/htup_details.h"
+#if HAVE_POLL_H
+#include <poll.h>
+#endif
+
 #include "access/xact.h"
 #include "catalog/pg_user_mapping.h"
 #include "commands/defrem.h"
+#include "common/base64.h"
 #include "funcapi.h"
 #include "libpq/libpq-be.h"
 #include "libpq/libpq-be-fe-helpers.h"
@@ -23,13 +27,10 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "postgres_fdw.h"
-#include "storage/fd.h"
 #include "storage/latch.h"
 #include "utils/builtins.h"
-#include "utils/datetime.h"
 #include "utils/hsearch.h"
 #include "utils/inval.h"
-#include "utils/memutils.h"
 #include "utils/syscache.h"
 
 /*
@@ -95,6 +96,13 @@ static uint32 pgfdw_we_get_result = 0;
  */
 #define CONNECTION_CLEANUP_TIMEOUT	30000
 
+/*
+ * Milliseconds to wait before issuing another cancel request.  This covers
+ * the race condition where the remote session ignored our cancel request
+ * because it arrived while idle.
+ */
+#define RETRY_CANCEL_TIMEOUT	1000
+
 /* Macro for constructing abort command to be sent */
 #define CONSTRUCT_ABORT_COMMAND(sql, entry, toplevel) \
 	do { \
@@ -108,9 +116,19 @@ static uint32 pgfdw_we_get_result = 0;
 	} while(0)
 
 /*
+ * Extension version number, for supporting older extension versions' objects
+ */
+enum pgfdwVersion
+{
+	PGFDW_V1_1 = 0,
+	PGFDW_V1_2,
+};
+
+/*
  * SQL functions
  */
 PG_FUNCTION_INFO_V1(postgres_fdw_get_connections);
+PG_FUNCTION_INFO_V1(postgres_fdw_get_connections_1_2);
 PG_FUNCTION_INFO_V1(postgres_fdw_disconnect);
 PG_FUNCTION_INFO_V1(postgres_fdw_disconnect_all);
 
@@ -135,6 +153,7 @@ static void pgfdw_reset_xact_state(ConnCacheEntry *entry, bool toplevel);
 static bool pgfdw_cancel_query(PGconn *conn);
 static bool pgfdw_cancel_query_begin(PGconn *conn, TimestampTz endtime);
 static bool pgfdw_cancel_query_end(PGconn *conn, TimestampTz endtime,
+								   TimestampTz retrycanceltime,
 								   bool consume_input);
 static bool pgfdw_exec_cleanup_query(PGconn *conn, const char *query,
 									 bool ignore_errors);
@@ -144,6 +163,7 @@ static bool pgfdw_exec_cleanup_query_end(PGconn *conn, const char *query,
 										 bool consume_input,
 										 bool ignore_errors);
 static bool pgfdw_get_cleanup_result(PGconn *conn, TimestampTz endtime,
+									 TimestampTz retrycanceltime,
 									 PGresult **result, bool *timed_out);
 static void pgfdw_abort_cleanup(ConnCacheEntry *entry, bool toplevel);
 static bool pgfdw_abort_cleanup_begin(ConnCacheEntry *entry, bool toplevel,
@@ -158,7 +178,13 @@ static void pgfdw_finish_abort_cleanup(List *pending_entries,
 static void pgfdw_security_check(const char **keywords, const char **values,
 								 UserMapping *user, PGconn *conn);
 static bool UserMappingPasswordRequired(UserMapping *user);
+static bool UseScramPassthrough(ForeignServer *server, UserMapping *user);
 static bool disconnect_cached_connections(Oid serverid);
+static void postgres_fdw_get_connections_internal(FunctionCallInfo fcinfo,
+												  enum pgfdwVersion api_version);
+static int	pgfdw_conn_check(PGconn *conn);
+static bool pgfdw_conn_checkable(void);
+static bool pgfdw_has_required_scram_options(const char **keywords, const char **values);
 
 /*
  * Get a PGconn which can be used to execute queries on the remote PostgreSQL
@@ -430,6 +456,15 @@ pgfdw_security_check(const char **keywords, const char **values, UserMapping *us
 		}
 	}
 
+	/*
+	 * Ok if SCRAM pass-through is being used and all required SCRAM options
+	 * are set correctly. If pgfdw_has_required_scram_options returns true we
+	 * assume that UseScramPassthrough is also true since SCRAM options are
+	 * only set when UseScramPassthrough is enabled.
+	 */
+	if (MyProcPort->has_scram_keys && pgfdw_has_required_scram_options(keywords, values))
+		return;
+
 	ereport(ERROR,
 			(errcode(ERRCODE_S_R_E_PROHIBITED_SQL_STATEMENT_ATTEMPTED),
 			 errmsg("password or GSSAPI delegated credentials required"),
@@ -460,9 +495,10 @@ connect_pg_server(ForeignServer *server, UserMapping *user)
 		 * and UserMapping.  (Some of them might not be libpq options, in
 		 * which case we'll just waste a few array slots.)  Add 4 extra slots
 		 * for application_name, fallback_application_name, client_encoding,
-		 * end marker.
+		 * end marker, and 3 extra slots for scram keys and required scram
+		 * pass-through options.
 		 */
-		n = list_length(server->options) + list_length(user->options) + 4;
+		n = list_length(server->options) + list_length(user->options) + 4 + 3;
 		keywords = (const char **) palloc(n * sizeof(char *));
 		values = (const char **) palloc(n * sizeof(char *));
 
@@ -531,9 +567,46 @@ connect_pg_server(ForeignServer *server, UserMapping *user)
 		values[n] = GetDatabaseEncodingName();
 		n++;
 
+		/* Add required SCRAM pass-through connection options if it's enabled. */
+		if (MyProcPort->has_scram_keys && UseScramPassthrough(server, user))
+		{
+			int			len;
+			int			encoded_len;
+
+			keywords[n] = "scram_client_key";
+			len = pg_b64_enc_len(sizeof(MyProcPort->scram_ClientKey));
+			/* don't forget the zero-terminator */
+			values[n] = palloc0(len + 1);
+			encoded_len = pg_b64_encode(MyProcPort->scram_ClientKey,
+										sizeof(MyProcPort->scram_ClientKey),
+										(char *) values[n], len);
+			if (encoded_len < 0)
+				elog(ERROR, "could not encode SCRAM client key");
+			n++;
+
+			keywords[n] = "scram_server_key";
+			len = pg_b64_enc_len(sizeof(MyProcPort->scram_ServerKey));
+			/* don't forget the zero-terminator */
+			values[n] = palloc0(len + 1);
+			encoded_len = pg_b64_encode(MyProcPort->scram_ServerKey,
+										sizeof(MyProcPort->scram_ServerKey),
+										(char *) values[n], len);
+			if (encoded_len < 0)
+				elog(ERROR, "could not encode SCRAM server key");
+			n++;
+
+			/*
+			 * Require scram-sha-256 to ensure that no other auth method is
+			 * used when connecting with foreign server.
+			 */
+			keywords[n] = "require_auth";
+			values[n] = "scram-sha-256";
+			n++;
+		}
+
 		keywords[n] = values[n] = NULL;
 
-		/* verify the set of connection parameters */
+		/* Verify the set of connection parameters. */
 		check_conn_params(keywords, values, user);
 
 		/* first time, allocate or get the custom wait event */
@@ -552,7 +625,7 @@ connect_pg_server(ForeignServer *server, UserMapping *user)
 							server->servername),
 					 errdetail_internal("%s", pchomp(PQerrorMessage(conn)))));
 
-		/* Perform post-connection security checks */
+		/* Perform post-connection security checks. */
 		pgfdw_security_check(keywords, values, user, conn);
 
 		/* Prepare new session for use */
@@ -606,6 +679,30 @@ UserMappingPasswordRequired(UserMapping *user)
 	return true;
 }
 
+static bool
+UseScramPassthrough(ForeignServer *server, UserMapping *user)
+{
+	ListCell   *cell;
+
+	foreach(cell, server->options)
+	{
+		DefElem    *def = (DefElem *) lfirst(cell);
+
+		if (strcmp(def->defname, "use_scram_passthrough") == 0)
+			return defGetBoolean(def);
+	}
+
+	foreach(cell, user->options)
+	{
+		DefElem    *def = (DefElem *) lfirst(cell);
+
+		if (strcmp(def->defname, "use_scram_passthrough") == 0)
+			return defGetBoolean(def);
+	}
+
+	return false;
+}
+
 /*
  * For non-superusers, insist that the connstr specify a password or that the
  * user provided their own GSSAPI delegated credentials.  This
@@ -640,10 +737,19 @@ check_conn_params(const char **keywords, const char **values, UserMapping *user)
 	if (!UserMappingPasswordRequired(user))
 		return;
 
+	/*
+	 * Ok if SCRAM pass-through is being used and all required scram options
+	 * are set correctly. If pgfdw_has_required_scram_options returns true we
+	 * assume that UseScramPassthrough is also true since SCRAM options are
+	 * only set when UseScramPassthrough is enabled.
+	 */
+	if (MyProcPort->has_scram_keys && pgfdw_has_required_scram_options(keywords, values))
+		return;
+
 	ereport(ERROR,
 			(errcode(ERRCODE_S_R_E_PROHIBITED_SQL_STATEMENT_ATTEMPTED),
 			 errmsg("password or GSSAPI delegated credentials required"),
-			 errdetail("Non-superusers must delegate GSSAPI credentials or provide a password in the user mapping.")));
+			 errdetail("Non-superusers must delegate GSSAPI credentials, provide a password, or enable SCRAM pass-through in user mapping.")));
 }
 
 /*
@@ -1308,18 +1414,25 @@ pgfdw_reset_xact_state(ConnCacheEntry *entry, bool toplevel)
 static bool
 pgfdw_cancel_query(PGconn *conn)
 {
+	TimestampTz now = GetCurrentTimestamp();
 	TimestampTz endtime;
+	TimestampTz retrycanceltime;
 
 	/*
 	 * If it takes too long to cancel the query and discard the result, assume
 	 * the connection is dead.
 	 */
-	endtime = TimestampTzPlusMilliseconds(GetCurrentTimestamp(),
-										  CONNECTION_CLEANUP_TIMEOUT);
+	endtime = TimestampTzPlusMilliseconds(now, CONNECTION_CLEANUP_TIMEOUT);
+
+	/*
+	 * Also, lose patience and re-issue the cancel request after a little bit.
+	 * (This serves to close some race conditions.)
+	 */
+	retrycanceltime = TimestampTzPlusMilliseconds(now, RETRY_CANCEL_TIMEOUT);
 
 	if (!pgfdw_cancel_query_begin(conn, endtime))
 		return false;
-	return pgfdw_cancel_query_end(conn, endtime, false);
+	return pgfdw_cancel_query_end(conn, endtime, retrycanceltime, false);
 }
 
 /*
@@ -1345,9 +1458,10 @@ pgfdw_cancel_query_begin(PGconn *conn, TimestampTz endtime)
 }
 
 static bool
-pgfdw_cancel_query_end(PGconn *conn, TimestampTz endtime, bool consume_input)
+pgfdw_cancel_query_end(PGconn *conn, TimestampTz endtime,
+					   TimestampTz retrycanceltime, bool consume_input)
 {
-	PGresult   *result = NULL;
+	PGresult   *result;
 	bool		timed_out;
 
 	/*
@@ -1366,7 +1480,8 @@ pgfdw_cancel_query_end(PGconn *conn, TimestampTz endtime, bool consume_input)
 	}
 
 	/* Get and discard the result of the query. */
-	if (pgfdw_get_cleanup_result(conn, endtime, &result, &timed_out))
+	if (pgfdw_get_cleanup_result(conn, endtime, retrycanceltime,
+								 &result, &timed_out))
 	{
 		if (timed_out)
 			ereport(WARNING,
@@ -1439,7 +1554,7 @@ pgfdw_exec_cleanup_query_end(PGconn *conn, const char *query,
 							 TimestampTz endtime, bool consume_input,
 							 bool ignore_errors)
 {
-	PGresult   *result = NULL;
+	PGresult   *result;
 	bool		timed_out;
 
 	Assert(query != NULL);
@@ -1457,7 +1572,7 @@ pgfdw_exec_cleanup_query_end(PGconn *conn, const char *query,
 	}
 
 	/* Get the result of the query. */
-	if (pgfdw_get_cleanup_result(conn, endtime, &result, &timed_out))
+	if (pgfdw_get_cleanup_result(conn, endtime, endtime, &result, &timed_out))
 	{
 		if (timed_out)
 			ereport(WARNING,
@@ -1481,28 +1596,36 @@ pgfdw_exec_cleanup_query_end(PGconn *conn, const char *query,
 }
 
 /*
- * Get, during abort cleanup, the result of a query that is in progress.  This
- * might be a query that is being interrupted by transaction abort, or it might
- * be a query that was initiated as part of transaction abort to get the remote
- * side back to the appropriate state.
+ * Get, during abort cleanup, the result of a query that is in progress.
+ * This might be a query that is being interrupted by a cancel request or by
+ * transaction abort, or it might be a query that was initiated as part of
+ * transaction abort to get the remote side back to the appropriate state.
  *
- * endtime is the time at which we should give up and assume the remote
- * side is dead.  Returns true if the timeout expired or connection trouble
- * occurred, false otherwise.  Sets *result except in case of a timeout.
- * Sets timed_out to true only when the timeout expired.
+ * endtime is the time at which we should give up and assume the remote side
+ * is dead.  retrycanceltime is the time at which we should issue a fresh
+ * cancel request (pass the same value as endtime if this is not wanted).
+ *
+ * Returns true if the timeout expired or connection trouble occurred,
+ * false otherwise.  Sets *result except in case of a true result.
+ * Sets *timed_out to true only when the timeout expired.
  */
 static bool
-pgfdw_get_cleanup_result(PGconn *conn, TimestampTz endtime, PGresult **result,
+pgfdw_get_cleanup_result(PGconn *conn, TimestampTz endtime,
+						 TimestampTz retrycanceltime,
+						 PGresult **result,
 						 bool *timed_out)
 {
 	volatile bool failed = false;
 	PGresult   *volatile last_res = NULL;
 
+	*result = NULL;
 	*timed_out = false;
 
 	/* In what follows, do not leak any PGresults on an error. */
 	PG_TRY();
 	{
+		int			canceldelta = RETRY_CANCEL_TIMEOUT * 2;
+
 		for (;;)
 		{
 			PGresult   *res;
@@ -1513,8 +1636,33 @@ pgfdw_get_cleanup_result(PGconn *conn, TimestampTz endtime, PGresult **result,
 				TimestampTz now = GetCurrentTimestamp();
 				long		cur_timeout;
 
+				/* If timeout has expired, give up. */
+				if (now >= endtime)
+				{
+					*timed_out = true;
+					failed = true;
+					goto exit;
+				}
+
+				/* If we need to re-issue the cancel request, do that. */
+				if (now >= retrycanceltime)
+				{
+					/* We ignore failure to issue the repeated request. */
+					(void) libpqsrv_cancel(conn, endtime);
+
+					/* Recompute "now" in case that took measurable time. */
+					now = GetCurrentTimestamp();
+
+					/* Adjust re-cancel timeout in increasing steps. */
+					retrycanceltime = TimestampTzPlusMilliseconds(now,
+																  canceldelta);
+					canceldelta += canceldelta;
+				}
+
 				/* If timeout has expired, give up, else get sleep time. */
-				cur_timeout = TimestampDifferenceMilliseconds(now, endtime);
+				cur_timeout = TimestampDifferenceMilliseconds(now,
+															  Min(endtime,
+																  retrycanceltime));
 				if (cur_timeout <= 0)
 				{
 					*timed_out = true;
@@ -1835,7 +1983,9 @@ pgfdw_finish_abort_cleanup(List *pending_entries, List *cancel_requested,
 		foreach(lc, cancel_requested)
 		{
 			ConnCacheEntry *entry = (ConnCacheEntry *) lfirst(lc);
+			TimestampTz now = GetCurrentTimestamp();
 			TimestampTz endtime;
+			TimestampTz retrycanceltime;
 			char		sql[100];
 
 			Assert(entry->changing_xact_state);
@@ -1849,10 +1999,13 @@ pgfdw_finish_abort_cleanup(List *pending_entries, List *cancel_requested,
 			 * remaining entries in the list, leading to slamming that entry's
 			 * connection shut.
 			 */
-			endtime = TimestampTzPlusMilliseconds(GetCurrentTimestamp(),
+			endtime = TimestampTzPlusMilliseconds(now,
 												  CONNECTION_CLEANUP_TIMEOUT);
+			retrycanceltime = TimestampTzPlusMilliseconds(now,
+														  RETRY_CANCEL_TIMEOUT);
 
-			if (!pgfdw_cancel_query_end(entry->conn, endtime, true))
+			if (!pgfdw_cancel_query_end(entry->conn, endtime,
+										retrycanceltime, true))
 			{
 				/* Unable to cancel running query */
 				pgfdw_reset_xact_state(entry, toplevel);
@@ -1977,23 +2130,41 @@ pgfdw_finish_abort_cleanup(List *pending_entries, List *cancel_requested,
 	}
 }
 
+/* Number of output arguments (columns) for various API versions */
+#define POSTGRES_FDW_GET_CONNECTIONS_COLS_V1_1	2
+#define POSTGRES_FDW_GET_CONNECTIONS_COLS_V1_2	6
+#define POSTGRES_FDW_GET_CONNECTIONS_COLS	6	/* maximum of above */
+
 /*
- * List active foreign server connections.
+ * Internal function used by postgres_fdw_get_connections variants.
  *
- * This function takes no input parameter and returns setof record made of
- * following values:
+ * For API version 1.1, this function takes no input parameter and
+ * returns a set of records with the following values:
+ *
  * - server_name - server name of active connection. In case the foreign server
  *   is dropped but still the connection is active, then the server name will
  *   be NULL in output.
  * - valid - true/false representing whether the connection is valid or not.
- * 	 Note that the connections can get invalidated in pgfdw_inval_callback.
+ *   Note that connections can become invalid in pgfdw_inval_callback.
+ *
+ * For API version 1.2 and later, this function takes an input parameter
+ * to check a connection status and returns the following
+ * additional values along with the four values from version 1.1:
+ *
+ * - user_name - the local user name of the active connection. In case the
+ *   user mapping is dropped but the connection is still active, then the
+ *   user name will be NULL in the output.
+ * - used_in_xact - true if the connection is used in the current transaction.
+ * - closed - true if the connection is closed.
+ * - remote_backend_pid - process ID of the remote backend, on the foreign
+ *   server, handling the connection.
  *
  * No records are returned when there are no cached connections at all.
  */
-Datum
-postgres_fdw_get_connections(PG_FUNCTION_ARGS)
+static void
+postgres_fdw_get_connections_internal(FunctionCallInfo fcinfo,
+									  enum pgfdwVersion api_version)
 {
-#define POSTGRES_FDW_GET_CONNECTIONS_COLS	2
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 	HASH_SEQ_STATUS scan;
 	ConnCacheEntry *entry;
@@ -2002,7 +2173,22 @@ postgres_fdw_get_connections(PG_FUNCTION_ARGS)
 
 	/* If cache doesn't exist, we return no records */
 	if (!ConnectionHash)
-		PG_RETURN_VOID();
+		return;
+
+	/* Check we have the expected number of output arguments */
+	switch (rsinfo->setDesc->natts)
+	{
+		case POSTGRES_FDW_GET_CONNECTIONS_COLS_V1_1:
+			if (api_version != PGFDW_V1_1)
+				elog(ERROR, "incorrect number of output arguments");
+			break;
+		case POSTGRES_FDW_GET_CONNECTIONS_COLS_V1_2:
+			if (api_version != PGFDW_V1_2)
+				elog(ERROR, "incorrect number of output arguments");
+			break;
+		default:
+			elog(ERROR, "incorrect number of output arguments");
+	}
 
 	hash_seq_init(&scan, ConnectionHash);
 	while ((entry = (ConnCacheEntry *) hash_seq_search(&scan)))
@@ -2010,6 +2196,7 @@ postgres_fdw_get_connections(PG_FUNCTION_ARGS)
 		ForeignServer *server;
 		Datum		values[POSTGRES_FDW_GET_CONNECTIONS_COLS] = {0};
 		bool		nulls[POSTGRES_FDW_GET_CONNECTIONS_COLS] = {0};
+		int			i = 0;
 
 		/* We only look for open remote connections */
 		if (!entry->conn)
@@ -2054,15 +2241,90 @@ postgres_fdw_get_connections(PG_FUNCTION_ARGS)
 			Assert(entry->conn && entry->xact_depth > 0 && entry->invalidated);
 
 			/* Show null, if no server name was found */
-			nulls[0] = true;
+			nulls[i++] = true;
 		}
 		else
-			values[0] = CStringGetTextDatum(server->servername);
+			values[i++] = CStringGetTextDatum(server->servername);
 
-		values[1] = BoolGetDatum(!entry->invalidated);
+		if (api_version >= PGFDW_V1_2)
+		{
+			HeapTuple	tp;
+
+			/* Use the system cache to obtain the user mapping */
+			tp = SearchSysCache1(USERMAPPINGOID, ObjectIdGetDatum(entry->key));
+
+			/*
+			 * Just like in the foreign server case, user mappings can also be
+			 * dropped in the current explicit transaction. Therefore, the
+			 * similar check as in the server case is required.
+			 */
+			if (!HeapTupleIsValid(tp))
+			{
+				/*
+				 * If we reach here, this entry must have been invalidated in
+				 * pgfdw_inval_callback, same as in the server case.
+				 */
+				Assert(entry->conn && entry->xact_depth > 0 &&
+					   entry->invalidated);
+
+				nulls[i++] = true;
+			}
+			else
+			{
+				Oid			userid;
+
+				userid = ((Form_pg_user_mapping) GETSTRUCT(tp))->umuser;
+				values[i++] = CStringGetTextDatum(MappingUserName(userid));
+				ReleaseSysCache(tp);
+			}
+		}
+
+		values[i++] = BoolGetDatum(!entry->invalidated);
+
+		if (api_version >= PGFDW_V1_2)
+		{
+			bool		check_conn = PG_GETARG_BOOL(0);
+
+			/* Is this connection used in the current transaction? */
+			values[i++] = BoolGetDatum(entry->xact_depth > 0);
+
+			/*
+			 * If a connection status check is requested and supported, return
+			 * whether the connection is closed. Otherwise, return NULL.
+			 */
+			if (check_conn && pgfdw_conn_checkable())
+				values[i++] = BoolGetDatum(pgfdw_conn_check(entry->conn) != 0);
+			else
+				nulls[i++] = true;
+
+			/* Return process ID of remote backend */
+			values[i++] = Int32GetDatum(PQbackendPID(entry->conn));
+		}
 
 		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
 	}
+}
+
+/*
+ * List active foreign server connections.
+ *
+ * The SQL API of this function has changed multiple times, and will likely
+ * do so again in future.  To support the case where a newer version of this
+ * loadable module is being used with an old SQL declaration of the function,
+ * we continue to support the older API versions.
+ */
+Datum
+postgres_fdw_get_connections_1_2(PG_FUNCTION_ARGS)
+{
+	postgres_fdw_get_connections_internal(fcinfo, PGFDW_V1_2);
+
+	PG_RETURN_VOID();
+}
+
+Datum
+postgres_fdw_get_connections(PG_FUNCTION_ARGS)
+{
+	postgres_fdw_get_connections_internal(fcinfo, PGFDW_V1_1);
 
 	PG_RETURN_VOID();
 }
@@ -2191,4 +2453,111 @@ disconnect_cached_connections(Oid serverid)
 	}
 
 	return result;
+}
+
+/*
+ * Check if the remote server closed the connection.
+ *
+ * Returns 1 if the connection is closed, -1 if an error occurred,
+ * and 0 if it's not closed or if the connection check is unavailable
+ * on this platform.
+ */
+static int
+pgfdw_conn_check(PGconn *conn)
+{
+	int			sock = PQsocket(conn);
+
+	if (PQstatus(conn) != CONNECTION_OK || sock == -1)
+		return -1;
+
+#if (defined(HAVE_POLL) && defined(POLLRDHUP))
+	{
+		struct pollfd input_fd;
+		int			result;
+
+		input_fd.fd = sock;
+		input_fd.events = POLLRDHUP;
+		input_fd.revents = 0;
+
+		do
+			result = poll(&input_fd, 1, 0);
+		while (result < 0 && errno == EINTR);
+
+		if (result < 0)
+			return -1;
+
+		return (input_fd.revents &
+				(POLLRDHUP | POLLHUP | POLLERR | POLLNVAL)) ? 1 : 0;
+	}
+#else
+	return 0;
+#endif
+}
+
+/*
+ * Check if connection status checking is available on this platform.
+ *
+ * Returns true if available, false otherwise.
+ */
+static bool
+pgfdw_conn_checkable(void)
+{
+#if (defined(HAVE_POLL) && defined(POLLRDHUP))
+	return true;
+#else
+	return false;
+#endif
+}
+
+/*
+ * Ensure that require_auth and SCRAM keys are correctly set on values. SCRAM
+ * keys used to pass-through are coming from the initial connection from the
+ * client with the server.
+ *
+ * All required SCRAM options are set by postgres_fdw, so we just need to
+ * ensure that these options are not overwritten by the user.
+ */
+static bool
+pgfdw_has_required_scram_options(const char **keywords, const char **values)
+{
+	bool		has_scram_server_key = false;
+	bool		has_scram_client_key = false;
+	bool		has_require_auth = false;
+	bool		has_scram_keys = false;
+
+	/*
+	 * Continue iterating even if we found the keys that we need to validate
+	 * to make sure that there is no other declaration of these keys that can
+	 * overwrite the first.
+	 */
+	for (int i = 0; keywords[i] != NULL; i++)
+	{
+		if (strcmp(keywords[i], "scram_client_key") == 0)
+		{
+			if (values[i] != NULL && values[i][0] != '\0')
+				has_scram_client_key = true;
+			else
+				has_scram_client_key = false;
+		}
+
+		if (strcmp(keywords[i], "scram_server_key") == 0)
+		{
+			if (values[i] != NULL && values[i][0] != '\0')
+				has_scram_server_key = true;
+			else
+				has_scram_server_key = false;
+		}
+
+		if (strcmp(keywords[i], "require_auth") == 0)
+		{
+			if (values[i] != NULL && strcmp(values[i], "scram-sha-256") == 0)
+				has_require_auth = true;
+			else
+				has_require_auth = false;
+		}
+	}
+
+	has_scram_keys = has_scram_client_key && has_scram_server_key && MyProcPort->has_scram_keys;
+
+	return (has_scram_keys && has_require_auth);
 }

@@ -7,7 +7,7 @@
  * This file contains WAL control and information functions.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/xlogfuncs.c
@@ -28,6 +28,7 @@
 #include "pgstat.h"
 #include "replication/walreceiver.h"
 #include "storage/fd.h"
+#include "storage/latch.h"
 #include "storage/standby.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"

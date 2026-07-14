@@ -3,7 +3,7 @@
  * pg_bitutils.c
  *	  Miscellaneous functions for bit-wise operations.
  *
- * Copyright (c) 2019-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2019-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/port/pg_bitutils.c
@@ -103,12 +103,17 @@ const uint8 pg_number_of_ones[256] = {
 	4, 5, 5, 6, 5, 6, 6, 7, 5, 6, 6, 7, 6, 7, 7, 8
 };
 
+/*
+ * If we are building the Neon versions, we don't need the "slow" fallbacks.
+ */
+#ifndef POPCNT_AARCH64
 static inline int pg_popcount32_slow(uint32 word);
 static inline int pg_popcount64_slow(uint64 word);
 static uint64 pg_popcount_slow(const char *buf, int bytes);
 static uint64 pg_popcount_masked_slow(const char *buf, int bytes, bits8 mask);
+#endif
 
-#ifdef TRY_POPCNT_FAST
+#ifdef TRY_POPCNT_X86_64
 static bool pg_popcount_available(void);
 static int	pg_popcount32_choose(uint32 word);
 static int	pg_popcount64_choose(uint64 word);
@@ -123,9 +128,9 @@ int			(*pg_popcount32) (uint32 word) = pg_popcount32_choose;
 int			(*pg_popcount64) (uint64 word) = pg_popcount64_choose;
 uint64		(*pg_popcount_optimized) (const char *buf, int bytes) = pg_popcount_choose;
 uint64		(*pg_popcount_masked_optimized) (const char *buf, int bytes, bits8 mask) = pg_popcount_masked_choose;
-#endif							/* TRY_POPCNT_FAST */
+#endif							/* TRY_POPCNT_X86_64 */
 
-#ifdef TRY_POPCNT_FAST
+#ifdef TRY_POPCNT_X86_64
 
 /*
  * Return true if CPUID indicates that the POPCNT instruction is available.
@@ -337,8 +342,12 @@ pg_popcount_masked_fast(const char *buf, int bytes, bits8 mask)
 	return popcnt;
 }
 
-#endif							/* TRY_POPCNT_FAST */
+#endif							/* TRY_POPCNT_X86_64 */
 
+/*
+ * If we are building the Neon versions, we don't need the "slow" fallbacks.
+ */
+#ifndef POPCNT_AARCH64
 
 /*
  * pg_popcount32_slow
@@ -370,12 +379,12 @@ static inline int
 pg_popcount64_slow(uint64 word)
 {
 #ifdef HAVE__BUILTIN_POPCOUNT
-#if defined(HAVE_LONG_INT_64)
+#if SIZEOF_LONG == 8
 	return __builtin_popcountl(word);
-#elif defined(HAVE_LONG_LONG_INT_64)
+#elif SIZEOF_LONG_LONG == 8
 	return __builtin_popcountll(word);
 #else
-#error must have a working 64-bit integer datatype
+#error "cannot find integer of the same size as uint64_t"
 #endif
 #else							/* !HAVE__BUILTIN_POPCOUNT */
 	int			result = 0;
@@ -486,14 +495,15 @@ pg_popcount_masked_slow(const char *buf, int bytes, bits8 mask)
 	return popcnt;
 }
 
-#ifndef TRY_POPCNT_FAST
+#endif							/* ! POPCNT_AARCH64 */
+
+#if !defined(TRY_POPCNT_X86_64) && !defined(POPCNT_AARCH64)
 
 /*
- * When the POPCNT instruction is not available, there's no point in using
+ * When special CPU instructions are not available, there's no point in using
  * function pointers to vary the implementation between the fast and slow
- * method.  We instead just make these actual external functions when
- * TRY_POPCNT_FAST is not defined.  The compiler should be able to inline
- * the slow versions here.
+ * method.  We instead just make these actual external functions.  The compiler
+ * should be able to inline the slow versions here.
  */
 int
 pg_popcount32(uint32 word)
@@ -527,4 +537,4 @@ pg_popcount_masked_optimized(const char *buf, int bytes, bits8 mask)
 	return pg_popcount_masked_slow(buf, bytes, mask);
 }
 
-#endif							/* !TRY_POPCNT_FAST */
+#endif							/* ! TRY_POPCNT_X86_64 && ! POPCNT_AARCH64 */

@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 pg_prewarm_sources = files(
   'autoprewarm.c',
@@ -29,6 +29,11 @@ tests += {
   'name': 'pg_prewarm',
   'sd': meson.current_source_dir(),
   'bd': meson.current_build_dir(),
+  'regress': {
+    'sql': [
+      'pg_prewarm',
+    ],
+  },
   'tap': {
     'tests': [
       't/001_basic.pl',

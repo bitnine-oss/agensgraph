@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 autoinc_sources = files(
   'autoinc.c',
@@ -107,3 +107,15 @@ install_data('refint.control', 'refint--1.0.sql',
 install_data('refint.example',
   kwargs: contrib_doc_args,
 )
+
+tests += {
+  'name': 'spi',
+  'sd': meson.current_source_dir(),
+  'bd': meson.current_build_dir(),
+  'regress': {
+    'sql': [
+      'autoinc',
+      'refint',
+    ],
+  },
+}

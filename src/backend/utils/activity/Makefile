@@ -2,7 +2,7 @@
 #
 # Makefile for backend/utils/activity
 #
-# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/backend/utils/activity/Makefile
@@ -20,6 +20,7 @@ OBJS = \
 	backend_status.o \
 	pgstat.o \
 	pgstat_archiver.o \
+	pgstat_backend.o \
 	pgstat_bgwriter.o \
 	pgstat_checkpointer.o \
 	pgstat_database.o \

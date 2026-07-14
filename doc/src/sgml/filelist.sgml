@@ -111,6 +111,7 @@
 <!ENTITY generic-wal SYSTEM "generic-wal.sgml">
 <!ENTITY custom-rmgr SYSTEM "custom-rmgr.sgml">
 <!ENTITY backup-manifest SYSTEM "backup-manifest.sgml">
+<!ENTITY oauth-validators SYSTEM "oauth-validators.sgml">
 
 <!-- contrib information -->
 <!ENTITY contrib         SYSTEM "contrib.sgml">
@@ -143,6 +144,8 @@
 <!ENTITY pgbuffercache   SYSTEM "pgbuffercache.sgml">
 <!ENTITY pgcrypto        SYSTEM "pgcrypto.sgml">
 <!ENTITY pgfreespacemap  SYSTEM "pgfreespacemap.sgml">
+<!ENTITY pglogicalinspect  SYSTEM "pglogicalinspect.sgml">
+<!ENTITY pgoverexplain   SYSTEM "pgoverexplain.sgml">
 <!ENTITY pgprewarm       SYSTEM "pgprewarm.sgml">
 <!ENTITY pgrowlocks      SYSTEM "pgrowlocks.sgml">
 <!ENTITY pgstatstatements SYSTEM "pgstatstatements.sgml">
@@ -177,7 +180,7 @@
 <!ENTITY sourcerepo SYSTEM "sourcerepo.sgml">
 
 <!ENTITY release    SYSTEM "release.sgml">
-<!ENTITY release-17 SYSTEM "release-17.sgml">
+<!ENTITY release-18 SYSTEM "release-18.sgml">
 
 <!ENTITY limits     SYSTEM "limits.sgml">
 <!ENTITY acronyms   SYSTEM "acronyms.sgml">

@@ -2,7 +2,7 @@
  *
  * clusterdb
  *
- * Portions Copyright (c) 2002-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2002-2025, PostgreSQL Global Development Group
  *
  * src/bin/scripts/clusterdb.c
  *
@@ -16,7 +16,6 @@
 #include "fe_utils/option_utils.h"
 #include "fe_utils/query_utils.h"
 #include "fe_utils/simple_list.h"
-#include "fe_utils/string_utils.h"
 
 
 static void cluster_one_database(const ConnParams *cparams, const char *table,

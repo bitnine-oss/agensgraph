@@ -2,7 +2,7 @@
 #
 # src/tools/pg_bsd_indent/Makefile
 #
-# Copyright (c) 2017-2024, PostgreSQL Global Development Group
+# Copyright (c) 2017-2025, PostgreSQL Global Development Group
 #
 #-------------------------------------------------------------------------
 
@@ -24,6 +24,8 @@ OBJS = \
 	lexi.o \
 	parse.o \
 	pr_comment.o
+
+$(OBJS): CFLAGS += $(PERMIT_MISSING_VARIABLE_DECLARATIONS)
 
 all: pg_bsd_indent
 

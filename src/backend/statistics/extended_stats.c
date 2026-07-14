@@ -6,7 +6,7 @@
  * Generic code supporting statistics objects created via CREATE STATISTICS.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -74,7 +74,7 @@ typedef struct StatExtEntry
 
 
 static List *fetch_statentries_for_relation(Relation pg_statext, Oid relid);
-static VacAttrStats **lookup_var_attr_stats(Relation rel, Bitmapset *attrs, List *exprs,
+static VacAttrStats **lookup_var_attr_stats(Bitmapset *attrs, List *exprs,
 											int nvacatts, VacAttrStats **vacatts);
 static void statext_store(Oid statOid, bool inh,
 						  MVNDistinct *ndistinct, MVDependencies *dependencies,
@@ -89,9 +89,8 @@ typedef struct AnlExprData
 	VacAttrStats *vacattrstat;	/* statistics attrs to analyze */
 } AnlExprData;
 
-static void compute_expr_stats(Relation onerel, double totalrows,
-							   AnlExprData *exprdata, int nexprs,
-							   HeapTuple *rows, int numrows);
+static void compute_expr_stats(Relation onerel, AnlExprData *exprdata,
+							   int nexprs, HeapTuple *rows, int numrows);
 static Datum serialize_expr_stats(AnlExprData *exprdata, int nexprs);
 static Datum expr_fetch_func(VacAttrStatsP stats, int rownum, bool *isNull);
 static AnlExprData *build_expr_data(List *exprs, int stattarget);
@@ -166,7 +165,7 @@ BuildRelationExtStatistics(Relation onerel, bool inh, double totalrows,
 		 * Check if we can build these stats based on the column analyzed. If
 		 * not, report this fact (except in autovacuum) and move on.
 		 */
-		stats = lookup_var_attr_stats(onerel, stat->columns, stat->exprs,
+		stats = lookup_var_attr_stats(stat->columns, stat->exprs,
 									  natts, vacattrstats);
 		if (!stats)
 		{
@@ -220,9 +219,7 @@ BuildRelationExtStatistics(Relation onerel, bool inh, double totalrows,
 				exprdata = build_expr_data(stat->exprs, stattarget);
 				nexprs = list_length(stat->exprs);
 
-				compute_expr_stats(onerel, totalrows,
-								   exprdata, nexprs,
-								   rows, numrows);
+				compute_expr_stats(onerel, exprdata, nexprs, rows, numrows);
 
 				exprstats = serialize_expr_stats(exprdata, nexprs);
 			}
@@ -296,7 +293,7 @@ ComputeExtStatisticsRows(Relation onerel,
 		 * analyzed. If not, ignore it (don't report anything, we'll do that
 		 * during the actual build BuildRelationExtStatistics).
 		 */
-		stats = lookup_var_attr_stats(onerel, stat->columns, stat->exprs,
+		stats = lookup_var_attr_stats(stat->columns, stat->exprs,
 									  natts, vacattrstats);
 
 		if (!stats)
@@ -690,7 +687,7 @@ examine_expression(Node *expr, int stattarget)
  * indicate to the caller that the stats should not be built.
  */
 static VacAttrStats **
-lookup_var_attr_stats(Relation rel, Bitmapset *attrs, List *exprs,
+lookup_var_attr_stats(Bitmapset *attrs, List *exprs,
 					  int nvacatts, VacAttrStats **vacatts)
 {
 	int			i = 0;
@@ -1400,7 +1397,7 @@ statext_is_compatible_clause_internal(PlannerInfo *root, Node *clause,
 		/*
 		 * If there are any securityQuals on the RTE from security barrier
 		 * views or RLS policies, then the user may not have access to all the
-		 * table's data, and we must check that the operator is leak-proof.
+		 * table's data, and we must check that the operator is leakproof.
 		 *
 		 * If the operator is leaky, then we must ignore this clause for the
 		 * purposes of estimating with MCV lists, otherwise the operator might
@@ -1467,7 +1464,7 @@ statext_is_compatible_clause_internal(PlannerInfo *root, Node *clause,
 		/*
 		 * If there are any securityQuals on the RTE from security barrier
 		 * views or RLS policies, then the user may not have access to all the
-		 * table's data, and we must check that the operator is leak-proof.
+		 * table's data, and we must check that the operator is leakproof.
 		 *
 		 * If the operator is leaky, then we must ignore this clause for the
 		 * purposes of estimating with MCV lists, otherwise the operator might
@@ -2107,8 +2104,7 @@ examine_opclause_args(List *args, Node **exprp, Const **cstp,
  * Compute statistics about expressions of a relation.
  */
 static void
-compute_expr_stats(Relation onerel, double totalrows,
-				   AnlExprData *exprdata, int nexprs,
+compute_expr_stats(Relation onerel, AnlExprData *exprdata, int nexprs,
 				   HeapTuple *rows, int numrows)
 {
 	MemoryContext expr_context,

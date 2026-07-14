@@ -5,7 +5,7 @@
  *	  configuration settings (pg_db_role_setting)
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_db_role_setting.h
@@ -20,7 +20,7 @@
 #define PG_DB_ROLE_SETTING_H
 
 #include "catalog/genbki.h"
-#include "catalog/pg_db_role_setting_d.h"
+#include "catalog/pg_db_role_setting_d.h"	/* IWYU pragma: export */
 
 #include "utils/guc.h"
 #include "utils/relcache.h"

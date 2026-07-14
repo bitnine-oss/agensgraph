@@ -39,8 +39,15 @@ HINT:  Use rename label instead
 --
 -- TRUNCATE TABLE
 --
+-- A label holding rows cannot be truncated: TRUNCATE would bypass the Cypher
+-- graph-consistency machinery (orphaning incident edges, staling ag_graphmeta).
+CREATE (:v);
 TRUNCATE TABLE g.v;
 ERROR:  cannot truncate label in graph schema
+-- Truncating an empty label is a no-op and is allowed, so a freshly created
+-- label can be reloaded by a parallel pg_restore.
+CREATE VLABEL vacant;
+TRUNCATE TABLE g.vacant;
 --
 -- TRIGGER
 --
@@ -73,9 +80,10 @@ drop cascades to elabel ag_edge
 drop cascades to vlabel v
 DROP ROLE tmp;
 DROP GRAPH g CASCADE;
-NOTICE:  drop cascades to 5 other objects
+NOTICE:  drop cascades to 6 other objects
 DETAIL:  drop cascades to sequence g.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel v
+drop cascades to vlabel vacant
 drop cascades to vlabel v2

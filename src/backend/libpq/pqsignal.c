@@ -3,7 +3,7 @@
  * pqsignal.c
  *	  Backend signal(2) support (see also src/port/pqsignal.c)
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -42,7 +42,7 @@ pqinitmask(void)
 {
 	sigemptyset(&UnBlockSig);
 
-	/* Note: InitializeLatchSupport() modifies UnBlockSig. */
+	/* Note: InitializeWaitEventSupport() modifies UnBlockSig. */
 
 	/* First set all signals, then clear some. */
 	sigfillset(&BlockSig);

@@ -5,7 +5,7 @@
  *	  (pg_parameter_acl).
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_parameter_acl.h
@@ -20,7 +20,7 @@
 #define PG_PARAMETER_ACL_H
 
 #include "catalog/genbki.h"
-#include "catalog/pg_parameter_acl_d.h"
+#include "catalog/pg_parameter_acl_d.h" /* IWYU pragma: export */
 
 /* ----------------
  *		pg_parameter_acl definition.  cpp turns this into

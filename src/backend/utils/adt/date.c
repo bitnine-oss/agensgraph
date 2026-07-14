@@ -3,7 +3,7 @@
  * date.c
  *	  implements DATE and TIME data types specified in SQL standard
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  *
@@ -34,6 +34,7 @@
 #include "utils/date.h"
 #include "utils/datetime.h"
 #include "utils/numeric.h"
+#include "utils/skipsupport.h"
 #include "utils/sortsupport.h"
 
 /*
@@ -256,8 +257,15 @@ make_date(PG_FUNCTION_ARGS)
 	/* Handle negative years as BC */
 	if (tm.tm_year < 0)
 	{
+		int			year = tm.tm_year;
+
 		bc = true;
-		tm.tm_year = -tm.tm_year;
+		if (pg_neg_s32_overflow(year, &year))
+			ereport(ERROR,
+					(errcode(ERRCODE_DATETIME_FIELD_OVERFLOW),
+					 errmsg("date field value out of range: %d-%02d-%02d",
+							tm.tm_year, tm.tm_mon, tm.tm_mday)));
+		tm.tm_year = year;
 	}
 
 	dterr = ValidateDate(DTK_DATE_M, false, false, bc, &tm);
@@ -453,6 +461,63 @@ date_sortsupport(PG_FUNCTION_ARGS)
 
 	ssup->comparator = ssup_datum_int32_cmp;
 	PG_RETURN_VOID();
+}
+
+static Datum
+date_decrement(Relation rel, Datum existing, bool *underflow)
+{
+	DateADT		dexisting = DatumGetDateADT(existing);
+
+	if (dexisting == DATEVAL_NOBEGIN)
+	{
+		/* return value is undefined */
+		*underflow = true;
+		return (Datum) 0;
+	}
+
+	*underflow = false;
+	return DateADTGetDatum(dexisting - 1);
+}
+
+static Datum
+date_increment(Relation rel, Datum existing, bool *overflow)
+{
+	DateADT		dexisting = DatumGetDateADT(existing);
+
+	if (dexisting == DATEVAL_NOEND)
+	{
+		/* return value is undefined */
+		*overflow = true;
+		return (Datum) 0;
+	}
+
+	*overflow = false;
+	return DateADTGetDatum(dexisting + 1);
+}
+
+Datum
+date_skipsupport(PG_FUNCTION_ARGS)
+{
+	SkipSupport sksup = (SkipSupport) PG_GETARG_POINTER(0);
+
+	sksup->decrement = date_decrement;
+	sksup->increment = date_increment;
+	sksup->low_elem = DateADTGetDatum(DATEVAL_NOBEGIN);
+	sksup->high_elem = DateADTGetDatum(DATEVAL_NOEND);
+
+	PG_RETURN_VOID();
+}
+
+Datum
+hashdate(PG_FUNCTION_ARGS)
+{
+	return hash_uint32(PG_GETARG_DATEADT(0));
+}
+
+Datum
+hashdateextended(PG_FUNCTION_ARGS)
+{
+	return hash_uint32_extended(PG_GETARG_DATEADT(0), PG_GETARG_INT64(1));
 }
 
 Datum

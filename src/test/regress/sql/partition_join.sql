@@ -34,6 +34,11 @@ EXPLAIN (COSTS OFF)
 SELECT t1.a, t1.c, t2.b, t2.c FROM prt1 t1, prt2 t2 WHERE t1.a = t2.b AND t1.b = 0 ORDER BY t1.a, t2.b;
 SELECT t1.a, t1.c, t2.b, t2.c FROM prt1 t1, prt2 t2 WHERE t1.a = t2.b AND t1.b = 0 ORDER BY t1.a, t2.b;
 
+-- inner join with partially-redundant join clauses
+EXPLAIN (COSTS OFF)
+SELECT t1.a, t1.c, t2.b, t2.c FROM prt1 t1, prt2 t2 WHERE t1.a = t2.a AND t1.a = t2.b ORDER BY t1.a, t2.b;
+SELECT t1.a, t1.c, t2.b, t2.c FROM prt1 t1, prt2 t2 WHERE t1.a = t2.a AND t1.a = t2.b ORDER BY t1.a, t2.b;
+
 -- left outer join, 3-way
 EXPLAIN (COSTS OFF)
 SELECT COUNT(*) FROM prt1 t1
@@ -137,6 +142,10 @@ SELECT a, b FROM prt1 FULL JOIN prt2 p2(b,a,c) USING(a,b)
 
 RESET enable_partitionwise_aggregate;
 RESET enable_hashjoin;
+
+-- bug in freeing the SpecialJoinInfo of a child-join
+EXPLAIN (COSTS OFF)
+SELECT * FROM prt1 t1 JOIN prt1 t2 ON t1.a = t2.a WHERE t1.a IN (SELECT a FROM prt1 t3);
 
 --
 -- partitioned by expression
@@ -385,6 +394,11 @@ ANALYZE prt2_l;
 EXPLAIN (COSTS OFF)
 SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_l t1, prt2_l t2 WHERE t1.a = t2.b AND t1.b = 0 ORDER BY t1.a, t2.b;
 SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_l t1, prt2_l t2 WHERE t1.a = t2.b AND t1.b = 0 ORDER BY t1.a, t2.b;
+
+-- inner join with partially-redundant join clauses
+EXPLAIN (COSTS OFF)
+SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_l t1, prt2_l t2 WHERE t1.a = t2.a AND t1.a = t2.b AND t1.c = t2.c ORDER BY t1.a, t2.b;
+SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_l t1, prt2_l t2 WHERE t1.a = t2.a AND t1.a = t2.b AND t1.c = t2.c ORDER BY t1.a, t2.b;
 
 -- left join
 EXPLAIN (COSTS OFF)
@@ -1210,6 +1224,30 @@ SELECT x.id, y.id FROM fract_t x LEFT JOIN fract_t y USING (id) ORDER BY x.id AS
 
 EXPLAIN (COSTS OFF)
 SELECT x.id, y.id FROM fract_t x LEFT JOIN fract_t y USING (id) ORDER BY x.id DESC LIMIT 10;
+EXPLAIN (COSTS OFF) -- Should use NestLoop with parameterised inner scan
+SELECT x.id, y.id FROM fract_t x LEFT JOIN fract_t y USING (id)
+ORDER BY x.id DESC LIMIT 2;
+
+--
+-- Test Append's fractional paths
+--
+
+CREATE INDEX pht1_c_idx ON pht1(c);
+-- SeqScan might be the best choice if we need one single tuple
+EXPLAIN (COSTS OFF) SELECT * FROM pht1 p1 JOIN pht1 p2 USING (c) LIMIT 1;
+-- Increase number of tuples requested and an IndexScan will be chosen
+EXPLAIN (COSTS OFF) SELECT * FROM pht1 p1 JOIN pht1 p2 USING (c) LIMIT 100;
+-- If almost all the data should be fetched - prefer SeqScan
+EXPLAIN (COSTS OFF) SELECT * FROM pht1 p1 JOIN pht1 p2 USING (c) LIMIT 1000;
+
+SET max_parallel_workers_per_gather = 1;
+SET debug_parallel_query = on;
+-- Partial paths should also be smart enough to employ limits
+EXPLAIN (COSTS OFF) SELECT * FROM pht1 p1 JOIN pht1 p2 USING (c) LIMIT 100;
+RESET debug_parallel_query;
+
+-- Remove indexes from the partitioned table and its partitions
+DROP INDEX pht1_c_idx CASCADE;
 
 -- cleanup
 DROP TABLE fract_t;

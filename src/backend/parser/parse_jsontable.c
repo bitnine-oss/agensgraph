@@ -3,7 +3,7 @@
  * parse_jsontable.c
  *	  parsing of JSON_TABLE
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -15,9 +15,7 @@
 
 #include "postgres.h"
 
-#include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
-#include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/optimizer.h"
@@ -26,7 +24,7 @@
 #include "parser/parse_expr.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_type.h"
-#include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
 #include "utils/json.h"
 #include "utils/lsyscache.h"
 
@@ -91,7 +89,7 @@ transformJsonTable(ParseState *pstate, JsonTable *jt)
 		jt->on_error->btype != JSON_BEHAVIOR_EMPTY_ARRAY)
 		ereport(ERROR,
 				errcode(ERRCODE_SYNTAX_ERROR),
-				errmsg("invalid ON ERROR behavior"),
+				errmsg("invalid %s behavior", "ON ERROR"),
 				errdetail("Only EMPTY [ ARRAY ] or ERROR is allowed in the top-level ON ERROR clause."),
 				parser_errposition(pstate, jt->on_error->location));
 
@@ -292,7 +290,7 @@ transformJsonTableColumns(JsonTableParseContext *cxt, List *columns,
 				if (ordinality_found)
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("cannot use more than one FOR ORDINALITY column"),
+							 errmsg("only one FOR ORDINALITY column is allowed"),
 							 parser_errposition(pstate, rawc->location)));
 				ordinality_found = true;
 				colexpr = NULL;

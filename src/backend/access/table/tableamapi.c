@@ -3,7 +3,7 @@
  * tableamapi.c
  *		Support routines for API for Postgres table access methods
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/table/tableamapi.c
@@ -91,9 +91,6 @@ GetTableAmRoutine(Oid amhandler)
 
 	Assert(routine->relation_estimate_size != NULL);
 
-	/* optional, but one callback implies presence of the other */
-	Assert((routine->scan_bitmap_next_block == NULL) ==
-		   (routine->scan_bitmap_next_tuple == NULL));
 	Assert(routine->scan_sample_next_block != NULL);
 	Assert(routine->scan_sample_next_tuple != NULL);
 

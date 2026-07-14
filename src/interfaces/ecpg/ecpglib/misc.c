@@ -66,7 +66,7 @@ static FILE *debugstream = NULL;
 void
 ecpg_init_sqlca(struct sqlca_t *sqlca)
 {
-	memcpy((char *) sqlca, (char *) &sqlca_init, sizeof(struct sqlca_t));
+	memcpy(sqlca, &sqlca_init, sizeof(struct sqlca_t));
 }
 
 bool
@@ -232,10 +232,10 @@ void
 ecpg_log(const char *format,...)
 {
 	va_list		ap;
-	struct sqlca_t *sqlca = ECPGget_sqlca();
 	const char *intl_format;
 	int			bufsize;
 	char	   *fmt;
+	struct sqlca_t *sqlca;
 
 	/*
 	 * For performance reasons, inspect simple_debug without taking the mutex.
@@ -261,6 +261,8 @@ ecpg_log(const char *format,...)
 		snprintf(fmt, bufsize, "[NO_PID]: %s", intl_format);
 	else
 		snprintf(fmt, bufsize, "[%d]: %s", (int) getpid(), intl_format);
+
+	sqlca = ECPGget_sqlca();
 
 	pthread_mutex_lock(&debug_mutex);
 
@@ -314,10 +316,10 @@ ECPGset_noind_null(enum ECPGttype type, void *ptr)
 			*((long long *) ptr) = LONG_LONG_MIN;
 			break;
 		case ECPGt_float:
-			memset((char *) ptr, 0xff, sizeof(float));
+			memset(ptr, 0xff, sizeof(float));
 			break;
 		case ECPGt_double:
-			memset((char *) ptr, 0xff, sizeof(double));
+			memset(ptr, 0xff, sizeof(double));
 			break;
 		case ECPGt_varchar:
 			*(((struct ECPGgeneric_varchar *) ptr)->arr) = 0x00;
@@ -327,18 +329,18 @@ ECPGset_noind_null(enum ECPGttype type, void *ptr)
 			((struct ECPGgeneric_bytea *) ptr)->len = 0;
 			break;
 		case ECPGt_decimal:
-			memset((char *) ptr, 0, sizeof(decimal));
+			memset(ptr, 0, sizeof(decimal));
 			((decimal *) ptr)->sign = NUMERIC_NULL;
 			break;
 		case ECPGt_numeric:
-			memset((char *) ptr, 0, sizeof(numeric));
+			memset(ptr, 0, sizeof(numeric));
 			((numeric *) ptr)->sign = NUMERIC_NULL;
 			break;
 		case ECPGt_interval:
-			memset((char *) ptr, 0xff, sizeof(interval));
+			memset(ptr, 0xff, sizeof(interval));
 			break;
 		case ECPGt_timestamp:
-			memset((char *) ptr, 0xff, sizeof(timestamp));
+			memset(ptr, 0xff, sizeof(timestamp));
 			break;
 		default:
 			break;

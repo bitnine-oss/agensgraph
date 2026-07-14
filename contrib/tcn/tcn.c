@@ -3,7 +3,7 @@
  * tcn.c
  *	  triggered change notification support for PostgreSQL
  *
- * Portions Copyright (c) 2011-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2011-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -23,7 +23,10 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "tcn",
+					.version = PG_VERSION
+);
 
 /*
  * Copy from s (for source) to r (for result), wrapping with q (quote)

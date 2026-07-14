@@ -4,7 +4,7 @@
  *	  routines for handling GIN entry tree pages.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -585,9 +585,9 @@ entryExecPlaceToPage(GinBtree btree, Buffer buf, GinBtreeStack *stack,
 		data.offset = off;
 
 		XLogRegisterBuffer(0, buf, REGBUF_STANDARD);
-		XLogRegisterBufData(0, (char *) &data,
+		XLogRegisterBufData(0, &data,
 							offsetof(ginxlogInsertEntry, tuple));
-		XLogRegisterBufData(0, (char *) insertData->entry,
+		XLogRegisterBufData(0, insertData->entry,
 							IndexTupleSize(insertData->entry));
 	}
 }

@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 citext_sources = files(
   'citext.c',
@@ -25,6 +25,8 @@ install_data(
   'citext--1.4.sql',
   'citext--1.4--1.5.sql',
   'citext--1.5--1.6.sql',
+  'citext--1.6--1.7.sql',
+  'citext--1.7--1.8.sql',
   kwargs: contrib_data_args,
 )
 

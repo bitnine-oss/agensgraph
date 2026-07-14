@@ -3,7 +3,7 @@
  * readfuncs.c
  *	  Reader functions for Postgres tree nodes.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -19,7 +19,7 @@
  *
  *	  However, if restore_location_fields is true, we do restore location
  *	  fields from the string.  This is currently intended only for use by the
- *	  WRITE_READ_PARSE_PLAN_TREES test code, which doesn't want to cause
+ *	  debug_write_read_parse_plan_trees test code, which doesn't want to cause
  *	  any change in the node contents.
  *
  *-------------------------------------------------------------------------
@@ -67,6 +67,12 @@
 	token = pg_strtok(&length);		/* skip :fldname */ \
 	token = pg_strtok(&length);		/* get field value */ \
 	local_node->fldname = atoui(token)
+
+/* Read a signed integer field (anything written using INT64_FORMAT) */
+#define READ_INT64_FIELD(fldname) \
+	token = pg_strtok(&length); /* skip :fldname */ \
+	token = pg_strtok(&length); /* get field value */ \
+	local_node->fldname = strtoi64(token, NULL, 10)
 
 /* Read an unsigned integer field (anything written using UINT64_FORMAT) */
 #define READ_UINT64_FIELD(fldname) \
@@ -118,7 +124,7 @@
 	local_node->fldname = nullable_string(token, length)
 
 /* Read a parse location field (and possibly throw away the value) */
-#ifdef WRITE_READ_PARSE_PLAN_TREES
+#ifdef DEBUG_NODE_TESTS_ENABLED
 #define READ_LOCATION_FIELD(fldname) \
 	token = pg_strtok(&length);		/* skip :fldname */ \
 	token = pg_strtok(&length);		/* get field value */ \
@@ -425,6 +431,9 @@ _readRangeTblEntry(void)
 		case RTE_RESULT:
 			/* no extra fields */
 			break;
+		case RTE_GROUP:
+			READ_NODE_FIELD(groupexprs);
+			break;
 		default:
 			elog(ERROR, "unrecognized RTE kind: %d",
 				 (int) local_node->rtekind);
@@ -520,6 +529,8 @@ _readA_Expr(void)
 
 	READ_NODE_FIELD(lexpr);
 	READ_NODE_FIELD(rexpr);
+	READ_LOCATION_FIELD(rexpr_list_start);
+	READ_LOCATION_FIELD(rexpr_list_end);
 	READ_LOCATION_FIELD(location);
 
 	READ_DONE();

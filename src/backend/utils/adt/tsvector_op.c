@@ -3,7 +3,7 @@
  * tsvector_op.c
  *	  operations over tsvector
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -2452,7 +2452,7 @@ ts_setup_firstcall(FunctionCallInfo fcinfo, FuncCallContext *funcctx,
 	MemoryContext oldcontext;
 	StatEntry  *node;
 
-	funcctx->user_fctx = (void *) stat;
+	funcctx->user_fctx = stat;
 
 	oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 

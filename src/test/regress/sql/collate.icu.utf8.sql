@@ -116,6 +116,11 @@ SELECT a, lower(x COLLATE "C"), lower(y COLLATE "C") FROM collate_test10;
 
 SELECT a, x, y FROM collate_test10 ORDER BY lower(y), a;
 
+SELECT lower('AbCd 123 #$% ıiIİ ẞ ß Ǆǅǆ Σσς' COLLATE "en-x-icu");
+SELECT casefold('AbCd 123 #$% ıiIİ ẞ ß Ǆǅǆ Σσς' COLLATE "en-x-icu");
+SELECT lower('AbCd 123 #$% ıiIİ ẞ ß Ǆǅǆ Σσς' COLLATE "tr-x-icu");
+SELECT casefold('AbCd 123 #$% ıiIİ ẞ ß Ǆǅǆ Σσς' COLLATE "tr-x-icu");
+
 -- LIKE/ILIKE
 
 SELECT * FROM collate_test1 WHERE b LIKE 'abc';
@@ -514,13 +519,36 @@ CREATE COLLATION testcoll_rulesx (provider = icu, locale = '', rules = '!!wrong!
 CREATE COLLATION ctest_det (provider = icu, locale = '', deterministic = true);
 CREATE COLLATION ctest_nondet (provider = icu, locale = '', deterministic = false);
 
+SELECT 'abc' LIKE 'abc' COLLATE ctest_det;
+SELECT 'abc' LIKE 'a\bc' COLLATE ctest_det;
+
+SELECT 'abc' LIKE 'abc' COLLATE ctest_nondet;
+SELECT 'abc' LIKE 'a\bc' COLLATE ctest_nondet;
+
 CREATE TABLE test6 (a int, b text);
 -- same string in different normal forms
-INSERT INTO test6 VALUES (1, U&'\00E4bc');
-INSERT INTO test6 VALUES (2, U&'\0061\0308bc');
+INSERT INTO test6 VALUES (1, U&'zy\00E4bc');
+INSERT INTO test6 VALUES (2, U&'zy\0061\0308bc');
 SELECT * FROM test6;
-SELECT * FROM test6 WHERE b = 'äbc' COLLATE ctest_det;
-SELECT * FROM test6 WHERE b = 'äbc' COLLATE ctest_nondet;
+SELECT * FROM test6 WHERE b = 'zyäbc' COLLATE ctest_det;
+SELECT * FROM test6 WHERE b = 'zyäbc' COLLATE ctest_nondet;
+
+SELECT strpos(b COLLATE ctest_det, 'bc') FROM test6;
+SELECT strpos(b COLLATE ctest_nondet, 'bc') FROM test6;
+
+SELECT replace(b COLLATE ctest_det, U&'\00E4b', 'X') FROM test6;
+SELECT replace(b COLLATE ctest_nondet, U&'\00E4b', 'X') FROM test6;
+
+SELECT a, split_part(b COLLATE ctest_det, U&'\00E4b', 2) FROM test6;
+SELECT a, split_part(b COLLATE ctest_nondet, U&'\00E4b', 2) FROM test6;
+SELECT a, split_part(b COLLATE ctest_det, U&'\00E4b', -1) FROM test6;
+SELECT a, split_part(b COLLATE ctest_nondet, U&'\00E4b', -1) FROM test6;
+
+SELECT a, string_to_array(b COLLATE ctest_det, U&'\00E4b') FROM test6;
+SELECT a, string_to_array(b COLLATE ctest_nondet, U&'\00E4b') FROM test6;
+
+SELECT * FROM test6 WHERE b LIKE 'zyäbc' COLLATE ctest_det;
+SELECT * FROM test6 WHERE b LIKE 'zyäbc' COLLATE ctest_nondet;
 
 -- same with arrays
 CREATE TABLE test6a (a int, b text[]);
@@ -535,6 +563,10 @@ CREATE COLLATION case_insensitive (provider = icu, locale = '@colStrength=second
 
 SELECT 'abc' <= 'ABC' COLLATE case_sensitive, 'abc' >= 'ABC' COLLATE case_sensitive;
 SELECT 'abc' <= 'ABC' COLLATE case_insensitive, 'abc' >= 'ABC' COLLATE case_insensitive;
+
+-- tests with array_sort
+SELECT array_sort('{a,B}'::text[] COLLATE case_insensitive);
+SELECT array_sort('{a,B}'::text[] COLLATE "C");
 
 -- test language tags
 CREATE COLLATION lt_insensitive (provider = icu, locale = 'en-u-ks-level1', deterministic = false);
@@ -637,14 +669,14 @@ SELECT string_to_array('ABCDEFGHI'::char(9) COLLATE case_insensitive, NULL, 'b')
 -- This tests the issue described in match_pattern_prefix().  In the
 -- absence of that check, the case_insensitive tests below would
 -- return no rows where they should logically return one.
-CREATE TABLE test4c (x text COLLATE "C");
+CREATE TABLE test4c (x text COLLATE case_insensitive);
 INSERT INTO test4c VALUES ('abc');
 CREATE INDEX ON test4c (x);
 SET enable_seqscan = off;
 SELECT x FROM test4c WHERE x LIKE 'ABC' COLLATE case_sensitive;  -- ok, no rows
 SELECT x FROM test4c WHERE x LIKE 'ABC%' COLLATE case_sensitive;  -- ok, no rows
-SELECT x FROM test4c WHERE x LIKE 'ABC' COLLATE case_insensitive;  -- error
-SELECT x FROM test4c WHERE x LIKE 'ABC%' COLLATE case_insensitive;  -- error
+SELECT x FROM test4c WHERE x LIKE 'ABC' COLLATE case_insensitive;  -- ok
+SELECT x FROM test4c WHERE x LIKE 'ABC%' COLLATE case_insensitive;  -- ok
 RESET enable_seqscan;
 
 -- Unicode special case: different variants of Greek lower case sigma.
@@ -687,39 +719,92 @@ SELECT * FROM test4 WHERE b = 'cote' COLLATE ignore_accents;
 SELECT * FROM test4 WHERE b = 'Cote' COLLATE ignore_accents;  -- still case-sensitive
 SELECT * FROM test4 WHERE b = 'Cote' COLLATE case_insensitive;
 
--- foreign keys (should use collation of primary key)
+CREATE TABLE test4nfd (a int, b text);
+INSERT INTO test4nfd VALUES (1, 'cote'), (2, 'côte'), (3, 'coté'), (4, 'côté');
+UPDATE test4nfd SET b = normalize(b, nfd);
 
--- PK is case-sensitive, FK is case-insensitive
+-- This shows why replace should be greedy.  Otherwise, in the NFD
+-- case, the match would stop before the decomposed accents, which
+-- would leave the accents in the results.
+SELECT a, b, replace(b COLLATE ignore_accents, 'co', 'ma') FROM test4;
+SELECT a, b, replace(b COLLATE ignore_accents, 'co', 'ma') FROM test4nfd;
+
+-- This is a tricky one.  A naive implementation would first test
+-- \00E4 matches \0061, which is true under ignore_accents, but then
+-- the rest of the string won't match anymore.  Therefore, the
+-- algorithm has to test whether the rest of the string matches, and
+-- if not try matching \00E4 against a longer substring like
+-- \0061\0308, which will then work out.
+SELECT U&'\0061\0308bc' LIKE U&'\00E4_c' COLLATE ignore_accents;
+-- and in reverse:
+SELECT U&'\00E4bc' LIKE U&'\0061\0308_c' COLLATE ignore_accents;
+-- inner % matches b:
+SELECT U&'\0061\0308bc' LIKE U&'\00E4%c' COLLATE ignore_accents;
+-- inner %% matches b then zero:
+SELECT U&'\0061\0308bc' LIKE U&'\00E4%%c' COLLATE ignore_accents;
+-- inner %% matches b then zero:
+SELECT U&'cb\0061\0308' LIKE U&'c%%\00E4' COLLATE ignore_accents;
+-- trailing _ matches two codepoints that form one grapheme:
+SELECT U&'cb\0061\0308' LIKE U&'cb_' COLLATE ignore_accents;
+-- trailing __ matches two codepoints that form one grapheme:
+SELECT U&'cb\0061\0308' LIKE U&'cb__' COLLATE ignore_accents;
+-- leading % matches zero:
+SELECT U&'\0061\0308bc' LIKE U&'%\00E4bc' COLLATE ignore_accents;
+-- leading % matches zero (with later %):
+SELECT U&'\0061\0308bc' LIKE U&'%\00E4%c' COLLATE ignore_accents;
+-- trailing % matches zero:
+SELECT U&'\0061\0308bc' LIKE U&'\00E4bc%' COLLATE ignore_accents;
+-- trailing % matches zero (with previous %):
+SELECT U&'\0061\0308bc' LIKE U&'\00E4%c%' COLLATE ignore_accents;
+-- _ versus two codepoints that form one grapheme:
+SELECT U&'\0061\0308bc' LIKE U&'_bc' COLLATE ignore_accents;
+-- (actually this matches because)
+SELECT U&'\0308bc' = 'bc' COLLATE ignore_accents;
+-- __ matches two codepoints that form one grapheme:
+SELECT U&'\0061\0308bc' LIKE U&'__bc' COLLATE ignore_accents;
+-- _ matches one codepoint that forms half a grapheme:
+SELECT U&'\0061\0308bc' LIKE U&'_\0308bc' COLLATE ignore_accents;
+-- doesn't match because \00e4 doesn't match only \0308
+SELECT U&'\0061\0308bc' LIKE U&'_\00e4bc' COLLATE ignore_accents;
+-- escape character at end of pattern
+SELECT 'foox' LIKE 'foo\' COLLATE ignore_accents;
+
+-- foreign keys (mixing different nondeterministic collations not allowed)
 CREATE TABLE test10pk (x text COLLATE case_sensitive PRIMARY KEY);
-INSERT INTO test10pk VALUES ('abc'), ('def'), ('ghi');
-CREATE TABLE test10fk (x text COLLATE case_insensitive REFERENCES test10pk (x) ON UPDATE CASCADE ON DELETE CASCADE);
-INSERT INTO test10fk VALUES ('abc');  -- ok
-INSERT INTO test10fk VALUES ('ABC');  -- error
-INSERT INTO test10fk VALUES ('xyz');  -- error
-SELECT * FROM test10pk;
-SELECT * FROM test10fk;
--- restrict update even though the values are "equal" in the FK table
-UPDATE test10fk SET x = 'ABC' WHERE x = 'abc';  -- error
-SELECT * FROM test10fk;
-DELETE FROM test10pk WHERE x = 'abc';
-SELECT * FROM test10pk;
-SELECT * FROM test10fk;
+CREATE TABLE test10fk (x text COLLATE case_insensitive REFERENCES test10pk (x) ON UPDATE CASCADE ON DELETE CASCADE);  -- error
 
--- PK is case-insensitive, FK is case-sensitive
 CREATE TABLE test11pk (x text COLLATE case_insensitive PRIMARY KEY);
-INSERT INTO test11pk VALUES ('abc'), ('def'), ('ghi');
-CREATE TABLE test11fk (x text COLLATE case_sensitive REFERENCES test11pk (x) ON UPDATE CASCADE ON DELETE CASCADE);
-INSERT INTO test11fk VALUES ('abc');  -- ok
-INSERT INTO test11fk VALUES ('ABC');  -- ok
-INSERT INTO test11fk VALUES ('xyz');  -- error
-SELECT * FROM test11pk;
-SELECT * FROM test11fk;
--- cascade update even though the values are "equal" in the PK table
-UPDATE test11pk SET x = 'ABC' WHERE x = 'abc';
-SELECT * FROM test11fk;
-DELETE FROM test11pk WHERE x = 'abc';
-SELECT * FROM test11pk;
-SELECT * FROM test11fk;
+CREATE TABLE test11fk (x text COLLATE case_sensitive REFERENCES test11pk (x) ON UPDATE CASCADE ON DELETE CASCADE);  -- error
+
+-- foreign key actions
+-- Some of the behaviors are most easily visible with a
+-- case-insensitive collation.
+CREATE TABLE test12pk (x text COLLATE case_insensitive PRIMARY KEY);
+CREATE TABLE test12fk (a int, b text COLLATE case_insensitive REFERENCES test12pk (x) ON UPDATE NO ACTION);
+INSERT INTO test12pk VALUES ('abc');
+INSERT INTO test12fk VALUES (1, 'abc'), (2, 'ABC');
+UPDATE test12pk SET x = 'ABC' WHERE x = 'abc';  -- ok
+SELECT * FROM test12pk;
+SELECT * FROM test12fk;  -- no updates here
+DROP TABLE test12pk, test12fk;
+
+CREATE TABLE test12pk (x text COLLATE case_insensitive PRIMARY KEY);
+CREATE TABLE test12fk (a int, b text COLLATE case_insensitive REFERENCES test12pk (x) ON UPDATE RESTRICT);
+INSERT INTO test12pk VALUES ('abc');
+INSERT INTO test12fk VALUES (1, 'abc'), (2, 'ABC');
+UPDATE test12pk SET x = 'ABC' WHERE x = 'abc';  -- restrict violation
+SELECT * FROM test12pk;
+SELECT * FROM test12fk;
+DROP TABLE test12pk, test12fk;
+
+CREATE TABLE test12pk (x text COLLATE case_insensitive PRIMARY KEY);
+CREATE TABLE test12fk (a int, b text COLLATE case_insensitive REFERENCES test12pk (x) ON UPDATE CASCADE);
+INSERT INTO test12pk VALUES ('abc');
+INSERT INTO test12fk VALUES (1, 'abc'), (2, 'ABC');
+UPDATE test12pk SET x = 'ABC' WHERE x = 'abc';  -- ok
+SELECT * FROM test12pk;
+SELECT * FROM test12fk;  -- was updated
+DROP TABLE test12pk, test12fk;
 
 -- partitioning
 CREATE TABLE test20 (a int, b text COLLATE case_insensitive) PARTITION BY LIST (b);
@@ -795,6 +880,122 @@ INSERT INTO test33 VALUES (1, 'def');
 INSERT INTO test33 VALUES (2, 'DEF');
 -- they end up in the same partition (but it's platform-dependent which one)
 SELECT (SELECT count(*) FROM test33_0) <> (SELECT count(*) FROM test33_1);
+
+--
+-- Bug #18568
+--
+-- Partitionwise aggregate (full or partial) should not be used when a
+-- partition key's collation doesn't match that of the GROUP BY column it is
+-- matched with.
+SET max_parallel_workers_per_gather TO 0;
+SET enable_incremental_sort TO off;
+
+CREATE TABLE pagg_tab3 (a text, c text collate case_insensitive) PARTITION BY LIST(c collate "C");
+CREATE TABLE pagg_tab3_p1 PARTITION OF pagg_tab3 FOR VALUES IN ('a', 'b');
+CREATE TABLE pagg_tab3_p2 PARTITION OF pagg_tab3 FOR VALUES IN ('B', 'A');
+INSERT INTO pagg_tab3 SELECT i % 4 + 1, substr('abAB', (i % 4) + 1 , 1) FROM generate_series(0, 19) i;
+ANALYZE pagg_tab3;
+
+SET enable_partitionwise_aggregate TO false;
+EXPLAIN (COSTS OFF)
+SELECT upper(c collate case_insensitive), count(c) FROM pagg_tab3 GROUP BY c collate case_insensitive ORDER BY 1;
+SELECT upper(c collate case_insensitive), count(c) FROM pagg_tab3 GROUP BY c collate case_insensitive ORDER BY 1;
+
+-- No "full" partitionwise aggregation allowed, though "partial" is allowed.
+SET enable_partitionwise_aggregate TO true;
+EXPLAIN (COSTS OFF)
+SELECT upper(c collate case_insensitive), count(c) FROM pagg_tab3 GROUP BY c collate case_insensitive ORDER BY 1;
+SELECT upper(c collate case_insensitive), count(c) FROM pagg_tab3 GROUP BY c collate case_insensitive ORDER BY 1;
+
+-- OK to use full partitionwise aggregate after changing the GROUP BY column's
+-- collation to be the same as that of the partition key.
+EXPLAIN (COSTS OFF)
+SELECT c collate "C", count(c) FROM pagg_tab3 GROUP BY c collate "C" ORDER BY 1;
+SELECT c collate "C", count(c) FROM pagg_tab3 GROUP BY c collate "C" ORDER BY 1;
+
+-- Partitionwise join should not be allowed too when the collation used by the
+-- join keys doesn't match the partition key collation.
+SET enable_partitionwise_join TO false;
+EXPLAIN (COSTS OFF)
+SELECT t1.c, count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c GROUP BY 1 ORDER BY t1.c COLLATE "C";
+SELECT t1.c, count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c GROUP BY 1 ORDER BY t1.c COLLATE "C";
+
+SET enable_partitionwise_join TO true;
+EXPLAIN (COSTS OFF)
+SELECT t1.c, count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c GROUP BY 1 ORDER BY t1.c COLLATE "C";
+SELECT t1.c, count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c GROUP BY 1 ORDER BY t1.c COLLATE "C";
+
+-- OK when the join clause uses the same collation as the partition key.
+EXPLAIN (COSTS OFF)
+SELECT t1.c COLLATE "C", count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c COLLATE "C" GROUP BY t1.c COLLATE "C" ORDER BY t1.c COLLATE "C";
+SELECT t1.c COLLATE "C", count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c COLLATE "C" GROUP BY t1.c COLLATE "C" ORDER BY t1.c COLLATE "C";
+
+SET enable_partitionwise_join TO false;
+EXPLAIN (COSTS OFF)
+SELECT t1.c COLLATE "C", count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c COLLATE "C" GROUP BY t1.c COLLATE "C" ORDER BY t1.c COLLATE "C";
+SELECT t1.c COLLATE "C", count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab3 t2 ON t1.c = t2.c COLLATE "C" GROUP BY t1.c COLLATE "C" ORDER BY t1.c COLLATE "C";
+
+-- Few other cases where the joined partition keys are matched via equivalence
+-- class, not a join restriction clause.
+
+-- Collations of joined columns match, but the partition keys collation is different
+SET enable_partitionwise_join TO true;
+CREATE TABLE pagg_tab4 (c text collate case_insensitive, b text collate case_insensitive) PARTITION BY LIST (b collate "C");
+CREATE TABLE pagg_tab4_p1 PARTITION OF pagg_tab4 FOR VALUES IN ('a', 'b');
+CREATE TABLE pagg_tab4_p2 PARTITION OF pagg_tab4 FOR VALUES IN ('B', 'A');
+INSERT INTO pagg_tab4 (b, c) SELECT substr('abAB', (i % 4) + 1 , 1), substr('abAB', (i % 2) + 1 , 1) FROM generate_series(0, 11) i;
+ANALYZE pagg_tab4;
+
+EXPLAIN (COSTS OFF)
+SELECT t1.c, count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab4 t2 ON t1.c = t2.c AND t1.c = t2.b GROUP BY 1 ORDER BY t1.c COLLATE "C";
+SELECT t1.c, count(t2.c) FROM pagg_tab3 t1 JOIN pagg_tab4 t2 ON t1.c = t2.c AND t1.c = t2.b GROUP BY 1 ORDER BY t1.c COLLATE "C";
+
+-- OK when the partition key collation is same as that of the join columns
+CREATE TABLE pagg_tab5 (c text collate case_insensitive, b text collate case_insensitive) PARTITION BY LIST (c collate case_insensitive);
+CREATE TABLE pagg_tab5_p1 PARTITION OF pagg_tab5 FOR VALUES IN ('a', 'b');
+CREATE TABLE pagg_tab5_p2 PARTITION OF pagg_tab5 FOR VALUES IN ('c', 'd');
+INSERT INTO pagg_tab5 (b, c) SELECT substr('abAB', (i % 4) + 1 , 1), substr('abAB', (i % 2) + 1 , 1) FROM generate_series(0, 5) i;
+INSERT INTO pagg_tab5 (b, c) SELECT substr('cdCD', (i % 4) + 1 , 1), substr('cdCD', (i % 2) + 1 , 1) FROM generate_series(0, 5) i;
+ANALYZE pagg_tab5;
+
+CREATE TABLE pagg_tab6 (c text collate case_insensitive, b text collate case_insensitive) PARTITION BY LIST (b collate case_insensitive);
+CREATE TABLE pagg_tab6_p1 PARTITION OF pagg_tab6 FOR VALUES IN ('a', 'b');
+CREATE TABLE pagg_tab6_p2 PARTITION OF pagg_tab6 FOR VALUES IN ('c', 'd');
+INSERT INTO pagg_tab6 (b, c) SELECT substr('abAB', (i % 4) + 1 , 1), substr('abAB', (i % 2) + 1 , 1) FROM generate_series(0, 5) i;
+INSERT INTO pagg_tab6 (b, c) SELECT substr('cdCD', (i % 4) + 1 , 1), substr('cdCD', (i % 2) + 1 , 1) FROM generate_series(0, 5) i;
+ANALYZE pagg_tab6;
+
+EXPLAIN (COSTS OFF)
+SELECT t1.c, count(t2.c) FROM pagg_tab5 t1 JOIN pagg_tab6 t2 ON t1.c = t2.c AND t1.c = t2.b GROUP BY 1 ORDER BY t1.c COLLATE "C";
+SELECT t1.c, count(t2.c) FROM pagg_tab5 t1 JOIN pagg_tab6 t2 ON t1.c = t2.c AND t1.c = t2.b GROUP BY 1 ORDER BY t1.c COLLATE "C";
+
+SET enable_partitionwise_join TO false;
+EXPLAIN (COSTS OFF)
+SELECT t1.c, count(t2.c) FROM pagg_tab5 t1 JOIN pagg_tab6 t2 ON t1.c = t2.c AND t1.c = t2.b GROUP BY 1 ORDER BY t1.c COLLATE "C";
+SELECT t1.c, count(t2.c) FROM pagg_tab5 t1 JOIN pagg_tab6 t2 ON t1.c = t2.c AND t1.c = t2.b GROUP BY 1 ORDER BY t1.c COLLATE "C";
+
+DROP TABLE pagg_tab3;
+DROP TABLE pagg_tab4;
+DROP TABLE pagg_tab5;
+DROP TABLE pagg_tab6;
+
+RESET enable_partitionwise_aggregate;
+RESET max_parallel_workers_per_gather;
+RESET enable_incremental_sort;
+
+-- virtual generated columns
+CREATE TABLE t5 (
+    a int,
+    b text collate "C",
+    c text collate "C" GENERATED ALWAYS AS (b COLLATE case_insensitive)
+);
+INSERT INTO t5 (a, b) values (1, 'D1'), (2, 'D2'), (3, 'd1');
+-- Collation of c should be the one defined for the column ("C"), not
+-- the one of the generation expression.  (Note that we cannot just
+-- test with, say, using COLLATION FOR, because the collation of
+-- function calls is already determined in the parser before
+-- rewriting.)
+SELECT * FROM t5 ORDER BY c ASC, a ASC;
 
 
 -- cleanup

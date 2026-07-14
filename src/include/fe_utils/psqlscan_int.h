@@ -34,7 +34,7 @@
  * same flex version, or if they don't use the same flex options.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/fe_utils/psqlscan_int.h
@@ -103,6 +103,10 @@ typedef struct PsqlScanStateData
 	bool		std_strings;	/* are string literals standard? */
 	const char *curline;		/* actual flex input string for cur buf */
 	const char *refline;		/* original data for cur buffer */
+
+	/* status for psql_scan_get_location() */
+	int			cur_line_no;	/* current line#, or 0 if no yylex done */
+	const char *cur_line_ptr;	/* points into cur_line_no'th line in scanbuf */
 
 	/*
 	 * All this state lives across successive input lines, until explicitly

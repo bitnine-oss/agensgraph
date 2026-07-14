@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 lo_sources = files(
   'lo.c',
@@ -20,6 +20,7 @@ install_data(
   'lo.control',
   'lo--1.0--1.1.sql',
   'lo--1.1.sql',
+  'lo--1.1--1.2.sql',
   kwargs: contrib_data_args,
 )
 

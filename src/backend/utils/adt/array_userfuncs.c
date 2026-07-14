@@ -3,7 +3,7 @@
  * array_userfuncs.c
  *	  Misc user-visible array support functions
  *
- * Copyright (c) 2003-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2003-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/adt/array_userfuncs.c
@@ -12,15 +12,19 @@
  */
 #include "postgres.h"
 
+#include "catalog/pg_operator_d.h"
 #include "catalog/pg_type.h"
 #include "common/int.h"
 #include "common/pg_prng.h"
 #include "libpq/pqformat.h"
+#include "miscadmin.h"
+#include "nodes/supportnodes.h"
 #include "port/pg_bitutils.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
+#include "utils/tuplesort.h"
 #include "utils/typcache.h"
 
 /*
@@ -41,6 +45,18 @@ typedef struct DeserialIOData
 	FmgrInfo	typreceive;
 	Oid			typioparam;
 } DeserialIOData;
+
+/*
+ * ArraySortCachedInfo
+ *		Used for caching catalog data in array_sort
+ */
+typedef struct ArraySortCachedInfo
+{
+	ArrayMetaState array_meta;	/* metadata for array_create_iterator */
+	Oid			elem_lt_opr;	/* "<" operator for element type */
+	Oid			elem_gt_opr;	/* ">" operator for element type */
+	Oid			array_type;		/* pg_type OID of array type */
+} ArraySortCachedInfo;
 
 static Datum array_position_common(FunctionCallInfo fcinfo);
 
@@ -167,6 +183,36 @@ array_append(PG_FUNCTION_ARGS)
 	PG_RETURN_DATUM(result);
 }
 
+/*
+ * array_append_support()
+ *
+ * Planner support function for array_append()
+ */
+Datum
+array_append_support(PG_FUNCTION_ARGS)
+{
+	Node	   *rawreq = (Node *) PG_GETARG_POINTER(0);
+	Node	   *ret = NULL;
+
+	if (IsA(rawreq, SupportRequestModifyInPlace))
+	{
+		/*
+		 * We can optimize in-place appends if the function's array argument
+		 * is the array being assigned to.  We don't need to worry about array
+		 * references within the other argument.
+		 */
+		SupportRequestModifyInPlace *req = (SupportRequestModifyInPlace *) rawreq;
+		Param	   *arg = (Param *) linitial(req->args);
+
+		if (arg && IsA(arg, Param) &&
+			arg->paramkind == PARAM_EXTERN &&
+			arg->paramid == req->paramid)
+			ret = (Node *) arg;
+	}
+
+	PG_RETURN_POINTER(ret);
+}
+
 /*-----------------------------------------------------------------------------
  * array_prepend :
  *		push an element onto the front of a one-dimensional array
@@ -228,6 +274,36 @@ array_prepend(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_DATUM(result);
+}
+
+/*
+ * array_prepend_support()
+ *
+ * Planner support function for array_prepend()
+ */
+Datum
+array_prepend_support(PG_FUNCTION_ARGS)
+{
+	Node	   *rawreq = (Node *) PG_GETARG_POINTER(0);
+	Node	   *ret = NULL;
+
+	if (IsA(rawreq, SupportRequestModifyInPlace))
+	{
+		/*
+		 * We can optimize in-place prepends if the function's array argument
+		 * is the array being assigned to.  We don't need to worry about array
+		 * references within the other argument.
+		 */
+		SupportRequestModifyInPlace *req = (SupportRequestModifyInPlace *) rawreq;
+		Param	   *arg = (Param *) lsecond(req->args);
+
+		if (arg && IsA(arg, Param) &&
+			arg->paramkind == PARAM_EXTERN &&
+			arg->paramid == req->paramid)
+			ret = (Node *) arg;
+	}
+
+	PG_RETURN_POINTER(ret);
 }
 
 /*-----------------------------------------------------------------------------
@@ -685,7 +761,7 @@ array_agg_serialize(PG_FUNCTION_ARGS)
 									&typisvarlena);
 			fmgr_info_cxt(typsend, &iodata->typsend,
 						  fcinfo->flinfo->fn_mcxt);
-			fcinfo->flinfo->fn_extra = (void *) iodata;
+			fcinfo->flinfo->fn_extra = iodata;
 		}
 
 		for (i = 0; i < state->nelems; i++)
@@ -776,7 +852,7 @@ array_agg_deserialize(PG_FUNCTION_ARGS)
 								   &iodata->typioparam);
 			fmgr_info_cxt(typreceive, &iodata->typreceive,
 						  fcinfo->flinfo->fn_mcxt);
-			fcinfo->flinfo->fn_extra = (void *) iodata;
+			fcinfo->flinfo->fn_extra = iodata;
 		}
 
 		for (int i = 0; i < nelems; i++)
@@ -1642,7 +1718,7 @@ array_shuffle(PG_FUNCTION_ARGS)
 	if (typentry == NULL || typentry->type_id != elmtyp)
 	{
 		typentry = lookup_type_cache(elmtyp, 0);
-		fcinfo->flinfo->fn_extra = (void *) typentry;
+		fcinfo->flinfo->fn_extra = typentry;
 	}
 
 	result = array_shuffle_n(array, ARR_DIMS(array)[0], true, elmtyp, typentry);
@@ -1678,10 +1754,285 @@ array_sample(PG_FUNCTION_ARGS)
 	if (typentry == NULL || typentry->type_id != elmtyp)
 	{
 		typentry = lookup_type_cache(elmtyp, 0);
-		fcinfo->flinfo->fn_extra = (void *) typentry;
+		fcinfo->flinfo->fn_extra = typentry;
 	}
 
 	result = array_shuffle_n(array, n, false, elmtyp, typentry);
 
 	PG_RETURN_ARRAYTYPE_P(result);
+}
+
+
+/*
+ * array_reverse_n
+ *		Return a copy of array with reversed items.
+ *
+ * NOTE: it would be cleaner to look up the elmlen/elmbval/elmalign info
+ * from the system catalogs, given only the elmtyp. However, the caller is
+ * in a better position to cache this info across multiple calls.
+ */
+static ArrayType *
+array_reverse_n(ArrayType *array, Oid elmtyp, TypeCacheEntry *typentry)
+{
+	ArrayType  *result;
+	int			ndim,
+			   *dims,
+			   *lbs,
+				nelm,
+				nitem,
+				rdims[MAXDIM],
+				rlbs[MAXDIM];
+	int16		elmlen;
+	bool		elmbyval;
+	char		elmalign;
+	Datum	   *elms,
+			   *ielms;
+	bool	   *nuls,
+			   *inuls;
+
+	ndim = ARR_NDIM(array);
+	dims = ARR_DIMS(array);
+	lbs = ARR_LBOUND(array);
+
+	elmlen = typentry->typlen;
+	elmbyval = typentry->typbyval;
+	elmalign = typentry->typalign;
+
+	deconstruct_array(array, elmtyp, elmlen, elmbyval, elmalign,
+					  &elms, &nuls, &nelm);
+
+	nitem = dims[0];			/* total number of items */
+	nelm /= nitem;				/* number of elements per item */
+
+	/* Reverse the array */
+	ielms = elms;
+	inuls = nuls;
+	for (int i = 0; i < nitem / 2; i++)
+	{
+		int			j = (nitem - i - 1) * nelm;
+		Datum	   *jelms = elms + j;
+		bool	   *jnuls = nuls + j;
+
+		/* Swap i'th and j'th items; advance ielms/inuls to next item */
+		for (int k = 0; k < nelm; k++)
+		{
+			Datum		elm = *ielms;
+			bool		nul = *inuls;
+
+			*ielms++ = *jelms;
+			*inuls++ = *jnuls;
+			*jelms++ = elm;
+			*jnuls++ = nul;
+		}
+	}
+
+	/* Set up dimensions of the result */
+	memcpy(rdims, dims, ndim * sizeof(int));
+	memcpy(rlbs, lbs, ndim * sizeof(int));
+	rdims[0] = nitem;
+
+	result = construct_md_array(elms, nuls, ndim, rdims, rlbs,
+								elmtyp, elmlen, elmbyval, elmalign);
+
+	pfree(elms);
+	pfree(nuls);
+
+	return result;
+}
+
+/*
+ * array_reverse
+ *
+ * Returns an array with the same dimensions as the input array, with its
+ * first-dimension elements in reverse order.
+ */
+Datum
+array_reverse(PG_FUNCTION_ARGS)
+{
+	ArrayType  *array = PG_GETARG_ARRAYTYPE_P(0);
+	ArrayType  *result;
+	Oid			elmtyp;
+	TypeCacheEntry *typentry;
+
+	/*
+	 * There is no point in reversing empty arrays or arrays with less than
+	 * two items.
+	 */
+	if (ARR_NDIM(array) < 1 || ARR_DIMS(array)[0] < 2)
+		PG_RETURN_ARRAYTYPE_P(array);
+
+	elmtyp = ARR_ELEMTYPE(array);
+	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
+	if (typentry == NULL || typentry->type_id != elmtyp)
+	{
+		typentry = lookup_type_cache(elmtyp, 0);
+		fcinfo->flinfo->fn_extra = (void *) typentry;
+	}
+
+	result = array_reverse_n(array, elmtyp, typentry);
+
+	PG_RETURN_ARRAYTYPE_P(result);
+}
+
+/*
+ * array_sort
+ *
+ * Sorts the first dimension of the array.
+ */
+static ArrayType *
+array_sort_internal(ArrayType *array, bool descending, bool nulls_first,
+					FunctionCallInfo fcinfo)
+{
+	ArrayType  *newarray;
+	Oid			collation = PG_GET_COLLATION();
+	int			ndim,
+			   *dims,
+			   *lbs;
+	ArraySortCachedInfo *cache_info;
+	Oid			elmtyp;
+	Oid			sort_typ;
+	Oid			sort_opr;
+	Tuplesortstate *tuplesortstate;
+	ArrayIterator array_iterator;
+	Datum		value;
+	bool		isnull;
+	ArrayBuildStateAny *astate = NULL;
+
+	ndim = ARR_NDIM(array);
+	dims = ARR_DIMS(array);
+	lbs = ARR_LBOUND(array);
+
+	/* Quick exit if we don't need to sort */
+	if (ndim < 1 || dims[0] < 2)
+		return array;
+
+	/* Set up cache area if we didn't already */
+	cache_info = (ArraySortCachedInfo *) fcinfo->flinfo->fn_extra;
+	if (cache_info == NULL)
+	{
+		cache_info = (ArraySortCachedInfo *)
+			MemoryContextAllocZero(fcinfo->flinfo->fn_mcxt,
+								   sizeof(ArraySortCachedInfo));
+		fcinfo->flinfo->fn_extra = cache_info;
+	}
+
+	/* Fetch and cache required data if we don't have it */
+	elmtyp = ARR_ELEMTYPE(array);
+	if (elmtyp != cache_info->array_meta.element_type)
+	{
+		TypeCacheEntry *typentry;
+
+		typentry = lookup_type_cache(elmtyp,
+									 TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
+		cache_info->array_meta.element_type = elmtyp;
+		cache_info->array_meta.typlen = typentry->typlen;
+		cache_info->array_meta.typbyval = typentry->typbyval;
+		cache_info->array_meta.typalign = typentry->typalign;
+		cache_info->elem_lt_opr = typentry->lt_opr;
+		cache_info->elem_gt_opr = typentry->gt_opr;
+		cache_info->array_type = typentry->typarray;
+	}
+
+	/* Identify the sort operator to use */
+	if (ndim == 1)
+	{
+		/* Need to sort the element type */
+		sort_typ = elmtyp;
+		sort_opr = (descending ? cache_info->elem_gt_opr : cache_info->elem_lt_opr);
+	}
+	else
+	{
+		/* Otherwise we're sorting arrays */
+		sort_typ = cache_info->array_type;
+		if (!OidIsValid(sort_typ))
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_OBJECT),
+					 errmsg("could not find array type for data type %s",
+							format_type_be(elmtyp))));
+		/* We know what operators to use for arrays */
+		sort_opr = (descending ? ARRAY_GT_OP : ARRAY_LT_OP);
+	}
+
+	/*
+	 * Fail if we don't know how to sort.  The error message is chosen to
+	 * match what array_lt()/array_gt() will say in the multidimensional case.
+	 */
+	if (!OidIsValid(sort_opr))
+		ereport(ERROR,
+				errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				errmsg("could not identify a comparison function for type %s",
+					   format_type_be(elmtyp)));
+
+	/* Put the things to be sorted (elements or sub-arrays) into a tuplesort */
+	tuplesortstate = tuplesort_begin_datum(sort_typ,
+										   sort_opr,
+										   collation,
+										   nulls_first,
+										   work_mem,
+										   NULL,
+										   TUPLESORT_NONE);
+
+	array_iterator = array_create_iterator(array, ndim - 1,
+										   &cache_info->array_meta);
+	while (array_iterate(array_iterator, &value, &isnull))
+	{
+		tuplesort_putdatum(tuplesortstate, value, isnull);
+	}
+	array_free_iterator(array_iterator);
+
+	/* Do the sort */
+	tuplesort_performsort(tuplesortstate);
+
+	/* Extract results into a new array */
+	while (tuplesort_getdatum(tuplesortstate, true, false, &value, &isnull, NULL))
+	{
+		astate = accumArrayResultAny(astate, value, isnull,
+									 sort_typ, CurrentMemoryContext);
+	}
+	tuplesort_end(tuplesortstate);
+
+	newarray = DatumGetArrayTypeP(makeArrayResultAny(astate,
+													 CurrentMemoryContext,
+													 true));
+
+	/* Adjust lower bound to match the input */
+	ARR_LBOUND(newarray)[0] = lbs[0];
+
+	return newarray;
+}
+
+Datum
+array_sort(PG_FUNCTION_ARGS)
+{
+	ArrayType  *array = PG_GETARG_ARRAYTYPE_P(0);
+
+	PG_RETURN_ARRAYTYPE_P(array_sort_internal(array,
+											  false,
+											  false,
+											  fcinfo));
+}
+
+Datum
+array_sort_order(PG_FUNCTION_ARGS)
+{
+	ArrayType  *array = PG_GETARG_ARRAYTYPE_P(0);
+	bool		descending = PG_GETARG_BOOL(1);
+
+	PG_RETURN_ARRAYTYPE_P(array_sort_internal(array,
+											  descending,
+											  descending,
+											  fcinfo));
+}
+
+Datum
+array_sort_order_nulls_first(PG_FUNCTION_ARGS)
+{
+	ArrayType  *array = PG_GETARG_ARRAYTYPE_P(0);
+	bool		descending = PG_GETARG_BOOL(1);
+	bool		nulls_first = PG_GETARG_BOOL(2);
+
+	PG_RETURN_ARRAYTYPE_P(array_sort_internal(array,
+											  descending,
+											  nulls_first,
+											  fcinfo));
 }

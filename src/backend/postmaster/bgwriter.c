@@ -21,7 +21,7 @@
  * should be killed by SIGQUIT and then a recovery cycle started.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -38,6 +38,7 @@
 #include "postmaster/auxprocess.h"
 #include "postmaster/bgwriter.h"
 #include "postmaster/interrupt.h"
+#include "storage/aio_subsys.h"
 #include "storage/buf_internals.h"
 #include "storage/bufmgr.h"
 #include "storage/condition_variable.h"
@@ -84,7 +85,7 @@ static XLogRecPtr last_snapshot_lsn = InvalidXLogRecPtr;
  * basic execution environment, but not enabled signals yet.
  */
 void
-BackgroundWriterMain(char *startup_data, size_t startup_data_len)
+BackgroundWriterMain(const void *startup_data, size_t startup_data_len)
 {
 	sigjmp_buf	local_sigjmp_buf;
 	MemoryContext bgwriter_context;
@@ -168,6 +169,7 @@ BackgroundWriterMain(char *startup_data, size_t startup_data_len)
 		 */
 		LWLockReleaseAll();
 		ConditionVariableCancelSleep();
+		pgaio_error_cleanup();
 		UnlockBuffers();
 		ReleaseAuxProcessResources(false);
 		AtEOXact_Buffers(false);
@@ -226,7 +228,7 @@ BackgroundWriterMain(char *startup_data, size_t startup_data_len)
 		/* Clear any already-pending wakeups */
 		ResetLatch(MyLatch);
 
-		HandleMainLoopInterrupts();
+		ProcessMainLoopInterrupts();
 
 		/*
 		 * Do one cycle of dirty-buffer writing.

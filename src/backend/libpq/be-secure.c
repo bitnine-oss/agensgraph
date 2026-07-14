@@ -6,7 +6,7 @@
  *	  message integrity and endpoint authentication.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -30,6 +30,7 @@
 #include "libpq/libpq.h"
 #include "miscadmin.h"
 #include "tcop/tcopprot.h"
+#include "utils/injection_point.h"
 #include "utils/wait_event.h"
 
 char	   *ssl_library;
@@ -48,6 +49,7 @@ bool		ssl_loaded_verify_locations = false;
 
 /* GUC variable controlling SSL cipher list */
 char	   *SSLCipherSuites = NULL;
+char	   *SSLCipherList = NULL;
 
 /* GUC variable for default ECHD curve. */
 char	   *SSLECDHCurve;
@@ -128,6 +130,8 @@ secure_open_server(Port *port)
 		port->raw_buf_consumed = 0;
 	}
 	Assert(pq_buffer_remaining_data() == 0);
+
+	INJECTION_POINT("backend-ssl-startup", NULL);
 
 	r = be_tls_open_server(port);
 
@@ -298,7 +302,7 @@ secure_raw_read(Port *port, void *ptr, size_t len)
  *	Write data to a secure connection.
  */
 ssize_t
-secure_write(Port *port, void *ptr, size_t len)
+secure_write(Port *port, const void *ptr, size_t len)
 {
 	ssize_t		n;
 	int			waitfor;

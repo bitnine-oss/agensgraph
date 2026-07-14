@@ -2,6 +2,13 @@
 -- PARALLEL
 --
 
+-- Save parallel worker stats, used for comparison at the end
+select pg_stat_force_next_flush();
+select parallel_workers_to_launch as parallel_workers_to_launch_before,
+       parallel_workers_launched as parallel_workers_launched_before
+  from pg_stat_database
+  where datname = current_database() \gset
+
 create function sp_parallel_restricted(int) returns int as
   $$begin return $1; end$$ language plpgsql parallel restricted;
 
@@ -223,7 +230,7 @@ select count(*) from bmscantest where a>1;
 -- test accumulation of stats for parallel nodes
 reset enable_seqscan;
 alter table tenk2 set (parallel_workers = 0);
-explain (analyze, timing off, summary off, costs off)
+explain (analyze, timing off, summary off, costs off, buffers off)
    select count(*) from tenk1, tenk2 where tenk1.hundred > 1
         and tenk2.thousand=0;
 alter table tenk2 reset (parallel_workers);
@@ -235,7 +242,7 @@ $$
 declare ln text;
 begin
     for ln in
-        explain (analyze, timing off, summary off, costs off)
+        explain (analyze, timing off, summary off, costs off, buffers off)
           select * from
           (select ten from tenk1 where ten < 100 order by ten) ss
           right join (values (1),(2),(3)) v(x) on true
@@ -265,6 +272,21 @@ select  count(*) from tenk1, tenk2 where tenk1.unique1 = tenk2.unique1;
 
 reset enable_hashjoin;
 reset enable_nestloop;
+
+-- test parallel nestloop join path with materialization of the inner path
+alter table tenk2 set (parallel_workers = 0);
+explain (costs off)
+select * from tenk1 t1, tenk2 t2 where t1.two > t2.two;
+
+-- test that parallel nestloop join is not generated if the inner path is
+-- not parallel-safe
+explain (costs off)
+select * from tenk1 t1
+    left join lateral
+      (select t1.unique1 as x, * from tenk2 t2 order by 1) t2
+    on true
+where t1.two > t2.two;
+alter table tenk2 reset (parallel_workers);
 
 -- test gather merge
 set enable_hashagg = false;
@@ -428,7 +450,7 @@ explain (costs off)
 -- to increase the parallel query test coverage
 SAVEPOINT settings;
 SET LOCAL debug_parallel_query = 1;
-EXPLAIN (analyze, timing off, summary off, costs off) SELECT * FROM tenk1;
+EXPLAIN (analyze, timing off, summary off, costs off, buffers off) SELECT * FROM tenk1;
 ROLLBACK TO SAVEPOINT settings;
 
 -- provoke error in worker
@@ -496,3 +518,73 @@ SELECT 1 FROM tenk1_vw_sec
   WHERE (SELECT sum(f1) FROM int4_tbl WHERE f1 < unique1) < 100;
 
 rollback;
+
+-- test that a newly-created session role propagates to workers.
+begin;
+create role regress_parallel_worker;
+set session authorization regress_parallel_worker;
+select current_setting('session_authorization');
+set debug_parallel_query = 1;
+select current_setting('session_authorization');
+rollback;
+
+-- test that function option SET ROLE works in parallel workers.
+create role regress_parallel_worker;
+
+create function set_and_report_role() returns text as
+  $$ select current_setting('role') $$ language sql parallel safe
+  set role = regress_parallel_worker;
+
+create function set_role_and_error(int) returns int as
+  $$ select 1 / $1 $$ language sql parallel safe
+  set role = regress_parallel_worker;
+
+set debug_parallel_query = 0;
+select set_and_report_role();
+select set_role_and_error(0);
+set debug_parallel_query = 1;
+select set_and_report_role();
+select set_role_and_error(0);
+reset debug_parallel_query;
+
+drop function set_and_report_role();
+drop function set_role_and_error(int);
+drop role regress_parallel_worker;
+
+-- don't freeze in ParallelFinish while holding an LWLock
+BEGIN;
+
+CREATE FUNCTION my_cmp (int4, int4)
+RETURNS int LANGUAGE sql AS
+$$
+	SELECT
+		CASE WHEN $1 < $2 THEN -1
+				WHEN $1 > $2 THEN  1
+				ELSE 0
+		END;
+$$;
+
+CREATE TABLE parallel_hang (i int4);
+INSERT INTO parallel_hang
+	(SELECT * FROM generate_series(1, 400) gs);
+
+CREATE OPERATOR CLASS int4_custom_ops FOR TYPE int4 USING btree AS
+	OPERATOR 1 < (int4, int4), OPERATOR 2 <= (int4, int4),
+	OPERATOR 3 = (int4, int4), OPERATOR 4 >= (int4, int4),
+	OPERATOR 5 > (int4, int4), FUNCTION 1 my_cmp(int4, int4);
+
+CREATE UNIQUE INDEX parallel_hang_idx
+					ON parallel_hang
+					USING btree (i int4_custom_ops);
+
+SET debug_parallel_query = on;
+DELETE FROM parallel_hang WHERE 380 <= i AND i <= 420;
+
+ROLLBACK;
+
+-- Check parallel worker stats
+select pg_stat_force_next_flush();
+select parallel_workers_to_launch > :'parallel_workers_to_launch_before'  AS wrk_to_launch,
+       parallel_workers_launched > :'parallel_workers_launched_before' AS wrk_launched
+  from pg_stat_database
+  where datname = current_database();

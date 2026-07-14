@@ -9,7 +9,7 @@
  * Reading data from the input file or client and parsing it into Datums
  * is handled in copyfromparse.c.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -28,7 +28,7 @@
 #include "access/tableam.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
-#include "commands/copy.h"
+#include "commands/copyapi.h"
 #include "commands/copyfrom_internal.h"
 #include "commands/progress.h"
 #include "commands/trigger.h"
@@ -69,7 +69,10 @@
  */
 #define MAX_BUFFERED_BYTES		65535
 
-/* Trim the list of buffers back down to this number after flushing */
+/*
+ * Trim the list of buffers back down to this number after flushing.  This
+ * must be >= 2.
+ */
 #define MAX_PARTITION_BUFFERS	32
 
 /* Stores multi-insert data related to a single relation in CopyFrom. */
@@ -105,6 +108,145 @@ typedef struct CopyMultiInsertInfo
 static void ClosePipeFromProgram(CopyFromState cstate);
 
 /*
+ * Built-in format-specific routines. One-row callbacks are defined in
+ * copyfromparse.c.
+ */
+static void CopyFromTextLikeInFunc(CopyFromState cstate, Oid atttypid, FmgrInfo *finfo,
+								   Oid *typioparam);
+static void CopyFromTextLikeStart(CopyFromState cstate, TupleDesc tupDesc);
+static void CopyFromTextLikeEnd(CopyFromState cstate);
+static void CopyFromBinaryInFunc(CopyFromState cstate, Oid atttypid,
+								 FmgrInfo *finfo, Oid *typioparam);
+static void CopyFromBinaryStart(CopyFromState cstate, TupleDesc tupDesc);
+static void CopyFromBinaryEnd(CopyFromState cstate);
+
+
+/*
+ * COPY FROM routines for built-in formats.
+ *
+ * CSV and text formats share the same TextLike routines except for the
+ * one-row callback.
+ */
+
+/* text format */
+static const CopyFromRoutine CopyFromRoutineText = {
+	.CopyFromInFunc = CopyFromTextLikeInFunc,
+	.CopyFromStart = CopyFromTextLikeStart,
+	.CopyFromOneRow = CopyFromTextOneRow,
+	.CopyFromEnd = CopyFromTextLikeEnd,
+};
+
+/* CSV format */
+static const CopyFromRoutine CopyFromRoutineCSV = {
+	.CopyFromInFunc = CopyFromTextLikeInFunc,
+	.CopyFromStart = CopyFromTextLikeStart,
+	.CopyFromOneRow = CopyFromCSVOneRow,
+	.CopyFromEnd = CopyFromTextLikeEnd,
+};
+
+/* binary format */
+static const CopyFromRoutine CopyFromRoutineBinary = {
+	.CopyFromInFunc = CopyFromBinaryInFunc,
+	.CopyFromStart = CopyFromBinaryStart,
+	.CopyFromOneRow = CopyFromBinaryOneRow,
+	.CopyFromEnd = CopyFromBinaryEnd,
+};
+
+/* Return a COPY FROM routine for the given options */
+static const CopyFromRoutine *
+CopyFromGetRoutine(const CopyFormatOptions *opts)
+{
+	if (opts->csv_mode)
+		return &CopyFromRoutineCSV;
+	else if (opts->binary)
+		return &CopyFromRoutineBinary;
+
+	/* default is text */
+	return &CopyFromRoutineText;
+}
+
+/* Implementation of the start callback for text and CSV formats */
+static void
+CopyFromTextLikeStart(CopyFromState cstate, TupleDesc tupDesc)
+{
+	AttrNumber	attr_count;
+
+	/*
+	 * If encoding conversion is needed, we need another buffer to hold the
+	 * converted input data.  Otherwise, we can just point input_buf to the
+	 * same buffer as raw_buf.
+	 */
+	if (cstate->need_transcoding)
+	{
+		cstate->input_buf = (char *) palloc(INPUT_BUF_SIZE + 1);
+		cstate->input_buf_index = cstate->input_buf_len = 0;
+	}
+	else
+		cstate->input_buf = cstate->raw_buf;
+	cstate->input_reached_eof = false;
+
+	initStringInfo(&cstate->line_buf);
+
+	/*
+	 * Create workspace for CopyReadAttributes results; used by CSV and text
+	 * format.
+	 */
+	attr_count = list_length(cstate->attnumlist);
+	cstate->max_fields = attr_count;
+	cstate->raw_fields = (char **) palloc(attr_count * sizeof(char *));
+}
+
+/*
+ * Implementation of the infunc callback for text and CSV formats. Assign
+ * the input function data to the given *finfo.
+ */
+static void
+CopyFromTextLikeInFunc(CopyFromState cstate, Oid atttypid, FmgrInfo *finfo,
+					   Oid *typioparam)
+{
+	Oid			func_oid;
+
+	getTypeInputInfo(atttypid, &func_oid, typioparam);
+	fmgr_info(func_oid, finfo);
+}
+
+/* Implementation of the end callback for text and CSV formats */
+static void
+CopyFromTextLikeEnd(CopyFromState cstate)
+{
+	/* nothing to do */
+}
+
+/* Implementation of the start callback for binary format */
+static void
+CopyFromBinaryStart(CopyFromState cstate, TupleDesc tupDesc)
+{
+	/* Read and verify binary header */
+	ReceiveCopyBinaryHeader(cstate);
+}
+
+/*
+ * Implementation of the infunc callback for binary format. Assign
+ * the binary input function to the given *finfo.
+ */
+static void
+CopyFromBinaryInFunc(CopyFromState cstate, Oid atttypid,
+					 FmgrInfo *finfo, Oid *typioparam)
+{
+	Oid			func_oid;
+
+	getTypeBinaryInputInfo(atttypid, &func_oid, typioparam);
+	fmgr_info(func_oid, finfo);
+}
+
+/* Implementation of the end callback for binary format */
+static void
+CopyFromBinaryEnd(CopyFromState cstate)
+{
+	/* nothing to do */
+}
+
+/*
  * error context callback for COPY FROM
  *
  * The argument for the error context must be CopyFromState.
@@ -124,14 +266,14 @@ CopyFromErrorCallback(void *arg)
 	{
 		/* can't usefully display the data */
 		if (cstate->cur_attname)
-			errcontext("COPY %s, line %llu, column %s",
+			errcontext("COPY %s, line %" PRIu64 ", column %s",
 					   cstate->cur_relname,
-					   (unsigned long long) cstate->cur_lineno,
+					   cstate->cur_lineno,
 					   cstate->cur_attname);
 		else
-			errcontext("COPY %s, line %llu",
+			errcontext("COPY %s, line %" PRIu64,
 					   cstate->cur_relname,
-					   (unsigned long long) cstate->cur_lineno);
+					   cstate->cur_lineno);
 	}
 	else
 	{
@@ -141,9 +283,9 @@ CopyFromErrorCallback(void *arg)
 			char	   *attval;
 
 			attval = CopyLimitPrintoutLength(cstate->cur_attval);
-			errcontext("COPY %s, line %llu, column %s: \"%s\"",
+			errcontext("COPY %s, line %" PRIu64 ", column %s: \"%s\"",
 					   cstate->cur_relname,
-					   (unsigned long long) cstate->cur_lineno,
+					   cstate->cur_lineno,
 					   cstate->cur_attname,
 					   attval);
 			pfree(attval);
@@ -151,9 +293,9 @@ CopyFromErrorCallback(void *arg)
 		else if (cstate->cur_attname)
 		{
 			/* error is relevant to a particular column, value is NULL */
-			errcontext("COPY %s, line %llu, column %s: null input",
+			errcontext("COPY %s, line %" PRIu64 ", column %s: null input",
 					   cstate->cur_relname,
-					   (unsigned long long) cstate->cur_lineno,
+					   cstate->cur_lineno,
 					   cstate->cur_attname);
 		}
 		else
@@ -168,16 +310,16 @@ CopyFromErrorCallback(void *arg)
 				char	   *lineval;
 
 				lineval = CopyLimitPrintoutLength(cstate->line_buf.data);
-				errcontext("COPY %s, line %llu: \"%s\"",
+				errcontext("COPY %s, line %" PRIu64 ": \"%s\"",
 						   cstate->cur_relname,
-						   (unsigned long long) cstate->cur_lineno, lineval);
+						   cstate->cur_lineno, lineval);
 				pfree(lineval);
 			}
 			else
 			{
-				errcontext("COPY %s, line %llu",
+				errcontext("COPY %s, line %" PRIu64,
 						   cstate->cur_relname,
-						   (unsigned long long) cstate->cur_lineno);
+						   cstate->cur_lineno);
 			}
 		}
 	}
@@ -551,6 +693,13 @@ CopyMultiInsertInfoFlush(CopyMultiInsertInfo *miinfo, ResultRelInfo *curr_rri,
 		 */
 		if (buffer->resultRelInfo == curr_rri)
 		{
+			/*
+			 * The code below would misbehave if we were trying to reduce the
+			 * list to less than two items.
+			 */
+			StaticAssertDecl(MAX_PARTITION_BUFFERS >= 2,
+							 "MAX_PARTITION_BUFFERS must be >= 2");
+
 			miinfo->multiInsertBuffers = list_delete_first(miinfo->multiInsertBuffers);
 			miinfo->multiInsertBuffers = lappend(miinfo->multiInsertBuffers, buffer);
 			buffer = (CopyMultiInsertBuffer *) linitial(miinfo->multiInsertBuffers);
@@ -588,10 +737,12 @@ CopyMultiInsertInfoNextFreeSlot(CopyMultiInsertInfo *miinfo,
 								ResultRelInfo *rri)
 {
 	CopyMultiInsertBuffer *buffer = rri->ri_CopyMultiInsertBuffer;
-	int			nused = buffer->nused;
+	int			nused;
 
 	Assert(buffer != NULL);
-	Assert(nused < MAX_BUFFERED_TUPLES);
+	Assert(buffer->nused < MAX_BUFFERED_TUPLES);
+
+	nused = buffer->nused;
 
 	if (buffer->slots[nused] == NULL)
 		buffer->slots[nused] = table_slot_create(rri->ri_RelationDesc, NULL);
@@ -646,7 +797,6 @@ CopyFrom(CopyFromState cstate)
 	CopyMultiInsertInfo multiInsertInfo = {0};	/* pacify compiler */
 	int64		processed = 0;
 	int64		excluded = 0;
-	int64		skipped = 0;
 	bool		has_before_insert_row_trig;
 	bool		has_instead_insert_row_trig;
 	bool		leafpart_use_multi_insert = false;
@@ -730,6 +880,12 @@ CopyFrom(CopyFromState cstate)
 					 errmsg("cannot perform COPY FREEZE on a partitioned table")));
 		}
 
+		/* There's currently no support for COPY FREEZE on foreign tables. */
+		if (cstate->rel->rd_rel->relkind == RELKIND_FOREIGN_TABLE)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("cannot perform COPY FREEZE on a foreign table")));
+
 		/*
 		 * Tolerate one registration for the benefit of FirstXactSnapshot.
 		 * Scan-bearing queries generally create at least two registrations,
@@ -758,7 +914,8 @@ CopyFrom(CopyFromState cstate)
 	 * index-entry-making machinery.  (There used to be a huge amount of code
 	 * here that basically duplicated execUtils.c ...)
 	 */
-	ExecInitRangeTable(estate, cstate->range_table, cstate->rteperminfos);
+	ExecInitRangeTable(estate, cstate->range_table, cstate->rteperminfos,
+					   bms_make_singleton(1));
 	resultRelInfo = target_resultRelInfo = makeNode(ResultRelInfo);
 	ExecInitResultRelation(estate, resultRelInfo, 1);
 
@@ -949,7 +1106,7 @@ CopyFrom(CopyFromState cstate)
 
 	/* Set up callback to identify error line number */
 	errcallback.callback = CopyFromErrorCallback;
-	errcallback.arg = (void *) cstate;
+	errcallback.arg = cstate;
 	errcallback.previous = error_context_stack;
 	error_context_stack = &errcallback;
 
@@ -993,26 +1150,29 @@ CopyFrom(CopyFromState cstate)
 		if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
 			break;
 
-		if (cstate->opts.on_error != COPY_ON_ERROR_STOP &&
+		if (cstate->opts.on_error == COPY_ON_ERROR_IGNORE &&
 			cstate->escontext->error_occurred)
 		{
 			/*
-			 * Soft error occurred, skip this tuple and deal with error
-			 * information according to ON_ERROR.
+			 * Soft error occurred, skip this tuple and just make
+			 * ErrorSaveContext ready for the next NextCopyFrom. Since we
+			 * don't set details_wanted and error_data is not to be filled,
+			 * just resetting error_occurred is enough.
 			 */
-			if (cstate->opts.on_error == COPY_ON_ERROR_IGNORE)
-
-				/*
-				 * Just make ErrorSaveContext ready for the next NextCopyFrom.
-				 * Since we don't set details_wanted and error_data is not to
-				 * be filled, just resetting error_occurred is enough.
-				 */
-				cstate->escontext->error_occurred = false;
+			cstate->escontext->error_occurred = false;
 
 			/* Report that this tuple was skipped by the ON_ERROR clause */
 			pgstat_progress_update_param(PROGRESS_COPY_TUPLES_SKIPPED,
-										 ++skipped);
+										 cstate->num_errors);
 
+			if (cstate->opts.reject_limit > 0 &&
+				cstate->num_errors > cstate->opts.reject_limit)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+						 errmsg("skipped more than REJECT_LIMIT (%" PRId64 ") rows due to data type incompatibility",
+								cstate->opts.reject_limit)));
+
+			/* Repeat NextCopyFrom() until no soft error occurs */
 			continue;
 		}
 
@@ -1325,12 +1485,13 @@ CopyFrom(CopyFromState cstate)
 	error_context_stack = errcallback.previous;
 
 	if (cstate->opts.on_error != COPY_ON_ERROR_STOP &&
-		cstate->num_errors > 0)
+		cstate->num_errors > 0 &&
+		cstate->opts.log_verbosity >= COPY_LOG_VERBOSITY_DEFAULT)
 		ereport(NOTICE,
-				errmsg_plural("%llu row was skipped due to data type incompatibility",
-							  "%llu rows were skipped due to data type incompatibility",
-							  (unsigned long long) cstate->num_errors,
-							  (unsigned long long) cstate->num_errors));
+				errmsg_plural("%" PRIu64 " row was skipped due to data type incompatibility",
+							  "%" PRIu64 " rows were skipped due to data type incompatibility",
+							  cstate->num_errors,
+							  cstate->num_errors));
 
 	if (bistate != NULL)
 		FreeBulkInsertState(bistate);
@@ -1398,7 +1559,6 @@ BeginCopyFrom(ParseState *pstate,
 				num_defaults;
 	FmgrInfo   *in_functions;
 	Oid		   *typioparams;
-	Oid			in_func_oid;
 	int		   *defmap;
 	ExprState **defexprs;
 	MemoryContext oldcontext;
@@ -1429,6 +1589,9 @@ BeginCopyFrom(ParseState *pstate,
 
 	/* Extract options from the statement node tree */
 	ProcessCopyOptions(pstate, &cstate->opts, true /* is_from */ , options);
+
+	/* Set the format routine */
+	cstate->routine = CopyFromGetRoutine(&cstate->opts);
 
 	/* Process the target relation */
 	cstate->rel = rel;
@@ -1461,8 +1624,9 @@ BeginCopyFrom(ParseState *pstate,
 			if (!list_member_int(cstate->attnumlist, attnum))
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-						 errmsg("FORCE_NOT_NULL column \"%s\" not referenced by COPY",
-								NameStr(attr->attname))));
+				/*- translator: first %s is the name of a COPY option, e.g. FORCE_NOT_NULL */
+						 errmsg("%s column \"%s\" not referenced by COPY",
+								"FORCE_NOT_NULL", NameStr(attr->attname))));
 			cstate->opts.force_notnull_flags[attnum - 1] = true;
 		}
 	}
@@ -1503,8 +1667,9 @@ BeginCopyFrom(ParseState *pstate,
 			if (!list_member_int(cstate->attnumlist, attnum))
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-						 errmsg("FORCE_NULL column \"%s\" not referenced by COPY",
-								NameStr(attr->attname))));
+				/*- translator: first %s is the name of a COPY option, e.g. FORCE_NOT_NULL */
+						 errmsg("%s column \"%s\" not referenced by COPY",
+								"FORCE_NULL", NameStr(attr->attname))));
 			cstate->opts.force_null_flags[attnum - 1] = true;
 		}
 	}
@@ -1583,25 +1748,6 @@ BeginCopyFrom(ParseState *pstate,
 	cstate->raw_buf_index = cstate->raw_buf_len = 0;
 	cstate->raw_reached_eof = false;
 
-	if (!cstate->opts.binary)
-	{
-		/*
-		 * If encoding conversion is needed, we need another buffer to hold
-		 * the converted input data.  Otherwise, we can just point input_buf
-		 * to the same buffer as raw_buf.
-		 */
-		if (cstate->need_transcoding)
-		{
-			cstate->input_buf = (char *) palloc(INPUT_BUF_SIZE + 1);
-			cstate->input_buf_index = cstate->input_buf_len = 0;
-		}
-		else
-			cstate->input_buf = cstate->raw_buf;
-		cstate->input_reached_eof = false;
-
-		initStringInfo(&cstate->line_buf);
-	}
-
 	initStringInfo(&cstate->attribute_buf);
 
 	/* Assign range table and rteperminfos, we'll need them in CopyFrom. */
@@ -1634,13 +1780,9 @@ BeginCopyFrom(ParseState *pstate,
 			continue;
 
 		/* Fetch the input function and typioparam info */
-		if (cstate->opts.binary)
-			getTypeBinaryInputInfo(att->atttypid,
-								   &in_func_oid, &typioparams[attnum - 1]);
-		else
-			getTypeInputInfo(att->atttypid,
-							 &in_func_oid, &typioparams[attnum - 1]);
-		fmgr_info(in_func_oid, &in_functions[attnum - 1]);
+		cstate->routine->CopyFromInFunc(cstate, att->atttypid,
+										&in_functions[attnum - 1],
+										&typioparams[attnum - 1]);
 
 		/* Get default info if available */
 		defexprs[attnum - 1] = NULL;
@@ -1775,20 +1917,7 @@ BeginCopyFrom(ParseState *pstate,
 
 	pgstat_progress_update_multi_param(3, progress_cols, progress_vals);
 
-	if (cstate->opts.binary)
-	{
-		/* Read and verify binary header */
-		ReceiveCopyBinaryHeader(cstate);
-	}
-
-	/* create workspace for CopyReadAttributes results */
-	if (!cstate->opts.binary)
-	{
-		AttrNumber	attr_count = list_length(cstate->attnumlist);
-
-		cstate->max_fields = attr_count;
-		cstate->raw_fields = (char **) palloc(attr_count * sizeof(char *));
-	}
+	cstate->routine->CopyFromStart(cstate, tupDesc);
 
 	MemoryContextSwitchTo(oldcontext);
 
@@ -1801,6 +1930,9 @@ BeginCopyFrom(ParseState *pstate,
 void
 EndCopyFrom(CopyFromState cstate)
 {
+	/* Invoke the end callback */
+	cstate->routine->CopyFromEnd(cstate);
+
 	/* No COPY FROM related resources except memory. */
 	if (cstate->is_program)
 	{

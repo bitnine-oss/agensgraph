@@ -2,7 +2,7 @@
  * Copyright (c) 1983, 1995, 1996 Eric P. Allman
  * Copyright (c) 1988, 1993
  *	The Regents of the University of California.  All rights reserved.
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -338,13 +338,22 @@ static void leading_pad(int zpad, int signvalue, int *padlen,
 static void trailing_pad(int padlen, PrintfTarget *target);
 
 /*
- * If strchrnul exists (it's a glibc-ism), it's a good bit faster than the
- * equivalent manual loop.  If it doesn't exist, provide a replacement.
+ * If strchrnul exists (it's a glibc-ism, but since adopted by some other
+ * platforms), it's a good bit faster than the equivalent manual loop.
+ * Use it if possible, and if it doesn't exist, use this replacement.
  *
  * Note: glibc declares this as returning "char *", but that would require
  * casting away const internally, so we don't follow that detail.
+ *
+ * Note: macOS has this too as of Sequoia 15.4, but it's hidden behind
+ * a deployment-target check that causes compile errors if the deployment
+ * target isn't high enough.  So !HAVE_DECL_STRCHRNUL may mean "yes it's
+ * declared, but it doesn't compile".  To avoid failing in that scenario,
+ * use a macro to avoid matching <string.h>'s name.
  */
-#ifndef HAVE_STRCHRNUL
+#if !HAVE_DECL_STRCHRNUL
+
+#define strchrnul pg_strchrnul
 
 static inline const char *
 strchrnul(const char *s, int c)
@@ -354,19 +363,7 @@ strchrnul(const char *s, int c)
 	return s;
 }
 
-#else
-
-/*
- * glibc's <string.h> declares strchrnul only if _GNU_SOURCE is defined.
- * While we typically use that on glibc platforms, configure will set
- * HAVE_STRCHRNUL whether it's used or not.  Fill in the missing declaration
- * so that this file will compile cleanly with or without _GNU_SOURCE.
- */
-#ifndef _GNU_SOURCE
-extern char *strchrnul(const char *s, int c);
-#endif
-
-#endif							/* HAVE_STRCHRNUL */
+#endif							/* !HAVE_DECL_STRCHRNUL */
 
 
 /*
@@ -560,6 +557,28 @@ nextch2:
 					fmtpos = accum;
 				accum = 0;
 				goto nextch2;
+#ifdef WIN32
+			case 'I':
+				/* Windows PRI*{32,64,PTR} size */
+				if (format[0] == '3' && format[1] == '2')
+					format += 2;
+				else if (format[0] == '6' && format[1] == '4')
+				{
+					format += 2;
+					longlongflag = 1;
+				}
+				else
+				{
+#if SIZEOF_VOID_P == SIZEOF_LONG
+					longflag = 1;
+#elif SIZEOF_VOID_P == SIZEOF_LONG_LONG
+					longlongflag = 1;
+#else
+#error "cannot find integer type of the same size as intptr_t"
+#endif
+				}
+				goto nextch2;
+#endif
 			case 'l':
 				if (longflag)
 					longlongflag = 1;
@@ -567,16 +586,12 @@ nextch2:
 					longflag = 1;
 				goto nextch2;
 			case 'z':
-#if SIZEOF_SIZE_T == 8
-#ifdef HAVE_LONG_INT_64
+#if SIZEOF_SIZE_T == SIZEOF_LONG
 				longflag = 1;
-#elif defined(HAVE_LONG_LONG_INT_64)
+#elif SIZEOF_SIZE_T == SIZEOF_LONG_LONG
 				longlongflag = 1;
 #else
-#error "Don't know how to print 64bit integers"
-#endif
-#else
-				/* assume size_t is same size as int */
+#error "cannot find integer type of the same size as size_t"
 #endif
 				goto nextch2;
 			case 'h':
@@ -827,6 +842,28 @@ nextch1:
 					fmtpos = accum;
 				accum = 0;
 				goto nextch1;
+#ifdef WIN32
+			case 'I':
+				/* Windows PRI*{32,64,PTR} size */
+				if (format[0] == '3' && format[1] == '2')
+					format += 2;
+				else if (format[0] == '6' && format[1] == '4')
+				{
+					format += 2;
+					longlongflag = 1;
+				}
+				else
+				{
+#if SIZEOF_VOID_P == SIZEOF_LONG
+					longflag = 1;
+#elif SIZEOF_VOID_P == SIZEOF_LONG_LONG
+					longlongflag = 1;
+#else
+#error "cannot find integer type of the same size as intptr_t"
+#endif
+				}
+				goto nextch1;
+#endif
 			case 'l':
 				if (longflag)
 					longlongflag = 1;
@@ -834,16 +871,12 @@ nextch1:
 					longflag = 1;
 				goto nextch1;
 			case 'z':
-#if SIZEOF_SIZE_T == 8
-#ifdef HAVE_LONG_INT_64
+#if SIZEOF_SIZE_T == SIZEOF_LONG
 				longflag = 1;
-#elif defined(HAVE_LONG_LONG_INT_64)
+#elif SIZEOF_SIZE_T == SIZEOF_LONG_LONG
 				longlongflag = 1;
 #else
-#error "Don't know how to print 64bit integers"
-#endif
-#else
-				/* assume size_t is same size as int */
+#error "cannot find integer type of the same size as size_t"
 #endif
 				goto nextch1;
 			case 'h':

@@ -3,7 +3,7 @@
  * pgoutput.h
  *		Logical Replication output plugin
  *
- * Copyright (c) 2015-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2015-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/include/replication/pgoutput.h
@@ -20,6 +20,7 @@ typedef struct PGOutputData
 	MemoryContext context;		/* private memory context for transient
 								 * allocations */
 	MemoryContext cachectx;		/* private memory context for cache data */
+	MemoryContext pubctx;		/* private memory context for publication data */
 
 	bool		in_streaming;	/* true if we are streaming a chunk of
 								 * transaction */

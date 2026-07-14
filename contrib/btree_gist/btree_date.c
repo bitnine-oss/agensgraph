@@ -5,8 +5,9 @@
 
 #include "btree_gist.h"
 #include "btree_utils_num.h"
-#include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
 #include "utils/date.h"
+#include "utils/sortsupport.h"
 
 typedef struct
 {
@@ -14,9 +15,7 @@ typedef struct
 	DateADT		upper;
 } dateKEY;
 
-/*
-** date ops
-*/
+/* GiST support functions */
 PG_FUNCTION_INFO_V1(gbt_date_compress);
 PG_FUNCTION_INFO_V1(gbt_date_fetch);
 PG_FUNCTION_INFO_V1(gbt_date_union);
@@ -25,6 +24,7 @@ PG_FUNCTION_INFO_V1(gbt_date_consistent);
 PG_FUNCTION_INFO_V1(gbt_date_distance);
 PG_FUNCTION_INFO_V1(gbt_date_penalty);
 PG_FUNCTION_INFO_V1(gbt_date_same);
+PG_FUNCTION_INFO_V1(gbt_date_sortsupport);
 
 static bool
 gbt_dategt(const void *a, const void *b, FmgrInfo *flinfo)
@@ -128,10 +128,8 @@ date_dist(PG_FUNCTION_ARGS)
 
 
 /**************************************************
- * date ops
+ * GiST support functions
  **************************************************/
-
-
 
 Datum
 gbt_date_compress(PG_FUNCTION_ARGS)
@@ -167,11 +165,10 @@ gbt_date_consistent(PG_FUNCTION_ARGS)
 	key.lower = (GBT_NUMKEY *) &kkk->lower;
 	key.upper = (GBT_NUMKEY *) &kkk->upper;
 
-	PG_RETURN_BOOL(gbt_num_consistent(&key, (void *) &query, &strategy,
+	PG_RETURN_BOOL(gbt_num_consistent(&key, &query, &strategy,
 									  GIST_LEAF(entry), &tinfo,
 									  fcinfo->flinfo));
 }
-
 
 Datum
 gbt_date_distance(PG_FUNCTION_ARGS)
@@ -186,10 +183,9 @@ gbt_date_distance(PG_FUNCTION_ARGS)
 	key.lower = (GBT_NUMKEY *) &kkk->lower;
 	key.upper = (GBT_NUMKEY *) &kkk->upper;
 
-	PG_RETURN_FLOAT8(gbt_num_distance(&key, (void *) &query, GIST_LEAF(entry),
+	PG_RETURN_FLOAT8(gbt_num_distance(&key, &query, GIST_LEAF(entry),
 									  &tinfo, fcinfo->flinfo));
 }
-
 
 Datum
 gbt_date_union(PG_FUNCTION_ARGS)
@@ -198,9 +194,8 @@ gbt_date_union(PG_FUNCTION_ARGS)
 	void	   *out = palloc(sizeof(dateKEY));
 
 	*(int *) PG_GETARG_POINTER(1) = sizeof(dateKEY);
-	PG_RETURN_POINTER(gbt_num_union((void *) out, entryvec, &tinfo, fcinfo->flinfo));
+	PG_RETURN_POINTER(gbt_num_union(out, entryvec, &tinfo, fcinfo->flinfo));
 }
-
 
 Datum
 gbt_date_penalty(PG_FUNCTION_ARGS)
@@ -238,7 +233,6 @@ gbt_date_penalty(PG_FUNCTION_ARGS)
 	PG_RETURN_POINTER(result);
 }
 
-
 Datum
 gbt_date_picksplit(PG_FUNCTION_ARGS)
 {
@@ -256,4 +250,27 @@ gbt_date_same(PG_FUNCTION_ARGS)
 
 	*result = gbt_num_same((void *) b1, (void *) b2, &tinfo, fcinfo->flinfo);
 	PG_RETURN_POINTER(result);
+}
+
+static int
+gbt_date_ssup_cmp(Datum x, Datum y, SortSupport ssup)
+{
+	dateKEY    *akey = (dateKEY *) DatumGetPointer(x);
+	dateKEY    *bkey = (dateKEY *) DatumGetPointer(y);
+
+	/* for leaf items we expect lower == upper, so only compare lower */
+	return DatumGetInt32(DirectFunctionCall2(date_cmp,
+											 DateADTGetDatum(akey->lower),
+											 DateADTGetDatum(bkey->lower)));
+}
+
+Datum
+gbt_date_sortsupport(PG_FUNCTION_ARGS)
+{
+	SortSupport ssup = (SortSupport) PG_GETARG_POINTER(0);
+
+	ssup->comparator = gbt_date_ssup_cmp;
+	ssup->ssup_extra = NULL;
+
+	PG_RETURN_VOID();
 }

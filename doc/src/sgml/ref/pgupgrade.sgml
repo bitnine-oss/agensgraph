@@ -67,7 +67,7 @@ PostgreSQL documentation
  </para>
 
   <para>
-   pg_upgrade supports upgrades from 9.2.X and later to the current
+   <application>pg_upgrade</application> supports upgrades from 9.2.X and later to the current
    major release of <productname>PostgreSQL</productname>, including snapshot and beta releases.
   </para>
  </refsect1>
@@ -118,7 +118,7 @@ PostgreSQL documentation
      <varlistentry>
       <term><option>-j <replaceable class="parameter">njobs</replaceable></option></term>
       <term><option>--jobs=<replaceable class="parameter">njobs</replaceable></option></term>
-      <listitem><para>number of simultaneous processes or threads to use
+      <listitem><para>number of simultaneous connections and processes/threads to use
       </para></listitem>
      </varlistentry>
 
@@ -235,7 +235,8 @@ PostgreSQL documentation
       <listitem>
        <para>
         Copy files to the new cluster.  This is the default.  (See also
-        <option>--link</option> and <option>--clone</option>.)
+        <option>--link</option>, <option>--clone</option>,
+        <option>--copy-file-range</option>, and <option>--swap</option>.)
        </para>
       </listitem>
      </varlistentry>
@@ -249,6 +250,94 @@ PostgreSQL documentation
         <option>--clone</option>, sharing physical disk blocks, while on others
         it may still copy blocks, but do so via an optimized path.  At present,
         it is supported on Linux and FreeBSD.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--no-statistics</option></term>
+      <listitem>
+       <para>
+        Do not restore statistics from the old cluster into the new cluster.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--set-char-signedness=</option><replaceable>option</replaceable></term>
+      <listitem>
+       <para>
+        Manually set the default char signedness of new clusters. Possible values
+        are <literal>signed</literal> and <literal>unsigned</literal>.
+       </para>
+       <para>
+        In the C language, the default signedness of the <type>char</type> type
+        (when not explicitly specified) varies across platforms. For example,
+        <type>char</type> defaults to <type>signed char</type> on x86 CPUs but
+        to <type>unsigned char</type> on ARM CPUs.
+       </para>
+       <para>
+        Starting from <productname>PostgreSQL</productname> 18, database clusters
+        maintain their own default char signedness setting, which can be used to
+        ensure consistent behavior across platforms with different default char
+        signedness. By default, <application>pg_upgrade</application> preserves
+        the char signedness setting when upgrading from an existing cluster.
+        However, when upgrading from <productname>PostgreSQL</productname> 17 or
+        earlier, <application>pg_upgrade</application> adopts the char signedness
+        of the platform on which it was built.
+       </para>
+       <para>
+        This option allows you to explicitly set the default char signedness for
+        the new cluster, overriding any inherited values. There are two specific
+        scenarios where this option is relevant:
+        <itemizedlist>
+         <listitem>
+          <para>
+           If you are planning to migrate to a different platform after the upgrade,
+           you should not use this option. The default behavior is right in this case.
+           Instead, perform the upgrade on the original platform without this flag,
+           and then migrate the cluster afterward. This is the recommended and safest
+           approach.
+          </para>
+         </listitem>
+         <listitem>
+          <para>
+           If you have already migrated the cluster to a platform with different
+           char signedness (for example, from an x86-based system to an ARM-based
+           system), you should use this option to specify the signedness matching
+           the original platform's default char signedness. Additionally, it's
+           essential not to modify any data files between migrating data files and
+           running <command>pg_upgrade</command>. <command>pg_upgrade</command>
+           should be the first operation that starts the cluster on the new platform.
+          </para>
+         </listitem>
+        </itemizedlist>
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--swap</option></term>
+      <listitem>
+       <para>
+        Move the data directories from the old cluster to the new cluster.
+        Then, replace the catalog files with those generated for the new
+        cluster.  This mode can outperform <option>--link</option>,
+        <option>--clone</option>, <option>--copy</option>, and
+        <option>--copy-file-range</option>, especially on clusters with many
+        relations.
+       </para>
+       <para>
+        However, this mode creates many garbage files in the old cluster, which
+        can prolong the file synchronization step if
+        <option>--sync-method=syncfs</option> is used.  Therefore, it is
+        recommended to use <option>--sync-method=fsync</option> with
+        <option>--swap</option>.
+       </para>
+       <para>
+        Additionally, once the file transfer step begins, the old cluster will
+        be destructively modified and therefore will no longer be safe to
+        start.  See <xref linkend="pgupgrade-step-revert"/> for details.
        </para>
       </listitem>
      </varlistentry>
@@ -294,6 +383,14 @@ PostgreSQL documentation
    These are the steps to perform an upgrade
    with <application>pg_upgrade</application>:
   </para>
+
+   <note>
+    <para>
+     The steps to upgrade <glossterm linkend="glossary-logical-replication-cluster">logical replication clusters</glossterm>
+     are not covered here;
+     refer to <xref linkend="logical-replication-upgrade"/> for details.
+    </para>
+   </note>
 
   <procedure>
    <step performance="optional">
@@ -397,129 +494,6 @@ make prefix=/usr/local/pgsql.new install
    </step>
 
    <step>
-    <title>Prepare for publisher upgrades</title>
-
-    <para>
-     <application>pg_upgrade</application> attempts to migrate logical
-     slots. This helps avoid the need for manually defining the same
-     logical slots on the new publisher. Migration of logical slots is
-     only supported when the old cluster is version 17.0 or later.
-     Logical slots on clusters before version 17.0 will silently be
-     ignored.
-    </para>
-
-    <para>
-     Before you start upgrading the publisher cluster, ensure that the
-     subscription is temporarily disabled, by executing
-     <link linkend="sql-altersubscription"><command>ALTER SUBSCRIPTION ... DISABLE</command></link>.
-     Re-enable the subscription after the upgrade.
-    </para>
-
-    <para>
-     There are some prerequisites for <application>pg_upgrade</application> to
-     be able to upgrade the logical slots. If these are not met an error
-     will be reported.
-    </para>
-
-    <itemizedlist>
-     <listitem>
-      <para>
-       The new cluster must have
-       <link linkend="guc-wal-level"><varname>wal_level</varname></link> as
-       <literal>logical</literal>.
-      </para>
-     </listitem>
-     <listitem>
-      <para>
-       The new cluster must have
-       <link linkend="guc-max-replication-slots"><varname>max_replication_slots</varname></link>
-       configured to a value greater than or equal to the number of slots
-       present in the old cluster.
-      </para>
-     </listitem>
-     <listitem>
-      <para>
-       The output plugins referenced by the slots on the old cluster must be
-       installed in the new PostgreSQL executable directory.
-      </para>
-     </listitem>
-     <listitem>
-      <para>
-       The old cluster has replicated all the transactions and logical decoding
-       messages to subscribers.
-      </para>
-     </listitem>
-     <listitem>
-      <para>
-       All slots on the old cluster must be usable, i.e., there are no slots
-       whose
-       <link linkend="view-pg-replication-slots">pg_replication_slots</link>.<structfield>conflicting</structfield>
-       is not <literal>true</literal>.
-      </para>
-     </listitem>
-     <listitem>
-      <para>
-       The new cluster must not have permanent logical slots, i.e.,
-       there must be no slots where
-       <link linkend="view-pg-replication-slots">pg_replication_slots</link>.<structfield>temporary</structfield>
-       is <literal>false</literal>.
-      </para>
-     </listitem>
-    </itemizedlist>
-
-   </step>
-
-   <step>
-    <title>Prepare for subscriber upgrades</title>
-
-    <para>
-     Setup the <link linkend="logical-replication-config-subscriber">
-     subscriber configurations</link> in the new subscriber.
-     <application>pg_upgrade</application> attempts to migrate subscription
-     dependencies which includes the subscription's table information present in
-     <link linkend="catalog-pg-subscription-rel">pg_subscription_rel</link>
-     system catalog and also the subscription's replication origin. This allows
-     logical replication on the new subscriber to continue from where the
-     old subscriber was up to. Migration of subscription dependencies is only
-     supported when the old cluster is version 17.0 or later. Subscription
-     dependencies on clusters before version 17.0 will silently be ignored.
-    </para>
-
-    <para>
-     There are some prerequisites for <application>pg_upgrade</application> to
-     be able to upgrade the subscriptions. If these are not met an error
-     will be reported.
-    </para>
-
-    <itemizedlist>
-     <listitem>
-      <para>
-       All the subscription tables in the old subscriber should be in state
-       <literal>i</literal> (initialize) or <literal>r</literal> (ready). This
-       can be verified by checking <link linkend="catalog-pg-subscription-rel">pg_subscription_rel</link>.<structfield>srsubstate</structfield>.
-      </para>
-     </listitem>
-     <listitem>
-      <para>
-       The replication origin entry corresponding to each of the subscriptions
-       should exist in the old cluster. This can be found by checking
-       <link linkend="catalog-pg-subscription">pg_subscription</link> and
-       <link linkend="catalog-pg-replication-origin">pg_replication_origin</link>
-       system tables.
-      </para>
-     </listitem>
-     <listitem>
-      <para>
-       The new cluster must have
-       <link linkend="guc-max-replication-slots"><varname>max_replication_slots</varname></link>
-       configured to a value greater than or equal to the number of
-       subscriptions present in the old cluster.
-      </para>
-     </listitem>
-    </itemizedlist>
-   </step>
-
-   <step>
     <title>Stop both servers</title>
 
     <para>
@@ -566,7 +540,7 @@ NET STOP postgresql-&majorversion;
      Always run the <application>pg_upgrade</application> binary of the new server, not the old one.
      <application>pg_upgrade</application> requires the specification of the old and new cluster's
      data and executable (<filename>bin</filename>) directories. You can also specify
-     user and port values, and whether you want the data files linked or cloned
+     user and port values, and whether you want the data files linked, cloned, or swapped
      instead of the default copy behavior.
     </para>
 
@@ -583,15 +557,18 @@ NET STOP postgresql-&majorversion;
      is started.  Clone mode also requires that the old and new data
      directories be in the same file system.  This mode is only available
      on certain operating systems and file systems.
+     Swap mode may be the fastest if there are many relations, but you will not
+     be able to access your old cluster once the file transfer step begins.
+     Swap mode also requires that the old and new cluster data directories be
+     in the same file system.
     </para>
 
     <para>
-     The <option>--jobs</option> option allows multiple CPU cores to be used
-     for copying/linking of files and to dump and restore database schemas
-     in parallel;  a good place to start is the maximum of the number of
-     CPU cores and tablespaces.  This option can dramatically reduce the
-     time to upgrade a multi-database server running on a multiprocessor
-     machine.
+     Setting <option>--jobs</option> to 2 or higher allows pg_upgrade to
+     process multiple databases and tablespaces in parallel.  A good starting
+     point is the number of CPU cores on the machine.  This option can
+     substantially reduce the upgrade time for multi-database and
+     multi-tablespace servers.
     </para>
 
     <para>
@@ -612,8 +589,9 @@ pg_upgrade.exe
      to perform only the checks, even if the old server is still
      running. <command>pg_upgrade --check</command> will also outline any
      manual adjustments you will need to make after the upgrade.  If you
-     are going to be using link or clone mode, you should use the option
-     <option>--link</option> or <option>--clone</option> with
+     are going to be using link, clone, copy-file-range, or swap mode, you
+     should use the option <option>--link</option>, <option>--clone</option>,
+     <option>--copy-file-range</option>, or <option>--swap</option> with
      <option>--check</option> to enable mode-specific checks.
      <command>pg_upgrade</command> requires write permission in the current directory.
     </para>
@@ -845,17 +823,29 @@ psql --username=postgres --file=script.sql postgres
     <title>Statistics</title>
 
     <para>
-     Because optimizer statistics are not transferred by <command>pg_upgrade</command>, you will
-     be instructed to run a command to regenerate that information at the end
-     of the upgrade.  You might need to set connection parameters to
-     match your new cluster.
+     Unless the <option>--no-statistics</option> option is specified,
+     <command>pg_upgrade</command> will transfer most optimizer statistics
+     from the old cluster to the new cluster.  However, some statistics may
+     not be transferred, such as those created explicitly with <xref
+     linkend="sql-createstatistics"/> or custom statistics added by an
+     extension.
     </para>
 
     <para>
-     Using <command>vacuumdb --all --analyze-only</command> can efficiently
-     generate such statistics, and the use of <option>--jobs</option>
-     can speed it up.  Option <option>--analyze-in-stages</option>
-     can be used to generate minimal statistics quickly.
+     Because not all statistics are transferred by
+     <command>pg_upgrade</command>, you will be instructed to run commands to
+     regenerate that information at the end of the upgrade.  You might need to
+     set connection parameters to match your new cluster.
+    </para>
+
+    <para>
+     First, use
+     <command>vacuumdb --all --analyze-in-stages --missing-stats-only</command>
+     to quickly generate minimal optimizer statistics for relations without
+     any.  Then, use <command>vacuumdb --all --analyze-only</command> to ensure
+     all relations have updated cumulative statistics for triggering vacuum and
+     analyze.  For both commands, the use of <option>--jobs</option> can speed
+     it up.
      If <varname>vacuum_cost_delay</varname> is set to a non-zero
      value, this can be overridden to speed up statistics generation
      using <envar>PGOPTIONS</envar>, e.g., <literal>PGOPTIONS='-c
@@ -893,7 +883,7 @@ psql --username=postgres --file=script.sql postgres
 
       <listitem>
        <para>
-        If the <option>--link</option> option was <emphasis>not</emphasis>
+        If neither <option>--link</option> nor <option>--swap</option> was
         used, the old cluster was unmodified;  it can be restarted.
        </para>
       </listitem>
@@ -932,6 +922,32 @@ psql --username=postgres --file=script.sql postgres
          </listitem>
 
         </itemizedlist></para>
+      </listitem>
+
+      <listitem>
+       <para>
+        If the <option>--swap</option> option was used, the old cluster might
+        be destructively modified:
+
+        <itemizedlist>
+         <listitem>
+          <para>
+           If <command>pg_upgrade</command> aborts before reporting that the
+           old cluster is no longer safe to start, the old cluster was
+           unmodified; it can be restarted.
+          </para>
+         </listitem>
+
+         <listitem>
+          <para>
+           If <command>pg_upgrade</command> has reported that the old cluster
+           is no longer safe to start, the old cluster was destructively
+           modified.  The old cluster will need to be restored from backup in
+           this case.
+          </para>
+         </listitem>
+        </itemizedlist>
+       </para>
       </listitem>
      </itemizedlist></para>
    </step>

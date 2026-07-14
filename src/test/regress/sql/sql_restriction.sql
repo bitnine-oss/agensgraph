@@ -44,7 +44,14 @@ ALTER TABLE g.v RENAME TO e;
 --
 -- TRUNCATE TABLE
 --
+-- A label holding rows cannot be truncated: TRUNCATE would bypass the Cypher
+-- graph-consistency machinery (orphaning incident edges, staling ag_graphmeta).
+CREATE (:v);
 TRUNCATE TABLE g.v;
+-- Truncating an empty label is a no-op and is allowed, so a freshly created
+-- label can be reloaded by a parallel pg_restore.
+CREATE VLABEL vacant;
+TRUNCATE TABLE g.vacant;
 
 --
 -- TRIGGER

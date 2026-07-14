@@ -169,6 +169,11 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
   </para>
 
   <para>
+   The parameter <xref linkend="guc-track-cost-delay-timing"/> enables
+   monitoring of cost-based vacuum delay.
+  </para>
+
+  <para>
    The parameter <xref linkend="guc-track-counts"/> controls whether
    cumulative statistics are collected about table and index accesses.
   </para>
@@ -180,12 +185,12 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
 
   <para>
    The parameter <xref linkend="guc-track-io-timing"/> enables monitoring
-   of block read and write times.
+   of block read, write, extend, and fsync times.
   </para>
 
   <para>
    The parameter <xref linkend="guc-track-wal-io-timing"/> enables monitoring
-   of WAL write times.
+   of WAL read, write and fsync times.
   </para>
 
   <para>
@@ -286,8 +291,8 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
    other sessions, many columns will be null.  Note, however, that the
    existence of a session and its general properties such as its sessions user
    and database are visible to all users.  Superusers and roles with privileges of
-   built-in role <literal>pg_read_all_stats</literal> (see also <xref
-   linkend="predefined-roles"/>) can see all the information about all sessions.
+   built-in role <link linkend="predefined-role-pg-monitor"><literal>pg_read_all_stats</literal></link>
+   can see all the information about all sessions.
   </para>
 
   <table id="monitoring-stats-dynamic-views-table">
@@ -507,7 +512,7 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
 
      <row>
       <entry><structname>pg_stat_subscription_stats</structname><indexterm><primary>pg_stat_subscription_stats</primary></indexterm></entry>
-      <entry>One row per subscription, showing statistics about errors.
+      <entry>One row per subscription, showing statistics about errors and conflicts.
       See <link linkend="monitoring-pg-stat-subscription-stats">
       <structname>pg_stat_subscription_stats</structname></link> for details.
       </entry>
@@ -900,6 +905,12 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
        Possible values are:
        <itemizedlist>
         <listitem>
+         <para>
+          <literal>starting</literal>: The backend is in initial startup. Client
+          authentication is performed during this phase.
+         </para>
+        </listitem>
+        <listitem>
         <para>
           <literal>active</literal>: The backend is executing a query.
          </para>
@@ -1016,7 +1027,9 @@ postgres   27093  0.0  0.0  30096  2752 ?        Ss   11:34   0:00 postgres: ser
     it may or may not be <literal>waiting</literal> on some event.  If the state
     is <literal>active</literal> and <structfield>wait_event</structfield> is non-null, it
     means that a query is being executed, but is being blocked somewhere
-    in the system.
+    in the system.  To keep the reporting overhead low, the system does not
+    attempt to synchronize different aspects of activity data for a backend.
+    As a result, ephemeral discrepancies may exist between the view's columns.
    </para>
   </note>
 
@@ -1148,7 +1161,7 @@ description | Waiting for a newly initialized WAL file to reach durable storage
    <note>
     <para>
      Extensions can add <literal>Extension</literal>,
-     <literal>InjectionPoint</literal>. and <literal>LWLock</literal> events
+     <literal>InjectionPoint</literal>, and <literal>LWLock</literal> events
      to the lists shown in <xref linkend="wait-event-extension-table"/> and
      <xref linkend="wait-event-lwlock-table"/>. In some cases, the name
      of an <literal>LWLock</literal> assigned by an extension will not be
@@ -2157,7 +2170,10 @@ description | Waiting for a newly initialized WAL file to reach durable storage
        <structfield>apply_error_count</structfield> <type>bigint</type>
       </para>
       <para>
-       Number of times an error occurred while applying changes
+       Number of times an error occurred while applying changes. Note that any
+       conflict resulting in an apply error will be counted in both
+       <literal>apply_error_count</literal> and the corresponding conflict
+       count (e.g., <literal>confl_*</literal>).
       </para></entry>
      </row>
 
@@ -2168,6 +2184,88 @@ description | Waiting for a newly initialized WAL file to reach durable storage
       <para>
        Number of times an error occurred during the initial table
        synchronization
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>confl_insert_exists</structfield> <type>bigint</type>
+      </para>
+      <para>
+       Number of times a row insertion violated a
+       <literal>NOT DEFERRABLE</literal> unique constraint during the
+       application of changes. See <xref linkend="conflict-insert-exists"/>
+       for details about this conflict.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>confl_update_origin_differs</structfield> <type>bigint</type>
+      </para>
+      <para>
+       Number of times an update was applied to a row that had been previously
+       modified by another source during the application of changes. See
+       <xref linkend="conflict-update-origin-differs"/> for details about this
+       conflict.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>confl_update_exists</structfield> <type>bigint</type>
+      </para>
+      <para>
+       Number of times that an updated row value violated a
+       <literal>NOT DEFERRABLE</literal> unique constraint during the
+       application of changes. See <xref linkend="conflict-update-exists"/>
+       for details about this conflict.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>confl_update_missing</structfield> <type>bigint</type>
+      </para>
+      <para>
+       Number of times the tuple to be updated was not found during the
+       application of changes. See <xref linkend="conflict-update-missing"/>
+       for details about this conflict.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>confl_delete_origin_differs</structfield> <type>bigint</type>
+      </para>
+      <para>
+       Number of times a delete operation was applied to row that had been
+       previously modified by another source during the application of changes.
+       See <xref linkend="conflict-delete-origin-differs"/> for details about
+       this conflict.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>confl_delete_missing</structfield> <type>bigint</type>
+      </para>
+      <para>
+       Number of times the tuple to be deleted was not found during the application
+       of changes. See <xref linkend="conflict-delete-missing"/> for details
+       about this conflict.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>confl_multiple_unique_conflicts</structfield> <type>bigint</type>
+      </para>
+      <para>
+       Number of times a row insertion or an updated row values violated multiple
+       <literal>NOT DEFERRABLE</literal> unique constraints during the
+       application of changes. See <xref linkend="conflict-multiple-unique-conflicts"/>
+       for details about this conflict.
       </para></entry>
      </row>
 
@@ -2508,9 +2606,10 @@ description | Waiting for a newly initialized WAL file to reach durable storage
   </para>
 
   <para>
-   Currently, I/O on relations (e.g. tables, indexes) is tracked. However,
-   relation I/O which bypasses shared buffers (e.g. when moving a table from one
-   tablespace to another) is currently not tracked.
+   Currently, I/O on relations (e.g. tables, indexes) and WAL activity are
+   tracked. However, relation I/O which bypasses shared buffers
+   (e.g. when moving a table from one tablespace to another) is currently
+   not tracked.
   </para>
 
   <table id="pg-stat-io-view" xreflabel="pg_stat_io">
@@ -2563,6 +2662,11 @@ description | Waiting for a newly initialized WAL file to reach durable storage
           <literal>temp relation</literal>: Temporary relations.
          </para>
         </listitem>
+        <listitem>
+         <para>
+          <literal>wal</literal>: Write Ahead Logs.
+         </para>
+        </listitem>
        </itemizedlist>
        </para>
       </entry>
@@ -2585,6 +2689,13 @@ description | Waiting for a newly initialized WAL file to reach durable storage
           shared buffers. Thus, reads and writes of relation data to and from
           shared buffers are tracked in <varname>context</varname>
           <literal>normal</literal>.
+         </para>
+        </listitem>
+        <listitem>
+         <para>
+          <literal>init</literal>: I/O operations performed while creating the
+          WAL segments are tracked in <varname>context</varname>
+          <literal>init</literal>.
          </para>
         </listitem>
         <listitem>
@@ -2619,8 +2730,18 @@ description | Waiting for a newly initialized WAL file to reach durable storage
         <structfield>reads</structfield> <type>bigint</type>
        </para>
        <para>
-        Number of read operations, each of the size specified in
-        <varname>op_bytes</varname>.
+        Number of read operations.
+       </para>
+      </entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry">
+       <para role="column_definition">
+        <structfield>read_bytes</structfield> <type>numeric</type>
+       </para>
+       <para>
+        The total size of read operations in bytes.
        </para>
       </entry>
      </row>
@@ -2631,8 +2752,12 @@ description | Waiting for a newly initialized WAL file to reach durable storage
         <structfield>read_time</structfield> <type>double precision</type>
        </para>
        <para>
-        Time spent in read operations in milliseconds (if
-        <xref linkend="guc-track-io-timing"/> is enabled, otherwise zero)
+        Time spent waiting for read operations in milliseconds (if
+        <xref linkend="guc-track-io-timing"/> is enabled and
+        <varname>object</varname> is not <literal>wal</literal>,
+        or if <xref linkend="guc-track-wal-io-timing"/> is enabled
+        and <varname>object</varname> is <literal>wal</literal>,
+        otherwise zero)
        </para>
       </entry>
      </row>
@@ -2643,8 +2768,18 @@ description | Waiting for a newly initialized WAL file to reach durable storage
         <structfield>writes</structfield> <type>bigint</type>
        </para>
        <para>
-        Number of write operations, each of the size specified in
-        <varname>op_bytes</varname>.
+        Number of write operations.
+       </para>
+      </entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry">
+       <para role="column_definition">
+        <structfield>write_bytes</structfield> <type>numeric</type>
+       </para>
+       <para>
+        The total size of write operations in bytes.
        </para>
       </entry>
      </row>
@@ -2655,8 +2790,12 @@ description | Waiting for a newly initialized WAL file to reach durable storage
         <structfield>write_time</structfield> <type>double precision</type>
        </para>
        <para>
-        Time spent in write operations in milliseconds (if
-        <xref linkend="guc-track-io-timing"/> is enabled, otherwise zero)
+        Time spent waiting for write operations in milliseconds (if
+        <xref linkend="guc-track-io-timing"/> is enabled and
+        <varname>object</varname> is not <literal>wal</literal>,
+        or if <xref linkend="guc-track-wal-io-timing"/> is enabled
+        and <varname>object</varname> is <literal>wal</literal>,
+        otherwise zero)
        </para>
       </entry>
      </row>
@@ -2667,8 +2806,8 @@ description | Waiting for a newly initialized WAL file to reach durable storage
         <structfield>writebacks</structfield> <type>bigint</type>
        </para>
        <para>
-        Number of units of size <varname>op_bytes</varname> which the process
-        requested the kernel write out to permanent storage.
+        Number of units of size <symbol>BLCKSZ</symbol> (typically 8kB) which
+        the process requested the kernel write out to permanent storage.
        </para>
       </entry>
      </row>
@@ -2679,7 +2818,7 @@ description | Waiting for a newly initialized WAL file to reach durable storage
         <structfield>writeback_time</structfield> <type>double precision</type>
        </para>
        <para>
-        Time spent in writeback operations in milliseconds (if
+        Time spent waiting for writeback operations in milliseconds (if
         <xref linkend="guc-track-io-timing"/> is enabled, otherwise zero). This
         includes the time spent queueing write-out requests and, potentially,
         the time spent to write out the dirty data.
@@ -2693,8 +2832,18 @@ description | Waiting for a newly initialized WAL file to reach durable storage
         <structfield>extends</structfield> <type>bigint</type>
        </para>
        <para>
-        Number of relation extend operations, each of the size specified in
-        <varname>op_bytes</varname>.
+        Number of relation extend operations.
+       </para>
+      </entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry">
+       <para role="column_definition">
+        <structfield>extend_bytes</structfield> <type>numeric</type>
+       </para>
+       <para>
+        The total size of relation extend operations in bytes.
        </para>
       </entry>
      </row>
@@ -2705,25 +2854,12 @@ description | Waiting for a newly initialized WAL file to reach durable storage
         <structfield>extend_time</structfield> <type>double precision</type>
        </para>
        <para>
-        Time spent in extend operations in milliseconds (if
-        <xref linkend="guc-track-io-timing"/> is enabled, otherwise zero)
-       </para>
-      </entry>
-     </row>
-
-     <row>
-      <entry role="catalog_table_entry">
-       <para role="column_definition">
-        <structfield>op_bytes</structfield> <type>bigint</type>
-       </para>
-       <para>
-        The number of bytes per unit of I/O read, written, or extended.
-       </para>
-       <para>
-        Relation data reads, writes, and extends are done in
-        <varname>block_size</varname> units, derived from the build-time
-        parameter <symbol>BLCKSZ</symbol>, which is <literal>8192</literal> by
-        default.
+        Time spent waiting for extend operations in milliseconds. (if
+        <xref linkend="guc-track-io-timing"/> is enabled and
+        <varname>object</varname> is not <literal>wal</literal>,
+        or if <xref linkend="guc-track-wal-io-timing"/> is enabled
+        and <varname>object</varname> is <literal>wal</literal>,
+        otherwise zero)
        </para>
       </entry>
      </row>
@@ -2792,8 +2928,12 @@ description | Waiting for a newly initialized WAL file to reach durable storage
         <structfield>fsync_time</structfield> <type>double precision</type>
        </para>
        <para>
-        Time spent in fsync operations in milliseconds (if
-        <xref linkend="guc-track-io-timing"/> is enabled, otherwise zero)
+        Time spent waiting for fsync operations in milliseconds (if
+        <xref linkend="guc-track-io-timing"/> is enabled and
+        <varname>object</varname> is not <literal>wal</literal>,
+        or if <xref linkend="guc-track-wal-io-timing"/> is enabled
+        and <varname>object</varname> is <literal>wal</literal>,
+        otherwise zero)
        </para>
       </entry>
      </row>
@@ -2832,6 +2972,16 @@ description | Waiting for a newly initialized WAL file to reach durable storage
   </para>
 
   <para>
+   For the <varname>object</varname> <literal>wal</literal>,
+   <varname>fsyncs</varname> and <varname>fsync_time</varname> track the
+   fsync activity of WAL files done in <function>issue_xlog_fsync</function>.
+   <varname>writes</varname> and <varname>write_time</varname>
+   track the write activity of WAL files done in
+   <function>XLogWrite</function>.
+   See <xref linkend="wal-configuration"/> for more information.
+  </para>
+
+  <para>
    <structname>pg_stat_io</structname> can be used to inform database tuning.
    For example:
    <itemizedlist>
@@ -2865,7 +3015,7 @@ description | Waiting for a newly initialized WAL file to reach durable storage
 
   <note>
    <para>
-    Columns tracking I/O time will only be non-zero when
+    Columns tracking I/O wait time will only be non-zero when
     <xref linkend="guc-track-io-timing"/> is enabled. The user should be
     careful when referencing these columns in combination with their
     corresponding I/O operations in case <varname>track_io_timing</varname>
@@ -2978,7 +3128,7 @@ description | Waiting for a newly initialized WAL file to reach durable storage
        <structfield>num_timed</structfield> <type>bigint</type>
       </para>
       <para>
-       Number of scheduled checkpoints that have been performed
+       Number of scheduled checkpoints due to timeout
       </para></entry>
      </row>
 
@@ -2987,7 +3137,16 @@ description | Waiting for a newly initialized WAL file to reach durable storage
        <structfield>num_requested</structfield> <type>bigint</type>
       </para>
       <para>
-       Number of requested checkpoints that have been performed
+       Number of requested checkpoints
+      </para></entry>
+     </row>
+
+      <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>num_done</structfield> <type>bigint</type>
+      </para>
+      <para>
+       Number of checkpoints that have been performed
       </para></entry>
      </row>
 
@@ -3045,7 +3204,16 @@ description | Waiting for a newly initialized WAL file to reach durable storage
        <structfield>buffers_written</structfield> <type>bigint</type>
       </para>
       <para>
-       Number of buffers written during checkpoints and restartpoints
+       Number of shared buffers written during checkpoints and restartpoints
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+        <structfield>slru_written</structfield> <type>bigint</type>
+      </para>
+      <para>
+        Number of SLRU buffers written during checkpoints and restartpoints
       </para></entry>
      </row>
 
@@ -3061,6 +3229,18 @@ description | Waiting for a newly initialized WAL file to reach durable storage
    </tgroup>
   </table>
 
+  <para>
+   Checkpoints may be skipped if the server has been idle since the last one.
+   <structfield>num_timed</structfield> and
+   <structfield>num_requested</structfield> count both completed and skipped
+   checkpoints, while <structfield>num_done</structfield> tracks only
+   the completed ones.  Similarly, restartpoints may be skipped
+   if the last replayed checkpoint record is already the last restartpoint.
+   <structfield>restartpoints_timed</structfield> and
+   <structfield>restartpoints_req</structfield> count both completed and
+   skipped restartpoints, while <structfield>restartpoints_done</structfield>
+   tracks only the completed ones.
+  </para>
  </sect2>
 
  <sect2 id="monitoring-pg-stat-wal-view">
@@ -3123,63 +3303,6 @@ description | Waiting for a newly initialized WAL file to reach durable storage
       </para>
       <para>
        Number of times WAL data was written to disk because WAL buffers became full
-      </para></entry>
-     </row>
-
-     <row>
-      <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>wal_write</structfield> <type>bigint</type>
-      </para>
-      <para>
-       Number of times WAL buffers were written out to disk via
-       <function>XLogWrite</function> request.
-       See <xref linkend="wal-configuration"/> for more information about
-       the internal WAL function <function>XLogWrite</function>.
-      </para></entry>
-     </row>
-
-     <row>
-      <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>wal_sync</structfield> <type>bigint</type>
-      </para>
-      <para>
-       Number of times WAL files were synced to disk via
-       <function>issue_xlog_fsync</function> request
-       (if <xref linkend="guc-fsync"/> is <literal>on</literal> and
-       <xref linkend="guc-wal-sync-method"/> is either
-       <literal>fdatasync</literal>, <literal>fsync</literal> or
-       <literal>fsync_writethrough</literal>, otherwise zero).
-       See <xref linkend="wal-configuration"/> for more information about
-       the internal WAL function <function>issue_xlog_fsync</function>.
-      </para></entry>
-     </row>
-
-     <row>
-      <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>wal_write_time</structfield> <type>double precision</type>
-      </para>
-      <para>
-       Total amount of time spent writing WAL buffers to disk via
-       <function>XLogWrite</function> request, in milliseconds
-       (if <xref linkend="guc-track-wal-io-timing"/> is enabled,
-       otherwise zero).  This includes the sync time when
-       <varname>wal_sync_method</varname> is either
-       <literal>open_datasync</literal> or <literal>open_sync</literal>.
-      </para></entry>
-     </row>
-
-     <row>
-      <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>wal_sync_time</structfield> <type>double precision</type>
-      </para>
-      <para>
-       Total amount of time spent syncing WAL files to disk via
-       <function>issue_xlog_fsync</function> request, in milliseconds
-       (if <varname>track_wal_io_timing</varname> is enabled,
-       <varname>fsync</varname> is <literal>on</literal>, and
-       <varname>wal_sync_method</varname> is either
-       <literal>fdatasync</literal>, <literal>fsync</literal> or
-       <literal>fsync_writethrough</literal>, otherwise zero).
       </para></entry>
      </row>
 
@@ -3393,8 +3516,8 @@ description | Waiting for a newly initialized WAL file to reach durable storage
       </para>
       <para>
        Number of data page checksum failures detected in this
-       database (or on a shared object), or NULL if data checksums are not
-       enabled.
+       database (or on a shared object), or NULL if data checksums are
+       disabled.
       </para></entry>
      </row>
 
@@ -3404,8 +3527,8 @@ description | Waiting for a newly initialized WAL file to reach durable storage
       </para>
       <para>
        Time at which the last data page checksum failure was detected in
-       this database (or on a shared object), or NULL if data checksums are not
-       enabled.
+       this database (or on a shared object), or NULL if data checksums are
+       disabled.
       </para></entry>
      </row>
 
@@ -3505,6 +3628,24 @@ description | Waiting for a newly initialized WAL file to reach durable storage
       <para>
        Number of database sessions to this database that were terminated
        by operator intervention
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>parallel_workers_to_launch</structfield> <type>bigint</type>
+      </para>
+      <para>
+       Number of parallel workers planned to be launched by queries on this database
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>parallel_workers_launched</structfield> <type>bigint</type>
+      </para>
+      <para>
+       Number of parallel workers launched by queries on this database
       </para></entry>
      </row>
 
@@ -3919,6 +4060,48 @@ description | Waiting for a newly initialized WAL file to reach durable storage
        daemon
       </para></entry>
      </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>total_vacuum_time</structfield> <type>double precision</type>
+      </para>
+      <para>
+       Total time this table has been manually vacuumed, in milliseconds.
+       (This includes the time spent sleeping due to cost-based delays.)
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>total_autovacuum_time</structfield> <type>double precision</type>
+      </para>
+      <para>
+       Total time this table has been vacuumed by the autovacuum daemon,
+       in milliseconds. (This includes the time spent sleeping due to
+       cost-based delays.)
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>total_analyze_time</structfield> <type>double precision</type>
+      </para>
+      <para>
+       Total time this table has been manually analyzed, in milliseconds.
+       (This includes the time spent sleeping due to cost-based delays.)
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>total_autoanalyze_time</structfield> <type>double precision</type>
+      </para>
+      <para>
+       Total time this table has been analyzed by the autovacuum daemon,
+       in milliseconds. (This includes the time spent sleeping due to
+       cost-based delays.)
+      </para></entry>
+     </row>
     </tbody>
    </tgroup>
   </table>
@@ -4074,16 +4257,35 @@ description | Waiting for a newly initialized WAL file to reach durable storage
 
   <note>
    <para>
-    Queries that use certain <acronym>SQL</acronym> constructs to search for
-    rows matching any value out of a list or array of multiple scalar values
-    (see <xref linkend="functions-comparisons"/>) perform multiple
-    <quote>primitive</quote> index scans (up to one primitive scan per scalar
-    value) during query execution.  Each internal primitive index scan
-    increments <structname>pg_stat_all_indexes</structname>.<structfield>idx_scan</structfield>,
+    Index scans may sometimes perform multiple index searches per execution.
+    Each index search increments <structname>pg_stat_all_indexes</structname>.<structfield>idx_scan</structfield>,
     so it's possible for the count of index scans to significantly exceed the
     total number of index scan executor node executions.
    </para>
+   <para>
+    This can happen with queries that use certain <acronym>SQL</acronym>
+    constructs to search for rows matching any value out of a list or array of
+    multiple scalar values (see <xref linkend="functions-comparisons"/>).  It
+    can also happen to queries with a
+    <literal><replaceable>column_name</replaceable> =
+     <replaceable>value1</replaceable> OR
+     <replaceable>column_name</replaceable> =
+     <replaceable>value2</replaceable> ...</literal> construct, though only
+    when the optimizer transforms the construct into an equivalent
+    multi-valued array representation.  Similarly, when B-tree index scans use
+    the skip scan optimization, an index search is performed each time the
+    scan is repositioned to the next index leaf page that might have matching
+    tuples (see <xref linkend="indexes-multicolumn"/>).
+   </para>
   </note>
+  <tip>
+   <para>
+    <command>EXPLAIN ANALYZE</command> outputs the total number of index
+    searches performed by each index scan node.  See
+    <xref linkend="using-explain-analyze"/> for an example demonstrating how
+    this works.
+   </para>
+  </tip>
 
  </sect2>
 
@@ -4670,6 +4872,27 @@ description | Waiting for a newly initialized WAL file to reach durable storage
       </row>
 
       <row>
+       <entry id="pg-stat-get-backend-io" role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_stat_get_backend_io</primary>
+        </indexterm>
+        <function>pg_stat_get_backend_io</function> ( <type>integer</type> )
+        <returnvalue>setof record</returnvalue>
+       </para>
+       <para>
+        Returns I/O statistics about the backend with the specified
+        process ID. The output fields are exactly the same as the ones in the
+        <structname>pg_stat_io</structname> view.
+       </para>
+       <para>
+        The function does not return I/O statistics for the checkpointer,
+        the background writer, the startup process and the autovacuum launcher
+        as they are already visible in the <structname>pg_stat_io</structname>
+        view and there is only one of each.
+       </para></entry>
+      </row>
+
+      <row>
        <entry role="func_table_entry"><para role="func_signature">
         <indexterm>
          <primary>pg_stat_get_activity</primary>
@@ -4682,6 +4905,25 @@ description | Waiting for a newly initialized WAL file to reach durable storage
         process ID, or one record for each active backend in the system
         if <literal>NULL</literal> is specified.  The fields returned are a
         subset of those in the <structname>pg_stat_activity</structname> view.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry id="pg-stat-get-backend-wal" role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_stat_get_backend_wal</primary>
+        </indexterm>
+        <function>pg_stat_get_backend_wal</function> ( <type>integer</type> )
+        <returnvalue>record</returnvalue>
+       </para>
+       <para>
+        Returns WAL statistics about the backend with the specified
+        process ID. The output fields are exactly the same as the ones in the
+        <structname>pg_stat_wal</structname> view.
+       </para>
+       <para>
+        The function does not return WAL statistics for the checkpointer,
+        the background writer, the startup process and the autovacuum launcher.
        </para></entry>
       </row>
 
@@ -4843,6 +5085,24 @@ description | Waiting for a newly initialized WAL file to reach durable storage
        <para>
         Resets statistics for a single table or index in the current database
         or shared across all databases in the cluster to zero.
+       </para>
+       <para>
+        This function is restricted to superusers by default, but other users
+        can be granted EXECUTE to run the function.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_stat_reset_backend_stats</primary>
+        </indexterm>
+        <function>pg_stat_reset_backend_stats</function> ( <type>integer</type> )
+        <returnvalue>void</returnvalue>
+       </para>
+       <para>
+        Resets statistics for a single backend with the specified process ID
+        to zero.
        </para>
        <para>
         This function is restricted to superusers by default, but other users
@@ -5382,6 +5642,18 @@ FROM pg_stat_get_backend_idset() AS backendid;
        <literal>acquiring inherited sample rows</literal>.
       </para></entry>
      </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>delay_time</structfield> <type>double precision</type>
+      </para>
+      <para>
+       Total time spent sleeping due to cost-based delay (see
+       <xref linkend="runtime-config-resource-vacuum-cost"/>, in milliseconds
+       (if <xref linkend="guc-track-cost-delay-timing"/> is enabled, otherwise
+       zero).
+      </para></entry>
+     </row>
     </tbody>
    </tgroup>
   </table>
@@ -5449,9 +5721,9 @@ FROM pg_stat_get_backend_idset() AS backendid;
 
   <note>
    <para>
-    Note that when <command>ANALYZE</command> is run on a partitioned table,
-    all of its partitions are also recursively analyzed.
-    In that case, <command>ANALYZE</command>
+    Note that when <command>ANALYZE</command> is run on a partitioned table
+    without the <literal>ONLY</literal> keyword, all of its partitions are
+    also recursively analyzed.  In that case, <command>ANALYZE</command>
     progress is reported first for the parent table, whereby its inheritance
     statistics are collected, followed by that for each partition.
    </para>
@@ -6305,6 +6577,21 @@ FROM pg_stat_get_backend_idset() AS backendid;
        Number of indexes processed. This counter only advances when the
        phase is <literal>vacuuming indexes</literal> or
        <literal>cleaning up indexes</literal>.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>delay_time</structfield> <type>double precision</type>
+      </para>
+      <para>
+       Total time spent sleeping due to cost-based delay (see
+       <xref linkend="runtime-config-resource-vacuum-cost"/>), in milliseconds
+       (if <xref linkend="guc-track-cost-delay-timing"/> is enabled, otherwise
+       zero).  This includes the time that any associated parallel workers have
+       slept.  However, parallel workers report their sleep time no more
+       frequently than once per second, so the reported value may be slightly
+       stale.
       </para></entry>
      </row>
     </tbody>

@@ -7,15 +7,13 @@
  * indexes or other on-disk structures. See hashfn.h if you need stability.
  *
  *
- * Portions Copyright (c) 2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2024-2025, PostgreSQL Global Development Group
  *
  * src/include/common/hashfn_unstable.h
  */
 #ifndef HASHFN_UNSTABLE_H
 #define HASHFN_UNSTABLE_H
 
-#include "port/pg_bitutils.h"
-#include "port/pg_bswap.h"
 
 /*
  * fasthash is a modification of code taken from
@@ -219,13 +217,6 @@ fasthash_accum(fasthash_state *hs, const char *k, size_t len)
 #define haszero64(v) \
 	(((v) - 0x0101010101010101) & ~(v) & 0x8080808080808080)
 
-/* get first byte in memory order */
-#ifdef WORDS_BIGENDIAN
-#define firstbyte64(v) ((v) >> 56)
-#else
-#define firstbyte64(v) ((v) & 0xFF)
-#endif
-
 /*
  * all-purpose workhorse for fasthash_accum_cstring
  */
@@ -262,33 +253,20 @@ static inline size_t
 fasthash_accum_cstring_aligned(fasthash_state *hs, const char *str)
 {
 	const char *const start = str;
-	uint64		chunk;
+	size_t		remainder;
 	uint64		zero_byte_low;
 
 	Assert(PointerIsAligned(start, uint64));
 
 	/*
 	 * For every chunk of input, check for zero bytes before mixing into the
-	 * hash. The chunk with zeros must contain the NUL terminator. We arrange
-	 * so that zero_byte_low tells us not only that a zero exists, but also
-	 * where it is, so we can hash the remainder of the string.
-	 *
-	 * The haszero64 calculation will set bits corresponding to the lowest
-	 * byte where a zero exists, so that suffices for little-endian machines.
-	 * For big-endian machines, we would need bits set for the highest zero
-	 * byte in the chunk, since the trailing junk past the terminator could
-	 * contain additional zeros. haszero64 does not give us that, so we
-	 * byteswap the chunk first.
+	 * hash. The chunk with zeros must contain the NUL terminator.
 	 */
 	for (;;)
 	{
-		chunk = *(uint64 *) str;
+		uint64		chunk = *(uint64 *) str;
 
-#ifdef WORDS_BIGENDIAN
-		zero_byte_low = haszero64(pg_bswap64(chunk));
-#else
 		zero_byte_low = haszero64(chunk);
-#endif
 		if (zero_byte_low)
 			break;
 
@@ -297,33 +275,9 @@ fasthash_accum_cstring_aligned(fasthash_state *hs, const char *str)
 		str += FH_SIZEOF_ACCUM;
 	}
 
-	if (firstbyte64(chunk) != 0)
-	{
-		size_t		remainder;
-		uint64		mask;
-
-		/*
-		 * The byte corresponding to the NUL will be 0x80, so the rightmost
-		 * bit position will be in the range 15, 23, ..., 63. Turn this into
-		 * byte position by dividing by 8.
-		 */
-		remainder = pg_rightmost_one_pos64(zero_byte_low) / BITS_PER_BYTE;
-
-		/*
-		 * Create a mask for the remaining bytes so we can combine them into
-		 * the hash. This must have the same result as mixing the remaining
-		 * bytes with fasthash_accum().
-		 */
-#ifdef WORDS_BIGENDIAN
-		mask = ~UINT64CONST(0) << BITS_PER_BYTE * (FH_SIZEOF_ACCUM - remainder);
-#else
-		mask = ~UINT64CONST(0) >> BITS_PER_BYTE * (FH_SIZEOF_ACCUM - remainder);
-#endif
-		hs->accum = chunk & mask;
-		fasthash_combine(hs);
-
-		str += remainder;
-	}
+	/* mix in remaining bytes */
+	remainder = fasthash_accum_cstring_unaligned(hs, str);
+	str += remainder;
 
 	return str - start;
 }

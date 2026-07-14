@@ -143,7 +143,7 @@
  * RT_DELETE		- Delete a key-value pair. Declared/defined if RT_USE_DELETE is defined
  *
  *
- * Copyright (c) 2024, PostgreSQL Global Development Group
+ * Copyright (c) 2024-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/include/lib/radixtree.h
@@ -151,13 +151,15 @@
  *-------------------------------------------------------------------------
  */
 
-#include "postgres.h"
-
 #include "nodes/bitmapset.h"
 #include "port/pg_bitutils.h"
 #include "port/simd.h"
 #include "utils/dsa.h"
 #include "utils/memutils.h"
+#ifdef RT_SHMEM
+#include "miscadmin.h"
+#include "storage/lwlock.h"
+#endif
 
 /* helpers */
 #define RT_MAKE_PREFIX(a) CppConcat(a,_)
@@ -273,7 +275,7 @@ typedef dsa_pointer RT_HANDLE;
 #endif
 
 #ifdef RT_SHMEM
-RT_SCOPE	RT_RADIX_TREE *RT_CREATE(MemoryContext ctx, dsa_area *dsa, int tranche_id);
+RT_SCOPE	RT_RADIX_TREE *RT_CREATE(dsa_area *dsa, int tranche_id);
 RT_SCOPE	RT_RADIX_TREE *RT_ATTACH(dsa_area *dsa, dsa_pointer dp);
 RT_SCOPE void RT_DETACH(RT_RADIX_TREE * tree);
 RT_SCOPE	RT_HANDLE RT_GET_HANDLE(RT_RADIX_TREE * tree);
@@ -704,8 +706,6 @@ typedef struct RT_RADIX_TREE_CONTROL
 /* Entry point for allocating and accessing the tree */
 struct RT_RADIX_TREE
 {
-	MemoryContext context;
-
 	/* pointing to either local memory or DSA */
 	RT_RADIX_TREE_CONTROL *ctl;
 
@@ -717,7 +717,6 @@ struct RT_RADIX_TREE
 	/* leaf_context is used only for single-value leaves */
 	MemoryContextData *leaf_context;
 #endif
-	MemoryContextData *iter_context;
 };
 
 /*
@@ -1808,39 +1807,25 @@ have_slot:
 /***************** SETUP / TEARDOWN *****************/
 
 /*
- * Create the radix tree in the given memory context and return it.
+ * Create the radix tree root in the caller's memory context and return it.
  *
- * All local memory required for a radix tree is allocated in the given
- * memory context and its children. Note that RT_FREE() will delete all
- * allocated space within the given memory context, so the dsa_area should
- * be created in a different context.
+ * The tree's nodes and leaves are allocated in "ctx" and its children for
+ * local memory, or in "dsa" for shared memory.
  */
 RT_SCOPE	RT_RADIX_TREE *
 #ifdef RT_SHMEM
-RT_CREATE(MemoryContext ctx, dsa_area *dsa, int tranche_id)
+RT_CREATE(dsa_area *dsa, int tranche_id)
 #else
 RT_CREATE(MemoryContext ctx)
 #endif
 {
 	RT_RADIX_TREE *tree;
-	MemoryContext old_ctx;
 	RT_CHILD_PTR rootnode;
 #ifdef RT_SHMEM
 	dsa_pointer dp;
 #endif
 
-	old_ctx = MemoryContextSwitchTo(ctx);
-
 	tree = (RT_RADIX_TREE *) palloc0(sizeof(RT_RADIX_TREE));
-	tree->context = ctx;
-
-	/*
-	 * Separate context for iteration in case the tree context doesn't support
-	 * pfree
-	 */
-	tree->iter_context = AllocSetContextCreate(ctx,
-											   RT_STR(RT_PREFIX) "_radix_tree iter context",
-											   ALLOCSET_SMALL_SIZES);
 
 #ifdef RT_SHMEM
 	tree->dsa = dsa;
@@ -1864,21 +1849,7 @@ RT_CREATE(MemoryContext ctx)
 												size_class.allocsize);
 	}
 
-	/* By default we use the passed context for leaves. */
-	tree->leaf_context = tree->context;
-
-#ifndef RT_VARLEN_VALUE_SIZE
-
-	/*
-	 * For leaves storing fixed-length values, we use a slab context to avoid
-	 * the possibility of space wastage by power-of-2 rounding up.
-	 */
-	if (sizeof(RT_VALUE_TYPE) > sizeof(RT_PTR_ALLOC))
-		tree->leaf_context = SlabContextCreate(ctx,
-											   RT_STR(RT_PREFIX) "_radix_tree leaf context",
-											   RT_SLAB_BLOCK_SIZE(sizeof(RT_VALUE_TYPE)),
-											   sizeof(RT_VALUE_TYPE));
-#endif							/* !RT_VARLEN_VALUE_SIZE */
+	tree->leaf_context = ctx;
 #endif							/* RT_SHMEM */
 
 	/* add root node now so that RT_SET can assume it exists */
@@ -1886,8 +1857,6 @@ RT_CREATE(MemoryContext ctx)
 	tree->ctl->root = rootnode.alloc;
 	tree->ctl->start_shift = 0;
 	tree->ctl->max_val = RT_SHIFT_GET_MAX_VAL(0);
-
-	MemoryContextSwitchTo(old_ctx);
 
 	return tree;
 }
@@ -2061,19 +2030,23 @@ RT_FREE(RT_RADIX_TREE * tree)
 	 */
 	tree->ctl->magic = 0;
 	dsa_free(tree->dsa, tree->ctl->handle);
-#endif
-
+#else
 	/*
-	 * Free all space allocated within the tree's context and delete all child
+	 * Free all space allocated within the leaf context and delete all child
 	 * contexts such as those used for nodes.
 	 */
-	MemoryContextReset(tree->context);
+	MemoryContextReset(tree->leaf_context);
+
+	pfree(tree->ctl);
+#endif
+	pfree(tree);
 }
 
 /***************** ITERATION *****************/
 
 /*
- * Create and return the iterator for the given radix tree.
+ * Create and return an iterator for the given radix tree
+ * in the caller's memory context.
  *
  * Taking a lock in shared mode during the iteration is the caller's
  * responsibility.
@@ -2084,8 +2057,7 @@ RT_BEGIN_ITERATE(RT_RADIX_TREE * tree)
 	RT_ITER    *iter;
 	RT_CHILD_PTR root;
 
-	iter = (RT_ITER *) MemoryContextAllocZero(tree->iter_context,
-											  sizeof(RT_ITER));
+	iter = (RT_ITER *) palloc0(sizeof(RT_ITER));
 	iter->tree = tree;
 
 	Assert(RT_PTR_ALLOC_IS_VALID(tree->ctl->root));
@@ -2681,7 +2653,7 @@ RT_MEMORY_USAGE(RT_RADIX_TREE * tree)
 	Assert(tree->ctl->magic == RT_RADIX_TREE_MAGIC);
 	total = dsa_get_total_size(tree->dsa);
 #else
-	total = MemoryContextMemAllocated(tree->context, true);
+	total = MemoryContextMemAllocated(tree->leaf_context, true);
 #endif
 
 	return total;
@@ -2782,7 +2754,7 @@ RT_SCOPE void
 RT_STATS(RT_RADIX_TREE * tree)
 {
 	fprintf(stderr, "max_val = " UINT64_FORMAT "\n", tree->ctl->max_val);
-	fprintf(stderr, "num_keys = %lld\n", (long long) tree->ctl->num_keys);
+	fprintf(stderr, "num_keys = %" PRId64 "\n", tree->ctl->num_keys);
 
 #ifdef RT_SHMEM
 	fprintf(stderr, "handle = " DSA_POINTER_FORMAT "\n", tree->ctl->handle);
@@ -2794,10 +2766,10 @@ RT_STATS(RT_RADIX_TREE * tree)
 	{
 		RT_SIZE_CLASS_ELEM size_class = RT_SIZE_CLASS_INFO[i];
 
-		fprintf(stderr, ", n%d = %lld", size_class.fanout, (long long) tree->ctl->num_nodes[i]);
+		fprintf(stderr, ", n%d = %" PRId64, size_class.fanout, tree->ctl->num_nodes[i]);
 	}
 
-	fprintf(stderr, ", leaves = %lld", (long long) tree->ctl->num_leaves);
+	fprintf(stderr, ", leaves = %" PRId64, tree->ctl->num_leaves);
 
 	fprintf(stderr, "\n");
 }

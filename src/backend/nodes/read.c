@@ -4,7 +4,7 @@
  *	  routines to convert a string (legal ascii representation of node) back
  *	  to nodes
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -32,7 +32,7 @@
 static const char *pg_strtok_ptr = NULL;
 
 /* State flag that determines how readfuncs.c should treat location fields */
-#ifdef WRITE_READ_PARSE_PLAN_TREES
+#ifdef DEBUG_NODE_TESTS_ENABLED
 bool		restore_location_fields = false;
 #endif
 
@@ -43,14 +43,14 @@ bool		restore_location_fields = false;
  *
  * restore_loc_fields instructs readfuncs.c whether to restore location
  * fields rather than set them to -1.  This is currently only supported
- * in builds with the WRITE_READ_PARSE_PLAN_TREES debugging flag set.
+ * in builds with DEBUG_NODE_TESTS_ENABLED defined.
  */
 static void *
 stringToNodeInternal(const char *str, bool restore_loc_fields)
 {
 	void	   *retval;
 	const char *save_strtok;
-#ifdef WRITE_READ_PARSE_PLAN_TREES
+#ifdef DEBUG_NODE_TESTS_ENABLED
 	bool		save_restore_location_fields;
 #endif
 
@@ -67,7 +67,7 @@ stringToNodeInternal(const char *str, bool restore_loc_fields)
 	/*
 	 * If enabled, likewise save/restore the location field handling flag.
 	 */
-#ifdef WRITE_READ_PARSE_PLAN_TREES
+#ifdef DEBUG_NODE_TESTS_ENABLED
 	save_restore_location_fields = restore_location_fields;
 	restore_location_fields = restore_loc_fields;
 #endif
@@ -76,7 +76,7 @@ stringToNodeInternal(const char *str, bool restore_loc_fields)
 
 	pg_strtok_ptr = save_strtok;
 
-#ifdef WRITE_READ_PARSE_PLAN_TREES
+#ifdef DEBUG_NODE_TESTS_ENABLED
 	restore_location_fields = save_restore_location_fields;
 #endif
 
@@ -92,7 +92,7 @@ stringToNode(const char *str)
 	return stringToNodeInternal(str, false);
 }
 
-#ifdef WRITE_READ_PARSE_PLAN_TREES
+#ifdef DEBUG_NODE_TESTS_ENABLED
 
 void *
 stringToNodeWithLocations(const char *str)
@@ -507,5 +507,5 @@ nodeRead(const char *token, int tok_len)
 			break;
 	}
 
-	return (void *) result;
+	return result;
 }

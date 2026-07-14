@@ -109,6 +109,23 @@ SELECT '20500110 173201 Europe/Helsinki'::timestamptz; -- non-DST
 SELECT '205000-07-10 17:32:01 Europe/Helsinki'::timestamptz; -- DST
 SELECT '205000-01-10 17:32:01 Europe/Helsinki'::timestamptz; -- non-DST
 
+-- Recognize "LMT" as whatever it means in the current zone
+SELECT 'Jan 01 00:00:00 1000 LMT'::timestamptz;
+SELECT 'Jan 01 00:00:00 2024 LMT'::timestamptz;
+SET timezone = 'Europe/London';
+SELECT 'Jan 01 00:00:00 1000 LMT'::timestamptz;
+SELECT 'Jan 01 00:00:00 2024 LMT'::timestamptz;
+-- which might be nothing
+SET timezone = 'UTC';
+SELECT 'Jan 01 00:00:00 2024 LMT'::timestamptz;  -- fail
+-- Another example of an abbrev that varies across zones
+SELECT '1912-01-01 00:00 MMT'::timestamptz;  -- from timezone_abbreviations
+SET timezone = 'America/Montevideo';
+SELECT '1912-01-01 00:00'::timestamptz;
+SELECT '1912-01-01 00:00 MMT'::timestamptz;
+SELECT '1912-01-01 00:00 MMT'::timestamptz AT TIME ZONE 'UTC';
+RESET timezone;
+
 -- Test non-error-throwing API
 SELECT pg_input_is_valid('now', 'timestamptz');
 SELECT pg_input_is_valid('garbage', 'timestamptz');
@@ -200,10 +217,14 @@ SELECT d1 - timestamp with time zone '1997-01-02' AS diff
    FROM TIMESTAMPTZ_TBL WHERE d1 BETWEEN '1902-01-01' AND '2038-01-01';
 
 SELECT date_trunc( 'week', timestamp with time zone '2004-02-29 15:44:17.71393' ) AS week_trunc;
+SELECT date_trunc( 'ago', timestamp with time zone 'infinity' ) AS invalid_trunc;
 
 SELECT date_trunc('day', timestamp with time zone '2001-02-16 20:38:40+00', 'Australia/Sydney') as sydney_trunc;  -- zone name
 SELECT date_trunc('day', timestamp with time zone '2001-02-16 20:38:40+00', 'GMT') as gmt_trunc;  -- fixed-offset abbreviation
 SELECT date_trunc('day', timestamp with time zone '2001-02-16 20:38:40+00', 'VET') as vet_trunc;  -- variable-offset abbreviation
+SELECT date_trunc('ago', timestamp with time zone 'infinity', 'GMT') AS invalid_zone_trunc;
+
+
 
 -- verify date_bin behaves the same as date_trunc for relevant intervals
 SELECT
@@ -442,14 +463,18 @@ SELECT make_timestamptz(1973, 07, 15, 08, 15, 55.33, '+2') = '1973-07-15 08:15:5
 -- full timezone names
 SELECT make_timestamptz(2014, 12, 10, 0, 0, 0, 'Europe/Prague') = timestamptz '2014-12-10 00:00:00 Europe/Prague';
 SELECT make_timestamptz(2014, 12, 10, 0, 0, 0, 'Europe/Prague') AT TIME ZONE 'UTC';
-SELECT make_timestamptz(1846, 12, 10, 0, 0, 0, 'Asia/Manila') AT TIME ZONE 'UTC';
+SELECT make_timestamptz(1881, 12, 10, 0, 0, 0, 'Asia/Singapore') AT TIME ZONE 'UTC';
+SELECT make_timestamptz(1881, 12, 10, 0, 0, 0, 'Pacific/Honolulu') AT TIME ZONE 'UTC';
 SELECT make_timestamptz(1881, 12, 10, 0, 0, 0, 'Europe/Paris') AT TIME ZONE 'UTC';
 SELECT make_timestamptz(1910, 12, 24, 0, 0, 0, 'Nehwon/Lankhmar');
 
 -- abbreviations
 SELECT make_timestamptz(2008, 12, 10, 10, 10, 10, 'EST');
 SELECT make_timestamptz(2008, 12, 10, 10, 10, 10, 'EDT');
-SELECT make_timestamptz(2014, 12, 10, 10, 10, 10, 'PST8PDT');
+SELECT make_timestamptz(2014, 12, 10, 10, 10, 10, 'FOO8BAR');
+
+-- POSIX
+SELECT make_timestamptz(2014, 12, 10, 10, 10, 10, 'PST8PDT,M3.2.0,M11.1.0');
 
 RESET TimeZone;
 
@@ -668,3 +693,7 @@ SELECT age(timestamptz 'infinity', timestamptz 'infinity');
 SELECT age(timestamptz 'infinity', timestamptz '-infinity');
 SELECT age(timestamptz '-infinity', timestamptz 'infinity');
 SELECT age(timestamptz '-infinity', timestamptz '-infinity');
+
+-- test timestamp near POSTGRES_EPOCH_JDATE
+select timestamptz '1999-12-31 24:00:00';
+select make_timestamptz(1999, 12, 31, 24, 0, 0);

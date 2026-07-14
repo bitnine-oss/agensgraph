@@ -3,7 +3,7 @@
  * nodeIndexscan.c
  *	  Routines to support indexed scans of relations
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -109,6 +109,7 @@ IndexNext(IndexScanState *node)
 		scandesc = index_beginscan(node->ss.ss_currentRelation,
 								   node->iss_RelationDesc,
 								   estate->es_snapshot,
+								   &node->iss_Instrument,
 								   node->iss_NumScanKeys,
 								   node->iss_NumOrderByKeys);
 
@@ -204,6 +205,7 @@ IndexNextWithReorder(IndexScanState *node)
 		scandesc = index_beginscan(node->ss.ss_currentRelation,
 								   node->iss_RelationDesc,
 								   estate->es_snapshot,
+								   &node->iss_Instrument,
 								   node->iss_NumScanKeys,
 								   node->iss_NumOrderByKeys);
 
@@ -794,6 +796,27 @@ ExecEndIndexScan(IndexScanState *node)
 	indexScanDesc = node->iss_ScanDesc;
 
 	/*
+	 * When ending a parallel worker, copy the statistics gathered by the
+	 * worker back into shared memory so that it can be picked up by the main
+	 * process to report in EXPLAIN ANALYZE
+	 */
+	if (node->iss_SharedInfo != NULL && IsParallelWorker())
+	{
+		IndexScanInstrumentation *winstrument;
+
+		Assert(ParallelWorkerNumber <= node->iss_SharedInfo->num_workers);
+		winstrument = &node->iss_SharedInfo->winstrument[ParallelWorkerNumber];
+
+		/*
+		 * We have to accumulate the stats rather than performing a memcpy.
+		 * When a Gather/GatherMerge node finishes it will perform planner
+		 * shutdown on the workers.  On rescan it will spin up new workers
+		 * which will have a new IndexOnlyScanState and zeroed stats.
+		 */
+		winstrument->nsearches += node->iss_Instrument.nsearches;
+	}
+
+	/*
 	 * close the index relation (no-op if we didn't open it)
 	 */
 	if (indexScanDesc)
@@ -1331,10 +1354,10 @@ ExecIndexBuildScanKeys(PlanState *planstate, Relation index,
 				varattno = ((Var *) leftop)->varattno;
 
 				/*
-				 * We have to look up the operator's associated btree support
+				 * We have to look up the operator's associated support
 				 * function
 				 */
-				if (index->rd_rel->relam != BTREE_AM_OID ||
+				if (!index->rd_indam->amcanorder ||
 					varattno < 1 || varattno > indnkeyatts)
 					elog(ERROR, "bogus RowCompare index qualification");
 				opfamily = index->rd_opfamily[varattno - 1];
@@ -1344,7 +1367,7 @@ ExecIndexBuildScanKeys(PlanState *planstate, Relation index,
 										   &op_lefttype,
 										   &op_righttype);
 
-				if (op_strategy != rc->rctype)
+				if (op_strategy != rc->cmptype)
 					elog(ERROR, "RowCompare index qualification contains wrong operator");
 
 				opfuncid = get_opfamily_proc(opfamily,
@@ -1421,7 +1444,7 @@ ExecIndexBuildScanKeys(PlanState *planstate, Relation index,
 			MemSet(this_scan_key, 0, sizeof(ScanKeyData));
 			this_scan_key->sk_flags = SK_ROW_HEADER;
 			this_scan_key->sk_attno = first_sub_key->sk_attno;
-			this_scan_key->sk_strategy = rc->rctype;
+			this_scan_key->sk_strategy = rc->cmptype;
 			/* sk_subtype, sk_collation, sk_func not used in a header */
 			this_scan_key->sk_argument = PointerGetDatum(first_sub_key);
 		}
@@ -1642,11 +1665,21 @@ ExecIndexScanEstimate(IndexScanState *node,
 					  ParallelContext *pcxt)
 {
 	EState	   *estate = node->ss.ps.state;
+	bool		instrument = node->ss.ps.instrument != NULL;
+	bool		parallel_aware = node->ss.ps.plan->parallel_aware;
+
+	if (!instrument && !parallel_aware)
+	{
+		/* No DSM required by the scan */
+		return;
+	}
 
 	node->iss_PscanLen = index_parallelscan_estimate(node->iss_RelationDesc,
 													 node->iss_NumScanKeys,
 													 node->iss_NumOrderByKeys,
-													 estate->es_snapshot);
+													 estate->es_snapshot,
+													 instrument, parallel_aware,
+													 pcxt->nworkers);
 	shm_toc_estimate_chunk(&pcxt->estimator, node->iss_PscanLen);
 	shm_toc_estimate_keys(&pcxt->estimator, 1);
 }
@@ -1663,16 +1696,33 @@ ExecIndexScanInitializeDSM(IndexScanState *node,
 {
 	EState	   *estate = node->ss.ps.state;
 	ParallelIndexScanDesc piscan;
+	bool		instrument = node->ss.ps.instrument != NULL;
+	bool		parallel_aware = node->ss.ps.plan->parallel_aware;
+
+	if (!instrument && !parallel_aware)
+	{
+		/* No DSM required by the scan */
+		return;
+	}
 
 	piscan = shm_toc_allocate(pcxt->toc, node->iss_PscanLen);
 	index_parallelscan_initialize(node->ss.ss_currentRelation,
 								  node->iss_RelationDesc,
 								  estate->es_snapshot,
-								  piscan);
+								  instrument, parallel_aware, pcxt->nworkers,
+								  &node->iss_SharedInfo, piscan);
 	shm_toc_insert(pcxt->toc, node->ss.ps.plan->plan_node_id, piscan);
+
+	if (!parallel_aware)
+	{
+		/* Only here to initialize SharedInfo in DSM */
+		return;
+	}
+
 	node->iss_ScanDesc =
 		index_beginscan_parallel(node->ss.ss_currentRelation,
 								 node->iss_RelationDesc,
+								 &node->iss_Instrument,
 								 node->iss_NumScanKeys,
 								 node->iss_NumOrderByKeys,
 								 piscan);
@@ -1697,6 +1747,7 @@ void
 ExecIndexScanReInitializeDSM(IndexScanState *node,
 							 ParallelContext *pcxt)
 {
+	Assert(node->ss.ps.plan->parallel_aware);
 	index_parallelrescan(node->iss_ScanDesc);
 }
 
@@ -1711,11 +1762,31 @@ ExecIndexScanInitializeWorker(IndexScanState *node,
 							  ParallelWorkerContext *pwcxt)
 {
 	ParallelIndexScanDesc piscan;
+	bool		instrument = node->ss.ps.instrument != NULL;
+	bool		parallel_aware = node->ss.ps.plan->parallel_aware;
+
+	if (!instrument && !parallel_aware)
+	{
+		/* No DSM required by the scan */
+		return;
+	}
 
 	piscan = shm_toc_lookup(pwcxt->toc, node->ss.ps.plan->plan_node_id, false);
+
+	if (instrument)
+		node->iss_SharedInfo = (SharedIndexScanInstrumentation *)
+			OffsetToPointer(piscan, piscan->ps_offset_ins);
+
+	if (!parallel_aware)
+	{
+		/* Only here to set up worker node's SharedInfo */
+		return;
+	}
+
 	node->iss_ScanDesc =
 		index_beginscan_parallel(node->ss.ss_currentRelation,
 								 node->iss_RelationDesc,
+								 &node->iss_Instrument,
 								 node->iss_NumScanKeys,
 								 node->iss_NumOrderByKeys,
 								 piscan);
@@ -1728,4 +1799,26 @@ ExecIndexScanInitializeWorker(IndexScanState *node,
 		index_rescan(node->iss_ScanDesc,
 					 node->iss_ScanKeys, node->iss_NumScanKeys,
 					 node->iss_OrderByKeys, node->iss_NumOrderByKeys);
+}
+
+/* ----------------------------------------------------------------
+ * ExecIndexScanRetrieveInstrumentation
+ *
+ *		Transfer index scan statistics from DSM to private memory.
+ * ----------------------------------------------------------------
+ */
+void
+ExecIndexScanRetrieveInstrumentation(IndexScanState *node)
+{
+	SharedIndexScanInstrumentation *SharedInfo = node->iss_SharedInfo;
+	size_t		size;
+
+	if (SharedInfo == NULL)
+		return;
+
+	/* Create a copy of SharedInfo in backend-local memory */
+	size = offsetof(SharedIndexScanInstrumentation, winstrument) +
+		SharedInfo->num_workers * sizeof(IndexScanInstrumentation);
+	node->iss_SharedInfo = palloc(size);
+	memcpy(node->iss_SharedInfo, SharedInfo, size);
 }

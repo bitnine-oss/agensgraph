@@ -164,3 +164,13 @@ RESET ROLE;
 
 -- Clean up
 DROP GRAPH IF EXISTS graph_priv_test CASCADE;
+
+-- Dropping the graph removes the schema-scoped default privileges, but the
+-- "FOR USER new_user" grant near the top is global (not schema-scoped), so it
+-- survives as a pg_default_acl row referencing new_user and readonly.  Reverse
+-- it so the regression database keeps no default-ACL entry pointing at these
+-- test roles; otherwise a plain pg_dump/pg_restore or pg_upgrade of the
+-- database into a freshly initialized cluster (which lacks the roles) fails.
+-- The roles themselves may remain, like the many regress_* roles other tests
+-- leave behind, because nothing in the database references them any more.
+ALTER DEFAULT PRIVILEGES FOR USER new_user REVOKE SELECT ON TABLES FROM group readonly;

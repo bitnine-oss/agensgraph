@@ -447,6 +447,8 @@ reset enable_bitmapscan;
 insert into arr_pk_tbl values(10, '[-2147483648:-2147483647]={1,2}');
 update arr_pk_tbl set f1[2147483647] = 42 where pk = 10;
 update arr_pk_tbl set f1[2147483646:2147483647] = array[4,2] where pk = 10;
+insert into arr_pk_tbl(pk, f1[0:2147483647]) values (2, '{}');
+insert into arr_pk_tbl(pk, f1[-2147483648:2147483647]) values (2, '{}');
 
 -- also exercise the expanded-array case
 do $$ declare a int[];
@@ -711,6 +713,28 @@ select array_replace(array['AB',NULL,'CDE'],NULL,'12');
 select array(select array[i,i/2] from generate_series(1,5) i);
 select array(select array['Hello', i::text] from generate_series(9,11) i);
 
+-- int2vector and oidvector should be treated as scalar types for this purpose
+select pg_typeof(array(select '11 22 33'::int2vector from generate_series(1,5)));
+select array(select '11 22 33'::int2vector from generate_series(1,5));
+select unnest(array(select '11 22 33'::int2vector from generate_series(1,5)));
+select pg_typeof(array(select '11 22 33'::oidvector from generate_series(1,5)));
+select array(select '11 22 33'::oidvector from generate_series(1,5));
+select unnest(array(select '11 22 33'::oidvector from generate_series(1,5)));
+
+-- array[] should do the same
+select pg_typeof(array['11 22 33'::int2vector]);
+select array['11 22 33'::int2vector];
+select pg_typeof(unnest(array['11 22 33'::int2vector]));
+select unnest(array['11 22 33'::int2vector]);
+select pg_typeof(unnest('11 22 33'::int2vector));
+select unnest('11 22 33'::int2vector);
+select pg_typeof(array['11 22 33'::oidvector]);
+select array['11 22 33'::oidvector];
+select pg_typeof(unnest(array['11 22 33'::oidvector]));
+select unnest(array['11 22 33'::oidvector]);
+select pg_typeof(unnest('11 22 33'::oidvector));
+select unnest('11 22 33'::oidvector);
+
 -- Insert/update on a column that is array of composite
 
 create temp table t1 (f1 int8_tbl[]);
@@ -825,3 +849,46 @@ SELECT array_dims(array_sample('[-1:2][2:3]={{1,2},{3,NULL},{5,6},{7,8}}'::int[]
 SELECT array_dims(array_sample('{{{1,2},{3,NULL}},{{5,6},{7,8}},{{9,10},{11,12}}}'::int[], 2));
 SELECT array_sample('{1,2,3,4,5,6}'::int[], -1); -- fail
 SELECT array_sample('{1,2,3,4,5,6}'::int[], 7); --fail
+
+-- array_reverse
+SELECT array_reverse('{}'::int[]);
+SELECT array_reverse('{1}'::int[]);
+SELECT array_reverse('{1,2}'::int[]);
+SELECT array_reverse('{1,2,3,NULL,4,5,6}'::int[]);
+SELECT array_reverse('{{1,2},{3,4},{5,6},{7,8}}'::int[]);
+
+-- array_sort
+SELECT array_sort('{}'::int[]);
+SELECT array_sort('{1}'::int[]);
+SELECT array_sort('{1,3,5,2,4,6}'::int[]);
+SELECT array_sort('{1.1,3.3,5.5,2.2,4.4,6.6}'::numeric[]);
+SELECT array_sort('{foo,bar,CCC,Abc,bbc}'::text[] COLLATE "C");
+SELECT array_sort('{foo,bar,null,CCC,Abc,bbc}'::text[] COLLATE "C");
+SELECT array_sort(ARRAY(SELECT '1 4'::int2vector UNION ALL SELECT '1 2'::int2vector));
+
+-- array_sort with order specified
+SELECT array_sort('{1.1,3.3,5.5,2.2,null,4.4,6.6}'::float8[], true);
+SELECT array_sort('{1.1,3.3,5.5,2.2,null,4.4,6.6}'::float8[], false);
+
+-- array_sort with order and nullsfirst flag specified
+SELECT array_sort('{1.1,3.3,5.5,2.2,null,4.4,6.6}'::float8[], true, true);
+SELECT array_sort('{1.1,3.3,5.5,2.2,null,4.4,6.6}'::float8[], true, false);
+SELECT array_sort('{1.1,3.3,5.5,2.2,null,4.4,6.6}'::float8[], false, true);
+SELECT array_sort('{1.1,3.3,5.5,2.2,null,4.4,6.6}'::float8[], false, false);
+
+-- multidimensional array tests
+SELECT array_sort('{{1}}'::int[]);
+SELECT array_sort(ARRAY[[2,4],[2,1],[6,5]]);
+SELECT array_sort('{{"1 2","3 4"}, {"1 -2","-1 4"}}'::int2vector[]);
+
+-- no ordering operator tests
+SELECT array_sort('{1}'::xid[]);  -- no error because no sort is required
+SELECT array_sort('{1,2,3}'::xid[]);
+SELECT array_sort('{{1,2,3},{2,3,4}}'::xid[]);
+
+-- bounds preservation tests
+SELECT array_sort(a) FROM (VALUES ('[10:12][20:21]={{1,2},{10,20},{3,4}}'::int[])) v(a);
+SELECT array_sort(a) FROM (VALUES ('[-1:0]={7,1}'::int[])) v(a);
+SELECT array_sort(a) FROM (VALUES ('[-2:0][20:21]={{1,2},{10,20},{1,-4}}'::int[])) v(a);
+SELECT array_sort(a [-1:0]) FROM (VALUES ('[-2:0][20:21]={{1,2},{10,20},{1,-4}}'::int[])) v(a);
+SELECT array_sort(a [-1:0][20:20]) FROM (VALUES ('[-2:0][20:21]={{1,2},{10,20},{1,-4}}'::int[])) v(a);

@@ -17,11 +17,9 @@
 #include "plpy_main.h"
 #include "plpy_procedure.h"
 #include "plpy_subxactobject.h"
-#include "plpython.h"
-#include "utils/builtins.h"
-#include "utils/lsyscache.h"
+#include "plpy_util.h"
+#include "utils/fmgrprotos.h"
 #include "utils/rel.h"
-#include "utils/typcache.h"
 
 /* saved state for a set-returning function */
 typedef struct PLySRFState
@@ -82,10 +80,10 @@ PLy_exec_function(FunctionCallInfo fcinfo, PLyProcedure *proc)
 										   sizeof(PLySRFState));
 				/* Immediately register cleanup callback */
 				srfstate->callback.func = plpython_srf_cleanup_callback;
-				srfstate->callback.arg = (void *) srfstate;
+				srfstate->callback.arg = srfstate;
 				MemoryContextRegisterResetCallback(funcctx->multi_call_memory_ctx,
 												   &srfstate->callback);
-				funcctx->user_fctx = (void *) srfstate;
+				funcctx->user_fctx = srfstate;
 			}
 			/* Every call setup */
 			funcctx = SRF_PERCALL_SETUP();
@@ -1068,13 +1066,7 @@ PLy_procedure_call(PLyProcedure *proc, const char *kargs, PyObject *vargs)
 
 	PG_TRY();
 	{
-#if PY_VERSION_HEX >= 0x03020000
-		rv = PyEval_EvalCode(proc->code,
-							 proc->globals, proc->globals);
-#else
-		rv = PyEval_EvalCode((PyCodeObject *) proc->code,
-							 proc->globals, proc->globals);
-#endif
+		rv = PyEval_EvalCode(proc->code, proc->globals, proc->globals);
 
 		/*
 		 * Since plpy will only let you close subtransactions that you

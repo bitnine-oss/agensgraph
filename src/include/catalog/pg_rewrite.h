@@ -7,7 +7,7 @@
  * --- ie, rule names are only unique among the rules of a given table.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_rewrite.h
@@ -22,7 +22,7 @@
 #define PG_REWRITE_H
 
 #include "catalog/genbki.h"
-#include "catalog/pg_rewrite_d.h"
+#include "catalog/pg_rewrite_d.h"	/* IWYU pragma: export */
 
 /* ----------------
  *		pg_rewrite definition.  cpp turns this into

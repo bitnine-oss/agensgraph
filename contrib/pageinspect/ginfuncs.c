@@ -2,24 +2,21 @@
  * ginfuncs.c
  *		Functions to investigate the content of GIN indexes
  *
- * Copyright (c) 2014-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2014-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		contrib/pageinspect/ginfuncs.c
  */
 #include "postgres.h"
 
-#include "access/gin.h"
 #include "access/gin_private.h"
 #include "access/htup_details.h"
-#include "catalog/namespace.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "pageinspect.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
-#include "utils/rel.h"
 
 
 PG_FUNCTION_INFO_V1(gin_metapage_info);

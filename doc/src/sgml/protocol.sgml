@@ -18,22 +18,10 @@
  </para>
 
  <para>
-  This document describes version 3.0 of the protocol, implemented in
-  <productname>PostgreSQL</productname> 7.4 and later.  For descriptions
-  of the earlier protocol versions, see previous releases of the
-  <productname>PostgreSQL</productname> documentation.  A single server
-  can support multiple protocol versions.  The initial startup-request
-  message tells the server which protocol version the client is attempting to
-  use.  If the major version requested by the client is not supported by
-  the server, the connection will be rejected (for example, this would occur
-  if the client requested protocol version 4.0, which does not exist as of
-  this writing).  If the minor version requested by the client is not
-  supported by the server (e.g., the client requests version 3.1, but the
-  server supports only 3.0), the server may either reject the connection or
-  may respond with a NegotiateProtocolVersion message containing the highest
-  minor protocol version which it supports.  The client may then choose either
-  to continue with the connection using the specified protocol version or
-  to abort the connection.
+  This document describes version 3.2 of the protocol, introduced in
+  <productname>PostgreSQL</productname> version 18. The server and the libpq
+  client library are backwards compatible with protocol version 3.0,
+  implemented in <productname>PostgreSQL</productname> 7.4 and later.
  </para>
 
   <para>
@@ -199,6 +187,90 @@
     server versions; the text format is usually the more portable choice.
    </para>
   </sect2>
+
+  <sect2 id="protocol-versions">
+   <title>Protocol Versions</title>
+
+   <para>
+    The current, latest version of the protocol is version 3.2. However, for
+    backwards compatibility with old server versions and middleware that don't
+    support the version negotiation yet, libpq still uses protocol version 3.0
+    by default.
+   </para>
+
+   <para>
+    A single server can support multiple protocol versions.  The initial
+    startup-request message tells the server which protocol version the client
+    is attempting to use.  If the major version requested by the client is not
+    supported by the server, the connection will be rejected (for example,
+    this would occur if the client requested protocol version 4.0, which does
+    not exist as of this writing).  If the minor version requested by the
+    client is not supported by the server (e.g., the client requests version
+    3.2, but the server supports only 3.0), the server may either reject the
+    connection or may respond with a NegotiateProtocolVersion message
+    containing the highest minor protocol version which it supports.  The
+    client may then choose either to continue with the connection using the
+    specified protocol version or to abort the connection.
+   </para>
+
+   <para>
+    The protocol negotiation was introduced in
+    <productname>PostgreSQL</productname> version 9.3.21. Earlier versions
+    would reject the connection if the client requested a minor version that
+    was not supported by the server.
+   </para>
+
+   <para>
+    <xref linkend="protocol-versions-table"/> shows the currently supported
+    protocol versions.
+   </para>
+
+   <table id="protocol-versions-table">
+    <title>Protocol Versions</title>
+
+    <tgroup cols="3">
+     <thead>
+      <row>
+       <entry>Version</entry>
+       <entry>Supported by</entry>
+       <entry>Description</entry>
+      </row>
+     </thead>
+
+     <tbody>
+      <row>
+      <entry>3.2</entry>
+      <entry>PostgreSQL 18 and later</entry>
+      <entry>Current latest version. The secret key used in query
+        cancellation was enlarged from 4 bytes to a variable length field. The
+        BackendKeyData message was changed to accommodate that, and the CancelRequest
+        message was redefined to have a variable length payload.
+      </entry>
+      </row>
+      <row>
+      <entry>3.1</entry>
+      <entry>-</entry>
+      <entry>Reserved. Version 3.1 has not been used by any PostgreSQL
+        version, but it was skipped because old versions of the popular
+        pgbouncer application had a bug in the protocol negotiation which made
+        it incorrectly claim that it supported version 3.1.
+      </entry>
+      </row>
+      <row>
+      <entry>3.0</entry>
+      <entry>PostgreSQL 7.4 and later</entry>
+      </row>
+      <row>
+      <entry>2.0</entry>
+      <entry>up to PostgreSQL 13</entry>
+      <entry>See previous releases of
+      the <productname>PostgreSQL</productname> documentation for
+      details</entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+  </sect2>
  </sect1>
 
  <sect1 id="protocol-flow">
@@ -312,6 +384,14 @@
         (Keep in mind the <function>md5()</function> function returns its
         result as a hex string.)
        </para>
+        <warning>
+         <para>
+          Support for MD5-encrypted passwords is deprecated and will be removed
+          in a future release of <productname>PostgreSQL</productname>.  Refer
+          to <xref linkend="auth-password"/> for details about migrating to
+          another password type.
+         </para>
+        </warning>
       </listitem>
      </varlistentry>
 
@@ -405,8 +485,14 @@
         this message indicates the highest supported minor version.  This
         message will also be sent if the client requested unsupported protocol
         options (i.e., beginning with <literal>_pq_.</literal>) in the
-        startup packet.  This message will be followed by an ErrorResponse or
-        a message indicating the success or failure of authentication.
+        startup packet.
+       </para>
+       <para>
+        After this message, the authentication will continue using the version
+        indicated by the server.  If the client does not support the older
+        version, it should immediately close the connection.  If the server
+        does not send this message, it supports the client's requested
+        protocol version and all the protocol options.
        </para>
       </listitem>
      </varlistentry>
@@ -1070,16 +1156,17 @@ SELCT 1/0;<!-- this typo is intentional -->
 
    <para>
     If the client has not issued an explicit <command>BEGIN</command>,
-    then each Sync ordinarily causes an implicit <command>COMMIT</command>
-    if the preceding step(s) succeeded, or an
-    implicit <command>ROLLBACK</command> if they failed.  However, there
-    are a few DDL commands (such as <command>CREATE DATABASE</command>)
-    that cannot be executed inside a transaction block.  If one of
-    these is executed in a pipeline, it will fail unless it is the first
-    command in the pipeline.  Furthermore, upon success it will force an
-    immediate commit to preserve database consistency.  Thus a Sync
-    immediately following one of these commands has no effect except to
-    respond with ReadyForQuery.
+    then an implicit transaction block is started and each Sync ordinarily
+    causes an implicit <command>COMMIT</command> if the preceding step(s)
+    succeeded, or an implicit <command>ROLLBACK</command> if they failed.
+    This implicit transaction block will only be detected by the server
+    when the first command ends without a sync.  There are a few DDL
+    commands (such as <command>CREATE DATABASE</command>) that cannot be
+    executed inside a transaction block. If one of these is executed in a
+    pipeline, it will fail unless it is the first command after a Sync.
+    Furthermore, upon success it will force an immediate commit to preserve
+    database consistency. Thus a Sync immediately following one of these
+    commands has no effect except to respond with ReadyForQuery.
    </para>
 
    <para>
@@ -1325,6 +1412,7 @@ SELCT 1/0;<!-- this typo is intentional -->
      <member><varname>IntervalStyle</varname></member>
      <member><varname>is_superuser</varname></member>
      <member><varname>scram_iterations</varname></member>
+     <member><varname>search_path</varname></member>
      <member><varname>server_encoding</varname></member>
      <member><varname>server_version</varname></member>
      <member><varname>session_authorization</varname></member>
@@ -1334,7 +1422,8 @@ SELCT 1/0;<!-- this typo is intentional -->
     (<varname>default_transaction_read_only</varname> and
     <varname>in_hot_standby</varname> were not reported by releases before
     14; <varname>scram_iterations</varname> was not reported by releases
-    before 16.)
+    before 16; <varname>search_path</varname> was not reported by releases
+    before 18.)
     Note that
     <varname>server_version</varname>,
     <varname>server_encoding</varname> and
@@ -1506,10 +1595,10 @@ SELCT 1/0;<!-- this typo is intentional -->
 
    <para>
     The frontend should also be prepared to handle an ErrorMessage
-    response to SSLRequest from the server.  This would only occur if
-    the server predates the addition of <acronym>SSL</acronym> support
-    to <productname>PostgreSQL</productname>.  (Such servers are now very ancient,
-    and likely do not exist in the wild anymore.)
+    response to SSLRequest from the server. The frontend should not display
+    this error message to the user/application, since the server has not been
+    authenticated
+    (<ulink url="https://www.postgresql.org/support/security/CVE-2024-10977/">CVE-2024-10977</ulink>).
     In this case the connection must
     be closed, but the frontend might choose to open a fresh connection
     and proceed without requesting <acronym>SSL</acronym>.
@@ -1619,12 +1708,13 @@ SELCT 1/0;<!-- this typo is intentional -->
 
    <para>
     The frontend should also be prepared to handle an ErrorMessage
-    response to GSSENCRequest from the server.  This would only occur if
-    the server predates the addition of <acronym>GSSAPI</acronym> encryption
-    support to <productname>PostgreSQL</productname>.  In this case the
-    connection must be closed, but the frontend might choose to open a fresh
-    connection and proceed without requesting <acronym>GSSAPI</acronym>
-    encryption.
+    response to GSSENCRequest from the server.  The frontend should not display
+    this error message to the user/application, since the server has not been
+    authenticated
+    (<ulink url="https://www.postgresql.org/support/security/CVE-2024-10977/">CVE-2024-10977</ulink>).
+    In this case the connection must be closed, but the frontend might choose
+    to open a fresh connection and proceed without requesting
+    <acronym>GSSAPI</acronym> encryption.
    </para>
 
    <para>
@@ -1676,11 +1766,11 @@ SELCT 1/0;<!-- this typo is intentional -->
 
   <para>
    <firstterm>SASL</firstterm> is a framework for authentication in connection-oriented
-   protocols. At the moment, <productname>PostgreSQL</productname> implements two SASL
-   authentication mechanisms, SCRAM-SHA-256 and SCRAM-SHA-256-PLUS. More
-   might be added in the future. The below steps illustrate how SASL
-   authentication is performed in general, while the next subsection gives
-   more details on SCRAM-SHA-256 and SCRAM-SHA-256-PLUS.
+   protocols. At the moment, <productname>PostgreSQL</productname> implements three
+   SASL authentication mechanisms: SCRAM-SHA-256, SCRAM-SHA-256-PLUS, and
+   OAUTHBEARER. More might be added in the future. The below steps illustrate how SASL
+   authentication is performed in general, while the next subsections give
+   more details on particular mechanisms.
   </para>
 
   <procedure>
@@ -1715,7 +1805,7 @@ SELCT 1/0;<!-- this typo is intentional -->
    <step id="sasl-auth-end">
     <para>
      Finally, when the authentication exchange is completed successfully, the
-     server sends an AuthenticationSASLFinal message, followed
+     server sends an optional AuthenticationSASLFinal message, followed
      immediately by an AuthenticationOk message. The AuthenticationSASLFinal
      contains additional server-to-client data, whose content is particular to the
      selected authentication mechanism. If the authentication mechanism doesn't
@@ -1734,9 +1824,9 @@ SELCT 1/0;<!-- this typo is intentional -->
    <title>SCRAM-SHA-256 Authentication</title>
 
    <para>
-    The implemented SASL mechanisms at the moment
-    are <literal>SCRAM-SHA-256</literal> and its variant with channel
-    binding <literal>SCRAM-SHA-256-PLUS</literal>. They are described in
+    <literal>SCRAM-SHA-256</literal>, and its variant with channel
+    binding <literal>SCRAM-SHA-256-PLUS</literal>, are password-based
+    authentication mechanisms. They are described in
     detail in <ulink url="https://datatracker.ietf.org/doc/html/rfc7677">RFC 7677</ulink>
     and <ulink url="https://datatracker.ietf.org/doc/html/rfc5802">RFC 5802</ulink>.
    </para>
@@ -1834,6 +1924,121 @@ SELCT 1/0;<!-- this typo is intentional -->
       Server sends an AuthenticationSASLFinal message, with the SCRAM
       <structname>server-final-message</structname>, followed immediately by
       an AuthenticationOk message.
+     </para>
+    </step>
+   </procedure>
+  </sect2>
+
+  <sect2 id="sasl-oauthbearer">
+   <title>OAUTHBEARER Authentication</title>
+
+   <para>
+    <literal>OAUTHBEARER</literal> is a token-based mechanism for federated
+    authentication. It is described in detail in
+    <ulink url="https://datatracker.ietf.org/doc/html/rfc7628">RFC 7628</ulink>.
+   </para>
+
+   <para>
+    A typical exchange differs depending on whether or not the client already
+    has a bearer token cached for the current user. If it does not, the exchange
+    will take place over two connections: the first "discovery" connection to
+    obtain OAuth metadata from the server, and the second connection to send
+    the token after the client has obtained it. (libpq does not currently
+    implement a caching method as part of its builtin flow, so it uses the
+    two-connection exchange.)
+   </para>
+
+   <para>
+    This mechanism is client-initiated, like SCRAM. The client initial response
+    consists of the standard "GS2" header used by SCRAM, followed by a list of
+    <literal>key=value</literal> pairs. The only key currently supported by
+    the server is <literal>auth</literal>, which contains the bearer token.
+    <literal>OAUTHBEARER</literal> additionally specifies three optional
+    components of the client initial response (the <literal>authzid</literal> of
+    the GS2 header, and the <structfield>host</structfield> and
+    <structfield>port</structfield> keys) which are currently ignored by the
+    server.
+   </para>
+
+   <para>
+    <literal>OAUTHBEARER</literal> does not support channel binding, and there
+    is no "OAUTHBEARER-PLUS" mechanism. This mechanism does not make use of
+    server data during a successful authentication, so the
+    AuthenticationSASLFinal message is not used in the exchange.
+   </para>
+
+   <procedure>
+    <title>Example</title>
+    <step>
+     <para>
+      During the first exchange, the server sends an AuthenticationSASL message
+      with the <literal>OAUTHBEARER</literal> mechanism advertised.
+     </para>
+    </step>
+
+    <step>
+     <para>
+      The client responds by sending a SASLInitialResponse message which
+      indicates the <literal>OAUTHBEARER</literal> mechanism. Assuming the
+      client does not already have a valid bearer token for the current user,
+      the <structfield>auth</structfield> field is empty, indicating a discovery
+      connection.
+     </para>
+    </step>
+
+    <step>
+     <para>
+      Server sends an AuthenticationSASLContinue message containing an error
+      <literal>status</literal> alongside a well-known URI and scopes that the
+      client should use to conduct an OAuth flow.
+     </para>
+    </step>
+
+    <step>
+     <para>
+      Client sends a SASLResponse message containing the empty set (a single
+      <literal>0x01</literal> byte) to finish its half of the discovery
+      exchange.
+     </para>
+    </step>
+
+    <step>
+     <para>
+      Server sends an ErrorMessage to fail the first exchange.
+     </para>
+     <para>
+      At this point, the client conducts one of many possible OAuth flows to
+      obtain a bearer token, using any metadata that it has been configured with
+      in addition to that provided by the server. (This description is left
+      deliberately vague; <literal>OAUTHBEARER</literal> does not specify or
+      mandate any particular method for obtaining a token.)
+     </para>
+     <para>
+      Once it has a token, the client reconnects to the server for the final
+      exchange:
+     </para>
+    </step>
+
+    <step>
+     <para>
+      The server once again sends an AuthenticationSASL message with the
+      <literal>OAUTHBEARER</literal> mechanism advertised.
+     </para>
+    </step>
+
+    <step>
+     <para>
+      The client responds by sending a SASLInitialResponse message, but this
+      time the <structfield>auth</structfield> field in the message contains the
+      bearer token that was obtained during the client flow.
+     </para>
+    </step>
+
+    <step>
+     <para>
+      The server validates the token according to the instructions of the
+      token provider. If the client is authorized to connect, it sends an
+      AuthenticationOk message to end the SASL exchange.
      </para>
     </step>
    </procedure>
@@ -2192,7 +2397,23 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
        </varlistentry>
       </variablelist>
 
-      <para>The following option is supported:</para>
+      <para>The following options are supported:</para>
+
+      <variablelist>
+       <varlistentry>
+        <term><literal>TWO_PHASE [ <replaceable class="parameter">boolean</replaceable> ]</literal></term>
+        <listitem>
+         <para>
+          If true, this logical replication slot supports decoding of two-phase
+          commit. With this option, commands related to two-phase commit such as
+          <literal>PREPARE TRANSACTION</literal>, <literal>COMMIT PREPARED</literal>
+          and <literal>ROLLBACK PREPARED</literal> are decoded and transmitted.
+          The transaction will be decoded and transmitted at
+          <literal>PREPARE TRANSACTION</literal> time.
+         </para>
+        </listitem>
+       </varlistentry>
+      </variablelist>
 
       <variablelist>
        <varlistentry>
@@ -2659,8 +2880,6 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
      <listitem>
       <para>
        Drops a replication slot, freeing any reserved server-side resources.
-       If the slot is a logical slot that was created in a database other than
-       the database the walsender is connected to, this command fails.
       </para>
 
       <variablelist>
@@ -3247,7 +3466,7 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
      </term>
      <listitem>
       <para>
-       Comma separated list of publication names for which to subscribe
+       Comma-separated list of publication names for which to subscribe
        (receive changes). The individual publication names are treated
        as standard objects names and can be quoted the same as needed.
        At least one publication name is required.
@@ -3312,8 +3531,9 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
      </term>
      <listitem>
       <para>
-       Option to send changes by their origin.  Possible values are "none"
-       to only send the changes that have no origin associated, or "any"
+       Option to send changes by their origin.  Possible values are
+       <literal>none</literal> to only send the changes that have no origin
+       associated, or <literal>any</literal>
        to send the changes regardless of their origin.  This can be used
        to avoid loops (infinite replication of the same data) among
        replication nodes.
@@ -3482,10 +3702,10 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
    indicate that it can be sent by a frontend (F), a backend (B), or both
    (F &amp; B).
    Notice that although each message includes a byte count at the beginning,
-   the message format is defined so that the message end can be found without
-   reference to the byte count.  This aids validity checking.  (The CopyData
-   message is an exception, because it forms part of a data stream; the contents
-   of any individual CopyData message cannot be interpretable on their own.)
+   most messages are defined so that the message end can be found without
+   reference to the byte count.  This is for historical reasons, as the
+   original, now-obsolete protocol version 2 did not have an explicit length
+   field.  It also aids validity checking though.
   </para>
 
   <variablelist>
@@ -3901,7 +4121,7 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
       </varlistentry>
 
       <varlistentry>
-       <term>Int32(12)</term>
+       <term>Int32</term>
        <listitem>
         <para>
          Length of message contents in bytes, including self.
@@ -3919,14 +4139,29 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
       </varlistentry>
 
       <varlistentry>
-       <term>Int32</term>
+       <term>Byte<replaceable>n</replaceable></term>
        <listitem>
         <para>
-         The secret key of this backend.
+         The secret key of this backend. This field extends to the end of the
+         message, indicated by the length field.
+        </para>
+        <para>
+          The maximum key length is 256 bytes. The
+          <productname>PostgreSQL</productname> server only sends keys up to
+          32 bytes, but the larger maximum size allows for future server
+          versions, as well as connection poolers and other middleware, to use
+          longer keys. One possible use case is augmenting the server's key
+          with extra information. Middleware is therefore also encouraged to
+          not use up all of the bytes, in case multiple middleware
+          applications are layered on top of each other, each of which may
+          wrap the key with extra data.
         </para>
        </listitem>
       </varlistentry>
      </variablelist>
+     <para>
+      Before protocol version 3.2, the secret key was always 4 bytes long.
+     </para>
     </listitem>
    </varlistentry>
 
@@ -4132,14 +4367,18 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
       </varlistentry>
 
       <varlistentry>
-       <term>Int32</term>
+       <term>Byte<replaceable>n</replaceable></term>
        <listitem>
         <para>
-         The secret key for the target backend.
+         The secret key for the target backend. This field extends to the end of the
+         message, indicated by the length field. The maximum key length is 256 bytes.
         </para>
        </listitem>
       </varlistentry>
      </variablelist>
+     <para>
+      Before protocol version 3.2, the secret key was always 4 bytes long.
+     </para>
     </listitem>
    </varlistentry>
 
@@ -6525,7 +6764,7 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
 
      <para>
       Next, the following message part appears for each column included in
-      the publication (except generated columns):
+      the publication:
      </para>
 
      <variablelist>
@@ -7053,8 +7292,8 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
        <term>Int64 (XLogRecPtr)</term>
        <listitem>
         <para>
-         The LSN of the abort. This field is available since protocol version
-         4.
+         The LSN of the abort operation, present only when streaming is set to parallel.
+         This field is available since protocol version 4.
         </para>
        </listitem>
       </varlistentry>
@@ -7063,9 +7302,9 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
        <term>Int64 (TimestampTz)</term>
        <listitem>
         <para>
-         Abort timestamp of the transaction. The value is in number
-         of microseconds since PostgreSQL epoch (2000-01-01). This field is
-         available since protocol version 4.
+         Abort timestamp of the transaction, present only when streaming is set to
+         parallel. The value is in number of microseconds since PostgreSQL epoch (2000-01-01).
+         This field is available since protocol version 4.
         </para>
        </listitem>
       </varlistentry>
@@ -7458,7 +7697,7 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
      </variablelist>
 
      <para>
-      Next, one of the following submessages appears for each column (except generated columns):
+      Next, one of the following submessages appears for each published column:
 
       <variablelist>
        <varlistentry>
@@ -7588,8 +7827,9 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
    is a well-defined way to recover from errors during <command>COPY</command>.  The special
    <quote><literal>\.</literal></quote> last line is not needed anymore, and is not sent
    during <command>COPY OUT</command>.
-   (It is still recognized as a terminator during <command>COPY IN</command>, but its use is
-   deprecated and will eventually be removed.)  Binary <command>COPY</command> is supported.
+   (It is still recognized as a terminator during text-mode <command>COPY
+   IN</command>, but not in CSV mode.  The text-mode behavior is
+   deprecated and may eventually be removed.)  Binary <command>COPY</command> is supported.
    The CopyInResponse and CopyOutResponse messages include fields indicating
    the number of columns and the format of each column.
   </para>

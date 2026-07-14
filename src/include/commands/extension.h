@@ -4,7 +4,7 @@
  *		Extension management commands (create/drop extension).
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/extension.h
@@ -17,6 +17,8 @@
 #include "catalog/objectaddress.h"
 #include "parser/parse_node.h"
 
+/* GUC */
+extern PGDLLIMPORT char *Extension_control_path;
 
 /*
  * creating_extension is only true while running a CREATE EXTENSION or ALTER

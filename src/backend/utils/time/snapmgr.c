@@ -3,10 +3,69 @@
  * snapmgr.c
  *		PostgreSQL snapshot manager
  *
+ * The following functions return an MVCC snapshot that can be used in tuple
+ * visibility checks:
+ *
+ * - GetTransactionSnapshot
+ * - GetLatestSnapshot
+ * - GetCatalogSnapshot
+ * - GetNonHistoricCatalogSnapshot
+ *
+ * Each of these functions returns a reference to a statically allocated
+ * snapshot.  The statically allocated snapshot is subject to change on any
+ * snapshot-related function call, and should not be used directly.  Instead,
+ * call PushActiveSnapshot() or RegisterSnapshot() to create a longer-lived
+ * copy and use that.
+ *
  * We keep track of snapshots in two ways: those "registered" by resowner.c,
  * and the "active snapshot" stack.  All snapshots in either of them live in
  * persistent memory.  When a snapshot is no longer in any of these lists
  * (tracked by separate refcounts on each snapshot), its memory can be freed.
+ *
+ * In addition to the above-mentioned MVCC snapshots, there are some special
+ * snapshots like SnapshotSelf, SnapshotAny, and "dirty" snapshots.  They can
+ * only be used in limited contexts and cannot be registered or pushed to the
+ * active stack.
+ *
+ * ActiveSnapshot stack
+ * --------------------
+ *
+ * Most visibility checks use the current "active snapshot" returned by
+ * GetActiveSnapshot().  When running normal queries, the active snapshot is
+ * set when query execution begins based on the transaction isolation level.
+ *
+ * The active snapshot is tracked in a stack so that the currently active one
+ * is at the top of the stack.  It mirrors the process call stack: whenever we
+ * recurse or switch context to fetch rows from a different portal for
+ * example, the appropriate snapshot is pushed to become the active snapshot,
+ * and popped on return.  Once upon a time, ActiveSnapshot was just a global
+ * variable that was saved and restored similar to CurrentMemoryContext, but
+ * nowadays it's managed as a separate data structure so that we can keep
+ * track of which snapshots are in use and reset MyProc->xmin when there is no
+ * active snapshot.
+ *
+ * However, there are a couple of exceptions where the active snapshot stack
+ * does not strictly mirror the call stack:
+ *
+ * - VACUUM and a few other utility commands manage their own transactions,
+ *   which take their own snapshots.  They are called with an active snapshot
+ *   set, like most utility commands, but they pop the active snapshot that
+ *   was pushed by the caller.  PortalRunUtility knows about the possibility
+ *   that the snapshot it pushed is no longer active on return.
+ *
+ * - When COMMIT or ROLLBACK is executed within a procedure or DO-block, the
+ *   active snapshot stack is destroyed, and re-established later when
+ *   subsequent statements in the procedure are executed.  There are many
+ *   limitations on when in-procedure COMMIT/ROLLBACK is allowed; one such
+ *   limitation is that all the snapshots on the active snapshot stack are
+ *   known to portals that are being executed, which makes it safe to reset
+ *   the stack.  See EnsurePortalSnapshotExists().
+ *
+ * Registered snapshots
+ * --------------------
+ *
+ * In addition to snapshots pushed to the active snapshot stack, a snapshot
+ * can be registered with a resource owner.
  *
  * The FirstXactSnapshot, if any, is treated a bit specially: we increment its
  * regd_count and list it in RegisteredSnapshots, but this reference is not
@@ -35,7 +94,7 @@
  * stack is empty.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -80,9 +139,10 @@
  */
 static SnapshotData CurrentSnapshotData = {SNAPSHOT_MVCC};
 static SnapshotData SecondarySnapshotData = {SNAPSHOT_MVCC};
-SnapshotData CatalogSnapshotData = {SNAPSHOT_MVCC};
+static SnapshotData CatalogSnapshotData = {SNAPSHOT_MVCC};
 SnapshotData SnapshotSelfData = {SNAPSHOT_SELF};
 SnapshotData SnapshotAnyData = {SNAPSHOT_ANY};
+SnapshotData SnapshotToastData = {SNAPSHOT_TOAST};
 
 /* Pointers to valid snapshots */
 static Snapshot CurrentSnapshot = NULL;
@@ -118,9 +178,6 @@ typedef struct ActiveSnapshotElt
 
 /* Top of the stack of active snapshots */
 static ActiveSnapshotElt *ActiveSnapshot = NULL;
-
-/* Bottom of the stack of active snapshots */
-static ActiveSnapshotElt *OldestActiveSnapshot = NULL;
 
 /*
  * Currently registered Snapshots.  Ordered in a heap by xmin, so that we can
@@ -199,33 +256,27 @@ typedef struct SerializedSnapshotData
 	bool		suboverflowed;
 	bool		takenDuringRecovery;
 	CommandId	curcid;
-	TimestampTz whenTaken;
-	XLogRecPtr	lsn;
 } SerializedSnapshotData;
 
 /*
  * GetTransactionSnapshot
  *		Get the appropriate snapshot for a new query in a transaction.
  *
- * Note that the return value may point at static storage that will be modified
- * by future calls and by CommandCounterIncrement().  Callers should call
- * RegisterSnapshot or PushActiveSnapshot on the returned snap if it is to be
- * used very long.
+ * Note that the return value points at static storage that will be modified
+ * by future calls and by CommandCounterIncrement().  Callers must call
+ * RegisterSnapshot or PushActiveSnapshot on the returned snap before doing
+ * any other non-trivial work that could invalidate it.
  */
 Snapshot
 GetTransactionSnapshot(void)
 {
 	/*
-	 * Return historic snapshot if doing logical decoding. We'll never need a
-	 * non-historic transaction snapshot in this (sub-)transaction, so there's
-	 * no need to be careful to set one up for later calls to
-	 * GetTransactionSnapshot().
+	 * This should not be called while doing logical decoding.  Historic
+	 * snapshots are only usable for catalog access, not for general-purpose
+	 * queries.
 	 */
 	if (HistoricSnapshotActive())
-	{
-		Assert(!FirstSnapshotSet);
-		return HistoricSnapshot;
-	}
+		elog(ERROR, "cannot take query snapshot during logical decoding");
 
 	/* First call in transaction? */
 	if (!FirstSnapshotSet)
@@ -311,36 +362,6 @@ GetLatestSnapshot(void)
 	SecondarySnapshot = GetSnapshotData(&SecondarySnapshotData);
 
 	return SecondarySnapshot;
-}
-
-/*
- * GetOldestSnapshot
- *
- *		Get the transaction's oldest known snapshot, as judged by the LSN.
- *		Will return NULL if there are no active or registered snapshots.
- */
-Snapshot
-GetOldestSnapshot(void)
-{
-	Snapshot	OldestRegisteredSnapshot = NULL;
-	XLogRecPtr	RegisteredLSN = InvalidXLogRecPtr;
-
-	if (!pairingheap_is_empty(&RegisteredSnapshots))
-	{
-		OldestRegisteredSnapshot = pairingheap_container(SnapshotData, ph_node,
-														 pairingheap_first(&RegisteredSnapshots));
-		RegisteredLSN = OldestRegisteredSnapshot->lsn;
-	}
-
-	if (OldestActiveSnapshot != NULL)
-	{
-		XLogRecPtr	ActiveLSN = OldestActiveSnapshot->as_snap->lsn;
-
-		if (XLogRecPtrIsInvalid(RegisteredLSN) || RegisteredLSN > ActiveLSN)
-			return OldestActiveSnapshot->as_snap;
-	}
-
-	return OldestRegisteredSnapshot;
 }
 
 /*
@@ -684,8 +705,6 @@ PushActiveSnapshotWithLevel(Snapshot snapshot, int snap_level)
 	newactive->as_snap->active_count++;
 
 	ActiveSnapshot = newactive;
-	if (OldestActiveSnapshot == NULL)
-		OldestActiveSnapshot = ActiveSnapshot;
 }
 
 /*
@@ -756,8 +775,6 @@ PopActiveSnapshot(void)
 
 	pfree(ActiveSnapshot);
 	ActiveSnapshot = newstack;
-	if (ActiveSnapshot == NULL)
-		OldestActiveSnapshot = NULL;
 
 	SnapshotResetXmin();
 }
@@ -902,13 +919,6 @@ xmin_cmp(const pairingheap_node *a, const pairingheap_node *b, void *arg)
  * dropped.  For efficiency, we only consider recomputing PGPROC->xmin when
  * the active snapshot stack is empty; this allows us not to need to track
  * which active snapshot is oldest.
- *
- * Note: it's tempting to use GetOldestSnapshot() here so that we can include
- * active snapshots in the calculation.  However, that compares by LSN not
- * xmin so it's not entirely clear that it's the same thing.  Also, we'd be
- * critically dependent on the assumption that the bottommost active snapshot
- * stack entry has the oldest xmin.  (Current uses of GetOldestSnapshot() are
- * not actually critical, but this would be.)
  */
 static void
 SnapshotResetXmin(void)
@@ -920,7 +930,7 @@ SnapshotResetXmin(void)
 
 	if (pairingheap_is_empty(&RegisteredSnapshots))
 	{
-		MyProc->xmin = InvalidTransactionId;
+		MyProc->xmin = TransactionXmin = InvalidTransactionId;
 		return;
 	}
 
@@ -928,7 +938,7 @@ SnapshotResetXmin(void)
 										pairingheap_first(&RegisteredSnapshots));
 
 	if (TransactionIdPrecedes(MyProc->xmin, minSnapshot->xmin))
-		MyProc->xmin = minSnapshot->xmin;
+		MyProc->xmin = TransactionXmin = minSnapshot->xmin;
 }
 
 /*
@@ -980,8 +990,6 @@ AtSubAbort_Snapshot(int level)
 		pfree(ActiveSnapshot);
 
 		ActiveSnapshot = next;
-		if (ActiveSnapshot == NULL)
-			OldestActiveSnapshot = NULL;
 	}
 
 	SnapshotResetXmin();
@@ -1065,7 +1073,6 @@ AtEOXact_Snapshot(bool isCommit, bool resetXmin)
 	 * it'll go away with TopTransactionContext.
 	 */
 	ActiveSnapshot = NULL;
-	OldestActiveSnapshot = NULL;
 	pairingheap_reset(&RegisteredSnapshots);
 
 	CurrentSnapshot = NULL;
@@ -1727,8 +1734,6 @@ SerializeSnapshot(Snapshot snapshot, char *start_address)
 	serialized_snapshot.suboverflowed = snapshot->suboverflowed;
 	serialized_snapshot.takenDuringRecovery = snapshot->takenDuringRecovery;
 	serialized_snapshot.curcid = snapshot->curcid;
-	serialized_snapshot.whenTaken = snapshot->whenTaken;
-	serialized_snapshot.lsn = snapshot->lsn;
 
 	/*
 	 * Ignore the SubXID array if it has overflowed, unless the snapshot was
@@ -1801,8 +1806,6 @@ RestoreSnapshot(char *start_address)
 	snapshot->suboverflowed = serialized_snapshot.suboverflowed;
 	snapshot->takenDuringRecovery = serialized_snapshot.takenDuringRecovery;
 	snapshot->curcid = serialized_snapshot.curcid;
-	snapshot->whenTaken = serialized_snapshot.whenTaken;
-	snapshot->lsn = serialized_snapshot.lsn;
 	snapshot->snapXactCompletionCount = 0;
 
 	/* Copy XIDs, if present. */

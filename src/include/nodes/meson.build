@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 node_support_input_i = [
   'nodes/nodes.h',
@@ -8,6 +8,7 @@ node_support_input_i = [
   'nodes/plannodes.h',
   'nodes/execnodes.h',
   'access/amapi.h',
+  'access/cmptype.h',
   'access/sdir.h',
   'access/tableam.h',
   'access/tsmapi.h',

@@ -2,7 +2,7 @@
  * test_ddl_deparse.c
  *		Support functions for the test_ddl_deparse module
  *
- * Copyright (c) 2014-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2014-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/test/modules/test_ddl_deparse/test_ddl_deparse.c
@@ -10,7 +10,6 @@
  */
 #include "postgres.h"
 
-#include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "nodes/execnodes.h"
 #include "tcop/deparse_utility.h"
@@ -134,9 +133,6 @@ get_altertable_subcmdinfo(PG_FUNCTION_ARGS)
 				break;
 			case AT_DropExpression:
 				strtype = "DROP EXPRESSION";
-				break;
-			case AT_CheckNotNull:
-				strtype = "CHECK NOT NULL";
 				break;
 			case AT_SetStatistics:
 				strtype = "SET STATS";
@@ -299,12 +295,6 @@ get_altertable_subcmdinfo(PG_FUNCTION_ARGS)
 				break;
 			case AT_DetachPartitionFinalize:
 				strtype = "DETACH PARTITION ... FINALIZE";
-				break;
-			case AT_SplitPartition:
-				strtype = "SPLIT PARTITION";
-				break;
-			case AT_MergePartitions:
-				strtype = "MERGE PARTITIONS";
 				break;
 			case AT_AddIdentity:
 				strtype = "ADD IDENTITY";

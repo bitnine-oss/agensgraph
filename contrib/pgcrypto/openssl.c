@@ -31,6 +31,7 @@
 
 #include "postgres.h"
 
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/err.h>
 #include <openssl/rand.h>
@@ -154,8 +155,6 @@ digest_free(PX_MD *h)
 	pfree(h);
 }
 
-static int	px_openssl_initialized = 0;
-
 /* PUBLIC functions */
 
 int
@@ -165,12 +164,6 @@ px_find_digest(const char *name, PX_MD **res)
 	EVP_MD_CTX *ctx;
 	PX_MD	   *h;
 	OSSLDigest *digest;
-
-	if (!px_openssl_initialized)
-	{
-		px_openssl_initialized = 1;
-		OpenSSL_add_all_algorithms();
-	}
 
 	md = EVP_get_digestbyname(name);
 	if (md == NULL)
@@ -211,7 +204,7 @@ px_find_digest(const char *name, PX_MD **res)
 	h->update = digest_update;
 	h->finish = digest_finish;
 	h->free = digest_free;
-	h->p.ptr = (void *) digest;
+	h->p.ptr = digest;
 
 	*res = h;
 	return 0;
@@ -624,6 +617,36 @@ ossl_aes_cbc_init(PX_Cipher *c, const uint8 *key, unsigned klen, const uint8 *iv
 	return err;
 }
 
+static int
+ossl_aes_cfb_init(PX_Cipher *c, const uint8 *key, unsigned klen, const uint8 *iv)
+{
+	OSSLCipher *od = c->ptr;
+	int			err;
+
+	err = ossl_aes_init(c, key, klen, iv);
+	if (err)
+		return err;
+
+	switch (od->klen)
+	{
+		case 128 / 8:
+			od->evp_ciph = EVP_aes_128_cfb();
+			break;
+		case 192 / 8:
+			od->evp_ciph = EVP_aes_192_cfb();
+			break;
+		case 256 / 8:
+			od->evp_ciph = EVP_aes_256_cfb();
+			break;
+		default:
+			/* shouldn't happen */
+			err = PXE_CIPHER_INIT;
+			break;
+	}
+
+	return err;
+}
+
 /*
  * aliases
  */
@@ -643,6 +666,7 @@ static PX_Alias ossl_aliases[] = {
 	{"rijndael", "aes-cbc"},
 	{"rijndael-cbc", "aes-cbc"},
 	{"rijndael-ecb", "aes-ecb"},
+	{"rijndael-cfb", "aes-cfb"},
 	{NULL}
 };
 
@@ -714,6 +738,13 @@ static const struct ossl_cipher ossl_aes_cbc = {
 	128 / 8, 256 / 8
 };
 
+static const struct ossl_cipher ossl_aes_cfb = {
+	ossl_aes_cfb_init,
+	NULL,						/* EVP_aes_XXX_cfb(), determined in init
+								 * function */
+	128 / 8, 256 / 8
+};
+
 /*
  * Special handlers
  */
@@ -735,6 +766,7 @@ static const struct ossl_cipher_lookup ossl_cipher_types[] = {
 	{"cast5-cbc", &ossl_cast_cbc},
 	{"aes-ecb", &ossl_aes_ecb},
 	{"aes-cbc", &ossl_aes_cbc},
+	{"aes-cfb", &ossl_aes_cfb},
 	{NULL}
 };
 
@@ -801,4 +833,56 @@ static void
 ResOwnerReleaseOSSLCipher(Datum res)
 {
 	free_openssl_cipher((OSSLCipher *) DatumGetPointer(res));
+}
+
+/*
+ * CheckFIPSMode
+ *
+ * Returns the FIPS mode of the underlying OpenSSL installation.
+ */
+bool
+CheckFIPSMode(void)
+{
+	int			fips_enabled = 0;
+
+	/*
+	 * EVP_default_properties_is_fips_enabled was added in OpenSSL 3.0, before
+	 * that FIPS_mode() was used to test for FIPS being enabled.  The last
+	 * upstream OpenSSL version before 3.0 which supported FIPS was 1.0.2, but
+	 * there are forks of 1.1.1 which are FIPS validated so we still need to
+	 * test with FIPS_mode() even though we don't support 1.0.2.
+	 */
+	fips_enabled =
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+		EVP_default_properties_is_fips_enabled(NULL);
+#else
+		FIPS_mode();
+#endif
+
+	return (fips_enabled == 1);
+}
+
+/*
+ * CheckBuiltinCryptoMode
+ *
+ * Function for erroring out in case built-in crypto is executed when the user
+ * has disabled it. If builtin_crypto_enabled is set to BC_OFF or BC_FIPS and
+ * OpenSSL is operating in FIPS mode the function will error out, else the
+ * query executing built-in crypto can proceed.
+ */
+void
+CheckBuiltinCryptoMode(void)
+{
+	if (builtin_crypto_enabled == BC_ON)
+		return;
+
+	if (builtin_crypto_enabled == BC_OFF)
+		ereport(ERROR,
+				errmsg("use of built-in crypto functions is disabled"));
+
+	Assert(builtin_crypto_enabled == BC_FIPS);
+
+	if (CheckFIPSMode() == true)
+		ereport(ERROR,
+				errmsg("use of non-FIPS validated crypto not allowed when OpenSSL is in FIPS mode"));
 }

@@ -14,6 +14,7 @@ teardown
 
 # heap_update()
 session s1
+setup	{ SET deadlock_timeout = '100s'; }
 step b1	{ BEGIN; }
 step grant1	{
 	GRANT SELECT ON intra_grant_inplace TO PUBLIC;
@@ -25,6 +26,7 @@ step c1	{ COMMIT; }
 
 # inplace update
 session s2
+setup	{ SET deadlock_timeout = '10ms'; }
 step read2	{
 	SELECT relhasindex FROM pg_class
 	WHERE oid = 'intra_grant_inplace'::regclass;
@@ -73,8 +75,6 @@ step keyshr5	{
 teardown	{ ROLLBACK; }
 
 
-# XXX extant bugs: permutation comments refer to planned post-bugfix behavior
-
 permutation
 	b1
 	grant1
@@ -93,6 +93,14 @@ permutation
 	keyshr5
 	b3
 	sfnku3
+	addk2(r3)
+	r3
+
+# reproduce bug in DoesMultiXactIdConflict() call
+permutation
+	b3
+	sfnku3
+	keyshr5
 	addk2(r3)
 	r3
 
@@ -126,8 +134,8 @@ permutation
 	b2
 	sfnku2
 	b1
-	grant1(c2)		# acquire LockTuple(), await sfnku2 xmax
-	addk2			# block in LockTuple() behind grant1 = deadlock
+	grant1(addk2)	# acquire LockTuple(), await sfnku2 xmax
+	addk2(*)		# block in LockTuple() behind grant1 = deadlock
 	c2
 	c1
 	read2
@@ -138,7 +146,7 @@ permutation
 	grant1
 	b3
 	sfu3(c1)	# acquire LockTuple(), await grant1 xmax
-	revoke4(sfu3)	# block in LockTuple() behind sfu3
+	revoke4(r3)	# block in LockTuple() behind sfu3
 	c1
 	r3			# revoke4 unlocks old tuple and finds new
 

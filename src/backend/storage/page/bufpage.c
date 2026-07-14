@@ -3,7 +3,7 @@
  * bufpage.c
  *	  POSTGRES standard buffer page code.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -61,7 +61,7 @@ PageInit(Page page, Size pageSize, Size specialSize)
 
 
 /*
- * PageIsVerifiedExtended
+ * PageIsVerified
  *		Check that the page header and checksum (if any) appear valid.
  *
  * This is called when a page has just been read in from disk.  The idea is
@@ -78,22 +78,29 @@ PageInit(Page page, Size pageSize, Size specialSize)
  * treat such a page as empty and without free space.  Eventually, VACUUM
  * will clean up such a page and make it usable.
  *
- * If flag PIV_LOG_WARNING is set, a WARNING is logged in the event of
- * a checksum failure.
+ * If flag PIV_LOG_WARNING/PIV_LOG_LOG is set, a WARNING/LOG message is logged
+ * in the event of a checksum failure.
  *
- * If flag PIV_REPORT_STAT is set, a checksum failure is reported directly
- * to pgstat.
+ * If flag PIV_IGNORE_CHECKSUM_FAILURE is set, checksum failures will cause a
+ * message about the failure to be emitted, but will not cause
+ * PageIsVerified() to return false.
+ *
+ * To allow the caller to report statistics about checksum failures,
+ * *checksum_failure_p can be passed in. Note that there may be checksum
+ * failures even if this function returns true, due to
+ * PIV_IGNORE_CHECKSUM_FAILURE.
  */
 bool
-PageIsVerifiedExtended(Page page, BlockNumber blkno, int flags)
+PageIsVerified(PageData *page, BlockNumber blkno, int flags, bool *checksum_failure_p)
 {
-	PageHeader	p = (PageHeader) page;
+	const PageHeaderData *p = (const PageHeaderData *) page;
 	size_t	   *pagebytes;
-	int			i;
 	bool		checksum_failure = false;
 	bool		header_sane = false;
-	bool		all_zeroes = false;
 	uint16		checksum = 0;
+
+	if (checksum_failure_p)
+		*checksum_failure_p = false;
 
 	/*
 	 * Don't verify page data unless the page passes basic non-zero test
@@ -102,10 +109,14 @@ PageIsVerifiedExtended(Page page, BlockNumber blkno, int flags)
 	{
 		if (DataChecksumsEnabled())
 		{
-			checksum = pg_checksum_page((char *) page, blkno);
+			checksum = pg_checksum_page(page, blkno);
 
 			if (checksum != p->pd_checksum)
+			{
 				checksum_failure = true;
+				if (checksum_failure_p)
+					*checksum_failure_p = true;
+			}
 		}
 
 		/*
@@ -126,36 +137,24 @@ PageIsVerifiedExtended(Page page, BlockNumber blkno, int flags)
 	}
 
 	/* Check all-zeroes case */
-	all_zeroes = true;
 	pagebytes = (size_t *) page;
-	for (i = 0; i < (BLCKSZ / sizeof(size_t)); i++)
-	{
-		if (pagebytes[i] != 0)
-		{
-			all_zeroes = false;
-			break;
-		}
-	}
 
-	if (all_zeroes)
+	if (pg_memory_is_all_zeros(pagebytes, BLCKSZ))
 		return true;
 
 	/*
-	 * Throw a WARNING if the checksum fails, but only after we've checked for
-	 * the all-zeroes case.
+	 * Throw a WARNING/LOG, as instructed by PIV_LOG_*, if the checksum fails,
+	 * but only after we've checked for the all-zeroes case.
 	 */
 	if (checksum_failure)
 	{
-		if ((flags & PIV_LOG_WARNING) != 0)
-			ereport(WARNING,
+		if ((flags & (PIV_LOG_WARNING | PIV_LOG_LOG)) != 0)
+			ereport(flags & PIV_LOG_WARNING ? WARNING : LOG,
 					(errcode(ERRCODE_DATA_CORRUPTED),
 					 errmsg("page verification failed, calculated checksum %u but expected %u",
 							checksum, p->pd_checksum)));
 
-		if ((flags & PIV_REPORT_STAT) != 0)
-			pgstat_report_checksum_failure();
-
-		if (header_sane && ignore_checksum_failure)
+		if (header_sane && (flags & PIV_IGNORE_CHECKSUM_FAILURE))
 			return true;
 	}
 
@@ -362,7 +361,7 @@ PageAddItemExtended(Page page,
  *		The returned page is not initialized at all; caller must do that.
  */
 Page
-PageGetTempPage(Page page)
+PageGetTempPage(const PageData *page)
 {
 	Size		pageSize;
 	Page		temp;
@@ -379,7 +378,7 @@ PageGetTempPage(Page page)
  *		The page is initialized by copying the contents of the given page.
  */
 Page
-PageGetTempPageCopy(Page page)
+PageGetTempPageCopy(const PageData *page)
 {
 	Size		pageSize;
 	Page		temp;
@@ -399,7 +398,7 @@ PageGetTempPageCopy(Page page)
  *		given page, and the special space is copied from the given page.
  */
 Page
-PageGetTempPageCopySpecial(Page page)
+PageGetTempPageCopySpecial(const PageData *page)
 {
 	Size		pageSize;
 	Page		temp;
@@ -426,7 +425,7 @@ PageRestoreTempPage(Page tempPage, Page oldPage)
 	Size		pageSize;
 
 	pageSize = PageGetPageSize(tempPage);
-	memcpy((char *) oldPage, (char *) tempPage, pageSize);
+	memcpy(oldPage, tempPage, pageSize);
 
 	pfree(tempPage);
 }
@@ -904,16 +903,16 @@ PageTruncateLinePointerArray(Page page)
  * PageGetHeapFreeSpace on heap pages.
  */
 Size
-PageGetFreeSpace(Page page)
+PageGetFreeSpace(const PageData *page)
 {
+	const PageHeaderData *phdr = (const PageHeaderData *) page;
 	int			space;
 
 	/*
 	 * Use signed arithmetic here so that we behave sensibly if pd_lower >
 	 * pd_upper.
 	 */
-	space = (int) ((PageHeader) page)->pd_upper -
-		(int) ((PageHeader) page)->pd_lower;
+	space = (int) phdr->pd_upper - (int) phdr->pd_lower;
 
 	if (space < (int) sizeof(ItemIdData))
 		return 0;
@@ -931,16 +930,16 @@ PageGetFreeSpace(Page page)
  * PageGetHeapFreeSpace on heap pages.
  */
 Size
-PageGetFreeSpaceForMultipleTuples(Page page, int ntups)
+PageGetFreeSpaceForMultipleTuples(const PageData *page, int ntups)
 {
+	const PageHeaderData *phdr = (const PageHeaderData *) page;
 	int			space;
 
 	/*
 	 * Use signed arithmetic here so that we behave sensibly if pd_lower >
 	 * pd_upper.
 	 */
-	space = (int) ((PageHeader) page)->pd_upper -
-		(int) ((PageHeader) page)->pd_lower;
+	space = (int) phdr->pd_upper - (int) phdr->pd_lower;
 
 	if (space < (int) (ntups * sizeof(ItemIdData)))
 		return 0;
@@ -955,16 +954,16 @@ PageGetFreeSpaceForMultipleTuples(Page page, int ntups)
  *		without any consideration for adding/removing line pointers.
  */
 Size
-PageGetExactFreeSpace(Page page)
+PageGetExactFreeSpace(const PageData *page)
 {
+	const PageHeaderData *phdr = (const PageHeaderData *) page;
 	int			space;
 
 	/*
 	 * Use signed arithmetic here so that we behave sensibly if pd_lower >
 	 * pd_upper.
 	 */
-	space = (int) ((PageHeader) page)->pd_upper -
-		(int) ((PageHeader) page)->pd_lower;
+	space = (int) phdr->pd_upper - (int) phdr->pd_lower;
 
 	if (space < 0)
 		return 0;
@@ -988,7 +987,7 @@ PageGetExactFreeSpace(Page page)
  * on the number of line pointers, we make this extra check.)
  */
 Size
-PageGetHeapFreeSpace(Page page)
+PageGetHeapFreeSpace(const PageData *page)
 {
 	Size		space;
 
@@ -1012,7 +1011,7 @@ PageGetHeapFreeSpace(Page page)
 				 */
 				for (offnum = FirstOffsetNumber; offnum <= nline; offnum = OffsetNumberNext(offnum))
 				{
-					ItemId		lp = PageGetItemId(page, offnum);
+					ItemId		lp = PageGetItemId(unconstify(PageData *, page), offnum);
 
 					if (!ItemIdIsUsed(lp))
 						break;
@@ -1105,8 +1104,8 @@ PageIndexTupleDelete(Page page, OffsetNumber offnum)
 		((char *) &phdr->pd_linp[offidx + 1] - (char *) phdr);
 
 	if (nbytes > 0)
-		memmove((char *) &(phdr->pd_linp[offidx]),
-				(char *) &(phdr->pd_linp[offidx + 1]),
+		memmove(&(phdr->pd_linp[offidx]),
+				&(phdr->pd_linp[offidx + 1]),
 				nbytes);
 
 	/*
@@ -1513,7 +1512,7 @@ PageSetChecksumCopy(Page page, BlockNumber blkno)
 
 	/* If we don't need a checksum, just return the passed-in data */
 	if (PageIsNew(page) || !DataChecksumsEnabled())
-		return (char *) page;
+		return page;
 
 	/*
 	 * We allocate the copy space once and use it over on each subsequent
@@ -1527,7 +1526,7 @@ PageSetChecksumCopy(Page page, BlockNumber blkno)
 											 PG_IO_ALIGN_SIZE,
 											 0);
 
-	memcpy(pageCopy, (char *) page, BLCKSZ);
+	memcpy(pageCopy, page, BLCKSZ);
 	((PageHeader) pageCopy)->pd_checksum = pg_checksum_page(pageCopy, blkno);
 	return pageCopy;
 }
@@ -1545,5 +1544,5 @@ PageSetChecksumInplace(Page page, BlockNumber blkno)
 	if (PageIsNew(page) || !DataChecksumsEnabled())
 		return;
 
-	((PageHeader) page)->pd_checksum = pg_checksum_page((char *) page, blkno);
+	((PageHeader) page)->pd_checksum = pg_checksum_page(page, blkno);
 }

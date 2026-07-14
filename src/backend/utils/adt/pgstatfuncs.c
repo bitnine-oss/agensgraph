@@ -3,7 +3,7 @@
  * pgstatfuncs.c
  *	  Functions for accessing various forms of statistics data
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -105,6 +105,34 @@ PG_STAT_GET_RELENTRY_INT64(tuples_updated)
 
 /* pg_stat_get_vacuum_count */
 PG_STAT_GET_RELENTRY_INT64(vacuum_count)
+
+#define PG_STAT_GET_RELENTRY_FLOAT8(stat)						\
+Datum															\
+CppConcat(pg_stat_get_,stat)(PG_FUNCTION_ARGS)					\
+{																\
+	Oid			relid = PG_GETARG_OID(0);						\
+	double		result;											\
+	PgStat_StatTabEntry *tabentry;								\
+																\
+	if ((tabentry = pgstat_fetch_stat_tabentry(relid)) == NULL)	\
+		result = 0;												\
+	else														\
+		result = (double) (tabentry->stat);						\
+																\
+	PG_RETURN_FLOAT8(result);									\
+}
+
+/* pg_stat_get_total_vacuum_time */
+PG_STAT_GET_RELENTRY_FLOAT8(total_vacuum_time)
+
+/* pg_stat_get_total_autovacuum_time */
+PG_STAT_GET_RELENTRY_FLOAT8(total_autovacuum_time)
+
+/* pg_stat_get_total_analyze_time */
+PG_STAT_GET_RELENTRY_FLOAT8(total_analyze_time)
+
+/* pg_stat_get_total_autoanalyze_time */
+PG_STAT_GET_RELENTRY_FLOAT8(total_autoanalyze_time)
 
 #define PG_STAT_GET_RELENTRY_TIMESTAMPTZ(stat)					\
 Datum															\
@@ -361,11 +389,13 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 		/* Values only available to role member or pg_read_all_stats */
 		if (HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		{
-			SockAddr	zero_clientaddr;
 			char	   *clipped_activity;
 
 			switch (beentry->st_state)
 			{
+				case STATE_STARTING:
+					values[4] = CStringGetTextDatum("starting");
+					break;
 				case STATE_IDLE:
 					values[4] = CStringGetTextDatum("idle");
 					break;
@@ -483,9 +513,8 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 				nulls[11] = true;
 
 			/* A zeroed client addr means we don't know */
-			memset(&zero_clientaddr, 0, sizeof(zero_clientaddr));
-			if (memcmp(&(beentry->st_clientaddr), &zero_clientaddr,
-					   sizeof(zero_clientaddr)) == 0)
+			if (pg_memory_is_all_zeros(&beentry->st_clientaddr,
+									   sizeof(beentry->st_clientaddr)))
 			{
 				nulls[12] = true;
 				nulls[13] = true;
@@ -611,10 +640,10 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 				values[28] = BoolGetDatum(false);	/* GSS credentials not
 													 * delegated */
 			}
-			if (beentry->st_query_id == 0)
+			if (beentry->st_query_id == INT64CONST(0))
 				nulls[30] = true;
 			else
-				values[30] = UInt64GetDatum(beentry->st_query_id);
+				values[30] = Int64GetDatum(beentry->st_query_id);
 		}
 		else
 		{
@@ -880,7 +909,6 @@ pg_stat_get_backend_client_addr(PG_FUNCTION_ARGS)
 {
 	int32		procNumber = PG_GETARG_INT32(0);
 	PgBackendStatus *beentry;
-	SockAddr	zero_clientaddr;
 	char		remote_host[NI_MAXHOST];
 	int			ret;
 
@@ -891,9 +919,8 @@ pg_stat_get_backend_client_addr(PG_FUNCTION_ARGS)
 		PG_RETURN_NULL();
 
 	/* A zeroed client addr means we don't know */
-	memset(&zero_clientaddr, 0, sizeof(zero_clientaddr));
-	if (memcmp(&(beentry->st_clientaddr), &zero_clientaddr,
-			   sizeof(zero_clientaddr)) == 0)
+	if (pg_memory_is_all_zeros(&beentry->st_clientaddr,
+							   sizeof(beentry->st_clientaddr)))
 		PG_RETURN_NULL();
 
 	switch (beentry->st_clientaddr.addr.ss_family)
@@ -925,7 +952,6 @@ pg_stat_get_backend_client_port(PG_FUNCTION_ARGS)
 {
 	int32		procNumber = PG_GETARG_INT32(0);
 	PgBackendStatus *beentry;
-	SockAddr	zero_clientaddr;
 	char		remote_port[NI_MAXSERV];
 	int			ret;
 
@@ -936,9 +962,8 @@ pg_stat_get_backend_client_port(PG_FUNCTION_ARGS)
 		PG_RETURN_NULL();
 
 	/* A zeroed client addr means we don't know */
-	memset(&zero_clientaddr, 0, sizeof(zero_clientaddr));
-	if (memcmp(&(beentry->st_clientaddr), &zero_clientaddr,
-			   sizeof(zero_clientaddr)) == 0)
+	if (pg_memory_is_all_zeros(&beentry->st_clientaddr,
+							   sizeof(beentry->st_clientaddr)))
 		PG_RETURN_NULL();
 
 	switch (beentry->st_clientaddr.addr.ss_family)
@@ -1038,6 +1063,12 @@ PG_STAT_GET_DBENTRY_INT64(sessions_fatal)
 
 /* pg_stat_get_db_sessions_killed */
 PG_STAT_GET_DBENTRY_INT64(sessions_killed)
+
+/* pg_stat_get_db_parallel_workers_to_launch */
+PG_STAT_GET_DBENTRY_INT64(parallel_workers_to_launch)
+
+/* pg_stat_get_db_parallel_workers_launched */
+PG_STAT_GET_DBENTRY_INT64(parallel_workers_launched)
 
 /* pg_stat_get_db_temp_bytes */
 PG_STAT_GET_DBENTRY_INT64(temp_bytes)
@@ -1192,6 +1223,12 @@ pg_stat_get_checkpointer_num_requested(PG_FUNCTION_ARGS)
 }
 
 Datum
+pg_stat_get_checkpointer_num_performed(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->num_performed);
+}
+
+Datum
 pg_stat_get_checkpointer_restartpoints_timed(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->restartpoints_timed);
@@ -1213,6 +1250,12 @@ Datum
 pg_stat_get_checkpointer_buffers_written(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->buffers_written);
+}
+
+Datum
+pg_stat_get_checkpointer_slru_written(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->slru_written);
 }
 
 Datum
@@ -1262,8 +1305,9 @@ pg_stat_get_buf_alloc(PG_FUNCTION_ARGS)
 }
 
 /*
-* When adding a new column to the pg_stat_io view, add a new enum value
-* here above IO_NUM_COLUMNS.
+* When adding a new column to the pg_stat_io view and the
+* pg_stat_get_backend_io() function, add a new enum value here above
+* IO_NUM_COLUMNS.
 */
 typedef enum io_stat_col
 {
@@ -1272,14 +1316,16 @@ typedef enum io_stat_col
 	IO_COL_OBJECT,
 	IO_COL_CONTEXT,
 	IO_COL_READS,
+	IO_COL_READ_BYTES,
 	IO_COL_READ_TIME,
 	IO_COL_WRITES,
+	IO_COL_WRITE_BYTES,
 	IO_COL_WRITE_TIME,
 	IO_COL_WRITEBACKS,
 	IO_COL_WRITEBACK_TIME,
 	IO_COL_EXTENDS,
+	IO_COL_EXTEND_BYTES,
 	IO_COL_EXTEND_TIME,
-	IO_COL_CONVERSION,
 	IO_COL_HITS,
 	IO_COL_EVICTIONS,
 	IO_COL_REUSES,
@@ -1321,10 +1367,35 @@ pgstat_get_io_op_index(IOOp io_op)
 }
 
 /*
+ * Get the number of the column containing IO bytes for the specified IOOp.
+ * If an IOOp is not tracked in bytes, IO_COL_INVALID is returned.
+ */
+static io_stat_col
+pgstat_get_io_byte_index(IOOp io_op)
+{
+	switch (io_op)
+	{
+		case IOOP_EXTEND:
+			return IO_COL_EXTEND_BYTES;
+		case IOOP_READ:
+			return IO_COL_READ_BYTES;
+		case IOOP_WRITE:
+			return IO_COL_WRITE_BYTES;
+		case IOOP_EVICT:
+		case IOOP_FSYNC:
+		case IOOP_HIT:
+		case IOOP_REUSE:
+		case IOOP_WRITEBACK:
+			return IO_COL_INVALID;
+	}
+
+	elog(ERROR, "unrecognized IOOp value: %d", io_op);
+	pg_unreachable();
+}
+
+/*
  * Get the number of the column containing IO times for the specified IOOp.
- * This function encodes our assumption that IO time for an IOOp is displayed
- * in the view in the column directly after the IOOp counts. If an op has no
- * associated time, IO_COL_INVALID is returned.
+ * If an op has no associated time, IO_COL_INVALID is returned.
  */
 static io_stat_col
 pgstat_get_io_time_index(IOOp io_op)
@@ -1332,11 +1403,15 @@ pgstat_get_io_time_index(IOOp io_op)
 	switch (io_op)
 	{
 		case IOOP_READ:
+			return IO_COL_READ_TIME;
 		case IOOP_WRITE:
+			return IO_COL_WRITE_TIME;
 		case IOOP_WRITEBACK:
+			return IO_COL_WRITEBACK_TIME;
 		case IOOP_EXTEND:
+			return IO_COL_EXTEND_TIME;
 		case IOOP_FSYNC:
-			return pgstat_get_io_op_index(io_op) + 1;
+			return IO_COL_FSYNC_TIME;
 		case IOOP_EVICT:
 		case IOOP_HIT:
 		case IOOP_REUSE:
@@ -1353,29 +1428,130 @@ pg_stat_us_to_ms(PgStat_Counter val_ms)
 	return val_ms * (double) 0.001;
 }
 
+/*
+ * pg_stat_io_build_tuples
+ *
+ * Helper routine for pg_stat_get_io() and pg_stat_get_backend_io()
+ * filling a result tuplestore with one tuple for each object and each
+ * context supported by the caller, based on the contents of bktype_stats.
+ */
+static void
+pg_stat_io_build_tuples(ReturnSetInfo *rsinfo,
+						PgStat_BktypeIO *bktype_stats,
+						BackendType bktype,
+						TimestampTz stat_reset_timestamp)
+{
+	Datum		bktype_desc = CStringGetTextDatum(GetBackendTypeDesc(bktype));
+
+	for (int io_obj = 0; io_obj < IOOBJECT_NUM_TYPES; io_obj++)
+	{
+		const char *obj_name = pgstat_get_io_object_name(io_obj);
+
+		for (int io_context = 0; io_context < IOCONTEXT_NUM_TYPES; io_context++)
+		{
+			const char *context_name = pgstat_get_io_context_name(io_context);
+
+			Datum		values[IO_NUM_COLUMNS] = {0};
+			bool		nulls[IO_NUM_COLUMNS] = {0};
+
+			/*
+			 * Some combinations of BackendType, IOObject, and IOContext are
+			 * not valid for any type of IOOp. In such cases, omit the entire
+			 * row from the view.
+			 */
+			if (!pgstat_tracks_io_object(bktype, io_obj, io_context))
+				continue;
+
+			values[IO_COL_BACKEND_TYPE] = bktype_desc;
+			values[IO_COL_CONTEXT] = CStringGetTextDatum(context_name);
+			values[IO_COL_OBJECT] = CStringGetTextDatum(obj_name);
+			if (stat_reset_timestamp != 0)
+				values[IO_COL_RESET_TIME] = TimestampTzGetDatum(stat_reset_timestamp);
+			else
+				nulls[IO_COL_RESET_TIME] = true;
+
+			for (int io_op = 0; io_op < IOOP_NUM_TYPES; io_op++)
+			{
+				int			op_idx = pgstat_get_io_op_index(io_op);
+				int			time_idx = pgstat_get_io_time_index(io_op);
+				int			byte_idx = pgstat_get_io_byte_index(io_op);
+
+				/*
+				 * Some combinations of BackendType and IOOp, of IOContext and
+				 * IOOp, and of IOObject and IOOp are not tracked. Set these
+				 * cells in the view NULL.
+				 */
+				if (pgstat_tracks_io_op(bktype, io_obj, io_context, io_op))
+				{
+					PgStat_Counter count =
+						bktype_stats->counts[io_obj][io_context][io_op];
+
+					values[op_idx] = Int64GetDatum(count);
+				}
+				else
+					nulls[op_idx] = true;
+
+				if (!nulls[op_idx])
+				{
+					/* not every operation is timed */
+					if (time_idx != IO_COL_INVALID)
+					{
+						PgStat_Counter time =
+							bktype_stats->times[io_obj][io_context][io_op];
+
+						values[time_idx] = Float8GetDatum(pg_stat_us_to_ms(time));
+					}
+
+					/* not every IO is tracked in bytes */
+					if (byte_idx != IO_COL_INVALID)
+					{
+						char		buf[256];
+						PgStat_Counter byte =
+							bktype_stats->bytes[io_obj][io_context][io_op];
+
+						/* Convert to numeric */
+						snprintf(buf, sizeof buf, INT64_FORMAT, byte);
+						values[byte_idx] = DirectFunctionCall3(numeric_in,
+															   CStringGetDatum(buf),
+															   ObjectIdGetDatum(0),
+															   Int32GetDatum(-1));
+					}
+				}
+				else
+				{
+					if (time_idx != IO_COL_INVALID)
+						nulls[time_idx] = true;
+					if (byte_idx != IO_COL_INVALID)
+						nulls[byte_idx] = true;
+				}
+			}
+
+			tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc,
+								 values, nulls);
+		}
+	}
+}
+
 Datum
 pg_stat_get_io(PG_FUNCTION_ARGS)
 {
 	ReturnSetInfo *rsinfo;
 	PgStat_IO  *backends_io_stats;
-	Datum		reset_time;
 
 	InitMaterializedSRF(fcinfo, 0);
 	rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 
 	backends_io_stats = pgstat_fetch_stat_io();
 
-	reset_time = TimestampTzGetDatum(backends_io_stats->stat_reset_timestamp);
-
 	for (int bktype = 0; bktype < BACKEND_NUM_TYPES; bktype++)
 	{
-		Datum		bktype_desc = CStringGetTextDatum(GetBackendTypeDesc(bktype));
 		PgStat_BktypeIO *bktype_stats = &backends_io_stats->stats[bktype];
 
 		/*
 		 * In Assert builds, we can afford an extra loop through all of the
-		 * counters checking that only expected stats are non-zero, since it
-		 * keeps the non-Assert code cleaner.
+		 * counters (in pg_stat_io_build_tuples()), checking that only
+		 * expected stats are non-zero, since it keeps the non-Assert code
+		 * cleaner.
 		 */
 		Assert(pgstat_bktype_io_stats_valid(bktype_stats, bktype));
 
@@ -1386,97 +1562,68 @@ pg_stat_get_io(PG_FUNCTION_ARGS)
 		if (!pgstat_tracks_io_bktype(bktype))
 			continue;
 
-		for (int io_obj = 0; io_obj < IOOBJECT_NUM_TYPES; io_obj++)
-		{
-			const char *obj_name = pgstat_get_io_object_name(io_obj);
-
-			for (int io_context = 0; io_context < IOCONTEXT_NUM_TYPES; io_context++)
-			{
-				const char *context_name = pgstat_get_io_context_name(io_context);
-
-				Datum		values[IO_NUM_COLUMNS] = {0};
-				bool		nulls[IO_NUM_COLUMNS] = {0};
-
-				/*
-				 * Some combinations of BackendType, IOObject, and IOContext
-				 * are not valid for any type of IOOp. In such cases, omit the
-				 * entire row from the view.
-				 */
-				if (!pgstat_tracks_io_object(bktype, io_obj, io_context))
-					continue;
-
-				values[IO_COL_BACKEND_TYPE] = bktype_desc;
-				values[IO_COL_CONTEXT] = CStringGetTextDatum(context_name);
-				values[IO_COL_OBJECT] = CStringGetTextDatum(obj_name);
-				values[IO_COL_RESET_TIME] = TimestampTzGetDatum(reset_time);
-
-				/*
-				 * Hard-code this to the value of BLCKSZ for now. Future
-				 * values could include XLOG_BLCKSZ, once WAL IO is tracked,
-				 * and constant multipliers, once non-block-oriented IO (e.g.
-				 * temporary file IO) is tracked.
-				 */
-				values[IO_COL_CONVERSION] = Int64GetDatum(BLCKSZ);
-
-				for (int io_op = 0; io_op < IOOP_NUM_TYPES; io_op++)
-				{
-					int			op_idx = pgstat_get_io_op_index(io_op);
-					int			time_idx = pgstat_get_io_time_index(io_op);
-
-					/*
-					 * Some combinations of BackendType and IOOp, of IOContext
-					 * and IOOp, and of IOObject and IOOp are not tracked. Set
-					 * these cells in the view NULL.
-					 */
-					if (pgstat_tracks_io_op(bktype, io_obj, io_context, io_op))
-					{
-						PgStat_Counter count =
-							bktype_stats->counts[io_obj][io_context][io_op];
-
-						values[op_idx] = Int64GetDatum(count);
-					}
-					else
-						nulls[op_idx] = true;
-
-					/* not every operation is timed */
-					if (time_idx == IO_COL_INVALID)
-						continue;
-
-					if (!nulls[op_idx])
-					{
-						PgStat_Counter time =
-							bktype_stats->times[io_obj][io_context][io_op];
-
-						values[time_idx] = Float8GetDatum(pg_stat_us_to_ms(time));
-					}
-					else
-						nulls[time_idx] = true;
-				}
-
-				tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc,
-									 values, nulls);
-			}
-		}
+		/* save tuples with data from this PgStat_BktypeIO */
+		pg_stat_io_build_tuples(rsinfo, bktype_stats, bktype,
+								backends_io_stats->stat_reset_timestamp);
 	}
 
 	return (Datum) 0;
 }
 
 /*
- * Returns statistics of WAL activity
+ * Returns I/O statistics for a backend with given PID.
  */
 Datum
-pg_stat_get_wal(PG_FUNCTION_ARGS)
+pg_stat_get_backend_io(PG_FUNCTION_ARGS)
 {
-#define PG_STAT_GET_WAL_COLS	9
+	ReturnSetInfo *rsinfo;
+	BackendType bktype;
+	int			pid;
+	PgStat_Backend *backend_stats;
+	PgStat_BktypeIO *bktype_stats;
+
+	InitMaterializedSRF(fcinfo, 0);
+	rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+
+	pid = PG_GETARG_INT32(0);
+	backend_stats = pgstat_fetch_stat_backend_by_pid(pid, &bktype);
+
+	if (!backend_stats)
+		return (Datum) 0;
+
+	bktype_stats = &backend_stats->io_stats;
+
+	/*
+	 * In Assert builds, we can afford an extra loop through all of the
+	 * counters (in pg_stat_io_build_tuples()), checking that only expected
+	 * stats are non-zero, since it keeps the non-Assert code cleaner.
+	 */
+	Assert(pgstat_bktype_io_stats_valid(bktype_stats, bktype));
+
+	/* save tuples with data from this PgStat_BktypeIO */
+	pg_stat_io_build_tuples(rsinfo, bktype_stats, bktype,
+							backend_stats->stat_reset_timestamp);
+	return (Datum) 0;
+}
+
+/*
+ * pg_stat_wal_build_tuple
+ *
+ * Helper routine for pg_stat_get_wal() and pg_stat_get_backend_wal()
+ * returning one tuple based on the contents of wal_counters.
+ */
+static Datum
+pg_stat_wal_build_tuple(PgStat_WalCounters wal_counters,
+						TimestampTz stat_reset_timestamp)
+{
+#define PG_STAT_WAL_COLS	5
 	TupleDesc	tupdesc;
-	Datum		values[PG_STAT_GET_WAL_COLS] = {0};
-	bool		nulls[PG_STAT_GET_WAL_COLS] = {0};
+	Datum		values[PG_STAT_WAL_COLS] = {0};
+	bool		nulls[PG_STAT_WAL_COLS] = {0};
 	char		buf[256];
-	PgStat_WalStats *wal_stats;
 
 	/* Initialise attributes information in the tuple descriptor */
-	tupdesc = CreateTemplateTupleDesc(PG_STAT_GET_WAL_COLS);
+	tupdesc = CreateTemplateTupleDesc(PG_STAT_WAL_COLS);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "wal_records",
 					   INT8OID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 2, "wal_fpi",
@@ -1485,45 +1632,68 @@ pg_stat_get_wal(PG_FUNCTION_ARGS)
 					   NUMERICOID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 4, "wal_buffers_full",
 					   INT8OID, -1, 0);
-	TupleDescInitEntry(tupdesc, (AttrNumber) 5, "wal_write",
-					   INT8OID, -1, 0);
-	TupleDescInitEntry(tupdesc, (AttrNumber) 6, "wal_sync",
-					   INT8OID, -1, 0);
-	TupleDescInitEntry(tupdesc, (AttrNumber) 7, "wal_write_time",
-					   FLOAT8OID, -1, 0);
-	TupleDescInitEntry(tupdesc, (AttrNumber) 8, "wal_sync_time",
-					   FLOAT8OID, -1, 0);
-	TupleDescInitEntry(tupdesc, (AttrNumber) 9, "stats_reset",
+	TupleDescInitEntry(tupdesc, (AttrNumber) 5, "stats_reset",
 					   TIMESTAMPTZOID, -1, 0);
 
 	BlessTupleDesc(tupdesc);
 
-	/* Get statistics about WAL activity */
-	wal_stats = pgstat_fetch_stat_wal();
-
 	/* Fill values and NULLs */
-	values[0] = Int64GetDatum(wal_stats->wal_records);
-	values[1] = Int64GetDatum(wal_stats->wal_fpi);
+	values[0] = Int64GetDatum(wal_counters.wal_records);
+	values[1] = Int64GetDatum(wal_counters.wal_fpi);
 
 	/* Convert to numeric. */
-	snprintf(buf, sizeof buf, UINT64_FORMAT, wal_stats->wal_bytes);
+	snprintf(buf, sizeof buf, UINT64_FORMAT, wal_counters.wal_bytes);
 	values[2] = DirectFunctionCall3(numeric_in,
 									CStringGetDatum(buf),
 									ObjectIdGetDatum(0),
 									Int32GetDatum(-1));
 
-	values[3] = Int64GetDatum(wal_stats->wal_buffers_full);
-	values[4] = Int64GetDatum(wal_stats->wal_write);
-	values[5] = Int64GetDatum(wal_stats->wal_sync);
+	values[3] = Int64GetDatum(wal_counters.wal_buffers_full);
 
-	/* Convert counters from microsec to millisec for display */
-	values[6] = Float8GetDatum(((double) wal_stats->wal_write_time) / 1000.0);
-	values[7] = Float8GetDatum(((double) wal_stats->wal_sync_time) / 1000.0);
-
-	values[8] = TimestampTzGetDatum(wal_stats->stat_reset_timestamp);
+	if (stat_reset_timestamp != 0)
+		values[4] = TimestampTzGetDatum(stat_reset_timestamp);
+	else
+		nulls[4] = true;
 
 	/* Returns the record as Datum */
 	PG_RETURN_DATUM(HeapTupleGetDatum(heap_form_tuple(tupdesc, values, nulls)));
+}
+
+/*
+ * Returns WAL statistics for a backend with given PID.
+ */
+Datum
+pg_stat_get_backend_wal(PG_FUNCTION_ARGS)
+{
+	int			pid;
+	PgStat_Backend *backend_stats;
+	PgStat_WalCounters bktype_stats;
+
+	pid = PG_GETARG_INT32(0);
+	backend_stats = pgstat_fetch_stat_backend_by_pid(pid, NULL);
+
+	if (!backend_stats)
+		PG_RETURN_NULL();
+
+	bktype_stats = backend_stats->wal_counters;
+
+	/* save tuples with data from this PgStat_WalCounters */
+	return (pg_stat_wal_build_tuple(bktype_stats, backend_stats->stat_reset_timestamp));
+}
+
+/*
+ * Returns statistics of WAL activity
+ */
+Datum
+pg_stat_get_wal(PG_FUNCTION_ARGS)
+{
+	PgStat_WalStats *wal_stats;
+
+	/* Get statistics about WAL activity */
+	wal_stats = pgstat_fetch_stat_wal();
+
+	return (pg_stat_wal_build_tuple(wal_stats->wal_counters,
+									wal_stats->stat_reset_timestamp));
 }
 
 /*
@@ -1696,7 +1866,7 @@ pg_stat_reset(PG_FUNCTION_ARGS)
  * Reset some shared cluster-wide counters
  *
  * When adding a new reset target, ideally the name should match that in
- * pgstat_kind_infos, if relevant.
+ * pgstat_kind_builtin_infos, if relevant.
  */
 Datum
 pg_stat_reset_shared(PG_FUNCTION_ARGS)
@@ -1763,6 +1933,41 @@ pg_stat_reset_single_function_counters(PG_FUNCTION_ARGS)
 	Oid			funcoid = PG_GETARG_OID(0);
 
 	pgstat_reset(PGSTAT_KIND_FUNCTION, MyDatabaseId, funcoid);
+
+	PG_RETURN_VOID();
+}
+
+/*
+ * Reset statistics of backend with given PID.
+ */
+Datum
+pg_stat_reset_backend_stats(PG_FUNCTION_ARGS)
+{
+	PGPROC	   *proc;
+	PgBackendStatus *beentry;
+	ProcNumber	procNumber;
+	int			backend_pid = PG_GETARG_INT32(0);
+
+	proc = BackendPidGetProc(backend_pid);
+
+	/* This could be an auxiliary process */
+	if (!proc)
+		proc = AuxiliaryPidGetProc(backend_pid);
+
+	if (!proc)
+		PG_RETURN_VOID();
+
+	procNumber = GetNumberFromPGProc(proc);
+
+	beentry = pgstat_get_beentry_by_proc_number(procNumber);
+	if (!beentry)
+		PG_RETURN_VOID();
+
+	/* Check if the backend type tracks statistics */
+	if (!pgstat_tracks_backend_bktype(beentry->st_backendType))
+		PG_RETURN_VOID();
+
+	pgstat_reset(PGSTAT_KIND_BACKEND, InvalidOid, procNumber);
 
 	PG_RETURN_VOID();
 }
@@ -1966,13 +2171,14 @@ pg_stat_get_replication_slot(PG_FUNCTION_ARGS)
 Datum
 pg_stat_get_subscription_stats(PG_FUNCTION_ARGS)
 {
-#define PG_STAT_GET_SUBSCRIPTION_STATS_COLS	4
+#define PG_STAT_GET_SUBSCRIPTION_STATS_COLS	11
 	Oid			subid = PG_GETARG_OID(0);
 	TupleDesc	tupdesc;
 	Datum		values[PG_STAT_GET_SUBSCRIPTION_STATS_COLS] = {0};
 	bool		nulls[PG_STAT_GET_SUBSCRIPTION_STATS_COLS] = {0};
 	PgStat_StatSubEntry *subentry;
 	PgStat_StatSubEntry allzero;
+	int			i = 0;
 
 	/* Get subscription stats */
 	subentry = pgstat_fetch_stat_subscription(subid);
@@ -1985,7 +2191,21 @@ pg_stat_get_subscription_stats(PG_FUNCTION_ARGS)
 					   INT8OID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 3, "sync_error_count",
 					   INT8OID, -1, 0);
-	TupleDescInitEntry(tupdesc, (AttrNumber) 4, "stats_reset",
+	TupleDescInitEntry(tupdesc, (AttrNumber) 4, "confl_insert_exists",
+					   INT8OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 5, "confl_update_origin_differs",
+					   INT8OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 6, "confl_update_exists",
+					   INT8OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 7, "confl_update_missing",
+					   INT8OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 8, "confl_delete_origin_differs",
+					   INT8OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 9, "confl_delete_missing",
+					   INT8OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 10, "confl_multiple_unique_conflicts",
+					   INT8OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 11, "stats_reset",
 					   TIMESTAMPTZOID, -1, 0);
 	BlessTupleDesc(tupdesc);
 
@@ -1997,19 +2217,25 @@ pg_stat_get_subscription_stats(PG_FUNCTION_ARGS)
 	}
 
 	/* subid */
-	values[0] = ObjectIdGetDatum(subid);
+	values[i++] = ObjectIdGetDatum(subid);
 
 	/* apply_error_count */
-	values[1] = Int64GetDatum(subentry->apply_error_count);
+	values[i++] = Int64GetDatum(subentry->apply_error_count);
 
 	/* sync_error_count */
-	values[2] = Int64GetDatum(subentry->sync_error_count);
+	values[i++] = Int64GetDatum(subentry->sync_error_count);
+
+	/* conflict count */
+	for (int nconflict = 0; nconflict < CONFLICT_NUM_TYPES; nconflict++)
+		values[i++] = Int64GetDatum(subentry->conflict_count[nconflict]);
 
 	/* stats_reset */
 	if (subentry->stat_reset_timestamp == 0)
-		nulls[3] = true;
+		nulls[i] = true;
 	else
-		values[3] = TimestampTzGetDatum(subentry->stat_reset_timestamp);
+		values[i] = TimestampTzGetDatum(subentry->stat_reset_timestamp);
+
+	Assert(i + 1 == PG_STAT_GET_SUBSCRIPTION_STATS_COLS);
 
 	/* Returns the record as Datum */
 	PG_RETURN_DATUM(HeapTupleGetDatum(heap_form_tuple(tupdesc, values, nulls)));
@@ -2027,8 +2253,8 @@ pg_stat_have_stats(PG_FUNCTION_ARGS)
 {
 	char	   *stats_type = text_to_cstring(PG_GETARG_TEXT_P(0));
 	Oid			dboid = PG_GETARG_OID(1);
-	Oid			objoid = PG_GETARG_OID(2);
+	uint64		objid = PG_GETARG_INT64(2);
 	PgStat_Kind kind = pgstat_get_kind_from_str(stats_type);
 
-	PG_RETURN_BOOL(pgstat_have_entry(kind, dboid, objoid));
+	PG_RETURN_BOOL(pgstat_have_entry(kind, dboid, objid));
 }

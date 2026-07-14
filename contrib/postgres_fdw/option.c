@@ -3,7 +3,7 @@
  * option.c
  *		  FDW and GUC option handling for postgres_fdw
  *
- * Portions Copyright (c) 2012-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/option.c
@@ -20,7 +20,6 @@
 #include "commands/extension.h"
 #include "libpq/libpq-be.h"
 #include "postgres_fdw.h"
-#include "utils/builtins.h"
 #include "utils/guc.h"
 #include "utils/varlena.h"
 
@@ -280,6 +279,9 @@ InitPgFdwOptions(void)
 		{"analyze_sampling", ForeignServerRelationId, false},
 		{"analyze_sampling", ForeignTableRelationId, false},
 
+		{"use_scram_passthrough", ForeignServerRelationId, false},
+		{"use_scram_passthrough", UserMappingRelationId, false},
+
 		/*
 		 * sslcert and sslkey are in fact libpq options, but we repeat them
 		 * here to allow them to appear in both foreign server context (when
@@ -344,6 +346,13 @@ InitPgFdwOptions(void)
 		if (strchr(lopt->dispchar, 'D') ||
 			strcmp(lopt->keyword, "fallback_application_name") == 0 ||
 			strcmp(lopt->keyword, "client_encoding") == 0)
+			continue;
+
+		/*
+		 * Disallow OAuth options for now, since the builtin flow communicates
+		 * on stderr by default and can't cache tokens yet.
+		 */
+		if (strncmp(lopt->keyword, "oauth_", strlen("oauth_")) == 0)
 			continue;
 
 		/* We don't have to copy keyword string, as described above. */
@@ -522,7 +531,7 @@ process_pgfdw_appname(const char *appname)
 				appendStringInfoString(&buf, application_name);
 				break;
 			case 'c':
-				appendStringInfo(&buf, "%lx.%x", (long) (MyStartTime), MyProcPid);
+				appendStringInfo(&buf, INT64_HEX_FORMAT ".%x", MyStartTime, MyProcPid);
 				break;
 			case 'C':
 				appendStringInfoString(&buf, cluster_name);

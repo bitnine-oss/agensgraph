@@ -4,7 +4,7 @@
  * syncrep_scanner.l
  *	  a lexical scanner for synchronous_standby_names
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -37,23 +37,36 @@ fprintf_to_ereport(const char *fmt, const char *msg)
 	ereport(ERROR, (errmsg_internal("%s", msg)));
 }
 
-/* Handles to the buffer that the lexer uses internally */
-static YY_BUFFER_STATE scanbufhandle;
+struct syncrep_yy_extra_type
+{
+	StringInfoData xdbuf;
+};
 
-static StringInfoData xdbuf;
+/*
+ * Better keep this definition here than put it in replication/syncrep.h and
+ * save a bit of duplication.  Putting it in replication/syncrep.h would leak
+ * the definition to other parts and possibly affect other scanners.
+*/
+#define YY_DECL extern int	syncrep_yylex(union YYSTYPE *yylval_param, char **syncrep_parse_error_msg_p, yyscan_t yyscanner)
 
 /* LCOV_EXCL_START */
 
 %}
 
+%option reentrant
+%option bison-bridge
 %option 8bit
 %option never-interactive
 %option nodefault
 %option noinput
 %option nounput
 %option noyywrap
+%option noyyalloc
+%option noyyrealloc
+%option noyyfree
 %option warn
 %option prefix="syncrep_yy"
+%option extra-type="struct syncrep_yy_extra_type *"
 
 /*
  * <xd> delimited identifiers (double-quoted identifiers)
@@ -82,38 +95,38 @@ xdinside		[^"]+
 [Ff][Ii][Rr][Ss][Tt]	{ return FIRST; }
 
 {xdstart}	{
-				initStringInfo(&xdbuf);
+				initStringInfo(&yyextra->xdbuf);
 				BEGIN(xd);
 		}
 <xd>{xddouble} {
-				appendStringInfoChar(&xdbuf, '"');
+				appendStringInfoChar(&yyextra->xdbuf, '"');
 		}
 <xd>{xdinside} {
-				appendStringInfoString(&xdbuf, yytext);
+				appendStringInfoString(&yyextra->xdbuf, yytext);
 		}
 <xd>{xdstop} {
-				syncrep_yylval.str = xdbuf.data;
-				xdbuf.data = NULL;
+				yylval->str = yyextra->xdbuf.data;
+				yyextra->xdbuf.data = NULL;
 				BEGIN(INITIAL);
 				return NAME;
 		}
 <xd><<EOF>> {
-				syncrep_yyerror("unterminated quoted identifier");
+				syncrep_yyerror(NULL, syncrep_parse_error_msg_p, yyscanner, "unterminated quoted identifier");
 				return JUNK;
 		}
 
 {identifier} {
-				syncrep_yylval.str = pstrdup(yytext);
+				yylval->str = pstrdup(yytext);
 				return NAME;
 		}
 
 {digit}+	{
-				syncrep_yylval.str = pstrdup(yytext);
+				yylval->str = pstrdup(yytext);
 				return NUM;
 		}
 
 "*"		{
-				syncrep_yylval.str = "*";
+				yylval->str = "*";
 				return NAME;
 		}
 
@@ -126,10 +139,26 @@ xdinside		[^"]+
 
 /* LCOV_EXCL_STOP */
 
-/* Needs to be here for access to yytext */
+/* see scan.l */
+#undef yyextra
+#define yyextra (((struct yyguts_t *) yyscanner)->yyextra_r)
+
+/*
+ * This yyerror() function does not raise an error (elog or similar), it just
+ * collects the error message in *syncrep_parse_error_msg_p and leaves it to
+ * the ultimate caller of the syncrep parser to raise the error.  (The
+ * ultimate caller will do that with special GUC error functions.)
+ *
+ * (The first argument is enforced by Bison to match the first argument of
+ * yyparse(), but it is not used here.)
+ */
 void
-syncrep_yyerror(const char *message)
+syncrep_yyerror(SyncRepConfigData **syncrep_parse_result_p, char **syncrep_parse_error_msg_p, yyscan_t yyscanner, const char *message)
 {
+	struct yyguts_t *yyg = (struct yyguts_t *) yyscanner;	/* needed for yytext
+															 * macro */
+	char *syncrep_parse_error_msg = *syncrep_parse_error_msg_p;
+
 	/* report only the first error in a parse operation */
 	if (syncrep_parse_error_msg)
 		return;
@@ -142,32 +171,51 @@ syncrep_yyerror(const char *message)
 }
 
 void
-syncrep_scanner_init(const char *str)
+syncrep_scanner_init(const char *str, yyscan_t *yyscannerp)
 {
-	Size		slen = strlen(str);
-	char	   *scanbuf;
+	yyscan_t	yyscanner;
+	struct syncrep_yy_extra_type *yyext = palloc0_object(struct syncrep_yy_extra_type);
 
-	/*
-	 * Might be left over after ereport()
-	 */
-	if (YY_CURRENT_BUFFER)
-		yy_delete_buffer(YY_CURRENT_BUFFER);
+	if (yylex_init(yyscannerp) != 0)
+		elog(ERROR, "yylex_init() failed: %m");
 
-	/*
-	 * Make a scan buffer with special termination needed by flex.
-	 */
-	scanbuf = (char *) palloc(slen + 2);
-	memcpy(scanbuf, str, slen);
-	scanbuf[slen] = scanbuf[slen + 1] = YY_END_OF_BUFFER_CHAR;
-	scanbufhandle = yy_scan_buffer(scanbuf, slen + 2);
+	yyscanner = *yyscannerp;
 
-	/* Make sure we start in proper state */
-	BEGIN(INITIAL);
+	yyset_extra(yyext, yyscanner);
+
+	yy_scan_string(str, yyscanner);
 }
 
 void
-syncrep_scanner_finish(void)
+syncrep_scanner_finish(yyscan_t yyscanner)
 {
-	yy_delete_buffer(scanbufhandle);
-	scanbufhandle = NULL;
+	pfree(yyextra);
+	yylex_destroy(yyscanner);
+}
+
+/*
+ * Interface functions to make flex use palloc() instead of malloc().
+ * It'd be better to make these static, but flex insists otherwise.
+ */
+
+void *
+yyalloc(yy_size_t size, yyscan_t yyscanner)
+{
+	return palloc(size);
+}
+
+void *
+yyrealloc(void *ptr, yy_size_t size, yyscan_t yyscanner)
+{
+	if (ptr)
+		return repalloc(ptr, size);
+	else
+		return palloc(size);
+}
+
+void
+yyfree(void *ptr, yyscan_t yyscanner)
+{
+	if (ptr)
+		pfree(ptr);
 }

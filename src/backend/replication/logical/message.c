@@ -3,7 +3,7 @@
  * message.c
  *	  Generic logical messages.
  *
- * Copyright (c) 2013-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/message.c
@@ -62,9 +62,9 @@ LogLogicalMessage(const char *prefix, const char *message, size_t size,
 	xlrec.message_size = size;
 
 	XLogBeginInsert();
-	XLogRegisterData((char *) &xlrec, SizeOfLogicalMessage);
-	XLogRegisterData(unconstify(char *, prefix), xlrec.prefix_size);
-	XLogRegisterData(unconstify(char *, message), size);
+	XLogRegisterData(&xlrec, SizeOfLogicalMessage);
+	XLogRegisterData(prefix, xlrec.prefix_size);
+	XLogRegisterData(message, size);
 
 	/* allow origin filtering */
 	XLogSetRecordFlags(XLOG_INCLUDE_ORIGIN);

@@ -19,7 +19,7 @@
  * value; we must detoast it first.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -43,6 +43,7 @@
 #include "utils/date.h"
 #include "utils/lsyscache.h"
 #include "utils/rangetypes.h"
+#include "utils/sortsupport.h"
 #include "utils/timestamp.h"
 
 
@@ -57,6 +58,7 @@ typedef struct RangeIOData
 
 static RangeIOData *get_range_io_data(FunctionCallInfo fcinfo, Oid rngtypid,
 									  IOFuncSelector func);
+static int	range_fast_cmp(Datum a, Datum b, SortSupport ssup);
 static char range_parse_flags(const char *flags_str);
 static bool range_parse(const char *string, char *flags, char **lbound_str,
 						char **ubound_str, Node *escontext);
@@ -359,7 +361,7 @@ get_range_io_data(FunctionCallInfo fcinfo, Oid rngtypid, IOFuncSelector func)
 		fmgr_info_cxt(typiofunc, &cache->typioproc,
 					  fcinfo->flinfo->fn_mcxt);
 
-		fcinfo->flinfo->fn_extra = (void *) cache;
+		fcinfo->flinfo->fn_extra = cache;
 	}
 
 	return cache;
@@ -1290,6 +1292,68 @@ range_cmp(PG_FUNCTION_ARGS)
 	PG_RETURN_INT32(cmp);
 }
 
+/* Sort support strategy routine */
+Datum
+range_sortsupport(PG_FUNCTION_ARGS)
+{
+	SortSupport ssup = (SortSupport) PG_GETARG_POINTER(0);
+
+	ssup->comparator = range_fast_cmp;
+	ssup->ssup_extra = NULL;
+
+	PG_RETURN_VOID();
+}
+
+/* like range_cmp, but uses the new sortsupport interface */
+static int
+range_fast_cmp(Datum a, Datum b, SortSupport ssup)
+{
+	RangeType  *range_a = DatumGetRangeTypeP(a);
+	RangeType  *range_b = DatumGetRangeTypeP(b);
+	TypeCacheEntry *typcache;
+	RangeBound	lower1,
+				lower2;
+	RangeBound	upper1,
+				upper2;
+	bool		empty1,
+				empty2;
+	int			cmp;
+
+	/* cache the range info between calls */
+	if (ssup->ssup_extra == NULL)
+	{
+		Assert(RangeTypeGetOid(range_a) == RangeTypeGetOid(range_b));
+		ssup->ssup_extra =
+			lookup_type_cache(RangeTypeGetOid(range_a), TYPECACHE_RANGE_INFO);
+	}
+	typcache = ssup->ssup_extra;
+
+	range_deserialize(typcache, range_a, &lower1, &upper1, &empty1);
+	range_deserialize(typcache, range_b, &lower2, &upper2, &empty2);
+
+	/* For b-tree use, empty ranges sort before all else */
+	if (empty1 && empty2)
+		cmp = 0;
+	else if (empty1)
+		cmp = -1;
+	else if (empty2)
+		cmp = 1;
+	else
+	{
+		cmp = range_cmp_bounds(typcache, &lower1, &lower2);
+		if (cmp == 0)
+			cmp = range_cmp_bounds(typcache, &upper1, &upper2);
+	}
+
+	if ((Datum) range_a != a)
+		pfree(range_a);
+	if ((Datum) range_b != b)
+		pfree(range_b);
+
+	return cmp;
+}
+
+
 /* inequality operators using the range_cmp function */
 Datum
 range_lt(PG_FUNCTION_ARGS)
@@ -1710,7 +1774,7 @@ range_get_typcache(FunctionCallInfo fcinfo, Oid rngtypid)
 		typcache = lookup_type_cache(rngtypid, TYPECACHE_RANGE_INFO);
 		if (typcache->rngelemtype == NULL)
 			elog(ERROR, "type %u is not a range type", rngtypid);
-		fcinfo->flinfo->fn_extra = (void *) typcache;
+		fcinfo->flinfo->fn_extra = typcache;
 	}
 
 	return typcache;

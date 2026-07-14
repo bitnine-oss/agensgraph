@@ -3,7 +3,7 @@
  * collationcmds.c
  *	  collation-related commands support code
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -377,13 +377,9 @@ DefineCollation(ParseState *pstate, List *names, List *parameters, bool if_not_e
 	if (!OidIsValid(newoid))
 		return InvalidObjectAddress;
 
-	/*
-	 * Check that the locales can be loaded.  NB: pg_newlocale_from_collation
-	 * is only supposed to be called on non-C-equivalent locales.
-	 */
+	/* Check that the locales can be loaded. */
 	CommandCounterIncrement();
-	if (!lc_collate_is_c(newoid) || !lc_ctype_is_c(newoid))
-		(void) pg_newlocale_from_collation(newoid);
+	(void) pg_newlocale_from_collation(newoid);
 
 	ObjectAddressSet(address, CollationRelationId, newoid);
 

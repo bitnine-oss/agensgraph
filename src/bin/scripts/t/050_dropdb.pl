@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 use strict;
 use warnings FATAL => 'all';
@@ -28,7 +28,9 @@ $node->issues_sql_like(
 	qr/statement: DROP DATABASE foobar2 WITH \(FORCE\);/,
 	'SQL DROP DATABASE (FORCE) run');
 
-$node->command_fails([ 'dropdb', 'nonexistent' ],
+$node->command_fails_like(
+	[ 'dropdb', 'nonexistent' ],
+	qr/database "nonexistent" does not exist/,
 	'fails with nonexistent database');
 
 # check that invalid database can be dropped with dropdb

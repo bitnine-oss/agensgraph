@@ -3,7 +3,7 @@
  * test_resowner_basic.c
  *		Test basic ResourceOwner functionality
  *
- * Copyright (c) 2022-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2022-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/test_resowner/test_resowner_basic.c
@@ -13,8 +13,6 @@
 #include "postgres.h"
 
 #include "fmgr.h"
-#include "lib/ilist.h"
-#include "utils/memutils.h"
 #include "utils/resowner.h"
 
 PG_MODULE_MAGIC;

@@ -4,7 +4,7 @@
  *	  PostgreSQL type definitions for ISNs (ISBN, ISMN, ISSN, EAN13, UPC)
  *
  * Author:	German Mendez Bravo (Kronuz)
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/isn/isn.h
@@ -18,7 +18,6 @@
 #include "fmgr.h"
 
 #undef ISN_DEBUG
-#define ISN_WEAK_MODE
 
 /*
  *	uint64 is the internal storage format for ISNs.

@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 use strict;
 use warnings FATAL => 'all';
@@ -181,7 +181,7 @@ my $aborted_xid;
 # autovacuum workers visiting the table could crash the backend.
 # Disable autovacuum so that won't happen.
 my $node = PostgreSQL::Test::Cluster->new('test');
-$node->init;
+$node->init(no_data_checksums => 1);
 $node->append_conf('postgresql.conf', 'autovacuum=off');
 $node->append_conf('postgresql.conf', 'max_prepared_transactions=10');
 
@@ -386,11 +386,12 @@ $node->start;
 
 # Check that pg_amcheck runs against the uncorrupted table without error.
 $node->command_ok(
-	[ 'pg_amcheck', '-p', $port, 'postgres' ],
+	[ 'pg_amcheck', '--port' => $port, 'postgres' ],
 	'pg_amcheck test table, prior to corruption');
 
 # Check that pg_amcheck runs against the uncorrupted table and index without error.
-$node->command_ok([ 'pg_amcheck', '-p', $port, 'postgres' ],
+$node->command_ok(
+	[ 'pg_amcheck', '--port' => $port, 'postgres' ],
 	'pg_amcheck test table and index, prior to corruption');
 
 $node->stop;
@@ -754,7 +755,7 @@ $node->start;
 # Run pg_amcheck against the corrupt table with epoch=0, comparing actual
 # corruption messages against the expected messages
 $node->command_checks_all(
-	[ 'pg_amcheck', '--no-dependent-indexes', '-p', $port, 'postgres' ],
+	[ 'pg_amcheck', '--no-dependent-indexes', '--port' => $port, 'postgres' ],
 	2, [@expected], [], 'Expected corruption message output');
 $node->safe_psql(
 	'postgres', qq(

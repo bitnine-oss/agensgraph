@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 pg_bsd_indent_sources = files(
   'args.c',
@@ -18,6 +18,7 @@ endif
 
 pg_bsd_indent = executable('pg_bsd_indent',
   pg_bsd_indent_sources,
+  c_args: cflags_no_missing_var_decls,
   dependencies: [frontend_code],
   include_directories: include_directories('.'),
   kwargs: default_bin_args + {

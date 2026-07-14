@@ -12,7 +12,7 @@
  * Note that other approaches to parameters are possible using the parser
  * hooks defined in ParseState.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -31,6 +31,7 @@
 #include "parser/parse_param.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
 
 
 typedef struct FixedParamState
@@ -71,7 +72,7 @@ setup_parse_fixed_parameters(ParseState *pstate,
 
 	parstate->paramTypes = paramTypes;
 	parstate->numParams = numParams;
-	pstate->p_ref_hook_state = (void *) parstate;
+	pstate->p_ref_hook_state = parstate;
 	pstate->p_paramref_hook = fixed_paramref_hook;
 	/* no need to use p_coerce_param_hook */
 }
@@ -87,7 +88,7 @@ setup_parse_variable_parameters(ParseState *pstate,
 
 	parstate->paramTypes = paramTypes;
 	parstate->numParams = numParams;
-	pstate->p_ref_hook_state = (void *) parstate;
+	pstate->p_ref_hook_state = parstate;
 	pstate->p_paramref_hook = variable_paramref_hook;
 	pstate->p_coerce_param_hook = variable_coerce_param_hook;
 }
@@ -136,7 +137,7 @@ variable_paramref_hook(ParseState *pstate, ParamRef *pref)
 	Param	   *param;
 
 	/* Check parameter number is in range */
-	if (paramno <= 0 || paramno > INT_MAX / sizeof(Oid))
+	if (paramno <= 0 || paramno > MaxAllocSize / sizeof(Oid))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_PARAMETER),
 				 errmsg("there is no parameter $%d", paramno),
@@ -273,7 +274,7 @@ check_variable_parameters(ParseState *pstate, Query *query)
 	if (*parstate->numParams > 0)
 		(void) query_tree_walker(query,
 								 check_parameter_resolution_walker,
-								 (void *) pstate, 0);
+								 pstate, 0);
 }
 
 /*
@@ -317,10 +318,10 @@ check_parameter_resolution_walker(Node *node, ParseState *pstate)
 		/* Recurse into RTE subquery or not-yet-planned sublink subquery */
 		return query_tree_walker((Query *) node,
 								 check_parameter_resolution_walker,
-								 (void *) pstate, 0);
+								 pstate, 0);
 	}
 	return expression_tree_walker(node, check_parameter_resolution_walker,
-								  (void *) pstate);
+								  pstate);
 }
 
 /*

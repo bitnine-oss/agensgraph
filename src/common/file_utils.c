@@ -5,7 +5,7 @@
  * Assorted utility functions to work on files.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/common/file_utils.c
@@ -28,6 +28,7 @@
 #ifdef FRONTEND
 #include "common/logging.h"
 #endif
+#include "common/relpath.h"
 #include "port/pg_iovec.h"
 
 #ifdef FRONTEND
@@ -44,12 +45,10 @@
  */
 #define MINIMUM_VERSION_FOR_PG_WAL	100000
 
-#ifdef PG_FLUSH_DATA_WORKS
-static int	pre_sync_fname(const char *fname, bool isdir);
-#endif
 static void walkdir(const char *path,
 					int (*action) (const char *fname, bool isdir),
-					bool process_symlinks);
+					bool process_symlinks,
+					const char *exclude_dir);
 
 #ifdef HAVE_SYNCFS
 
@@ -92,11 +91,15 @@ do_syncfs(const char *path)
  * syncing, and might not have privileges to write at all.
  *
  * serverVersion indicates the version of the server to be sync'd.
+ *
+ * If sync_data_files is false, this function skips syncing "base/" and any
+ * other tablespace directories.
  */
 void
 sync_pgdata(const char *pg_data,
 			int serverVersion,
-			DataDirSyncMethod sync_method)
+			DataDirSyncMethod sync_method,
+			bool sync_data_files)
 {
 	bool		xlog_is_symlink;
 	char		pg_wal[MAXPGPATH];
@@ -105,7 +108,7 @@ sync_pgdata(const char *pg_data,
 	/* handle renaming of pg_xlog to pg_wal in post-10 clusters */
 	snprintf(pg_wal, MAXPGPATH, "%s/%s", pg_data,
 			 serverVersion < MINIMUM_VERSION_FOR_PG_WAL ? "pg_xlog" : "pg_wal");
-	snprintf(pg_tblspc, MAXPGPATH, "%s/pg_tblspc", pg_data);
+	snprintf(pg_tblspc, MAXPGPATH, "%s/%s", pg_data, PG_TBLSPC_DIR);
 
 	/*
 	 * If pg_wal is a symlink, we'll need to recurse into it separately,
@@ -146,30 +149,33 @@ sync_pgdata(const char *pg_data,
 				do_syncfs(pg_data);
 
 				/* If any tablespaces are configured, sync each of those. */
-				dir = opendir(pg_tblspc);
-				if (dir == NULL)
-					pg_log_error("could not open directory \"%s\": %m",
-								 pg_tblspc);
-				else
+				if (sync_data_files)
 				{
-					while (errno = 0, (de = readdir(dir)) != NULL)
-					{
-						char		subpath[MAXPGPATH * 2];
-
-						if (strcmp(de->d_name, ".") == 0 ||
-							strcmp(de->d_name, "..") == 0)
-							continue;
-
-						snprintf(subpath, sizeof(subpath), "%s/%s",
-								 pg_tblspc, de->d_name);
-						do_syncfs(subpath);
-					}
-
-					if (errno)
-						pg_log_error("could not read directory \"%s\": %m",
+					dir = opendir(pg_tblspc);
+					if (dir == NULL)
+						pg_log_error("could not open directory \"%s\": %m",
 									 pg_tblspc);
+					else
+					{
+						while (errno = 0, (de = readdir(dir)) != NULL)
+						{
+							char		subpath[MAXPGPATH * 2];
 
-					(void) closedir(dir);
+							if (strcmp(de->d_name, ".") == 0 ||
+								strcmp(de->d_name, "..") == 0)
+								continue;
+
+							snprintf(subpath, sizeof(subpath), "%s/%s",
+									 pg_tblspc, de->d_name);
+							do_syncfs(subpath);
+						}
+
+						if (errno)
+							pg_log_error("could not read directory \"%s\": %m",
+										 pg_tblspc);
+
+						(void) closedir(dir);
+					}
 				}
 
 				/* If pg_wal is a symlink, process that too. */
@@ -181,15 +187,21 @@ sync_pgdata(const char *pg_data,
 
 		case DATA_DIR_SYNC_METHOD_FSYNC:
 			{
+				char	   *exclude_dir = NULL;
+
+				if (!sync_data_files)
+					exclude_dir = psprintf("%s/base", pg_data);
+
 				/*
 				 * If possible, hint to the kernel that we're soon going to
 				 * fsync the data directory and its contents.
 				 */
 #ifdef PG_FLUSH_DATA_WORKS
-				walkdir(pg_data, pre_sync_fname, false);
+				walkdir(pg_data, pre_sync_fname, false, exclude_dir);
 				if (xlog_is_symlink)
-					walkdir(pg_wal, pre_sync_fname, false);
-				walkdir(pg_tblspc, pre_sync_fname, true);
+					walkdir(pg_wal, pre_sync_fname, false, NULL);
+				if (sync_data_files)
+					walkdir(pg_tblspc, pre_sync_fname, true, NULL);
 #endif
 
 				/*
@@ -202,10 +214,14 @@ sync_pgdata(const char *pg_data,
 				 * get fsync'd twice. That's not an expected case so we don't
 				 * worry about optimizing it.
 				 */
-				walkdir(pg_data, fsync_fname, false);
+				walkdir(pg_data, fsync_fname, false, exclude_dir);
 				if (xlog_is_symlink)
-					walkdir(pg_wal, fsync_fname, false);
-				walkdir(pg_tblspc, fsync_fname, true);
+					walkdir(pg_wal, fsync_fname, false, NULL);
+				if (sync_data_files)
+					walkdir(pg_tblspc, fsync_fname, true, NULL);
+
+				if (exclude_dir)
+					pfree(exclude_dir);
 			}
 			break;
 	}
@@ -244,10 +260,10 @@ sync_dir_recurse(const char *dir, DataDirSyncMethod sync_method)
 				 * fsync the data directory and its contents.
 				 */
 #ifdef PG_FLUSH_DATA_WORKS
-				walkdir(dir, pre_sync_fname, false);
+				walkdir(dir, pre_sync_fname, false, NULL);
 #endif
 
-				walkdir(dir, fsync_fname, false);
+				walkdir(dir, fsync_fname, false, NULL);
 			}
 			break;
 	}
@@ -263,6 +279,9 @@ sync_dir_recurse(const char *dir, DataDirSyncMethod sync_method)
  * ignored in subdirectories, ie we intentionally don't pass down the
  * process_symlinks flag to recursive calls.
  *
+ * If exclude_dir is not NULL, it specifies a directory path to skip
+ * processing.
+ *
  * Errors are reported but not considered fatal.
  *
  * See also walkdir in fd.c, which is a backend version of this logic.
@@ -270,10 +289,14 @@ sync_dir_recurse(const char *dir, DataDirSyncMethod sync_method)
 static void
 walkdir(const char *path,
 		int (*action) (const char *fname, bool isdir),
-		bool process_symlinks)
+		bool process_symlinks,
+		const char *exclude_dir)
 {
 	DIR		   *dir;
 	struct dirent *de;
+
+	if (exclude_dir && strcmp(exclude_dir, path) == 0)
+		return;
 
 	dir = opendir(path);
 	if (dir == NULL)
@@ -298,7 +321,7 @@ walkdir(const char *path,
 				(*action) (subpath, false);
 				break;
 			case PGFILETYPE_DIR:
-				walkdir(subpath, action, false);
+				walkdir(subpath, action, false, exclude_dir);
 				break;
 			default:
 
@@ -326,16 +349,16 @@ walkdir(const char *path,
 }
 
 /*
- * Hint to the OS that it should get ready to fsync() this file.
+ * Hint to the OS that it should get ready to fsync() this file, if supported
+ * by the platform.
  *
  * Ignores errors trying to open unreadable files, and reports other errors
  * non-fatally.
  */
-#ifdef PG_FLUSH_DATA_WORKS
-
-static int
+int
 pre_sync_fname(const char *fname, bool isdir)
 {
+#ifdef PG_FLUSH_DATA_WORKS
 	int			fd;
 
 	fd = open(fname, O_RDONLY | PG_BINARY, 0);
@@ -362,10 +385,9 @@ pre_sync_fname(const char *fname, bool isdir)
 #endif
 
 	(void) close(fd);
+#endif							/* PG_FLUSH_DATA_WORKS */
 	return 0;
 }
-
-#endif							/* PG_FLUSH_DATA_WORKS */
 
 /*
  * fsync_fname -- Try to fsync a file or directory
@@ -686,7 +708,7 @@ pg_pwritev_with_retry(int fd, const struct iovec *iov, int iovcnt, off_t offset)
 ssize_t
 pg_pwrite_zeros(int fd, size_t size, off_t offset)
 {
-	static const PGIOAlignedBlock zbuffer = {{0}};	/* worth BLCKSZ */
+	static const PGIOAlignedBlock zbuffer = {0};	/* worth BLCKSZ */
 	void	   *zerobuf_addr = unconstify(PGIOAlignedBlock *, &zbuffer)->data;
 	struct iovec iov[PG_IOV_MAX];
 	size_t		remaining_size = size;

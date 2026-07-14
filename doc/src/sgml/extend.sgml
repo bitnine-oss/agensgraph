@@ -650,6 +650,11 @@ RETURNS anycompatible AS ...
     </para>
 
     <para>
+     Additional locations for extension control files can be configured using
+     the parameter <xref linkend="guc-extension-control-path"/>.
+    </para>
+
+    <para>
      The file format for an extension control file is the same as for the
      <filename>postgresql.conf</filename> file, namely a list of
      <replaceable>parameter_name</replaceable> <literal>=</literal> <replaceable>value</replaceable>
@@ -669,9 +674,9 @@ RETURNS anycompatible AS ...
        <para>
         The directory containing the extension's <acronym>SQL</acronym> script
         file(s).  Unless an absolute path is given, the name is relative to
-        the installation's <literal>SHAREDIR</literal> directory.  The
-        default behavior is equivalent to specifying
-        <literal>directory = 'extension'</literal>.
+        the directory where the control file was found.  By default,
+        the script files are looked for in the same directory where the
+        control file was found.
        </para>
       </listitem>
      </varlistentry>
@@ -719,8 +724,8 @@ RETURNS anycompatible AS ...
        <para>
         The value of this parameter will be substituted for each occurrence
         of <literal>MODULE_PATHNAME</literal> in the script file(s).  If it is not
-        set, no substitution is made.  Typically, this is set to
-        <literal>$libdir/<replaceable>shared_library_name</replaceable></literal> and
+        set, no substitution is made.  Typically, this is set to just
+        <literal><replaceable>shared_library_name</replaceable></literal> and
         then <literal>MODULE_PATHNAME</literal> is used in <command>CREATE
         FUNCTION</command> commands for C-language functions, so that the script
         files do not need to hard-wire the name of the shared library.
@@ -1339,8 +1344,8 @@ SELECT * FROM pg_extension_update_paths('<replaceable>extension_name</replaceabl
       secure <varname>search_path</varname>; do <emphasis>not</emphasis>
       trust the path provided by <command>CREATE/ALTER EXTENSION</command>
       to be secure.  Best practice is to temporarily
-      set <varname>search_path</varname> to <literal>'pg_catalog,
-      pg_temp'</literal> and insert references to the extension's
+      set <varname>search_path</varname> to <literal>pg_catalog,
+      pg_temp</literal> and insert references to the extension's
       installation schema explicitly where needed.  (This practice might
       also be helpful for creating views.)  Examples can be found in
       the <filename>contrib</filename> modules in
@@ -1348,15 +1353,11 @@ SELECT * FROM pg_extension_update_paths('<replaceable>extension_name</replaceabl
      </para>
 
      <para>
-      Cross-extension references are extremely difficult to make fully
-      secure, partially because of uncertainty about which schema the other
-      extension is in.  The hazards are reduced if both extensions are
-      installed in the same schema, because then a hostile object cannot be
-      placed ahead of the referenced extension in the installation-time
-      <varname>search_path</varname>.  However, no mechanism currently exists
-      to require that.  For now, best practice is to not mark an extension
-      trusted if it depends on another one, unless that other one is always
-      installed in <literal>pg_catalog</literal>.
+      Secure cross-extension references typically require schema-qualification
+      of the names of the other extension's objects, using the
+      <literal>@extschema:<replaceable>name</replaceable>@</literal>
+      syntax, in addition to careful matching of argument types for functions
+      and operators.
      </para>
     </sect3>
    </sect2>
@@ -1808,6 +1809,36 @@ include $(PGXS)
     setting <varname>PG_CONFIG</varname> to point to its
     <command>pg_config</command> program, either within the makefile
     or on the <literal>make</literal> command line.
+   </para>
+
+   <para>
+    You can select a separate directory prefix in which to install your
+    extension's files, by setting the <command>make</command> variable
+    <varname>prefix</varname> when executing <literal>make install</literal>
+    like so:
+<programlisting>
+make install prefix=/usr/local/postgresql
+</programlisting>
+    This will install the extension control and SQL files into
+    <filename>/usr/local/postgresql/share</filename> and the shared modules into
+    <filename>/usr/local/postgresql/lib</filename>.  If the prefix does not
+    include the strings <literal>postgres</literal> or
+    <literal>pgsql</literal>, such as
+<programlisting>
+make install prefix=/usr/local/extras
+</programlisting>
+    then <literal>postgresql</literal> will be appended to the directory
+    names, installing the control and SQL files into
+    <filename>/usr/local/extras/share/postgresql/extension</filename> and the
+    shared modules into <filename>/usr/local/extras/lib/postgresql</filename>.
+    Either way, you'll need to set <xref
+    linkend="guc-extension-control-path"/> and <xref
+    linkend="guc-dynamic-library-path"/> to enable the
+    <productname>PostgreSQL</productname> server to find the files:
+<programlisting>
+extension_control_path = '/usr/local/extras/share/postgresql:$system'
+dynamic_library_path = '/usr/local/extras/lib/postgresql:$libdir'
+</programlisting>
    </para>
 
    <para>

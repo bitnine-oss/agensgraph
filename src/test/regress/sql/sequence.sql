@@ -413,4 +413,7 @@ SELECT nextval('test_seq1');
 SELECT nextval('test_seq1');
 SELECT nextval('test_seq1');
 
+-- pg_get_sequence_data
+SELECT * FROM pg_get_sequence_data('test_seq1');
+
 DROP SEQUENCE test_seq1;

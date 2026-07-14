@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 use strict;
 use warnings FATAL => 'all';
@@ -28,23 +28,27 @@ $node->dump_info;
 $node->start;
 
 $node->command_fails(['pg_recvlogical'], 'pg_recvlogical needs a slot name');
-$node->command_fails([ 'pg_recvlogical', '-S', 'test' ],
+$node->command_fails(
+	[ 'pg_recvlogical', '--slot' => 'test' ],
 	'pg_recvlogical needs a database');
-$node->command_fails([ 'pg_recvlogical', '-S', 'test', '-d', 'postgres' ],
+$node->command_fails(
+	[ 'pg_recvlogical', '--slot' => 'test', '--dbname' => 'postgres' ],
 	'pg_recvlogical needs an action');
 $node->command_fails(
 	[
-		'pg_recvlogical', '-S',
-		'test', '-d',
-		$node->connstr('postgres'), '--start'
+		'pg_recvlogical',
+		'--slot' => 'test',
+		'--dbname' => $node->connstr('postgres'),
+		'--start',
 	],
 	'no destination file');
 
 $node->command_ok(
 	[
-		'pg_recvlogical', '-S',
-		'test', '-d',
-		$node->connstr('postgres'), '--create-slot'
+		'pg_recvlogical',
+		'--slot' => 'test',
+		'--dbname' => $node->connstr('postgres'),
+		'--create-slot',
 	],
 	'slot created');
 
@@ -60,26 +64,33 @@ chomp($nextlsn);
 
 $node->command_ok(
 	[
-		'pg_recvlogical', '-S', 'test', '-d', $node->connstr('postgres'),
-		'--start', '--endpos', "$nextlsn", '--no-loop', '-f', '-'
+		'pg_recvlogical',
+		'--slot' => 'test',
+		'--dbname' => $node->connstr('postgres'),
+		'--start',
+		'--endpos' => $nextlsn,
+		'--no-loop',
+		'--file' => '-',
 	],
 	'replayed a transaction');
 
 $node->command_ok(
 	[
-		'pg_recvlogical', '-S',
-		'test', '-d',
-		$node->connstr('postgres'), '--drop-slot'
+		'pg_recvlogical',
+		'--slot' => 'test',
+		'--dbname' => $node->connstr('postgres'),
+		'--drop-slot'
 	],
 	'slot dropped');
 
 #test with two-phase option enabled
 $node->command_ok(
 	[
-		'pg_recvlogical', '-S',
-		'test', '-d',
-		$node->connstr('postgres'), '--create-slot',
-		'--two-phase'
+		'pg_recvlogical',
+		'--slot' => 'test',
+		'--dbname' => $node->connstr('postgres'),
+		'--create-slot',
+		'--two-phase',
 	],
 	'slot with two-phase created');
 
@@ -94,20 +105,50 @@ chomp($nextlsn);
 
 $node->command_fails(
 	[
-		'pg_recvlogical', '-S',
-		'test', '-d',
-		$node->connstr('postgres'), '--start',
-		'--endpos', "$nextlsn",
-		'--two-phase', '--no-loop',
-		'-f', '-'
+		'pg_recvlogical',
+		'--slot' => 'test',
+		'--dbname' => $node->connstr('postgres'),
+		'--start',
+		'--endpos' => $nextlsn,
+		'--enable-two-phase', '--no-loop',
+		'--file' => '-',
 	],
 	'incorrect usage');
 
 $node->command_ok(
 	[
-		'pg_recvlogical', '-S', 'test', '-d', $node->connstr('postgres'),
-		'--start', '--endpos', "$nextlsn", '--no-loop', '-f', '-'
+		'pg_recvlogical',
+		'--slot' => 'test',
+		'--dbname' => $node->connstr('postgres'),
+		'--start',
+		'--endpos' => $nextlsn,
+		'--no-loop',
+		'--file' => '-',
 	],
 	'replayed a two-phase transaction');
+
+$node->command_ok(
+	[
+		'pg_recvlogical',
+		'--slot' => 'test',
+		'--drop-slot'
+	],
+	'drop could work without dbname');
+
+# test with failover option enabled
+$node->command_ok(
+	[
+		'pg_recvlogical',
+		'--slot' => 'test',
+		'--dbname' => $node->connstr('postgres'),
+		'--create-slot',
+		'--enable-failover',
+	],
+	'slot with failover created');
+
+my $result = $node->safe_psql('postgres',
+	"SELECT failover FROM pg_catalog.pg_replication_slots WHERE slot_name = 'test'"
+);
+is($result, 't', "failover is enabled for the new slot");
 
 done_testing();

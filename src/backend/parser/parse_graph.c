@@ -89,6 +89,7 @@ typedef struct
 {
 	TargetEntry *te;
 	Node	   *prop_map;
+	Index		varno;			/* RTE of the (anonymous) element, for ginAvail */
 } ElemQualOnly;
 
 typedef struct prop_constr_context
@@ -2799,8 +2800,45 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 		TargetEntry *te = eqo->te;
 
 		te->resno = (AttrNumber) pstate->p_next_resno++;
-		addElemQual(pstate, te->resno, eqo->prop_map);
 		*targetList = lappend(*targetList, te);
+
+		/*
+		 * Apply this anonymous element's property constraint here, inside the
+		 * pattern query, referencing the element expression directly.  Deferring
+		 * it to the enclosing clause instead (via addElemQual() /
+		 * transformElemQuals()) would make the outer qual reference this resjunk
+		 * targetlist column across the subquery boundary.  PG18's planner cannot
+		 * handle that: a subquery rel does not expose its resjunk columns, so
+		 * pulling the subquery up or pushing the qual into it fails (either
+		 * "could not find replacement targetlist entry" or an attno-range
+		 * assertion).  The column is still added to the target list above so
+		 * that later clauses can reference the element as a future vertex.
+		 */
+		if (eqo->prop_map != NULL)
+		{
+			Node	   *prop_map;
+			bool		is_cyphermap;
+
+			prop_map = getExprField((Expr *) te->expr, AG_ELEM_PROP_MAP);
+			is_cyphermap = IsA(eqo->prop_map, CypherMapExpr);
+
+			if (is_cyphermap)
+				qual = transform_prop_constr(pstate, qual, prop_map,
+											 eqo->prop_map);
+
+			if ((is_cyphermap && ginAvail(pstate, eqo->varno, 1)) ||
+				!is_cyphermap)
+			{
+				Node	   *prop_constr;
+				Expr	   *expr;
+
+				prop_constr = transformPropMap(pstate, eqo->prop_map,
+											   EXPR_KIND_WHERE);
+				expr = make_op(pstate, list_make1(makeString("@>")),
+							   prop_map, prop_constr, pstate->p_last_srf, -1);
+				qual = qualAndExpr(qual, (Node *) expr);
+			}
+		}
 	}
 
 	return qual;
@@ -2971,6 +3009,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList,
 			eqo = palloc(sizeof(*eqo));
 			eqo->te = te;
 			eqo->prop_map = cnode->prop_map;
+			eqo->varno = nsitem->p_rtindex;
 
 			*eqoList = lappend(*eqoList, eqo);
 		}
@@ -3125,6 +3164,7 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 			eqo = palloc(sizeof(*eqo));
 			eqo->te = _te;
 			eqo->prop_map = crel->prop_map;
+			eqo->varno = nsitem->p_rtindex;
 
 			*eqoList = lappend(*eqoList, eqo);
 		}
@@ -7087,10 +7127,10 @@ makeJoinResCols(ParseState *pstate, ParseNamespaceItem *l_rte,
 	List	   *colnames = NIL,
 			   *colvars = NIL;
 
-	expandRTE(l_rte->p_rte, l_rte->p_rtindex, 0, -1, false, &l_colnames,
-			  l_colvars);
-	expandRTE(r_rte->p_rte, r_rte->p_rtindex, 0, -1, false, &r_colnames,
-			  r_colvars);
+	expandRTE(l_rte->p_rte, l_rte->p_rtindex, 0, VAR_RETURNING_DEFAULT, -1,
+			  false, &l_colnames, l_colvars);
+	expandRTE(r_rte->p_rte, r_rte->p_rtindex, 0, VAR_RETURNING_DEFAULT, -1,
+			  false, &r_colnames, r_colvars);
 
 	*res_colnames = list_concat(*res_colnames, l_colnames);
 	*res_colvars = list_concat(*res_colvars, *l_colvars);

@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 psql_sources = files(
   'command.c',
@@ -13,16 +13,26 @@ psql_sources = files(
   'prompt.c',
   'startup.c',
   'stringutils.c',
-  'tab-complete.c',
   'variables.c',
 )
 
 psqlscanslash = custom_target('psqlscanslash',
   input: 'psqlscanslash.l',
   output: 'psqlscanslash.c',
-  command: [flex_cmd, '--no-backup', '--fix-warnings', '--', '-Cfe', '-p', '-p'])
+  command: [flex_cmd, '--no-backup', '--', '-Cfe', '-p', '-p'])
 generated_sources += psqlscanslash
 psql_sources += psqlscanslash
+
+tabcomplete = custom_target('tabcomplete',
+  input: 'tab-complete.in.c',
+  output: 'tab-complete.c',
+  command: [
+    perl, files('gen_tabcomplete.pl'), '@INPUT@',
+    '--outfile', '@OUTPUT@',
+  ],
+)
+generated_sources += tabcomplete
+psql_sources += tabcomplete
 
 sql_help = custom_target('psql_help',
   output: ['sql_help.c', 'sql_help.h'],

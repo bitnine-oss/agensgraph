@@ -3,7 +3,7 @@
  * pg_seclabel.h
  *	  definition of the "security label" system catalog (pg_seclabel)
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_seclabel.h
@@ -18,7 +18,7 @@
 #define PG_SECLABEL_H
 
 #include "catalog/genbki.h"
-#include "catalog/pg_seclabel_d.h"
+#include "catalog/pg_seclabel_d.h"	/* IWYU pragma: export */
 
 /* ----------------
  *		pg_seclabel definition.  cpp turns this into

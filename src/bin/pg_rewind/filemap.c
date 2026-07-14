@@ -16,7 +16,7 @@
  * for each file.  Finally, it sorts the array to the final order that the
  * actions should be executed in.
  *
- * Copyright (c) 2013-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2025, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
@@ -26,6 +26,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "access/xlog_internal.h"
 #include "catalog/pg_tablespace_d.h"
 #include "common/file_utils.h"
 #include "common/hashfn_unstable.h"
@@ -38,14 +39,14 @@
  * Define a hash table which we can use to store information about the files
  * appearing in source and target systems.
  */
-#define SH_PREFIX		filehash
-#define SH_ELEMENT_TYPE	file_entry_t
-#define SH_KEY_TYPE		const char *
-#define	SH_KEY			path
+#define SH_PREFIX				filehash
+#define SH_ELEMENT_TYPE			file_entry_t
+#define SH_KEY_TYPE				const char *
+#define SH_KEY					path
 #define SH_HASH_KEY(tb, key)	hash_string(key)
 #define SH_EQUAL(tb, a, b)		(strcmp(a, b) == 0)
-#define	SH_SCOPE		static inline
-#define SH_RAW_ALLOCATOR	pg_malloc0
+#define SH_SCOPE				static inline
+#define SH_RAW_ALLOCATOR		pg_malloc0
 #define SH_DECLARE
 #define SH_DEFINE
 #include "lib/simplehash.h"
@@ -60,7 +61,36 @@ static char *datasegpath(RelFileLocator rlocator, ForkNumber forknum,
 
 static file_entry_t *insert_filehash_entry(const char *path);
 static file_entry_t *lookup_filehash_entry(const char *path);
+
+/*
+ * A separate hash table which tracks WAL files that must not be deleted.
+ */
+typedef struct keepwal_entry
+{
+	const char *path;
+	uint32		status;
+} keepwal_entry;
+
+#define SH_PREFIX				keepwal
+#define SH_ELEMENT_TYPE			keepwal_entry
+#define SH_KEY_TYPE				const char *
+#define SH_KEY					path
+#define SH_HASH_KEY(tb, key)	hash_string(key)
+#define SH_EQUAL(tb, a, b)		(strcmp(a, b) == 0)
+#define SH_SCOPE				static inline
+#define SH_RAW_ALLOCATOR		pg_malloc0
+#define SH_DECLARE
+#define SH_DEFINE
+#include "lib/simplehash.h"
+
+#define KEEPWAL_INITIAL_SIZE	1000
+
+
+static keepwal_hash *keepwal = NULL;
+static bool keepwal_entry_exists(const char *path);
+
 static int	final_filemap_cmp(const void *a, const void *b);
+
 static bool check_file_excluded(const char *path, bool is_source);
 
 /*
@@ -97,7 +127,7 @@ static const char *const excludeDirContents[] =
 	 * even if the intention is to restore to another primary. See backup.sgml
 	 * for a more detailed description.
 	 */
-	"pg_replslot",
+	"pg_replslot",				/* defined as PG_REPLSLOT_DIR */
 
 	/* Contents removed on startup, see dsm_cleanup_for_mmap(). */
 	"pg_dynshmem",				/* defined as PG_DYNSHMEM_DIR */
@@ -204,6 +234,39 @@ static file_entry_t *
 lookup_filehash_entry(const char *path)
 {
 	return filehash_lookup(filehash, path);
+}
+
+/*
+ * Initialize a hash table to store WAL file names that must be kept.
+ */
+void
+keepwal_init(void)
+{
+	/* An initial hash size out of thin air */
+	keepwal = keepwal_create(KEEPWAL_INITIAL_SIZE, NULL);
+}
+
+/* Mark the given file to prevent its removal */
+void
+keepwal_add_entry(const char *path)
+{
+	keepwal_entry *entry;
+	bool		found;
+
+	/* Should only be called with keepwal initialized */
+	Assert(keepwal != NULL);
+
+	entry = keepwal_insert(keepwal, path, &found);
+
+	if (!found)
+		entry->path = pg_strdup(path);
+}
+
+/* Return true if file is marked as not to be removed, false otherwise */
+static bool
+keepwal_entry_exists(const char *path)
+{
+	return keepwal_lookup(keepwal, path) != NULL;
 }
 
 /*
@@ -590,18 +653,17 @@ isRelDataFile(const char *path)
 static char *
 datasegpath(RelFileLocator rlocator, ForkNumber forknum, BlockNumber segno)
 {
-	char	   *path;
+	RelPathStr	path;
 	char	   *segpath;
 
 	path = relpathperm(rlocator, forknum);
 	if (segno > 0)
 	{
-		segpath = psprintf("%s.%u", path, segno);
-		pfree(path);
+		segpath = psprintf("%s.%u", path.str, segno);
 		return segpath;
 	}
 	else
-		return path;
+		return pstrdup(path.str);
 }
 
 /*
@@ -643,7 +705,7 @@ decide_file_action(file_entry_t *entry)
 	 * Don't touch the control file. It is handled specially, after copying
 	 * all the other files.
 	 */
-	if (strcmp(path, "global/pg_control") == 0)
+	if (strcmp(path, XLOG_CONTROL_FILE) == 0)
 		return FILE_ACTION_NONE;
 
 	/* Skip macOS system files */
@@ -685,7 +747,15 @@ decide_file_action(file_entry_t *entry)
 	}
 	else if (entry->target_exists && !entry->source_exists)
 	{
-		/* File exists in target, but not source. Remove it. */
+		/*
+		 * For files that exist in target but not in source, we check the
+		 * keepwal hash table; any files listed therein must not be removed.
+		 */
+		if (keepwal_entry_exists(path))
+		{
+			pg_log_debug("Not removing file \"%s\" because it is required for recovery", path);
+			return FILE_ACTION_NONE;
+		}
 		return FILE_ACTION_REMOVE;
 	}
 	else if (!entry->target_exists && !entry->source_exists)

@@ -5,7 +5,7 @@
  * Basically this is stuff that is useful in both pg_dump and pg_dumpall.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pg_dump/dumputils.c
@@ -16,6 +16,8 @@
 
 #include <ctype.h>
 
+#include "common/file_perm.h"
+#include "common/logging.h"
 #include "dumputils.h"
 #include "fe_utils/string_utils.h"
 
@@ -508,7 +510,8 @@ do { \
 		CONVERT_PRIV('s', "SET");
 		CONVERT_PRIV('A', "ALTER SYSTEM");
 	}
-	else if (strcmp(type, "LARGE OBJECT") == 0)
+	else if (strcmp(type, "LARGE OBJECT") == 0 ||
+			 strcmp(type, "LARGE OBJECTS") == 0)
 	{
 		CONVERT_PRIV('r', "SELECT");
 		CONVERT_PRIV('w', "UPDATE");
@@ -884,4 +887,38 @@ makeAlterConfigCommand(PGconn *conn, const char *configitem,
 	appendPQExpBufferStr(buf, ";\n");
 
 	pg_free(mine);
+}
+
+/*
+ * create_or_open_dir
+ *
+ * This will create a new directory with the given dirname. If there is
+ * already an empty directory with that name, then use it.
+ */
+void
+create_or_open_dir(const char *dirname)
+{
+	int			ret;
+
+	switch ((ret = pg_check_dir(dirname)))
+	{
+		case -1:
+			/* opendir failed but not with ENOENT */
+			pg_fatal("could not open directory \"%s\": %m", dirname);
+			break;
+		case 0:
+			/* directory does not exist */
+			if (mkdir(dirname, pg_dir_create_mode) < 0)
+				pg_fatal("could not create directory \"%s\": %m", dirname);
+			break;
+		case 1:
+			/* exists and is empty, fix perms */
+			if (chmod(dirname, pg_dir_create_mode) != 0)
+				pg_fatal("could not change permissions of directory \"%s\": %m",
+						 dirname);
+			break;
+		default:
+			/* exists and is not empty */
+			pg_fatal("directory \"%s\" is not empty", dirname);
+	}
 }

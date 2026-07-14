@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2025, PostgreSQL Global Development Group
  *
  * src/bin/psql/mainloop.c
  */
@@ -69,7 +69,7 @@ MainLoop(FILE *source)
 	/* Create working state */
 	scan_state = psql_scan_create(&psqlscan_callbacks);
 	cond_stack = conditional_stack_create();
-	psql_scan_set_passthrough(scan_state, (void *) cond_stack);
+	psql_scan_set_passthrough(scan_state, cond_stack);
 
 	query_buf = createPQExpBuffer();
 	previous_buf = createPQExpBuffer();

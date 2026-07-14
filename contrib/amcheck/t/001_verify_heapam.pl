@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 use strict;
 use warnings FATAL => 'all';
@@ -9,13 +9,13 @@ use PostgreSQL::Test::Utils;
 
 use Test::More;
 
-my ($node, $result);
+my $node;
 
 #
 # Test set-up
 #
 $node = PostgreSQL::Test::Cluster->new('test');
-$node->init;
+$node->init(no_data_checksums => 1);
 $node->append_conf('postgresql.conf', 'autovacuum=off');
 $node->start;
 $node->safe_psql('postgres', q(CREATE EXTENSION amcheck));
@@ -85,19 +85,6 @@ sub relation_filepath
 		qq(SELECT pg_relation_filepath('$relname')));
 	die "path not found for relation $relname" unless defined $rel;
 	return "$pgdata/$rel";
-}
-
-# Returns the fully qualified name of the toast table for the named relation
-sub get_toast_for
-{
-	my ($relname) = @_;
-
-	return $node->safe_psql(
-		'postgres', qq(
-		SELECT 'pg_toast.' || t.relname
-			FROM pg_catalog.pg_class c, pg_catalog.pg_class t
-			WHERE c.relname = '$relname'
-			  AND c.reltoastrelid = t.oid));
 }
 
 # (Re)create and populate a test table of the given name.

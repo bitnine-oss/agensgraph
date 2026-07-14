@@ -8,7 +8,7 @@
  * storage implementation and the details about individual types of
  * statistics.
  *
- * Copyright (c) 2001-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/activity/pgstat_checkpointer.c
@@ -17,6 +17,7 @@
 
 #include "postgres.h"
 
+#include "utils/memutils.h"
 #include "utils/pgstat_internal.h"
 
 
@@ -29,8 +30,6 @@ PgStat_CheckpointerStats PendingCheckpointerStats = {0};
 void
 pgstat_report_checkpointer(void)
 {
-	/* We assume this initializes to zeroes */
-	static const PgStat_CheckpointerStats all_zeroes;
 	PgStatShared_Checkpointer *stats_shmem = &pgStatLocal.shmem->checkpointer;
 
 	Assert(!pgStatLocal.shmem->is_shutdown);
@@ -40,8 +39,8 @@ pgstat_report_checkpointer(void)
 	 * This function can be called even if nothing at all has happened. In
 	 * this case, avoid unnecessarily modifying the stats entry.
 	 */
-	if (memcmp(&PendingCheckpointerStats, &all_zeroes,
-			   sizeof(all_zeroes)) == 0)
+	if (pg_memory_is_all_zeros(&PendingCheckpointerStats,
+							   sizeof(struct PgStat_CheckpointerStats)))
 		return;
 
 	pgstat_begin_changecount_write(&stats_shmem->changecount);
@@ -49,12 +48,14 @@ pgstat_report_checkpointer(void)
 #define CHECKPOINTER_ACC(fld) stats_shmem->stats.fld += PendingCheckpointerStats.fld
 	CHECKPOINTER_ACC(num_timed);
 	CHECKPOINTER_ACC(num_requested);
+	CHECKPOINTER_ACC(num_performed);
 	CHECKPOINTER_ACC(restartpoints_timed);
 	CHECKPOINTER_ACC(restartpoints_requested);
 	CHECKPOINTER_ACC(restartpoints_performed);
 	CHECKPOINTER_ACC(write_time);
 	CHECKPOINTER_ACC(sync_time);
 	CHECKPOINTER_ACC(buffers_written);
+	CHECKPOINTER_ACC(slru_written);
 #undef CHECKPOINTER_ACC
 
 	pgstat_end_changecount_write(&stats_shmem->changecount);
@@ -82,6 +83,14 @@ pgstat_fetch_stat_checkpointer(void)
 	pgstat_snapshot_fixed(PGSTAT_KIND_CHECKPOINTER);
 
 	return &pgStatLocal.snapshot.checkpointer;
+}
+
+void
+pgstat_checkpointer_init_shmem_cb(void *stats)
+{
+	PgStatShared_Checkpointer *stats_shmem = (PgStatShared_Checkpointer *) stats;
+
+	LWLockInitialize(&stats_shmem->lock, LWTRANCHE_PGSTATS_DATA);
 }
 
 void
@@ -119,11 +128,13 @@ pgstat_checkpointer_snapshot_cb(void)
 #define CHECKPOINTER_COMP(fld) pgStatLocal.snapshot.checkpointer.fld -= reset.fld;
 	CHECKPOINTER_COMP(num_timed);
 	CHECKPOINTER_COMP(num_requested);
+	CHECKPOINTER_COMP(num_performed);
 	CHECKPOINTER_COMP(restartpoints_timed);
 	CHECKPOINTER_COMP(restartpoints_requested);
 	CHECKPOINTER_COMP(restartpoints_performed);
 	CHECKPOINTER_COMP(write_time);
 	CHECKPOINTER_COMP(sync_time);
 	CHECKPOINTER_COMP(buffers_written);
+	CHECKPOINTER_COMP(slru_written);
 #undef CHECKPOINTER_COMP
 }

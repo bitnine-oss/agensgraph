@@ -6,7 +6,9 @@
 #include "btree_gist.h"
 #include "btree_utils_num.h"
 #include "fmgr.h"
-#include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
+#include "utils/fmgroids.h"
+#include "utils/sortsupport.h"
 
 /* enums are really Oids, so we just use the same structure */
 
@@ -16,9 +18,7 @@ typedef struct
 	Oid			upper;
 } oidKEY;
 
-/*
-** enum ops
-*/
+/* GiST support functions */
 PG_FUNCTION_INFO_V1(gbt_enum_compress);
 PG_FUNCTION_INFO_V1(gbt_enum_fetch);
 PG_FUNCTION_INFO_V1(gbt_enum_union);
@@ -26,6 +26,7 @@ PG_FUNCTION_INFO_V1(gbt_enum_picksplit);
 PG_FUNCTION_INFO_V1(gbt_enum_consistent);
 PG_FUNCTION_INFO_V1(gbt_enum_penalty);
 PG_FUNCTION_INFO_V1(gbt_enum_same);
+PG_FUNCTION_INFO_V1(gbt_enum_sortsupport);
 
 
 static bool
@@ -99,9 +100,8 @@ static const gbtree_ninfo tinfo =
 
 
 /**************************************************
- * Enum ops
+ * GiST support functions
  **************************************************/
-
 
 Datum
 gbt_enum_compress(PG_FUNCTION_ARGS)
@@ -137,7 +137,7 @@ gbt_enum_consistent(PG_FUNCTION_ARGS)
 	key.lower = (GBT_NUMKEY *) &kkk->lower;
 	key.upper = (GBT_NUMKEY *) &kkk->upper;
 
-	PG_RETURN_BOOL(gbt_num_consistent(&key, (void *) &query, &strategy,
+	PG_RETURN_BOOL(gbt_num_consistent(&key, &query, &strategy,
 									  GIST_LEAF(entry), &tinfo,
 									  fcinfo->flinfo));
 }
@@ -149,9 +149,8 @@ gbt_enum_union(PG_FUNCTION_ARGS)
 	void	   *out = palloc(sizeof(oidKEY));
 
 	*(int *) PG_GETARG_POINTER(1) = sizeof(oidKEY);
-	PG_RETURN_POINTER(gbt_num_union((void *) out, entryvec, &tinfo, fcinfo->flinfo));
+	PG_RETURN_POINTER(gbt_num_union(out, entryvec, &tinfo, fcinfo->flinfo));
 }
-
 
 Datum
 gbt_enum_penalty(PG_FUNCTION_ARGS)
@@ -182,4 +181,40 @@ gbt_enum_same(PG_FUNCTION_ARGS)
 
 	*result = gbt_num_same((void *) b1, (void *) b2, &tinfo, fcinfo->flinfo);
 	PG_RETURN_POINTER(result);
+}
+
+static int
+gbt_enum_ssup_cmp(Datum x, Datum y, SortSupport ssup)
+{
+	oidKEY	   *arg1 = (oidKEY *) DatumGetPointer(x);
+	oidKEY	   *arg2 = (oidKEY *) DatumGetPointer(y);
+
+	/* for leaf items we expect lower == upper, so only compare lower */
+	return DatumGetInt32(CallerFInfoFunctionCall2(enum_cmp,
+												  ssup->ssup_extra,
+												  InvalidOid,
+												  arg1->lower,
+												  arg2->lower));
+}
+
+Datum
+gbt_enum_sortsupport(PG_FUNCTION_ARGS)
+{
+	SortSupport ssup = (SortSupport) PG_GETARG_POINTER(0);
+	FmgrInfo   *flinfo;
+
+	ssup->comparator = gbt_enum_ssup_cmp;
+
+	/*
+	 * Since gbt_enum_ssup_cmp() uses enum_cmp() like the rest of the
+	 * comparison functions, it also needs to pass flinfo when calling it. The
+	 * caller to a SortSupport comparison function doesn't provide an FmgrInfo
+	 * struct, so look it up now, save it in ssup_extra and use it in
+	 * gbt_enum_ssup_cmp() later.
+	 */
+	flinfo = MemoryContextAlloc(ssup->ssup_cxt, sizeof(FmgrInfo));
+	fmgr_info_cxt(F_ENUM_CMP, flinfo, ssup->ssup_cxt);
+	ssup->ssup_extra = flinfo;
+
+	PG_RETURN_VOID();
 }

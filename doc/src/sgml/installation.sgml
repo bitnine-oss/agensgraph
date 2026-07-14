@@ -55,9 +55,11 @@
       </indexterm>
 
       Alternatively, <productname>PostgreSQL</productname> can be built using
-      <ulink url="https://mesonbuild.com/">Meson</ulink>.  This is currently
-      experimental.  If you choose to use
-      <application>Meson</application>, then you don't need
+      <ulink url="https://mesonbuild.com/">Meson</ulink>.  This is the only
+      option for building <productname>PostgreSQL</productname> on Windows
+      using <productname>Visual Studio</productname>.  For other platforms,
+      using <application>Meson</application> is currently experimental.  If
+      you choose to use <application>Meson</application>, then you don't need
       <acronym>GNU</acronym> <application>make</application>, but the other
       requirements below still apply.
      </para>
@@ -100,10 +102,10 @@
        <primary>yacc</primary>
       </indexterm>
 
-      <application>Flex</application> 2.5.35 or later and
-      <application>Bison</application> 2.3 or later are required.  Other
-      <application>lex</application> and <application>yacc</application>
-      programs cannot be used.
+      <application>Flex</application> and <application>Bison</application> are
+      required.  Other <application>lex</application> and
+      <application>yacc</application> programs cannot be used.
+      <application>Bison</application> needs to be at least version 2.3.
      </para>
     </listitem>
 
@@ -239,7 +241,7 @@
       language, you need a <productname>Python</productname>
       installation with the header files and
       the <application>sysconfig</application> module.  The minimum
-      required version is <productname>Python</productname> 3.2.
+      supported version is <productname>Python</productname> 3.6.8.
      </para>
 
      <para>
@@ -293,7 +295,13 @@
       encrypted client connections.  <productname>OpenSSL</productname> is
       also required for random number generation on platforms that do not
       have <filename>/dev/urandom</filename> (except Windows).  The minimum
-      required version is 1.0.2.
+      required version is 1.1.1.
+     </para>
+     <para>
+      Additionally, <productname>LibreSSL</productname> is supported using the
+      <productname>OpenSSL</productname> compatibility layer.  The minimum
+      required version is 3.4 (from <systemitem class="osname">OpenBSD</systemitem>
+      version 7.0).
      </para>
     </listitem>
 
@@ -302,6 +310,14 @@
       You need <application>MIT Kerberos</application> (for GSSAPI),
       <productname>OpenLDAP</productname>, and/or <application>PAM</application>,
       if you want to support authentication using those services.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      You need <productname>Curl</productname> to build an optional module
+      which implements the <link linkend="libpq-oauth">OAuth Device
+      Authorization flow</link> for client applications.
      </para>
     </listitem>
 
@@ -936,17 +952,15 @@ build-postgresql:
          <acronym>JIT</acronym> compilation (see <xref linkend="jit"/>).  This
          requires the <productname>LLVM</productname> library to be installed.
          The minimum required version of <productname>LLVM</productname> is
-         currently 10.
+         currently 14.
         </para>
         <para>
          <command>llvm-config</command><indexterm><primary>llvm-config</primary></indexterm>
          will be used to find the required compilation options.
-         <command>llvm-config</command>, and then
-         <command>llvm-config-$major-$minor</command> for all supported
-         versions, will be searched for in your <envar>PATH</envar>.  If
-         that would not yield the desired program,
-         use <envar>LLVM_CONFIG</envar> to specify a path to the
-         correct <command>llvm-config</command>. For example
+         <command>llvm-config</command> will be searched for in your
+         <envar>PATH</envar>.  If that would not yield the desired program,
+         use <envar>LLVM_CONFIG</envar> to specify a path to the correct
+         <command>llvm-config</command>. For example
 <programlisting>
 ./configure ... --with-llvm LLVM_CONFIG='/path/to/llvm/bin/llvm-config'
 </programlisting>
@@ -991,7 +1005,9 @@ build-postgresql:
         <para>
          Build with support for <acronym>SSL</acronym> (encrypted)
          connections. The only <replaceable>LIBRARY</replaceable>
-         supported is <option>openssl</option>. This requires the
+         supported is <option>openssl</option>, which is used for both
+         <productname>OpenSSL</productname>
+         and <productname>LibreSSL</productname>. This requires the
          <productname>OpenSSL</productname> package to be installed.
          <filename>configure</filename> will check for the required
          header files and libraries to make sure that your
@@ -1135,6 +1151,48 @@ build-postgresql:
        </listitem>
       </varlistentry>
 
+      <varlistentry id="configure-option-with-libcurl">
+       <term><option>--with-libcurl</option></term>
+       <listitem>
+        <para>
+         Build with libcurl support for OAuth 2.0 client flows.
+         Libcurl version 7.61.0 or later is required for this feature.
+         Building with this will check for the required header files
+         and libraries to make sure that your <productname>curl</productname>
+         installation is sufficient before proceeding.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="configure-option-with-libnuma">
+       <term><option>--with-libnuma</option></term>
+       <listitem>
+        <para>
+         Build with libnuma support for basic NUMA support.
+         Only supported on platforms for which the <productname>libnuma</productname>
+         library is implemented.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="configure-option-with-liburing">
+       <term><option>--with-liburing</option></term>
+       <listitem>
+        <para>
+        Build with liburing, enabling io_uring support for asynchronous I/O.
+        </para>
+        <para>
+         To detect the required compiler and linker options, PostgreSQL will
+         query <command>pkg-config</command>.
+        </para>
+        <para>
+         To use a liburing installation that is in an unusual location, you
+         can set <command>pkg-config</command>-related environment
+         variables (see its documentation).
+        </para>
+       </listitem>
+      </varlistentry>
+
       <varlistentry id="configure-option-with-libxml">
        <term><option>--with-libxml</option></term>
        <listitem>
@@ -1254,34 +1312,6 @@ build-postgresql:
          This disables
          support for compressed archives in <application>pg_dump</application>
          and <application>pg_restore</application>.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry id="configure-option-disable-spinlocks">
-       <term><option>--disable-spinlocks</option></term>
-       <listitem>
-        <para>
-         Allow the build to succeed even if <productname>PostgreSQL</productname>
-         has no CPU spinlock support for the platform.  The lack of
-         spinlock support will result in very poor performance; therefore,
-         this option should only be used if the build aborts and
-         informs you that the platform lacks spinlock support. If this
-         option is required to build <productname>PostgreSQL</productname> on
-         your platform, please report the problem to the
-         <productname>PostgreSQL</productname> developers.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry id="configure-option-disable-atomics">
-       <term><option>--disable-atomics</option></term>
-       <listitem>
-        <para>
-         Disable use of CPU atomic operations.  This option does nothing on
-         platforms that lack such operations.  On platforms that do have
-         them, this will result in poor performance.  This option is only
-         useful for debugging or making performance comparisons.
         </para>
        </listitem>
       </varlistentry>
@@ -1937,7 +1967,7 @@ build-postgresql:
      it will break many of <filename>configure</filename>'s built-in tests.  To add
      such flags, include them in the <envar>COPT</envar> environment variable
      while running <filename>make</filename>.  The contents of <envar>COPT</envar>
-     are added to both the <envar>CFLAGS</envar> and <envar>LDFLAGS</envar>
+     are added to the <envar>CFLAGS</envar>, <envar>CXXFLAGS</envar>, and <envar>LDFLAGS</envar>
      options set up by <filename>configure</filename>.  For example, you could do
 <screen>
 <userinput>make COPT='-Werror'</userinput>
@@ -2424,7 +2454,7 @@ ninja install
         <acronym>JIT</acronym> compilation (see <xref linkend="jit"/>).
         This requires the <productname>LLVM</productname> library to be
         installed.  The minimum required version of
-        <productname>LLVM</productname> is currently 10.  Disabled by
+        <productname>LLVM</productname> is currently 14.  Disabled by
         default.
        </para>
 
@@ -2604,6 +2634,47 @@ ninja install
       </listitem>
      </varlistentry>
 
+     <varlistentry id="configure-with-libcurl-meson">
+      <term><option>-Dlibcurl={ auto | enabled | disabled }</option></term>
+      <listitem>
+       <para>
+        Build with libcurl support for OAuth 2.0 client flows.
+        Libcurl version 7.61.0 or later is required for this feature.
+        Building with this will check for the required header files
+        and libraries to make sure that your <productname>Curl</productname>
+        installation is sufficient before proceeding. The default for this
+        option is auto.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="configure-with-liburing-meson">
+      <term><option>-Dliburing={ auto | enabled | disabled }</option></term>
+      <listitem>
+       <para>
+        Build with liburing, enabling io_uring support for asynchronous I/O.
+        Defaults to auto.
+       </para>
+
+       <para>
+        To use a liburing installation that is in an unusual location, you
+        can set <command>pkg-config</command>-related environment
+        variables (see its documentation).
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="configure-with-libnuma-meson">
+      <term><option>-Dlibnuma={ auto | enabled | disabled }</option></term>
+      <listitem>
+       <para>
+        Build with libnuma support for basic NUMA support.
+        Only supported on platforms for which the <productname>libnuma</productname>
+        library is implemented. The default for this option is auto.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="configure-with-libxml-meson">
       <term><option>-Dlibxml={ auto | enabled | disabled }</option></term>
       <listitem>
@@ -2690,35 +2761,6 @@ ninja install
       </listitem>
      </varlistentry>
 
-     <varlistentry id="configure-spinlocks-meson">
-      <term><option>-Dspinlocks={ true | false }</option></term>
-      <listitem>
-       <para>
-        This option is set to true by default; setting it to false will
-        allow the build to succeed even if <productname>PostgreSQL</productname>
-        has no CPU spinlock support for the platform.  The lack of
-        spinlock support will result in very poor performance; therefore,
-        this option should only be changed if the build aborts and
-        informs you that the platform lacks spinlock support. If setting this
-        option to false is required to build <productname>PostgreSQL</productname> on
-        your platform, please report the problem to the
-        <productname>PostgreSQL</productname> developers.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry id="configure-atomics-meson">
-      <term><option>-Datomics={ true | false }</option></term>
-      <listitem>
-       <para>
-        This option is set to true by default; setting it to false will
-        disable use of CPU atomic operations.  The option does nothing on
-        platforms that lack such operations.  On platforms that do have
-        them, disabling atomics will result in poor performance.  Changing
-        this option is only useful for debugging or making performance comparisons.
-       </para>
-      </listitem>
-     </varlistentry>
     </variablelist>
    </sect3>
 
@@ -2727,7 +2769,7 @@ ninja install
 
     <variablelist>
      <varlistentry id="configure-auto-features-meson">
-      <term><option>--auto_features={ auto | enabled | disabled }</option></term>
+      <term><option>--auto-features={ auto | enabled | disabled }</option></term>
       <listitem>
        <para>
         Setting this option allows you to override the value of all
@@ -3131,9 +3173,13 @@ ninja install
       <term><option>-DPG_TEST_EXTRA=<replaceable>TEST_SUITES</replaceable></option></term>
       <listitem>
        <para>
-        Enable test suites which require special software to run.  This option
-        accepts arguments via a whitespace-separated list.  See <xref
-        linkend="regress-additional"/> for details.
+        Enable additional test suites, which are not run by default because
+        they are not secure to run on a multiuser system, require special
+        software to run, or are resource intensive.  The argument is a
+        whitespace-separated list of tests to enable. See
+        <xref linkend="regress-additional"/> for details. If the
+        <envar>PG_TEST_EXTRA</envar> environment variable is set when the
+        tests are run, it overrides this setup-time option.
        </para>
       </listitem>
      </varlistentry>
@@ -3390,12 +3436,9 @@ export MANPATH
 
   <para>
    In general, <productname>PostgreSQL</productname> can be expected to work on
-   these CPU architectures: x86, PowerPC, S/390, SPARC, ARM, MIPS, RISC-V,
-   and PA-RISC, including
+   these CPU architectures: x86, PowerPC, S/390, SPARC, ARM, MIPS,
+   and RISC-V, including
    big-endian, little-endian, 32-bit, and 64-bit variants where applicable.
-   It is often
-   possible to build on an unsupported CPU type by configuring with
-   <option>--disable-spinlocks</option>, but performance will be poor.
   </para>
 
   <para>
@@ -3422,7 +3465,8 @@ export MANPATH
   <para>
    Historical versions of <productname>PostgreSQL</productname> or POSTGRES
    also ran on CPU architectures including Alpha, Itanium, M32R, M68K,
-   M88K, NS32K, SuperH, and VAX, and operating systems including 4.3BSD, AIX, BEOS,
+   M88K, NS32K, PA-RISC, SuperH, and VAX,
+   and operating systems including 4.3BSD, AIX, BEOS,
    BSD/OS, DG/UX, Dynix, HP-UX, IRIX, NeXTSTEP, QNX, SCO, SINIX, Sprite, SunOS,
    Tru64 UNIX, and ULTRIX.
   </para>
@@ -3631,33 +3675,9 @@ xcrun --show-sdk-path
 
    <para>
     PostgreSQL for Windows can be built using MinGW, a Unix-like build
-    environment for Microsoft operating systems.
-    The MinGW build procedure uses the normal build system described in
-    this chapter.
-   </para>
-
-   <para>
-    MinGW, the Unix-like build tools, and MSYS, a collection
-    of Unix tools required to run shell scripts
-    like <command>configure</command>, can be downloaded
-    from <ulink url="http://www.mingw.org/"></ulink>.  Neither is
-    required to run the resulting binaries; they are needed only for
-    creating the binaries.
-   </para>
-
-   <para>
-     To build 64 bit binaries using MinGW, install the 64 bit tool set
-     from <ulink url="https://mingw-w64.org/"></ulink>, put its bin
-     directory in the <envar>PATH</envar>, and run
-     <command>configure</command> with the
-     <command>--host=x86_64-w64-mingw32</command> option.
-   </para>
-
-   <para>
-    After you have everything installed, it is suggested that you
-    run <application>psql</application>
-    under <command>CMD.EXE</command>, as the MSYS console has
-    buffering issues.
+    environment for Windows.  It is recommended to use the <ulink
+    url="https://www.msys2.org/">MSYS2</ulink> environment for this and also
+    to install any prerequisite packages.
    </para>
 
    <sect3 id="mingw-crash-dumps">
@@ -3781,11 +3801,11 @@ make: *** [postgres] Error 1
    </sect3>
   </sect2>
 
-  <sect2 id="installation-notes-visual">
-   <title>Visual</title>
+  <sect2 id="installation-notes-visual-studio">
+   <title>Visual Studio</title>
 
-   <indexterm zone="installation-notes-visual">
-    <primary>Visual</primary>
+   <indexterm zone="installation-notes-visual-studio">
+    <primary>Visual Studio</primary>
     <secondary>installation on</secondary>
    </indexterm>
 
@@ -3799,8 +3819,8 @@ make: *** [postgres] Error 1
    </para>
 
    <para>
-    PostgreSQL for Windows with Visual can be built using meson, as described
-    in <xref linkend="install-meson"/>.
+    PostgreSQL for Windows with Visual Studio can be built using Meson, as
+    described in <xref linkend="install-meson"/>.
     The native Windows port requires a 32 or 64-bit version of Windows
     10 or later.
    </para>
@@ -3870,14 +3890,12 @@ make: *** [postgres] Error 1
 
      <variablelist>
       <varlistentry>
-       <term><productname>ActiveState Perl</productname></term>
+       <term><productname>Strawberry Perl</productname></term>
        <listitem><para>
-        ActiveState Perl is required to run the build generation scripts. MinGW
+        Strawberry Perl is required to run the build generation scripts. MinGW
         or Cygwin Perl will not work. It must also be present in the PATH.
         Binaries can be downloaded from
-        <ulink url="https://www.activestate.com"></ulink>
-        (Note: version 5.14 or later is required,
-        the free Standard Distribution is sufficient).
+        <ulink url="https://strawberryperl.com"></ulink>.
        </para></listitem>
       </varlistentry>
 
@@ -3886,38 +3904,10 @@ make: *** [postgres] Error 1
         <productname>Flex</productname></term>
        <listitem>
        <para>
-        <productname>Bison</productname> and <productname>Flex</productname> are
-        required.  Only <productname>Bison</productname> versions 2.3 and later
-        will work. <productname>Flex</productname> must be version 2.5.35 or later.
+        Binaries for <productname>Bison</productname> and
+        <productname>Flex</productname> can be downloaded from <ulink
+        url="https://github.com/lexxmark/winflexbison"></ulink>.
        </para>
-
-       <para>
-        Both <productname>Bison</productname> and <productname>Flex</productname>
-        are included in the <productname>msys</productname> tool suite, available
-        from <ulink url="http://www.mingw.org/wiki/MSYS"></ulink> as part of the
-        <productname>MinGW</productname> compiler suite.
-       </para>
-
-       <para>
-        You will need to add the directory containing
-        <filename>flex.exe</filename> and <filename>bison.exe</filename> to the
-        PATH environment variable. In the case of MinGW, the directory is the
-        <filename>\msys\1.0\bin</filename> subdirectory of your MinGW
-        installation directory.
-       </para>
-
-       <note>
-        <para>
-          The Bison distribution from GnuWin32 appears to have a bug that
-          causes Bison to malfunction when installed in a directory with
-          spaces in the name, such as the default location on English
-          installations <filename>C:\Program Files\GnuWin32</filename>.
-          Consider installing into <filename>C:\GnuWin32</filename> or use the
-          NTFS short name path to GnuWin32 in your PATH environment setting
-          (e.g., <filename>C:\PROGRA~1\GnuWin32</filename>).
-         </para>
-       </note>
-
        </listitem>
       </varlistentry>
      </variablelist>
@@ -3929,10 +3919,11 @@ make: *** [postgres] Error 1
 
      <variablelist>
       <varlistentry>
-       <term><productname>ActiveState Tcl</productname></term>
+       <term><productname>Magicsplat Tcl</productname></term>
        <listitem><para>
-        Required for building <application>PL/Tcl</application> (Note: version
-        8.4 is required, the free Standard Distribution is sufficient).
+        Required for building <application>PL/Tcl</application>.
+        Binaries can be downloaded from
+        <ulink url="https://www.magicsplat.com/tcl-installer/index.html"></ulink>.
        </para></listitem>
       </varlistentry>
 

@@ -3,7 +3,7 @@
  *
  *	server checks and output routines
  *
- *	Copyright (c) 2010-2024, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2025, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/check.c
  */
 
@@ -11,14 +11,13 @@
 
 #include "catalog/pg_authid_d.h"
 #include "catalog/pg_class_d.h"
-#include "catalog/pg_collation.h"
 #include "fe_utils/string_utils.h"
-#include "mb/pg_wchar.h"
 #include "pg_upgrade.h"
+#include "common/unicode_version.h"
 
 static void check_new_cluster_is_empty(void);
 static void check_is_install_user(ClusterInfo *cluster);
-static void check_proper_datallowconn(ClusterInfo *cluster);
+static void check_for_connection_status(ClusterInfo *cluster);
 static void check_for_prepared_transactions(ClusterInfo *cluster);
 static void check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster);
 static void check_for_user_defined_postfix_ops(ClusterInfo *cluster);
@@ -27,9 +26,10 @@ static void check_for_tables_with_oids(ClusterInfo *cluster);
 static void check_for_pg_role_prefix(ClusterInfo *cluster);
 static void check_for_new_tablespace_dir(void);
 static void check_for_user_defined_encoding_conversions(ClusterInfo *cluster);
+static void check_for_unicode_update(ClusterInfo *cluster);
 static void check_new_cluster_logical_replication_slots(void);
 static void check_new_cluster_subscription_configuration(void);
-static void check_old_cluster_for_valid_slots(bool live_check);
+static void check_old_cluster_for_valid_slots(void);
 static void check_old_cluster_subscription_state(void);
 
 /*
@@ -315,6 +315,132 @@ static DataTypesUsageChecks data_types_usage_checks[] =
 };
 
 /*
+ * Private state for check_for_data_types_usage()'s UpgradeTask.
+ */
+struct data_type_check_state
+{
+	DataTypesUsageChecks *check;	/* the check for this step */
+	bool		result;			/* true if check failed for any database */
+	PQExpBuffer *report;		/* buffer for report on failed checks */
+};
+
+/*
+ * Returns a palloc'd query string for the data type check, for use by
+ * check_for_data_types_usage()'s UpgradeTask.
+ */
+static char *
+data_type_check_query(int checknum)
+{
+	DataTypesUsageChecks *check = &data_types_usage_checks[checknum];
+
+	return psprintf("WITH RECURSIVE oids AS ( "
+	/* start with the type(s) returned by base_query */
+					"	%s "
+					"	UNION ALL "
+					"	SELECT * FROM ( "
+	/* inner WITH because we can only reference the CTE once */
+					"		WITH x AS (SELECT oid FROM oids) "
+	/* domains on any type selected so far */
+					"			SELECT t.oid FROM pg_catalog.pg_type t, x WHERE typbasetype = x.oid AND typtype = 'd' "
+					"			UNION ALL "
+	/* arrays over any type selected so far */
+					"			SELECT t.oid FROM pg_catalog.pg_type t, x WHERE typelem = x.oid AND typtype = 'b' "
+					"			UNION ALL "
+	/* composite types containing any type selected so far */
+					"			SELECT t.oid FROM pg_catalog.pg_type t, pg_catalog.pg_class c, pg_catalog.pg_attribute a, x "
+					"			WHERE t.typtype = 'c' AND "
+					"				  t.oid = c.reltype AND "
+					"				  c.oid = a.attrelid AND "
+					"				  NOT a.attisdropped AND "
+					"				  a.atttypid = x.oid "
+					"			UNION ALL "
+	/* ranges containing any type selected so far */
+					"			SELECT t.oid FROM pg_catalog.pg_type t, pg_catalog.pg_range r, x "
+					"			WHERE t.typtype = 'r' AND r.rngtypid = t.oid AND r.rngsubtype = x.oid"
+					"	) foo "
+					") "
+	/* now look for stored columns of any such type */
+					"SELECT n.nspname, c.relname, a.attname "
+					"FROM	pg_catalog.pg_class c, "
+					"		pg_catalog.pg_namespace n, "
+					"		pg_catalog.pg_attribute a "
+					"WHERE	c.oid = a.attrelid AND "
+					"		NOT a.attisdropped AND "
+					"		a.atttypid IN (SELECT oid FROM oids) AND "
+					"		c.relkind IN ("
+					CppAsString2(RELKIND_RELATION) ", "
+					CppAsString2(RELKIND_MATVIEW) ", "
+					CppAsString2(RELKIND_INDEX) ") AND "
+					"		c.relnamespace = n.oid AND "
+	/* exclude possible orphaned temp tables */
+					"		n.nspname !~ '^pg_temp_' AND "
+					"		n.nspname !~ '^pg_toast_temp_' AND "
+	/* exclude system catalogs, too */
+					"		n.nspname NOT IN ('pg_catalog', 'information_schema')",
+					check->base_query);
+}
+
+/*
+ * Callback function for processing results of queries for
+ * check_for_data_types_usage()'s UpgradeTask.  If the query returned any rows
+ * (i.e., the check failed), write the details to the report file.
+ */
+static void
+process_data_type_check(DbInfo *dbinfo, PGresult *res, void *arg)
+{
+	struct data_type_check_state *state = (struct data_type_check_state *) arg;
+	int			ntups = PQntuples(res);
+	char		output_path[MAXPGPATH];
+	int			i_nspname = PQfnumber(res, "nspname");
+	int			i_relname = PQfnumber(res, "relname");
+	int			i_attname = PQfnumber(res, "attname");
+	FILE	   *script = NULL;
+
+	AssertVariableIsOfType(&process_data_type_check, UpgradeTaskProcessCB);
+
+	if (ntups == 0)
+		return;
+
+	snprintf(output_path, sizeof(output_path), "%s/%s",
+			 log_opts.basedir,
+			 state->check->report_filename);
+
+	/*
+	 * Make sure we have a buffer to save reports to now that we found a first
+	 * failing check.
+	 */
+	if (*state->report == NULL)
+		*state->report = createPQExpBuffer();
+
+	/*
+	 * If this is the first time we see an error for the check in question
+	 * then print a status message of the failure.
+	 */
+	if (!state->result)
+	{
+		pg_log(PG_REPORT, "failed check: %s", _(state->check->status));
+		appendPQExpBuffer(*state->report, "\n%s\n%s    %s\n",
+						  _(state->check->report_text),
+						  _("A list of the problem columns is in the file:"),
+						  output_path);
+	}
+	state->result = true;
+
+	if ((script = fopen_priv(output_path, "a")) == NULL)
+		pg_fatal("could not open file \"%s\": %m", output_path);
+
+	fprintf(script, "In database: %s\n", dbinfo->db_name);
+
+	for (int rowno = 0; rowno < ntups; rowno++)
+		fprintf(script, "  %s.%s.%s\n",
+				PQgetvalue(res, rowno, i_nspname),
+				PQgetvalue(res, rowno, i_relname),
+				PQgetvalue(res, rowno, i_attname));
+
+	fclose(script);
+}
+
+/*
  * check_for_data_types_usage()
  *	Detect whether there are any stored columns depending on given type(s)
  *
@@ -334,15 +460,16 @@ static DataTypesUsageChecks data_types_usage_checks[] =
  * there's no storage involved in a view.
  */
 static void
-check_for_data_types_usage(ClusterInfo *cluster, DataTypesUsageChecks *checks)
+check_for_data_types_usage(ClusterInfo *cluster)
 {
-	bool		found = false;
-	bool	   *results;
-	PQExpBufferData report;
-	DataTypesUsageChecks *tmp = checks;
+	PQExpBuffer report = NULL;
+	DataTypesUsageChecks *tmp = data_types_usage_checks;
 	int			n_data_types_usage_checks = 0;
+	UpgradeTask *task = upgrade_task_create();
+	char	  **queries = NULL;
+	struct data_type_check_state *states;
 
-	prep_status("Checking for data type usage");
+	prep_status("Checking data type usage");
 
 	/* Gather number of checks to perform */
 	while (tmp->status != NULL)
@@ -351,177 +478,62 @@ check_for_data_types_usage(ClusterInfo *cluster, DataTypesUsageChecks *checks)
 		tmp++;
 	}
 
-	/* Prepare an array to store the results of checks in */
-	results = pg_malloc0(sizeof(bool) * n_data_types_usage_checks);
+	/* Allocate memory for queries and for task states */
+	queries = pg_malloc0(sizeof(char *) * n_data_types_usage_checks);
+	states = pg_malloc0(sizeof(struct data_type_check_state) * n_data_types_usage_checks);
+
+	for (int i = 0; i < n_data_types_usage_checks; i++)
+	{
+		DataTypesUsageChecks *check = &data_types_usage_checks[i];
+
+		if (check->threshold_version == MANUAL_CHECK)
+		{
+			Assert(check->version_hook);
+
+			/*
+			 * Make sure that the check applies to the current cluster version
+			 * and skip it if not.
+			 */
+			if (!check->version_hook(cluster))
+				continue;
+		}
+		else if (check->threshold_version != ALL_VERSIONS)
+		{
+			if (GET_MAJOR_VERSION(cluster->major_version) > check->threshold_version)
+				continue;
+		}
+		else
+			Assert(check->threshold_version == ALL_VERSIONS);
+
+		queries[i] = data_type_check_query(i);
+
+		states[i].check = check;
+		states[i].report = &report;
+
+		upgrade_task_add_step(task, queries[i], process_data_type_check,
+							  true, &states[i]);
+	}
 
 	/*
 	 * Connect to each database in the cluster and run all defined checks
 	 * against that database before trying the next one.
 	 */
-	for (int dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
+	upgrade_task_run(task, cluster);
+	upgrade_task_free(task);
+
+	if (report)
 	{
-		DbInfo	   *active_db = &cluster->dbarr.dbs[dbnum];
-		PGconn	   *conn = connectToServer(cluster, active_db->db_name);
-
-		for (int checknum = 0; checknum < n_data_types_usage_checks; checknum++)
-		{
-			PGresult   *res;
-			int			ntups;
-			int			i_nspname;
-			int			i_relname;
-			int			i_attname;
-			FILE	   *script = NULL;
-			bool		db_used = false;
-			char		output_path[MAXPGPATH];
-			DataTypesUsageChecks *cur_check = &checks[checknum];
-
-			if (cur_check->threshold_version == MANUAL_CHECK)
-			{
-				Assert(cur_check->version_hook);
-
-				/*
-				 * Make sure that the check applies to the current cluster
-				 * version and skip if not. If no check hook has been defined
-				 * we run the check for all versions.
-				 */
-				if (!cur_check->version_hook(cluster))
-					continue;
-			}
-			else if (cur_check->threshold_version != ALL_VERSIONS)
-			{
-				if (GET_MAJOR_VERSION(cluster->major_version) > cur_check->threshold_version)
-					continue;
-			}
-			else
-				Assert(cur_check->threshold_version == ALL_VERSIONS);
-
-			snprintf(output_path, sizeof(output_path), "%s/%s",
-					 log_opts.basedir,
-					 cur_check->report_filename);
-
-			/*
-			 * The type(s) of interest might be wrapped in a domain, array,
-			 * composite, or range, and these container types can be nested
-			 * (to varying extents depending on server version, but that's not
-			 * of concern here).  To handle all these cases we need a
-			 * recursive CTE.
-			 */
-			res = executeQueryOrDie(conn,
-									"WITH RECURSIVE oids AS ( "
-			/* start with the type(s) returned by base_query */
-									"	%s "
-									"	UNION ALL "
-									"	SELECT * FROM ( "
-			/* inner WITH because we can only reference the CTE once */
-									"		WITH x AS (SELECT oid FROM oids) "
-			/* domains on any type selected so far */
-									"			SELECT t.oid FROM pg_catalog.pg_type t, x WHERE typbasetype = x.oid AND typtype = 'd' "
-									"			UNION ALL "
-			/* arrays over any type selected so far */
-									"			SELECT t.oid FROM pg_catalog.pg_type t, x WHERE typelem = x.oid AND typtype = 'b' "
-									"			UNION ALL "
-			/* composite types containing any type selected so far */
-									"			SELECT t.oid FROM pg_catalog.pg_type t, pg_catalog.pg_class c, pg_catalog.pg_attribute a, x "
-									"			WHERE t.typtype = 'c' AND "
-									"				  t.oid = c.reltype AND "
-									"				  c.oid = a.attrelid AND "
-									"				  NOT a.attisdropped AND "
-									"				  a.atttypid = x.oid "
-									"			UNION ALL "
-			/* ranges containing any type selected so far */
-									"			SELECT t.oid FROM pg_catalog.pg_type t, pg_catalog.pg_range r, x "
-									"			WHERE t.typtype = 'r' AND r.rngtypid = t.oid AND r.rngsubtype = x.oid"
-									"	) foo "
-									") "
-			/* now look for stored columns of any such type */
-									"SELECT n.nspname, c.relname, a.attname "
-									"FROM	pg_catalog.pg_class c, "
-									"		pg_catalog.pg_namespace n, "
-									"		pg_catalog.pg_attribute a "
-									"WHERE	c.oid = a.attrelid AND "
-									"		NOT a.attisdropped AND "
-									"		a.atttypid IN (SELECT oid FROM oids) AND "
-									"		c.relkind IN ("
-									CppAsString2(RELKIND_RELATION) ", "
-									CppAsString2(RELKIND_MATVIEW) ", "
-									CppAsString2(RELKIND_INDEX) ") AND "
-									"		c.relnamespace = n.oid AND "
-			/* exclude possible orphaned temp tables */
-									"		n.nspname !~ '^pg_temp_' AND "
-									"		n.nspname !~ '^pg_toast_temp_' AND "
-			/* exclude system catalogs, too */
-									"		n.nspname NOT IN ('pg_catalog', 'information_schema')",
-									cur_check->base_query);
-
-			ntups = PQntuples(res);
-
-			/*
-			 * The datatype was found, so extract the data and log to the
-			 * requested filename. We need to open the file for appending
-			 * since the check might have already found the type in another
-			 * database earlier in the loop.
-			 */
-			if (ntups)
-			{
-				/*
-				 * Make sure we have a buffer to save reports to now that we
-				 * found a first failing check.
-				 */
-				if (!found)
-					initPQExpBuffer(&report);
-				found = true;
-
-				/*
-				 * If this is the first time we see an error for the check in
-				 * question then print a status message of the failure.
-				 */
-				if (!results[checknum])
-				{
-					pg_log(PG_REPORT, "    failed check: %s", _(cur_check->status));
-					appendPQExpBuffer(&report, "\n%s\n%s    %s\n",
-									  _(cur_check->report_text),
-									  _("A list of the problem columns is in the file:"),
-									  output_path);
-				}
-				results[checknum] = true;
-
-				i_nspname = PQfnumber(res, "nspname");
-				i_relname = PQfnumber(res, "relname");
-				i_attname = PQfnumber(res, "attname");
-
-				for (int rowno = 0; rowno < ntups; rowno++)
-				{
-					if (script == NULL && (script = fopen_priv(output_path, "a")) == NULL)
-						pg_fatal("could not open file \"%s\": %m", output_path);
-
-					if (!db_used)
-					{
-						fprintf(script, "In database: %s\n", active_db->db_name);
-						db_used = true;
-					}
-					fprintf(script, "  %s.%s.%s\n",
-							PQgetvalue(res, rowno, i_nspname),
-							PQgetvalue(res, rowno, i_relname),
-							PQgetvalue(res, rowno, i_attname));
-				}
-
-				if (script)
-				{
-					fclose(script);
-					script = NULL;
-				}
-			}
-
-			PQclear(res);
-		}
-
-		PQfinish(conn);
+		pg_fatal("Data type checks failed: %s", report->data);
+		destroyPQExpBuffer(report);
 	}
 
-	if (found)
-		pg_fatal("Data type checks failed: %s", report.data);
-
-	pg_free(results);
+	for (int i = 0; i < n_data_types_usage_checks; i++)
+	{
+		if (queries[i])
+			pg_free(queries[i]);
+	}
+	pg_free(queries);
+	pg_free(states);
 
 	check_ok();
 }
@@ -555,9 +567,9 @@ fix_path_separator(char *path)
 }
 
 void
-output_check_banner(bool live_check)
+output_check_banner(void)
 {
-	if (user_opts.check && live_check)
+	if (user_opts.live_check)
 	{
 		pg_log(PG_REPORT,
 			   "Performing Consistency Checks on Old Live Server\n"
@@ -573,18 +585,24 @@ output_check_banner(bool live_check)
 
 
 void
-check_and_dump_old_cluster(bool live_check)
+check_and_dump_old_cluster(void)
 {
 	/* -- OLD -- */
 
-	if (!live_check)
+	if (!user_opts.live_check)
 		start_postmaster(&old_cluster, true);
+
+	/*
+	 * First check that all databases allow connections since we'll otherwise
+	 * fail in later stages.
+	 */
+	check_for_connection_status(&old_cluster);
 
 	/*
 	 * Extract a list of databases, tables, and logical replication slots from
 	 * the old cluster.
 	 */
-	get_db_rel_and_slot_infos(&old_cluster, live_check);
+	get_db_rel_and_slot_infos(&old_cluster);
 
 	init_tablespaces();
 
@@ -595,7 +613,6 @@ check_and_dump_old_cluster(bool live_check)
 	 * Check for various failure cases
 	 */
 	check_is_install_user(&old_cluster);
-	check_proper_datallowconn(&old_cluster);
 	check_for_prepared_transactions(&old_cluster);
 	check_for_isn_and_int8_passing_mismatch(&old_cluster);
 
@@ -605,16 +622,24 @@ check_and_dump_old_cluster(bool live_check)
 		 * Logical replication slots can be migrated since PG17. See comments
 		 * atop get_old_cluster_logical_slot_infos().
 		 */
-		check_old_cluster_for_valid_slots(live_check);
+		check_old_cluster_for_valid_slots();
 
 		/*
 		 * Subscriptions and their dependencies can be migrated since PG17.
-		 * See comments atop get_db_subscription_count().
+		 * Before that the logical slots are not upgraded, so we will not be
+		 * able to upgrade the logical replication clusters completely.
 		 */
+		get_subscription_count(&old_cluster);
 		check_old_cluster_subscription_state();
 	}
 
-	check_for_data_types_usage(&old_cluster, data_types_usage_checks);
+	check_for_data_types_usage(&old_cluster);
+
+	/*
+	 * Unicode updates can affect some objects that use expressions with
+	 * functions dependent on Unicode.
+	 */
+	check_for_unicode_update(&old_cluster);
 
 	/*
 	 * PG 14 changed the function signature of encoding conversion functions.
@@ -667,7 +692,7 @@ check_and_dump_old_cluster(bool live_check)
 	if (!user_opts.check)
 		generate_old_dump();
 
-	if (!live_check)
+	if (!user_opts.live_check)
 		stop_postmaster(false);
 }
 
@@ -675,7 +700,7 @@ check_and_dump_old_cluster(bool live_check)
 void
 check_new_cluster(void)
 {
-	get_db_rel_and_slot_infos(&new_cluster, false);
+	get_db_rel_and_slot_infos(&new_cluster);
 
 	check_new_cluster_is_empty();
 
@@ -692,7 +717,34 @@ check_new_cluster(void)
 			check_copy_file_range();
 			break;
 		case TRANSFER_MODE_LINK:
-			check_hard_link();
+			check_hard_link(TRANSFER_MODE_LINK);
+			break;
+		case TRANSFER_MODE_SWAP:
+
+			/*
+			 * We do the hard link check for --swap, too, since it's an easy
+			 * way to verify the clusters are in the same file system.  This
+			 * allows us to take some shortcuts in the file synchronization
+			 * step.  With some more effort, we could probably support the
+			 * separate-file-system use case, but this mode is unlikely to
+			 * offer much benefit if we have to copy the files across file
+			 * system boundaries.
+			 */
+			check_hard_link(TRANSFER_MODE_SWAP);
+
+			/*
+			 * There are a few known issues with using --swap to upgrade from
+			 * versions older than 10.  For example, the sequence tuple format
+			 * changed in v10, and the visibility map format changed in 9.6.
+			 * While such problems are not insurmountable (and we may have to
+			 * deal with similar problems in the future, anyway), it doesn't
+			 * seem worth the effort to support swap mode for upgrades from
+			 * long-unsupported versions.
+			 */
+			if (GET_MAJOR_VERSION(old_cluster.major_version) < 1000)
+				pg_fatal("Swap mode can only upgrade clusters from PostgreSQL version %s and later.",
+						 "10");
+
 			break;
 	}
 
@@ -762,9 +814,12 @@ output_completion_banner(char *deletion_script_file_name)
 	}
 
 	pg_log(PG_REPORT,
-		   "Optimizer statistics are not transferred by pg_upgrade.\n"
-		   "Once you start the new server, consider running:\n"
-		   "    %s/vacuumdb %s--all --analyze-in-stages", new_cluster.bindir, user_specification.data);
+		   "Some statistics are not transferred by pg_upgrade.\n"
+		   "Once you start the new server, consider running these two commands:\n"
+		   "    %s/vacuumdb %s--all --analyze-in-stages --missing-stats-only\n"
+		   "    %s/vacuumdb %s--all --analyze-only",
+		   new_cluster.bindir, user_specification.data,
+		   new_cluster.bindir, user_specification.data);
 
 	if (deletion_script_file_name)
 		pg_log(PG_REPORT,
@@ -821,19 +876,31 @@ check_cluster_versions(void)
 		GET_MAJOR_VERSION(new_cluster.bin_version))
 		pg_fatal("New cluster data and binary directories are from different major versions.");
 
+	/*
+	 * Since from version 18, newly created database clusters always have
+	 * 'signed' default char-signedness, it makes less sense to use
+	 * --set-char-signedness option for upgrading from version 18 or later.
+	 * Users who want to change the default char signedness of the new
+	 * cluster, they can use pg_resetwal manually before the upgrade.
+	 */
+	if (GET_MAJOR_VERSION(old_cluster.major_version) >= 1800 &&
+		user_opts.char_signedness != -1)
+		pg_fatal("The option %s cannot be used for upgrades from PostgreSQL %s and later.",
+				 "--set-char-signedness", "18");
+
 	check_ok();
 }
 
 
 void
-check_cluster_compatibility(bool live_check)
+check_cluster_compatibility(void)
 {
 	/* get/check pg_control data of servers */
-	get_control_data(&old_cluster, live_check);
-	get_control_data(&new_cluster, false);
+	get_control_data(&old_cluster);
+	get_control_data(&new_cluster);
 	check_control_data(&old_cluster.controldata, &new_cluster.controldata);
 
-	if (live_check && old_cluster.port == new_cluster.port)
+	if (user_opts.live_check && old_cluster.port == new_cluster.port)
 		pg_fatal("When checking a live server, "
 				 "the old and new port numbers must be different.");
 }
@@ -907,6 +974,7 @@ create_script_for_old_cluster_deletion(char **deletion_script_file_name)
 	int			tblnum;
 	char		old_cluster_pgdata[MAXPGPATH],
 				new_cluster_pgdata[MAXPGPATH];
+	char	   *old_tblspc_suffix;
 
 	*deletion_script_file_name = psprintf("%sdelete_old_cluster.%s",
 										  SCRIPT_PREFIX, SCRIPT_EXT);
@@ -971,39 +1039,13 @@ create_script_for_old_cluster_deletion(char **deletion_script_file_name)
 			fix_path_separator(old_cluster.pgdata), PATH_QUOTE);
 
 	/* delete old cluster's alternate tablespaces */
+	old_tblspc_suffix = pg_strdup(old_cluster.tablespace_suffix);
+	fix_path_separator(old_tblspc_suffix);
 	for (tblnum = 0; tblnum < os_info.num_old_tablespaces; tblnum++)
-	{
-		/*
-		 * Do the old cluster's per-database directories share a directory
-		 * with a new version-specific tablespace?
-		 */
-		if (strlen(old_cluster.tablespace_suffix) == 0)
-		{
-			/* delete per-database directories */
-			int			dbnum;
-
-			fprintf(script, "\n");
-
-			for (dbnum = 0; dbnum < old_cluster.dbarr.ndbs; dbnum++)
-				fprintf(script, RMDIR_CMD " %c%s%c%u%c\n", PATH_QUOTE,
-						fix_path_separator(os_info.old_tablespaces[tblnum]),
-						PATH_SEPARATOR, old_cluster.dbarr.dbs[dbnum].db_oid,
-						PATH_QUOTE);
-		}
-		else
-		{
-			char	   *suffix_path = pg_strdup(old_cluster.tablespace_suffix);
-
-			/*
-			 * Simply delete the tablespace directory, which might be ".old"
-			 * or a version-specific subdirectory.
-			 */
-			fprintf(script, RMDIR_CMD " %c%s%s%c\n", PATH_QUOTE,
-					fix_path_separator(os_info.old_tablespaces[tblnum]),
-					fix_path_separator(suffix_path), PATH_QUOTE);
-			pfree(suffix_path);
-		}
-	}
+		fprintf(script, RMDIR_CMD " %c%s%s%c\n", PATH_QUOTE,
+				fix_path_separator(os_info.old_tablespaces[tblnum]),
+				old_tblspc_suffix, PATH_QUOTE);
+	pfree(old_tblspc_suffix);
 
 	fclose(script);
 
@@ -1075,14 +1117,14 @@ check_is_install_user(ClusterInfo *cluster)
 
 
 /*
- *	check_proper_datallowconn
+ *	check_for_connection_status
  *
  *	Ensure that all non-template0 databases allow connections since they
  *	otherwise won't be restored; and that template0 explicitly doesn't allow
  *	connections since it would make pg_dumpall --globals restore fail.
  */
 static void
-check_proper_datallowconn(ClusterInfo *cluster)
+check_for_connection_status(ClusterInfo *cluster)
 {
 	int			dbnum;
 	PGconn	   *conn_template1;
@@ -1090,6 +1132,7 @@ check_proper_datallowconn(ClusterInfo *cluster)
 	int			ntups;
 	int			i_datname;
 	int			i_datallowconn;
+	int			i_datconnlimit;
 	FILE	   *script = NULL;
 	char		output_path[MAXPGPATH];
 
@@ -1097,23 +1140,25 @@ check_proper_datallowconn(ClusterInfo *cluster)
 
 	snprintf(output_path, sizeof(output_path), "%s/%s",
 			 log_opts.basedir,
-			 "databases_with_datallowconn_false.txt");
+			 "databases_cannot_connect_to.txt");
 
 	conn_template1 = connectToServer(cluster, "template1");
 
 	/* get database names */
 	dbres = executeQueryOrDie(conn_template1,
-							  "SELECT	datname, datallowconn "
+							  "SELECT	datname, datallowconn, datconnlimit "
 							  "FROM	pg_catalog.pg_database");
 
 	i_datname = PQfnumber(dbres, "datname");
 	i_datallowconn = PQfnumber(dbres, "datallowconn");
+	i_datconnlimit = PQfnumber(dbres, "datconnlimit");
 
 	ntups = PQntuples(dbres);
 	for (dbnum = 0; dbnum < ntups; dbnum++)
 	{
 		char	   *datname = PQgetvalue(dbres, dbnum, i_datname);
 		char	   *datallowconn = PQgetvalue(dbres, dbnum, i_datallowconn);
+		char	   *datconnlimit = PQgetvalue(dbres, dbnum, i_datconnlimit);
 
 		if (strcmp(datname, "template0") == 0)
 		{
@@ -1125,10 +1170,11 @@ check_proper_datallowconn(ClusterInfo *cluster)
 		else
 		{
 			/*
-			 * avoid datallowconn == false databases from being skipped on
-			 * restore
+			 * Avoid datallowconn == false databases from being skipped on
+			 * restore, and ensure that no databases are marked invalid with
+			 * datconnlimit == -2.
 			 */
-			if (strcmp(datallowconn, "f") == 0)
+			if ((strcmp(datallowconn, "f") == 0) || strcmp(datconnlimit, "-2") == 0)
 			{
 				if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
 					pg_fatal("could not open file \"%s\": %m", output_path);
@@ -1147,11 +1193,11 @@ check_proper_datallowconn(ClusterInfo *cluster)
 		fclose(script);
 		pg_log(PG_REPORT, "fatal");
 		pg_fatal("All non-template0 databases must allow connections, i.e. their\n"
-				 "pg_database.datallowconn must be true.  Your installation contains\n"
-				 "non-template0 databases with their pg_database.datallowconn set to\n"
-				 "false.  Consider allowing connection for all non-template0 databases\n"
-				 "or drop the databases which do not allow connections.  A list of\n"
-				 "databases with the problem is in the file:\n"
+				 "pg_database.datallowconn must be true and pg_database.datconnlimit\n"
+				 "must not be -2.  Your installation contains non-template0 databases\n"
+				 "which cannot be connected to.  Consider allowing connection for all\n"
+				 "non-template0 databases or drop the databases which do not allow\n"
+				 "connections.  A list of databases with the problem is in the file:\n"
 				 "    %s", output_path);
 	}
 	else
@@ -1192,6 +1238,37 @@ check_for_prepared_transactions(ClusterInfo *cluster)
 	check_ok();
 }
 
+/*
+ * Callback function for processing result of query for
+ * check_for_isn_and_int8_passing_mismatch()'s UpgradeTask.  If the query
+ * returned any rows (i.e., the check failed), write the details to the report
+ * file.
+ */
+static void
+process_isn_and_int8_passing_mismatch(DbInfo *dbinfo, PGresult *res, void *arg)
+{
+	int			ntups = PQntuples(res);
+	int			i_nspname = PQfnumber(res, "nspname");
+	int			i_proname = PQfnumber(res, "proname");
+	UpgradeTaskReport *report = (UpgradeTaskReport *) arg;
+
+	AssertVariableIsOfType(&process_isn_and_int8_passing_mismatch,
+						   UpgradeTaskProcessCB);
+
+	if (ntups == 0)
+		return;
+
+	if (report->file == NULL &&
+		(report->file = fopen_priv(report->path, "w")) == NULL)
+		pg_fatal("could not open file \"%s\": %m", report->path);
+
+	fprintf(report->file, "In database: %s\n", dbinfo->db_name);
+
+	for (int rowno = 0; rowno < ntups; rowno++)
+		fprintf(report->file, "  %s.%s\n",
+				PQgetvalue(res, rowno, i_nspname),
+				PQgetvalue(res, rowno, i_proname));
+}
 
 /*
  *	check_for_isn_and_int8_passing_mismatch()
@@ -1203,9 +1280,13 @@ check_for_prepared_transactions(ClusterInfo *cluster)
 static void
 check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster)
 {
-	int			dbnum;
-	FILE	   *script = NULL;
-	char		output_path[MAXPGPATH];
+	UpgradeTask *task;
+	UpgradeTaskReport report;
+	const char *query = "SELECT n.nspname, p.proname "
+		"FROM   pg_catalog.pg_proc p, "
+		"       pg_catalog.pg_namespace n "
+		"WHERE  p.pronamespace = n.oid AND "
+		"       p.probin = '$libdir/isn'";
 
 	prep_status("Checking for contrib/isn with bigint-passing mismatch");
 
@@ -1217,54 +1298,20 @@ check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster)
 		return;
 	}
 
-	snprintf(output_path, sizeof(output_path), "%s/%s",
+	report.file = NULL;
+	snprintf(report.path, sizeof(report.path), "%s/%s",
 			 log_opts.basedir,
 			 "contrib_isn_and_int8_pass_by_value.txt");
 
-	for (dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
+	task = upgrade_task_create();
+	upgrade_task_add_step(task, query, process_isn_and_int8_passing_mismatch,
+						  true, &report);
+	upgrade_task_run(task, cluster);
+	upgrade_task_free(task);
+
+	if (report.file)
 	{
-		PGresult   *res;
-		bool		db_used = false;
-		int			ntups;
-		int			rowno;
-		int			i_nspname,
-					i_proname;
-		DbInfo	   *active_db = &cluster->dbarr.dbs[dbnum];
-		PGconn	   *conn = connectToServer(cluster, active_db->db_name);
-
-		/* Find any functions coming from contrib/isn */
-		res = executeQueryOrDie(conn,
-								"SELECT n.nspname, p.proname "
-								"FROM	pg_catalog.pg_proc p, "
-								"		pg_catalog.pg_namespace n "
-								"WHERE	p.pronamespace = n.oid AND "
-								"		p.probin = '$libdir/isn'");
-
-		ntups = PQntuples(res);
-		i_nspname = PQfnumber(res, "nspname");
-		i_proname = PQfnumber(res, "proname");
-		for (rowno = 0; rowno < ntups; rowno++)
-		{
-			if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
-				pg_fatal("could not open file \"%s\": %m", output_path);
-			if (!db_used)
-			{
-				fprintf(script, "In database: %s\n", active_db->db_name);
-				db_used = true;
-			}
-			fprintf(script, "  %s.%s\n",
-					PQgetvalue(res, rowno, i_nspname),
-					PQgetvalue(res, rowno, i_proname));
-		}
-
-		PQclear(res);
-
-		PQfinish(conn);
-	}
-
-	if (script)
-	{
-		fclose(script);
+		fclose(report.file);
 		pg_log(PG_REPORT, "fatal");
 		pg_fatal("Your installation contains \"contrib/isn\" functions which rely on the\n"
 				 "bigint data type.  Your old and new clusters pass bigint values\n"
@@ -1272,10 +1319,47 @@ check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster)
 				 "manually dump databases in the old cluster that use \"contrib/isn\"\n"
 				 "facilities, drop them, perform the upgrade, and then restore them.  A\n"
 				 "list of the problem functions is in the file:\n"
-				 "    %s", output_path);
+				 "    %s", report.path);
 	}
 	else
 		check_ok();
+}
+
+/*
+ * Callback function for processing result of query for
+ * check_for_user_defined_postfix_ops()'s UpgradeTask.  If the query returned
+ * any rows (i.e., the check failed), write the details to the report file.
+ */
+static void
+process_user_defined_postfix_ops(DbInfo *dbinfo, PGresult *res, void *arg)
+{
+	UpgradeTaskReport *report = (UpgradeTaskReport *) arg;
+	int			ntups = PQntuples(res);
+	int			i_oproid = PQfnumber(res, "oproid");
+	int			i_oprnsp = PQfnumber(res, "oprnsp");
+	int			i_oprname = PQfnumber(res, "oprname");
+	int			i_typnsp = PQfnumber(res, "typnsp");
+	int			i_typname = PQfnumber(res, "typname");
+
+	AssertVariableIsOfType(&process_user_defined_postfix_ops,
+						   UpgradeTaskProcessCB);
+
+	if (ntups == 0)
+		return;
+
+	if (report->file == NULL &&
+		(report->file = fopen_priv(report->path, "w")) == NULL)
+		pg_fatal("could not open file \"%s\": %m", report->path);
+
+	fprintf(report->file, "In database: %s\n", dbinfo->db_name);
+
+	for (int rowno = 0; rowno < ntups; rowno++)
+		fprintf(report->file, "  (oid=%s) %s.%s (%s.%s, NONE)\n",
+				PQgetvalue(res, rowno, i_oproid),
+				PQgetvalue(res, rowno, i_oprnsp),
+				PQgetvalue(res, rowno, i_oprname),
+				PQgetvalue(res, rowno, i_typnsp),
+				PQgetvalue(res, rowno, i_typname));
 }
 
 /*
@@ -1284,93 +1368,86 @@ check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster)
 static void
 check_for_user_defined_postfix_ops(ClusterInfo *cluster)
 {
-	int			dbnum;
-	FILE	   *script = NULL;
-	char		output_path[MAXPGPATH];
+	UpgradeTaskReport report;
+	UpgradeTask *task = upgrade_task_create();
+	const char *query;
+
+	/*
+	 * The query below hardcodes FirstNormalObjectId as 16384 rather than
+	 * interpolating that C #define into the query because, if that #define is
+	 * ever changed, the cutoff we want to use is the value used by
+	 * pre-version 14 servers, not that of some future version.
+	 */
+	query = "SELECT o.oid AS oproid, "
+		"       n.nspname AS oprnsp, "
+		"       o.oprname, "
+		"       tn.nspname AS typnsp, "
+		"       t.typname "
+		"FROM pg_catalog.pg_operator o, "
+		"     pg_catalog.pg_namespace n, "
+		"     pg_catalog.pg_type t, "
+		"     pg_catalog.pg_namespace tn "
+		"WHERE o.oprnamespace = n.oid AND "
+		"      o.oprleft = t.oid AND "
+		"      t.typnamespace = tn.oid AND "
+		"      o.oprright = 0 AND "
+		"      o.oid >= 16384";
 
 	prep_status("Checking for user-defined postfix operators");
 
-	snprintf(output_path, sizeof(output_path), "%s/%s",
+	report.file = NULL;
+	snprintf(report.path, sizeof(report.path), "%s/%s",
 			 log_opts.basedir,
 			 "postfix_ops.txt");
 
-	/* Find any user defined postfix operators */
-	for (dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
+	upgrade_task_add_step(task, query, process_user_defined_postfix_ops,
+						  true, &report);
+	upgrade_task_run(task, cluster);
+	upgrade_task_free(task);
+
+	if (report.file)
 	{
-		PGresult   *res;
-		bool		db_used = false;
-		int			ntups;
-		int			rowno;
-		int			i_oproid,
-					i_oprnsp,
-					i_oprname,
-					i_typnsp,
-					i_typname;
-		DbInfo	   *active_db = &cluster->dbarr.dbs[dbnum];
-		PGconn	   *conn = connectToServer(cluster, active_db->db_name);
-
-		/*
-		 * The query below hardcodes FirstNormalObjectId as 16384 rather than
-		 * interpolating that C #define into the query because, if that
-		 * #define is ever changed, the cutoff we want to use is the value
-		 * used by pre-version 14 servers, not that of some future version.
-		 */
-		res = executeQueryOrDie(conn,
-								"SELECT o.oid AS oproid, "
-								"       n.nspname AS oprnsp, "
-								"       o.oprname, "
-								"       tn.nspname AS typnsp, "
-								"       t.typname "
-								"FROM pg_catalog.pg_operator o, "
-								"     pg_catalog.pg_namespace n, "
-								"     pg_catalog.pg_type t, "
-								"     pg_catalog.pg_namespace tn "
-								"WHERE o.oprnamespace = n.oid AND "
-								"      o.oprleft = t.oid AND "
-								"      t.typnamespace = tn.oid AND "
-								"      o.oprright = 0 AND "
-								"      o.oid >= 16384");
-		ntups = PQntuples(res);
-		i_oproid = PQfnumber(res, "oproid");
-		i_oprnsp = PQfnumber(res, "oprnsp");
-		i_oprname = PQfnumber(res, "oprname");
-		i_typnsp = PQfnumber(res, "typnsp");
-		i_typname = PQfnumber(res, "typname");
-		for (rowno = 0; rowno < ntups; rowno++)
-		{
-			if (script == NULL &&
-				(script = fopen_priv(output_path, "w")) == NULL)
-				pg_fatal("could not open file \"%s\": %m", output_path);
-			if (!db_used)
-			{
-				fprintf(script, "In database: %s\n", active_db->db_name);
-				db_used = true;
-			}
-			fprintf(script, "  (oid=%s) %s.%s (%s.%s, NONE)\n",
-					PQgetvalue(res, rowno, i_oproid),
-					PQgetvalue(res, rowno, i_oprnsp),
-					PQgetvalue(res, rowno, i_oprname),
-					PQgetvalue(res, rowno, i_typnsp),
-					PQgetvalue(res, rowno, i_typname));
-		}
-
-		PQclear(res);
-
-		PQfinish(conn);
-	}
-
-	if (script)
-	{
-		fclose(script);
+		fclose(report.file);
 		pg_log(PG_REPORT, "fatal");
 		pg_fatal("Your installation contains user-defined postfix operators, which are not\n"
 				 "supported anymore.  Consider dropping the postfix operators and replacing\n"
 				 "them with prefix operators or function calls.\n"
 				 "A list of user-defined postfix operators is in the file:\n"
-				 "    %s", output_path);
+				 "    %s", report.path);
 	}
 	else
 		check_ok();
+}
+
+/*
+ * Callback function for processing results of query for
+ * check_for_incompatible_polymorphics()'s UpgradeTask.  If the query returned
+ * any rows (i.e., the check failed), write the details to the report file.
+ */
+static void
+process_incompat_polymorphics(DbInfo *dbinfo, PGresult *res, void *arg)
+{
+	UpgradeTaskReport *report = (UpgradeTaskReport *) arg;
+	int			ntups = PQntuples(res);
+	int			i_objkind = PQfnumber(res, "objkind");
+	int			i_objname = PQfnumber(res, "objname");
+
+	AssertVariableIsOfType(&process_incompat_polymorphics,
+						   UpgradeTaskProcessCB);
+
+	if (ntups == 0)
+		return;
+
+	if (report->file == NULL &&
+		(report->file = fopen_priv(report->path, "w")) == NULL)
+		pg_fatal("could not open file \"%s\": %m", report->path);
+
+	fprintf(report->file, "In database: %s\n", dbinfo->db_name);
+
+	for (int rowno = 0; rowno < ntups; rowno++)
+		fprintf(report->file, "  %s: %s\n",
+				PQgetvalue(res, rowno, i_objkind),
+				PQgetvalue(res, rowno, i_objname));
 }
 
 /*
@@ -1382,14 +1459,15 @@ check_for_user_defined_postfix_ops(ClusterInfo *cluster)
 static void
 check_for_incompatible_polymorphics(ClusterInfo *cluster)
 {
-	PGresult   *res;
-	FILE	   *script = NULL;
-	char		output_path[MAXPGPATH];
 	PQExpBufferData old_polymorphics;
+	UpgradeTask *task = upgrade_task_create();
+	UpgradeTaskReport report;
+	char	   *query;
 
 	prep_status("Checking for incompatible polymorphic functions");
 
-	snprintf(output_path, sizeof(output_path), "%s/%s",
+	report.file = NULL;
+	snprintf(report.path, sizeof(report.path), "%s/%s",
 			 log_opts.basedir,
 			 "incompatible_polymorphics.txt");
 
@@ -1413,80 +1491,51 @@ check_for_incompatible_polymorphics(ClusterInfo *cluster)
 							 ", 'array_positions(anyarray,anyelement)'"
 							 ", 'width_bucket(anyelement,anyarray)'");
 
-	for (int dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
+	/*
+	 * The query below hardcodes FirstNormalObjectId as 16384 rather than
+	 * interpolating that C #define into the query because, if that #define is
+	 * ever changed, the cutoff we want to use is the value used by
+	 * pre-version 14 servers, not that of some future version.
+	 */
+
+	/* Aggregate transition functions */
+	query = psprintf("SELECT 'aggregate' AS objkind, p.oid::regprocedure::text AS objname "
+					 "FROM pg_proc AS p "
+					 "JOIN pg_aggregate AS a ON a.aggfnoid=p.oid "
+					 "JOIN pg_proc AS transfn ON transfn.oid=a.aggtransfn "
+					 "WHERE p.oid >= 16384 "
+					 "AND a.aggtransfn = ANY(ARRAY[%s]::regprocedure[]) "
+					 "AND a.aggtranstype = ANY(ARRAY['anyarray', 'anyelement']::regtype[]) "
+
+	/* Aggregate final functions */
+					 "UNION ALL "
+					 "SELECT 'aggregate' AS objkind, p.oid::regprocedure::text AS objname "
+					 "FROM pg_proc AS p "
+					 "JOIN pg_aggregate AS a ON a.aggfnoid=p.oid "
+					 "JOIN pg_proc AS finalfn ON finalfn.oid=a.aggfinalfn "
+					 "WHERE p.oid >= 16384 "
+					 "AND a.aggfinalfn = ANY(ARRAY[%s]::regprocedure[]) "
+					 "AND a.aggtranstype = ANY(ARRAY['anyarray', 'anyelement']::regtype[]) "
+
+	/* Operators */
+					 "UNION ALL "
+					 "SELECT 'operator' AS objkind, op.oid::regoperator::text AS objname "
+					 "FROM pg_operator AS op "
+					 "WHERE op.oid >= 16384 "
+					 "AND oprcode = ANY(ARRAY[%s]::regprocedure[]) "
+					 "AND oprleft = ANY(ARRAY['anyarray', 'anyelement']::regtype[])",
+					 old_polymorphics.data,
+					 old_polymorphics.data,
+					 old_polymorphics.data);
+
+	upgrade_task_add_step(task, query, process_incompat_polymorphics,
+						  true, &report);
+	upgrade_task_run(task, cluster);
+	upgrade_task_free(task);
+
+	if (report.file)
 	{
-		bool		db_used = false;
-		DbInfo	   *active_db = &cluster->dbarr.dbs[dbnum];
-		PGconn	   *conn = connectToServer(cluster, active_db->db_name);
-		int			ntups;
-		int			i_objkind,
-					i_objname;
-
-		/*
-		 * The query below hardcodes FirstNormalObjectId as 16384 rather than
-		 * interpolating that C #define into the query because, if that
-		 * #define is ever changed, the cutoff we want to use is the value
-		 * used by pre-version 14 servers, not that of some future version.
-		 */
-		res = executeQueryOrDie(conn,
-		/* Aggregate transition functions */
-								"SELECT 'aggregate' AS objkind, p.oid::regprocedure::text AS objname "
-								"FROM pg_proc AS p "
-								"JOIN pg_aggregate AS a ON a.aggfnoid=p.oid "
-								"JOIN pg_proc AS transfn ON transfn.oid=a.aggtransfn "
-								"WHERE p.oid >= 16384 "
-								"AND a.aggtransfn = ANY(ARRAY[%s]::regprocedure[]) "
-								"AND a.aggtranstype = ANY(ARRAY['anyarray', 'anyelement']::regtype[]) "
-
-		/* Aggregate final functions */
-								"UNION ALL "
-								"SELECT 'aggregate' AS objkind, p.oid::regprocedure::text AS objname "
-								"FROM pg_proc AS p "
-								"JOIN pg_aggregate AS a ON a.aggfnoid=p.oid "
-								"JOIN pg_proc AS finalfn ON finalfn.oid=a.aggfinalfn "
-								"WHERE p.oid >= 16384 "
-								"AND a.aggfinalfn = ANY(ARRAY[%s]::regprocedure[]) "
-								"AND a.aggtranstype = ANY(ARRAY['anyarray', 'anyelement']::regtype[]) "
-
-		/* Operators */
-								"UNION ALL "
-								"SELECT 'operator' AS objkind, op.oid::regoperator::text AS objname "
-								"FROM pg_operator AS op "
-								"WHERE op.oid >= 16384 "
-								"AND oprcode = ANY(ARRAY[%s]::regprocedure[]) "
-								"AND oprleft = ANY(ARRAY['anyarray', 'anyelement']::regtype[]);",
-								old_polymorphics.data,
-								old_polymorphics.data,
-								old_polymorphics.data);
-
-		ntups = PQntuples(res);
-
-		i_objkind = PQfnumber(res, "objkind");
-		i_objname = PQfnumber(res, "objname");
-
-		for (int rowno = 0; rowno < ntups; rowno++)
-		{
-			if (script == NULL &&
-				(script = fopen_priv(output_path, "w")) == NULL)
-				pg_fatal("could not open file \"%s\": %m", output_path);
-			if (!db_used)
-			{
-				fprintf(script, "In database: %s\n", active_db->db_name);
-				db_used = true;
-			}
-
-			fprintf(script, "  %s: %s\n",
-					PQgetvalue(res, rowno, i_objkind),
-					PQgetvalue(res, rowno, i_objname));
-		}
-
-		PQclear(res);
-		PQfinish(conn);
-	}
-
-	if (script)
-	{
-		fclose(script);
+		fclose(report.file);
 		pg_log(PG_REPORT, "fatal");
 		pg_fatal("Your installation contains user-defined objects that refer to internal\n"
 				 "polymorphic functions with arguments of type \"anyarray\" or \"anyelement\".\n"
@@ -1494,12 +1543,43 @@ check_for_incompatible_polymorphics(ClusterInfo *cluster)
 				 "afterwards, changing them to refer to the new corresponding functions with\n"
 				 "arguments of type \"anycompatiblearray\" and \"anycompatible\".\n"
 				 "A list of the problematic objects is in the file:\n"
-				 "    %s", output_path);
+				 "    %s", report.path);
 	}
 	else
 		check_ok();
 
 	termPQExpBuffer(&old_polymorphics);
+	pg_free(query);
+}
+
+/*
+ * Callback function for processing results of query for
+ * check_for_tables_with_oids()'s UpgradeTask.  If the query returned any rows
+ * (i.e., the check failed), write the details to the report file.
+ */
+static void
+process_with_oids_check(DbInfo *dbinfo, PGresult *res, void *arg)
+{
+	UpgradeTaskReport *report = (UpgradeTaskReport *) arg;
+	int			ntups = PQntuples(res);
+	int			i_nspname = PQfnumber(res, "nspname");
+	int			i_relname = PQfnumber(res, "relname");
+
+	AssertVariableIsOfType(&process_with_oids_check, UpgradeTaskProcessCB);
+
+	if (ntups == 0)
+		return;
+
+	if (report->file == NULL &&
+		(report->file = fopen_priv(report->path, "w")) == NULL)
+		pg_fatal("could not open file \"%s\": %m", report->path);
+
+	fprintf(report->file, "In database: %s\n", dbinfo->db_name);
+
+	for (int rowno = 0; rowno < ntups; rowno++)
+		fprintf(report->file, "  %s.%s\n",
+				PQgetvalue(res, rowno, i_nspname),
+				PQgetvalue(res, rowno, i_relname));
 }
 
 /*
@@ -1508,67 +1588,36 @@ check_for_incompatible_polymorphics(ClusterInfo *cluster)
 static void
 check_for_tables_with_oids(ClusterInfo *cluster)
 {
-	int			dbnum;
-	FILE	   *script = NULL;
-	char		output_path[MAXPGPATH];
+	UpgradeTaskReport report;
+	UpgradeTask *task = upgrade_task_create();
+	const char *query = "SELECT n.nspname, c.relname "
+		"FROM   pg_catalog.pg_class c, "
+		"       pg_catalog.pg_namespace n "
+		"WHERE  c.relnamespace = n.oid AND "
+		"       c.relhasoids AND"
+		"       n.nspname NOT IN ('pg_catalog')";
 
 	prep_status("Checking for tables WITH OIDS");
 
-	snprintf(output_path, sizeof(output_path), "%s/%s",
+	report.file = NULL;
+	snprintf(report.path, sizeof(report.path), "%s/%s",
 			 log_opts.basedir,
 			 "tables_with_oids.txt");
 
-	/* Find any tables declared WITH OIDS */
-	for (dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
+	upgrade_task_add_step(task, query, process_with_oids_check,
+						  true, &report);
+	upgrade_task_run(task, cluster);
+	upgrade_task_free(task);
+
+	if (report.file)
 	{
-		PGresult   *res;
-		bool		db_used = false;
-		int			ntups;
-		int			rowno;
-		int			i_nspname,
-					i_relname;
-		DbInfo	   *active_db = &cluster->dbarr.dbs[dbnum];
-		PGconn	   *conn = connectToServer(cluster, active_db->db_name);
-
-		res = executeQueryOrDie(conn,
-								"SELECT n.nspname, c.relname "
-								"FROM	pg_catalog.pg_class c, "
-								"		pg_catalog.pg_namespace n "
-								"WHERE	c.relnamespace = n.oid AND "
-								"		c.relhasoids AND"
-								"       n.nspname NOT IN ('pg_catalog')");
-
-		ntups = PQntuples(res);
-		i_nspname = PQfnumber(res, "nspname");
-		i_relname = PQfnumber(res, "relname");
-		for (rowno = 0; rowno < ntups; rowno++)
-		{
-			if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
-				pg_fatal("could not open file \"%s\": %m", output_path);
-			if (!db_used)
-			{
-				fprintf(script, "In database: %s\n", active_db->db_name);
-				db_used = true;
-			}
-			fprintf(script, "  %s.%s\n",
-					PQgetvalue(res, rowno, i_nspname),
-					PQgetvalue(res, rowno, i_relname));
-		}
-
-		PQclear(res);
-
-		PQfinish(conn);
-	}
-
-	if (script)
-	{
-		fclose(script);
+		fclose(report.file);
 		pg_log(PG_REPORT, "fatal");
 		pg_fatal("Your installation contains tables declared WITH OIDS, which is not\n"
 				 "supported anymore.  Consider removing the oid column using\n"
 				 "    ALTER TABLE ... SET WITHOUT OIDS;\n"
 				 "A list of tables with the problem is in the file:\n"
-				 "    %s", output_path);
+				 "    %s", report.path);
 	}
 	else
 		check_ok();
@@ -1633,81 +1682,261 @@ check_for_pg_role_prefix(ClusterInfo *cluster)
 }
 
 /*
+ * Callback function for processing results of query for
+ * check_for_user_defined_encoding_conversions()'s UpgradeTask.  If the query
+ * returned any rows (i.e., the check failed), write the details to the report
+ * file.
+ */
+static void
+process_user_defined_encoding_conversions(DbInfo *dbinfo, PGresult *res, void *arg)
+{
+	UpgradeTaskReport *report = (UpgradeTaskReport *) arg;
+	int			ntups = PQntuples(res);
+	int			i_conoid = PQfnumber(res, "conoid");
+	int			i_conname = PQfnumber(res, "conname");
+	int			i_nspname = PQfnumber(res, "nspname");
+
+	AssertVariableIsOfType(&process_user_defined_encoding_conversions,
+						   UpgradeTaskProcessCB);
+
+	if (ntups == 0)
+		return;
+
+	if (report->file == NULL &&
+		(report->file = fopen_priv(report->path, "w")) == NULL)
+		pg_fatal("could not open file \"%s\": %m", report->path);
+
+	fprintf(report->file, "In database: %s\n", dbinfo->db_name);
+
+	for (int rowno = 0; rowno < ntups; rowno++)
+		fprintf(report->file, "  (oid=%s) %s.%s\n",
+				PQgetvalue(res, rowno, i_conoid),
+				PQgetvalue(res, rowno, i_nspname),
+				PQgetvalue(res, rowno, i_conname));
+}
+
+/*
  * Verify that no user-defined encoding conversions exist.
  */
 static void
 check_for_user_defined_encoding_conversions(ClusterInfo *cluster)
 {
-	int			dbnum;
-	FILE	   *script = NULL;
-	char		output_path[MAXPGPATH];
+	UpgradeTaskReport report;
+	UpgradeTask *task = upgrade_task_create();
+	const char *query;
 
 	prep_status("Checking for user-defined encoding conversions");
 
-	snprintf(output_path, sizeof(output_path), "%s/%s",
+	report.file = NULL;
+	snprintf(report.path, sizeof(report.path), "%s/%s",
 			 log_opts.basedir,
 			 "encoding_conversions.txt");
 
-	/* Find any user defined encoding conversions */
-	for (dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
+	/*
+	 * The query below hardcodes FirstNormalObjectId as 16384 rather than
+	 * interpolating that C #define into the query because, if that #define is
+	 * ever changed, the cutoff we want to use is the value used by
+	 * pre-version 14 servers, not that of some future version.
+	 */
+	query = "SELECT c.oid as conoid, c.conname, n.nspname "
+		"FROM pg_catalog.pg_conversion c, "
+		"     pg_catalog.pg_namespace n "
+		"WHERE c.connamespace = n.oid AND "
+		"      c.oid >= 16384";
+
+	upgrade_task_add_step(task, query,
+						  process_user_defined_encoding_conversions,
+						  true, &report);
+	upgrade_task_run(task, cluster);
+	upgrade_task_free(task);
+
+	if (report.file)
 	{
-		PGresult   *res;
-		bool		db_used = false;
-		int			ntups;
-		int			rowno;
-		int			i_conoid,
-					i_conname,
-					i_nspname;
-		DbInfo	   *active_db = &cluster->dbarr.dbs[dbnum];
-		PGconn	   *conn = connectToServer(cluster, active_db->db_name);
-
-		/*
-		 * The query below hardcodes FirstNormalObjectId as 16384 rather than
-		 * interpolating that C #define into the query because, if that
-		 * #define is ever changed, the cutoff we want to use is the value
-		 * used by pre-version 14 servers, not that of some future version.
-		 */
-		res = executeQueryOrDie(conn,
-								"SELECT c.oid as conoid, c.conname, n.nspname "
-								"FROM pg_catalog.pg_conversion c, "
-								"     pg_catalog.pg_namespace n "
-								"WHERE c.connamespace = n.oid AND "
-								"      c.oid >= 16384");
-		ntups = PQntuples(res);
-		i_conoid = PQfnumber(res, "conoid");
-		i_conname = PQfnumber(res, "conname");
-		i_nspname = PQfnumber(res, "nspname");
-		for (rowno = 0; rowno < ntups; rowno++)
-		{
-			if (script == NULL &&
-				(script = fopen_priv(output_path, "w")) == NULL)
-				pg_fatal("could not open file \"%s\": %m", output_path);
-			if (!db_used)
-			{
-				fprintf(script, "In database: %s\n", active_db->db_name);
-				db_used = true;
-			}
-			fprintf(script, "  (oid=%s) %s.%s\n",
-					PQgetvalue(res, rowno, i_conoid),
-					PQgetvalue(res, rowno, i_nspname),
-					PQgetvalue(res, rowno, i_conname));
-		}
-
-		PQclear(res);
-
-		PQfinish(conn);
-	}
-
-	if (script)
-	{
-		fclose(script);
+		fclose(report.file);
 		pg_log(PG_REPORT, "fatal");
 		pg_fatal("Your installation contains user-defined encoding conversions.\n"
 				 "The conversion function parameters changed in PostgreSQL version 14\n"
 				 "so this cluster cannot currently be upgraded.  You can remove the\n"
 				 "encoding conversions in the old cluster and restart the upgrade.\n"
 				 "A list of user-defined encoding conversions is in the file:\n"
-				 "    %s", output_path);
+				 "    %s", report.path);
+	}
+	else
+		check_ok();
+}
+
+/*
+ * Callback function for processing results of query for
+ * check_for_unicode_update()'s UpgradeTask.  If the query returned any rows
+ * (i.e., the check failed), write the details to the report file.
+ */
+static void
+process_unicode_update(DbInfo *dbinfo, PGresult *res, void *arg)
+{
+	UpgradeTaskReport *report = (UpgradeTaskReport *) arg;
+	int			ntups = PQntuples(res);
+	int			i_reloid = PQfnumber(res, "reloid");
+	int			i_nspname = PQfnumber(res, "nspname");
+	int			i_relname = PQfnumber(res, "relname");
+
+	if (ntups == 0)
+		return;
+
+	if (report->file == NULL &&
+		(report->file = fopen_priv(report->path, "w")) == NULL)
+		pg_fatal("could not open file \"%s\": %m", report->path);
+
+	fprintf(report->file, "In database: %s\n", dbinfo->db_name);
+
+	for (int rowno = 0; rowno < ntups; rowno++)
+		fprintf(report->file, "  (oid=%s) %s.%s\n",
+				PQgetvalue(res, rowno, i_reloid),
+				PQgetvalue(res, rowno, i_nspname),
+				PQgetvalue(res, rowno, i_relname));
+}
+
+/*
+ * Check if the Unicode version built into Postgres changed between the old
+ * cluster and the new cluster.
+ */
+static bool
+unicode_version_changed(ClusterInfo *cluster)
+{
+	PGconn	   *conn_template1 = connectToServer(cluster, "template1");
+	PGresult   *res;
+	char	   *old_unicode_version;
+	bool		unicode_updated;
+
+	res = executeQueryOrDie(conn_template1, "SELECT unicode_version()");
+	old_unicode_version = PQgetvalue(res, 0, 0);
+	unicode_updated = (strcmp(old_unicode_version, PG_UNICODE_VERSION) != 0);
+
+	PQclear(res);
+	PQfinish(conn_template1);
+
+	return unicode_updated;
+}
+
+/*
+ * check_for_unicode_update()
+ *
+ * Check if the version of Unicode in the old server and the new server
+ * differ. If so, check for indexes, partitioned tables, or constraints that
+ * use expressions with functions dependent on Unicode behavior.
+ */
+static void
+check_for_unicode_update(ClusterInfo *cluster)
+{
+	UpgradeTaskReport report;
+	UpgradeTask *task;
+	const char *query;
+
+	/*
+	 * The builtin provider did not exist prior to version 17. While there are
+	 * still problems that could potentially be caught from earlier versions,
+	 * such as an index on NORMALIZE(), we don't check for that here.
+	 */
+	if (GET_MAJOR_VERSION(cluster->major_version) < 1700)
+		return;
+
+	prep_status("Checking for objects affected by Unicode update");
+
+	if (!unicode_version_changed(cluster))
+	{
+		check_ok();
+		return;
+	}
+
+	report.file = NULL;
+	snprintf(report.path, sizeof(report.path), "%s/%s",
+			 log_opts.basedir,
+			 "unicode_dependent_rels.txt");
+
+	query =
+	/* collations that use built-in Unicode for character semantics */
+		"WITH collations(collid) AS ( "
+		"  SELECT oid FROM pg_collation "
+		"  WHERE collprovider='b' AND colllocale IN ('C.UTF-8','PG_UNICODE_FAST') "
+	/* include default collation, if appropriate */
+		"  UNION "
+		"  SELECT 'pg_catalog.default'::regcollation FROM pg_database "
+		"  WHERE datname = current_database() AND "
+		"  datlocprovider='b' AND datlocale IN ('C.UTF-8','PG_UNICODE_FAST') "
+		"), "
+	/* functions that use built-in Unicode */
+		"functions(procid) AS ( "
+		"  SELECT proc.oid FROM pg_proc proc "
+		"  WHERE proname IN ('normalize','unicode_assigned','unicode_version','is_normalized') AND "
+		"        pronamespace='pg_catalog'::regnamespace "
+		"), "
+	/* operators that use the input collation for character semantics */
+		"coll_operators(operid, procid, collid) AS ( "
+		"  SELECT oper.oid, oper.oprcode, collid FROM pg_operator oper, collations "
+		"  WHERE oprname IN ('~', '~*', '!~', '!~*', '~~*', '!~~*') AND "
+		"        oprnamespace='pg_catalog'::regnamespace AND "
+		"        oprright='text'::regtype "
+		"), "
+	/* functions that use the input collation for character semantics */
+		"coll_functions(procid, collid) AS ( "
+		"  SELECT proc.oid, collid FROM pg_proc proc, collations "
+		"  WHERE proname IN ('lower','initcap','upper') AND "
+		"        pronamespace='pg_catalog'::regnamespace AND "
+		"        proargtypes[0] = 'text'::regtype "
+	/* include functions behind the operators listed above */
+		"  UNION "
+		"  SELECT procid, collid FROM coll_operators "
+		"), "
+
+	/*
+	 * Generate patterns to search a pg_node_tree for the above functions and
+	 * operators.
+	 */
+		"patterns(p) AS ( "
+		"  SELECT '{FUNCEXPR :funcid ' || procid::text || '[ }]' FROM functions "
+		"  UNION "
+		"  SELECT '{OPEXPR :opno ' || operid::text || ' (:\\w+ \\w+ )*' || "
+		"         ':inputcollid ' || collid::text || '[ }]' FROM coll_operators "
+		"  UNION "
+		"  SELECT '{FUNCEXPR :funcid ' || procid::text || ' (:\\w+ \\w+ )*' || "
+		"         ':inputcollid ' || collid::text || '[ }]' FROM coll_functions "
+		") "
+
+	/*
+	 * Match the patterns against expressions used for relation contents.
+	 */
+		"SELECT reloid, relkind, nspname, relname "
+		"  FROM ( "
+		"    SELECT conrelid "
+		"    FROM pg_constraint, patterns WHERE conbin::text ~ p "
+		"  UNION "
+		"    SELECT indexrelid "
+		"    FROM pg_index, patterns WHERE indexprs::text ~ p OR indpred::text ~ p "
+		"  UNION "
+		"    SELECT partrelid "
+		"    FROM pg_partitioned_table, patterns WHERE partexprs::text ~ p "
+		"  UNION "
+		"    SELECT ev_class "
+		"    FROM pg_rewrite, pg_class, patterns "
+		"    WHERE ev_class = pg_class.oid AND relkind = 'm' AND ev_action::text ~ p"
+		"  ) s(reloid), pg_class c, pg_namespace n, pg_database d "
+		"  WHERE s.reloid = c.oid AND c.relnamespace = n.oid AND "
+		"        d.datname = current_database() AND "
+		"        d.encoding = pg_char_to_encoding('UTF8');";
+
+	task = upgrade_task_create();
+	upgrade_task_add_step(task, query,
+						  process_unicode_update,
+						  true, &report);
+	upgrade_task_run(task, cluster);
+	upgrade_task_free(task);
+
+	if (report.file)
+	{
+		fclose(report.file);
+		report_status(PG_WARNING, "warning");
+		pg_log(PG_WARNING, "Your installation contains relations that might be affected by a new version of Unicode.\n"
+			   "A list of potentially-affected relations is in the file:\n"
+			   "    %s", report.path);
 	}
 	else
 		check_ok();
@@ -1754,7 +1983,7 @@ check_new_cluster_logical_replication_slots(void)
 	nslots_on_new = atoi(PQgetvalue(res, 0, 0));
 
 	if (nslots_on_new)
-		pg_fatal("Expected 0 logical replication slots but found %d.",
+		pg_fatal("expected 0 logical replication slots but found %d",
 				 nslots_on_new);
 
 	PQclear(res);
@@ -1769,7 +1998,7 @@ check_new_cluster_logical_replication_slots(void)
 	wal_level = PQgetvalue(res, 0, 0);
 
 	if (strcmp(wal_level, "logical") != 0)
-		pg_fatal("\"wal_level\" must be \"logical\", but is set to \"%s\"",
+		pg_fatal("\"wal_level\" must be \"logical\" but is set to \"%s\"",
 				 wal_level);
 
 	max_replication_slots = atoi(PQgetvalue(res, 1, 0));
@@ -1788,26 +2017,23 @@ check_new_cluster_logical_replication_slots(void)
 /*
  * check_new_cluster_subscription_configuration()
  *
- * Verify that the max_replication_slots configuration specified is enough for
- * creating the subscriptions. This is required to create the replication
- * origin for each subscription.
+ * Verify that the max_active_replication_origins configuration specified is
+ * enough for creating the subscriptions. This is required to create the
+ * replication origin for each subscription.
  */
 static void
 check_new_cluster_subscription_configuration(void)
 {
 	PGresult   *res;
 	PGconn	   *conn;
-	int			nsubs_on_old;
-	int			max_replication_slots;
+	int			max_active_replication_origins;
 
 	/* Subscriptions and their dependencies can be migrated since PG17. */
 	if (GET_MAJOR_VERSION(old_cluster.major_version) < 1700)
 		return;
 
-	nsubs_on_old = count_old_cluster_subscriptions();
-
 	/* Quick return if there are no subscriptions to be migrated. */
-	if (nsubs_on_old == 0)
+	if (old_cluster.nsubs == 0)
 		return;
 
 	prep_status("Checking for new cluster configuration for subscriptions");
@@ -1815,16 +2041,16 @@ check_new_cluster_subscription_configuration(void)
 	conn = connectToServer(&new_cluster, "template1");
 
 	res = executeQueryOrDie(conn, "SELECT setting FROM pg_settings "
-							"WHERE name = 'max_replication_slots';");
+							"WHERE name = 'max_active_replication_origins';");
 
 	if (PQntuples(res) != 1)
 		pg_fatal("could not determine parameter settings on new cluster");
 
-	max_replication_slots = atoi(PQgetvalue(res, 0, 0));
-	if (nsubs_on_old > max_replication_slots)
-		pg_fatal("\"max_replication_slots\" (%d) must be greater than or equal to the number of "
+	max_active_replication_origins = atoi(PQgetvalue(res, 0, 0));
+	if (old_cluster.nsubs > max_active_replication_origins)
+		pg_fatal("\"max_active_replication_origins\" (%d) must be greater than or equal to the number of "
 				 "subscriptions (%d) on the old cluster",
-				 max_replication_slots, nsubs_on_old);
+				 max_active_replication_origins, old_cluster.nsubs);
 
 	PQclear(res);
 	PQfinish(conn);
@@ -1839,7 +2065,7 @@ check_new_cluster_subscription_configuration(void)
  * before shutdown.
  */
 static void
-check_old_cluster_for_valid_slots(bool live_check)
+check_old_cluster_for_valid_slots(void)
 {
 	char		output_path[MAXPGPATH];
 	FILE	   *script = NULL;
@@ -1878,7 +2104,7 @@ check_old_cluster_for_valid_slots(bool live_check)
 			 * Note: This can be satisfied only when the old cluster has been
 			 * shut down, so we skip this for live checks.
 			 */
-			if (!live_check && !slot->caught_up)
+			if (!user_opts.live_check && !slot->caught_up)
 			{
 				if (script == NULL &&
 					(script = fopen_priv(output_path, "w")) == NULL)
@@ -1896,7 +2122,7 @@ check_old_cluster_for_valid_slots(bool live_check)
 		fclose(script);
 
 		pg_log(PG_REPORT, "fatal");
-		pg_fatal("Your installation contains logical replication slots that can't be upgraded.\n"
+		pg_fatal("Your installation contains logical replication slots that cannot be upgraded.\n"
 				 "You can remove invalid slots and/or consume the pending WAL for other slots,\n"
 				 "and then restart the upgrade.\n"
 				 "A list of the problematic slots is in the file:\n"
@@ -1904,6 +2130,39 @@ check_old_cluster_for_valid_slots(bool live_check)
 	}
 
 	check_ok();
+}
+
+/*
+ * Callback function for processing results of query for
+ * check_old_cluster_subscription_state()'s UpgradeTask.  If the query returned
+ * any rows (i.e., the check failed), write the details to the report file.
+ */
+static void
+process_old_sub_state_check(DbInfo *dbinfo, PGresult *res, void *arg)
+{
+	UpgradeTaskReport *report = (UpgradeTaskReport *) arg;
+	int			ntups = PQntuples(res);
+	int			i_srsubstate = PQfnumber(res, "srsubstate");
+	int			i_subname = PQfnumber(res, "subname");
+	int			i_nspname = PQfnumber(res, "nspname");
+	int			i_relname = PQfnumber(res, "relname");
+
+	AssertVariableIsOfType(&process_old_sub_state_check, UpgradeTaskProcessCB);
+
+	if (ntups == 0)
+		return;
+
+	if (report->file == NULL &&
+		(report->file = fopen_priv(report->path, "w")) == NULL)
+		pg_fatal("could not open file \"%s\": %m", report->path);
+
+	for (int i = 0; i < ntups; i++)
+		fprintf(report->file, "The table sync state \"%s\" is not allowed for database:\"%s\" subscription:\"%s\" schema:\"%s\" relation:\"%s\"\n",
+				PQgetvalue(res, i, i_srsubstate),
+				dbinfo->db_name,
+				PQgetvalue(res, i, i_subname),
+				PQgetvalue(res, i, i_nspname),
+				PQgetvalue(res, i, i_relname));
 }
 
 /*
@@ -1916,115 +2175,99 @@ check_old_cluster_for_valid_slots(bool live_check)
 static void
 check_old_cluster_subscription_state(void)
 {
-	FILE	   *script = NULL;
-	char		output_path[MAXPGPATH];
+	UpgradeTask *task = upgrade_task_create();
+	UpgradeTaskReport report;
+	const char *query;
+	PGresult   *res;
+	PGconn	   *conn;
 	int			ntup;
 
 	prep_status("Checking for subscription state");
 
-	snprintf(output_path, sizeof(output_path), "%s/%s",
+	report.file = NULL;
+	snprintf(report.path, sizeof(report.path), "%s/%s",
 			 log_opts.basedir,
 			 "subs_invalid.txt");
-	for (int dbnum = 0; dbnum < old_cluster.dbarr.ndbs; dbnum++)
+
+	/*
+	 * Check that all the subscriptions have their respective replication
+	 * origin.  This check only needs to run once.
+	 */
+	conn = connectToServer(&old_cluster, old_cluster.dbarr.dbs[0].db_name);
+	res = executeQueryOrDie(conn,
+							"SELECT d.datname, s.subname "
+							"FROM pg_catalog.pg_subscription s "
+							"LEFT OUTER JOIN pg_catalog.pg_replication_origin o "
+							"	ON o.roname = 'pg_' || s.oid "
+							"INNER JOIN pg_catalog.pg_database d "
+							"	ON d.oid = s.subdbid "
+							"WHERE o.roname IS NULL;");
+	ntup = PQntuples(res);
+	for (int i = 0; i < ntup; i++)
 	{
-		PGresult   *res;
-		DbInfo	   *active_db = &old_cluster.dbarr.dbs[dbnum];
-		PGconn	   *conn = connectToServer(&old_cluster, active_db->db_name);
-
-		/* We need to check for pg_replication_origin only once. */
-		if (dbnum == 0)
-		{
-			/*
-			 * Check that all the subscriptions have their respective
-			 * replication origin.
-			 */
-			res = executeQueryOrDie(conn,
-									"SELECT d.datname, s.subname "
-									"FROM pg_catalog.pg_subscription s "
-									"LEFT OUTER JOIN pg_catalog.pg_replication_origin o "
-									"	ON o.roname = 'pg_' || s.oid "
-									"INNER JOIN pg_catalog.pg_database d "
-									"	ON d.oid = s.subdbid "
-									"WHERE o.roname IS NULL;");
-
-			ntup = PQntuples(res);
-			for (int i = 0; i < ntup; i++)
-			{
-				if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
-					pg_fatal("could not open file \"%s\": %m", output_path);
-				fprintf(script, "The replication origin is missing for database:\"%s\" subscription:\"%s\"\n",
-						PQgetvalue(res, i, 0),
-						PQgetvalue(res, i, 1));
-			}
-			PQclear(res);
-		}
-
-		/*
-		 * We don't allow upgrade if there is a risk of dangling slot or
-		 * origin corresponding to initial sync after upgrade.
-		 *
-		 * A slot/origin not created yet refers to the 'i' (initialize) state,
-		 * while 'r' (ready) state refers to a slot/origin created previously
-		 * but already dropped. These states are supported for pg_upgrade. The
-		 * other states listed below are not supported:
-		 *
-		 * a) SUBREL_STATE_DATASYNC: A relation upgraded while in this state
-		 * would retain a replication slot, which could not be dropped by the
-		 * sync worker spawned after the upgrade because the subscription ID
-		 * used for the slot name won't match anymore.
-		 *
-		 * b) SUBREL_STATE_SYNCDONE: A relation upgraded while in this state
-		 * would retain the replication origin when there is a failure in
-		 * tablesync worker immediately after dropping the replication slot in
-		 * the publisher.
-		 *
-		 * c) SUBREL_STATE_FINISHEDCOPY: A tablesync worker spawned to work on
-		 * a relation upgraded while in this state would expect an origin ID
-		 * with the OID of the subscription used before the upgrade, causing
-		 * it to fail.
-		 *
-		 * d) SUBREL_STATE_SYNCWAIT, SUBREL_STATE_CATCHUP and
-		 * SUBREL_STATE_UNKNOWN: These states are not stored in the catalog,
-		 * so we need not allow these states.
-		 */
-		res = executeQueryOrDie(conn,
-								"SELECT r.srsubstate, s.subname, n.nspname, c.relname "
-								"FROM pg_catalog.pg_subscription_rel r "
-								"LEFT JOIN pg_catalog.pg_subscription s"
-								"	ON r.srsubid = s.oid "
-								"LEFT JOIN pg_catalog.pg_class c"
-								"	ON r.srrelid = c.oid "
-								"LEFT JOIN pg_catalog.pg_namespace n"
-								"	ON c.relnamespace = n.oid "
-								"WHERE r.srsubstate NOT IN ('i', 'r') "
-								"ORDER BY s.subname");
-
-		ntup = PQntuples(res);
-		for (int i = 0; i < ntup; i++)
-		{
-			if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
-				pg_fatal("could not open file \"%s\": %m", output_path);
-
-			fprintf(script, "The table sync state \"%s\" is not allowed for database:\"%s\" subscription:\"%s\" schema:\"%s\" relation:\"%s\"\n",
-					PQgetvalue(res, i, 0),
-					active_db->db_name,
-					PQgetvalue(res, i, 1),
-					PQgetvalue(res, i, 2),
-					PQgetvalue(res, i, 3));
-		}
-
-		PQclear(res);
-		PQfinish(conn);
+		if (report.file == NULL &&
+			(report.file = fopen_priv(report.path, "w")) == NULL)
+			pg_fatal("could not open file \"%s\": %m", report.path);
+		fprintf(report.file, "The replication origin is missing for database:\"%s\" subscription:\"%s\"\n",
+				PQgetvalue(res, i, 0),
+				PQgetvalue(res, i, 1));
 	}
+	PQclear(res);
+	PQfinish(conn);
 
-	if (script)
+	/*
+	 * We don't allow upgrade if there is a risk of dangling slot or origin
+	 * corresponding to initial sync after upgrade.
+	 *
+	 * A slot/origin not created yet refers to the 'i' (initialize) state,
+	 * while 'r' (ready) state refers to a slot/origin created previously but
+	 * already dropped. These states are supported for pg_upgrade. The other
+	 * states listed below are not supported:
+	 *
+	 * a) SUBREL_STATE_DATASYNC: A relation upgraded while in this state would
+	 * retain a replication slot, which could not be dropped by the sync
+	 * worker spawned after the upgrade because the subscription ID used for
+	 * the slot name won't match anymore.
+	 *
+	 * b) SUBREL_STATE_SYNCDONE: A relation upgraded while in this state would
+	 * retain the replication origin when there is a failure in tablesync
+	 * worker immediately after dropping the replication slot in the
+	 * publisher.
+	 *
+	 * c) SUBREL_STATE_FINISHEDCOPY: A tablesync worker spawned to work on a
+	 * relation upgraded while in this state would expect an origin ID with
+	 * the OID of the subscription used before the upgrade, causing it to
+	 * fail.
+	 *
+	 * d) SUBREL_STATE_SYNCWAIT, SUBREL_STATE_CATCHUP and
+	 * SUBREL_STATE_UNKNOWN: These states are not stored in the catalog, so we
+	 * need not allow these states.
+	 */
+	query = "SELECT r.srsubstate, s.subname, n.nspname, c.relname "
+		"FROM pg_catalog.pg_subscription_rel r "
+		"LEFT JOIN pg_catalog.pg_subscription s"
+		"   ON r.srsubid = s.oid "
+		"LEFT JOIN pg_catalog.pg_class c"
+		"   ON r.srrelid = c.oid "
+		"LEFT JOIN pg_catalog.pg_namespace n"
+		"   ON c.relnamespace = n.oid "
+		"WHERE r.srsubstate NOT IN ('i', 'r') "
+		"ORDER BY s.subname";
+
+	upgrade_task_add_step(task, query, process_old_sub_state_check,
+						  true, &report);
+
+	upgrade_task_run(task, &old_cluster);
+	upgrade_task_free(task);
+
+	if (report.file)
 	{
-		fclose(script);
+		fclose(report.file);
 		pg_log(PG_REPORT, "fatal");
 		pg_fatal("Your installation contains subscriptions without origin or having relations not in i (initialize) or r (ready) state.\n"
 				 "You can allow the initial sync to finish for all relations and then restart the upgrade.\n"
 				 "A list of the problematic subscriptions is in the file:\n"
-				 "    %s", output_path);
+				 "    %s", report.path);
 	}
 	else
 		check_ok();

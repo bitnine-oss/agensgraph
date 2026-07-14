@@ -3,7 +3,7 @@
  * test_predtest.c
  *		Test correctness of optimizer's predicate proof logic.
  *
- * Copyright (c) 2018-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2018-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/test_predtest/test_predtest.c
@@ -54,8 +54,7 @@ test_predtest(PG_FUNCTION_ARGS)
 	int			i;
 
 	/* We use SPI to parse, plan, and execute the test query */
-	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+	SPI_connect();
 
 	/*
 	 * First, plan and execute the query, and inspect the results.  To the

@@ -157,7 +157,7 @@ ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 			foreach(lc, mgstate->sets)
 			{
 				char	   *attr_name =
-					NameStr(slot->tts_tupleDescriptor->attrs[i].attname);
+					NameStr(TupleDescAttr(slot->tts_tupleDescriptor, i)->attname);
 				GraphSetProp *gsp = lfirst(lc);
 
 				if (strcmp(gsp->variable, attr_name) == 0)
@@ -174,7 +174,7 @@ ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		if (update_cols[i])
 		{
 			Datum		cur_datum = slot->tts_values[i];
-			Oid			element_type = slot->tts_tupleDescriptor->attrs[i].atttypid;
+			Oid			element_type = TupleDescAttr(slot->tts_tupleDescriptor, i)->atttypid;
 			Datum		affected_datum;
 
 			/*
@@ -243,10 +243,10 @@ findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		Oid			type_oid;
 
 		if (slot->tts_isnull[i] ||
-			slot->tts_tupleDescriptor->attrs[i].attisdropped)
+			TupleDescAttr(slot->tts_tupleDescriptor, i)->attisdropped)
 			continue;
 
-		type_oid = slot->tts_tupleDescriptor->attrs[i].atttypid;
+		type_oid = TupleDescAttr(slot->tts_tupleDescriptor, i)->atttypid;
 
 		/*
 		 * A node or relationship whose id is NULL was bound by an OPTIONAL

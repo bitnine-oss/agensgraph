@@ -2,7 +2,7 @@
  *
  * Load data from a backup manifest into memory.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pg_combinebackup/load_manifest.c
@@ -60,7 +60,7 @@ static void combinebackup_version_cb(JsonManifestParseContext *context,
 static void combinebackup_system_identifier_cb(JsonManifestParseContext *context,
 											   uint64 manifest_system_identifier);
 static void combinebackup_per_file_cb(JsonManifestParseContext *context,
-									  const char *pathname, size_t size,
+									  const char *pathname, uint64 size,
 									  pg_checksum_type checksum_type,
 									  int checksum_length,
 									  uint8 *checksum_payload);
@@ -68,9 +68,9 @@ static void combinebackup_per_wal_range_cb(JsonManifestParseContext *context,
 										   TimeLineID tli,
 										   XLogRecPtr start_lsn,
 										   XLogRecPtr end_lsn);
-static void report_manifest_error(JsonManifestParseContext *context,
-								  const char *fmt,...)
-			pg_attribute_printf(2, 3) pg_attribute_noreturn();
+pg_noreturn static void report_manifest_error(JsonManifestParseContext *context,
+											  const char *fmt,...)
+			pg_attribute_printf(2, 3);
 
 /*
  * Load backup_manifest files from an array of backups and produces an array
@@ -204,8 +204,7 @@ load_backup_manifest(char *backup_directory)
 							 (long long int) statbuf.st_size);
 			}
 			bytes_left -= rc;
-			json_parse_manifest_incremental_chunk(
-												  inc_state, buffer, rc, bytes_left == 0);
+			json_parse_manifest_incremental_chunk(inc_state, buffer, rc, bytes_left == 0);
 		}
 
 		/* Release the incremental state memory */
@@ -267,7 +266,7 @@ combinebackup_system_identifier_cb(JsonManifestParseContext *context,
  */
 static void
 combinebackup_per_file_cb(JsonManifestParseContext *context,
-						  const char *pathname, size_t size,
+						  const char *pathname, uint64 size,
 						  pg_checksum_type checksum_type,
 						  int checksum_length, uint8 *checksum_payload)
 {

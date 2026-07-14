@@ -2,7 +2,7 @@
  *
  * Command line option processing facilities for frontend code
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/fe_utils/option_utils.h
@@ -11,8 +11,6 @@
  */
 #ifndef OPTION_UTILS_H
 #define OPTION_UTILS_H
-
-#include "postgres_fe.h"
 
 #include "common/file_utils.h"
 

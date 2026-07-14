@@ -19,7 +19,7 @@
  * routines.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -67,7 +67,7 @@ PQlibVersion(void)
 
 
 /*
- * pqGetc: get 1 character from the connection
+ * pqGetc: read 1 character from the connection
  *
  *	All these routines return 0 on success, EOF on error.
  *	Note that for the Get routines, EOF only means there is not enough
@@ -100,7 +100,7 @@ pqPutc(char c, PGconn *conn)
 
 /*
  * pqGets[_append]:
- * get a null-terminated string from the connection,
+ * read a null-terminated string from the connection,
  * and store it in an expansible PQExpBuffer.
  * If we run out of memory, all of the string is still read,
  * but the excess characters are silently discarded.
@@ -159,10 +159,10 @@ pqPuts(const char *s, PGconn *conn)
 
 /*
  * pqGetnchar:
- *	get a string of exactly len bytes in buffer s, no null termination
+ *	read exactly len bytes in buffer s, no null termination
  */
 int
-pqGetnchar(char *s, size_t len, PGconn *conn)
+pqGetnchar(void *s, size_t len, PGconn *conn)
 {
 	if (len > (size_t) (conn->inEnd - conn->inCursor))
 		return EOF;
@@ -199,7 +199,7 @@ pqSkipnchar(size_t len, PGconn *conn)
  *	write exactly len bytes to the current message
  */
 int
-pqPutnchar(const char *s, size_t len, PGconn *conn)
+pqPutnchar(const void *s, size_t len, PGconn *conn)
 {
 	if (pqPutMsgBytes(s, len, conn))
 		return EOF;
@@ -436,6 +436,21 @@ pqCheckInBufferSpace(size_t bytes_needed, PGconn *conn)
 }
 
 /*
+ * pqParseDone: after a server-to-client message has successfully
+ * been parsed, advance conn->inStart to account for it.
+ */
+void
+pqParseDone(PGconn *conn, int newInStart)
+{
+	/* trace server-to-client message */
+	if (conn->Pfdebug)
+		pqTraceOutputMessage(conn, conn->inBuffer + conn->inStart, false);
+
+	/* Mark message as done */
+	conn->inStart = newInStart;
+}
+
+/*
  * pqPutMsgStart: begin construction of a message to the server
  *
  * msg_type is the message type byte, or 0 for a message without type byte
@@ -538,9 +553,35 @@ pqPutMsgEnd(PGconn *conn)
 	/* Make message eligible to send */
 	conn->outCount = conn->outMsgEnd;
 
+	/* If appropriate, try to push out some data */
 	if (conn->outCount >= 8192)
 	{
-		int			toSend = conn->outCount - (conn->outCount % 8192);
+		int			toSend = conn->outCount;
+
+		/*
+		 * On Unix-pipe connections, it seems profitable to prefer sending
+		 * pipe-buffer-sized packets not randomly-sized ones, so retain the
+		 * last partial-8K chunk in our buffer for now.  On TCP connections,
+		 * the advantage of that is far less clear.  Moreover, it flat out
+		 * isn't safe when using SSL or GSSAPI, because those code paths have
+		 * API stipulations that if they fail to send all the data that was
+		 * offered in the previous write attempt, we mustn't offer less data
+		 * in this write attempt.  The previous write attempt might've been
+		 * pqFlush attempting to send everything in the buffer, so we mustn't
+		 * offer less now.  (Presently, we won't try to use SSL or GSSAPI on
+		 * Unix connections, so those checks are just Asserts.  They'll have
+		 * to become part of the regular if-test if we ever change that.)
+		 */
+		if (conn->raddr.addr.ss_family == AF_UNIX)
+		{
+#ifdef USE_SSL
+			Assert(!conn->ssl_in_use);
+#endif
+#ifdef ENABLE_GSS
+			Assert(!conn->gssenc);
+#endif
+			toSend -= toSend % 8192;
+		}
 
 		if (pqSendSome(conn, toSend) < 0)
 			return EOF;
@@ -1034,34 +1075,43 @@ pqWriteReady(PGconn *conn)
  * or both.  Returns >0 if one or more conditions are met, 0 if it timed
  * out, -1 if an error occurred.
  *
- * If SSL is in use, the SSL buffer is checked prior to checking the socket
- * for read data directly.
+ * If an altsock is set for asynchronous authentication, that will be used in
+ * preference to the "server" socket. Otherwise, if SSL is in use, the SSL
+ * buffer is checked prior to checking the socket for read data directly.
  */
 static int
 pqSocketCheck(PGconn *conn, int forRead, int forWrite, pg_usec_time_t end_time)
 {
 	int			result;
+	pgsocket	sock;
 
 	if (!conn)
 		return -1;
-	if (conn->sock == PGINVALID_SOCKET)
+
+	if (conn->altsock != PGINVALID_SOCKET)
+		sock = conn->altsock;
+	else
 	{
-		libpq_append_conn_error(conn, "invalid socket");
-		return -1;
-	}
+		sock = conn->sock;
+		if (sock == PGINVALID_SOCKET)
+		{
+			libpq_append_conn_error(conn, "invalid socket");
+			return -1;
+		}
 
 #ifdef USE_SSL
-	/* Check for SSL library buffering read bytes */
-	if (forRead && conn->ssl_in_use && pgtls_read_pending(conn))
-	{
-		/* short-circuit the select */
-		return 1;
-	}
+		/* Check for SSL library buffering read bytes */
+		if (forRead && conn->ssl_in_use && pgtls_read_pending(conn))
+		{
+			/* short-circuit the select */
+			return 1;
+		}
 #endif
+	}
 
 	/* We will retry as long as we get EINTR */
 	do
-		result = PQsocketPoll(conn->sock, forRead, forWrite, end_time);
+		result = PQsocketPoll(sock, forRead, forWrite, end_time);
 	while (result < 0 && SOCK_ERRNO == EINTR);
 
 	if (result < 0)
@@ -1197,13 +1247,9 @@ PQgetCurrentTimeUSec(void)
  */
 
 /*
- * Returns the byte length of the character beginning at s, using the
- * specified encoding.
- *
- * Caution: when dealing with text that is not certainly valid in the
- * specified encoding, the result may exceed the actual remaining
- * string length.  Callers that are not prepared to deal with that
- * should use PQmblenBounded() instead.
+ * Like pg_encoding_mblen().  Use this in callers that want the
+ * dynamically-linked libpq's stance on encodings, even if that means
+ * different behavior in different startups of the executable.
  */
 int
 PQmblen(const char *s, int encoding)
@@ -1212,8 +1258,9 @@ PQmblen(const char *s, int encoding)
 }
 
 /*
- * Returns the byte length of the character beginning at s, using the
- * specified encoding; but not more than the distance to end of string.
+ * Like pg_encoding_mblen_bounded().  Use this in callers that want the
+ * dynamically-linked libpq's stance on encodings, even if that means
+ * different behavior in different startups of the executable.
  */
 int
 PQmblenBounded(const char *s, int encoding)

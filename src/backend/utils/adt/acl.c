@@ -3,7 +3,7 @@
  * acl.c
  *	  Basic access control list data structures manipulation routines.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -26,6 +26,7 @@
 #include "catalog/pg_foreign_data_wrapper.h"
 #include "catalog/pg_foreign_server.h"
 #include "catalog/pg_language.h"
+#include "catalog/pg_largeobject.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_tablespace.h"
@@ -39,6 +40,7 @@
 #include "lib/bloomfilter.h"
 #include "lib/qunique.h"
 #include "miscadmin.h"
+#include "storage/large_object.h"
 #include "utils/acl.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
@@ -46,6 +48,7 @@
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/varlena.h"
 
@@ -124,6 +127,7 @@ static AclMode convert_tablespace_priv_string(text *priv_type_text);
 static Oid	convert_type_name(text *typename);
 static AclMode convert_type_priv_string(text *priv_type_text);
 static AclMode convert_parameter_priv_string(text *priv_text);
+static AclMode convert_largeobject_priv_string(text *priv_type_text);
 static AclMode convert_role_priv_string(text *priv_type_text);
 static AclResult pg_role_aclcheck(Oid role_oid, Oid roleid, AclMode mode);
 
@@ -340,9 +344,6 @@ aclparse(const char *s, AclItem *aip, Node *escontext)
 				break;
 			case ACL_MAINTAIN_CHR:
 				read = ACL_MAINTAIN;
-				break;
-			case 'R':			/* ignore old RULE privileges */
-				read = 0;
 				break;
 			default:
 				ereturn(escontext, NULL,
@@ -1639,7 +1640,6 @@ makeaclitem(PG_FUNCTION_ARGS)
 		{"SET", ACL_SET},
 		{"ALTER SYSTEM", ACL_ALTER_SYSTEM},
 		{"MAINTAIN", ACL_MAINTAIN},
-		{"RULE", 0},			/* ignore old RULE privileges */
 		{NULL, 0}
 	};
 
@@ -1808,7 +1808,7 @@ aclexplode(PG_FUNCTION_ARGS)
 		idx = (int *) palloc(sizeof(int[2]));
 		idx[0] = 0;				/* ACL array item index */
 		idx[1] = -1;			/* privilege type counter */
-		funcctx->user_fctx = (void *) idx;
+		funcctx->user_fctx = idx;
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -2063,8 +2063,6 @@ convert_table_priv_string(text *priv_type_text)
 		{"TRIGGER WITH GRANT OPTION", ACL_GRANT_OPTION_FOR(ACL_TRIGGER)},
 		{"MAINTAIN", ACL_MAINTAIN},
 		{"MAINTAIN WITH GRANT OPTION", ACL_GRANT_OPTION_FOR(ACL_MAINTAIN)},
-		{"RULE", 0},			/* ignore old RULE privileges */
-		{"RULE WITH GRANT OPTION", 0},
 		{NULL, 0}
 	};
 
@@ -4670,6 +4668,142 @@ convert_parameter_priv_string(text *priv_text)
 }
 
 /*
+ * has_largeobject_privilege variants
+ *		These are all named "has_largeobject_privilege" at the SQL level.
+ *		They take various combinations of large object OID with
+ *		user name, user OID, or implicit user = current_user.
+ *
+ *		The result is a boolean value: true if user has the indicated
+ *		privilege, false if not, or NULL if object doesn't exist.
+ */
+
+/*
+ * has_lo_priv_byid
+ *
+ *		Helper function to check user privileges on a large object given the
+ *		role by Oid, large object by Oid, and privileges as AclMode.
+ */
+static bool
+has_lo_priv_byid(Oid roleid, Oid lobjId, AclMode priv, bool *is_missing)
+{
+	Snapshot	snapshot = NULL;
+	AclResult	aclresult;
+
+	if (priv & ACL_UPDATE)
+		snapshot = NULL;
+	else
+		snapshot = GetActiveSnapshot();
+
+	if (!LargeObjectExistsWithSnapshot(lobjId, snapshot))
+	{
+		Assert(is_missing != NULL);
+		*is_missing = true;
+		return false;
+	}
+
+	if (lo_compat_privileges)
+		return true;
+
+	aclresult = pg_largeobject_aclcheck_snapshot(lobjId,
+												 roleid,
+												 priv,
+												 snapshot);
+	return aclresult == ACLCHECK_OK;
+}
+
+/*
+ * has_largeobject_privilege_name_id
+ *		Check user privileges on a large object given
+ *		name username, large object oid, and text priv name.
+ */
+Datum
+has_largeobject_privilege_name_id(PG_FUNCTION_ARGS)
+{
+	Name		username = PG_GETARG_NAME(0);
+	Oid			roleid = get_role_oid_or_public(NameStr(*username));
+	Oid			lobjId = PG_GETARG_OID(1);
+	text	   *priv_type_text = PG_GETARG_TEXT_PP(2);
+	AclMode		mode;
+	bool		is_missing = false;
+	bool		result;
+
+	mode = convert_largeobject_priv_string(priv_type_text);
+	result = has_lo_priv_byid(roleid, lobjId, mode, &is_missing);
+
+	if (is_missing)
+		PG_RETURN_NULL();
+
+	PG_RETURN_BOOL(result);
+}
+
+/*
+ * has_largeobject_privilege_id
+ *		Check user privileges on a large object given
+ *		large object oid, and text priv name.
+ *		current_user is assumed
+ */
+Datum
+has_largeobject_privilege_id(PG_FUNCTION_ARGS)
+{
+	Oid			lobjId = PG_GETARG_OID(0);
+	Oid			roleid = GetUserId();
+	text	   *priv_type_text = PG_GETARG_TEXT_PP(1);
+	AclMode		mode;
+	bool		is_missing = false;
+	bool		result;
+
+	mode = convert_largeobject_priv_string(priv_type_text);
+	result = has_lo_priv_byid(roleid, lobjId, mode, &is_missing);
+
+	if (is_missing)
+		PG_RETURN_NULL();
+
+	PG_RETURN_BOOL(result);
+}
+
+/*
+ * has_largeobject_privilege_id_id
+ *		Check user privileges on a large object given
+ *		roleid, large object oid, and text priv name.
+ */
+Datum
+has_largeobject_privilege_id_id(PG_FUNCTION_ARGS)
+{
+	Oid			roleid = PG_GETARG_OID(0);
+	Oid			lobjId = PG_GETARG_OID(1);
+	text	   *priv_type_text = PG_GETARG_TEXT_PP(2);
+	AclMode		mode;
+	bool		is_missing = false;
+	bool		result;
+
+	mode = convert_largeobject_priv_string(priv_type_text);
+	result = has_lo_priv_byid(roleid, lobjId, mode, &is_missing);
+
+	if (is_missing)
+		PG_RETURN_NULL();
+
+	PG_RETURN_BOOL(result);
+}
+
+/*
+ * convert_largeobject_priv_string
+ *		Convert text string to AclMode value.
+ */
+static AclMode
+convert_largeobject_priv_string(text *priv_type_text)
+{
+	static const priv_map largeobject_priv_map[] = {
+		{"SELECT", ACL_SELECT},
+		{"SELECT WITH GRANT OPTION", ACL_GRANT_OPTION_FOR(ACL_SELECT)},
+		{"UPDATE", ACL_UPDATE},
+		{"UPDATE WITH GRANT OPTION", ACL_GRANT_OPTION_FOR(ACL_UPDATE)},
+		{NULL, 0}
+	};
+
+	return convert_any_priv_string(priv_type_text, largeobject_priv_map);
+}
+
+/*
  * pg_has_role variants
  *		These are all named "pg_has_role" at the SQL level.
  *		They take various combinations of role name, role OID,
@@ -5298,24 +5432,6 @@ select_best_admin(Oid member, Oid role)
 	return admin_role;
 }
 
-
-/* does what it says ... */
-static int
-count_one_bits(AclMode mask)
-{
-	int			nbits = 0;
-
-	/* this code relies on AclMode being an unsigned type */
-	while (mask)
-	{
-		if (mask & 1)
-			nbits++;
-		mask >>= 1;
-	}
-	return nbits;
-}
-
-
 /*
  * Select the effective grantor ID for a GRANT or REVOKE operation.
  *
@@ -5398,7 +5514,7 @@ select_best_grantor(Oid roleId, AclMode privileges,
 		 */
 		if (otherprivs != ACL_NO_RIGHTS)
 		{
-			int			nnewrights = count_one_bits(otherprivs);
+			int			nnewrights = pg_popcount64(otherprivs);
 
 			if (nnewrights > nrights)
 			{

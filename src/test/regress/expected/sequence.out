@@ -839,4 +839,11 @@ SELECT nextval('test_seq1');
        3
 (1 row)
 
+-- pg_get_sequence_data
+SELECT * FROM pg_get_sequence_data('test_seq1');
+ last_value | is_called 
+------------+-----------
+         10 | t
+(1 row)
+
 DROP SEQUENCE test_seq1;

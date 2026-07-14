@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 # Set of tests for authentication and pg_hba.conf. The following password
 # methods are checked through this test:
@@ -7,6 +7,8 @@
 # - MD5-encrypted
 # - SCRAM-encrypted
 # This test can only run with Unix-domain sockets.
+#
+# There's also a few tests of the log_connections GUC here.
 
 use strict;
 use warnings FATAL => 'all';
@@ -64,7 +66,62 @@ sub test_conn
 my $node = PostgreSQL::Test::Cluster->new('primary');
 $node->init;
 $node->append_conf('postgresql.conf', "log_connections = on\n");
+# Needed to allow connect_fails to inspect postmaster log:
+$node->append_conf('postgresql.conf', "log_min_messages = debug2");
 $node->start;
+
+# Test behavior of log_connections GUC
+#
+# There wasn't another test file where these tests obviously fit, and we don't
+# want to incur the cost of spinning up a new cluster just to test one GUC.
+
+# Make a database for the log_connections tests to avoid test fragility if
+# other tests are added to this file in the future
+$node->safe_psql('postgres', "CREATE DATABASE test_log_connections");
+
+my $log_connections =
+  $node->safe_psql('test_log_connections', q(SHOW log_connections;));
+is($log_connections, 'on', qq(check log connections has expected value 'on'));
+
+$node->connect_ok(
+	'test_log_connections',
+	qq(log_connections 'on' works as expected for backwards compatibility),
+	log_like => [
+		qr/connection received/,
+		qr/connection authenticated/,
+		qr/connection authorized: user=\S+ database=test_log_connections/,
+	],
+	log_unlike => [ qr/connection ready/, ],);
+
+$node->safe_psql(
+	'test_log_connections',
+	q[ALTER SYSTEM SET log_connections = receipt,authorization,setup_durations;
+				   SELECT pg_reload_conf();]);
+
+$node->connect_ok(
+	'test_log_connections',
+	q(log_connections with subset of specified options logs only those aspects),
+	log_like => [
+		qr/connection received/,
+		qr/connection authorized: user=\S+ database=test_log_connections/,
+		qr/connection ready/,
+	],
+	log_unlike => [ qr/connection authenticated/, ],);
+
+$node->safe_psql('test_log_connections',
+	qq(ALTER SYSTEM SET log_connections = 'all'; SELECT pg_reload_conf();));
+
+$node->connect_ok(
+	'test_log_connections',
+	qq(log_connections 'all' logs all available connection aspects),
+	log_like => [
+		qr/connection received/,
+		qr/connection authenticated/,
+		qr/connection authorized: user=\S+ database=test_log_connections/,
+		qr/connection ready/,
+	],);
+
+# Authentication tests
 
 # could fail in FIPS mode
 my $md5_works = ($node->psql('postgres', "select md5('')") == 0);
@@ -277,6 +334,16 @@ $node->connect_fails(
 	"require_auth methods cannot be duplicated, !none case",
 	expected_stderr =>
 	  qr/require_auth method "!none" is specified more than once/);
+$node->connect_fails(
+	"user=scram_role require_auth=scram-sha-256,scram-sha-256",
+	"require_auth methods cannot be duplicated, scram-sha-256 case",
+	expected_stderr =>
+	  qr/require_auth method "scram-sha-256" is specified more than once/);
+$node->connect_fails(
+	"user=scram_role require_auth=!scram-sha-256,!scram-sha-256",
+	"require_auth methods cannot be duplicated, !scram-sha-256 case",
+	expected_stderr =>
+	  qr/require_auth method "!scram-sha-256" is specified more than once/);
 
 # Unknown value defined in require_auth.
 $node->connect_fails(
@@ -360,7 +427,7 @@ test_conn(
 test_conn($node, 'user=md5_role', 'scram-sha-256', 2,
 	log_unlike => [qr/connection authenticated:/]);
 
-# require_auth should succeeds with SCRAM when it is required.
+# require_auth should succeed with SCRAM when it is required.
 $node->connect_ok(
 	"user=scram_role require_auth=scram-sha-256",
 	"SCRAM authentication required, works with SCRAM auth");
@@ -394,11 +461,11 @@ $node->connect_fails(
 $node->connect_fails(
 	"user=scram_role require_auth=!scram-sha-256",
 	"SCRAM authentication forbidden, fails with SCRAM auth",
-	expected_stderr => qr/server requested SASL authentication/);
+	expected_stderr => qr/server requested SCRAM-SHA-256 authentication/);
 $node->connect_fails(
 	"user=scram_role require_auth=!password,!md5,!scram-sha-256",
 	"multiple authentication types forbidden, fails with SCRAM auth",
-	expected_stderr => qr/server requested SASL authentication/);
+	expected_stderr => qr/server requested SCRAM-SHA-256 authentication/);
 
 # Test that bad passwords are rejected.
 $ENV{"PGPASSWORD"} = 'badpass';
@@ -455,13 +522,13 @@ $node->connect_fails(
 	"user=scram_role require_auth=!scram-sha-256",
 	"password authentication forbidden, fails with SCRAM auth",
 	expected_stderr =>
-	  qr/authentication method requirement "!scram-sha-256" failed: server requested SASL authentication/
+	  qr/authentication method requirement "!scram-sha-256" failed: server requested SCRAM-SHA-256 authentication/
 );
 $node->connect_fails(
 	"user=scram_role require_auth=!password,!md5,!scram-sha-256",
 	"multiple authentication types forbidden, fails with SCRAM auth",
 	expected_stderr =>
-	  qr/authentication method requirement "!password,!md5,!scram-sha-256" failed: server requested SASL authentication/
+	  qr/authentication method requirement "!password,!md5,!scram-sha-256" failed: server requested SCRAM-SHA-256 authentication/
 );
 
 # Test SYSTEM_USER <> NULL with parallel workers.

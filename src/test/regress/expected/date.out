@@ -94,17 +94,17 @@ SELECT date '1/8/1999';
 ERROR:  date/time field value out of range: "1/8/1999"
 LINE 1: SELECT date '1/8/1999';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '1/18/1999';
 ERROR:  date/time field value out of range: "1/18/1999"
 LINE 1: SELECT date '1/18/1999';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '18/1/1999';
 ERROR:  date/time field value out of range: "18/1/1999"
 LINE 1: SELECT date '18/1/1999';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '01/02/03';
     date    
 ------------
@@ -139,7 +139,7 @@ SELECT date 'January 8, 99 BC';
 ERROR:  date/time field value out of range: "January 8, 99 BC"
 LINE 1: SELECT date 'January 8, 99 BC';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '99-Jan-08';
     date    
 ------------
@@ -156,7 +156,7 @@ SELECT date '08-Jan-99';
 ERROR:  date/time field value out of range: "08-Jan-99"
 LINE 1: SELECT date '08-Jan-99';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '08-Jan-1999';
     date    
 ------------
@@ -167,7 +167,7 @@ SELECT date 'Jan-08-99';
 ERROR:  date/time field value out of range: "Jan-08-99"
 LINE 1: SELECT date 'Jan-08-99';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date 'Jan-08-1999';
     date    
 ------------
@@ -198,7 +198,7 @@ SELECT date '08 Jan 99';
 ERROR:  date/time field value out of range: "08 Jan 99"
 LINE 1: SELECT date '08 Jan 99';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '08 Jan 1999';
     date    
 ------------
@@ -209,7 +209,7 @@ SELECT date 'Jan 08 99';
 ERROR:  date/time field value out of range: "Jan 08 99"
 LINE 1: SELECT date 'Jan 08 99';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date 'Jan 08 1999';
     date    
 ------------
@@ -244,22 +244,22 @@ SELECT date '08-01-99';
 ERROR:  date/time field value out of range: "08-01-99"
 LINE 1: SELECT date '08-01-99';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '08-01-1999';
 ERROR:  date/time field value out of range: "08-01-1999"
 LINE 1: SELECT date '08-01-1999';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '01-08-99';
 ERROR:  date/time field value out of range: "01-08-99"
 LINE 1: SELECT date '01-08-99';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '01-08-1999';
 ERROR:  date/time field value out of range: "01-08-1999"
 LINE 1: SELECT date '01-08-1999';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '99-08-01';
     date    
 ------------
@@ -288,22 +288,22 @@ SELECT date '08 01 99';
 ERROR:  date/time field value out of range: "08 01 99"
 LINE 1: SELECT date '08 01 99';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '08 01 1999';
 ERROR:  date/time field value out of range: "08 01 1999"
 LINE 1: SELECT date '08 01 1999';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '01 08 99';
 ERROR:  date/time field value out of range: "01 08 99"
 LINE 1: SELECT date '01 08 99';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '01 08 1999';
 ERROR:  date/time field value out of range: "01 08 1999"
 LINE 1: SELECT date '01 08 1999';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '99 08 01';
     date    
 ------------
@@ -345,7 +345,7 @@ SELECT date '1/18/1999';
 ERROR:  date/time field value out of range: "1/18/1999"
 LINE 1: SELECT date '1/18/1999';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '18/1/1999';
     date    
 ------------
@@ -392,7 +392,7 @@ SELECT date '99-Jan-08';
 ERROR:  date/time field value out of range: "99-Jan-08"
 LINE 1: SELECT date '99-Jan-08';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '1999-Jan-08';
     date    
 ------------
@@ -435,7 +435,7 @@ SELECT date '99 Jan 08';
 ERROR:  date/time field value out of range: "99 Jan 08"
 LINE 1: SELECT date '99 Jan 08';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '1999 Jan 08';
     date    
 ------------
@@ -480,7 +480,7 @@ SELECT date '99-01-08';
 ERROR:  date/time field value out of range: "99-01-08"
 LINE 1: SELECT date '99-01-08';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '1999-01-08';
     date    
 ------------
@@ -515,7 +515,7 @@ SELECT date '99-08-01';
 ERROR:  date/time field value out of range: "99-08-01"
 LINE 1: SELECT date '99-08-01';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '1999-08-01';
     date    
 ------------
@@ -526,7 +526,7 @@ SELECT date '99 01 08';
 ERROR:  date/time field value out of range: "99 01 08"
 LINE 1: SELECT date '99 01 08';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '1999 01 08';
     date    
 ------------
@@ -561,7 +561,7 @@ SELECT date '99 08 01';
 ERROR:  date/time field value out of range: "99 08 01"
 LINE 1: SELECT date '99 08 01';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '1999 08 01';
     date    
 ------------
@@ -603,7 +603,7 @@ SELECT date '18/1/1999';
 ERROR:  date/time field value out of range: "18/1/1999"
 LINE 1: SELECT date '18/1/1999';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '01/02/03';
     date    
 ------------
@@ -644,7 +644,7 @@ SELECT date '99-Jan-08';
 ERROR:  date/time field value out of range: "99-Jan-08"
 LINE 1: SELECT date '99-Jan-08';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '1999-Jan-08';
     date    
 ------------
@@ -731,7 +731,7 @@ SELECT date '99-01-08';
 ERROR:  date/time field value out of range: "99-01-08"
 LINE 1: SELECT date '99-01-08';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '1999-01-08';
     date    
 ------------
@@ -766,7 +766,7 @@ SELECT date '99-08-01';
 ERROR:  date/time field value out of range: "99-08-01"
 LINE 1: SELECT date '99-08-01';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '1999-08-01';
     date    
 ------------
@@ -777,7 +777,7 @@ SELECT date '99 01 08';
 ERROR:  date/time field value out of range: "99 01 08"
 LINE 1: SELECT date '99 01 08';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '1999 01 08';
     date    
 ------------
@@ -812,7 +812,7 @@ SELECT date '99 08 01';
 ERROR:  date/time field value out of range: "99 08 01"
 LINE 1: SELECT date '99 08 01';
                     ^
-HINT:  Perhaps you need a different "datestyle" setting.
+HINT:  Perhaps you need a different "DateStyle" setting.
 SELECT date '1999 08 01';
     date    
 ------------
@@ -1295,7 +1295,7 @@ SELECT DATE_TRUNC('MILLENNIUM', TIMESTAMP '1970-03-20 04:30:00.00000'); -- 1001
 SELECT DATE_TRUNC('MILLENNIUM', DATE '1970-03-20'); -- 1001-01-01
           date_trunc          
 ------------------------------
- Thu Jan 01 00:00:00 1001 PST
+ Thu Jan 01 00:00:00 1001 LMT
 (1 row)
 
 SELECT DATE_TRUNC('CENTURY', TIMESTAMP '1970-03-20 04:30:00.00000'); -- 1901
@@ -1319,13 +1319,13 @@ SELECT DATE_TRUNC('CENTURY', DATE '2004-08-10'); -- 2001-01-01
 SELECT DATE_TRUNC('CENTURY', DATE '0002-02-04'); -- 0001-01-01
           date_trunc          
 ------------------------------
- Mon Jan 01 00:00:00 0001 PST
+ Mon Jan 01 00:00:00 0001 LMT
 (1 row)
 
 SELECT DATE_TRUNC('CENTURY', DATE '0055-08-10 BC'); -- 0100-01-01 BC
            date_trunc            
 ---------------------------------
- Tue Jan 01 00:00:00 0100 PST BC
+ Tue Jan 01 00:00:00 0100 LMT BC
 (1 row)
 
 SELECT DATE_TRUNC('DECADE', DATE '1993-12-25'); -- 1990-01-01
@@ -1337,13 +1337,13 @@ SELECT DATE_TRUNC('DECADE', DATE '1993-12-25'); -- 1990-01-01
 SELECT DATE_TRUNC('DECADE', DATE '0004-12-25'); -- 0001-01-01 BC
            date_trunc            
 ---------------------------------
- Sat Jan 01 00:00:00 0001 PST BC
+ Sat Jan 01 00:00:00 0001 LMT BC
 (1 row)
 
 SELECT DATE_TRUNC('DECADE', DATE '0002-12-31 BC'); -- 0011-01-01 BC
            date_trunc            
 ---------------------------------
- Mon Jan 01 00:00:00 0011 PST BC
+ Mon Jan 01 00:00:00 0011 LMT BC
 (1 row)
 
 --
@@ -1528,6 +1528,8 @@ select make_date(2013, 13, 1);
 ERROR:  date field value out of range: 2013-13-01
 select make_date(2013, 11, -1);
 ERROR:  date field value out of range: 2013-11--1
+SELECT make_date(-2147483648, 1, 1);
+ERROR:  date field value out of range: -2147483648-01-01
 select make_time(10, 55, 100.1);
 ERROR:  time field value out of range: 10:55:100.1
 select make_time(24, 0, 2.1);

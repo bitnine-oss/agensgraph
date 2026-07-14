@@ -3,7 +3,7 @@
  * slru.h
  *		Simple LRU buffering for transaction status logfiles
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/slru.h
@@ -128,16 +128,13 @@ typedef struct SlruCtlData
 {
 	SlruShared	shared;
 
-	/*
-	 * Bitmask to determine bank number from page number.
-	 */
-	bits16		bank_mask;
+	/* Number of banks in this SLRU. */
+	uint16		nbanks;
 
 	/*
-	 * If true, use long segment filenames formed from lower 48 bits of the
-	 * segment number, e.g. pg_xact/000000001234. Otherwise, use short
-	 * filenames formed from lower 16 bits of the segment number e.g.
-	 * pg_xact/1234.
+	 * If true, use long segment file names.  Otherwise, use short file names.
+	 *
+	 * For details about the file name format, see SlruFileName().
 	 */
 	bool		long_segment_names;
 
@@ -164,7 +161,6 @@ typedef struct SlruCtlData
 	 * it's always the same, it doesn't need to be in shared memory.
 	 */
 	char		Dir[64];
-
 } SlruCtlData;
 
 typedef SlruCtlData *SlruCtl;
@@ -180,7 +176,7 @@ SimpleLruGetBankLock(SlruCtl ctl, int64 pageno)
 {
 	int			bankno;
 
-	bankno = pageno & ctl->bank_mask;
+	bankno = pageno % ctl->nbanks;
 	return &(ctl->shared->bank_locks[bankno].lock);
 }
 

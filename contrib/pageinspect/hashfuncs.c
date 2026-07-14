@@ -2,7 +2,7 @@
  * hashfuncs.c
  *		Functions to investigate the content of HASH indexes
  *
- * Copyright (c) 2017-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2017-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		contrib/pageinspect/hashfuncs.c
@@ -436,8 +436,8 @@ hash_bitmap_info(PG_FUNCTION_ARGS)
 	if (ovflblkno >= RelationGetNumberOfBlocks(indexRel))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("block number %lld is out of range for relation \"%s\"",
-						(long long int) ovflblkno, RelationGetRelationName(indexRel))));
+				 errmsg("block number %" PRId64 " is out of range for relation \"%s\"",
+						ovflblkno, RelationGetRelationName(indexRel))));
 
 	/* Read the metapage so we can determine which bitmap page to use */
 	metabuf = _hash_getbuf(indexRel, HASH_METAPAGE, HASH_READ, LH_META_PAGE);

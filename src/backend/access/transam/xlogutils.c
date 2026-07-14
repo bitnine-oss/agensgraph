@@ -8,7 +8,7 @@
  * None of this code is used during normal system operation.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/xlogutils.c
@@ -86,15 +86,14 @@ static void
 report_invalid_page(int elevel, RelFileLocator locator, ForkNumber forkno,
 					BlockNumber blkno, bool present)
 {
-	char	   *path = relpathperm(locator, forkno);
+	RelPathStr	path = relpathperm(locator, forkno);
 
 	if (present)
 		elog(elevel, "page %u of relation %s is uninitialized",
-			 blkno, path);
+			 blkno, path.str);
 	else
 		elog(elevel, "page %u of relation %s does not exist",
-			 blkno, path);
-	pfree(path);
+			 blkno, path.str);
 }
 
 /* Log a reference to an invalid page */
@@ -180,14 +179,9 @@ forget_invalid_pages(RelFileLocator locator, ForkNumber forkno,
 			hentry->key.forkno == forkno &&
 			hentry->key.blkno >= minblkno)
 		{
-			if (message_level_is_interesting(DEBUG2))
-			{
-				char	   *path = relpathperm(hentry->key.locator, forkno);
-
-				elog(DEBUG2, "page %u of relation %s has been dropped",
-					 hentry->key.blkno, path);
-				pfree(path);
-			}
+			elog(DEBUG2, "page %u of relation %s has been dropped",
+				 hentry->key.blkno,
+				 relpathperm(hentry->key.locator, forkno).str);
 
 			if (hash_search(invalid_page_tab,
 							&hentry->key,
@@ -213,14 +207,9 @@ forget_invalid_pages_db(Oid dbid)
 	{
 		if (hentry->key.locator.dbOid == dbid)
 		{
-			if (message_level_is_interesting(DEBUG2))
-			{
-				char	   *path = relpathperm(hentry->key.locator, hentry->key.forkno);
-
-				elog(DEBUG2, "page %u of relation %s has been dropped",
-					 hentry->key.blkno, path);
-				pfree(path);
-			}
+			elog(DEBUG2, "page %u of relation %s has been dropped",
+				 hentry->key.blkno,
+				 relpathperm(hentry->key.locator, hentry->key.forkno).str);
 
 			if (hash_search(invalid_page_tab,
 							&hentry->key,
@@ -851,11 +840,6 @@ wal_segment_close(XLogReaderState *state)
  *
  * Public because it would likely be very helpful for someone writing another
  * output method outside walsender, e.g. in a bgworker.
- *
- * TODO: The walsender has its own version of this, but it relies on the
- * walsender's latch being set whenever WAL is flushed. No such infrastructure
- * exists for normal backends, so we have to do a check/sleep/repeat style of
- * loop for now.
  */
 int
 read_local_xlog_page(XLogReaderState *state, XLogRecPtr targetPagePtr,
@@ -895,7 +879,14 @@ read_local_xlog_page_guts(XLogReaderState *state, XLogRecPtr targetPagePtr,
 
 	loc = targetPagePtr + reqLen;
 
-	/* Loop waiting for xlog to be available if necessary */
+	/*
+	 * Loop waiting for xlog to be available if necessary
+	 *
+	 * TODO: The walsender has its own version of this function, which uses a
+	 * condition variable to wake up whenever WAL is flushed. We could use the
+	 * same infrastructure here, instead of the check/sleep/repeat style of
+	 * loop.
+	 */
 	while (1)
 	{
 		/*

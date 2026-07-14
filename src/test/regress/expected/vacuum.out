@@ -83,6 +83,53 @@ INSERT INTO vactst SELECT generate_series(301, 400);
 DELETE FROM vactst WHERE i % 5 <> 0; -- delete a few rows inside
 ANALYZE vactst;
 COMMIT;
+-- Test ANALYZE setting relhassubclass=f for non-partitioning inheritance
+BEGIN;
+CREATE TABLE past_inh_parent ();
+CREATE TABLE past_inh_child () INHERITS (past_inh_parent);
+INSERT INTO past_inh_child DEFAULT VALUES;
+INSERT INTO past_inh_child DEFAULT VALUES;
+ANALYZE past_inh_parent;
+SELECT reltuples, relhassubclass
+  FROM pg_class WHERE oid = 'past_inh_parent'::regclass;
+ reltuples | relhassubclass 
+-----------+----------------
+         0 | t
+(1 row)
+
+DROP TABLE past_inh_child;
+ANALYZE past_inh_parent;
+SELECT reltuples, relhassubclass
+  FROM pg_class WHERE oid = 'past_inh_parent'::regclass;
+ reltuples | relhassubclass 
+-----------+----------------
+         0 | f
+(1 row)
+
+COMMIT;
+-- Test ANALYZE setting relhassubclass=f for partitioning
+BEGIN;
+CREATE TABLE past_parted (i int) PARTITION BY LIST(i);
+CREATE TABLE past_part PARTITION OF past_parted FOR VALUES IN (1);
+INSERT INTO past_parted VALUES (1),(1);
+ANALYZE past_parted;
+DROP TABLE past_part;
+SELECT reltuples, relhassubclass
+  FROM pg_class WHERE oid = 'past_parted'::regclass;
+ reltuples | relhassubclass 
+-----------+----------------
+         2 | t
+(1 row)
+
+ANALYZE past_parted;
+SELECT reltuples, relhassubclass
+  FROM pg_class WHERE oid = 'past_parted'::regclass;
+ reltuples | relhassubclass 
+-----------+----------------
+         0 | f
+(1 row)
+
+COMMIT;
 VACUUM FULL pg_am;
 VACUUM FULL pg_class;
 VACUUM FULL pg_database;
@@ -101,6 +148,10 @@ CREATE INDEX brin_pvactst ON pvactst USING brin (i);
 CREATE INDEX gin_pvactst ON pvactst USING gin (a);
 CREATE INDEX gist_pvactst ON pvactst USING gist (p);
 CREATE INDEX spgist_pvactst ON pvactst USING spgist (p);
+CREATE TABLE pvactst2 (i INT) WITH (autovacuum_enabled = off);
+INSERT INTO pvactst2 SELECT generate_series(1, 1000);
+CREATE INDEX ON pvactst2 (i);
+CREATE INDEX ON pvactst2 (i);
 -- VACUUM invokes parallel index cleanup
 SET min_parallel_index_scan_size to 0;
 VACUUM (PARALLEL 2) pvactst;
@@ -120,6 +171,13 @@ VACUUM (PARALLEL) pvactst; -- error, cannot use PARALLEL option without parallel
 ERROR:  parallel option requires a value between 0 and 1024
 LINE 1: VACUUM (PARALLEL) pvactst;
                 ^
+-- Test parallel vacuum using the minimum maintenance_work_mem with and without
+-- dead tuples.
+SET maintenance_work_mem TO 64;
+VACUUM (PARALLEL 2) pvactst2;
+DELETE FROM pvactst2 WHERE i < 1000;
+VACUUM (PARALLEL 2) pvactst2;
+RESET maintenance_work_mem;
 -- Test different combinations of parallel and full options for temporary tables
 CREATE TEMPORARY TABLE tmp (a int PRIMARY KEY);
 CREATE INDEX tmp_idx1 ON tmp (a);
@@ -128,6 +186,7 @@ WARNING:  disabling parallel option of vacuum on "tmp" --- cannot vacuum tempora
 VACUUM (PARALLEL 0, FULL TRUE) tmp; -- can specify parallel disabled (even though that's implied by FULL)
 RESET min_parallel_index_scan_size;
 DROP TABLE pvactst;
+DROP TABLE pvactst2;
 -- INDEX_CLEANUP option
 CREATE TABLE no_index_cleanup (i INT PRIMARY KEY, t TEXT);
 -- Use uncompressed data stored in toast.
@@ -177,6 +236,7 @@ SELECT pg_relation_size('vac_truncate_test') > 0;
  t
 (1 row)
 
+SET vacuum_truncate = false;
 VACUUM (DISABLE_PAGE_SKIPPING) vac_truncate_test;
 SELECT pg_relation_size('vac_truncate_test') = 0;
  ?column? 
@@ -185,6 +245,32 @@ SELECT pg_relation_size('vac_truncate_test') = 0;
 (1 row)
 
 VACUUM (TRUNCATE FALSE, FULL TRUE) vac_truncate_test;
+ALTER TABLE vac_truncate_test RESET (vacuum_truncate);
+INSERT INTO vac_truncate_test VALUES (1, NULL), (NULL, NULL);
+ERROR:  null value in column "i" of relation "vac_truncate_test" violates not-null constraint
+DETAIL:  Failing row contains (null, null).
+VACUUM (DISABLE_PAGE_SKIPPING) vac_truncate_test;
+SELECT pg_relation_size('vac_truncate_test') > 0;
+ ?column? 
+----------
+ t
+(1 row)
+
+RESET vacuum_truncate;
+VACUUM (TRUNCATE FALSE, DISABLE_PAGE_SKIPPING) vac_truncate_test;
+SELECT pg_relation_size('vac_truncate_test') > 0;
+ ?column? 
+----------
+ t
+(1 row)
+
+VACUUM (DISABLE_PAGE_SKIPPING) vac_truncate_test;
+SELECT pg_relation_size('vac_truncate_test') = 0;
+ ?column? 
+----------
+ t
+(1 row)
+
 DROP TABLE vac_truncate_test;
 -- partitioned table
 CREATE TABLE vacparted (a int, b char) PARTITION BY LIST (a);
@@ -244,6 +330,98 @@ ANALYZE vactst, vactst;
 BEGIN;  -- ANALYZE behaves differently inside a transaction block
 ANALYZE vactst, vactst;
 COMMIT;
+--
+-- Tests for ANALYZE ONLY / VACUUM ONLY on partitioned tables
+--
+CREATE TABLE only_parted (a int, b text) PARTITION BY LIST (a);
+CREATE TABLE only_parted1 PARTITION OF only_parted FOR VALUES IN (1);
+INSERT INTO only_parted VALUES (1, 'a');
+-- Ensure only the partitioned table is analyzed
+ANALYZE ONLY only_parted;
+SELECT relname, last_analyze IS NOT NULL AS analyzed, last_vacuum IS NOT NULL AS vacuumed
+  FROM pg_stat_user_tables
+  WHERE relid IN ('only_parted'::regclass, 'only_parted1'::regclass)
+  ORDER BY relname;
+   relname    | analyzed | vacuumed 
+--------------+----------+----------
+ only_parted  | t        | f
+ only_parted1 | f        | f
+(2 rows)
+
+-- Ensure partitioned table and the partitions are analyzed
+ANALYZE only_parted;
+SELECT relname, last_analyze IS NOT NULL AS analyzed, last_vacuum IS NOT NULL AS vacuumed
+  FROM pg_stat_user_tables
+  WHERE relid IN ('only_parted'::regclass, 'only_parted1'::regclass)
+  ORDER BY relname;
+   relname    | analyzed | vacuumed 
+--------------+----------+----------
+ only_parted  | t        | f
+ only_parted1 | t        | f
+(2 rows)
+
+DROP TABLE only_parted;
+-- VACUUM ONLY on a partitioned table does nothing, ensure we get a warning.
+VACUUM ONLY vacparted;
+WARNING:  VACUUM ONLY of partitioned table "vacparted" has no effect
+-- Try ANALYZE ONLY with a column list
+ANALYZE ONLY vacparted(a,b);
+--
+-- Tests for VACUUM ONLY / ANALYZE ONLY on inheritance tables
+--
+CREATE TABLE only_inh_parent (a int primary key, b TEXT);
+CREATE TABLE only_inh_child () INHERITS (only_inh_parent);
+INSERT INTO only_inh_child(a,b) VALUES (1, 'aaa'), (2, 'bbb'), (3, 'ccc');
+-- Ensure only parent is analyzed
+ANALYZE ONLY only_inh_parent;
+SELECT relname, last_analyze IS NOT NULL AS analyzed, last_vacuum IS NOT NULL AS vacuumed
+  FROM pg_stat_user_tables
+  WHERE relid IN ('only_inh_parent'::regclass, 'only_inh_child'::regclass)
+  ORDER BY relname;
+     relname     | analyzed | vacuumed 
+-----------------+----------+----------
+ only_inh_child  | f        | f
+ only_inh_parent | t        | f
+(2 rows)
+
+-- Ensure the parent and child are analyzed
+ANALYZE only_inh_parent;
+SELECT relname, last_analyze IS NOT NULL AS analyzed, last_vacuum IS NOT NULL AS vacuumed
+  FROM pg_stat_user_tables
+  WHERE relid IN ('only_inh_parent'::regclass, 'only_inh_child'::regclass)
+  ORDER BY relname;
+     relname     | analyzed | vacuumed 
+-----------------+----------+----------
+ only_inh_child  | t        | f
+ only_inh_parent | t        | f
+(2 rows)
+
+-- Ensure only the parent is vacuumed
+VACUUM ONLY only_inh_parent;
+SELECT relname, last_analyze IS NOT NULL AS analyzed, last_vacuum IS NOT NULL AS vacuumed
+  FROM pg_stat_user_tables
+  WHERE relid IN ('only_inh_parent'::regclass, 'only_inh_child'::regclass)
+  ORDER BY relname;
+     relname     | analyzed | vacuumed 
+-----------------+----------+----------
+ only_inh_child  | t        | f
+ only_inh_parent | t        | t
+(2 rows)
+
+-- Ensure parent and child are vacuumed
+VACUUM only_inh_parent;
+SELECT relname, last_analyze IS NOT NULL AS analyzed, last_vacuum IS NOT NULL AS vacuumed
+  FROM pg_stat_user_tables
+  WHERE relid IN ('only_inh_parent'::regclass, 'only_inh_child'::regclass)
+  ORDER BY relname;
+     relname     | analyzed | vacuumed 
+-----------------+----------+----------
+ only_inh_child  | t        | t
+ only_inh_parent | t        | t
+(2 rows)
+
+DROP TABLE only_inh_parent CASCADE;
+NOTICE:  drop cascades to table only_inh_child
 -- parenthesized syntax for ANALYZE
 ANALYZE (VERBOSE) does_not_exist;
 ERROR:  relation "does_not_exist" does not exist

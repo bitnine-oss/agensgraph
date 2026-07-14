@@ -40,10 +40,10 @@ REINDEX (TABLESPACE regress_tblspace) TABLE CONCURRENTLY pg_am;
 REINDEX (TABLESPACE regress_tblspace) TABLE pg_authid;
 REINDEX (TABLESPACE regress_tblspace) TABLE CONCURRENTLY pg_authid;
 -- toast relations, fail
-REINDEX (TABLESPACE regress_tblspace) INDEX pg_toast.pg_toast_1260_index;
-REINDEX (TABLESPACE regress_tblspace) INDEX CONCURRENTLY pg_toast.pg_toast_1260_index;
-REINDEX (TABLESPACE regress_tblspace) TABLE pg_toast.pg_toast_1260;
-REINDEX (TABLESPACE regress_tblspace) TABLE CONCURRENTLY pg_toast.pg_toast_1260;
+REINDEX (TABLESPACE regress_tblspace) INDEX pg_toast.pg_toast_1262_index;
+REINDEX (TABLESPACE regress_tblspace) INDEX CONCURRENTLY pg_toast.pg_toast_1262_index;
+REINDEX (TABLESPACE regress_tblspace) TABLE pg_toast.pg_toast_1262;
+REINDEX (TABLESPACE regress_tblspace) TABLE CONCURRENTLY pg_toast.pg_toast_1262;
 -- system catalog, fail
 REINDEX (TABLESPACE pg_global) TABLE pg_authid;
 REINDEX (TABLESPACE pg_global) TABLE CONCURRENTLY pg_authid;
@@ -395,6 +395,12 @@ DROP TABLESPACE regress_tblspace;
 ALTER INDEX testschema.part_a_idx SET TABLESPACE pg_default;
 -- Fail, not empty
 DROP TABLESPACE regress_tblspace;
+
+-- Adequate cache initialization before GRANT
+\c -
+BEGIN;
+GRANT ALL ON TABLESPACE regress_tblspace TO PUBLIC;
+ROLLBACK;
 
 CREATE ROLE regress_tablespace_user1 login;
 CREATE ROLE regress_tablespace_user2 login;

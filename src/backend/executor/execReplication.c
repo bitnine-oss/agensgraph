@@ -3,7 +3,7 @@
  * execReplication.c
  *	  miscellaneous executor routines for logical replication
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -15,6 +15,7 @@
 #include "postgres.h"
 
 #include "access/genam.h"
+#include "access/gist.h"
 #include "access/relscan.h"
 #include "access/tableam.h"
 #include "access/transam.h"
@@ -24,6 +25,7 @@
 #include "executor/execGraphMeta.h"
 #include "executor/executor.h"
 #include "executor/nodeModifyTable.h"
+#include "replication/conflict.h"
 #include "replication/logicalrelation.h"
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
@@ -36,49 +38,6 @@
 
 static bool tuples_equal(TupleTableSlot *slot1, TupleTableSlot *slot2,
 						 TypeCacheEntry **eq);
-
-/*
- * Returns the fixed strategy number, if any, of the equality operator for the
- * given index access method, otherwise, InvalidStrategy.
- *
- * Currently, only Btree and Hash indexes are supported. The other index access
- * methods don't have a fixed strategy for equality operation - instead, the
- * support routines of each operator class interpret the strategy numbers
- * according to the operator class's definition.
- */
-StrategyNumber
-get_equal_strategy_number_for_am(Oid am)
-{
-	int			ret;
-
-	switch (am)
-	{
-		case BTREE_AM_OID:
-			ret = BTEqualStrategyNumber;
-			break;
-		case HASH_AM_OID:
-			ret = HTEqualStrategyNumber;
-			break;
-		default:
-			/* XXX: Only Btree and Hash indexes are supported */
-			ret = InvalidStrategy;
-			break;
-	}
-
-	return ret;
-}
-
-/*
- * Return the appropriate strategy number which corresponds to the equality
- * operator.
- */
-static StrategyNumber
-get_equal_strategy_number(Oid opclass)
-{
-	Oid			am = get_opclass_method(opclass);
-
-	return get_equal_strategy_number_for_am(am);
-}
 
 /*
  * Setup a ScanKey for a search in the relation 'rel' for a tuple 'key' that
@@ -133,8 +92,7 @@ build_replindex_scan_key(ScanKey skey, Relation rel, Relation idxrel,
 		 */
 		optype = get_opclass_input_type(opclass->values[index_attoff]);
 		opfamily = get_opclass_family(opclass->values[index_attoff]);
-		eq_strategy = get_equal_strategy_number(opclass->values[index_attoff]);
-
+		eq_strategy = IndexAmTranslateCompareType(COMPARE_EQ, idxrel->rd_rel->relam, opfamily, false);
 		operator = get_opfamily_member(opfamily, optype,
 									   optype,
 									   eq_strategy);
@@ -165,6 +123,51 @@ build_replindex_scan_key(ScanKey skey, Relation rel, Relation idxrel,
 	Assert(skey_attoff > 0);
 
 	return skey_attoff;
+}
+
+
+/*
+ * Helper function to check if it is necessary to re-fetch and lock the tuple
+ * due to concurrent modifications. This function should be called after
+ * invoking table_tuple_lock.
+ */
+static bool
+should_refetch_tuple(TM_Result res, TM_FailureData *tmfd)
+{
+	bool		refetch = false;
+
+	switch (res)
+	{
+		case TM_Ok:
+			break;
+		case TM_Updated:
+			/* XXX: Improve handling here */
+			if (ItemPointerIndicatesMovedPartitions(&tmfd->ctid))
+				ereport(LOG,
+						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+						 errmsg("tuple to be locked was already moved to another partition due to concurrent update, retrying")));
+			else
+				ereport(LOG,
+						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+						 errmsg("concurrent update, retrying")));
+			refetch = true;
+			break;
+		case TM_Deleted:
+			/* XXX: Improve handling here */
+			ereport(LOG,
+					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+					 errmsg("concurrent delete, retrying")));
+			refetch = true;
+			break;
+		case TM_Invisible:
+			elog(ERROR, "attempted to lock invisible tuple");
+			break;
+		default:
+			elog(ERROR, "unexpected table_tuple_lock status: %u", res);
+			break;
+	}
+
+	return refetch;
 }
 
 /*
@@ -200,7 +203,7 @@ RelationFindReplTupleByIndex(Relation rel, Oid idxoid,
 	skey_attoff = build_replindex_scan_key(skey, rel, idxrel, searchslot);
 
 	/* Start an index scan. */
-	scan = index_beginscan(rel, idxrel, &snap, skey_attoff, 0);
+	scan = index_beginscan(rel, idxrel, &snap, NULL, skey_attoff, 0);
 
 retry:
 	found = false;
@@ -251,7 +254,7 @@ retry:
 
 		PushActiveSnapshot(GetLatestSnapshot());
 
-		res = table_tuple_lock(rel, &(outslot->tts_tid), GetLatestSnapshot(),
+		res = table_tuple_lock(rel, &(outslot->tts_tid), GetActiveSnapshot(),
 							   outslot,
 							   GetCurrentCommandId(false),
 							   lockmode,
@@ -261,34 +264,8 @@ retry:
 
 		PopActiveSnapshot();
 
-		switch (res)
-		{
-			case TM_Ok:
-				break;
-			case TM_Updated:
-				/* XXX: Improve handling here */
-				if (ItemPointerIndicatesMovedPartitions(&tmfd.ctid))
-					ereport(LOG,
-							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-							 errmsg("tuple to be locked was already moved to another partition due to concurrent update, retrying")));
-				else
-					ereport(LOG,
-							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-							 errmsg("concurrent update, retrying")));
-				goto retry;
-			case TM_Deleted:
-				/* XXX: Improve handling here */
-				ereport(LOG,
-						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-						 errmsg("concurrent delete, retrying")));
-				goto retry;
-			case TM_Invisible:
-				elog(ERROR, "attempted to lock invisible tuple");
-				break;
-			default:
-				elog(ERROR, "unexpected table_tuple_lock status: %u", res);
-				break;
-		}
+		if (should_refetch_tuple(res, &tmfd))
+			goto retry;
 	}
 
 	index_endscan(scan);
@@ -435,7 +412,7 @@ retry:
 
 		PushActiveSnapshot(GetLatestSnapshot());
 
-		res = table_tuple_lock(rel, &(outslot->tts_tid), GetLatestSnapshot(),
+		res = table_tuple_lock(rel, &(outslot->tts_tid), GetActiveSnapshot(),
 							   outslot,
 							   GetCurrentCommandId(false),
 							   lockmode,
@@ -445,40 +422,135 @@ retry:
 
 		PopActiveSnapshot();
 
-		switch (res)
-		{
-			case TM_Ok:
-				break;
-			case TM_Updated:
-				/* XXX: Improve handling here */
-				if (ItemPointerIndicatesMovedPartitions(&tmfd.ctid))
-					ereport(LOG,
-							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-							 errmsg("tuple to be locked was already moved to another partition due to concurrent update, retrying")));
-				else
-					ereport(LOG,
-							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-							 errmsg("concurrent update, retrying")));
-				goto retry;
-			case TM_Deleted:
-				/* XXX: Improve handling here */
-				ereport(LOG,
-						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-						 errmsg("concurrent delete, retrying")));
-				goto retry;
-			case TM_Invisible:
-				elog(ERROR, "attempted to lock invisible tuple");
-				break;
-			default:
-				elog(ERROR, "unexpected table_tuple_lock status: %u", res);
-				break;
-		}
+		if (should_refetch_tuple(res, &tmfd))
+			goto retry;
 	}
 
 	table_endscan(scan);
 	ExecDropSingleTupleTableSlot(scanslot);
 
 	return found;
+}
+
+/*
+ * Build additional index information necessary for conflict detection.
+ */
+static void
+BuildConflictIndexInfo(ResultRelInfo *resultRelInfo, Oid conflictindex)
+{
+	for (int i = 0; i < resultRelInfo->ri_NumIndices; i++)
+	{
+		Relation	indexRelation = resultRelInfo->ri_IndexRelationDescs[i];
+		IndexInfo  *indexRelationInfo = resultRelInfo->ri_IndexRelationInfo[i];
+
+		if (conflictindex != RelationGetRelid(indexRelation))
+			continue;
+
+		/*
+		 * This Assert will fail if BuildSpeculativeIndexInfo() is called
+		 * twice for the given index.
+		 */
+		Assert(indexRelationInfo->ii_UniqueOps == NULL);
+
+		BuildSpeculativeIndexInfo(indexRelation, indexRelationInfo);
+	}
+}
+
+/*
+ * Find the tuple that violates the passed unique index (conflictindex).
+ *
+ * If the conflicting tuple is found return true, otherwise false.
+ *
+ * We lock the tuple to avoid getting it deleted before the caller can fetch
+ * the required information. Note that if the tuple is deleted before a lock
+ * is acquired, we will retry to find the conflicting tuple again.
+ */
+static bool
+FindConflictTuple(ResultRelInfo *resultRelInfo, EState *estate,
+				  Oid conflictindex, TupleTableSlot *slot,
+				  TupleTableSlot **conflictslot)
+{
+	Relation	rel = resultRelInfo->ri_RelationDesc;
+	ItemPointerData conflictTid;
+	TM_FailureData tmfd;
+	TM_Result	res;
+
+	*conflictslot = NULL;
+
+	/*
+	 * Build additional information required to check constraints violations.
+	 * See check_exclusion_or_unique_constraint().
+	 */
+	BuildConflictIndexInfo(resultRelInfo, conflictindex);
+
+retry:
+	if (ExecCheckIndexConstraints(resultRelInfo, slot, estate,
+								  &conflictTid, &slot->tts_tid,
+								  list_make1_oid(conflictindex)))
+	{
+		if (*conflictslot)
+			ExecDropSingleTupleTableSlot(*conflictslot);
+
+		*conflictslot = NULL;
+		return false;
+	}
+
+	*conflictslot = table_slot_create(rel, NULL);
+
+	PushActiveSnapshot(GetLatestSnapshot());
+
+	res = table_tuple_lock(rel, &conflictTid, GetActiveSnapshot(),
+						   *conflictslot,
+						   GetCurrentCommandId(false),
+						   LockTupleShare,
+						   LockWaitBlock,
+						   0 /* don't follow updates */ ,
+						   &tmfd);
+
+	PopActiveSnapshot();
+
+	if (should_refetch_tuple(res, &tmfd))
+		goto retry;
+
+	return true;
+}
+
+/*
+ * Check all the unique indexes in 'recheckIndexes' for conflict with the
+ * tuple in 'remoteslot' and report if found.
+ */
+static void
+CheckAndReportConflict(ResultRelInfo *resultRelInfo, EState *estate,
+					   ConflictType type, List *recheckIndexes,
+					   TupleTableSlot *searchslot, TupleTableSlot *remoteslot)
+{
+	List	   *conflicttuples = NIL;
+	TupleTableSlot *conflictslot;
+
+	/* Check all the unique indexes for conflicts */
+	foreach_oid(uniqueidx, resultRelInfo->ri_onConflictArbiterIndexes)
+	{
+		if (list_member_oid(recheckIndexes, uniqueidx) &&
+			FindConflictTuple(resultRelInfo, estate, uniqueidx, remoteslot,
+							  &conflictslot))
+		{
+			ConflictTupleInfo *conflicttuple = palloc0_object(ConflictTupleInfo);
+
+			conflicttuple->slot = conflictslot;
+			conflicttuple->indexoid = uniqueidx;
+
+			GetTupleTransactionInfo(conflictslot, &conflicttuple->xmin,
+									&conflicttuple->origin, &conflicttuple->ts);
+
+			conflicttuples = lappend(conflicttuples, conflicttuple);
+		}
+	}
+
+	/* Report the conflict, if found */
+	if (conflicttuples)
+		ReportApplyConflict(estate, resultRelInfo, ERROR,
+							list_length(conflicttuples) > 1 ? CT_MULTIPLE_UNIQUE_CONFLICTS : type,
+							searchslot, remoteslot, conflicttuples);
 }
 
 /*
@@ -510,6 +582,8 @@ ExecSimpleRelationInsert(ResultRelInfo *resultRelInfo,
 	if (!skip_tuple)
 	{
 		List	   *recheckIndexes = NIL;
+		List	   *conflictindexes;
+		bool		conflict = false;
 
 		/* Compute stored generated columns */
 		if (rel->rd_att->constr &&
@@ -526,10 +600,33 @@ ExecSimpleRelationInsert(ResultRelInfo *resultRelInfo,
 		/* OK, store the tuple and create index entries for it */
 		simple_table_tuple_insert(resultRelInfo->ri_RelationDesc, slot);
 
+		conflictindexes = resultRelInfo->ri_onConflictArbiterIndexes;
+
 		if (resultRelInfo->ri_NumIndices > 0)
 			recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
-												   slot, estate, false, false,
-												   NULL, NIL, false);
+												   slot, estate, false,
+												   conflictindexes ? true : false,
+												   &conflict,
+												   conflictindexes, false);
+
+		/*
+		 * Checks the conflict indexes to fetch the conflicting local tuple
+		 * and reports the conflict. We perform this check here, instead of
+		 * performing an additional index scan before the actual insertion and
+		 * reporting the conflict if any conflicting tuples are found. This is
+		 * to avoid the overhead of executing the extra scan for each INSERT
+		 * operation, even when no conflict arises, which could introduce
+		 * significant overhead to replication, particularly in cases where
+		 * conflicts are rare.
+		 *
+		 * XXX OTOH, this could lead to clean-up effort for dead tuples added
+		 * in heap and index in case of conflicts. But as conflicts shouldn't
+		 * be a frequent thing so we preferred to save the performance
+		 * overhead of extra scan before each insertion.
+		 */
+		if (conflict)
+			CheckAndReportConflict(resultRelInfo, estate, CT_INSERT_EXISTS,
+								   recheckIndexes, NULL, slot);
 
 		/* AFTER ROW INSERT Triggers */
 		ExecARInsertTriggers(estate, resultRelInfo, slot,
@@ -563,8 +660,12 @@ ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 	Relation	rel = resultRelInfo->ri_RelationDesc;
 	ItemPointer tid = &(searchslot->tts_tid);
 
-	/* For now we support only tables. */
+	/*
+	 * We support only non-system tables, with
+	 * check_publication_add_relation() accountable.
+	 */
 	Assert(rel->rd_rel->relkind == RELKIND_RELATION);
+	Assert(!IsCatalogRelation(rel));
 
 	CheckCmdReplicaIdentity(rel, CMD_UPDATE);
 
@@ -581,6 +682,8 @@ ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 	{
 		List	   *recheckIndexes = NIL;
 		TU_UpdateIndexes update_indexes;
+		List	   *conflictindexes;
+		bool		conflict = false;
 
 		/* Compute stored generated columns */
 		if (rel->rd_att->constr &&
@@ -597,11 +700,23 @@ ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 		simple_table_tuple_update(rel, tid, slot, estate->es_snapshot,
 								  &update_indexes);
 
+		conflictindexes = resultRelInfo->ri_onConflictArbiterIndexes;
+
 		if (resultRelInfo->ri_NumIndices > 0 && (update_indexes != TU_None))
 			recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
-												   slot, estate, true, false,
-												   NULL, NIL,
+												   slot, estate, true,
+												   conflictindexes ? true : false,
+												   &conflict, conflictindexes,
 												   (update_indexes == TU_Summarizing));
+
+		/*
+		 * Refer to the comments above the call to CheckAndReportConflict() in
+		 * ExecSimpleRelationInsert to understand why this check is done at
+		 * this point.
+		 */
+		if (conflict)
+			CheckAndReportConflict(resultRelInfo, estate, CT_UPDATE_EXISTS,
+								   recheckIndexes, searchslot, slot);
 
 		/* AFTER ROW UPDATE Triggers */
 		ExecARUpdateTriggers(estate, resultRelInfo,
@@ -675,16 +790,27 @@ CheckCmdReplicaIdentity(Relation rel, CmdType cmd)
 		return;
 
 	/*
-	 * It is only safe to execute UPDATE/DELETE when all columns, referenced
-	 * in the row filters from publications which the relation is in, are
-	 * valid - i.e. when all referenced columns are part of REPLICA IDENTITY
-	 * or the table does not publish UPDATEs or DELETEs.
+	 * It is only safe to execute UPDATE/DELETE if the relation does not
+	 * publish UPDATEs or DELETEs, or all the following conditions are
+	 * satisfied:
+	 *
+	 * 1. All columns, referenced in the row filters from publications which
+	 * the relation is in, are valid - i.e. when all referenced columns are
+	 * part of REPLICA IDENTITY.
+	 *
+	 * 2. All columns, referenced in the column lists are valid - i.e. when
+	 * all columns referenced in the REPLICA IDENTITY are covered by the
+	 * column list.
+	 *
+	 * 3. All generated columns in REPLICA IDENTITY of the relation, are valid
+	 * - i.e. when all these generated columns are published.
 	 *
 	 * XXX We could optimize it by first checking whether any of the
-	 * publications have a row filter for this relation. If not and relation
-	 * has replica identity then we can avoid building the descriptor but as
-	 * this happens only one time it doesn't seem worth the additional
-	 * complexity.
+	 * publications have a row filter or column list for this relation, or if
+	 * the relation contains a generated column. If none of these exist and
+	 * the relation has replica identity then we can avoid building the
+	 * descriptor but as this happens only one time it doesn't seem worth the
+	 * additional complexity.
 	 */
 	RelationBuildPublicationDesc(rel, &pubdesc);
 	if (cmd == CMD_UPDATE && !pubdesc.rf_valid_for_update)
@@ -699,6 +825,12 @@ CheckCmdReplicaIdentity(Relation rel, CmdType cmd)
 				 errmsg("cannot update table \"%s\"",
 						RelationGetRelationName(rel)),
 				 errdetail("Column list used by the publication does not cover the replica identity.")));
+	else if (cmd == CMD_UPDATE && !pubdesc.gencols_valid_for_update)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
+				 errmsg("cannot update table \"%s\"",
+						RelationGetRelationName(rel)),
+				 errdetail("Replica identity must not contain unpublished generated columns.")));
 	else if (cmd == CMD_DELETE && !pubdesc.rf_valid_for_delete)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
@@ -711,6 +843,12 @@ CheckCmdReplicaIdentity(Relation rel, CmdType cmd)
 				 errmsg("cannot delete from table \"%s\"",
 						RelationGetRelationName(rel)),
 				 errdetail("Column list used by the publication does not cover the replica identity.")));
+	else if (cmd == CMD_DELETE && !pubdesc.gencols_valid_for_delete)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
+				 errmsg("cannot delete from table \"%s\"",
+						RelationGetRelationName(rel)),
+				 errdetail("Replica identity must not contain unpublished generated columns.")));
 
 	/* If relation has replica identity we are always good. */
 	if (OidIsValid(RelationGetReplicaIndex(rel)))

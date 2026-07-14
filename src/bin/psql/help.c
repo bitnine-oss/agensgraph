@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2025, PostgreSQL Global Development Group
  *
  * src/bin/psql/help.c
  */
@@ -22,9 +22,6 @@
 #endif
 
 #include "ag_const.h"
-#include "common.h"
-#include "common/logging.h"
-#include "common/username.h"
 #include "help.h"
 #include "input.h"
 #include "settings.h"
@@ -174,7 +171,6 @@ slashUsage(unsigned short int pager)
 	initPQExpBuffer(&buf);
 
 	HELP0("General\n");
-	HELP0("  \\bind [PARAM]...       set query parameters\n");
 	HELP0("  \\copyright             show PostgreSQL usage and distribution terms\n");
 	HELP0("  \\crosstabview [COLUMNS] execute query and display result in crosstab\n");
 	HELP0("  \\errverbose            show most recent error message at maximum verbosity\n");
@@ -228,67 +224,68 @@ slashUsage(unsigned short int pager)
 	HELP0("\n");
 
 	HELP0("Informational\n");
-	HELP0("  (options: S = show system objects, + = additional detail)\n");
-	HELP0("  \\d[S+]                 list tables, views, and sequences\n");
-	HELP0("  \\d[S+]  NAME           describe table, view, sequence, or index\n");
-	HELP0("  \\da[S]  [PATTERN]      list aggregates\n");
-	HELP0("  \\dA[+]  [PATTERN]      list access methods\n");
-	HELP0("  \\dAc[+] [AMPTRN [TYPEPTRN]]  list operator classes\n");
-	HELP0("  \\dAf[+] [AMPTRN [TYPEPTRN]]  list operator families\n");
-	HELP0("  \\dAo[+] [AMPTRN [OPFPTRN]]   list operators of operator families\n");
-	HELP0("  \\dAp[+] [AMPTRN [OPFPTRN]]   list support functions of operator families\n");
-	HELP0("  \\db[+]  [PATTERN]      list tablespaces\n");
-	HELP0("  \\dc[S+] [PATTERN]      list conversions\n");
-	HELP0("  \\dconfig[+] [PATTERN]  list configuration parameters\n");
-	HELP0("  \\dC[+]  [PATTERN]      list casts\n");
-	HELP0("  \\dd[S]  [PATTERN]      show object descriptions not displayed elsewhere\n");
-	HELP0("  \\dD[S+] [PATTERN]      list domains\n");
-	HELP0("  \\ddp    [PATTERN]      list default privileges\n");
-	HELP0("  \\dE[S+] [PATTERN]      list foreign tables\n");
-	HELP0("  \\des[+] [PATTERN]      list foreign servers\n");
-	HELP0("  \\det[+] [PATTERN]      list foreign tables\n");
-	HELP0("  \\deu[+] [PATTERN]      list user mappings\n");
-	HELP0("  \\dew[+] [PATTERN]      list foreign-data wrappers\n");
-	HELP0("  \\df[anptw][S+] [FUNCPTRN [TYPEPTRN ...]]\n"
+	HELP0("  (options: S = show system objects, x = expanded mode, + = additional detail)\n");
+	HELP0("  \\d[Sx+]                list tables, views, and sequences\n");
+	HELP0("  \\d[S+]   NAME          describe table, view, sequence, or index\n");
+	HELP0("  \\da[Sx]  [PATTERN]     list aggregates\n");
+	HELP0("  \\dA[x+]  [PATTERN]     list access methods\n");
+	HELP0("  \\dAc[x+] [AMPTRN [TYPEPTRN]]  list operator classes\n");
+	HELP0("  \\dAf[x+] [AMPTRN [TYPEPTRN]]  list operator families\n");
+	HELP0("  \\dAo[x+] [AMPTRN [OPFPTRN]]   list operators of operator families\n");
+	HELP0("  \\dAp[x+] [AMPTRN [OPFPTRN]]   list support functions of operator families\n");
+	HELP0("  \\db[x+]  [PATTERN]     list tablespaces\n");
+	HELP0("  \\dc[Sx+] [PATTERN]     list conversions\n");
+	HELP0("  \\dconfig[x+] [PATTERN] list configuration parameters\n");
+	HELP0("  \\dC[x+]  [PATTERN]     list casts\n");
+	HELP0("  \\dd[Sx]  [PATTERN]     show object descriptions not displayed elsewhere\n");
+	HELP0("  \\dD[Sx+] [PATTERN]     list domains\n");
+	HELP0("  \\ddp[x]  [PATTERN]     list default privileges\n");
+	HELP0("  \\dE[Sx+] [PATTERN]     list foreign tables\n");
+	HELP0("  \\des[x+] [PATTERN]     list foreign servers\n");
+	HELP0("  \\det[x+] [PATTERN]     list foreign tables\n");
+	HELP0("  \\deu[x+] [PATTERN]     list user mappings\n");
+	HELP0("  \\dew[x+] [PATTERN]     list foreign-data wrappers\n");
+	HELP0("  \\df[anptw][Sx+] [FUNCPTRN [TYPEPTRN ...]]\n"
 		  "                         list [only agg/normal/procedure/trigger/window] functions\n");
-	HELP0("  \\dF[+]  [PATTERN]      list text search configurations\n");
-	HELP0("  \\dFd[+] [PATTERN]      list text search dictionaries\n");
-	HELP0("  \\dFp[+] [PATTERN]      list text search parsers\n");
-	HELP0("  \\dFt[+] [PATTERN]      list text search templates\n");
-	HELP0("  \\dg[S+] [PATTERN]      list roles\n");
-	HELP0("  \\di[S+] [PATTERN]      list indexes\n");
-	HELP0("  \\dl[+]                 list large objects, same as \\lo_list\n");
-	HELP0("  \\dL[S+] [PATTERN]      list procedural languages\n");
-	HELP0("  \\dm[S+] [PATTERN]      list materialized views\n");
-	HELP0("  \\dn[S+] [PATTERN]      list schemas\n");
-	HELP0("  \\do[S+] [OPPTRN [TYPEPTRN [TYPEPTRN]]]\n"
+	HELP0("  \\dF[x+]  [PATTERN]     list text search configurations\n");
+	HELP0("  \\dFd[x+] [PATTERN]     list text search dictionaries\n");
+	HELP0("  \\dFp[x+] [PATTERN]     list text search parsers\n");
+	HELP0("  \\dFt[x+] [PATTERN]     list text search templates\n");
+	HELP0("  \\dg[Sx+] [PATTERN]     list roles\n");
+	HELP0("  \\di[Sx+] [PATTERN]     list indexes\n");
+	HELP0("  \\dl[x+]                list large objects, same as \\lo_list\n");
+	HELP0("  \\dL[Sx+] [PATTERN]     list procedural languages\n");
+	HELP0("  \\dm[Sx+] [PATTERN]     list materialized views\n");
+	HELP0("  \\dn[Sx+] [PATTERN]     list schemas\n");
+	HELP0("  \\do[Sx+] [OPPTRN [TYPEPTRN [TYPEPTRN]]]\n"
 		  "                         list operators\n");
-	HELP0("  \\dO[S+] [PATTERN]      list collations\n");
-	HELP0("  \\dp[S]  [PATTERN]      list table, view, and sequence access privileges\n");
-	HELP0("  \\dP[itn+] [PATTERN]    list [only index/table] partitioned relations [n=nested]\n");
-	HELP0("  \\drds [ROLEPTRN [DBPTRN]] list per-database role settings\n");
-	HELP0("  \\drg[S] [PATTERN]      list role grants\n");
-	HELP0("  \\dRp[+] [PATTERN]      list replication publications\n");
-	HELP0("  \\dRs[+] [PATTERN]      list replication subscriptions\n");
-	HELP0("  \\ds[S+] [PATTERN]      list sequences\n");
-	HELP0("  \\dt[S+] [PATTERN]      list tables\n");
-	HELP0("  \\dT[S+] [PATTERN]      list data types\n");
-	HELP0("  \\du[S+] [PATTERN]      list roles\n");
-	HELP0("  \\dv[S+] [PATTERN]      list views\n");
-	HELP0("  \\dx[+]  [PATTERN]      list extensions\n");
-	HELP0("  \\dX     [PATTERN]      list extended statistics\n");
-	HELP0("  \\dy[+]  [PATTERN]      list event triggers\n");
-	HELP0("  \\l[+]   [PATTERN]      list databases\n");
-	HELP0("  \\sf[+]  FUNCNAME       show a function's definition\n");
-	HELP0("  \\sv[+]  VIEWNAME       show a view's definition\n");
-	HELP0("  \\z[S]   [PATTERN]      same as \\dp\n");
+	HELP0("  \\dO[Sx+] [PATTERN]     list collations\n");
+	HELP0("  \\dp[Sx]  [PATTERN]     list table, view, and sequence access privileges\n");
+	HELP0("  \\dP[itnx+] [PATTERN]   list [only index/table] partitioned relations [n=nested]\n");
+	HELP0("  \\drds[x] [ROLEPTRN [DBPTRN]]\n"
+		  "                         list per-database role settings\n");
+	HELP0("  \\drg[Sx] [PATTERN]     list role grants\n");
+	HELP0("  \\dRp[x+] [PATTERN]     list replication publications\n");
+	HELP0("  \\dRs[x+] [PATTERN]     list replication subscriptions\n");
+	HELP0("  \\ds[Sx+] [PATTERN]     list sequences\n");
+	HELP0("  \\dt[Sx+] [PATTERN]     list tables\n");
+	HELP0("  \\dT[Sx+] [PATTERN]     list data types\n");
+	HELP0("  \\du[Sx+] [PATTERN]     list roles\n");
+	HELP0("  \\dv[Sx+] [PATTERN]     list views\n");
+	HELP0("  \\dx[x+]  [PATTERN]     list extensions\n");
+	HELP0("  \\dX[x]   [PATTERN]     list extended statistics\n");
+	HELP0("  \\dy[x+]  [PATTERN]     list event triggers\n");
+	HELP0("  \\l[x+]   [PATTERN]     list databases\n");
+	HELP0("  \\sf[+]   FUNCNAME      show a function's definition\n");
+	HELP0("  \\sv[+]   VIEWNAME      show a view's definition\n");
+	HELP0("  \\z[Sx]   [PATTERN]     same as \\dp\n");
 	HELP0("\n");
 
 	HELP0("Large Objects\n");
 	HELP0("  \\lo_export LOBOID FILE write large object to file\n");
 	HELP0("  \\lo_import FILE [COMMENT]\n"
 		  "                         read large object from file\n");
-	HELP0("  \\lo_list[+]            list large objects\n");
+	HELP0("  \\lo_list[x+]           list large objects\n");
 	HELP0("  \\lo_unlink LOBOID      delete a large object\n");
 	HELP0("\n");
 
@@ -304,7 +301,7 @@ slashUsage(unsigned short int pager)
 		  "                         numericlocale|pager|pager_min_lines|recordsep|\n"
 		  "                         recordsep_zero|tableattr|title|tuples_only|\n"
 		  "                         unicode_border_linestyle|unicode_column_linestyle|\n"
-		  "                         unicode_header_linestyle)\n");
+		  "                         unicode_header_linestyle|xheader_width)\n");
 	HELPN("  \\t [on|off]            show only rows (currently %s)\n",
 		  ON(pset.popt.topt.tuples_only));
 	HELP0("  \\T [STRING]            set HTML <table> tag attributes, or unset if none\n");
@@ -338,6 +335,22 @@ slashUsage(unsigned short int pager)
 	HELP0("  \\prompt [TEXT] NAME    prompt user to set internal variable\n");
 	HELP0("  \\set [NAME [VALUE]]    set internal variable, or list all if no parameters\n");
 	HELP0("  \\unset NAME            unset (delete) internal variable\n");
+	HELP0("\n");
+
+	HELP0("Extended Query Protocol\n");
+	HELP0("  \\bind [PARAM]...       set query parameters\n");
+	HELP0("  \\bind_named STMT_NAME [PARAM]...\n"
+		  "                         set query parameters for an existing prepared statement\n");
+	HELP0("  \\close_prepared STMT_NAME\n"
+		  "                         close an existing prepared statement\n");
+	HELP0("  \\endpipeline           exit pipeline mode\n");
+	HELP0("  \\flush                 flush output data to the server\n");
+	HELP0("  \\flushrequest          send request to the server to flush its output buffer\n");
+	HELP0("  \\getresults [NUM_RES]  read NUM_RES pending results, or all if no argument\n");
+	HELP0("  \\parse STMT_NAME       create a prepared statement\n");
+	HELP0("  \\sendpipeline          send an extended query to an ongoing pipeline\n");
+	HELP0("  \\startpipeline         enter pipeline mode\n");
+	HELP0("  \\syncpipeline          add a synchronisation point to an ongoing pipeline\n");
 
 	/* Now we can count the lines. */
 	nlcount = 0;
@@ -461,6 +474,9 @@ helpVariables(unsigned short int pager)
 		  "  VERSION_NAME\n"
 		  "  VERSION_NUM\n"
 		  "    psql's version (in verbose string, short string, or numeric format)\n");
+	HELPN("  WATCH_INTERVAL\n"
+		  "    number of seconds \\watch waits between executions (default %s)\n",
+		  DEFAULT_WATCH_INTERVAL);
 
 	HELP0("\nDisplay settings:\n");
 	HELP0("Usage:\n");
@@ -504,6 +520,9 @@ helpVariables(unsigned short int pager)
 		  "  unicode_column_linestyle\n"
 		  "  unicode_header_linestyle\n"
 		  "    set the style of Unicode line drawing [single, double]\n");
+	HELP0("  xheader_width\n"
+		  "    set the maximum width of the header for expanded output\n"
+		  "    [full, column, page, integer value]\n");
 
 	HELP0("\nEnvironment variables:\n");
 	HELP0("Usage:\n");
@@ -740,7 +759,7 @@ print_copyright(void)
 {
 	puts("PostgreSQL Database Management System\n"
 		 "(formerly known as Postgres, then as Postgres95)\n\n"
-		 "Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group\n\n"
+		 "Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group\n\n"
 		 "Portions Copyright (c) 1994, The Regents of the University of California\n\n"
 		 "Permission to use, copy, modify, and distribute this software and its\n"
 		 "documentation for any purpose, without fee, and without a written agreement\n"

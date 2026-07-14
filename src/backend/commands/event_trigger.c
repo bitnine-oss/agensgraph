@@ -3,7 +3,7 @@
  * event_trigger.c
  *	  PostgreSQL EVENT TRIGGER support code.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -276,8 +276,8 @@ insert_event_trigger_tuple(const char *trigname, const char *eventname, Oid evtO
 	Relation	tgrel;
 	Oid			trigoid;
 	HeapTuple	tuple;
-	Datum		values[Natts_pg_trigger];
-	bool		nulls[Natts_pg_trigger];
+	Datum		values[Natts_pg_event_trigger];
+	bool		nulls[Natts_pg_event_trigger];
 	NameData	evtnamedata,
 				evteventdata;
 	ObjectAddress myself,
@@ -388,6 +388,7 @@ SetDatabaseHasLoginEventTriggers(void)
 	/* Set dathasloginevt flag in pg_database */
 	Form_pg_database db;
 	Relation	pg_db = table_open(DatabaseRelationId, RowExclusiveLock);
+	ItemPointerData otid;
 	HeapTuple	tuple;
 
 	/*
@@ -399,16 +400,18 @@ SetDatabaseHasLoginEventTriggers(void)
 	 */
 	LockSharedObject(DatabaseRelationId, MyDatabaseId, 0, AccessExclusiveLock);
 
-	tuple = SearchSysCacheCopy1(DATABASEOID, ObjectIdGetDatum(MyDatabaseId));
+	tuple = SearchSysCacheLockedCopy1(DATABASEOID, ObjectIdGetDatum(MyDatabaseId));
 	if (!HeapTupleIsValid(tuple))
 		elog(ERROR, "cache lookup failed for database %u", MyDatabaseId);
+	otid = tuple->t_self;
 	db = (Form_pg_database) GETSTRUCT(tuple);
 	if (!db->dathasloginevt)
 	{
 		db->dathasloginevt = true;
-		CatalogTupleUpdate(pg_db, &tuple->t_self, tuple);
+		CatalogTupleUpdate(pg_db, &otid, tuple);
 		CommandCounterIncrement();
 	}
+	UnlockTuple(pg_db, &otid, InplaceUpdateTupleLock);
 	table_close(pg_db, RowExclusiveLock);
 	heap_freetuple(tuple);
 }
@@ -946,25 +949,18 @@ EventTriggerOnLogin(void)
 		{
 			Relation	pg_db = table_open(DatabaseRelationId, RowExclusiveLock);
 			HeapTuple	tuple;
+			void	   *state;
 			Form_pg_database db;
 			ScanKeyData key[1];
-			SysScanDesc scan;
 
-			/*
-			 * Get the pg_database tuple to scribble on.  Note that this does
-			 * not directly rely on the syscache to avoid issues with
-			 * flattened toast values for the in-place update.
-			 */
+			/* Fetch a copy of the tuple to scribble on */
 			ScanKeyInit(&key[0],
 						Anum_pg_database_oid,
 						BTEqualStrategyNumber, F_OIDEQ,
 						ObjectIdGetDatum(MyDatabaseId));
 
-			scan = systable_beginscan(pg_db, DatabaseOidIndexId, true,
-									  NULL, 1, key);
-			tuple = systable_getnext(scan);
-			tuple = heap_copytuple(tuple);
-			systable_endscan(scan);
+			systable_inplace_update_begin(pg_db, DatabaseOidIndexId, true,
+										  NULL, 1, key, &tuple, &state);
 
 			if (!HeapTupleIsValid(tuple))
 				elog(ERROR, "could not find tuple for database %u", MyDatabaseId);
@@ -979,14 +975,11 @@ EventTriggerOnLogin(void)
 				 * this instead of regular updates serves two purposes. First,
 				 * that avoids possible waiting on the row-level lock. Second,
 				 * that avoids dealing with TOAST.
-				 *
-				 * It's known that changes made by heap_inplace_update() may
-				 * be lost due to concurrent normal updates.  However, we are
-				 * OK with that.  The subsequent connections will still have a
-				 * chance to set "dathasloginevt" to false.
 				 */
-				heap_inplace_update(pg_db, tuple);
+				systable_inplace_update_finish(state, tuple);
 			}
+			else
+				systable_inplace_update_cancel(state);
 			table_close(pg_db, RowExclusiveLock);
 			heap_freetuple(tuple);
 		}
@@ -1130,7 +1123,7 @@ EventTriggerInvoke(List *fn_oid_list, EventTriggerData *trigdata)
 /*
  * Do event triggers support this object type?
  *
- * See also event trigger support matrix in event-trigger.sgml.
+ * See also event trigger documentation in event-trigger.sgml.
  */
 bool
 EventTriggerSupportsObjectType(ObjectType obtype)
@@ -1163,7 +1156,7 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 /*
  * Do event triggers support this object class?
  *
- * See also event trigger support matrix in event-trigger.sgml.
+ * See also event trigger documentation in event-trigger.sgml.
  */
 bool
 EventTriggerSupportsObject(const ObjectAddress *object)

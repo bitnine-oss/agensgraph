@@ -4,7 +4,7 @@
  *	  routines for fast build of inverted index
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -117,7 +117,7 @@ ginInitBA(BuildAccumulator *accum)
 							 ginCombineData,
 							 ginAllocEntryAccumulator,
 							 NULL,	/* no freefunc needed */
-							 (void *) accum);
+							 accum);
 }
 
 /*
@@ -127,10 +127,10 @@ ginInitBA(BuildAccumulator *accum)
 static Datum
 getDatumCopy(BuildAccumulator *accum, OffsetNumber attnum, Datum value)
 {
-	Form_pg_attribute att;
+	CompactAttribute *att;
 	Datum		res;
 
-	att = TupleDescAttr(accum->ginstate->origTupdesc, attnum - 1);
+	att = TupleDescCompactAttr(accum->ginstate->origTupdesc, attnum - 1);
 	if (att->attbyval)
 		res = value;
 	else

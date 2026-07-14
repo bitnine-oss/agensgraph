@@ -4,7 +4,7 @@
  *	  creator functions for various nodes. The functions here are for the
  *	  most frequently created nodes.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -51,7 +51,7 @@ makeSimpleA_Expr(A_Expr_Kind kind, char *name,
 	A_Expr	   *a = makeNode(A_Expr);
 
 	a->kind = kind;
-	a->name = list_make1(makeString((char *) name));
+	a->name = list_make1(makeString(name));
 	a->lexpr = lexpr;
 	a->rexpr = rexpr;
 	a->location = location;
@@ -80,12 +80,14 @@ makeVar(int varno,
 	var->varlevelsup = varlevelsup;
 
 	/*
-	 * Only a few callers need to make Var nodes with non-null varnullingrels,
-	 * or with varnosyn/varattnosyn different from varno/varattno.  We don't
-	 * provide separate arguments for them, but just initialize them to NULL
-	 * and the given varno/varattno.  This reduces code clutter and chance of
-	 * error for most callers.
+	 * Only a few callers need to make Var nodes with varreturningtype
+	 * different from VAR_RETURNING_DEFAULT, non-null varnullingrels, or with
+	 * varnosyn/varattnosyn different from varno/varattno.  We don't provide
+	 * separate arguments for them, but just initialize them to sensible
+	 * default values.  This reduces code clutter and chance of error for most
+	 * callers.
 	 */
+	var->varreturningtype = VAR_RETURNING_DEFAULT;
 	var->varnullingrels = NULL;
 	var->varnosyn = (Index) varno;
 	var->varattnosyn = varattno;
@@ -159,6 +161,53 @@ makeWholeRowVar(RangeTblEntry *rte,
 							 varlevelsup);
 			break;
 
+		case RTE_SUBQUERY:
+
+			/*
+			 * For a standard subquery, the Var should be of RECORD type.
+			 * However, if we're looking at a subquery that was expanded from
+			 * a view or SRF (only possible during planning), we must use the
+			 * appropriate rowtype, so that the resulting Var has the same
+			 * type that we would have produced from the original RTE.
+			 */
+			if (OidIsValid(rte->relid))
+			{
+				/* Subquery was expanded from a view */
+				toid = get_rel_type_id(rte->relid);
+				if (!OidIsValid(toid))
+					ereport(ERROR,
+							(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+							 errmsg("relation \"%s\" does not have a composite type",
+									get_rel_name(rte->relid))));
+			}
+			else if (rte->functions)
+			{
+				/*
+				 * Subquery was expanded from a set-returning function.  That
+				 * would not have happened if there's more than one function
+				 * or ordinality was requested.  We also needn't worry about
+				 * the allowScalar case, since the planner doesn't use that.
+				 * Otherwise this must match the RTE_FUNCTION code below.
+				 */
+				Assert(!allowScalar);
+				fexpr = ((RangeTblFunction *) linitial(rte->functions))->funcexpr;
+				toid = exprType(fexpr);
+				if (!type_is_rowtype(toid))
+					toid = RECORDOID;
+			}
+			else
+			{
+				/* Normal subquery-in-FROM */
+				toid = RECORDOID;
+			}
+			result = makeVar(varno,
+							 InvalidAttrNumber,
+							 toid,
+							 -1,
+							 InvalidOid,
+							 varlevelsup);
+			break;
+
 		case RTE_FUNCTION:
 
 			/*
@@ -215,8 +264,8 @@ makeWholeRowVar(RangeTblEntry *rte,
 		default:
 
 			/*
-			 * RTE is a join, subselect, tablefunc, or VALUES.  We represent
-			 * this as a whole-row Var of RECORD type. (Note that in most
+			 * RTE is a join, tablefunc, VALUES, CTE, etc.  We represent these
+			 * cases as a whole-row Var of RECORD type.  (Note that in most
 			 * cases the Var will be expanded to a RowExpr during planning,
 			 * but that is not our concern here.)
 			 */
@@ -434,6 +483,30 @@ makeRangeVar(char *schemaname, char *relname, int location)
 	r->location = location;
 
 	return r;
+}
+
+/*
+ * makeNotNullConstraint -
+ *		creates a Constraint node for NOT NULL constraints
+ */
+Constraint *
+makeNotNullConstraint(String *colname)
+{
+	Constraint *notnull;
+
+	notnull = makeNode(Constraint);
+	notnull->contype = CONSTR_NOTNULL;
+	notnull->conname = NULL;
+	notnull->is_no_inherit = false;
+	notnull->deferrable = false;
+	notnull->initdeferred = false;
+	notnull->location = -1;
+	notnull->keys = list_make1(colname);
+	notnull->is_enforced = true;
+	notnull->skip_validation = false;
+	notnull->initially_valid = true;
+
+	return notnull;
 }
 
 /*
@@ -760,7 +833,8 @@ make_ands_implicit(Expr *clause)
 IndexInfo *
 makeIndexInfo(int numattrs, int numkeyattrs, Oid amoid, List *expressions,
 			  List *predicates, bool unique, bool nulls_not_distinct,
-			  bool isready, bool concurrent, bool summarizing)
+			  bool isready, bool concurrent, bool summarizing,
+			  bool withoutoverlaps)
 {
 	IndexInfo  *n = makeNode(IndexInfo);
 
@@ -775,6 +849,7 @@ makeIndexInfo(int numattrs, int numkeyattrs, Oid amoid, List *expressions,
 	n->ii_IndexUnchanged = false;
 	n->ii_Concurrent = concurrent;
 	n->ii_Summarizing = summarizing;
+	n->ii_WithoutOverlaps = withoutoverlaps;
 
 	/* summarizing indexes cannot contain non-key attributes */
 	Assert(!summarizing || (numkeyattrs == numattrs));

@@ -7,7 +7,7 @@
  * a single process to use the TidStore. It is meant to be an example of
  * usage.
  *
- * Copyright (c) 2024, PostgreSQL Global Development Group
+ * Copyright (c) 2024-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/test_tidstore/test_tidstore.c
@@ -18,7 +18,6 @@
 
 #include "access/tidstore.h"
 #include "fmgr.h"
-#include "funcapi.h"
 #include "storage/block.h"
 #include "storage/itemptr.h"
 #include "storage/lwlock.h"
@@ -267,9 +266,14 @@ check_set_block_offsets(PG_FUNCTION_ARGS)
 	iter = TidStoreBeginIterate(tidstore);
 	while ((iter_result = TidStoreIterateNext(iter)) != NULL)
 	{
-		for (int i = 0; i < iter_result->num_offsets; i++)
+		OffsetNumber offsets[MaxOffsetNumber];
+		int			num_offsets;
+
+		num_offsets = TidStoreGetBlockOffsets(iter_result, offsets, lengthof(offsets));
+		Assert(num_offsets <= lengthof(offsets));
+		for (int i = 0; i < num_offsets; i++)
 			ItemPointerSet(&(items.iter_tids[num_iter_tids++]), iter_result->blkno,
-						   iter_result->offsets[i]);
+						   offsets[i]);
 	}
 	TidStoreEndIterate(iter);
 	TidStoreUnlock(tidstore);
@@ -288,13 +292,13 @@ check_set_block_offsets(PG_FUNCTION_ARGS)
 	qsort(items.lookup_tids, items.num_tids, sizeof(ItemPointerData), itemptr_cmp);
 	for (int i = 0; i < items.num_tids; i++)
 	{
-		if (itemptr_cmp((const void *) &items.insert_tids[i], (const void *) &items.iter_tids[i]) != 0)
+		if (itemptr_cmp(&items.insert_tids[i], &items.iter_tids[i]) != 0)
 			elog(ERROR, "TID iter array doesn't match verification array, got (%u,%u) expected (%u,%u)",
 				 ItemPointerGetBlockNumber(&items.iter_tids[i]),
 				 ItemPointerGetOffsetNumber(&items.iter_tids[i]),
 				 ItemPointerGetBlockNumber(&items.insert_tids[i]),
 				 ItemPointerGetOffsetNumber(&items.insert_tids[i]));
-		if (itemptr_cmp((const void *) &items.insert_tids[i], (const void *) &items.lookup_tids[i]) != 0)
+		if (itemptr_cmp(&items.insert_tids[i], &items.lookup_tids[i]) != 0)
 			elog(ERROR, "TID lookup array doesn't match verification array, got (%u,%u) expected (%u,%u)",
 				 ItemPointerGetBlockNumber(&items.lookup_tids[i]),
 				 ItemPointerGetOffsetNumber(&items.lookup_tids[i]),

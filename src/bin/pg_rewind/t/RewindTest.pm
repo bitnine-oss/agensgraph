@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 package RewindTest;
 
@@ -69,8 +69,9 @@ sub primary_psql
 	my $cmd = shift;
 	my $dbname = shift || 'postgres';
 
-	system_or_bail 'psql', '-q', '--no-psqlrc', '-d',
-	  $node_primary->connstr($dbname), '-c', "$cmd";
+	system_or_bail 'psql', '--quiet', '--no-psqlrc',
+	  '--dbname' => $node_primary->connstr($dbname),
+	  '--command' => $cmd;
 	return;
 }
 
@@ -79,8 +80,9 @@ sub standby_psql
 	my $cmd = shift;
 	my $dbname = shift || 'postgres';
 
-	system_or_bail 'psql', '-q', '--no-psqlrc', '-d',
-	  $node_standby->connstr($dbname), '-c', "$cmd";
+	system_or_bail 'psql', '--quiet', '--no-psqlrc',
+	  '--dbname' => $node_standby->connstr($dbname),
+	  '--command' => $cmd;
 	return;
 }
 
@@ -95,11 +97,12 @@ sub check_query
 
 	# we want just the output, no formatting
 	my $result = run [
-		'psql', '-q', '-A', '-t', '--no-psqlrc', '-d',
-		$node_primary->connstr('postgres'),
-		'-c', $query
+		'psql', '--quiet', '--no-align', '--tuples-only', '--no-psqlrc',
+		'--dbname' => $node_primary->connstr('postgres'),
+		'--command' => $query
 	  ],
-	  '>', \$stdout, '2>', \$stderr;
+	  '>' => \$stdout,
+	  '2>' => \$stderr;
 
 	is($result, 1, "$test_name: psql exit code");
 	is($stderr, '', "$test_name: psql no stderr");
@@ -124,7 +127,7 @@ sub setup_cluster
 	$node_primary->init(
 		allows_streaming => 1,
 		extra => $extra,
-		auth_extra => [ '--create-role', 'rewind_user' ]);
+		auth_extra => [ '--create-role' => 'rewind_user' ]);
 
 	# Set wal_keep_size to prevent WAL segment recycling after enforced
 	# checkpoints in the tests.
@@ -255,12 +258,11 @@ sub run_pg_rewind
 		command_ok(
 			[
 				'pg_rewind',
-				"--debug",
-				"--source-pgdata=$standby_pgdata",
-				"--target-pgdata=$primary_pgdata",
-				"--no-sync",
-				"--config-file",
-				"$tmp_folder/primary-postgresql.conf.tmp"
+				'--debug',
+				'--source-pgdata' => $standby_pgdata,
+				'--target-pgdata' => $primary_pgdata,
+				'--no-sync',
+				'--config-file' => "$tmp_folder/primary-postgresql.conf.tmp",
 			],
 			'pg_rewind local');
 	}
@@ -270,13 +272,20 @@ sub run_pg_rewind
 		# recovery configuration automatically.
 		command_ok(
 			[
-				'pg_rewind', "--debug",
-				"--source-server", $standby_connstr,
-				"--target-pgdata=$primary_pgdata", "--no-sync",
-				"--write-recovery-conf", "--config-file",
-				"$tmp_folder/primary-postgresql.conf.tmp"
+				'pg_rewind',
+				'--debug',
+				'--source-server' => $standby_connstr,
+				'--target-pgdata' => $primary_pgdata,
+				'--no-sync',
+				'--write-recovery-conf',
+				'--config-file' => "$tmp_folder/primary-postgresql.conf.tmp",
 			],
 			'pg_rewind remote');
+
+		# Check that pg_rewind with dbname and --write-recovery-conf
+		# wrote the dbname in the generated primary_conninfo value.
+		like(slurp_file("$primary_pgdata/postgresql.auto.conf"),
+			qr/dbname=postgres/m, 'recovery conf file sets dbname');
 
 		# Check that standby.signal is here as recovery configuration
 		# was requested.
@@ -327,14 +336,13 @@ sub run_pg_rewind
 		command_ok(
 			[
 				'pg_rewind',
-				"--debug",
-				"--source-pgdata=$standby_pgdata",
-				"--target-pgdata=$primary_pgdata",
-				"--no-sync",
-				"--no-ensure-shutdown",
-				"--restore-target-wal",
-				"--config-file",
-				"$primary_pgdata/postgresql.conf"
+				'--debug',
+				'--source-pgdata' => $standby_pgdata,
+				'--target-pgdata' => $primary_pgdata,
+				'--no-sync',
+				'--no-ensure-shutdown',
+				'--restore-target-wal',
+				'--config-file' => "$primary_pgdata/postgresql.conf",
 			],
 			'pg_rewind archive');
 	}

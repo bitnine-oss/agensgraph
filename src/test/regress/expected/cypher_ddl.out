@@ -327,6 +327,9 @@ ALTER VLABEL v0 SET STORAGE external;
  properties | jsonb   |           | not null | jsonb_build_object()                                                        | external |              | 
 Indexes:
     "v0_pkey" PRIMARY KEY, btree (id)
+Not-null constraints:
+    "v0_id_not_null" NOT NULL "id" (local, inherited)
+    "v0_properties_not_null" NOT NULL "properties" (local, inherited)
 Inherits: ddl.ag_vertex
 Child tables: ddl.v00,
               ddl.v01

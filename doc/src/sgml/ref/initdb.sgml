@@ -227,7 +227,7 @@ PostgreSQL documentation
       </listitem>
      </varlistentry>
 
-     <varlistentry id="app-initdb-allow-group-access" xreflabel="group access">
+     <varlistentry id="app-initdb-allow-group-access">
       <term><option>-g</option></term>
       <term><option>--allow-group-access</option></term>
       <listitem>
@@ -260,14 +260,20 @@ PostgreSQL documentation
       </listitem>
      </varlistentry>
 
-     <varlistentry id="app-initdb-data-checksums" xreflabel="data checksums">
+     <varlistentry id="app-initdb-data-checksums">
       <term><option>-k</option></term>
       <term><option>--data-checksums</option></term>
       <listitem>
        <para>
-        Use checksums on data pages to help detect corruption by the
-        I/O system that would otherwise be silent. Enabling checksums
-        may incur a noticeable performance penalty. If set, checksums
+        Use checksums on data pages to help detect corruption by the I/O
+        system that would otherwise be silent.  This is enabled by default;
+        use <xref linkend="app-initdb-no-data-checksums"/> to disable
+        checksums.
+       </para>
+
+       <para>
+        Enabling checksums
+        might incur a small performance penalty. If set, checksums
         are calculated for all objects, in all databases. All checksum
         failures will be reported in the
         <link linkend="monitoring-pg-stat-database-view">
@@ -289,8 +295,8 @@ PostgreSQL documentation
        <para>
         If <option>--locale-provider</option> is <literal>builtin</literal>,
         <option>--locale</option> or <option>--builtin-locale</option> must be
-        specified and set to <literal>C</literal> or
-        <literal>C.UTF-8</literal>.
+        specified and set to <literal>C</literal>, <literal>C.UTF-8</literal>
+        or <literal>PG_UNICODE_FAST</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -339,6 +345,15 @@ PostgreSQL documentation
         DATABASE</command> command when new databases are subsequently
         created.  The default is <literal>libc</literal> (see <xref
         linkend="locale-providers"/>).
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="app-initdb-no-data-checksums">
+      <term><option>--no-data-checksums</option></term>
+      <listitem>
+       <para>
+        Do not enable data checksums.
        </para>
       </listitem>
      </varlistentry>
@@ -508,6 +523,33 @@ PostgreSQL documentation
         subsequent operating system crash can leave the data directory
         corrupt.  Generally, this option is useful for testing, but should not
         be used when creating a production installation.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="app-initdb-option-no-sync-data-files">
+      <term><option>--no-sync-data-files</option></term>
+      <listitem>
+       <para>
+        By default, <command>initdb</command> safely writes all database files
+        to disk.  This option instructs <command>initdb</command> to skip
+        synchronizing all files in the individual database directories, the
+        database directories themselves, and the tablespace directories, i.e.,
+        everything in the <filename>base</filename> subdirectory and any other
+        tablespace directories.  Other files, such as those in
+        <literal>pg_wal</literal> and <literal>pg_xact</literal>, will still be
+        synchronized unless the <option>--no-sync</option> option is also
+        specified.
+       </para>
+       <para>
+        Note that if <option>--no-sync-data-files</option> is used in
+        conjunction with <option>--sync-method=syncfs</option>, some or all of
+        the aforementioned files and directories will be synchronized because
+        <literal>syncfs</literal> processes entire file systems.
+       </para>
+       <para>
+        This option is primarily intended for internal use by tools that
+        separately ensure the skipped files are synchronized to disk.
        </para>
       </listitem>
      </varlistentry>

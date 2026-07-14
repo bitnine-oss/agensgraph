@@ -20,7 +20,7 @@
  * appropriate value for a free lock.  The meaning of the variable is up to
  * the caller, the lightweight lock code just assigns and compares it.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -60,7 +60,7 @@
  * The attentive reader might have noticed that naively doing the above has a
  * glaring race condition: We try to lock using the atomic operations and
  * notice that we have to wait. Unfortunately by the time we have finished
- * queuing, the former locker very well might have already finished it's
+ * queuing, the former locker very well might have already finished its
  * work. That's problematic because we're now stuck waiting inside the OS.
 
  * To mitigate those races we use a two phased attempt at locking:
@@ -80,9 +80,9 @@
 #include "pg_trace.h"
 #include "pgstat.h"
 #include "port/pg_bitutils.h"
-#include "postmaster/postmaster.h"
 #include "storage/proc.h"
 #include "storage/proclist.h"
+#include "storage/procnumber.h"
 #include "storage/spin.h"
 #include "utils/memutils.h"
 
@@ -91,27 +91,34 @@
 #endif
 
 
-/* We use the ShmemLock spinlock to protect LWLockCounter */
-extern slock_t *ShmemLock;
+#define LW_FLAG_HAS_WAITERS			((uint32) 1 << 31)
+#define LW_FLAG_RELEASE_OK			((uint32) 1 << 30)
+#define LW_FLAG_LOCKED				((uint32) 1 << 29)
+#define LW_FLAG_BITS				3
+#define LW_FLAG_MASK				(((1<<LW_FLAG_BITS)-1)<<(32-LW_FLAG_BITS))
 
-#define LW_FLAG_HAS_WAITERS			((uint32) 1 << 30)
-#define LW_FLAG_RELEASE_OK			((uint32) 1 << 29)
-#define LW_FLAG_LOCKED				((uint32) 1 << 28)
-
-#define LW_VAL_EXCLUSIVE			((uint32) 1 << 24)
+/* assumes MAX_BACKENDS is a (power of 2) - 1, checked below */
+#define LW_VAL_EXCLUSIVE			(MAX_BACKENDS + 1)
 #define LW_VAL_SHARED				1
 
-#define LW_LOCK_MASK				((uint32) ((1 << 25)-1))
-/* Must be greater than MAX_BACKENDS - which is 2^23-1, so we're fine. */
-#define LW_SHARED_MASK				((uint32) ((1 << 24)-1))
+/* already (power of 2)-1, i.e. suitable for a mask */
+#define LW_SHARED_MASK				MAX_BACKENDS
+#define LW_LOCK_MASK				(MAX_BACKENDS | LW_VAL_EXCLUSIVE)
 
-StaticAssertDecl(LW_VAL_EXCLUSIVE > (uint32) MAX_BACKENDS,
-				 "MAX_BACKENDS too big for lwlock.c");
+
+StaticAssertDecl(((MAX_BACKENDS + 1) & MAX_BACKENDS) == 0,
+				 "MAX_BACKENDS + 1 needs to be a power of 2");
+
+StaticAssertDecl((MAX_BACKENDS & LW_FLAG_MASK) == 0,
+				 "MAX_BACKENDS and LW_FLAG_MASK overlap");
+
+StaticAssertDecl((LW_VAL_EXCLUSIVE & LW_FLAG_MASK) == 0,
+				 "LW_VAL_EXCLUSIVE and LW_FLAG_MASK overlap");
 
 /*
  * There are three sorts of LWLock "tranches":
  *
- * 1. The individually-named locks defined in lwlocknames.h each have their
+ * 1. The individually-named locks defined in lwlocklist.h each have their
  * own tranche.  We absorb the names of these tranches from there into
  * BuiltinTrancheNames here.
  *
@@ -127,7 +134,7 @@ StaticAssertDecl(LW_VAL_EXCLUSIVE > (uint32) MAX_BACKENDS,
  * ... and do not forget to update the documentation's list of wait events.
  */
 static const char *const BuiltinTrancheNames[] = {
-#define PG_LWLOCK(id, lockname) [id] = CppAsString(lockname) "Lock",
+#define PG_LWLOCK(id, lockname) [id] = CppAsString(lockname),
 #include "storage/lwlocklist.h"
 #undef PG_LWLOCK
 	[LWTRANCHE_XACT_BUFFER] = "XactBuffer",
@@ -146,6 +153,7 @@ static const char *const BuiltinTrancheNames[] = {
 	[LWTRANCHE_LOCK_MANAGER] = "LockManager",
 	[LWTRANCHE_PREDICATE_LOCK_MANAGER] = "PredicateLockManager",
 	[LWTRANCHE_PARALLEL_HASH_JOIN] = "ParallelHashJoin",
+	[LWTRANCHE_PARALLEL_BTREE_SCAN] = "ParallelBtreeScan",
 	[LWTRANCHE_PARALLEL_QUERY_DSA] = "ParallelQueryDSA",
 	[LWTRANCHE_PER_SESSION_DSA] = "PerSessionDSA",
 	[LWTRANCHE_PER_SESSION_RECORD_TYPE] = "PerSessionRecordType",
@@ -161,7 +169,7 @@ static const char *const BuiltinTrancheNames[] = {
 	[LWTRANCHE_LAUNCHER_HASH] = "LogicalRepLauncherHash",
 	[LWTRANCHE_DSM_REGISTRY_DSA] = "DSMRegistryDSA",
 	[LWTRANCHE_DSM_REGISTRY_HASH] = "DSMRegistryHash",
-	[LWTRANCHE_COMMITTS_SLRU] = "CommitTSSLRU",
+	[LWTRANCHE_COMMITTS_SLRU] = "CommitTsSLRU",
 	[LWTRANCHE_MULTIXACTOFFSET_SLRU] = "MultixactOffsetSLRU",
 	[LWTRANCHE_MULTIXACTMEMBER_SLRU] = "MultixactMemberSLRU",
 	[LWTRANCHE_NOTIFY_SLRU] = "NotifySLRU",
@@ -169,6 +177,7 @@ static const char *const BuiltinTrancheNames[] = {
 	[LWTRANCHE_SUBTRANS_SLRU] = "SubtransSLRU",
 	[LWTRANCHE_XACT_SLRU] = "XactSLRU",
 	[LWTRANCHE_PARALLEL_VACUUM_DSA] = "ParallelVacuumDSA",
+	[LWTRANCHE_AIO_URING_COMPLETION] = "AioUringCompletion",
 };
 
 StaticAssertDecl(lengthof(BuiltinTrancheNames) ==
@@ -609,6 +618,7 @@ LWLockNewTrancheId(void)
 	int		   *LWLockCounter;
 
 	LWLockCounter = (int *) ((char *) MainLWLockArray - sizeof(int));
+	/* We use the ShmemLock spinlock to protect LWLockCounter */
 	SpinLockAcquire(ShmemLock);
 	result = (*LWLockCounter)++;
 	SpinLockRelease(ShmemLock);
@@ -1777,14 +1787,25 @@ LWLockUpdateVar(LWLock *lock, pg_atomic_uint64 *valptr, uint64 val)
 
 
 /*
- * LWLockRelease - release a previously acquired lock
+ * Stop treating lock as held by current backend.
+ *
+ * This is the code that can be shared between actually releasing a lock
+ * (LWLockRelease()) and just not tracking ownership of the lock anymore
+ * without releasing the lock (LWLockDisown()).
+ *
+ * Returns the mode in which the lock was held by the current backend.
+ *
+ * NB: This does not call RESUME_INTERRUPTS(), but leaves that responsibility
+ * of the caller.
+ *
+ * NB: This will leave lock->owner pointing to the current backend (if
+ * LOCK_DEBUG is set). This is somewhat intentional, as it makes it easier to
+ * debug cases of missing wakeups during lock release.
  */
-void
-LWLockRelease(LWLock *lock)
+static inline LWLockMode
+LWLockDisownInternal(LWLock *lock)
 {
 	LWLockMode	mode;
-	uint32		oldstate;
-	bool		check_waiters;
 	int			i;
 
 	/*
@@ -1804,7 +1825,18 @@ LWLockRelease(LWLock *lock)
 	for (; i < num_held_lwlocks; i++)
 		held_lwlocks[i] = held_lwlocks[i + 1];
 
-	PRINT_LWDEBUG("LWLockRelease", lock, mode);
+	return mode;
+}
+
+/*
+ * Helper function to release lock, shared between LWLockRelease() and
+ * LWLockReleaseDisowned().
+ */
+static void
+LWLockReleaseInternal(LWLock *lock, LWLockMode mode)
+{
+	uint32		oldstate;
+	bool		check_waiters;
 
 	/*
 	 * Release my hold on lock, after that it can immediately be acquired by
@@ -1842,11 +1874,52 @@ LWLockRelease(LWLock *lock)
 		LOG_LWDEBUG("LWLockRelease", lock, "releasing waiters");
 		LWLockWakeup(lock);
 	}
+}
+
+
+/*
+ * Stop treating lock as held by current backend.
+ *
+ * After calling this function it's the callers responsibility to ensure that
+ * the lock gets released (via LWLockReleaseDisowned()), even in case of an
+ * error. This only is desirable if the lock is going to be released in a
+ * different process than the process that acquired it.
+ */
+void
+LWLockDisown(LWLock *lock)
+{
+	LWLockDisownInternal(lock);
+
+	RESUME_INTERRUPTS();
+}
+
+/*
+ * LWLockRelease - release a previously acquired lock
+ */
+void
+LWLockRelease(LWLock *lock)
+{
+	LWLockMode	mode;
+
+	mode = LWLockDisownInternal(lock);
+
+	PRINT_LWDEBUG("LWLockRelease", lock, mode);
+
+	LWLockReleaseInternal(lock, mode);
 
 	/*
 	 * Now okay to allow cancel/die interrupts.
 	 */
 	RESUME_INTERRUPTS();
+}
+
+/*
+ * Release lock previously disowned with LWLockDisown().
+ */
+void
+LWLockReleaseDisowned(LWLock *lock, LWLockMode mode)
+{
+	LWLockReleaseInternal(lock, mode);
 }
 
 /*
@@ -1885,6 +1958,21 @@ LWLockReleaseAll(void)
 	}
 }
 
+
+/*
+ * ForEachLWLockHeldByMe - run a callback for each held lock
+ *
+ * This is meant as debug support only.
+ */
+void
+ForEachLWLockHeldByMe(void (*callback) (LWLock *, LWLockMode, void *),
+					  void *context)
+{
+	int			i;
+
+	for (i = 0; i < num_held_lwlocks; i++)
+		callback(held_lwlocks[i].lock, held_lwlocks[i].mode, context);
+}
 
 /*
  * LWLockHeldByMe - test whether my process holds a lock in any mode

@@ -172,6 +172,17 @@ select x, not x as not_x, q2 from
   group by grouping sets(x, q2)
   order by x, q2;
 
+select x, y
+  from (select four as x, four as y from tenk1) as t
+  group by grouping sets (x, y)
+  having y is null
+  order by 1, 2;
+
+select x, y || 'y'
+  from (select four as x, four as y from tenk1) as t
+  group by grouping sets (x, y)
+  order by 1, 2;
+
 -- check qual push-down rules for a subquery with grouping sets
 explain (verbose, costs off)
 select * from (
@@ -278,6 +289,11 @@ select v.c, (select count(*) from gstest2 group by () having v.c)
 explain (costs off)
   select v.c, (select count(*) from gstest2 group by () having v.c)
     from (values (false),(true)) v(c) order by v.c;
+
+-- test pushdown of HAVING clause that does not reference any columns that are nullable by grouping sets
+explain (costs off)
+select a, b, count(*) from gstest2 group by grouping sets ((a, b), (a)) having a > 1 and b > 1;
+select a, b, count(*) from gstest2 group by grouping sets ((a, b), (a)) having a > 1 and b > 1;
 
 -- HAVING with GROUPING queries
 select ten, grouping(ten) from onek
@@ -588,5 +604,103 @@ select (select grouping(v1)) from (values ((select 1))) v(v1) group by cube(v1);
 explain (costs off)
 select (select grouping(v1)) from (values ((select 1))) v(v1) group by v1;
 select (select grouping(v1)) from (values ((select 1))) v(v1) group by v1;
+
+-- test handling of subqueries in grouping sets
+create temp table gstest5(id integer primary key, v integer);
+insert into gstest5 select i, i from generate_series(1,5)i;
+
+explain (verbose, costs off)
+select grouping((select t1.v from gstest5 t2 where id = t1.id)),
+       (select t1.v from gstest5 t2 where id = t1.id) as s
+from gstest5 t1
+group by grouping sets(v, s)
+order by case when grouping((select t1.v from gstest5 t2 where id = t1.id)) = 0
+              then (select t1.v from gstest5 t2 where id = t1.id)
+              else null end
+         nulls first;
+
+select grouping((select t1.v from gstest5 t2 where id = t1.id)),
+       (select t1.v from gstest5 t2 where id = t1.id) as s
+from gstest5 t1
+group by grouping sets(v, s)
+order by case when grouping((select t1.v from gstest5 t2 where id = t1.id)) = 0
+              then (select t1.v from gstest5 t2 where id = t1.id)
+              else null end
+         nulls first;
+
+explain (verbose, costs off)
+select grouping((select t1.v from gstest5 t2 where id = t1.id)),
+       (select t1.v from gstest5 t2 where id = t1.id) as s,
+       case when grouping((select t1.v from gstest5 t2 where id = t1.id)) = 0
+            then (select t1.v from gstest5 t2 where id = t1.id)
+            else null end as o
+from gstest5 t1
+group by grouping sets(v, s)
+order by o nulls first;
+
+select grouping((select t1.v from gstest5 t2 where id = t1.id)),
+       (select t1.v from gstest5 t2 where id = t1.id) as s,
+       case when grouping((select t1.v from gstest5 t2 where id = t1.id)) = 0
+            then (select t1.v from gstest5 t2 where id = t1.id)
+            else null end as o
+from gstest5 t1
+group by grouping sets(v, s)
+order by o nulls first;
+
+-- test handling of expressions that should match lower target items
+explain (costs off)
+select a < b and b < 3 from (values (1, 2)) t(a, b) group by rollup(a < b and b < 3) having a < b and b < 3;
+select a < b and b < 3 from (values (1, 2)) t(a, b) group by rollup(a < b and b < 3) having a < b and b < 3;
+
+explain (costs off)
+select not a from (values(true)) t(a) group by rollup(not a) having not not a;
+select not a from (values(true)) t(a) group by rollup(not a) having not not a;
+
+-- test handling of expressions nullable by grouping sets
+explain (costs off)
+select distinct on (a, b) a, b
+from (values (1, 1), (2, 2)) as t (a, b) where a = b
+group by grouping sets((a, b), (a))
+order by a, b;
+
+select distinct on (a, b) a, b
+from (values (1, 1), (2, 2)) as t (a, b) where a = b
+group by grouping sets((a, b), (a))
+order by a, b;
+
+explain (costs off)
+select distinct on (a, b+1) a, b+1
+from (values (1, 0), (2, 1)) as t (a, b) where a = b+1
+group by grouping sets((a, b+1), (a))
+order by a, b+1;
+
+select distinct on (a, b+1) a, b+1
+from (values (1, 0), (2, 1)) as t (a, b) where a = b+1
+group by grouping sets((a, b+1), (a))
+order by a, b+1;
+
+explain (costs off)
+select a, b
+from (values (1, 1), (2, 2)) as t (a, b) where a = b
+group by grouping sets((a, b), (a))
+order by a, b nulls first;
+
+select a, b
+from (values (1, 1), (2, 2)) as t (a, b) where a = b
+group by grouping sets((a, b), (a))
+order by a, b nulls first;
+
+explain (costs off)
+select 1 as one group by rollup(one) order by one nulls first;
+select 1 as one group by rollup(one) order by one nulls first;
+
+explain (costs off)
+select a, b, row_number() over (order by a, b nulls first)
+from (values (1, 1), (2, 2)) as t (a, b) where a = b
+group by grouping sets((a, b), (a));
+
+select a, b, row_number() over (order by a, b nulls first)
+from (values (1, 1), (2, 2)) as t (a, b) where a = b
+group by grouping sets((a, b), (a));
 
 -- end

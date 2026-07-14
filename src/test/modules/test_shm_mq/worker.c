@@ -9,7 +9,7 @@
  *		but it should be possible to use much of the control logic just
  *		as presented here.
  *
- * Copyright (c) 2013-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/test_shm_mq/worker.c
@@ -77,7 +77,7 @@ test_shm_mq_main(Datum main_arg)
 	 * exit, which is fine.  If there were a ResourceOwner, it would acquire
 	 * ownership of the mapping, but we have no need for that.
 	 */
-	seg = dsm_attach(DatumGetInt32(main_arg));
+	seg = dsm_attach(DatumGetUInt32(main_arg));
 	if (seg == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),

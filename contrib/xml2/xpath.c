@@ -11,7 +11,6 @@
 #include "fmgr.h"
 #include "funcapi.h"
 #include "lib/stringinfo.h"
-#include "miscadmin.h"
 #include "utils/builtins.h"
 #include "utils/xml.h"
 
@@ -23,7 +22,10 @@
 #include <libxml/xmlerror.h>
 #include <libxml/parserInternals.h>
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "xml2",
+					.version = PG_VERSION
+);
 
 /* exported for use by xslt_proc.c */
 
@@ -279,8 +281,8 @@ xpath_string(PG_FUNCTION_ARGS)
 	/* We could try casting to string using the libxml function? */
 
 	xpath = (xmlChar *) palloc(pathsize + 9);
-	memcpy((char *) xpath, "string(", 7);
-	memcpy((char *) (xpath + 7), VARDATA_ANY(xpathsupp), pathsize);
+	memcpy(xpath, "string(", 7);
+	memcpy(xpath + 7, VARDATA_ANY(xpathsupp), pathsize);
 	xpath[pathsize + 7] = ')';
 	xpath[pathsize + 8] = '\0';
 
@@ -386,9 +388,9 @@ pgxml_xpath(text *document, xmlChar *xpath, xpath_workspace *workspace)
 			workspace->ctxt->node = xmlDocGetRootElement(workspace->doctree);
 
 			/* compile the path */
-			comppath = xmlXPathCompile(xpath);
+			comppath = xmlXPathCtxtCompile(workspace->ctxt, xpath);
 			if (comppath == NULL)
-				xml_ereport(xmlerrcxt, ERROR, ERRCODE_EXTERNAL_ROUTINE_EXCEPTION,
+				xml_ereport(xmlerrcxt, ERROR, ERRCODE_INVALID_ARGUMENT_FOR_XQUERY,
 							"XPath Syntax Error");
 
 			/* Now evaluate the path expression. */
@@ -560,8 +562,7 @@ xpath_table(PG_FUNCTION_ARGS)
 					 relname,
 					 condition);
 
-	if ((ret = SPI_connect()) < 0)
-		elog(ERROR, "xpath_table: SPI_connect returned %d", ret);
+	SPI_connect();
 
 	if ((ret = SPI_exec(query_buf.data, 0)) != SPI_OK_SELECT)
 		elog(ERROR, "xpath_table: SPI execution failed for query %s",
@@ -650,10 +651,10 @@ xpath_table(PG_FUNCTION_ARGS)
 						ctxt->node = xmlDocGetRootElement(doctree);
 
 						/* compile the path */
-						comppath = xmlXPathCompile(xpaths[j]);
+						comppath = xmlXPathCtxtCompile(ctxt, xpaths[j]);
 						if (comppath == NULL)
 							xml_ereport(xmlerrcxt, ERROR,
-										ERRCODE_EXTERNAL_ROUTINE_EXCEPTION,
+										ERRCODE_INVALID_ARGUMENT_FOR_XQUERY,
 										"XPath Syntax Error");
 
 						/* Now evaluate the path expression. */

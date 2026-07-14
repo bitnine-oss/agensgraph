@@ -4,7 +4,7 @@
  *	  support for communication destinations
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -33,7 +33,7 @@
 #include "access/xact.h"
 #include "commands/copy.h"
 #include "commands/createas.h"
-#include "commands/explain.h"
+#include "commands/explain_dr.h"
 #include "commands/matview.h"
 #include "executor/functions.h"
 #include "executor/tqueue.h"

@@ -3,7 +3,7 @@
  * blinsert.c
  *		Bloom index build and insert functions.
  *
- * Copyright (c) 2016-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/bloom/blinsert.c
@@ -16,15 +16,16 @@
 #include "access/generic_xlog.h"
 #include "access/tableam.h"
 #include "bloom.h"
-#include "catalog/index.h"
 #include "miscadmin.h"
+#include "nodes/execnodes.h"
 #include "storage/bufmgr.h"
-#include "storage/indexfsm.h"
-#include "storage/smgr.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "bloom",
+					.version = PG_VERSION
+);
 
 /*
  * State of bloom index build.  We accumulate one page data here before
@@ -141,7 +142,7 @@ blbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 
 	/* Do the heap scan */
 	reltuples = table_index_build_scan(heap, index, indexInfo, true, true,
-									   bloomBuildCallback, (void *) &buildstate,
+									   bloomBuildCallback, &buildstate,
 									   NULL);
 
 	/* Flush last page if needed (it will be, unless heap was empty) */

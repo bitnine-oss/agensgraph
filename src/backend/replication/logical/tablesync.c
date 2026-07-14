@@ -2,7 +2,7 @@
  * tablesync.c
  *	  PostgreSQL logical replication: initial table data synchronization
  *
- * Copyright (c) 2012-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/tablesync.c
@@ -139,8 +139,7 @@ static StringInfo copybuf = NULL;
 /*
  * Exit routine for synchronization worker.
  */
-static void
-pg_attribute_noreturn()
+pg_noreturn static void
 finish_sync_worker(void)
 {
 	/*
@@ -604,14 +603,19 @@ process_syncing_tables_for_apply(XLogRecPtr current_lsn)
 						TimestampDifferenceExceeds(hentry->last_start_time, now,
 												   wal_retrieve_retry_interval))
 					{
-						logicalrep_worker_launch(WORKERTYPE_TABLESYNC,
-												 MyLogicalRepWorker->dbid,
-												 MySubscription->oid,
-												 MySubscription->name,
-												 MyLogicalRepWorker->userid,
-												 rstate->relid,
-												 DSM_HANDLE_INVALID);
+						/*
+						 * Set the last_start_time even if we fail to start
+						 * the worker, so that we won't retry until
+						 * wal_retrieve_retry_interval has elapsed.
+						 */
 						hentry->last_start_time = now;
+						(void) logicalrep_worker_launch(WORKERTYPE_TABLESYNC,
+														MyLogicalRepWorker->dbid,
+														MySubscription->oid,
+														MySubscription->name,
+														MyLogicalRepWorker->userid,
+														rstate->relid,
+														DSM_HANDLE_INVALID);
 					}
 				}
 			}
@@ -760,7 +764,7 @@ copy_read_data(void *outbuf, int minread, int maxread)
 				if (avail > maxread)
 					avail = maxread;
 				memcpy(outbuf, &copybuf->data[copybuf->cursor], avail);
-				outbuf = (void *) ((char *) outbuf + avail);
+				outbuf = (char *) outbuf + avail;
 				copybuf->cursor += avail;
 				maxread -= avail;
 				bytesread += avail;
@@ -787,23 +791,27 @@ copy_read_data(void *outbuf, int minread, int maxread)
 
 /*
  * Get information about remote relation in similar fashion the RELATION
- * message provides during replication. This function also returns the relation
- * qualifications to be used in the COPY command.
+ * message provides during replication.
+ *
+ * This function also returns (a) the relation qualifications to be used in
+ * the COPY command, and (b) whether the remote relation has published any
+ * generated column.
  */
 static void
-fetch_remote_table_info(char *nspname, char *relname,
-						LogicalRepRelation *lrel, List **qual)
+fetch_remote_table_info(char *nspname, char *relname, LogicalRepRelation *lrel,
+						List **qual, bool *gencol_published)
 {
 	WalRcvExecResult *res;
 	StringInfoData cmd;
 	TupleTableSlot *slot;
 	Oid			tableRow[] = {OIDOID, CHAROID, CHAROID};
-	Oid			attrRow[] = {INT2OID, TEXTOID, OIDOID, BOOLOID};
+	Oid			attrRow[] = {INT2OID, TEXTOID, OIDOID, BOOLOID, BOOLOID};
 	Oid			qualRow[] = {TEXTOID};
 	bool		isnull;
 	int			natt;
-	ListCell   *lc;
+	StringInfo	pub_names = NULL;
 	Bitmapset  *included_cols = NULL;
+	int			server_version = walrcv_server_version(LogRepWorkerWalRcvConn);
 
 	lrel->nspname = nspname;
 	lrel->relname = relname;
@@ -851,20 +859,15 @@ fetch_remote_table_info(char *nspname, char *relname,
 	 * We need to do this before fetching info about column names and types,
 	 * so that we can skip columns that should not be replicated.
 	 */
-	if (walrcv_server_version(LogRepWorkerWalRcvConn) >= 150000)
+	if (server_version >= 150000)
 	{
 		WalRcvExecResult *pubres;
 		TupleTableSlot *tslot;
 		Oid			attrsRow[] = {INT2VECTOROID};
-		StringInfoData pub_names;
 
-		initStringInfo(&pub_names);
-		foreach(lc, MySubscription->publications)
-		{
-			if (foreach_current_index(lc) > 0)
-				appendStringInfoString(&pub_names, ", ");
-			appendStringInfoString(&pub_names, quote_literal_cstr(strVal(lfirst(lc))));
-		}
+		/* Build the pub_names comma-separated string. */
+		pub_names = makeStringInfo();
+		GetPublicationsStr(MySubscription->publications, pub_names, true);
 
 		/*
 		 * Fetch info about column lists for the relation (from all the
@@ -881,7 +884,7 @@ fetch_remote_table_info(char *nspname, char *relname,
 						 " WHERE gpt.relid = %u AND c.oid = gpt.relid"
 						 "   AND p.pubname IN ( %s )",
 						 lrel->remoteid,
-						 pub_names.data);
+						 pub_names->data);
 
 		pubres = walrcv_exec(LogRepWorkerWalRcvConn, cmd.data,
 							 lengthof(attrsRow), attrsRow);
@@ -936,19 +939,23 @@ fetch_remote_table_info(char *nspname, char *relname,
 		ExecDropSingleTupleTableSlot(tslot);
 
 		walrcv_clear_result(pubres);
-
-		pfree(pub_names.data);
 	}
 
 	/*
 	 * Now fetch column names and types.
 	 */
 	resetStringInfo(&cmd);
+	appendStringInfoString(&cmd,
+						   "SELECT a.attnum,"
+						   "       a.attname,"
+						   "       a.atttypid,"
+						   "       a.attnum = ANY(i.indkey)");
+
+	/* Generated columns can be replicated since version 18. */
+	if (server_version >= 180000)
+		appendStringInfoString(&cmd, ", a.attgenerated != ''");
+
 	appendStringInfo(&cmd,
-					 "SELECT a.attnum,"
-					 "       a.attname,"
-					 "       a.atttypid,"
-					 "       a.attnum = ANY(i.indkey)"
 					 "  FROM pg_catalog.pg_attribute a"
 					 "  LEFT JOIN pg_catalog.pg_index i"
 					 "       ON (i.indexrelid = pg_get_replica_identity_index(%u))"
@@ -957,11 +964,11 @@ fetch_remote_table_info(char *nspname, char *relname,
 					 "   AND a.attrelid = %u"
 					 " ORDER BY a.attnum",
 					 lrel->remoteid,
-					 (walrcv_server_version(LogRepWorkerWalRcvConn) >= 120000 ?
+					 (server_version >= 120000 && server_version < 180000 ?
 					  "AND a.attgenerated = ''" : ""),
 					 lrel->remoteid);
 	res = walrcv_exec(LogRepWorkerWalRcvConn, cmd.data,
-					  lengthof(attrRow), attrRow);
+					  server_version >= 180000 ? lengthof(attrRow) : lengthof(attrRow) - 1, attrRow);
 
 	if (res->status != WALRCV_OK_TUPLES)
 		ereport(ERROR,
@@ -1005,6 +1012,13 @@ fetch_remote_table_info(char *nspname, char *relname,
 		if (DatumGetBool(slot_getattr(slot, 4, &isnull)))
 			lrel->attkeys = bms_add_member(lrel->attkeys, natt);
 
+		/* Remember if the remote table has published any generated column. */
+		if (server_version >= 180000 && !(*gencol_published))
+		{
+			*gencol_published = DatumGetBool(slot_getattr(slot, 5, &isnull));
+			Assert(!isnull);
+		}
+
 		/* Should never happen. */
 		if (++natt >= MaxTupleAttributeNumber)
 			elog(ERROR, "too many columns in remote table \"%s.%s\"",
@@ -1037,21 +1051,10 @@ fetch_remote_table_info(char *nspname, char *relname,
 	 * 3) one of the subscribed publications is declared as TABLES IN SCHEMA
 	 * that includes this relation
 	 */
-	if (walrcv_server_version(LogRepWorkerWalRcvConn) >= 150000)
+	if (server_version >= 150000)
 	{
-		StringInfoData pub_names;
-
-		/* Build the pubname list. */
-		initStringInfo(&pub_names);
-		foreach_node(String, pubstr, MySubscription->publications)
-		{
-			char	   *pubname = strVal(pubstr);
-
-			if (foreach_current_index(pubstr) > 0)
-				appendStringInfoString(&pub_names, ", ");
-
-			appendStringInfoString(&pub_names, quote_literal_cstr(pubname));
-		}
+		/* Reuse the already-built pub_names. */
+		Assert(pub_names != NULL);
 
 		/* Check for row filters. */
 		resetStringInfo(&cmd);
@@ -1062,7 +1065,7 @@ fetch_remote_table_info(char *nspname, char *relname,
 						 " WHERE gpt.relid = %u"
 						 "   AND p.pubname IN ( %s )",
 						 lrel->remoteid,
-						 pub_names.data);
+						 pub_names->data);
 
 		res = walrcv_exec(LogRepWorkerWalRcvConn, cmd.data, 1, qualRow);
 
@@ -1101,6 +1104,7 @@ fetch_remote_table_info(char *nspname, char *relname,
 		ExecDropSingleTupleTableSlot(slot);
 
 		walrcv_clear_result(res);
+		destroyStringInfo(pub_names);
 	}
 
 	pfree(cmd.data);
@@ -1123,10 +1127,12 @@ copy_table(Relation rel)
 	List	   *attnamelist;
 	ParseState *pstate;
 	List	   *options = NIL;
+	bool		gencol_published = false;
 
 	/* Get the publisher relation info. */
 	fetch_remote_table_info(get_namespace_name(RelationGetNamespace(rel)),
-							RelationGetRelationName(rel), &lrel, &qual);
+							RelationGetRelationName(rel), &lrel, &qual,
+							&gencol_published);
 
 	/* Put the relation into relmap. */
 	logicalrep_relmap_update(&lrel);
@@ -1138,8 +1144,8 @@ copy_table(Relation rel)
 	/* Start copy on the publisher. */
 	initStringInfo(&cmd);
 
-	/* Regular table with no row filter */
-	if (lrel.relkind == RELKIND_RELATION && qual == NIL)
+	/* Regular table with no row filter or generated columns */
+	if (lrel.relkind == RELKIND_RELATION && qual == NIL && !gencol_published)
 	{
 		appendStringInfo(&cmd, "COPY %s",
 						 quote_qualified_identifier(lrel.nspname, lrel.relname));
@@ -1170,9 +1176,14 @@ copy_table(Relation rel)
 	{
 		/*
 		 * For non-tables and tables with row filters, we need to do COPY
-		 * (SELECT ...), but we can't just do SELECT * because we need to not
-		 * copy generated columns. For tables with any row filters, build a
-		 * SELECT query with OR'ed row filters for COPY.
+		 * (SELECT ...), but we can't just do SELECT * because we may need to
+		 * copy only subset of columns including generated columns. For tables
+		 * with any row filters, build a SELECT query with OR'ed row filters
+		 * for COPY.
+		 *
+		 * We also need to use this same COPY (SELECT ...) syntax when
+		 * generated columns are published, because copy of generated columns
+		 * is not supported by the normal COPY.
 		 */
 		appendStringInfoString(&cmd, "COPY (SELECT ");
 		for (int i = 0; i < lrel.natts; i++)
@@ -1342,7 +1353,8 @@ LogicalRepSyncTableStart(XLogRecPtr *origin_startpos)
 	if (LogRepWorkerWalRcvConn == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_CONNECTION_FAILURE),
-				 errmsg("could not connect to the publisher: %s", err)));
+				 errmsg("table synchronization worker for subscription \"%s\" could not connect to the publisher: %s",
+						MySubscription->name, err)));
 
 	Assert(MyLogicalRepWorker->relstate == SUBREL_STATE_INIT ||
 		   MyLogicalRepWorker->relstate == SUBREL_STATE_DATASYNC ||

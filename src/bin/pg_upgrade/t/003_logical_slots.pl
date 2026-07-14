@@ -1,4 +1,4 @@
-# Copyright (c) 2023-2024, PostgreSQL Global Development Group
+# Copyright (c) 2023-2025, PostgreSQL Global Development Group
 
 # Tests for upgrading logical replication slots
 
@@ -40,13 +40,13 @@ checkpoint_timeout = 1h
 # Setup a common pg_upgrade command to be used by all the test cases
 my @pg_upgrade_cmd = (
 	'pg_upgrade', '--no-sync',
-	'-d', $oldpub->data_dir,
-	'-D', $newpub->data_dir,
-	'-b', $oldpub->config_data('--bindir'),
-	'-B', $newpub->config_data('--bindir'),
-	'-s', $newpub->host,
-	'-p', $oldpub->port,
-	'-P', $newpub->port,
+	'--old-datadir' => $oldpub->data_dir,
+	'--new-datadir' => $newpub->data_dir,
+	'--old-bindir' => $oldpub->config_data('--bindir'),
+	'--new-bindir' => $newpub->config_data('--bindir'),
+	'--socketdir' => $newpub->host,
+	'--old-port' => $oldpub->port,
+	'--new-port' => $newpub->port,
 	$mode);
 
 # In a VPATH build, we'll be started in the source directory, but we want
@@ -117,7 +117,7 @@ command_checks_all(
 	[@pg_upgrade_cmd],
 	1,
 	[
-		qr/Your installation contains logical replication slots that can't be upgraded./
+		qr/Your installation contains logical replication slots that cannot be upgraded./
 	],
 	[qr//],
 	'run of pg_upgrade of old cluster with slots having unconsumed WAL records'

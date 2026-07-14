@@ -22,7 +22,7 @@
  * tuples (unless buffering mode is disabled).
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -273,7 +273,7 @@ gistbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 		/* Scan the table, adding all tuples to the tuplesort */
 		reltuples = table_index_build_scan(heap, index, indexInfo, true, true,
 										   gistSortedBuildCallback,
-										   (void *) &buildstate, NULL);
+										   &buildstate, NULL);
 
 		/*
 		 * Perform the sort and build index pages.
@@ -312,7 +312,7 @@ gistbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 		/* Scan the table, inserting all the tuples to the index. */
 		reltuples = table_index_build_scan(heap, index, indexInfo, true, true,
 										   gistBuildCallback,
-										   (void *) &buildstate, NULL);
+										   &buildstate, NULL);
 
 		/*
 		 * If buffering was used, flush out all the tuples that are still in
@@ -657,10 +657,12 @@ gistInitBuffering(GISTBuildState *buildstate)
 	itupMinSize = (Size) MAXALIGN(sizeof(IndexTupleData));
 	for (i = 0; i < index->rd_att->natts; i++)
 	{
-		if (TupleDescAttr(index->rd_att, i)->attlen < 0)
+		CompactAttribute *attr = TupleDescCompactAttr(index->rd_att, i);
+
+		if (attr->attlen < 0)
 			itupMinSize += VARHDRSZ;
 		else
-			itupMinSize += TupleDescAttr(index->rd_att, i)->attlen;
+			itupMinSize += attr->attlen;
 	}
 
 	/* Calculate average and maximal number of index tuples which fit to page */

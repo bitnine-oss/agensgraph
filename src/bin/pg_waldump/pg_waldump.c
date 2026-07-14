@@ -2,7 +2,7 @@
  *
  * pg_waldump.c - decode and display WAL
  *
- * Copyright (c) 2013-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_waldump/pg_waldump.c
@@ -610,10 +610,10 @@ XLogDumpStatsRow(const char *name,
 		tot_len_pct = 100 * (double) tot_len / total_len;
 
 	printf("%-27s "
-		   "%20" INT64_MODIFIER "u (%6.02f) "
-		   "%20" INT64_MODIFIER "u (%6.02f) "
-		   "%20" INT64_MODIFIER "u (%6.02f) "
-		   "%20" INT64_MODIFIER "u (%6.02f)\n",
+		   "%20" PRIu64 " (%6.02f) "
+		   "%20" PRIu64 " (%6.02f) "
+		   "%20" PRIu64 " (%6.02f) "
+		   "%20" PRIu64 " (%6.02f)\n",
 		   name, n, n_pct, rec_len, rec_len_pct, fpi_len, fpi_len_pct,
 		   tot_len, tot_len_pct);
 }
@@ -742,10 +742,10 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogStats *stats)
 		fpi_len_pct = 100 * (double) total_fpi_len / total_len;
 
 	printf("%-27s "
-		   "%20" INT64_MODIFIER "u %-9s"
-		   "%20" INT64_MODIFIER "u %-9s"
-		   "%20" INT64_MODIFIER "u %-9s"
-		   "%20" INT64_MODIFIER "u %-6s\n",
+		   "%20" PRIu64 " %-9s"
+		   "%20" PRIu64 " %-9s"
+		   "%20" PRIu64 " %-9s"
+		   "%20" PRIu64 " %-6s\n",
 		   "Total", stats->count, "",
 		   total_rec_len, psprintf("[%.02f%%]", rec_len_pct),
 		   total_fpi_len, psprintf("[%.02f%%]", fpi_len_pct),

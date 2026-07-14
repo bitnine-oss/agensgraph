@@ -3,7 +3,7 @@
  * policy.c
  *	  Commands for manipulating policies.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/commands/policy.c
@@ -627,7 +627,7 @@ CreatePolicy(CreatePolicyStmt *stmt)
 	table_id = RangeVarGetRelidExtended(stmt->table, AccessExclusiveLock,
 										0,
 										RangeVarCallbackForPolicy,
-										(void *) stmt);
+										stmt);
 
 	/* Open target_table to build quals. No additional lock is necessary. */
 	target_table = relation_open(table_id, NoLock);
@@ -803,7 +803,7 @@ AlterPolicy(AlterPolicyStmt *stmt)
 	table_id = RangeVarGetRelidExtended(stmt->table, AccessExclusiveLock,
 										0,
 										RangeVarCallbackForPolicy,
-										(void *) stmt);
+										stmt);
 
 	target_table = relation_open(table_id, NoLock);
 
@@ -1108,7 +1108,7 @@ rename_policy(RenameStmt *stmt)
 	table_id = RangeVarGetRelidExtended(stmt->relation, AccessExclusiveLock,
 										0,
 										RangeVarCallbackForPolicy,
-										(void *) stmt);
+										stmt);
 
 	target_table = relation_open(table_id, NoLock);
 

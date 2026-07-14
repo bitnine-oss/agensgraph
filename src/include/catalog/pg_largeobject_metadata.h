@@ -5,7 +5,7 @@
  *	  (pg_largeobject_metadata)
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_largeobject_metadata.h
@@ -20,7 +20,7 @@
 #define PG_LARGEOBJECT_METADATA_H
 
 #include "catalog/genbki.h"
-#include "catalog/pg_largeobject_metadata_d.h"
+#include "catalog/pg_largeobject_metadata_d.h"	/* IWYU pragma: export */
 
 /* ----------------
  *		pg_largeobject_metadata definition. cpp turns this into

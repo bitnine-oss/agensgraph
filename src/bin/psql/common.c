@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2025, PostgreSQL Global Development Group
  *
  * src/bin/psql/common.c
  */
@@ -122,6 +122,18 @@ CloseGOutput(FILE *gfile_fout, bool is_pipe)
 		else
 			fclose(gfile_fout);
 	}
+}
+
+/*
+ * Reset pset pipeline state
+ */
+static void
+pipelineReset(void)
+{
+	pset.piped_syncs = 0;
+	pset.piped_commands = 0;
+	pset.available_results = 0;
+	pset.requested_results = 0;
 }
 
 /*
@@ -357,6 +369,7 @@ CheckConnection(void)
 
 		fprintf(stderr, _("The connection to the server was lost. Attempting reset: "));
 		PQreset(pset.db);
+		pipelineReset();
 		OK = ConnectionUp();
 		if (!OK)
 		{
@@ -418,10 +431,12 @@ AcceptResult(const PGresult *result, bool show_error)
 			case PGRES_EMPTY_QUERY:
 			case PGRES_COPY_IN:
 			case PGRES_COPY_OUT:
+			case PGRES_PIPELINE_SYNC:
 				/* Fine, do nothing */
 				OK = true;
 				break;
 
+			case PGRES_PIPELINE_ABORTED:
 			case PGRES_BAD_RESPONSE:
 			case PGRES_NONFATAL_ERROR:
 			case PGRES_FATAL_ERROR:
@@ -509,6 +524,26 @@ SetShellResultVariables(int wait_result)
 				(wait_result == 0) ? "false" : "true");
 	snprintf(buf, sizeof(buf), "%d", wait_result_to_exit_code(wait_result));
 	SetVariable(pset.vars, "SHELL_EXIT_CODE", buf);
+}
+
+
+/*
+ * Set special pipeline variables
+ * - PIPELINE_SYNC_COUNT: The number of piped syncs
+ * - PIPELINE_COMMAND_COUNT: The number of piped commands
+ * - PIPELINE_RESULT_COUNT: The number of results available to read
+ */
+static void
+SetPipelineVariables(void)
+{
+	char		buf[32];
+
+	snprintf(buf, sizeof(buf), "%d", pset.piped_syncs);
+	SetVariable(pset.vars, "PIPELINE_SYNC_COUNT", buf);
+	snprintf(buf, sizeof(buf), "%d", pset.piped_commands);
+	SetVariable(pset.vars, "PIPELINE_COMMAND_COUNT", buf);
+	snprintf(buf, sizeof(buf), "%d", pset.available_results);
+	SetVariable(pset.vars, "PIPELINE_RESULT_COUNT", buf);
 }
 
 
@@ -1053,6 +1088,7 @@ PrintQueryResult(PGresult *result, bool last,
 			success = true;
 			break;
 
+		case PGRES_PIPELINE_ABORTED:
 		case PGRES_BAD_RESPONSE:
 		case PGRES_NONFATAL_ERROR:
 		case PGRES_FATAL_ERROR:
@@ -1277,15 +1313,8 @@ sendquery_cleanup:
 		pset.gsavepopt = NULL;
 	}
 
-	/* clean up after \bind */
-	if (pset.bind_flag)
-	{
-		for (i = 0; i < pset.bind_nparams; i++)
-			free(pset.bind_params[i]);
-		free(pset.bind_params);
-		pset.bind_params = NULL;
-		pset.bind_flag = false;
-	}
+	/* clean up after extended protocol queries */
+	clean_extended_state();
 
 	/* reset \gset trigger */
 	if (pset.gset_prefix)
@@ -1378,7 +1407,7 @@ DescribeQuery(const char *query, double *elapsed_msec)
 				char	   *escname;
 
 				if (i > 0)
-					appendPQExpBufferStr(&buf, ",");
+					appendPQExpBufferChar(&buf, ',');
 
 				name = PQfname(result, i);
 				escname = PQescapeLiteral(pset.db, name, strlen(name));
@@ -1428,6 +1457,80 @@ DescribeQuery(const char *query, double *elapsed_msec)
 	return OK;
 }
 
+/*
+ * Read and discard all results in an aborted pipeline.
+ *
+ * If a synchronisation point is found, we can stop discarding results as
+ * the pipeline will switch back to a clean state.  If no synchronisation
+ * point is available, we need to stop when there are no more pending
+ * results, otherwise, calling PQgetResult() would block.
+ */
+static PGresult *
+discardAbortedPipelineResults(void)
+{
+	for (;;)
+	{
+		PGresult   *res = PQgetResult(pset.db);
+		ExecStatusType result_status = PQresultStatus(res);
+
+		if (result_status == PGRES_PIPELINE_SYNC)
+		{
+			/*
+			 * Found a synchronisation point.  The sync counter is decremented
+			 * by the caller.
+			 */
+			return res;
+		}
+		else if (res != NULL && result_status == PGRES_FATAL_ERROR)
+		{
+			/*
+			 * Found a FATAL error sent by the backend, and we cannot recover
+			 * from this state.  Instead, return the last result and let the
+			 * outer loop handle it.
+			 */
+			PGresult   *fatal_res PG_USED_FOR_ASSERTS_ONLY;
+
+			/*
+			 * Fetch result to consume the end of the current query being
+			 * processed.
+			 */
+			fatal_res = PQgetResult(pset.db);
+			Assert(fatal_res == NULL);
+			return res;
+		}
+		else if (res == NULL)
+		{
+			/* A query was processed, decrement the counters */
+			Assert(pset.available_results > 0);
+			Assert(pset.requested_results > 0);
+			pset.available_results--;
+			pset.requested_results--;
+		}
+
+		if (pset.requested_results == 0)
+		{
+			/* We have read all the requested results, leave */
+			return res;
+		}
+
+		if (pset.available_results == 0 && pset.piped_syncs == 0)
+		{
+			/*
+			 * There are no more results to get and there is no
+			 * synchronisation point to stop at.  This will leave the pipeline
+			 * in an aborted state.
+			 */
+			return res;
+		}
+
+		/*
+		 * An aborted pipeline will have either NULL results or results in an
+		 * PGRES_PIPELINE_ABORTED status.
+		 */
+		Assert(res == NULL || result_status == PGRES_PIPELINE_ABORTED);
+		PQclear(res);
+	}
+}
 
 /*
  * ExecQueryAndProcessResults: utility function for use by SendQuery()
@@ -1440,7 +1543,7 @@ DescribeQuery(const char *query, double *elapsed_msec)
  * input or output stream.  In that event, we'll marshal data for the COPY.
  *
  * For other commands, the results are processed normally, depending on their
- * status.
+ * status and the status of a pipeline.
  *
  * When invoked from \watch, is_watch is true and min_rows is the value
  * of that option, or 0 if it wasn't set.
@@ -1459,8 +1562,9 @@ ExecQueryAndProcessResults(const char *query,
 						   const printQueryOpt *opt, FILE *printQueryFout)
 {
 	bool		timing = pset.timing;
-	bool		success;
+	bool		success = false;
 	bool		return_early = false;
+	bool		end_pipeline = false;
 	instr_time	before,
 				after;
 	PGresult   *result;
@@ -1472,10 +1576,129 @@ ExecQueryAndProcessResults(const char *query,
 	else
 		INSTR_TIME_SET_ZERO(before);
 
-	if (pset.bind_flag)
-		success = PQsendQueryParams(pset.db, query, pset.bind_nparams, NULL, (const char *const *) pset.bind_params, NULL, NULL, 0);
-	else
-		success = PQsendQuery(pset.db, query);
+	switch (pset.send_mode)
+	{
+		case PSQL_SEND_EXTENDED_CLOSE:
+			success = PQsendClosePrepared(pset.db, pset.stmtName);
+			if (success && PQpipelineStatus(pset.db) != PQ_PIPELINE_OFF)
+				pset.piped_commands++;
+			break;
+		case PSQL_SEND_EXTENDED_PARSE:
+			success = PQsendPrepare(pset.db, pset.stmtName, query, 0, NULL);
+			if (success && PQpipelineStatus(pset.db) != PQ_PIPELINE_OFF)
+				pset.piped_commands++;
+			break;
+		case PSQL_SEND_EXTENDED_QUERY_PARAMS:
+			Assert(pset.stmtName == NULL);
+			success = PQsendQueryParams(pset.db, query,
+										pset.bind_nparams, NULL,
+										(const char *const *) pset.bind_params,
+										NULL, NULL, 0);
+			if (success && PQpipelineStatus(pset.db) != PQ_PIPELINE_OFF)
+				pset.piped_commands++;
+			break;
+		case PSQL_SEND_EXTENDED_QUERY_PREPARED:
+			Assert(pset.stmtName != NULL);
+			success = PQsendQueryPrepared(pset.db, pset.stmtName,
+										  pset.bind_nparams,
+										  (const char *const *) pset.bind_params,
+										  NULL, NULL, 0);
+			if (success && PQpipelineStatus(pset.db) != PQ_PIPELINE_OFF)
+				pset.piped_commands++;
+			break;
+		case PSQL_SEND_START_PIPELINE_MODE:
+			success = PQenterPipelineMode(pset.db);
+			break;
+		case PSQL_SEND_END_PIPELINE_MODE:
+			success = PQpipelineSync(pset.db);
+			if (success && PQpipelineStatus(pset.db) != PQ_PIPELINE_OFF)
+			{
+				/*
+				 * End of the pipeline, all queued commands need to be
+				 * processed.
+				 */
+				end_pipeline = true;
+				pset.piped_syncs++;
+
+				/*
+				 * The server will send a ReadyForQuery after a Sync is
+				 * processed, flushing all the results back to the client.
+				 */
+				pset.available_results += pset.piped_commands;
+				pset.piped_commands = 0;
+
+				/* We want to read all results */
+				pset.requested_results = pset.available_results + pset.piped_syncs;
+			}
+			break;
+		case PSQL_SEND_PIPELINE_SYNC:
+			success = PQsendPipelineSync(pset.db);
+			if (success && PQpipelineStatus(pset.db) != PQ_PIPELINE_OFF)
+			{
+				pset.piped_syncs++;
+
+				/*
+				 * The server will send a ReadyForQuery after a Sync is
+				 * processed, flushing all the results back to the client.
+				 */
+				pset.available_results += pset.piped_commands;
+				pset.piped_commands = 0;
+			}
+			break;
+		case PSQL_SEND_FLUSH:
+			success = PQflush(pset.db);
+			break;
+		case PSQL_SEND_FLUSH_REQUEST:
+			success = PQsendFlushRequest(pset.db);
+			if (success && PQpipelineStatus(pset.db) != PQ_PIPELINE_OFF)
+			{
+				/*
+				 * With the flush request, all commands in the pipeline are
+				 * pushed and the server will flush the results back to the
+				 * client, making them available.
+				 */
+				pset.available_results += pset.piped_commands;
+				pset.piped_commands = 0;
+			}
+			break;
+		case PSQL_SEND_GET_RESULTS:
+			if (pset.available_results == 0 && pset.piped_syncs == 0)
+			{
+				/*
+				 * If no sync or flush request were sent, PQgetResult() would
+				 * block as there are no results available.  Forbid any
+				 * attempt to get pending results should we try to reach this
+				 * state.
+				 */
+				pg_log_info("No pending results to get");
+				success = false;
+				pset.requested_results = 0;
+			}
+			else
+			{
+				success = true;
+
+				/*
+				 * Cap requested_results to the maximum number of known
+				 * results.
+				 */
+				if (pset.requested_results == 0 ||
+					pset.requested_results > (pset.available_results + pset.piped_syncs))
+					pset.requested_results = pset.available_results + pset.piped_syncs;
+			}
+			break;
+		case PSQL_SEND_QUERY:
+			if (PQpipelineStatus(pset.db) != PQ_PIPELINE_OFF)
+			{
+				success = PQsendQueryParams(pset.db, query,
+											0, NULL, NULL, NULL, NULL, 0);
+				if (success)
+					pset.piped_commands++;
+			}
+			else
+				success = PQsendQuery(pset.db, query);
+			break;
+	}
 
 	if (!success)
 	{
@@ -1486,7 +1709,21 @@ ExecQueryAndProcessResults(const char *query,
 
 		CheckConnection();
 
+		SetPipelineVariables();
+
 		return -1;
+	}
+
+	if (pset.requested_results == 0 && !end_pipeline &&
+		PQpipelineStatus(pset.db) != PQ_PIPELINE_OFF)
+	{
+		/*
+		 * We are in a pipeline and have not reached the pipeline end, or
+		 * there was no request to read pipeline results.  Update the psql
+		 * variables tracking the pipeline activity and exit.
+		 */
+		SetPipelineVariables();
+		return 1;
 	}
 
 	/*
@@ -1536,7 +1773,7 @@ ExecQueryAndProcessResults(const char *query,
 	{
 		ExecStatusType result_status;
 		bool		is_chunked_result = false;
-		PGresult   *next_result;
+		PGresult   *next_result = NULL;
 		bool		last;
 
 		if (!AcceptResult(result, false))
@@ -1559,13 +1796,16 @@ ExecQueryAndProcessResults(const char *query,
 			ClearOrSaveResult(result);
 			success = false;
 
+			if (result_status == PGRES_PIPELINE_ABORTED)
+				pg_log_info("Pipeline aborted, command did not run");
+
 			/*
 			 * switch to next result
 			 */
 			if (result_status == PGRES_COPY_BOTH ||
 				result_status == PGRES_COPY_OUT ||
 				result_status == PGRES_COPY_IN)
-
+			{
 				/*
 				 * For some obscure reason PQgetResult does *not* return a
 				 * NULL in copy cases despite the result having been cleared,
@@ -1573,6 +1813,23 @@ ExecQueryAndProcessResults(const char *query,
 				 * ignore manually.
 				 */
 				result = NULL;
+			}
+			else if ((end_pipeline || pset.requested_results > 0)
+					 && PQpipelineStatus(pset.db) != PQ_PIPELINE_OFF)
+			{
+				/*
+				 * Error within a pipeline.  All commands are aborted until
+				 * the next synchronisation point.  We need to consume all the
+				 * results until this synchronisation point, or stop when
+				 * there are no more result to discard.
+				 *
+				 * Checking the pipeline status is necessary for the case
+				 * where the connection was reset.  The new connection is not
+				 * in any kind of pipeline state and thus has no result to
+				 * discard.
+				 */
+				result = discardAbortedPipelineResults();
+			}
 			else
 				result = PQgetResult(pset.db);
 
@@ -1612,6 +1869,33 @@ ExecQueryAndProcessResults(const char *query,
 			result_status == PGRES_COPY_OUT)
 		{
 			FILE	   *copy_stream = NULL;
+
+			if (PQpipelineStatus(pset.db) != PQ_PIPELINE_OFF)
+			{
+				/*
+				 * Running COPY within a pipeline can break the protocol
+				 * synchronisation in multiple ways, and psql shows its limits
+				 * when it comes to tracking this information.
+				 *
+				 * While in COPY mode, the backend process ignores additional
+				 * Sync messages and will not send the matching ReadyForQuery
+				 * expected by the frontend.
+				 *
+				 * Additionally, libpq automatically sends a Sync with the
+				 * Copy message, creating an unexpected synchronisation point.
+				 * A failure during COPY would leave the pipeline in an
+				 * aborted state while the backend would be in a clean state,
+				 * ready to process commands.
+				 *
+				 * Improving those issues would require modifications in how
+				 * libpq handles pipelines and COPY.  Hence, for the time
+				 * being, we forbid the use of COPY within a pipeline,
+				 * aborting the connection to avoid an inconsistent state on
+				 * psql side if trying to use a COPY command.
+				 */
+				pg_log_info("COPY in a pipeline is not supported, aborting connection");
+				exit(EXIT_BADCONN);
+			}
 
 			/*
 			 * For COPY OUT, direct the output to the default place (probably
@@ -1683,7 +1967,7 @@ ExecQueryAndProcessResults(const char *query,
 			{
 				/*
 				 * Display the current chunk of results, unless the output
-				 * stream stopped working or we got cancelled.  We skip use of
+				 * stream stopped working or we got canceled.  We skip use of
 				 * PrintQueryResult and go directly to printQuery, so that we
 				 * can pass the correct is_pager value and because we don't
 				 * want PrintQueryStatus to happen yet.  Above, we rejected
@@ -1759,12 +2043,66 @@ ExecQueryAndProcessResults(const char *query,
 			}
 		}
 
+		if (result_status == PGRES_PIPELINE_SYNC)
+		{
+			Assert(pset.piped_syncs > 0);
+
+			/*
+			 * Sync response, decrease the sync and requested_results
+			 * counters.
+			 */
+			pset.piped_syncs--;
+			pset.requested_results--;
+
+			/*
+			 * After a synchronisation point, reset success state to print
+			 * possible successful results that will be processed after this.
+			 */
+			success = true;
+
+			/*
+			 * If all syncs were processed and pipeline end was requested,
+			 * exit pipeline mode.
+			 */
+			if (end_pipeline && pset.piped_syncs == 0)
+				success &= PQexitPipelineMode(pset.db);
+		}
+		else if (PQpipelineStatus(pset.db) != PQ_PIPELINE_OFF &&
+				 result_status != PGRES_PIPELINE_SYNC)
+		{
+			/*
+			 * In a pipeline with a non-sync response?  Decrease the result
+			 * counters.
+			 */
+			pset.available_results--;
+			pset.requested_results--;
+		}
+
 		/*
 		 * Check PQgetResult() again.  In the typical case of a single-command
 		 * string, it will return NULL.  Otherwise, we'll have other results
 		 * to process.  We need to do that to check whether this is the last.
 		 */
-		next_result = PQgetResult(pset.db);
+		if (PQpipelineStatus(pset.db) == PQ_PIPELINE_OFF)
+			next_result = PQgetResult(pset.db);
+		else
+		{
+			/*
+			 * In pipeline mode, a NULL result indicates the end of the
+			 * current query being processed.  Call PQgetResult() once to
+			 * consume this state.
+			 */
+			if (result_status != PGRES_PIPELINE_SYNC)
+			{
+				next_result = PQgetResult(pset.db);
+				Assert(next_result == NULL);
+			}
+
+			/* Now, we can get the next result in the pipeline. */
+			if (pset.requested_results > 0)
+				next_result = PQgetResult(pset.db);
+		}
+
 		last = (next_result == NULL);
 
 		/*
@@ -1786,8 +2124,13 @@ ExecQueryAndProcessResults(const char *query,
 			*elapsed_msec = INSTR_TIME_GET_MILLISEC(after);
 		}
 
-		/* this may or may not print something depending on settings */
-		if (result != NULL)
+		/*
+		 * This may or may not print something depending on settings.
+		 *
+		 * A pipeline sync will have a non-NULL result but does not have
+		 * anything to print, thus ignore results in this case.
+		 */
+		if (result != NULL && result_status != PGRES_PIPELINE_SYNC)
 		{
 			/*
 			 * If results need to be printed into the file specified by \g,
@@ -1813,9 +2156,15 @@ ExecQueryAndProcessResults(const char *query,
 		ClearOrSaveResult(result);
 		result = next_result;
 
-		if (cancel_pressed)
+		if (cancel_pressed && PQpipelineStatus(pset.db) == PQ_PIPELINE_OFF)
 		{
-			/* drop this next result, as well as any others not yet read */
+			/*
+			 * Outside of a pipeline, drop the next result, as well as any
+			 * others not yet read.
+			 *
+			 * Within a pipeline, we can let the outer loop handle this as an
+			 * aborted pipeline, which will discard then all the results.
+			 */
 			ClearOrSaveResult(result);
 			ClearOrSaveAllResults();
 			break;
@@ -1824,6 +2173,18 @@ ExecQueryAndProcessResults(const char *query,
 
 	/* close \g file if we opened it */
 	CloseGOutput(gfile_fout, gfile_is_pipe);
+
+	if (end_pipeline)
+	{
+		/* after a pipeline is processed, pipeline piped_syncs should be 0 */
+		Assert(pset.piped_syncs == 0);
+		/* all commands have been processed */
+		Assert(pset.piped_commands == 0);
+		/* all results were read */
+		Assert(pset.available_results == 0);
+	}
+	Assert(pset.requested_results == 0);
+	SetPipelineVariables();
 
 	/* may need this to recover from conn loss during COPY */
 	if (!CheckConnection())
@@ -2253,6 +2614,49 @@ uri_prefix_length(const char *connstr)
 		return sizeof(short_uri_designator) - 1;
 
 	return 0;
+}
+
+/*
+ * Reset state related to extended query protocol
+ *
+ * Clean up any state related to bind parameters, statement name and
+ * PSQL_SEND_MODE.  This needs to be called after processing a query or when
+ * running a new meta-command that uses the extended query protocol, like
+ * \parse, \bind, etc.
+ */
+void
+clean_extended_state(void)
+{
+	int			i;
+
+	switch (pset.send_mode)
+	{
+		case PSQL_SEND_EXTENDED_CLOSE:	/* \close_prepared */
+			free(pset.stmtName);
+			break;
+		case PSQL_SEND_EXTENDED_PARSE:	/* \parse */
+			free(pset.stmtName);
+			break;
+		case PSQL_SEND_EXTENDED_QUERY_PARAMS:	/* \bind */
+		case PSQL_SEND_EXTENDED_QUERY_PREPARED: /* \bind_named */
+			for (i = 0; i < pset.bind_nparams; i++)
+				free(pset.bind_params[i]);
+			free(pset.bind_params);
+			free(pset.stmtName);
+			pset.bind_params = NULL;
+			break;
+		case PSQL_SEND_QUERY:
+		case PSQL_SEND_START_PIPELINE_MODE: /* \startpipeline */
+		case PSQL_SEND_END_PIPELINE_MODE:	/* \endpipeline */
+		case PSQL_SEND_PIPELINE_SYNC:	/* \syncpipeline */
+		case PSQL_SEND_FLUSH:	/* \flush */
+		case PSQL_SEND_GET_RESULTS: /* \getresults */
+		case PSQL_SEND_FLUSH_REQUEST:	/* \flushrequest */
+			break;
+	}
+
+	pset.stmtName = NULL;
+	pset.send_mode = PSQL_SEND_QUERY;
 }
 
 /*

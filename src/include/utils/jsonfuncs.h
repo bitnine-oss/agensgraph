@@ -3,7 +3,7 @@
  * jsonfuncs.h
  *	  Functions to process JSON data types.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/jsonfuncs.h
@@ -41,7 +41,7 @@ typedef text *(*JsonTransformStringValuesAction) (void *state, char *elem_value,
 extern JsonLexContext *makeJsonLexContext(JsonLexContext *lex, text *json, bool need_escapes);
 
 /* try to parse json, and errsave(escontext) on failure */
-extern bool pg_parse_json_or_errsave(JsonLexContext *lex, JsonSemAction *sem,
+extern bool pg_parse_json_or_errsave(JsonLexContext *lex, const JsonSemAction *sem,
 									 struct Node *escontext);
 
 #define pg_parse_json_or_ereport(lex, sem) \

@@ -138,7 +138,9 @@ CREATE DATABASE <replaceable class="parameter">name</replaceable>
         log volume substantially, especially if the template database is large,
         it also forces the system to perform a checkpoint both before and
         after the creation of the new database. In some situations, this may
-        have a noticeable negative impact on overall system performance.
+        have a noticeable negative impact on overall system performance. The
+        <literal>FILE_COPY</literal> strategy is affected by the <xref
+        linkend="guc-file-copy-method"/> setting.
        </para>
       </listitem>
      </varlistentry>
@@ -168,7 +170,8 @@ CREATE DATABASE <replaceable class="parameter">name</replaceable>
         If <xref linkend="create-database-locale-provider"/> is
         <literal>builtin</literal>, then <replaceable>locale</replaceable> or
         <replaceable>builtin_locale</replaceable> must be specified and set to
-        either <literal>C</literal> or <literal>C.UTF-8</literal>.
+        either <literal>C</literal>, <literal>C.UTF-8</literal>, or
+        <literal>PG_UNICODE_FAST</literal>.
        </para>
        <tip>
         <para>
@@ -233,7 +236,8 @@ CREATE DATABASE <replaceable class="parameter">name</replaceable>
        </para>
        <para>
         The locales available for the <literal>builtin</literal> provider are
-        <literal>C</literal> and <literal>C.UTF-8</literal>.
+        <literal>C</literal>, <literal>C.UTF-8</literal> and
+        <literal>PG_UNICODE_FAST</literal>.
        </para>
       </listitem>
      </varlistentry>

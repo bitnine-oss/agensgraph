@@ -3,7 +3,7 @@
  * libpq_source.c
  *	  Functions for fetching files from a remote server via libpq.
  *
- * Copyright (c) 2013-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2025, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
@@ -11,7 +11,6 @@
 
 #include "catalog/pg_type_d.h"
 #include "common/connect.h"
-#include "datapagemap.h"
 #include "file_ops.h"
 #include "filemap.h"
 #include "lib/stringinfo.h"
@@ -294,7 +293,7 @@ libpq_traverse_files(rewind_source *source, process_file_callback_t callback)
 		}
 
 		path = PQgetvalue(res, i, 0);
-		filesize = atol(PQgetvalue(res, i, 1));
+		filesize = atoll(PQgetvalue(res, i, 1));
 		isdir = (strcmp(PQgetvalue(res, i, 2), "t") == 0);
 		link_target = PQgetvalue(res, i, 3);
 
@@ -568,8 +567,8 @@ process_queued_fetch_requests(libpq_source *src)
 		}
 		else
 		{
-			pg_log_debug("received chunk for file \"%s\", offset %lld, size %d",
-						 filename, (long long int) chunkoff, chunksize);
+			pg_log_debug("received chunk for file \"%s\", offset %" PRId64 ", size %d",
+						 filename, chunkoff, chunksize);
 
 			if (strcmp(filename, rq->path) != 0)
 			{
@@ -577,8 +576,8 @@ process_queued_fetch_requests(libpq_source *src)
 						 filename, rq->path);
 			}
 			if (chunkoff != rq->offset)
-				pg_fatal("received data at offset %lld of file \"%s\", when requested for offset %lld",
-						 (long long int) chunkoff, rq->path, (long long int) rq->offset);
+				pg_fatal("received data at offset %" PRId64 " of file \"%s\", when requested for offset %lld",
+						 chunkoff, rq->path, (long long int) rq->offset);
 
 			/*
 			 * We should not receive more data than we requested, or

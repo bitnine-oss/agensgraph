@@ -3,7 +3,7 @@
  * tlist.c
  *	  Target list manipulation routines
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1139,8 +1139,7 @@ split_pathtarget_walker(Node *node, split_pathtarget_context *context)
 		context->current_depth = 0;
 		context->current_sgref = 0; /* subexpressions are not sortgroup items */
 
-		(void) expression_tree_walker(node, split_pathtarget_walker,
-									  (void *) context);
+		(void) expression_tree_walker(node, split_pathtarget_walker, context);
 
 		/* Depth is one more than any SRF below it */
 		srf_depth = context->current_depth + 1;
@@ -1181,8 +1180,7 @@ split_pathtarget_walker(Node *node, split_pathtarget_context *context)
 	 * examine its inputs.
 	 */
 	context->current_sgref = 0; /* subexpressions are not sortgroup items */
-	return expression_tree_walker(node, split_pathtarget_walker,
-								  (void *) context);
+	return expression_tree_walker(node, split_pathtarget_walker, context);
 }
 
 /*

@@ -949,9 +949,10 @@ int
 GetEpochTime(struct tm *tm)
 {
 	struct tm  *t0;
+	struct tm	tmbuf;
 	time_t		epoch = 0;
 
-	t0 = gmtime(&epoch);
+	t0 = gmtime_r(&epoch, &tmbuf);
 
 	if (t0)
 	{
@@ -973,12 +974,13 @@ abstime2tm(AbsoluteTime _time, int *tzp, struct tm *tm, char **tzn)
 {
 	time_t		time = (time_t) _time;
 	struct tm  *tx;
+	struct tm	tmbuf;
 
 	errno = 0;
 	if (tzp != NULL)
-		tx = localtime((time_t *) &time);
+		tx = localtime_r(&time, &tmbuf);
 	else
-		tx = gmtime((time_t *) &time);
+		tx = gmtime_r(&time, &tmbuf);
 
 	if (!tx)
 	{
@@ -2325,10 +2327,10 @@ DecodeDateTime(char **field, int *ftype, int nf,
 			return ((fmask & DTK_TIME_M) == DTK_TIME_M) ? 1 : -1;
 
 		/*
-		 * check for valid day of month, now that we know for sure the month
-		 * and year...
+		 * check for valid day of month and month, now that we know for sure
+		 * the month and year...
 		 */
-		if (tm->tm_mday < 1 || tm->tm_mday > day_tab[isleap(tm->tm_year)][tm->tm_mon - 1])
+		if (tm->tm_mon < 1 || tm->tm_mday < 1 || tm->tm_mday > day_tab[isleap(tm->tm_year)][tm->tm_mon - 1])
 			return -1;
 
 		/*
@@ -2810,9 +2812,10 @@ PGTYPEStimestamp_defmt_scan(char **str, char *fmt, timestamp * d,
 				/* number of seconds in scan_val.luint_val */
 				{
 					struct tm  *tms;
+					struct tm	tmbuf;
 					time_t		et = (time_t) scan_val.luint_val;
 
-					tms = gmtime(&et);
+					tms = gmtime_r(&et, &tmbuf);
 
 					if (tms)
 					{

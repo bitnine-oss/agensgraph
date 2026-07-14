@@ -377,8 +377,9 @@ initdb --locale-provider=icu --icu-locale=en
      <listitem>
       <para>
        The <literal>builtin</literal> provider uses built-in operations. Only
-       the <literal>C</literal> and <literal>C.UTF-8</literal> locales are
-       supported for this provider.
+       the <literal>C</literal>, <literal>C.UTF-8</literal>, and
+       <literal>PG_UNICODE_FAST</literal> locales are supported for this
+       provider.
       </para>
       <para>
        The <literal>C</literal> locale behavior is identical to the
@@ -391,6 +392,13 @@ initdb --locale-provider=icu --icu-locale=en
        based on Unicode. The collation uses the code point values only. The
        regular expression character classes are based on the "POSIX
        Compatible" semantics, and the case mapping is the "simple" variant.
+      </para>
+      <para>
+       The <literal>PG_UNICODE_FAST</literal> locale is available only when
+       the database encoding is <literal>UTF-8</literal>, and the behavior is
+       based on Unicode. The collation uses the code point values only. The
+       regular expression character classes are based on the "Standard"
+       semantics, and the case mapping is the "full" variant.
       </para>
      </listitem>
     </varlistentry>
@@ -862,7 +870,7 @@ SELECT * FROM test1 ORDER BY a || b COLLATE "fr_FR";
         This SQL standard collation sorts using the Unicode Collation
         Algorithm with the Default Unicode Collation Element Table.  It is
         available in all encodings.  ICU support is required to use this
-        collation, and behavior may change if Postgres is built with a
+        collation, and behavior may change if <productname>PostgreSQL</productname> is built with a
         different version of ICU.  (This collation has the same behavior as
         the ICU root locale; see <xref
         linkend="collation-managing-predefined-icu-und-x-icu"/>.)
@@ -887,6 +895,23 @@ SELECT * FROM test1 ORDER BY a || b COLLATE "fr_FR";
      </varlistentry>
 
      <varlistentry>
+      <term><literal>pg_unicode_fast</literal></term>
+      <listitem>
+       <para>
+        This collation sorts by Unicode code point values rather than natural
+        language order.  For the functions <function>lower</function>,
+        <function>initcap</function>, and <function>upper</function> it uses
+        Unicode full case mapping. For pattern matching (including regular
+        expressions), it uses the Standard variant of Unicode <ulink
+        url="https://www.unicode.org/reports/tr18/#Compatibility_Properties">Compatibility
+        Properties</ulink>.  Behavior is efficient and stable within a
+        <productname>Postgres</productname> major version.  It is only
+        available for encoding <literal>UTF8</literal>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><literal>pg_c_utf8</literal></term>
       <listitem>
        <para>
@@ -897,7 +922,7 @@ SELECT * FROM test1 ORDER BY a || b COLLATE "fr_FR";
         expressions), it uses the POSIX Compatible variant of Unicode <ulink
         url="https://www.unicode.org/reports/tr18/#Compatibility_Properties">Compatibility
         Properties</ulink>.  Behavior is efficient and stable within a
-        <productname>Postgres</productname> major version.  This collation is
+        <productname>PostgreSQL</productname> major version.  This collation is
         only available for encoding <literal>UTF8</literal>.
        </para>
       </listitem>
@@ -1197,7 +1222,7 @@ CREATE COLLATION ignore_accents (provider = icu, locale = 'und-u-ks-level1-kc-tr
      to a performance penalty.  Note, in particular, that B-tree cannot use
      deduplication with indexes that use a nondeterministic collation.  Also,
      certain operations are not possible with nondeterministic collations,
-     such as pattern matching operations.  Therefore, they should be used
+     such as some pattern matching operations.  Therefore, they should be used
      only in cases where they are specifically wanted.
     </para>
 
@@ -1846,7 +1871,7 @@ ORDER BY c COLLATE ebcdic;
          <entry>Traditional Chinese, Taiwanese</entry>
          <entry>Yes</entry>
          <entry>Yes</entry>
-         <entry>1&ndash;3</entry>
+         <entry>1&ndash;4</entry>
          <entry></entry>
         </row>
         <row>

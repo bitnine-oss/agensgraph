@@ -2,27 +2,23 @@
  * brinfuncs.c
  *		Functions to investigate BRIN indexes
  *
- * Copyright (c) 2014-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2014-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		contrib/pageinspect/brinfuncs.c
  */
 #include "postgres.h"
 
-#include "access/brin.h"
 #include "access/brin_internal.h"
 #include "access/brin_page.h"
-#include "access/brin_revmap.h"
 #include "access/brin_tuple.h"
 #include "access/htup_details.h"
-#include "catalog/index.h"
 #include "catalog/pg_am_d.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
 #include "pageinspect.h"
-#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -121,6 +117,8 @@ verify_brin_page(bytea *raw_page, uint16 type, const char *strtype)
 	return page;
 }
 
+/* Number of output arguments (columns) for brin_page_items() */
+#define BRIN_PAGE_ITEMS_V1_12	8
 
 /*
  * Extract all item values from a BRIN index page
@@ -148,6 +146,21 @@ brin_page_items(PG_FUNCTION_ARGS)
 				 errmsg("must be superuser to use raw page functions")));
 
 	InitMaterializedSRF(fcinfo, 0);
+
+	/*
+	 * Version 1.12 added a new output column for the empty range flag. But as
+	 * it was added in the middle, it may cause crashes with function
+	 * definitions from older versions of the extension.
+	 *
+	 * There is no way to reliably avoid the problems created by the old
+	 * function definition at this point, so insist that the user update the
+	 * extension.
+	 */
+	if (rsinfo->setDesc->natts < BRIN_PAGE_ITEMS_V1_12)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
+				 errmsg("function has wrong number of declared columns"),
+				 errhint("To resolve the problem, update the \"pageinspect\" extension to the latest version.")));
 
 	indexRel = index_open(indexRelid, AccessShareLock);
 

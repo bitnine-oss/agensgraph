@@ -15,7 +15,7 @@
  * but currently we have no need for oversize temp files without buffered
  * access.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/buffile.h
@@ -38,7 +38,7 @@ typedef struct BufFile BufFile;
 
 extern BufFile *BufFileCreateTemp(bool interXact);
 extern void BufFileClose(BufFile *file);
-extern pg_nodiscard size_t BufFileRead(BufFile *file, void *ptr, size_t size);
+pg_nodiscard extern size_t BufFileRead(BufFile *file, void *ptr, size_t size);
 extern void BufFileReadExact(BufFile *file, void *ptr, size_t size);
 extern size_t BufFileReadMaybeEOF(BufFile *file, void *ptr, size_t size, bool eofOK);
 extern void BufFileWrite(BufFile *file, const void *ptr, size_t size);

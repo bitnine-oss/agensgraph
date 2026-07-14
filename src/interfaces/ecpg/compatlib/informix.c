@@ -175,6 +175,25 @@ deccopy(decimal *src, decimal *target)
 	memcpy(target, src, sizeof(decimal));
 }
 
+static char *
+ecpg_strndup(const char *str, size_t len)
+{
+	size_t		real_len = strlen(str);
+	int			use_len = (int) ((real_len > len) ? len : real_len);
+
+	char	   *new = malloc(use_len + 1);
+
+	if (new)
+	{
+		memcpy(new, str, use_len);
+		new[use_len] = '\0';
+	}
+	else
+		errno = ENOMEM;
+
+	return new;
+}
+
 int
 deccvasc(const char *cp, int len, decimal *np)
 {
@@ -186,8 +205,8 @@ deccvasc(const char *cp, int len, decimal *np)
 	if (risnull(CSTRINGTYPE, cp))
 		return 0;
 
-	str = pnstrdup(cp, len);	/* decimal_in always converts the complete
-								 * string */
+	str = ecpg_strndup(cp, len);	/* decimal_in always converts the complete
+									 * string */
 	if (!str)
 		ret = ECPG_INFORMIX_NUM_UNDERFLOW;
 	else
@@ -1016,7 +1035,7 @@ ECPG_informix_reset_sqlca(void)
 	if (sqlca == NULL)
 		return;
 
-	memcpy((char *) sqlca, (char *) &sqlca_init, sizeof(struct sqlca_t));
+	memcpy(sqlca, &sqlca_init, sizeof(struct sqlca_t));
 }
 
 int

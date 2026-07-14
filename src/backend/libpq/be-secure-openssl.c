@@ -4,7 +4,7 @@
  *	  functions for OpenSSL support in the backend.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -33,8 +33,7 @@
 #include "pgstat.h"
 #include "storage/fd.h"
 #include "storage/latch.h"
-#include "tcop/tcopprot.h"
-#include "utils/builtins.h"
+#include "utils/guc.h"
 #include "utils/memutils.h"
 
 /*
@@ -44,6 +43,7 @@
  * include <wincrypt.h>, but some other Windows headers do.)
  */
 #include "common/openssl.h"
+#include <openssl/bn.h>
 #include <openssl/conf.h>
 #include <openssl/dh.h>
 #ifndef OPENSSL_NO_ECDH
@@ -56,10 +56,10 @@
 static void default_openssl_tls_init(SSL_CTX *context, bool isServerStart);
 openssl_tls_init_hook_typ openssl_tls_init_hook = default_openssl_tls_init;
 
-static int	my_sock_read(BIO *h, char *buf, int size);
-static int	my_sock_write(BIO *h, const char *buf, int size);
-static BIO_METHOD *my_BIO_s_socket(void);
-static int	my_SSL_set_fd(Port *port, int fd);
+static int	port_bio_read(BIO *h, char *buf, int size);
+static int	port_bio_write(BIO *h, const char *buf, int size);
+static BIO_METHOD *port_bio_method(void);
+static int	ssl_set_port_bio(Port *port);
 
 static DH  *load_dh_file(char *filename, bool isServerStart);
 static DH  *load_dh_buffer(const char *buffer, size_t len);
@@ -75,12 +75,12 @@ static int	alpn_cb(SSL *ssl,
 					void *userdata);
 static bool initialize_dh(SSL_CTX *context, bool isServerStart);
 static bool initialize_ecdh(SSL_CTX *context, bool isServerStart);
+static const char *SSLerrmessageExt(unsigned long ecode, const char *replacement);
 static const char *SSLerrmessage(unsigned long ecode);
 
 static char *X509_NAME_to_cstring(X509_NAME *name);
 
 static SSL_CTX *SSL_context = NULL;
-static bool SSL_initialized = false;
 static bool dummy_ssl_passwd_cb_called = false;
 static bool ssl_is_server_start;
 
@@ -100,19 +100,6 @@ be_tls_init(bool isServerStart)
 	SSL_CTX    *context;
 	int			ssl_ver_min = -1;
 	int			ssl_ver_max = -1;
-
-	/* This stuff need be done only once. */
-	if (!SSL_initialized)
-	{
-#ifdef HAVE_OPENSSL_INIT_SSL
-		OPENSSL_init_ssl(OPENSSL_INIT_LOAD_CONFIG, NULL);
-#else
-		OPENSSL_config(NULL);
-		SSL_library_init();
-		SSL_load_error_strings();
-#endif
-		SSL_initialized = true;
-	}
 
 	/*
 	 * Create a new SSL context into which we'll load all the configuration
@@ -250,7 +237,8 @@ be_tls_init(bool isServerStart)
 		if (ssl_ver_min > ssl_ver_max)
 		{
 			ereport(isServerStart ? FATAL : LOG,
-					(errmsg("could not set SSL protocol version range"),
+					(errcode(ERRCODE_CONFIG_FILE_ERROR),
+					 errmsg("could not set SSL protocol version range"),
 					 errdetail("\"%s\" cannot be higher than \"%s\"",
 							   "ssl_min_protocol_version",
 							   "ssl_max_protocol_version")));
@@ -258,7 +246,18 @@ be_tls_init(bool isServerStart)
 		}
 	}
 
-	/* disallow SSL session tickets */
+	/*
+	 * Disallow SSL session tickets. OpenSSL use both stateful and stateless
+	 * tickets for TLSv1.3, and stateless ticket for TLSv1.2. SSL_OP_NO_TICKET
+	 * is available since 0.9.8f but only turns off stateless tickets. In
+	 * order to turn off stateful tickets we need SSL_CTX_set_num_tickets,
+	 * which is available since OpenSSL 1.1.1.  LibreSSL 3.5.4 (from OpenBSD
+	 * 7.1) introduced this API for compatibility, but doesn't support session
+	 * tickets at all so it's a no-op there.
+	 */
+#ifdef HAVE_SSL_CTX_SET_NUM_TICKETS
+	SSL_CTX_set_num_tickets(context, 0);
+#endif
 	SSL_CTX_set_options(context, SSL_OP_NO_TICKET);
 
 	/* disallow SSL session caching, too */
@@ -288,13 +287,29 @@ be_tls_init(bool isServerStart)
 	if (!initialize_ecdh(context, isServerStart))
 		goto error;
 
-	/* set up the allowed cipher list */
-	if (SSL_CTX_set_cipher_list(context, SSLCipherSuites) != 1)
+	/* set up the allowed cipher list for TLSv1.2 and below */
+	if (SSL_CTX_set_cipher_list(context, SSLCipherList) != 1)
 	{
 		ereport(isServerStart ? FATAL : LOG,
 				(errcode(ERRCODE_CONFIG_FILE_ERROR),
-				 errmsg("could not set the cipher list (no valid ciphers available)")));
+				 errmsg("could not set the TLSv1.2 cipher list (no valid ciphers available)")));
 		goto error;
+	}
+
+	/*
+	 * Set up the allowed cipher suites for TLSv1.3. If the GUC is an empty
+	 * string we leave the allowed suites to be the OpenSSL default value.
+	 */
+	if (SSLCipherSuites[0])
+	{
+		/* set up the allowed cipher suites */
+		if (SSL_CTX_set_ciphersuites(context, SSLCipherSuites) != 1)
+		{
+			ereport(isServerStart ? FATAL : LOG,
+					(errcode(ERRCODE_CONFIG_FILE_ERROR),
+					 errmsg("could not set the TLSv1.3 cipher suites (no valid ciphers available)")));
+			goto error;
+		}
 	}
 
 	/* Let server choose order */
@@ -454,7 +469,7 @@ be_tls_open_server(Port *port)
 						SSLerrmessage(ERR_get_error()))));
 		return -1;
 	}
-	if (!my_SSL_set_fd(port, port->sock))
+	if (!ssl_set_port_bio(port))
 	{
 		ereport(COMMERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
@@ -507,7 +522,7 @@ aloop:
 				else
 					waitfor = WL_SOCKET_WRITEABLE | WL_EXIT_ON_PM_DEATH;
 
-				(void) WaitLatchOrSocket(MyLatch, waitfor, port->sock, 0,
+				(void) WaitLatchOrSocket(NULL, waitfor, port->sock, 0,
 										 WAIT_EVENT_SSL_OPEN_SERVER);
 				goto aloop;
 			case SSL_ERROR_SYSCALL:
@@ -806,7 +821,7 @@ be_tls_read(Port *port, void *ptr, size_t len, int *waitfor)
 }
 
 ssize_t
-be_tls_write(Port *port, void *ptr, size_t len, int *waitfor)
+be_tls_write(Port *port, const void *ptr, size_t len, int *waitfor)
 {
 	ssize_t		n;
 	int			err;
@@ -891,17 +906,19 @@ be_tls_write(Port *port, void *ptr, size_t len, int *waitfor)
  * see sock_read() and sock_write() in OpenSSL's crypto/bio/bss_sock.c.
  */
 
-static BIO_METHOD *my_bio_methods = NULL;
+static BIO_METHOD *port_bio_method_ptr = NULL;
 
 static int
-my_sock_read(BIO *h, char *buf, int size)
+port_bio_read(BIO *h, char *buf, int size)
 {
 	int			res = 0;
+	Port	   *port = (Port *) BIO_get_data(h);
 
 	if (buf != NULL)
 	{
-		res = secure_raw_read(((Port *) BIO_get_app_data(h)), buf, size);
+		res = secure_raw_read(port, buf, size);
 		BIO_clear_retry_flags(h);
+		port->last_read_was_eof = res == 0;
 		if (res <= 0)
 		{
 			/* If we were interrupted, tell caller to retry */
@@ -916,11 +933,11 @@ my_sock_read(BIO *h, char *buf, int size)
 }
 
 static int
-my_sock_write(BIO *h, const char *buf, int size)
+port_bio_write(BIO *h, const char *buf, int size)
 {
 	int			res = 0;
 
-	res = secure_raw_write(((Port *) BIO_get_app_data(h)), buf, size);
+	res = secure_raw_write(((Port *) BIO_get_data(h)), buf, size);
 	BIO_clear_retry_flags(h);
 	if (res <= 0)
 	{
@@ -934,75 +951,81 @@ my_sock_write(BIO *h, const char *buf, int size)
 	return res;
 }
 
-static BIO_METHOD *
-my_BIO_s_socket(void)
+static long
+port_bio_ctrl(BIO *h, int cmd, long num, void *ptr)
 {
-	if (!my_bio_methods)
+	long		res;
+	Port	   *port = (Port *) BIO_get_data(h);
+
+	switch (cmd)
 	{
-		BIO_METHOD *biom = (BIO_METHOD *) BIO_s_socket();
-#ifdef HAVE_BIO_METH_NEW
+		case BIO_CTRL_EOF:
+
+			/*
+			 * This should not be needed. port_bio_read already has a way to
+			 * signal EOF to OpenSSL. However, OpenSSL made an undocumented,
+			 * backwards-incompatible change and now expects EOF via BIO_ctrl.
+			 * See https://github.com/openssl/openssl/issues/8208
+			 */
+			res = port->last_read_was_eof;
+			break;
+		case BIO_CTRL_FLUSH:
+			/* libssl expects all BIOs to support BIO_flush. */
+			res = 1;
+			break;
+		default:
+			res = 0;
+			break;
+	}
+
+	return res;
+}
+
+static BIO_METHOD *
+port_bio_method(void)
+{
+	if (!port_bio_method_ptr)
+	{
 		int			my_bio_index;
 
 		my_bio_index = BIO_get_new_index();
 		if (my_bio_index == -1)
 			return NULL;
-		my_bio_index |= (BIO_TYPE_DESCRIPTOR | BIO_TYPE_SOURCE_SINK);
-		my_bio_methods = BIO_meth_new(my_bio_index, "PostgreSQL backend socket");
-		if (!my_bio_methods)
+		my_bio_index |= BIO_TYPE_SOURCE_SINK;
+		port_bio_method_ptr = BIO_meth_new(my_bio_index, "PostgreSQL backend socket");
+		if (!port_bio_method_ptr)
 			return NULL;
-		if (!BIO_meth_set_write(my_bio_methods, my_sock_write) ||
-			!BIO_meth_set_read(my_bio_methods, my_sock_read) ||
-			!BIO_meth_set_gets(my_bio_methods, BIO_meth_get_gets(biom)) ||
-			!BIO_meth_set_puts(my_bio_methods, BIO_meth_get_puts(biom)) ||
-			!BIO_meth_set_ctrl(my_bio_methods, BIO_meth_get_ctrl(biom)) ||
-			!BIO_meth_set_create(my_bio_methods, BIO_meth_get_create(biom)) ||
-			!BIO_meth_set_destroy(my_bio_methods, BIO_meth_get_destroy(biom)) ||
-			!BIO_meth_set_callback_ctrl(my_bio_methods, BIO_meth_get_callback_ctrl(biom)))
+		if (!BIO_meth_set_write(port_bio_method_ptr, port_bio_write) ||
+			!BIO_meth_set_read(port_bio_method_ptr, port_bio_read) ||
+			!BIO_meth_set_ctrl(port_bio_method_ptr, port_bio_ctrl))
 		{
-			BIO_meth_free(my_bio_methods);
-			my_bio_methods = NULL;
+			BIO_meth_free(port_bio_method_ptr);
+			port_bio_method_ptr = NULL;
 			return NULL;
 		}
-#else
-		my_bio_methods = malloc(sizeof(BIO_METHOD));
-		if (!my_bio_methods)
-			return NULL;
-		memcpy(my_bio_methods, biom, sizeof(BIO_METHOD));
-		my_bio_methods->bread = my_sock_read;
-		my_bio_methods->bwrite = my_sock_write;
-#endif
 	}
-	return my_bio_methods;
+	return port_bio_method_ptr;
 }
 
-/* This should exactly match OpenSSL's SSL_set_fd except for using my BIO */
 static int
-my_SSL_set_fd(Port *port, int fd)
+ssl_set_port_bio(Port *port)
 {
-	int			ret = 0;
 	BIO		   *bio;
 	BIO_METHOD *bio_method;
 
-	bio_method = my_BIO_s_socket();
+	bio_method = port_bio_method();
 	if (bio_method == NULL)
-	{
-		SSLerr(SSL_F_SSL_SET_FD, ERR_R_BUF_LIB);
-		goto err;
-	}
+		return 0;
+
 	bio = BIO_new(bio_method);
-
 	if (bio == NULL)
-	{
-		SSLerr(SSL_F_SSL_SET_FD, ERR_R_BUF_LIB);
-		goto err;
-	}
-	BIO_set_app_data(bio, port);
+		return 0;
 
-	BIO_set_fd(bio, fd, BIO_NOCLOSE);
+	BIO_set_data(bio, port);
+	BIO_set_init(bio, 1);
+
 	SSL_set_bio(port->ssl, bio, bio);
-	ret = 1;
-err:
-	return ret;
+	return 1;
 }
 
 /*
@@ -1085,7 +1108,7 @@ load_dh_buffer(const char *buffer, size_t len)
 	BIO		   *bio;
 	DH		   *dh = NULL;
 
-	bio = BIO_new_mem_buf(unconstify(char *, buffer), len);
+	bio = BIO_new_mem_buf(buffer, len);
 	if (bio == NULL)
 		return NULL;
 	dh = PEM_read_bio_DHparams(bio, NULL, NULL, NULL);
@@ -1402,33 +1425,48 @@ static bool
 initialize_ecdh(SSL_CTX *context, bool isServerStart)
 {
 #ifndef OPENSSL_NO_ECDH
-	EC_KEY	   *ecdh;
-	int			nid;
-
-	nid = OBJ_sn2nid(SSLECDHCurve);
-	if (!nid)
+	if (SSL_CTX_set1_groups_list(context, SSLECDHCurve) != 1)
 	{
+		/*
+		 * OpenSSL 3.3.0 introduced proper error messages for group parsing
+		 * errors, earlier versions returns "no SSL error reported" which is
+		 * far from helpful. For older versions, we replace with a better
+		 * error message. Injecting the error into the OpenSSL error queue
+		 * need APIs from OpenSSL 3.0.
+		 */
 		ereport(isServerStart ? FATAL : LOG,
-				(errcode(ERRCODE_CONFIG_FILE_ERROR),
-				 errmsg("ECDH: unrecognized curve name: %s", SSLECDHCurve)));
+				errcode(ERRCODE_CONFIG_FILE_ERROR),
+				errmsg("could not set group names specified in ssl_groups: %s",
+					   SSLerrmessageExt(ERR_get_error(),
+										_("No valid groups found"))),
+				errhint("Ensure that each group name is spelled correctly and supported by the installed version of OpenSSL."));
 		return false;
 	}
-
-	ecdh = EC_KEY_new_by_curve_name(nid);
-	if (!ecdh)
-	{
-		ereport(isServerStart ? FATAL : LOG,
-				(errcode(ERRCODE_CONFIG_FILE_ERROR),
-				 errmsg("ECDH: could not create key")));
-		return false;
-	}
-
-	SSL_CTX_set_options(context, SSL_OP_SINGLE_ECDH_USE);
-	SSL_CTX_set_tmp_ecdh(context, ecdh);
-	EC_KEY_free(ecdh);
 #endif
 
 	return true;
+}
+
+/*
+ * Obtain reason string for passed SSL errcode with replacement
+ *
+ * The error message supplied in replacement will be used in case the error
+ * code from OpenSSL is 0, else the error message from SSLerrmessage() will
+ * be returned.
+ *
+ * Not all versions of OpenSSL place an error on the queue even for failing
+ * operations, which will yield "no SSL error reported" by SSLerrmessage. This
+ * function can be used to ensure that a proper error message is displayed for
+ * versions reporting no error, while using the OpenSSL error via SSLerrmessage
+ * for versions where there is one.
+ */
+static const char *
+SSLerrmessageExt(unsigned long ecode, const char *replacement)
+{
+	if (ecode == 0)
+		return replacement;
+	else
+		return SSLerrmessage(ecode);
 }
 
 /*
@@ -1453,10 +1491,11 @@ SSLerrmessage(unsigned long ecode)
 		return errreason;
 
 	/*
-	 * In OpenSSL 3.0.0 and later, ERR_reason_error_string randomly refuses to
-	 * map system errno values.  We can cover that shortcoming with this bit
-	 * of code.  Older OpenSSL versions don't have the ERR_SYSTEM_ERROR macro,
-	 * but that's okay because they don't have the shortcoming either.
+	 * In OpenSSL 3.0.0 and later, ERR_reason_error_string does not map system
+	 * errno values anymore.  (See OpenSSL source code for the explanation.)
+	 * We can cover that shortcoming with this bit of code.  Older OpenSSL
+	 * versions don't have the ERR_SYSTEM_ERROR macro, but that's okay because
+	 * they don't have the shortcoming either.
 	 */
 #ifdef ERR_SYSTEM_ERROR
 	if (ERR_SYSTEM_ERROR(ecode))

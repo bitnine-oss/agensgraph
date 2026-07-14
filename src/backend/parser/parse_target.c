@@ -3,7 +3,7 @@
  * parse_target.c
  *	  handle target lists
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -419,6 +419,9 @@ markTargetListOrigin(ParseState *pstate, TargetEntry *tle,
 				tle->resorigtbl = ste->resorigtbl;
 				tle->resorigcol = ste->resorigcol;
 			}
+			break;
+		case RTE_GROUP:
+			/* We couldn't get here: the RTE_GROUP RTE has not been added */
 			break;
 	}
 }
@@ -1547,8 +1550,8 @@ expandRecordVariable(ParseState *pstate, Var *var, int levelsup)
 				   *lvar;
 		int			i;
 
-		expandRTE(rte, var->varno, 0, var->location, false,
-				  &names, &vars);
+		expandRTE(rte, var->varno, 0, var->varreturningtype,
+				  var->location, false, &names, &vars);
 
 		tupleDesc = CreateTemplateTupleDesc(list_length(vars));
 		i = 1;
@@ -1680,6 +1683,12 @@ expandRecordVariable(ParseState *pstate, Var *var, int levelsup)
 				}
 				/* else fall through to inspect the expression */
 			}
+			break;
+		case RTE_GROUP:
+
+			/*
+			 * We couldn't get here: the RTE_GROUP RTE has not been added.
+			 */
 			break;
 	}
 

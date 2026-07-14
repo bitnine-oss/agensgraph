@@ -3,7 +3,7 @@
  * relnode.c
  *	  Relation-node lookup/construction routines
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -876,31 +876,21 @@ build_join_rel(PlannerInfo *root,
  * 'restrictlist': list of RestrictInfo nodes that apply to this particular
  *		pair of joinable relations
  * 'sjinfo': child join's join-type details
+ * 'nappinfos' and 'appinfos': AppendRelInfo array for child relids
  */
 RelOptInfo *
 build_child_join_rel(PlannerInfo *root, RelOptInfo *outer_rel,
 					 RelOptInfo *inner_rel, RelOptInfo *parent_joinrel,
-					 List *restrictlist, SpecialJoinInfo *sjinfo)
+					 List *restrictlist, SpecialJoinInfo *sjinfo,
+					 int nappinfos, AppendRelInfo **appinfos)
 {
 	RelOptInfo *joinrel = makeNode(RelOptInfo);
-	AppendRelInfo **appinfos;
-	int			nappinfos;
 
 	/* Only joins between "other" relations land here. */
 	Assert(IS_OTHER_REL(outer_rel) && IS_OTHER_REL(inner_rel));
 
 	/* The parent joinrel should have consider_partitionwise_join set. */
 	Assert(parent_joinrel->consider_partitionwise_join);
-
-	/*
-	 * Find the AppendRelInfo structures for the child baserels.  We'll need
-	 * these for computing the child join's relid set, and later for mapping
-	 * Vars to the child rel.
-	 */
-	appinfos = find_appinfos_by_relids(root,
-									   bms_union(outer_rel->relids,
-												 inner_rel->relids),
-									   &nappinfos);
 
 	joinrel->reloptkind = RELOPT_OTHER_JOINREL;
 	joinrel->relids = adjust_child_relids(parent_joinrel->relids,
@@ -1016,8 +1006,6 @@ build_child_join_rel(PlannerInfo *root, RelOptInfo *outer_rel,
 		add_child_join_rel_equivalences(root,
 										nappinfos, appinfos,
 										parent_joinrel, joinrel);
-
-	pfree(appinfos);
 
 	return joinrel;
 }
@@ -1923,6 +1911,13 @@ get_param_path_clause_serials(Path *path)
 {
 	if (path->param_info == NULL)
 		return NULL;			/* not parameterized */
+
+	/*
+	 * We don't currently support parameterized MergeAppend paths, as
+	 * explained in the comments for generate_orderedappend_paths.
+	 */
+	Assert(!IsA(path, MergeAppendPath));
+
 	if (IsA(path, NestPath) ||
 		IsA(path, MergePath) ||
 		IsA(path, HashPath))
@@ -1959,27 +1954,6 @@ get_param_path_clause_serials(Path *path)
 		 * enforced in each input path.
 		 */
 		AppendPath *apath = (AppendPath *) path;
-		Bitmapset  *pserials;
-		ListCell   *lc;
-
-		pserials = NULL;
-		foreach(lc, apath->subpaths)
-		{
-			Path	   *subpath = (Path *) lfirst(lc);
-			Bitmapset  *subserials;
-
-			subserials = get_param_path_clause_serials(subpath);
-			if (lc == list_head(apath->subpaths))
-				pserials = bms_copy(subserials);
-			else
-				pserials = bms_int_members(pserials, subserials);
-		}
-		return pserials;
-	}
-	else if (IsA(path, MergeAppendPath))
-	{
-		/* Same as AppendPath case */
-		MergeAppendPath *apath = (MergeAppendPath *) path;
 		Bitmapset  *pserials;
 		ListCell   *lc;
 
@@ -2092,10 +2066,9 @@ have_partkey_equi_join(PlannerInfo *root, RelOptInfo *joinrel,
 					   JoinType jointype, List *restrictlist)
 {
 	PartitionScheme part_scheme = rel1->part_scheme;
+	bool		pk_known_equal[PARTITION_MAX_KEYS];
+	int			num_equal_pks;
 	ListCell   *lc;
-	int			cnt_pks;
-	bool		pk_has_clause[PARTITION_MAX_KEYS];
-	bool		strict_op;
 
 	/*
 	 * This function must only be called when the joined relations have same
@@ -2104,13 +2077,19 @@ have_partkey_equi_join(PlannerInfo *root, RelOptInfo *joinrel,
 	Assert(rel1->part_scheme == rel2->part_scheme);
 	Assert(part_scheme);
 
-	memset(pk_has_clause, 0, sizeof(pk_has_clause));
+	/* We use a bool array to track which partkey columns are known equal */
+	memset(pk_known_equal, 0, sizeof(pk_known_equal));
+	/* ... as well as a count of how many are known equal */
+	num_equal_pks = 0;
+
+	/* First, look through the join's restriction clauses */
 	foreach(lc, restrictlist)
 	{
 		RestrictInfo *rinfo = lfirst_node(RestrictInfo, lc);
 		OpExpr	   *opexpr;
 		Expr	   *expr1;
 		Expr	   *expr2;
+		bool		strict_op;
 		int			ipk1;
 		int			ipk2;
 
@@ -2188,11 +2167,19 @@ have_partkey_equi_join(PlannerInfo *root, RelOptInfo *joinrel,
 		if (ipk1 != ipk2)
 			continue;
 
+		/* Ignore clause if we already proved these keys equal. */
+		if (pk_known_equal[ipk1])
+			continue;
+
+		/* Reject if the partition key collation differs from the clause's. */
+		if (rel1->part_scheme->partcollation[ipk1] != opexpr->inputcollid)
+			return false;
+
 		/*
 		 * The clause allows partitionwise join only if it uses the same
 		 * operator family as that specified by the partition key.
 		 */
-		if (rel1->part_scheme->strategy == PARTITION_STRATEGY_HASH)
+		if (part_scheme->strategy == PARTITION_STRATEGY_HASH)
 		{
 			if (!OidIsValid(rinfo->hashjoinoperator) ||
 				!op_in_opfamily(rinfo->hashjoinoperator,
@@ -2204,17 +2191,109 @@ have_partkey_equi_join(PlannerInfo *root, RelOptInfo *joinrel,
 			continue;
 
 		/* Mark the partition key as having an equi-join clause. */
-		pk_has_clause[ipk1] = true;
+		pk_known_equal[ipk1] = true;
+
+		/* We can stop examining clauses once we prove all keys equal. */
+		if (++num_equal_pks == part_scheme->partnatts)
+			return true;
 	}
 
-	/* Check whether every partition key has an equi-join condition. */
-	for (cnt_pks = 0; cnt_pks < part_scheme->partnatts; cnt_pks++)
+	/*
+	 * Also check to see if any keys are known equal by equivclass.c.  In most
+	 * cases there would have been a join restriction clause generated from
+	 * any EC that had such knowledge, but there might be no such clause, or
+	 * it might happen to constrain other members of the ECs than the ones we
+	 * are looking for.
+	 */
+	for (int ipk = 0; ipk < part_scheme->partnatts; ipk++)
 	{
-		if (!pk_has_clause[cnt_pks])
-			return false;
+		Oid			btree_opfamily;
+
+		/* Ignore if we already proved these keys equal. */
+		if (pk_known_equal[ipk])
+			continue;
+
+		/*
+		 * We need a btree opfamily to ask equivclass.c about.  If the
+		 * partopfamily is a hash opfamily, look up its equality operator, and
+		 * select some btree opfamily that that operator is part of.  (Any
+		 * such opfamily should be good enough, since equivclass.c will track
+		 * multiple opfamilies as appropriate.)
+		 */
+		if (part_scheme->strategy == PARTITION_STRATEGY_HASH)
+		{
+			Oid			eq_op;
+			List	   *eq_opfamilies;
+
+			eq_op = get_opfamily_member(part_scheme->partopfamily[ipk],
+										part_scheme->partopcintype[ipk],
+										part_scheme->partopcintype[ipk],
+										HTEqualStrategyNumber);
+			if (!OidIsValid(eq_op))
+				break;			/* we're not going to succeed */
+			eq_opfamilies = get_mergejoin_opfamilies(eq_op);
+			if (eq_opfamilies == NIL)
+				break;			/* we're not going to succeed */
+			btree_opfamily = linitial_oid(eq_opfamilies);
+		}
+		else
+			btree_opfamily = part_scheme->partopfamily[ipk];
+
+		/*
+		 * We consider only non-nullable partition keys here; nullable ones
+		 * would not be treated as part of the same equivalence classes as
+		 * non-nullable ones.
+		 */
+		foreach(lc, rel1->partexprs[ipk])
+		{
+			Node	   *expr1 = (Node *) lfirst(lc);
+			ListCell   *lc2;
+			Oid			partcoll1 = rel1->part_scheme->partcollation[ipk];
+			Oid			exprcoll1 = exprCollation(expr1);
+
+			foreach(lc2, rel2->partexprs[ipk])
+			{
+				Node	   *expr2 = (Node *) lfirst(lc2);
+
+				if (exprs_known_equal(root, expr1, expr2, btree_opfamily))
+				{
+					/*
+					 * Ensure that the collation of the expression matches
+					 * that of the partition key. Checking just one collation
+					 * (partcoll1 and exprcoll1) suffices because partcoll1
+					 * and partcoll2, as well as exprcoll1 and exprcoll2,
+					 * should be identical. This holds because both rel1 and
+					 * rel2 use the same PartitionScheme and expr1 and expr2
+					 * are equal.
+					 */
+					if (partcoll1 == exprcoll1)
+					{
+						Oid			partcoll2 PG_USED_FOR_ASSERTS_ONLY =
+							rel2->part_scheme->partcollation[ipk];
+						Oid			exprcoll2 PG_USED_FOR_ASSERTS_ONLY =
+							exprCollation(expr2);
+
+						Assert(partcoll2 == exprcoll2);
+						pk_known_equal[ipk] = true;
+						break;
+					}
+				}
+			}
+			if (pk_known_equal[ipk])
+				break;
+		}
+
+		if (pk_known_equal[ipk])
+		{
+			/* We can stop examining keys once we prove all keys equal. */
+			if (++num_equal_pks == part_scheme->partnatts)
+				return true;
+		}
+		else
+			break;				/* no chance to succeed, give up */
 	}
 
-	return true;
+	return false;
 }
 
 /*

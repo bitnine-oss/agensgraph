@@ -1,13 +1,18 @@
 # src/bin/pg_verifybackup/nls.mk
 CATALOG_NAME     = pg_verifybackup
 GETTEXT_FILES    = $(FRONTEND_COMMON_GETTEXT_FILES) \
+                   astreamer_verify.c \
                    pg_verifybackup.c \
                    ../../common/controldata_utils.c \
                    ../../common/cryptohash.c \
                    ../../common/cryptohash_openssl.c \
                    ../../common/fe_memutils.c \
                    ../../common/jsonapi.c \
-                   ../../common/parse_manifest.c
+                   ../../common/parse_manifest.c \
+                   ../../fe_utils/astreamer_gzip.c \
+                   ../../fe_utils/astreamer_lz4.c \
+                   ../../fe_utils/astreamer_tar.c \
+                   ../../fe_utils/astreamer_zstd.c
 GETTEXT_TRIGGERS = $(FRONTEND_COMMON_GETTEXT_TRIGGERS) \
                    json_token_error:2 \
                    json_manifest_parse_failure:2 \

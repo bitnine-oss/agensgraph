@@ -5,12 +5,15 @@
 
 #include "catalog/pg_collation.h"
 #include "common/hashfn.h"
-#include "utils/builtins.h"
+#include "fmgr.h"
 #include "utils/formatting.h"
 #include "utils/varlena.h"
 #include "varatt.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "citext",
+					.version = PG_VERSION
+);
 
 /*
  *		====================

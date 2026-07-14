@@ -285,6 +285,17 @@ make check-world PG_TEST_EXTRA='kerberos ldap ssl load_balance libpq_encryption'
     </varlistentry>
 
     <varlistentry>
+     <term><literal>sepgsql</literal></term>
+     <listitem>
+      <para>
+       Runs the test suite under <filename>contrib/sepgsql</filename>.  This
+       requires an SELinux environment that is set up in a specific way; see
+       <xref linkend="sepgsql-regression"/>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
      <term><literal>ssl</literal></term>
      <listitem>
       <para>
@@ -333,6 +344,16 @@ make check-world PG_TEST_EXTRA='kerberos ldap ssl load_balance libpq_encryption'
       <para>
        Runs the test suite under <filename>src/test/modules/xid_wraparound</filename>.
        Not enabled by default because it is resource intensive.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>oauth</literal></term>
+     <listitem>
+      <para>
+       Runs the test suite under <filename>src/test/modules/oauth_validator</filename>.
+       This opens TCP/IP listen sockets for a test server running HTTPS.
       </para>
      </listitem>
     </varlistentry>
@@ -576,11 +597,11 @@ make check NO_LOCALE=1
     <para>
      Most of the date and time results are dependent on the time zone
      environment.  The reference files are generated for time zone
-     <literal>PST8PDT</literal> (Berkeley, California), and there will be
+     <literal>America/Los_Angeles</literal>, and there will be
      apparent failures if the tests are not run with that time zone setting.
      The regression test driver sets environment variable
-     <envar>PGTZ</envar> to <literal>PST8PDT</literal>, which normally
-     ensures proper results.
+     <envar>PGTZ</envar> to <literal>America/Los_Angeles</literal>,
+     which normally ensures proper results.
     </para>
    </sect2>
 

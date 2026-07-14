@@ -3,7 +3,7 @@
  * dummy_index_am.c
  *		Index AM template main file.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -18,16 +18,14 @@
 #include "catalog/index.h"
 #include "commands/vacuum.h"
 #include "nodes/pathnodes.h"
-#include "utils/guc.h"
-#include "utils/rel.h"
 
 PG_MODULE_MAGIC;
 
 /* parse table for fillRelOptions */
-relopt_parse_elt di_relopt_tab[6];
+static relopt_parse_elt di_relopt_tab[6];
 
 /* Kind of relation options for dummy index */
-relopt_kind di_relopt_kind;
+static relopt_kind di_relopt_kind;
 
 typedef enum DummyAmEnum
 {
@@ -47,7 +45,7 @@ typedef struct DummyIndexOptions
 	int			option_string_null_offset;
 }			DummyIndexOptions;
 
-relopt_enum_elt_def dummyAmEnumValues[] =
+static relopt_enum_elt_def dummyAmEnumValues[] =
 {
 	{"one", DUMMY_AM_ENUM_ONE},
 	{"two", DUMMY_AM_ENUM_TWO},
@@ -284,6 +282,9 @@ dihandler(PG_FUNCTION_ARGS)
 	amroutine->amsupport = 1;
 	amroutine->amcanorder = false;
 	amroutine->amcanorderbyop = false;
+	amroutine->amcanhash = false;
+	amroutine->amconsistentequality = false;
+	amroutine->amconsistentordering = false;
 	amroutine->amcanbackward = false;
 	amroutine->amcanunique = false;
 	amroutine->amcanmulticol = false;
@@ -308,6 +309,7 @@ dihandler(PG_FUNCTION_ARGS)
 	amroutine->amvacuumcleanup = divacuumcleanup;
 	amroutine->amcanreturn = NULL;
 	amroutine->amcostestimate = dicostestimate;
+	amroutine->amgettreeheight = NULL;
 	amroutine->amoptions = dioptions;
 	amroutine->amproperty = NULL;
 	amroutine->ambuildphasename = NULL;

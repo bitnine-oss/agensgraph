@@ -3675,34 +3675,29 @@ MATCH (u) WHERE id(u) = '99.1'::graphid RETURN count(*) AS n;
 
 -- edge id: scans only knows
 EXPLAIN (costs off) MATCH ()-[e]->() WHERE id(e) = '6.1'::graphid RETURN e;
-                                     QUERY PLAN                                     
-------------------------------------------------------------------------------------
- Nested Loop
-   ->  Nested Loop
-         ->  Seq Scan on knows e
-               Filter: (id = '6.1'::graphid)
-         ->  Append
-               ->  Seq Scan on ag_vertex "<0000000110>_1"
-                     Filter: (id = e.start)
-               ->  Seq Scan on person "<0000000110>_2"
-                     Filter: (id = e.start)
-               ->  Index Only Scan using city_pkey on city "<0000000110>_3"
-                     Index Cond: (id = e.start)
-               ->  Index Only Scan using employee_pkey on employee "<0000000110>_4"
-                     Index Cond: (id = e.start)
-   ->  Memoize
-         Cache Key: e."end"
-         Cache Mode: logical
-         ->  Append
-               ->  Seq Scan on ag_vertex "<0000000111>_1"
-                     Filter: (id = e."end")
-               ->  Seq Scan on person "<0000000111>_2"
-                     Filter: (id = e."end")
-               ->  Index Only Scan using city_pkey on city "<0000000111>_3"
-                     Index Cond: (id = e."end")
-               ->  Index Only Scan using employee_pkey on employee "<0000000111>_4"
-                     Index Cond: (id = e."end")
-(25 rows)
+                                        QUERY PLAN                                        
+------------------------------------------------------------------------------------------
+ Hash Join
+   Hash Cond: ("<0000000111>".id = e."end")
+   ->  Append
+         ->  Seq Scan on ag_vertex "<0000000111>_1"
+         ->  Seq Scan on person "<0000000111>_2"
+         ->  Seq Scan on city "<0000000111>_3"
+         ->  Seq Scan on employee "<0000000111>_4"
+   ->  Hash
+         ->  Nested Loop
+               ->  Seq Scan on knows e
+                     Filter: (id = '6.1'::graphid)
+               ->  Append
+                     ->  Seq Scan on ag_vertex "<0000000110>_1"
+                           Filter: (id = e.start)
+                     ->  Seq Scan on person "<0000000110>_2"
+                           Filter: (id = e.start)
+                     ->  Index Only Scan using city_pkey on city "<0000000110>_3"
+                           Index Cond: (id = e.start)
+                     ->  Index Only Scan using employee_pkey on employee "<0000000110>_4"
+                           Index Cond: (id = e.start)
+(20 rows)
 
 MATCH ()-[e]->() WHERE id(e) = '6.1'::graphid RETURN label(e) AS l;
     l    
@@ -4065,26 +4060,17 @@ EXPLAIN (costs off) MATCH (u) WHERE id(u) = '3.1'::graphid OR id(u) = '4.1'::gra
                Filter: ((id = '3.1'::graphid) OR (id = '4.1'::graphid))
          ->  Bitmap Heap Scan on city u_3
                Recheck Cond: ((id = '3.1'::graphid) OR (id = '4.1'::graphid))
-               ->  BitmapOr
-                     ->  Bitmap Index Scan on city_pkey
-                           Index Cond: (id = '3.1'::graphid)
-                     ->  Bitmap Index Scan on city_pkey
-                           Index Cond: (id = '4.1'::graphid)
+               ->  Bitmap Index Scan on city_pkey
+                     Index Cond: (id = ANY ('{3.1,4.1}'::graphid[]))
          ->  Bitmap Heap Scan on employee u_4
                Recheck Cond: ((id = '3.1'::graphid) OR (id = '4.1'::graphid))
-               ->  BitmapOr
-                     ->  Bitmap Index Scan on employee_pkey
-                           Index Cond: (id = '3.1'::graphid)
-                     ->  Bitmap Index Scan on employee_pkey
-                           Index Cond: (id = '4.1'::graphid)
+               ->  Bitmap Index Scan on employee_pkey
+                     Index Cond: (id = ANY ('{3.1,4.1}'::graphid[]))
          ->  Bitmap Heap Scan on manager u_5
                Recheck Cond: ((id = '3.1'::graphid) OR (id = '4.1'::graphid))
-               ->  BitmapOr
-                     ->  Bitmap Index Scan on manager_pkey
-                           Index Cond: (id = '3.1'::graphid)
-                     ->  Bitmap Index Scan on manager_pkey
-                           Index Cond: (id = '4.1'::graphid)
-(27 rows)
+               ->  Bitmap Index Scan on manager_pkey
+                     Index Cond: (id = ANY ('{3.1,4.1}'::graphid[]))
+(18 rows)
 
 MATCH (u) WHERE id(u) = '3.1'::graphid OR id(u) = '4.1'::graphid RETURN label(u) AS l, id(u) AS id ORDER BY id;
     l     | id  

@@ -4,7 +4,7 @@
  *	  internal structures for hash joins
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/executor/hashjoin.h
@@ -147,7 +147,7 @@ typedef struct HashMemoryChunkData
 
 typedef struct HashMemoryChunkData *HashMemoryChunk;
 
-#define HASH_CHUNK_SIZE			(32 * 1024L)
+#define HASH_CHUNK_SIZE			((Size) (32 * 1024))
 #define HASH_CHUNK_HEADER_SIZE	MAXALIGN(sizeof(HashMemoryChunkData))
 #define HASH_CHUNK_DATA(hc)		(((char *) (hc)) + HASH_CHUNK_HEADER_SIZE)
 /* tuples exceeding HASH_CHUNK_THRESHOLD bytes are put in their own chunk */
@@ -313,8 +313,6 @@ typedef struct HashJoinTableData
 		dsa_pointer_atomic *shared;
 	}			buckets;
 
-	bool		keepNulls;		/* true to store unmatchable NULL tuples */
-
 	bool		skewEnabled;	/* are we using skew optimization? */
 	HashSkewBucket **skewBucket;	/* hashtable of skew buckets */
 	int			skewBucketLen;	/* size of skewBucket array (a power of 2!) */
@@ -342,16 +340,6 @@ typedef struct HashJoinTableData
 	 */
 	BufFile   **innerBatchFile; /* buffered virtual temp file per batch */
 	BufFile   **outerBatchFile; /* buffered virtual temp file per batch */
-
-	/*
-	 * Info about the datatype-specific hash functions for the datatypes being
-	 * hashed. These are arrays of the same length as the number of hash join
-	 * clauses (hash keys).
-	 */
-	FmgrInfo   *outer_hashfunctions;	/* lookup data for hash functions */
-	FmgrInfo   *inner_hashfunctions;	/* lookup data for hash functions */
-	bool	   *hashStrict;		/* is each hash join operator strict? */
-	Oid		   *collations;
 
 	Size		spaceUsed;		/* memory space currently used by tuples */
 	Size		spaceAllowed;	/* upper limit for space used */

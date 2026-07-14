@@ -18,8 +18,9 @@ PostgreSQL documentation
   <refname>pg_restore</refname>
 
   <refpurpose>
-   restore a <productname>PostgreSQL</productname> database from an
-   archive file created by <application>pg_dump</application>
+   restore <productname>PostgreSQL</productname> databases from archives
+   created by <application>pg_dump</application> or
+   <application>pg_dumpall</application>
   </refpurpose>
  </refnamediv>
 
@@ -38,13 +39,14 @@ PostgreSQL documentation
 
   <para>
    <application>pg_restore</application> is a utility for restoring a
-   <productname>PostgreSQL</productname> database from an archive
-   created by <xref linkend="app-pgdump"/> in one of the non-plain-text
+   <productname>PostgreSQL</productname> database or cluster from an archive
+   created by <xref linkend="app-pgdump"/> or
+   <xref linkend="app-pg-dumpall"/> in one of the non-plain-text
    formats.  It will issue the commands necessary to reconstruct the
-   database to the state it was in at the time it was saved.  The
-   archive files also allow <application>pg_restore</application> to
+   database or cluster to the state it was in at the time it was saved. The
+   archives also allow <application>pg_restore</application> to
    be selective about what is restored, or even to reorder the items
-   prior to being restored. The archive files are designed to be
+   prior to being restored. The archive formats are designed to be
    portable across architectures.
   </para>
 
@@ -52,10 +54,17 @@ PostgreSQL documentation
    <application>pg_restore</application> can operate in two modes.
    If a database name is specified, <application>pg_restore</application>
    connects to that database and restores archive contents directly into
-   the database.  Otherwise, a script containing the SQL
-   commands necessary to rebuild the database is created and written
+   the database.
+   When restoring from a dump made by <application>pg_dumpall</application>,
+   each database will be created and then the restoration will be run in that
+   database.
+
+   Otherwise, when a database name is not specified, a script containing the SQL
+   commands necessary to rebuild the database or cluster is created and written
    to a file or standard output.  This script output is equivalent to
-   the plain text output format of <application>pg_dump</application>.
+   the plain text output format of <application>pg_dump</application> or
+   <application>pg_dumpall</application>.
+
    Some of the options controlling the output are therefore analogous to
    <application>pg_dump</application> options.
   </para>
@@ -94,7 +103,7 @@ PostgreSQL documentation
       <term><option>--data-only</option></term>
       <listitem>
        <para>
-        Restore only the data, not the schema (data definitions).
+        Restore only the data, not the schema (data definitions) or statistics.
         Table data, large objects, and sequence values are restored,
         if present in the archive.
        </para>
@@ -140,6 +149,8 @@ PostgreSQL documentation
         commands that mention this database.
         Access privileges for the database itself are also restored,
         unless <option>--no-acl</option> is specified.
+        <option>--create</option> is required when restoring multiple databases
+        from an archive created by <application>pg_dumpall</application>.
        </para>
 
        <para>
@@ -191,86 +202,6 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
-      <term><option>--filter=<replaceable class="parameter">filename</replaceable></option></term>
-      <listitem>
-       <para>
-        Specify a filename from which to read patterns for objects excluded
-        or included from restore. The patterns are interpreted according to the
-        same rules as
-        <option>-n</option>/<option>--schema</option> for including objects in schemas,
-        <option>-N</option>/<option>--exclude-schema</option>for excluding objects in schemas,
-        <option>-P</option>/<option>--function</option> for restoring named functions,
-        <option>-I</option>/<option>--index</option> for restoring named indexes,
-        <option>-t</option>/<option>--table</option> for restoring named tables
-        or <option>-T</option>/<option>--trigger</option> for restoring triggers.
-        To read from <literal>STDIN</literal>, use <filename>-</filename> as the
-        filename.  The <option>--filter</option> option can be specified in
-        conjunction with the above listed options for including or excluding
-        objects, and can also be specified more than once for multiple filter
-        files.
-       </para>
-
-       <para>
-        The file lists one database pattern per row, with the following format:
-<synopsis>
-{ include | exclude } { function | index | schema | table | trigger } <replaceable class="parameter">PATTERN</replaceable>
-</synopsis>
-       </para>
-
-       <para>
-        The first keyword specifies whether the objects matched by the pattern
-        are to be included or excluded. The second keyword specifies the type
-        of object to be filtered using the pattern:
-        <itemizedlist>
-         <listitem>
-          <para>
-           <literal>function</literal>: functions, works like the
-           <option>-P</option>/<option>--function</option> option. This keyword
-           can only be used with the <literal>include</literal> keyword.
-          </para>
-         </listitem>
-         <listitem>
-          <para>
-           <literal>index</literal>: indexes, works like the
-           <option>-I</option>/<option>--indexes</option> option. This keyword
-           can only be used with the <literal>include</literal> keyword.
-          </para>
-         </listitem>
-         <listitem>
-          <para>
-           <literal>schema</literal>: schemas, works like the
-           <option>-n</option>/<option>--schema</option> and
-           <option>-N</option>/<option>--exclude-schema</option> options.
-          </para>
-         </listitem>
-         <listitem>
-          <para>
-           <literal>table</literal>: tables, works like the
-           <option>-t</option>/<option>--table</option> option. This keyword
-           can only be used with the <literal>include</literal> keyword.
-          </para>
-         </listitem>
-         <listitem>
-          <para>
-           <literal>trigger</literal>: triggers, works like the
-           <option>-T</option>/<option>--trigger</option> option. This keyword
-           can only be used with the <literal>include</literal> keyword.
-          </para>
-         </listitem>
-        </itemizedlist>
-       </para>
-
-       <para>
-        Lines starting with <literal>#</literal> are considered comments and
-        ignored. Comments can be placed after an object pattern row as well.
-        Blank lines are also ignored. See <xref linkend="app-psql-patterns"/>
-        for how to perform quoting in patterns.
-       </para>
-
-      </listitem>
-     </varlistentry>
-
-     <varlistentry>
       <term><option>-F <replaceable class="parameter">format</replaceable></option></term>
       <term><option>--format=<replaceable class="parameter">format</replaceable></option></term>
       <listitem>
@@ -312,6 +243,19 @@ PostgreSQL documentation
          </listitem>
         </varlistentry>
        </variablelist></para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-g</option></term>
+      <term><option>--globals-only</option></term>
+      <listitem>
+       <para>
+        Restore only global objects (roles and tablespaces), no databases.
+       </para>
+       <para>
+        This option is only relevant when restoring from an archive made using <application>pg_dumpall</application>.
+       </para>
       </listitem>
      </varlistentry>
 
@@ -483,10 +427,11 @@ PostgreSQL documentation
         to the extent that schema entries are present in the archive.
        </para>
        <para>
-        This option is the inverse of <option>--data-only</option>.
+        This option cannot be used with <option>--data-only</option>
+        or <option>--statistics-only</option>.
         It is similar to, but for historical reasons not identical to,
         specifying
-        <option>--section=pre-data --section=post-data</option>.
+        <option>--section=pre-data --section=post-data --no-statistics</option>.
        </para>
        <para>
         (Do not confuse this with the <option>--schema</option> option, which
@@ -617,7 +562,7 @@ PostgreSQL documentation
       <term><option>--disable-triggers</option></term>
       <listitem>
        <para>
-        This option is relevant only when performing a data-only restore.
+        This option is relevant only when performing a restore without schema.
         It instructs <application>pg_restore</application> to execute commands
         to temporarily disable triggers on the target tables while
         the data is restored.  Use this if you have referential
@@ -659,6 +604,108 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>--exclude-database=<replaceable class="parameter">pattern</replaceable></option></term>
+      <listitem>
+       <para>
+        Do not restore databases whose name matches
+        <replaceable class="parameter">pattern</replaceable>.
+        Multiple patterns can be excluded by writing multiple
+        <option>--exclude-database</option> switches.  The
+        <replaceable class="parameter">pattern</replaceable> parameter is
+        interpreted as a pattern according to the same rules used by
+        <application>psql</application>'s <literal>\d</literal>
+        commands (see <xref linkend="app-psql-patterns"/>),
+        so multiple databases can also be excluded by writing wildcard
+        characters in the pattern.  When using wildcards, be careful to
+        quote the pattern if needed to prevent shell wildcard expansion.
+       </para>
+       <para>
+        This option is only relevant when restoring from an archive made using <application>pg_dumpall</application>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--filter=<replaceable class="parameter">filename</replaceable></option></term>
+      <listitem>
+       <para>
+        Specify a filename from which to read patterns for objects excluded
+        or included from restore. The patterns are interpreted according to the
+        same rules as
+        <option>-n</option>/<option>--schema</option> for including objects in schemas,
+        <option>-N</option>/<option>--exclude-schema</option> for excluding objects in schemas,
+        <option>-P</option>/<option>--function</option> for restoring named functions,
+        <option>-I</option>/<option>--index</option> for restoring named indexes,
+        <option>-t</option>/<option>--table</option> for restoring named tables
+        or <option>-T</option>/<option>--trigger</option> for restoring triggers.
+        To read from <literal>STDIN</literal>, use <filename>-</filename> as the
+        filename.  The <option>--filter</option> option can be specified in
+        conjunction with the above listed options for including or excluding
+        objects, and can also be specified more than once for multiple filter
+        files.
+       </para>
+
+       <para>
+        The file lists one database pattern per row, with the following format:
+<synopsis>
+{ include | exclude } { function | index | schema | table | trigger } <replaceable class="parameter">PATTERN</replaceable>
+</synopsis>
+       </para>
+
+       <para>
+        The first keyword specifies whether the objects matched by the pattern
+        are to be included or excluded. The second keyword specifies the type
+        of object to be filtered using the pattern:
+        <itemizedlist>
+         <listitem>
+          <para>
+           <literal>function</literal>: functions, works like the
+           <option>-P</option>/<option>--function</option> option. This keyword
+           can only be used with the <literal>include</literal> keyword.
+          </para>
+         </listitem>
+         <listitem>
+          <para>
+           <literal>index</literal>: indexes, works like the
+           <option>-I</option>/<option>--indexes</option> option. This keyword
+           can only be used with the <literal>include</literal> keyword.
+          </para>
+         </listitem>
+         <listitem>
+          <para>
+           <literal>schema</literal>: schemas, works like the
+           <option>-n</option>/<option>--schema</option> and
+           <option>-N</option>/<option>--exclude-schema</option> options.
+          </para>
+         </listitem>
+         <listitem>
+          <para>
+           <literal>table</literal>: tables, works like the
+           <option>-t</option>/<option>--table</option> option. This keyword
+           can only be used with the <literal>include</literal> keyword.
+          </para>
+         </listitem>
+         <listitem>
+          <para>
+           <literal>trigger</literal>: triggers, works like the
+           <option>-T</option>/<option>--trigger</option> option. This keyword
+           can only be used with the <literal>include</literal> keyword.
+          </para>
+         </listitem>
+        </itemizedlist>
+       </para>
+
+       <para>
+        Lines starting with <literal>#</literal> are considered comments and
+        ignored. Comments can be placed after an object pattern row as well.
+        Blank lines are also ignored. See <xref linkend="app-psql-patterns"/>
+        for how to perform quoting in patterns.
+       </para>
+
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>--if-exists</option></term>
       <listitem>
        <para>
@@ -676,6 +723,16 @@ PostgreSQL documentation
       <listitem>
        <para>
         Do not output commands to restore comments, even if the archive
+        contains them.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--no-data</option></term>
+      <listitem>
+       <para>
+        Do not output commands to restore data, even if the archive
         contains them.
        </para>
       </listitem>
@@ -704,6 +761,16 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>--no-policies</option></term>
+      <listitem>
+       <para>
+        Do not output commands to restore row security policies, even if
+        the archive contains them.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>--no-publications</option></term>
       <listitem>
        <para>
@@ -714,11 +781,31 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>--no-schema</option></term>
+      <listitem>
+       <para>
+        Do not output commands to restore schema (data definitions), even if
+        the archive contains them.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>--no-security-labels</option></term>
       <listitem>
        <para>
         Do not output commands to restore security labels,
         even if the archive contains them.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--no-statistics</option></term>
+      <listitem>
+       <para>
+        Do not output commands to restore statistics, even if the archive
+        contains them.
        </para>
       </listitem>
      </varlistentry>
@@ -775,13 +862,22 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>--statistics-only</option></term>
+      <listitem>
+       <para>
+        Restore only the statistics, not schema (data definitions) or data.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>--strict-names</option></term>
       <listitem>
        <para>
         Require that each schema
         (<option>-n</option>/<option>--schema</option>) and table
         (<option>-t</option>/<option>--table</option>) qualifier match at
-        least one schema/table in the backup file.
+        least one schema/table in the file to be restored.
        </para>
       </listitem>
      </varlistentry>
@@ -819,6 +915,36 @@ PostgreSQL documentation
         ownership.  This makes the dump more standards-compatible, but
         depending on the history of the objects in the dump, might not restore
         properly.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--with-data</option></term>
+      <listitem>
+       <para>
+        Output commands to restore data, if the archive contains them.
+        This is the default.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--with-schema</option></term>
+      <listitem>
+       <para>
+        Output commands to restore schema (data definitions), if the archive
+        contains them. This is the default.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--with-statistics</option></term>
+      <listitem>
+       <para>
+        Output commands to restore statistics, if the archive contains them.
+        This is the default.
        </para>
       </listitem>
      </varlistentry>
@@ -1040,10 +1166,12 @@ CREATE DATABASE foo WITH TEMPLATE template0;
   </para>
 
   <para>
-   Once restored, it is wise to run <command>ANALYZE</command> on each
-   restored table so the optimizer has useful statistics; see
-   <xref linkend="vacuum-for-statistics"/> and
-   <xref linkend="autovacuum"/> for more information.
+   By default, <command>pg_restore</command> will restore optimizer statistics
+   if included in the dump file.  If not all statistics were restored, it may
+   be useful to run <command>ANALYZE</command> on each restored table so the
+   optimizer has useful statistics; see <xref
+   linkend="vacuum-for-statistics"/> and <xref linkend="autovacuum"/> for more
+   information.
   </para>
 
  </refsect1>

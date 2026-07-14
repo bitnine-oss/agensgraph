@@ -1,5 +1,5 @@
 
-# Copyright (c) 2024, PostgreSQL Global Development Group
+# Copyright (c) 2024-2025, PostgreSQL Global Development Group
 
 use strict;
 use warnings FATAL => 'all';
@@ -34,6 +34,14 @@ log_checkpoints = on
 restart_after_crash = on
 ]);
 $node_primary->start;
+
+# Check if the extension injection_points is available, as it may be
+# possible that this script is run with installcheck, where the module
+# would not be installed by default.
+if (!$node_primary->check_extension('injection_points'))
+{
+	plan skip_all => 'Extension injection_points not installed';
+}
 
 my $backup_name = 'my_backup';
 $node_primary->backup($backup_name);
@@ -102,7 +110,7 @@ $node_standby->safe_psql('postgres',
 my $checkpoint_complete = 0;
 foreach my $i (0 .. 10 * $PostgreSQL::Test::Utils::timeout_default)
 {
-	if ($node_standby->log_contains("restartpoint complete"), $logstart)
+	if ($node_standby->log_contains("restartpoint complete", $logstart))
 	{
 		$checkpoint_complete = 1;
 		last;
@@ -116,15 +124,14 @@ my $psql_timeout = IPC::Run::timer(3600);
 my ($killme_stdin, $killme_stdout, $killme_stderr) = ('', '', '');
 my $killme = IPC::Run::start(
 	[
-		'psql', '-XAtq', '-v', 'ON_ERROR_STOP=1', '-f', '-', '-d',
-		$node_standby->connstr('postgres')
+		'psql', '--no-psqlrc', '--no-align', '--tuples-only', '--quiet',
+		'--set' => 'ON_ERROR_STOP=1',
+		'--file' => '-',
+		'--dbname' => $node_standby->connstr('postgres')
 	],
-	'<',
-	\$killme_stdin,
-	'>',
-	\$killme_stdout,
-	'2>',
-	\$killme_stderr,
+	'<' => \$killme_stdin,
+	'>' => \$killme_stdout,
+	'2>' => \$killme_stderr,
 	$psql_timeout);
 $killme_stdin .= q[
 SELECT pg_backend_pid();

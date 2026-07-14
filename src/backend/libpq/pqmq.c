@@ -3,7 +3,7 @@
  * pqmq.c
  *	  Use the frontend/backend protocol for communication over a shm_mq
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/libpq/pqmq.c
@@ -26,7 +26,7 @@
 static shm_mq_handle *pq_mq_handle;
 static bool pq_mq_busy = false;
 static pid_t pq_mq_parallel_leader_pid = 0;
-static pid_t pq_mq_parallel_leader_proc_number = INVALID_PROC_NUMBER;
+static ProcNumber pq_mq_parallel_leader_proc_number = INVALID_PROC_NUMBER;
 
 static void pq_cleanup_redirect_to_shm_mq(dsm_segment *seg, Datum arg);
 static void mq_comm_reset(void);

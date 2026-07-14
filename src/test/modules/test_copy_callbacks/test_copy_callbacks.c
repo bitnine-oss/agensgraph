@@ -3,7 +3,7 @@
  * test_copy_callbacks.c
  *		Code for testing COPY callbacks.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -42,8 +42,8 @@ test_copy_to_callback(PG_FUNCTION_ARGS)
 	processed = DoCopyTo(cstate);
 	EndCopyTo(cstate);
 
-	ereport(NOTICE, (errmsg("COPY TO callback has processed %lld rows",
-							(long long) processed)));
+	ereport(NOTICE, (errmsg("COPY TO callback has processed %" PRId64 " rows",
+							processed)));
 
 	table_close(rel, NoLock);
 

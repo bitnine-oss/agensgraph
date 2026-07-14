@@ -6,7 +6,7 @@
  *
  * This code is released under the terms of the PostgreSQL License.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/test/regress/regress.c
@@ -21,8 +21,7 @@
 
 #include "access/detoast.h"
 #include "access/htup_details.h"
-#include "access/transam.h"
-#include "access/xact.h"
+#include "catalog/catalog.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
@@ -38,6 +37,7 @@
 #include "optimizer/plancat.h"
 #include "parser/parse_coerce.h"
 #include "port/atomics.h"
+#include "postmaster/postmaster.h"	/* for MAX_BACKENDS */
 #include "storage/spin.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
@@ -80,7 +80,10 @@
 
 static void regress_lseg_construct(LSEG *lseg, Point *pt1, Point *pt2);
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "regress",
+					.version = PG_VERSION
+);
 
 
 /* return the point where two paths intersect, or NULL if no intersection. */
@@ -264,227 +267,6 @@ trigger_return_old(PG_FUNCTION_ARGS)
 	return PointerGetDatum(tuple);
 }
 
-#define TTDUMMY_INFINITY	999999
-
-static SPIPlanPtr splan = NULL;
-static bool ttoff = false;
-
-PG_FUNCTION_INFO_V1(ttdummy);
-
-Datum
-ttdummy(PG_FUNCTION_ARGS)
-{
-	TriggerData *trigdata = (TriggerData *) fcinfo->context;
-	Trigger    *trigger;		/* to get trigger name */
-	char	  **args;			/* arguments */
-	int			attnum[2];		/* fnumbers of start/stop columns */
-	Datum		oldon,
-				oldoff;
-	Datum		newon,
-				newoff;
-	Datum	   *cvals;			/* column values */
-	char	   *cnulls;			/* column nulls */
-	char	   *relname;		/* triggered relation name */
-	Relation	rel;			/* triggered relation */
-	HeapTuple	trigtuple;
-	HeapTuple	newtuple = NULL;
-	HeapTuple	rettuple;
-	TupleDesc	tupdesc;		/* tuple description */
-	int			natts;			/* # of attributes */
-	bool		isnull;			/* to know is some column NULL or not */
-	int			ret;
-	int			i;
-
-	if (!CALLED_AS_TRIGGER(fcinfo))
-		elog(ERROR, "ttdummy: not fired by trigger manager");
-	if (!TRIGGER_FIRED_FOR_ROW(trigdata->tg_event))
-		elog(ERROR, "ttdummy: must be fired for row");
-	if (!TRIGGER_FIRED_BEFORE(trigdata->tg_event))
-		elog(ERROR, "ttdummy: must be fired before event");
-	if (TRIGGER_FIRED_BY_INSERT(trigdata->tg_event))
-		elog(ERROR, "ttdummy: cannot process INSERT event");
-	if (TRIGGER_FIRED_BY_UPDATE(trigdata->tg_event))
-		newtuple = trigdata->tg_newtuple;
-
-	trigtuple = trigdata->tg_trigtuple;
-
-	rel = trigdata->tg_relation;
-	relname = SPI_getrelname(rel);
-
-	/* check if TT is OFF for this relation */
-	if (ttoff)					/* OFF - nothing to do */
-	{
-		pfree(relname);
-		return PointerGetDatum((newtuple != NULL) ? newtuple : trigtuple);
-	}
-
-	trigger = trigdata->tg_trigger;
-
-	if (trigger->tgnargs != 2)
-		elog(ERROR, "ttdummy (%s): invalid (!= 2) number of arguments %d",
-			 relname, trigger->tgnargs);
-
-	args = trigger->tgargs;
-	tupdesc = rel->rd_att;
-	natts = tupdesc->natts;
-
-	for (i = 0; i < 2; i++)
-	{
-		attnum[i] = SPI_fnumber(tupdesc, args[i]);
-		if (attnum[i] <= 0)
-			elog(ERROR, "ttdummy (%s): there is no attribute %s",
-				 relname, args[i]);
-		if (SPI_gettypeid(tupdesc, attnum[i]) != INT4OID)
-			elog(ERROR, "ttdummy (%s): attribute %s must be of integer type",
-				 relname, args[i]);
-	}
-
-	oldon = SPI_getbinval(trigtuple, tupdesc, attnum[0], &isnull);
-	if (isnull)
-		elog(ERROR, "ttdummy (%s): %s must be NOT NULL", relname, args[0]);
-
-	oldoff = SPI_getbinval(trigtuple, tupdesc, attnum[1], &isnull);
-	if (isnull)
-		elog(ERROR, "ttdummy (%s): %s must be NOT NULL", relname, args[1]);
-
-	if (newtuple != NULL)		/* UPDATE */
-	{
-		newon = SPI_getbinval(newtuple, tupdesc, attnum[0], &isnull);
-		if (isnull)
-			elog(ERROR, "ttdummy (%s): %s must be NOT NULL", relname, args[0]);
-		newoff = SPI_getbinval(newtuple, tupdesc, attnum[1], &isnull);
-		if (isnull)
-			elog(ERROR, "ttdummy (%s): %s must be NOT NULL", relname, args[1]);
-
-		if (oldon != newon || oldoff != newoff)
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("ttdummy (%s): you cannot change %s and/or %s columns (use set_ttdummy)",
-							relname, args[0], args[1])));
-
-		if (newoff != TTDUMMY_INFINITY)
-		{
-			pfree(relname);		/* allocated in upper executor context */
-			return PointerGetDatum(NULL);
-		}
-	}
-	else if (oldoff != TTDUMMY_INFINITY)	/* DELETE */
-	{
-		pfree(relname);
-		return PointerGetDatum(NULL);
-	}
-
-	newoff = DirectFunctionCall1(nextval, CStringGetTextDatum("ttdummy_seq"));
-	/* nextval now returns int64; coerce down to int32 */
-	newoff = Int32GetDatum((int32) DatumGetInt64(newoff));
-
-	/* Connect to SPI manager */
-	if ((ret = SPI_connect()) < 0)
-		elog(ERROR, "ttdummy (%s): SPI_connect returned %d", relname, ret);
-
-	/* Fetch tuple values and nulls */
-	cvals = (Datum *) palloc(natts * sizeof(Datum));
-	cnulls = (char *) palloc(natts * sizeof(char));
-	for (i = 0; i < natts; i++)
-	{
-		cvals[i] = SPI_getbinval((newtuple != NULL) ? newtuple : trigtuple,
-								 tupdesc, i + 1, &isnull);
-		cnulls[i] = (isnull) ? 'n' : ' ';
-	}
-
-	/* change date column(s) */
-	if (newtuple)				/* UPDATE */
-	{
-		cvals[attnum[0] - 1] = newoff;	/* start_date eq current date */
-		cnulls[attnum[0] - 1] = ' ';
-		cvals[attnum[1] - 1] = TTDUMMY_INFINITY;	/* stop_date eq INFINITY */
-		cnulls[attnum[1] - 1] = ' ';
-	}
-	else
-		/* DELETE */
-	{
-		cvals[attnum[1] - 1] = newoff;	/* stop_date eq current date */
-		cnulls[attnum[1] - 1] = ' ';
-	}
-
-	/* if there is no plan ... */
-	if (splan == NULL)
-	{
-		SPIPlanPtr	pplan;
-		Oid		   *ctypes;
-		char	   *query;
-
-		/* allocate space in preparation */
-		ctypes = (Oid *) palloc(natts * sizeof(Oid));
-		query = (char *) palloc(100 + 16 * natts);
-
-		/*
-		 * Construct query: INSERT INTO _relation_ VALUES ($1, ...)
-		 */
-		sprintf(query, "INSERT INTO %s VALUES (", relname);
-		for (i = 1; i <= natts; i++)
-		{
-			sprintf(query + strlen(query), "$%d%s",
-					i, (i < natts) ? ", " : ")");
-			ctypes[i - 1] = SPI_gettypeid(tupdesc, i);
-		}
-
-		/* Prepare plan for query */
-		pplan = SPI_prepare(query, natts, ctypes);
-		if (pplan == NULL)
-			elog(ERROR, "ttdummy (%s): SPI_prepare returned %s", relname, SPI_result_code_string(SPI_result));
-
-		if (SPI_keepplan(pplan))
-			elog(ERROR, "ttdummy (%s): SPI_keepplan failed", relname);
-
-		splan = pplan;
-	}
-
-	ret = SPI_execp(splan, cvals, cnulls, 0);
-
-	if (ret < 0)
-		elog(ERROR, "ttdummy (%s): SPI_execp returned %d", relname, ret);
-
-	/* Tuple to return to upper Executor ... */
-	if (newtuple)				/* UPDATE */
-		rettuple = SPI_modifytuple(rel, trigtuple, 1, &(attnum[1]), &newoff, NULL);
-	else						/* DELETE */
-		rettuple = trigtuple;
-
-	SPI_finish();				/* don't forget say Bye to SPI mgr */
-
-	pfree(relname);
-
-	return PointerGetDatum(rettuple);
-}
-
-PG_FUNCTION_INFO_V1(set_ttdummy);
-
-Datum
-set_ttdummy(PG_FUNCTION_ARGS)
-{
-	int32		on = PG_GETARG_INT32(0);
-
-	if (ttoff)					/* OFF currently */
-	{
-		if (on == 0)
-			PG_RETURN_INT32(0);
-
-		/* turn ON */
-		ttoff = false;
-		PG_RETURN_INT32(0);
-	}
-
-	/* ON currently */
-	if (on != 0)
-		PG_RETURN_INT32(1);
-
-	/* turn OFF */
-	ttoff = true;
-
-	PG_RETURN_INT32(1);
-}
-
 
 /*
  * Type int44 has no real-world use, but the regression tests use it
@@ -643,6 +425,31 @@ make_tuple_indirect(PG_FUNCTION_ARGS)
 	 * function into a container type (record, array, etc) it should be OK.
 	 */
 	PG_RETURN_POINTER(newtup->t_data);
+}
+
+PG_FUNCTION_INFO_V1(get_environ);
+
+Datum
+get_environ(PG_FUNCTION_ARGS)
+{
+#if !defined(WIN32) || defined(_MSC_VER)
+	extern char **environ;
+#endif
+	int			nvals = 0;
+	ArrayType  *result;
+	Datum	   *env;
+
+	for (char **s = environ; *s; s++)
+		nvals++;
+
+	env = palloc(nvals * sizeof(Datum));
+
+	for (int i = 0; i < nvals; i++)
+		env[i] = CStringGetTextDatum(environ[i]);
+
+	result = construct_array_builtin(env, nvals, TEXTOID);
+
+	PG_RETURN_POINTER(result);
 }
 
 PG_FUNCTION_INFO_V1(regress_setenv);
@@ -887,91 +694,7 @@ test_spinlock(void)
 		if (memcmp(struct_w_lock.data_after, "ef12", 4) != 0)
 			elog(ERROR, "padding after spinlock modified");
 	}
-
-	/*
-	 * Ensure that allocating more than INT32_MAX emulated spinlocks works.
-	 * That's interesting because the spinlock emulation uses a 32bit integer
-	 * to map spinlocks onto semaphores. There've been bugs...
-	 */
-#ifndef HAVE_SPINLOCKS
-	{
-		/*
-		 * Initialize enough spinlocks to advance counter close to wraparound.
-		 * It's too expensive to perform acquire/release for each, as those
-		 * may be syscalls when the spinlock emulation is used (and even just
-		 * atomic TAS would be expensive).
-		 */
-		for (uint32 i = 0; i < INT32_MAX - 100000; i++)
-		{
-			slock_t		lock;
-
-			SpinLockInit(&lock);
-		}
-
-		for (uint32 i = 0; i < 200000; i++)
-		{
-			slock_t		lock;
-
-			SpinLockInit(&lock);
-
-			SpinLockAcquire(&lock);
-			SpinLockRelease(&lock);
-			SpinLockAcquire(&lock);
-			SpinLockRelease(&lock);
-		}
-	}
-#endif
 }
-
-/*
- * Verify that performing atomic ops inside a spinlock isn't a
- * problem. Realistically that's only going to be a problem when both
- * --disable-spinlocks and --disable-atomics are used, but it's cheap enough
- * to just always test.
- *
- * The test works by initializing enough atomics that we'd conflict if there
- * were an overlap between a spinlock and an atomic by holding a spinlock
- * while manipulating more than NUM_SPINLOCK_SEMAPHORES atomics.
- *
- * NUM_TEST_ATOMICS doesn't really need to be more than
- * NUM_SPINLOCK_SEMAPHORES, but it seems better to test a bit more
- * extensively.
- */
-static void
-test_atomic_spin_nest(void)
-{
-	slock_t		lock;
-#define NUM_TEST_ATOMICS (NUM_SPINLOCK_SEMAPHORES + NUM_ATOMICS_SEMAPHORES + 27)
-	pg_atomic_uint32 atomics32[NUM_TEST_ATOMICS];
-	pg_atomic_uint64 atomics64[NUM_TEST_ATOMICS];
-
-	SpinLockInit(&lock);
-
-	for (int i = 0; i < NUM_TEST_ATOMICS; i++)
-	{
-		pg_atomic_init_u32(&atomics32[i], 0);
-		pg_atomic_init_u64(&atomics64[i], 0);
-	}
-
-	/* just so it's not all zeroes */
-	for (int i = 0; i < NUM_TEST_ATOMICS; i++)
-	{
-		EXPECT_EQ_U32(pg_atomic_fetch_add_u32(&atomics32[i], i), 0);
-		EXPECT_EQ_U64(pg_atomic_fetch_add_u64(&atomics64[i], i), 0);
-	}
-
-	/* test whether we can do atomic op with lock held */
-	SpinLockAcquire(&lock);
-	for (int i = 0; i < NUM_TEST_ATOMICS; i++)
-	{
-		EXPECT_EQ_U32(pg_atomic_fetch_sub_u32(&atomics32[i], i), i);
-		EXPECT_EQ_U32(pg_atomic_read_u32(&atomics32[i]), 0);
-		EXPECT_EQ_U64(pg_atomic_fetch_sub_u64(&atomics64[i], i), i);
-		EXPECT_EQ_U64(pg_atomic_read_u64(&atomics64[i]), 0);
-	}
-	SpinLockRelease(&lock);
-}
-#undef NUM_TEST_ATOMICS
 
 PG_FUNCTION_INFO_V1(test_atomic_ops);
 Datum
@@ -989,8 +712,6 @@ test_atomic_ops(PG_FUNCTION_ARGS)
 	 */
 	test_spinlock();
 
-	test_atomic_spin_nest();
-
 	PG_RETURN_BOOL(true);
 }
 
@@ -1000,6 +721,13 @@ test_fdw_handler(PG_FUNCTION_ARGS)
 {
 	elog(ERROR, "test_fdw_handler is not implemented");
 	PG_RETURN_NULL();
+}
+
+PG_FUNCTION_INFO_V1(is_catalog_text_unique_index_oid);
+Datum
+is_catalog_text_unique_index_oid(PG_FUNCTION_ARGS)
+{
+	return IsCatalogTextUniqueIndexOid(PG_GETARG_OID(0));
 }
 
 PG_FUNCTION_INFO_V1(test_support_func);
@@ -1080,6 +808,56 @@ Datum
 test_opclass_options_func(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_NULL();
+}
+
+/* one-time tests for encoding infrastructure */
+PG_FUNCTION_INFO_V1(test_enc_setup);
+Datum
+test_enc_setup(PG_FUNCTION_ARGS)
+{
+	/* Test pg_encoding_set_invalid() */
+	for (int i = 0; i < _PG_LAST_ENCODING_; i++)
+	{
+		char		buf[2],
+					bigbuf[16];
+		int			len,
+					mblen,
+					valid;
+
+		if (pg_encoding_max_length(i) == 1)
+			continue;
+		pg_encoding_set_invalid(i, buf);
+		len = strnlen(buf, 2);
+		if (len != 2)
+			elog(WARNING,
+				 "official invalid string for encoding \"%s\" has length %d",
+				 pg_enc2name_tbl[i].name, len);
+		mblen = pg_encoding_mblen(i, buf);
+		if (mblen != 2)
+			elog(WARNING,
+				 "official invalid string for encoding \"%s\" has mblen %d",
+				 pg_enc2name_tbl[i].name, mblen);
+		valid = pg_encoding_verifymbstr(i, buf, len);
+		if (valid != 0)
+			elog(WARNING,
+				 "official invalid string for encoding \"%s\" has valid prefix of length %d",
+				 pg_enc2name_tbl[i].name, valid);
+		valid = pg_encoding_verifymbstr(i, buf, 1);
+		if (valid != 0)
+			elog(WARNING,
+				 "first byte of official invalid string for encoding \"%s\" has valid prefix of length %d",
+				 pg_enc2name_tbl[i].name, valid);
+		memset(bigbuf, ' ', sizeof(bigbuf));
+		bigbuf[0] = buf[0];
+		bigbuf[1] = buf[1];
+		valid = pg_encoding_verifymbstr(i, bigbuf, sizeof(bigbuf));
+		if (valid != 0)
+			elog(WARNING,
+				 "trailing data changed official invalid string for encoding \"%s\" to have valid prefix of length %d",
+				 pg_enc2name_tbl[i].name, valid);
+	}
+
+	PG_RETURN_VOID();
 }
 
 /*
@@ -1221,4 +999,32 @@ binary_coercible(PG_FUNCTION_ARGS)
 	Oid			targettype = PG_GETARG_OID(1);
 
 	PG_RETURN_BOOL(IsBinaryCoercible(srctype, targettype));
+}
+
+/*
+ * Sanity checks for functions in relpath.h
+ */
+PG_FUNCTION_INFO_V1(test_relpath);
+Datum
+test_relpath(PG_FUNCTION_ARGS)
+{
+	RelPathStr	rpath;
+
+	/*
+	 * Verify that PROCNUMBER_CHARS and MAX_BACKENDS stay in sync.
+	 * Unfortunately I don't know how to express that in a way suitable for a
+	 * static assert.
+	 */
+	if ((int) ceil(log10(MAX_BACKENDS)) != PROCNUMBER_CHARS)
+		elog(WARNING, "mismatch between MAX_BACKENDS and PROCNUMBER_CHARS");
+
+	/* verify that the max-length relpath is generated ok */
+	rpath = GetRelationPath(OID_MAX, OID_MAX, OID_MAX, MAX_BACKENDS - 1,
+							INIT_FORKNUM);
+
+	if (strlen(rpath.str) != REL_PATH_STR_MAXLEN)
+		elog(WARNING, "maximum length relpath is if length %zu instead of %zu",
+			 strlen(rpath.str), REL_PATH_STR_MAXLEN);
+
+	PG_RETURN_VOID();
 }

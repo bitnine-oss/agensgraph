@@ -129,6 +129,9 @@
     In all cases, a trigger is executed as part of the same transaction as
     the statement that triggered it, so if either the statement or the
     trigger causes an error, the effects of both will be rolled back.
+    Also, the trigger will always run as the role that queued the trigger
+    event, unless the trigger function is marked as <literal>SECURITY
+    DEFINER</literal>, in which case it will run as the function owner.
    </para>
 
    <para>
@@ -289,6 +292,10 @@
     <literal>BEFORE</literal> trigger.  Changes to the value of a generated
     column in a <literal>BEFORE</literal> trigger are ignored and will be
     overwritten.
+    Virtual generated columns are never computed when triggers fire.  In the C
+    language interface, their content is undefined in a trigger function.
+    Higher-level programming languages should prevent access to virtual
+    generated columns in triggers.
    </para>
 
    <para>
@@ -357,7 +364,8 @@
    <para>
     If a foreign key constraint specifies referential actions (that
     is, cascading updates or deletes), those actions are performed via
-    ordinary SQL update or delete commands on the referencing table.
+    ordinary SQL <command>UPDATE</command> or <command>DELETE</command>
+    commands on the referencing table.
     In particular, any triggers that exist on the referencing table
     will be fired for those changes.  If such a trigger modifies or
     blocks the effect of one of these commands, the end result could
@@ -915,8 +923,7 @@ trigf(PG_FUNCTION_ARGS)
     tupdesc = trigdata->tg_relation->rd_att;
 
     /* connect to SPI manager */
-    if ((ret = SPI_connect()) < 0)
-        elog(ERROR, "trigf (fired %s): SPI_connect returned %d", when, ret);
+    SPI_connect();
 
     /* get number of rows in table */
     ret = SPI_exec("SELECT count(*) FROM ttest", 0);

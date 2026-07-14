@@ -5,7 +5,6 @@
 
 #include "_int.h"
 #include "miscadmin.h"
-#include "utils/builtins.h"
 
 PG_FUNCTION_INFO_V1(bqarr_in);
 PG_FUNCTION_INFO_V1(bqarr_out);
@@ -299,7 +298,7 @@ bool
 signconsistent(QUERYTYPE *query, BITVECP sign, int siglen, bool calcnot)
 {
 	return execute(GETQUERY(query) + query->size - 1,
-				   (void *) sign, (void *) (intptr_t) siglen, calcnot,
+				   sign, (void *) (intptr_t) siglen, calcnot,
 				   checkcondition_bit);
 }
 
@@ -313,7 +312,7 @@ execconsistent(QUERYTYPE *query, ArrayType *array, bool calcnot)
 	chkval.arrb = ARRPTR(array);
 	chkval.arre = chkval.arrb + ARRNELEMS(array);
 	return execute(GETQUERY(query) + query->size - 1,
-				   (void *) &chkval, NULL, calcnot,
+				   &chkval, NULL, calcnot,
 				   checkcondition_arr);
 }
 
@@ -355,7 +354,7 @@ gin_bool_consistent(QUERYTYPE *query, bool *check)
 	}
 
 	return execute(GETQUERY(query) + query->size - 1,
-				   (void *) &gcv, NULL, true,
+				   &gcv, NULL, true,
 				   checkcondition_gin);
 }
 

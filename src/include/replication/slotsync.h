@@ -3,7 +3,7 @@
  * slotsync.h
  *	  Exports for slot synchronization.
  *
- * Portions Copyright (c) 2016-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2016-2025, PostgreSQL Global Development Group
  *
  * src/include/replication/slotsync.h
  *
@@ -26,7 +26,7 @@ extern PGDLLIMPORT char *PrimarySlotName;
 extern char *CheckAndGetDbnameFromConninfo(void);
 extern bool ValidateSlotSyncParams(int elevel);
 
-extern void ReplSlotSyncWorkerMain(char *startup_data, size_t startup_data_len) pg_attribute_noreturn();
+pg_noreturn extern void ReplSlotSyncWorkerMain(const void *startup_data, size_t startup_data_len);
 
 extern void ShutDownSlotSync(void);
 extern bool SlotSyncWorkerCanRestart(void);

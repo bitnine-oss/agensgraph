@@ -4,7 +4,7 @@
  *	  reliable BSD-style signal(2) routine stolen from RWW who stole it
  *	  from Stevens...
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -74,8 +74,7 @@ static volatile pqsigfunc pqsignal_handlers[PG_NSIG];
 /*
  * Except when called with SIG_IGN or SIG_DFL, pqsignal() sets up this function
  * as the handler for all signals.  This wrapper handler function checks that
- * it is called within a process that the server knows about (i.e., any process
- * that has called InitProcessGlobals(), such as a client backend), and not a
+ * it is called within a process that knew to maintain MyProcPid, and not a
  * child process forked by system(3), etc.  This check ensures that such child
  * processes do not modify shared memory, which is often detrimental.  If the
  * check succeeds, the function originally provided to pqsignal() is called.
@@ -87,6 +86,9 @@ static void
 wrapper_handler(SIGNAL_ARGS)
 {
 	int			save_errno = errno;
+
+	Assert(postgres_signal_arg > 0);
+	Assert(postgres_signal_arg < PG_NSIG);
 
 #ifndef FRONTEND
 
@@ -113,29 +115,18 @@ wrapper_handler(SIGNAL_ARGS)
 /*
  * Set up a signal handler, with SA_RESTART, for signal "signo"
  *
- * Returns the previous handler.
- *
- * NB: If called within a signal handler, race conditions may lead to bogus
- * return values.  You should either avoid calling this within signal handlers
- * or ignore the return value.
- *
- * XXX: Since no in-tree callers use the return value, and there is little
- * reason to do so, it would be nice if we could convert this to a void
- * function instead of providing potentially-bogus return values.
- * Unfortunately, that requires modifying the pqsignal() in legacy-pqsignal.c,
- * which in turn requires an SONAME bump, which is probably not worth it.
+ * Note: the actual name of this function is either pqsignal_fe when
+ * compiled with -DFRONTEND, or pqsignal_be when compiled without that.
+ * This is to avoid a name collision with libpq's legacy-pqsignal.c.
  */
-pqsigfunc
+void
 pqsignal(int signo, pqsigfunc func)
 {
-	pqsigfunc	orig_func = pqsignal_handlers[signo];	/* assumed atomic */
 #if !(defined(WIN32) && defined(FRONTEND))
-	struct sigaction act,
-				oact;
-#else
-	pqsigfunc	ret;
+	struct sigaction act;
 #endif
 
+	Assert(signo > 0);
 	Assert(signo < PG_NSIG);
 
 	if (func != SIG_IGN && func != SIG_DFL)
@@ -152,17 +143,11 @@ pqsignal(int signo, pqsigfunc func)
 	if (signo == SIGCHLD)
 		act.sa_flags |= SA_NOCLDSTOP;
 #endif
-	if (sigaction(signo, &act, &oact) < 0)
-		return SIG_ERR;
-	else if (oact.sa_handler == wrapper_handler)
-		return orig_func;
-	else
-		return oact.sa_handler;
+	if (sigaction(signo, &act, NULL) < 0)
+		Assert(false);			/* probably indicates coding error */
 #else
 	/* Forward to Windows native signal system. */
-	if ((ret = signal(signo, func)) == wrapper_handler)
-		return orig_func;
-	else
-		return ret;
+	if (signal(signo, func) == SIG_ERR)
+		Assert(false);			/* probably indicates coding error */
 #endif
 }

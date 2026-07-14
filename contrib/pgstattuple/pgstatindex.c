@@ -32,14 +32,11 @@
 #include "access/htup_details.h"
 #include "access/nbtree.h"
 #include "access/relation.h"
-#include "access/table.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "storage/bufmgr.h"
-#include "storage/lmgr.h"
-#include "utils/builtins.h"
 #include "utils/rel.h"
 #include "utils/varlena.h"
 
@@ -311,7 +308,7 @@ pgstatindex_impl(Relation rel, FunctionCallInfo fcinfo)
 
 			max_avail = BLCKSZ - (BLCKSZ - ((PageHeader) page)->pd_special + SizeOfPageHeaderData);
 			indexStat.max_avail += max_avail;
-			indexStat.free_space += PageGetFreeSpace(page);
+			indexStat.free_space += PageGetExactFreeSpace(page);
 
 			indexStat.leaf_pages++;
 

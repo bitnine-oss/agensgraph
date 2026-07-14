@@ -638,8 +638,11 @@ select sum(ss.tst::int) from
 where o.ten = 0;
 
 --
--- Test rescan of a SetOp node
+-- Test rescan of a hashed SetOp node
 --
+begin;
+set local enable_sort = off;
+
 explain (costs off)
 select count(*) from
   onek o cross join lateral (
@@ -656,6 +659,33 @@ select count(*) from
     select * from onek i2 where i2.unique1 = o.unique2
   ) ss
 where o.ten = 1;
+
+rollback;
+
+--
+-- Test rescan of a sorted SetOp node
+--
+begin;
+set local enable_hashagg = off;
+
+explain (costs off)
+select count(*) from
+  onek o cross join lateral (
+    select * from onek i1 where i1.unique1 = o.unique1
+    except
+    select * from onek i2 where i2.unique1 = o.unique2
+  ) ss
+where o.ten = 1;
+
+select count(*) from
+  onek o cross join lateral (
+    select * from onek i1 where i1.unique1 = o.unique1
+    except
+    select * from onek i2 where i2.unique1 = o.unique2
+  ) ss
+where o.ten = 1;
+
+rollback;
 
 --
 -- Test rescan of a RecursiveUnion node
@@ -857,7 +887,7 @@ $$
 declare ln text;
 begin
     for ln in
-        explain (analyze, summary off, timing off, costs off)
+        explain (analyze, summary off, timing off, costs off, buffers off)
         select * from (select pk,c2 from sq_limit order by c1,pk) as x limit 3
     loop
         ln := regexp_replace(ln, 'Memory: \S*',  'Memory: xxx');
@@ -889,6 +919,158 @@ move forward all in c1;
 fetch backward all in c1;
 
 commit;
+
+--
+-- Verify that we correctly flatten cases involving a subquery output
+-- expression that doesn't need to be wrapped in a PlaceHolderVar
+--
+
+explain (costs off)
+select tname, attname from (
+select relname::information_schema.sql_identifier as tname, * from
+  (select * from pg_class c) ss1) ss2
+  right join pg_attribute a on a.attrelid = ss2.oid
+where tname = 'tenk1' and attnum = 1;
+
+select tname, attname from (
+select relname::information_schema.sql_identifier as tname, * from
+  (select * from pg_class c) ss1) ss2
+  right join pg_attribute a on a.attrelid = ss2.oid
+where tname = 'tenk1' and attnum = 1;
+
+-- Check behavior when there's a lateral reference in the output expression
+explain (verbose, costs off)
+select t1.ten, sum(x) from
+  tenk1 t1 left join lateral (
+    select t1.ten + t2.ten as x, t2.fivethous from tenk1 t2
+  ) ss on t1.unique1 = ss.fivethous
+group by t1.ten
+order by t1.ten;
+
+select t1.ten, sum(x) from
+  tenk1 t1 left join lateral (
+    select t1.ten + t2.ten as x, t2.fivethous from tenk1 t2
+  ) ss on t1.unique1 = ss.fivethous
+group by t1.ten
+order by t1.ten;
+
+explain (verbose, costs off)
+select t1.q1, x from
+  int8_tbl t1 left join
+  (int8_tbl t2 left join
+   lateral (select t2.q1+t3.q1 as x, * from int8_tbl t3) t3 on t2.q2 = t3.q2)
+  on t1.q2 = t2.q2
+order by 1, 2;
+
+select t1.q1, x from
+  int8_tbl t1 left join
+  (int8_tbl t2 left join
+   lateral (select t2.q1+t3.q1 as x, * from int8_tbl t3) t3 on t2.q2 = t3.q2)
+  on t1.q2 = t2.q2
+order by 1, 2;
+
+-- strict expressions containing variables of rels under the same lowest
+-- nulling outer join can escape being wrapped
+explain (verbose, costs off)
+select t1.q1, x from
+  int8_tbl t1 left join
+  (int8_tbl t2 inner join
+   lateral (select t2.q1+1 as x, * from int8_tbl t3) t3 on t2.q2 = t3.q2)
+  on t1.q2 = t2.q2
+order by 1, 2;
+
+select t1.q1, x from
+  int8_tbl t1 left join
+  (int8_tbl t2 inner join
+   lateral (select t2.q1+1 as x, * from int8_tbl t3) t3 on t2.q2 = t3.q2)
+  on t1.q2 = t2.q2
+order by 1, 2;
+
+-- otherwise we need to wrap the strict expressions
+explain (verbose, costs off)
+select t1.q1, x from
+  int8_tbl t1 left join
+  (int8_tbl t2 left join
+   lateral (select t2.q1+1 as x, * from int8_tbl t3) t3 on t2.q2 = t3.q2)
+  on t1.q2 = t2.q2
+order by 1, 2;
+
+select t1.q1, x from
+  int8_tbl t1 left join
+  (int8_tbl t2 left join
+   lateral (select t2.q1+1 as x, * from int8_tbl t3) t3 on t2.q2 = t3.q2)
+  on t1.q2 = t2.q2
+order by 1, 2;
+
+-- lateral references for simple Vars can escape being wrapped if the
+-- referenced rel is under the same lowest nulling outer join
+explain (verbose, costs off)
+select t1.q1, x from
+  int8_tbl t1 left join
+  (int8_tbl t2 inner join
+   lateral (select t2.q2 as x, * from int8_tbl t3) ss on t2.q2 = ss.q1)
+  on t1.q1 = t2.q1
+order by 1, 2;
+
+select t1.q1, x from
+  int8_tbl t1 left join
+  (int8_tbl t2 inner join
+   lateral (select t2.q2 as x, * from int8_tbl t3) ss on t2.q2 = ss.q1)
+  on t1.q1 = t2.q1
+order by 1, 2;
+
+-- otherwise we need to wrap the Vars
+explain (verbose, costs off)
+select t1.q1, x from
+  int8_tbl t1 left join
+  (int8_tbl t2 left join
+   lateral (select t2.q2 as x, * from int8_tbl t3) ss on t2.q2 = ss.q1)
+  on t1.q1 = t2.q1
+order by 1, 2;
+
+select t1.q1, x from
+  int8_tbl t1 left join
+  (int8_tbl t2 left join
+   lateral (select t2.q2 as x, * from int8_tbl t3) ss on t2.q2 = ss.q1)
+  on t1.q1 = t2.q1
+order by 1, 2;
+
+-- lateral references for PHVs can also escape being wrapped if the
+-- referenced rel is under the same lowest nulling outer join
+explain (verbose, costs off)
+select ss2.* from
+  int8_tbl t1 left join
+  (int8_tbl t2 left join
+   (select coalesce(q1) as x, * from int8_tbl t3) ss1 on t2.q1 = ss1.q2 inner join
+   lateral (select ss1.x as y, * from int8_tbl t4) ss2 on t2.q2 = ss2.q1)
+  on t1.q2 = ss2.q1
+order by 1, 2, 3;
+
+select ss2.* from
+  int8_tbl t1 left join
+  (int8_tbl t2 left join
+   (select coalesce(q1) as x, * from int8_tbl t3) ss1 on t2.q1 = ss1.q2 inner join
+   lateral (select ss1.x as y, * from int8_tbl t4) ss2 on t2.q2 = ss2.q1)
+  on t1.q2 = ss2.q1
+order by 1, 2, 3;
+
+-- otherwise we need to wrap the PHVs
+explain (verbose, costs off)
+select ss2.* from
+  int8_tbl t1 left join
+  (int8_tbl t2 left join
+   (select coalesce(q1) as x, * from int8_tbl t3) ss1 on t2.q1 = ss1.q2 left join
+   lateral (select ss1.x as y, * from int8_tbl t4) ss2 on t2.q2 = ss2.q1)
+  on t1.q2 = ss2.q1
+order by 1, 2, 3;
+
+select ss2.* from
+  int8_tbl t1 left join
+  (int8_tbl t2 left join
+   (select coalesce(q1) as x, * from int8_tbl t3) ss1 on t2.q1 = ss1.q2 left join
+   lateral (select ss1.x as y, * from int8_tbl t4) ss2 on t2.q2 = ss2.q1)
+  on t1.q2 = ss2.q1
+order by 1, 2, 3;
 
 --
 -- Tests for CTE inlining behavior
@@ -1020,3 +1202,103 @@ WHERE a.thousand < 750;
 explain (costs off)
 SELECT * FROM tenk1 A LEFT JOIN tenk2 B
 ON B.hundred in (SELECT min(c.hundred) FROM tenk2 C WHERE c.odd = b.odd);
+
+--
+-- Test VALUES to ARRAY (VtA) transformation
+--
+
+-- VtA transformation for joined VALUES is not supported
+EXPLAIN (COSTS OFF)
+SELECT * FROM onek, (VALUES('RFAAAA'), ('VJAAAA')) AS v (i)
+  WHERE onek.stringu1 = v.i;
+
+-- VtA transformation for a composite argument is not supported
+EXPLAIN (COSTS OFF)
+SELECT * FROM onek
+  WHERE (unique1,ten) IN (VALUES (1,1), (20,0), (99,9), (17,99))
+  ORDER BY unique1;
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM onek
+    WHERE unique1 IN (VALUES(10000), (2), (389), (1000), (2000), (10029))
+    ORDER BY unique1;
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM onek
+    WHERE unique1 IN (VALUES(1200), (1));
+
+-- Recursive evaluation of constant queries is not yet supported
+EXPLAIN (COSTS OFF)
+SELECT * FROM onek
+  WHERE unique1 IN (SELECT x * x FROM (VALUES(1200), (1)) AS x(x));
+
+EXPLAIN (COSTS OFF)
+SELECT unique1, stringu1 FROM onek WHERE stringu1::name IN (VALUES('RFAAAA'), ('VJAAAA'));
+
+EXPLAIN (COSTS OFF)
+SELECT unique1, stringu1 FROM onek WHERE stringu1::text IN (VALUES('RFAAAA'), ('VJAAAA'));
+
+EXPLAIN (COSTS OFF)
+SELECT * from onek WHERE unique1 in (VALUES(1200::bigint), (1));
+
+-- VtA shouldn't depend on the side of the join probing with the VALUES expression.
+EXPLAIN (COSTS OFF)
+SELECT c.unique1,c.ten FROM tenk1 c JOIN onek a USING (ten)
+WHERE a.ten IN (VALUES (1), (2));
+EXPLAIN (COSTS OFF)
+SELECT c.unique1,c.ten FROM tenk1 c JOIN onek a USING (ten)
+WHERE c.ten IN (VALUES (1), (2));
+
+-- Constant expressions are simplified
+EXPLAIN (COSTS OFF)
+SELECT ten FROM onek WHERE sin(two ) +four IN (VALUES (sin(0.5)), (2));
+EXPLAIN (COSTS OFF)
+
+-- VtA allows NULLs in the list
+SELECT ten FROM onek WHERE sin(two)+four IN (VALUES (sin(0.5)), (NULL), (2));
+
+-- VtA is supported for custom plans where params are substituted with
+-- constants.  VtA is not supported with generic plans where params prevent
+-- us from building a constant array.
+PREPARE test (int, numeric, text) AS
+  SELECT ten FROM onek WHERE sin(two) * four / ($3::real) IN (VALUES (sin($2)), (2), ($1));
+EXPLAIN (COSTS OFF) EXECUTE test(42, 3.14, '-1.5');
+EXPLAIN (COSTS OFF) EXECUTE test(NULL, 3.14, NULL);
+EXPLAIN (COSTS OFF) EXECUTE test(NULL, 3.14, '-1.5');
+SET plan_cache_mode = 'force_generic_plan';
+EXPLAIN (COSTS OFF) EXECUTE test(NULL, 3.14, '-1.5');
+RESET plan_cache_mode;
+
+--  VtA doesn't support LIMIT, OFFSET, and ORDER BY clauses
+EXPLAIN (COSTS OFF)
+SELECT ten FROM onek WHERE unique1 IN (VALUES (1), (2) OFFSET 1);
+EXPLAIN (COSTS OFF)
+SELECT ten FROM onek WHERE unique1 IN (VALUES (1), (2) ORDER BY 1);
+EXPLAIN (COSTS OFF)
+SELECT ten FROM onek WHERE unique1 IN (VALUES (1), (2) LIMIT 1);
+
+EXPLAIN (COSTS OFF)
+SELECT ten FROM onek t
+WHERE unique1 IN (VALUES (0), ((2 IN (SELECT unique2 FROM onek c
+  WHERE c.unique2 = t.unique1))::integer));
+
+EXPLAIN (COSTS OFF)
+SELECT ten FROM onek t
+WHERE unique1 IN (VALUES (0), ((2 IN (SELECT unique2 FROM onek c
+  WHERE c.unique2 IN (VALUES (sin(0.5)), (2))))::integer));
+
+-- VtA is not allowed with subqueries
+EXPLAIN (COSTS OFF)
+SELECT ten FROM onek t WHERE unique1 IN (VALUES (0), ((2 IN
+  (SELECT (3)))::integer)
+);
+
+-- VtA is not allowed with non-constant expressions
+EXPLAIN (COSTS OFF)
+SELECT ten FROM onek t WHERE unique1 IN (VALUES (0), (unique2));
+EXPLAIN (COSTS OFF)
+SELECT * FROM onek t1, lateral (SELECT * FROM onek t2 WHERE t2.ten IN (values (t1.ten), (1)));
+
+-- VtA causes the whole expression to be evaluated as a constant
+EXPLAIN (COSTS OFF)
+SELECT ten FROM onek t WHERE 1.0::integer IN ((VALUES (1), (3)));

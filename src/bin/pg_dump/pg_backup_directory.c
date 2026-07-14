@@ -19,7 +19,7 @@
  *	sync.
  *
  *
- *	Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ *	Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  *	Portions Copyright (c) 1994, Regents of the University of California
  *	Portions Copyright (c) 2000, Philip Warner
  *
@@ -41,6 +41,7 @@
 
 #include "common/file_utils.h"
 #include "compress_io.h"
+#include "dumputils.h"
 #include "parallel.h"
 #include "pg_backup_utils.h"
 
@@ -140,7 +141,7 @@ InitArchiveFmt_Directory(ArchiveHandle *AH)
 
 	/* Set up our private context */
 	ctx = (lclContext *) pg_malloc0(sizeof(lclContext));
-	AH->formatData = (void *) ctx;
+	AH->formatData = ctx;
 
 	ctx->dataFH = NULL;
 	ctx->LOsTocFH = NULL;
@@ -156,41 +157,8 @@ InitArchiveFmt_Directory(ArchiveHandle *AH)
 
 	if (AH->mode == archModeWrite)
 	{
-		struct stat st;
-		bool		is_empty = false;
-
 		/* we accept an empty existing directory */
-		if (stat(ctx->directory, &st) == 0 && S_ISDIR(st.st_mode))
-		{
-			DIR		   *dir = opendir(ctx->directory);
-
-			if (dir)
-			{
-				struct dirent *d;
-
-				is_empty = true;
-				while (errno = 0, (d = readdir(dir)))
-				{
-					if (strcmp(d->d_name, ".") != 0 && strcmp(d->d_name, "..") != 0)
-					{
-						is_empty = false;
-						break;
-					}
-				}
-
-				if (errno)
-					pg_fatal("could not read directory \"%s\": %m",
-							 ctx->directory);
-
-				if (closedir(dir))
-					pg_fatal("could not close directory \"%s\": %m",
-							 ctx->directory);
-			}
-		}
-
-		if (!is_empty && mkdir(ctx->directory, 0700) < 0)
-			pg_fatal("could not create directory \"%s\": %m",
-					 ctx->directory);
+		create_or_open_dir(ctx->directory);
 	}
 	else
 	{							/* Read Mode */
@@ -246,7 +214,7 @@ _ArchiveEntry(ArchiveHandle *AH, TocEntry *te)
 	else
 		tctx->filename = NULL;
 
-	te->formatData = (void *) tctx;
+	te->formatData = tctx;
 }
 
 /*
@@ -285,7 +253,7 @@ _ReadExtraToc(ArchiveHandle *AH, TocEntry *te)
 	if (tctx == NULL)
 	{
 		tctx = (lclTocEntry *) pg_malloc0(sizeof(lclTocEntry));
-		te->formatData = (void *) tctx;
+		te->formatData = tctx;
 	}
 
 	tctx->filename = ReadStr(AH);
@@ -444,10 +412,15 @@ _LoadLOs(ArchiveHandle *AH, TocEntry *te)
 
 	/*
 	 * Note: before archive v16, there was always only one BLOBS TOC entry,
-	 * now there can be multiple.  We don't need to worry what version we are
-	 * reading though, because tctx->filename should be correct either way.
+	 * now there can be multiple.  Furthermore, although the actual filename
+	 * was always "blobs.toc" before v16, the value of tctx->filename did not
+	 * match that before commit 548e50976 fixed it.  For simplicity we assume
+	 * it must be "blobs.toc" in all archives before v16.
 	 */
-	setFilePath(AH, tocfname, tctx->filename);
+	if (AH->version < K_VERS_1_16)
+		setFilePath(AH, tocfname, "blobs.toc");
+	else
+		setFilePath(AH, tocfname, tctx->filename);
 
 	CFH = ctx->LOsTocFH = InitDiscoverCompressFileHandle(tocfname, PG_BINARY_R);
 
@@ -780,7 +753,7 @@ _PrepParallelRestore(ArchiveHandle *AH)
 			continue;
 
 		/* We may ignore items not due to be restored */
-		if ((te->reqs & REQ_DATA) == 0)
+		if ((te->reqs & (REQ_DATA | REQ_STATS)) == 0)
 			continue;
 
 		/*

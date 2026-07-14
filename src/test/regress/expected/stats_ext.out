@@ -66,6 +66,29 @@ ERROR:  syntax error at or near ","
 LINE 1: CREATE STATISTICS tst ON (x, y) FROM ext_stats_test;
                                    ^
 DROP TABLE ext_stats_test;
+-- statistics on virtual generated column not allowed
+CREATE TABLE ext_stats_test1 (x int, y int, z int GENERATED ALWAYS AS (x+y) VIRTUAL, w xid);
+CREATE STATISTICS tst on z from ext_stats_test1;
+ERROR:  statistics creation on virtual generated columns is not supported
+CREATE STATISTICS tst on (z) from ext_stats_test1;
+ERROR:  statistics creation on virtual generated columns is not supported
+CREATE STATISTICS tst on (z+1) from ext_stats_test1;
+ERROR:  statistics creation on virtual generated columns is not supported
+CREATE STATISTICS tst (ndistinct) ON z from ext_stats_test1;
+ERROR:  statistics creation on virtual generated columns is not supported
+-- statistics on system column not allowed
+CREATE STATISTICS tst on tableoid from ext_stats_test1;
+ERROR:  statistics creation on system columns is not supported
+CREATE STATISTICS tst on (tableoid) from ext_stats_test1;
+ERROR:  statistics creation on system columns is not supported
+CREATE STATISTICS tst on (tableoid::int+1) from ext_stats_test1;
+ERROR:  statistics creation on system columns is not supported
+CREATE STATISTICS tst (ndistinct) ON xmin from ext_stats_test1;
+ERROR:  statistics creation on system columns is not supported
+-- statistics without a less-than operator not supported
+CREATE STATISTICS tst (ndistinct) ON w from ext_stats_test1;
+ERROR:  column "w" cannot be used in statistics because its type xid has no default btree operator class
+DROP TABLE ext_stats_test1;
 -- Ensure stats are dropped sanely, and test IF NOT EXISTS while at it
 CREATE TABLE ab1 (a INTEGER, b INTEGER, c INTEGER);
 CREATE STATISTICS IF NOT EXISTS ab1_a_b_stats ON a, b FROM ab1;
@@ -3254,6 +3277,8 @@ CREATE OPERATOR <<< (procedure = op_leak, leftarg = int, rightarg = int,
                      restrict = scalarltsel);
 SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
 ERROR:  permission denied for table priv_test_tbl
+SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 OR b <<< 0;
+ERROR:  permission denied for table priv_test_tbl
 DELETE FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Permission denied
 ERROR:  permission denied for table priv_test_tbl
 -- Grant access via a security barrier view, but hide all data
@@ -3268,6 +3293,11 @@ SELECT * FROM tststats.priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not l
 ---+---
 (0 rows)
 
+SELECT * FROM tststats.priv_test_view WHERE a <<< 0 OR b <<< 0; -- Should not leak
+ a | b 
+---+---
+(0 rows)
+
 DELETE FROM tststats.priv_test_view WHERE a <<< 0 AND b <<< 0; -- Should not leak
 -- Grant table access, but hide all data with RLS
 RESET SESSION AUTHORIZATION;
@@ -3276,6 +3306,11 @@ GRANT SELECT, DELETE ON tststats.priv_test_tbl TO regress_stats_user1;
 -- Should now have direct table access, but see nothing and leak nothing
 SET SESSION AUTHORIZATION regress_stats_user1;
 SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 AND b <<< 0; -- Should not leak
+ a | b 
+---+---
+(0 rows)
+
+SELECT * FROM tststats.priv_test_tbl WHERE a <<< 0 OR b <<< 0;
  a | b 
 ---+---
 (0 rows)
@@ -3333,3 +3368,91 @@ NOTICE:  drop cascades to 2 other objects
 DETAIL:  drop cascades to table tststats.priv_test_tbl
 drop cascades to view tststats.priv_test_view
 DROP USER regress_stats_user1;
+CREATE TABLE grouping_unique (x integer);
+INSERT INTO grouping_unique (x) SELECT gs FROM generate_series(1,1000) AS gs;
+ANALYZE grouping_unique;
+-- Optimiser treat GROUP-BY operator as an 'uniqueser' of the input
+SELECT * FROM check_estimated_rows('
+  SELECT * FROM generate_series(1, 1) t1 LEFT JOIN (
+    SELECT x FROM grouping_unique t2 GROUP BY x) AS q1
+  ON t1.t1 = q1.x;
+');
+ estimated | actual 
+-----------+--------
+         1 |      1
+(1 row)
+
+DROP TABLE grouping_unique;
+--
+-- Extended statistics on sb_2 (x, y, z) improve a bucket size estimation,
+-- and the optimizer may choose hash join.
+--
+CREATE TABLE sb_1 AS
+  SELECT gs % 10 AS x, gs % 10 AS y, gs % 10 AS z
+  FROM generate_series(1, 1e4) AS gs;
+CREATE TABLE sb_2 AS
+  SELECT gs % 49 AS x, gs % 51 AS y, gs % 73 AS z, 'abc' || gs AS payload
+  FROM generate_series(1, 1e4) AS gs;
+ANALYZE sb_1, sb_2;
+-- During hash join estimation, the number of distinct values on each column
+-- is calculated. The optimizer selects the smallest number of distinct values
+-- and the largest hash bucket size. The optimizer decides that the hash
+-- bucket size is quite big because there are possibly many correlations.
+EXPLAIN (COSTS OFF) -- Choose merge join
+SELECT * FROM sb_1 a, sb_2 b WHERE a.x = b.x AND a.y = b.y AND a.z = b.z;
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Merge Join
+   Merge Cond: ((a.z = b.z) AND (a.x = b.x) AND (a.y = b.y))
+   ->  Sort
+         Sort Key: a.z, a.x, a.y
+         ->  Seq Scan on sb_1 a
+   ->  Sort
+         Sort Key: b.z, b.x, b.y
+         ->  Seq Scan on sb_2 b
+(8 rows)
+
+-- The ndistinct extended statistics on (x, y, z) provides more reliable value
+-- of bucket size.
+CREATE STATISTICS extstat_sb_2 (ndistinct) ON x, y, z FROM sb_2;
+ANALYZE sb_2;
+EXPLAIN (COSTS OFF) -- Choose hash join
+SELECT * FROM sb_1 a, sb_2 b WHERE a.x = b.x AND a.y = b.y AND a.z = b.z;
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Hash Join
+   Hash Cond: ((a.x = b.x) AND (a.y = b.y) AND (a.z = b.z))
+   ->  Seq Scan on sb_1 a
+   ->  Hash
+         ->  Seq Scan on sb_2 b
+(5 rows)
+
+-- Check that the Hash Join bucket size estimator detects equal clauses correctly.
+SET enable_nestloop = 'off';
+SET enable_mergejoin = 'off';
+EXPLAIN (COSTS OFF)
+SELECT FROM sb_1 LEFT JOIN sb_2 ON (sb_2.x=sb_1.x) AND (sb_1.x=sb_2.x);
+                       QUERY PLAN                       
+--------------------------------------------------------
+ Hash Left Join
+   Hash Cond: ((sb_1.x = sb_2.x) AND (sb_1.x = sb_2.x))
+   ->  Seq Scan on sb_1
+   ->  Hash
+         ->  Seq Scan on sb_2
+(5 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT FROM sb_1 LEFT JOIN sb_2
+   ON (sb_2.x=sb_1.x) AND (sb_1.x=sb_2.x) AND (sb_1.y=sb_2.y);
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
+ Hash Left Join
+   Hash Cond: ((sb_1.x = sb_2.x) AND (sb_1.y = sb_2.y) AND (sb_1.x = sb_2.x))
+   ->  Seq Scan on sb_1
+   ->  Hash
+         ->  Seq Scan on sb_2
+(5 rows)
+
+RESET enable_nestloop;
+RESET enable_mergejoin;
+DROP TABLE sb_1, sb_2 CASCADE;

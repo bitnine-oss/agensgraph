@@ -3,7 +3,7 @@
  * compress_zstd.c
  *	 Routines for archivers to write a Zstd compressed data stream.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -137,10 +137,12 @@ EndCompressorZstd(ArchiveHandle *AH, CompressorState *cs)
 		Assert(zstdcs->dstream == NULL);
 		_ZstdWriteCommon(AH, cs, true);
 		ZSTD_freeCStream(zstdcs->cstream);
-		pg_free(zstdcs->output.dst);
 	}
 
+	/* output buffer may be allocated in either mode */
+	pg_free(zstdcs->output.dst);
 	pg_free(zstdcs);
+	cs->private_data = NULL;
 }
 
 static void

@@ -186,7 +186,7 @@
    <itemizedlist>
     <listitem>
      <para>
-      Each individual record in a WAL file is protected by a CRC-32 (32-bit) check
+      Each individual record in a WAL file is protected by a CRC-32C (32-bit) check
       that allows us to tell if record contents are correct. The CRC value
       is set when we write each WAL record and checked during crash recovery,
       archive recovery and replication.
@@ -194,10 +194,8 @@
     </listitem>
     <listitem>
      <para>
-      Data pages are not currently checksummed by default, though full page images
-      recorded in WAL records will be protected; see <link
-      linkend="app-initdb-data-checksums"><application>initdb</application></link>
-      for details about enabling data checksums.
+      Data pages are checksummed by default, and full page images
+      recorded in WAL records are always checksum protected.
      </para>
     </listitem>
     <listitem>
@@ -212,7 +210,7 @@
     </listitem>
     <listitem>
      <para>
-      Individual state files in <filename>pg_twophase</filename> are protected by CRC-32.
+      Individual state files in <filename>pg_twophase</filename> are protected by CRC-32C.
      </para>
     </listitem>
     <listitem>
@@ -238,15 +236,15 @@
   </indexterm>
 
   <para>
-   By default, data pages are not protected by checksums, but this can
-   optionally be enabled for a cluster. When enabled, each data page includes
+   By default, data pages are protected by checksums, but this can
+   optionally be disabled for a cluster. When enabled, each data page includes
    a checksum that is updated when the page is written and verified each time
    the page is read. Only data pages are protected by checksums; internal data
    structures and temporary files are not.
   </para>
 
   <para>
-   Checksums are normally enabled when the cluster is initialized using <link
+   Checksums can be disabled when the cluster is initialized using <link
    linkend="app-initdb-data-checksums"><application>initdb</application></link>.
    They can also be enabled or disabled at a later time as an offline
    operation. Data checksums are enabled or disabled at the full cluster
@@ -643,6 +641,9 @@
    until the situation is resolved. A slow or failed standby server that
    uses a replication slot will have the same effect (see
    <xref linkend="streaming-replication-slots"/>).
+   Similarly, if <link linkend="runtime-config-wal-summarization">
+   WAL summarization</link> is enabled, old segments are kept
+   until they are summarized.
   </para>
 
   <para>
@@ -679,11 +680,11 @@
 
   <para>
    In some cases, when the WAL size on the primary increases quickly,
-   for instance during massive INSERT,
+   for instance during massive <command>INSERT</command>,
    the <structfield>restartpoints_req</structfield> counter on the standby
    may demonstrate a peak growth.
    This occurs because requests to create a new restartpoint due to increased
-   XLOG consumption cannot be performed because the safe checkpoint record
+   WAL consumption cannot be performed because the safe checkpoint record
    since the last restartpoint has not yet been replayed on the standby.
    This behavior is normal and does not lead to an increase in system resource
    consumption.
@@ -810,8 +811,9 @@
    When <xref linkend="guc-track-wal-io-timing"/> is enabled, the total
    amounts of time <function>XLogWrite</function> writes and
    <function>issue_xlog_fsync</function> syncs WAL data to disk are counted as
-   <literal>wal_write_time</literal> and <literal>wal_sync_time</literal> in
-   <xref linkend="pg-stat-wal-view"/>, respectively.
+   <varname>write_time</varname> and <varname>fsync_time</varname> in
+   <xref linkend="pg-stat-io-view"/> for the <varname>object</varname>
+   <literal>wal</literal>, respectively.
    <function>XLogWrite</function> is normally called by
    <function>XLogInsertRecord</function> (when there is no space for the new
    record in WAL buffers), <function>XLogFlush</function> and the WAL writer,
@@ -829,8 +831,9 @@
    of the setting of <varname>track_wal_io_timing</varname>, the number
    of times <function>XLogWrite</function> writes and
    <function>issue_xlog_fsync</function> syncs WAL data to disk are also
-   counted as <literal>wal_write</literal> and <literal>wal_sync</literal>
-   in <structname>pg_stat_wal</structname>, respectively.
+   counted as <varname>writes</varname> and <varname>fsyncs</varname>
+   in <structname>pg_stat_io</structname> for the <varname>object</varname>
+   <literal>wal</literal>, respectively.
   </para>
 
   <para>
@@ -841,8 +844,8 @@
    The <xref linkend="guc-maintenance-io-concurrency"/> and
    <xref linkend="guc-wal-decode-buffer-size"/> settings limit prefetching
    concurrency and distance, respectively.  By default, it is set to
-   <literal>try</literal>, which enables the feature on systems where
-   <function>posix_fadvise</function> is available.
+   <literal>try</literal>, which enables the feature on systems that support
+   issuing read-ahead advice.
   </para>
  </sect1>
 

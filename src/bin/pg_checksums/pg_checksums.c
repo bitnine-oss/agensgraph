@@ -4,7 +4,7 @@
  *	  Checks, enables or disables page level checksums for an offline
  *	  cluster
  *
- * Copyright (c) 2010-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/bin/pg_checksums/pg_checksums.c
@@ -16,12 +16,11 @@
 
 #include <dirent.h>
 #include <limits.h>
-#include <time.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "common/controldata_utils.h"
-#include "common/file_perm.h"
 #include "common/file_utils.h"
 #include "common/logging.h"
 #include "common/relpath.h"
@@ -60,8 +59,8 @@ static const char *progname;
 /*
  * Progress status information.
  */
-int64		total_size = 0;
-int64		current_size = 0;
+static int64 total_size = 0;
+static int64 current_size = 0;
 static pg_time_t last_progress_report = 0;
 
 static void
@@ -143,9 +142,9 @@ progress_report(bool finished)
 	/* Calculate current percentage of size done */
 	percent = total_size ? (int) ((current_size) * 100 / total_size) : 0;
 
-	fprintf(stderr, _("%lld/%lld MB (%d%%) computed"),
-			(long long) (current_size / (1024 * 1024)),
-			(long long) (total_size / (1024 * 1024)),
+	fprintf(stderr, _("%" PRId64 "/%" PRId64 " MB (%d%%) computed"),
+			(current_size / (1024 * 1024)),
+			(total_size / (1024 * 1024)),
 			percent);
 
 	/*
@@ -389,7 +388,7 @@ scan_directory(const char *basedir, const char *subdir, bool sizeonly)
 			 * is valid, resolving the linked locations and dive into them
 			 * directly.
 			 */
-			if (strncmp("pg_tblspc", subdir, strlen("pg_tblspc")) == 0)
+			if (strncmp(PG_TBLSPC_DIR, subdir, strlen(PG_TBLSPC_DIR)) == 0)
 			{
 				char		tblspc_path[MAXPGPATH];
 				struct stat tblspc_st;
@@ -594,22 +593,22 @@ main(int argc, char *argv[])
 		{
 			total_size = scan_directory(DataDir, "global", true);
 			total_size += scan_directory(DataDir, "base", true);
-			total_size += scan_directory(DataDir, "pg_tblspc", true);
+			total_size += scan_directory(DataDir, PG_TBLSPC_DIR, true);
 		}
 
 		(void) scan_directory(DataDir, "global", false);
 		(void) scan_directory(DataDir, "base", false);
-		(void) scan_directory(DataDir, "pg_tblspc", false);
+		(void) scan_directory(DataDir, PG_TBLSPC_DIR, false);
 
 		if (showprogress)
 			progress_report(true);
 
 		printf(_("Checksum operation completed\n"));
-		printf(_("Files scanned:   %lld\n"), (long long) files_scanned);
-		printf(_("Blocks scanned:  %lld\n"), (long long) blocks_scanned);
+		printf(_("Files scanned:   %" PRId64 "\n"), files_scanned);
+		printf(_("Blocks scanned:  %" PRId64 "\n"), blocks_scanned);
 		if (mode == PG_MODE_CHECK)
 		{
-			printf(_("Bad checksums:  %lld\n"), (long long) badblocks);
+			printf(_("Bad checksums:  %" PRId64 "\n"), badblocks);
 			printf(_("Data checksum version: %u\n"), ControlFile->data_checksum_version);
 
 			if (badblocks > 0)
@@ -617,8 +616,8 @@ main(int argc, char *argv[])
 		}
 		else if (mode == PG_MODE_ENABLE)
 		{
-			printf(_("Files written:  %lld\n"), (long long) files_written);
-			printf(_("Blocks written: %lld\n"), (long long) blocks_written);
+			printf(_("Files written:  %" PRId64 "\n"), files_written);
+			printf(_("Blocks written: %" PRId64 "\n"), blocks_written);
 		}
 	}
 
@@ -635,7 +634,7 @@ main(int argc, char *argv[])
 		if (do_sync)
 		{
 			pg_log_info("syncing data directory");
-			sync_pgdata(DataDir, PG_VERSION_NUM, sync_method);
+			sync_pgdata(DataDir, PG_VERSION_NUM, sync_method, true);
 		}
 
 		pg_log_info("updating control file");

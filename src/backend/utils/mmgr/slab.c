@@ -8,7 +8,7 @@
  * with minimal memory wastage and fragmentation.
  *
  *
- * Portions Copyright (c) 2017-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2017-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/mmgr/slab.c
@@ -601,8 +601,8 @@ SlabAllocFromNewBlock(MemoryContext context, Size size, int flags)
  *		want to avoid that.
  */
 pg_noinline
+pg_noreturn
 static void
-pg_attribute_noreturn()
 SlabAllocInvalidSize(MemoryContext context, Size size)
 {
 	SlabContext *slab = (SlabContext *) context;

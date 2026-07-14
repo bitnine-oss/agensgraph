@@ -3,7 +3,7 @@
  * worker_internal.h
  *	  Internal headers shared by logical replication workers.
  *
- * Portions Copyright (c) 2016-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2016-2025, PostgreSQL Global Development Group
  *
  * src/include/replication/worker_internal.h
  *
@@ -240,7 +240,8 @@ extern PGDLLIMPORT bool InitializingApplyWorker;
 extern void logicalrep_worker_attach(int slot);
 extern LogicalRepWorker *logicalrep_worker_find(Oid subid, Oid relid,
 												bool only_running);
-extern List *logicalrep_workers_find(Oid subid, bool only_running);
+extern List *logicalrep_workers_find(Oid subid, bool only_running,
+									 bool acquire_lock);
 extern bool logicalrep_worker_launch(LogicalRepWorkerType wtype,
 									 Oid dbid, Oid subid, const char *subname,
 									 Oid userid, Oid relid,

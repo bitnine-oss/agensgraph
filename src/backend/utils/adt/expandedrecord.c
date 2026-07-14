@@ -7,7 +7,7 @@
  * store values of named composite types, domains over named composite types,
  * and record types (registered or anonymous).
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -161,7 +161,7 @@ make_expanded_record_from_typeid(Oid type_id, int32 typmod,
 	{
 		/* Register callback to release the refcount */
 		erh->er_mcb.func = ER_mc_callback;
-		erh->er_mcb.arg = (void *) erh;
+		erh->er_mcb.arg = erh;
 		MemoryContextRegisterResetCallback(erh->hdr.eoh_context,
 										   &erh->er_mcb);
 
@@ -289,7 +289,7 @@ make_expanded_record_from_tupdesc(TupleDesc tupdesc,
 	{
 		/* Register callback to release the refcount */
 		erh->er_mcb.func = ER_mc_callback;
-		erh->er_mcb.arg = (void *) erh;
+		erh->er_mcb.arg = erh;
 		MemoryContextRegisterResetCallback(erh->hdr.eoh_context,
 										   &erh->er_mcb);
 
@@ -385,7 +385,7 @@ make_expanded_record_from_exprecord(ExpandedRecordHeader *olderh,
 	{
 		/* Register callback to release the refcount */
 		erh->er_mcb.func = ER_mc_callback;
-		erh->er_mcb.arg = (void *) erh;
+		erh->er_mcb.arg = erh;
 		MemoryContextRegisterResetCallback(erh->hdr.eoh_context,
 										   &erh->er_mcb);
 
@@ -699,7 +699,7 @@ ER_get_flat_size(ExpandedObjectHeader *eohptr)
 	{
 		for (i = 0; i < erh->nfields; i++)
 		{
-			Form_pg_attribute attr = TupleDescAttr(tupdesc, i);
+			CompactAttribute *attr = TupleDescCompactAttr(tupdesc, i);
 
 			if (!erh->dnulls[i] &&
 				!attr->attbyval && attr->attlen == -1 &&
@@ -844,7 +844,7 @@ expanded_record_fetch_tupdesc(ExpandedRecordHeader *erh)
 		if (erh->er_mcb.arg == NULL)
 		{
 			erh->er_mcb.func = ER_mc_callback;
-			erh->er_mcb.arg = (void *) erh;
+			erh->er_mcb.arg = erh;
 			MemoryContextRegisterResetCallback(erh->hdr.eoh_context,
 											   &erh->er_mcb);
 		}
@@ -1115,7 +1115,7 @@ expanded_record_set_field_internal(ExpandedRecordHeader *erh, int fnumber,
 								   bool check_constraints)
 {
 	TupleDesc	tupdesc;
-	Form_pg_attribute attr;
+	CompactAttribute *attr;
 	Datum	   *dvalues;
 	bool	   *dnulls;
 	char	   *oldValue;
@@ -1146,7 +1146,7 @@ expanded_record_set_field_internal(ExpandedRecordHeader *erh, int fnumber,
 	 * Copy new field value into record's context, and deal with detoasting,
 	 * if needed.
 	 */
-	attr = TupleDescAttr(tupdesc, fnumber - 1);
+	attr = TupleDescCompactAttr(tupdesc, fnumber - 1);
 	if (!isnull && !attr->attbyval)
 	{
 		MemoryContext oldcxt;
@@ -1279,7 +1279,7 @@ expanded_record_set_fields(ExpandedRecordHeader *erh,
 
 	for (fnumber = 0; fnumber < erh->nfields; fnumber++)
 	{
-		Form_pg_attribute attr = TupleDescAttr(tupdesc, fnumber);
+		CompactAttribute *attr = TupleDescCompactAttr(tupdesc, fnumber);
 		Datum		newValue;
 		bool		isnull;
 
@@ -1541,7 +1541,7 @@ check_domain_for_new_field(ExpandedRecordHeader *erh, int fnumber,
 	 */
 	if (!isnull)
 	{
-		Form_pg_attribute attr = TupleDescAttr(erh->er_tupdesc, fnumber - 1);
+		CompactAttribute *attr = TupleDescCompactAttr(erh->er_tupdesc, fnumber - 1);
 
 		if (!attr->attbyval && attr->attlen == -1 &&
 			VARATT_IS_EXTERNAL(DatumGetPointer(newValue)))

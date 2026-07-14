@@ -7,7 +7,7 @@
  *		A big hack of the regexp.c code!! Contributed by
  *		Keith Parks <emkxp01@mtcc.demon.co.uk> (7/95).
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -33,18 +33,18 @@
 
 
 static int	SB_MatchText(const char *t, int tlen, const char *p, int plen,
-						 pg_locale_t locale, bool locale_is_c);
+						 pg_locale_t locale);
 static text *SB_do_like_escape(text *pat, text *esc);
 
 static int	MB_MatchText(const char *t, int tlen, const char *p, int plen,
-						 pg_locale_t locale, bool locale_is_c);
+						 pg_locale_t locale);
 static text *MB_do_like_escape(text *pat, text *esc);
 
 static int	UTF8_MatchText(const char *t, int tlen, const char *p, int plen,
-						   pg_locale_t locale, bool locale_is_c);
+						   pg_locale_t locale);
 
 static int	SB_IMatchText(const char *t, int tlen, const char *p, int plen,
-						  pg_locale_t locale, bool locale_is_c);
+						  pg_locale_t locale);
 
 static int	GenericMatchText(const char *s, int slen, const char *p, int plen, Oid collation);
 static int	Generic_Text_IC_like(text *str, text *pat, Oid collation);
@@ -91,14 +91,14 @@ wchareq(const char *p1, const char *p2)
  * fold-on-the-fly processing, however.
  */
 static char
-SB_lower_char(unsigned char c, pg_locale_t locale, bool locale_is_c)
+SB_lower_char(unsigned char c, pg_locale_t locale)
 {
-	if (locale_is_c)
+	if (locale->ctype_is_c)
 		return pg_ascii_tolower(c);
-	else if (locale)
-		return tolower_l(c, locale->info.lt);
-	else
+	else if (locale->is_default)
 		return pg_tolower(c);
+	else
+		return tolower_l(c, locale->info.lt);
 }
 
 
@@ -131,7 +131,7 @@ SB_lower_char(unsigned char c, pg_locale_t locale, bool locale_is_c)
 #include "like_match.c"
 
 /* setup to compile like_match.c for single byte case insensitive matches */
-#define MATCH_LOWER(t) SB_lower_char((unsigned char) (t), locale, locale_is_c)
+#define MATCH_LOWER(t, locale) SB_lower_char((unsigned char) (t), locale)
 #define NextChar(p, plen) NextByte((p), (plen))
 #define MatchText SB_IMatchText
 
@@ -149,22 +149,28 @@ SB_lower_char(unsigned char c, pg_locale_t locale, bool locale_is_c)
 static inline int
 GenericMatchText(const char *s, int slen, const char *p, int plen, Oid collation)
 {
-	if (collation && !lc_ctype_is_c(collation))
-	{
-		pg_locale_t locale = pg_newlocale_from_collation(collation);
+	pg_locale_t locale;
 
-		if (!pg_locale_deterministic(locale))
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("nondeterministic collations are not supported for LIKE")));
+	if (!OidIsValid(collation))
+	{
+		/*
+		 * This typically means that the parser could not resolve a conflict
+		 * of implicit collations, so report it that way.
+		 */
+		ereport(ERROR,
+				(errcode(ERRCODE_INDETERMINATE_COLLATION),
+				 errmsg("could not determine which collation to use for LIKE"),
+				 errhint("Use the COLLATE clause to set the collation explicitly.")));
 	}
 
+	locale = pg_newlocale_from_collation(collation);
+
 	if (pg_database_encoding_max_length() == 1)
-		return SB_MatchText(s, slen, p, plen, 0, true);
+		return SB_MatchText(s, slen, p, plen, locale);
 	else if (GetDatabaseEncoding() == PG_UTF8)
-		return UTF8_MatchText(s, slen, p, plen, 0, true);
+		return UTF8_MatchText(s, slen, p, plen, locale);
 	else
-		return MB_MatchText(s, slen, p, plen, 0, true);
+		return MB_MatchText(s, slen, p, plen, locale);
 }
 
 static inline int
@@ -174,8 +180,7 @@ Generic_Text_IC_like(text *str, text *pat, Oid collation)
 			   *p;
 	int			slen,
 				plen;
-	pg_locale_t locale = 0;
-	bool		locale_is_c = false;
+	pg_locale_t locale;
 
 	if (!OidIsValid(collation))
 	{
@@ -189,12 +194,9 @@ Generic_Text_IC_like(text *str, text *pat, Oid collation)
 				 errhint("Use the COLLATE clause to set the collation explicitly.")));
 	}
 
-	if (lc_ctype_is_c(collation))
-		locale_is_c = true;
-	else
-		locale = pg_newlocale_from_collation(collation);
+	locale = pg_newlocale_from_collation(collation);
 
-	if (!pg_locale_deterministic(locale))
+	if (!locale->deterministic)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("nondeterministic collations are not supported for ILIKE")));
@@ -207,7 +209,7 @@ Generic_Text_IC_like(text *str, text *pat, Oid collation)
 	 * way.
 	 */
 
-	if (pg_database_encoding_max_length() > 1 || (locale && locale->provider == COLLPROVIDER_ICU))
+	if (pg_database_encoding_max_length() > 1 || (locale->provider == COLLPROVIDER_ICU))
 	{
 		pat = DatumGetTextPP(DirectFunctionCall1Coll(lower, collation,
 													 PointerGetDatum(pat)));
@@ -218,9 +220,9 @@ Generic_Text_IC_like(text *str, text *pat, Oid collation)
 		s = VARDATA_ANY(str);
 		slen = VARSIZE_ANY_EXHDR(str);
 		if (GetDatabaseEncoding() == PG_UTF8)
-			return UTF8_MatchText(s, slen, p, plen, 0, true);
+			return UTF8_MatchText(s, slen, p, plen, 0);
 		else
-			return MB_MatchText(s, slen, p, plen, 0, true);
+			return MB_MatchText(s, slen, p, plen, 0);
 	}
 	else
 	{
@@ -228,7 +230,7 @@ Generic_Text_IC_like(text *str, text *pat, Oid collation)
 		plen = VARSIZE_ANY_EXHDR(pat);
 		s = VARDATA_ANY(str);
 		slen = VARSIZE_ANY_EXHDR(str);
-		return SB_IMatchText(s, slen, p, plen, locale, locale_is_c);
+		return SB_IMatchText(s, slen, p, plen, locale);
 	}
 }
 
@@ -336,7 +338,7 @@ bytealike(PG_FUNCTION_ARGS)
 	p = VARDATA_ANY(pat);
 	plen = VARSIZE_ANY_EXHDR(pat);
 
-	result = (SB_MatchText(s, slen, p, plen, 0, true) == LIKE_TRUE);
+	result = (SB_MatchText(s, slen, p, plen, 0) == LIKE_TRUE);
 
 	PG_RETURN_BOOL(result);
 }
@@ -357,7 +359,7 @@ byteanlike(PG_FUNCTION_ARGS)
 	p = VARDATA_ANY(pat);
 	plen = VARSIZE_ANY_EXHDR(pat);
 
-	result = (SB_MatchText(s, slen, p, plen, 0, true) != LIKE_TRUE);
+	result = (SB_MatchText(s, slen, p, plen, 0) != LIKE_TRUE);
 
 	PG_RETURN_BOOL(result);
 }

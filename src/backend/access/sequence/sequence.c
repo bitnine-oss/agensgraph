@@ -3,7 +3,7 @@
  * sequence.c
  *	  Generic routines for sequence-related code.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,7 +22,7 @@
 
 #include "access/relation.h"
 #include "access/sequence.h"
-#include "storage/lmgr.h"
+#include "utils/rel.h"
 
 static inline void validate_relation_kind(Relation r);
 

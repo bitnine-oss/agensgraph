@@ -4,7 +4,7 @@
  *		Functions for direct access to files
  *
  *
- * Copyright (c) 2004-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2004-2025, PostgreSQL Global Development Group
  *
  * Author: Andreas Pflug <pgadmin@pse-consulting.de>
  *
@@ -690,25 +690,36 @@ pg_ls_archive_statusdir(PG_FUNCTION_ARGS)
 }
 
 /*
- * Function to return the list of files in the pg_logical/snapshots directory.
+ * Function to return the list of files in the WAL summaries directory.
+ */
+Datum
+pg_ls_summariesdir(PG_FUNCTION_ARGS)
+{
+	return pg_ls_dir_files(fcinfo, XLOGDIR "/summaries", true);
+}
+
+/*
+ * Function to return the list of files in the PG_LOGICAL_SNAPSHOTS_DIR
+ * directory.
  */
 Datum
 pg_ls_logicalsnapdir(PG_FUNCTION_ARGS)
 {
-	return pg_ls_dir_files(fcinfo, "pg_logical/snapshots", false);
+	return pg_ls_dir_files(fcinfo, PG_LOGICAL_SNAPSHOTS_DIR, false);
 }
 
 /*
- * Function to return the list of files in the pg_logical/mappings directory.
+ * Function to return the list of files in the PG_LOGICAL_MAPPINGS_DIR
+ * directory.
  */
 Datum
 pg_ls_logicalmapdir(PG_FUNCTION_ARGS)
 {
-	return pg_ls_dir_files(fcinfo, "pg_logical/mappings", false);
+	return pg_ls_dir_files(fcinfo, PG_LOGICAL_MAPPINGS_DIR, false);
 }
 
 /*
- * Function to return the list of files in the pg_replslot/<replication_slot>
+ * Function to return the list of files in the PG_REPLSLOT_DIR/<slot_name>
  * directory.
  */
 Datum
@@ -728,6 +739,7 @@ pg_ls_replslotdir(PG_FUNCTION_ARGS)
 				 errmsg("replication slot \"%s\" does not exist",
 						slotname)));
 
-	snprintf(path, sizeof(path), "pg_replslot/%s", slotname);
+	snprintf(path, sizeof(path), "%s/%s", PG_REPLSLOT_DIR, slotname);
+
 	return pg_ls_dir_files(fcinfo, path, false);
 }

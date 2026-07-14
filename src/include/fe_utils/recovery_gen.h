@@ -2,7 +2,7 @@
  *
  * Generator for recovery configuration
  *
- * Portions Copyright (c) 2011-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2011-2025, PostgreSQL Global Development Group
  *
  * src/include/fe_utils/recovery_gen.h
  *
@@ -25,5 +25,6 @@ extern PQExpBuffer GenerateRecoveryConfig(PGconn *pgconn,
 										  char *dbname);
 extern void WriteRecoveryConfig(PGconn *pgconn, const char *target_dir,
 								PQExpBuffer contents);
+extern char *GetDbnameFromConnectionOptions(const char *connstr);
 
 #endif							/* RECOVERY_GEN_H */

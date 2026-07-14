@@ -3,7 +3,7 @@
  * objectaddress.c
  *	  functions for working with ObjectAddresses
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -961,7 +961,8 @@ static void getLabelIdentity(StringInfo buffer, Oid laboid, List **object);
  *
  * If the object is a relation or a child object of a relation (e.g. an
  * attribute or constraint), the relation is also opened and *relp receives
- * the open relcache entry pointer; otherwise, *relp is set to NULL.  This
+ * the open relcache entry pointer; otherwise, *relp is set to NULL.
+ * (relp can be NULL if the caller never passes a relation-related object.)  This
  * is a bit grotty but it makes life simpler, since the caller will
  * typically need the relcache entry too.  Caller must close the relcache
  * entry when done with it.  The relation is locked with the specified lockmode
@@ -1279,8 +1280,12 @@ get_object_address(ObjectType objtype, Node *object,
 		old_address = address;
 	}
 
+	/* relp must be given if it's a relation */
+	Assert(!relation || relp);
+
 	/* Return the object address and the relation. */
-	*relp = relation;
+	if (relp)
+		*relp = relation;
 	return address;
 }
 
@@ -2076,16 +2081,20 @@ get_object_address_defacl(List *object, bool missing_ok)
 		case DEFACLOBJ_NAMESPACE:
 			objtype_str = "schemas";
 			break;
+		case DEFACLOBJ_LARGEOBJECT:
+			objtype_str = "large objects";
+			break;
 		default:
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("unrecognized default ACL object type \"%c\"", objtype),
-					 errhint("Valid object types are \"%c\", \"%c\", \"%c\", \"%c\", \"%c\".",
+					 errhint("Valid object types are \"%c\", \"%c\", \"%c\", \"%c\", \"%c\", \"%c\".",
 							 DEFACLOBJ_RELATION,
 							 DEFACLOBJ_SEQUENCE,
 							 DEFACLOBJ_FUNCTION,
 							 DEFACLOBJ_TYPE,
-							 DEFACLOBJ_NAMESPACE)));
+							 DEFACLOBJ_NAMESPACE,
+							 DEFACLOBJ_LARGEOBJECT)));
 	}
 
 	/*
@@ -2948,13 +2957,34 @@ get_object_property_data(Oid class_id)
 HeapTuple
 get_catalog_object_by_oid(Relation catalog, AttrNumber oidcol, Oid objectId)
 {
+	return
+		get_catalog_object_by_oid_extended(catalog, oidcol, objectId, false);
+}
+
+/*
+ * Same as get_catalog_object_by_oid(), but with an additional "locktup"
+ * argument controlling whether to acquire a LOCKTAG_TUPLE at mode
+ * InplaceUpdateTupleLock.  See README.tuplock section "Locking to write
+ * inplace-updated tables".
+ */
+HeapTuple
+get_catalog_object_by_oid_extended(Relation catalog,
+								   AttrNumber oidcol,
+								   Oid objectId,
+								   bool locktup)
+{
 	HeapTuple	tuple;
 	Oid			classId = RelationGetRelid(catalog);
 	int			oidCacheId = get_object_catcache_oid(classId);
 
 	if (oidCacheId > 0)
 	{
-		tuple = SearchSysCacheCopy1(oidCacheId, ObjectIdGetDatum(objectId));
+		if (locktup)
+			tuple = SearchSysCacheLockedCopy1(oidCacheId,
+											  ObjectIdGetDatum(objectId));
+		else
+			tuple = SearchSysCacheCopy1(oidCacheId,
+										ObjectIdGetDatum(objectId));
 		if (!HeapTupleIsValid(tuple))	/* should not happen */
 			return NULL;
 	}
@@ -2979,6 +3009,10 @@ get_catalog_object_by_oid(Relation catalog, AttrNumber oidcol, Oid objectId)
 			systable_endscan(scan);
 			return NULL;
 		}
+
+		if (locktup)
+			LockTuple(catalog, &tuple->t_self, InplaceUpdateTupleLock);
+
 		tuple = heap_copytuple(tuple);
 
 		systable_endscan(scan);
@@ -3398,6 +3432,12 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 				initStringInfo(&opfam);
 				getOpFamilyDescription(&opfam, amopForm->amopfamily, false);
 
+				/*
+				 * We use FORMAT_TYPE_ALLOW_INVALID here so as not to fail
+				 * completely if the type links are dangling, which is a form
+				 * of catalog corruption that could occur due to old bugs.
+				 */
+
 				/*------
 				   translator: %d is the operator strategy (a number), the
 				   first two %s's are data type names, the third %s is the
@@ -3405,8 +3445,10 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 				   textual form of the operator with arguments.  */
 				appendStringInfo(&buffer, _("operator %d (%s, %s) of %s: %s"),
 								 amopForm->amopstrategy,
-								 format_type_be(amopForm->amoplefttype),
-								 format_type_be(amopForm->amoprighttype),
+								 format_type_extended(amopForm->amoplefttype,
+													  -1, FORMAT_TYPE_ALLOW_INVALID),
+								 format_type_extended(amopForm->amoprighttype,
+													  -1, FORMAT_TYPE_ALLOW_INVALID),
 								 opfam.data,
 								 format_operator(amopForm->amopopr));
 
@@ -3455,6 +3497,12 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 				initStringInfo(&opfam);
 				getOpFamilyDescription(&opfam, amprocForm->amprocfamily, false);
 
+				/*
+				 * We use FORMAT_TYPE_ALLOW_INVALID here so as not to fail
+				 * completely if the type links are dangling, which is a form
+				 * of catalog corruption that could occur due to old bugs.
+				 */
+
 				/*------
 				   translator: %d is the function number, the first two %s's
 				   are data type names, the third %s is the description of the
@@ -3462,8 +3510,10 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 				   function with arguments.  */
 				appendStringInfo(&buffer, _("function %d (%s, %s) of %s: %s"),
 								 amprocForm->amprocnum,
-								 format_type_be(amprocForm->amproclefttype),
-								 format_type_be(amprocForm->amprocrighttype),
+								 format_type_extended(amprocForm->amproclefttype,
+													  -1, FORMAT_TYPE_ALLOW_INVALID),
+								 format_type_extended(amprocForm->amprocrighttype,
+													  -1, FORMAT_TYPE_ALLOW_INVALID),
 								 opfam.data,
 								 format_procedure(amprocForm->amproc));
 
@@ -3964,6 +4014,12 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 						Assert(!nspname);
 						appendStringInfo(&buffer,
 										 _("default privileges on new schemas belonging to role %s"),
+										 rolename);
+						break;
+					case DEFACLOBJ_LARGEOBJECT:
+						Assert(!nspname);
+						appendStringInfo(&buffer,
+										 _("default privileges on new large objects belonging to role %s"),
 										 rolename);
 						break;
 					default:
@@ -4536,6 +4592,75 @@ pg_identify_object_as_address(PG_FUNCTION_ARGS)
 	htup = heap_form_tuple(tupdesc, values, nulls);
 
 	PG_RETURN_DATUM(HeapTupleGetDatum(htup));
+}
+
+/*
+ * SQL-level callable function to obtain the ACL of a specified object, given
+ * its catalog OID, object OID and sub-object ID.
+ */
+Datum
+pg_get_acl(PG_FUNCTION_ARGS)
+{
+	Oid			classId = PG_GETARG_OID(0);
+	Oid			objectId = PG_GETARG_OID(1);
+	int32		objsubid = PG_GETARG_INT32(2);
+	Oid			catalogId;
+	AttrNumber	Anum_acl;
+	Datum		datum;
+	bool		isnull;
+	HeapTuple	tup;
+
+	/* for "pinned" items in pg_depend, return null */
+	if (!OidIsValid(classId) && !OidIsValid(objectId))
+		PG_RETURN_NULL();
+
+	/* for large objects, the catalog to look at is pg_largeobject_metadata */
+	catalogId = (classId == LargeObjectRelationId) ?
+		LargeObjectMetadataRelationId : classId;
+	Anum_acl = get_object_attnum_acl(catalogId);
+
+	/* return NULL if no ACL field for this catalog */
+	if (Anum_acl == InvalidAttrNumber)
+		PG_RETURN_NULL();
+
+	/*
+	 * If dealing with a relation's attribute (objsubid is set), the ACL is
+	 * retrieved from pg_attribute.
+	 */
+	if (classId == RelationRelationId && objsubid != 0)
+	{
+		AttrNumber	attnum = (AttrNumber) objsubid;
+
+		tup = SearchSysCacheCopyAttNum(objectId, attnum);
+
+		if (!HeapTupleIsValid(tup))
+			PG_RETURN_NULL();
+
+		datum = SysCacheGetAttr(ATTNUM, tup, Anum_pg_attribute_attacl,
+								&isnull);
+	}
+	else
+	{
+		Relation	rel;
+
+		rel = table_open(catalogId, AccessShareLock);
+
+		tup = get_catalog_object_by_oid(rel, get_object_attnum_oid(catalogId),
+										objectId);
+		if (!HeapTupleIsValid(tup))
+		{
+			table_close(rel, AccessShareLock);
+			PG_RETURN_NULL();
+		}
+
+		datum = heap_getattr(tup, Anum_acl, RelationGetDescr(rel), &isnull);
+		table_close(rel, AccessShareLock);
+	}
+
+	if (isnull)
+		PG_RETURN_NULL();
+
+	PG_RETURN_DATUM(datum);
 }
 
 /*
@@ -5834,6 +5959,10 @@ getObjectIdentityParts(const ObjectAddress *object,
 					case DEFACLOBJ_NAMESPACE:
 						appendStringInfoString(&buffer,
 											   " on schemas");
+						break;
+					case DEFACLOBJ_LARGEOBJECT:
+						appendStringInfoString(&buffer,
+											   " on large objects");
 						break;
 				}
 

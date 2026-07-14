@@ -3,7 +3,7 @@
  * backup_manifest.c
  *	  code for generating and sending a backup manifest
  *
- * Portions Copyright (c) 2010-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/backup/backup_manifest.c
@@ -16,6 +16,7 @@
 #include "access/xlog.h"
 #include "backup/backup_manifest.h"
 #include "backup/basebackup_sink.h"
+#include "common/relpath.h"
 #include "mb/pg_wchar.h"
 #include "utils/builtins.h"
 #include "utils/json.h"
@@ -117,7 +118,7 @@ AddFileToBackupManifest(backup_manifest_info *manifest, Oid spcoid,
 	 */
 	if (OidIsValid(spcoid))
 	{
-		snprintf(pathbuf, sizeof(pathbuf), "pg_tblspc/%u/%s", spcoid,
+		snprintf(pathbuf, sizeof(pathbuf), "%s/%u/%s", PG_TBLSPC_DIR, spcoid,
 				 pathname);
 		pathname = pathbuf;
 	}
@@ -148,7 +149,7 @@ AddFileToBackupManifest(backup_manifest_info *manifest, Oid spcoid,
 		pg_verify_mbstr(PG_UTF8, pathname, pathlen, true))
 	{
 		appendStringInfoString(&buf, "{ \"Path\": ");
-		escape_json(&buf, pathname);
+		escape_json_with_len(&buf, pathname, pathlen);
 		appendStringInfoString(&buf, ", ");
 	}
 	else

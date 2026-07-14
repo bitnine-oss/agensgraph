@@ -3,7 +3,7 @@
  *
  * Utilities for replaying WAL records.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/xlogutils.h
@@ -13,6 +13,9 @@
 
 #include "access/xlogreader.h"
 #include "storage/bufmgr.h"
+
+/* GUC variable */
+extern PGDLLIMPORT bool ignore_invalid_pages;
 
 /*
  * Prior to 8.4, all activity during recovery was carried out by the startup

@@ -8,6 +8,12 @@
 -- conditio sine qua non
 SHOW track_counts;  -- must be on
 
+-- List of backend types, contexts and objects tracked in pg_stat_io.
+\a
+SELECT backend_type, object, context FROM pg_stat_io
+  ORDER BY backend_type COLLATE "C", object COLLATE "C", context COLLATE "C";
+\a
+
 -- ensure that both seqscan and indexscan plans are allowed
 SET enable_seqscan TO on;
 SET enable_indexscan TO on;
@@ -420,9 +426,13 @@ SELECT sessions > :db_stat_sessions FROM pg_stat_database WHERE datname = (SELEC
 -- Test pg_stat_checkpointer checkpointer-related stats, together with pg_stat_wal
 SELECT num_requested AS rqst_ckpts_before FROM pg_stat_checkpointer \gset
 
--- Test pg_stat_wal (and make a temp table so our temp schema exists)
+-- Test pg_stat_wal
 SELECT wal_bytes AS wal_bytes_before FROM pg_stat_wal \gset
 
+-- Test pg_stat_get_backend_wal()
+SELECT wal_bytes AS backend_wal_bytes_before from pg_stat_get_backend_wal(pg_backend_pid()) \gset
+
+-- Make a temp table so our temp schema exists
 CREATE TEMP TABLE test_stats_temp AS SELECT 17;
 DROP TABLE test_stats_temp;
 
@@ -434,6 +444,9 @@ CHECKPOINT;
 
 SELECT num_requested > :rqst_ckpts_before FROM pg_stat_checkpointer;
 SELECT wal_bytes > :wal_bytes_before FROM pg_stat_wal;
+
+SELECT pg_stat_force_next_flush();
+SELECT wal_bytes > :backend_wal_bytes_before FROM pg_stat_get_backend_wal(pg_backend_pid());
 
 -- Test pg_stat_get_backend_idset() and some allied functions.
 -- In particular, verify that their notion of backend ID matches
@@ -542,7 +555,7 @@ ROLLBACK;
 SELECT pg_stat_have_stats('bgwriter', 0, 0);
 -- unknown stats kinds error out
 SELECT pg_stat_have_stats('zaphod', 0, 0);
--- db stats have objoid 0
+-- db stats have objid 0
 SELECT pg_stat_have_stats('database', :dboid, 1);
 SELECT pg_stat_have_stats('database', :dboid, 0);
 
@@ -595,32 +608,49 @@ SELECT pg_stat_get_replication_slot(NULL);
 SELECT pg_stat_get_subscription_stats(NULL);
 
 
--- Test that the following operations are tracked in pg_stat_io:
+-- Test that the following operations are tracked in pg_stat_io and in
+-- backend stats:
 -- - reads of target blocks into shared buffers
 -- - writes of shared buffers to permanent storage
 -- - extends of relations using shared buffers
 -- - fsyncs done to ensure the durability of data dirtying shared buffers
 -- - shared buffer hits
+-- - WAL writes and fsyncs in IOContext IOCONTEXT_NORMAL
 
 -- There is no test for blocks evicted from shared buffers, because we cannot
 -- be sure of the state of shared buffers at the point the test is run.
 
 -- Create a regular table and insert some data to generate IOCONTEXT_NORMAL
 -- extends.
+SELECT pid AS checkpointer_pid FROM pg_stat_activity
+  WHERE backend_type = 'checkpointer' \gset
 SELECT sum(extends) AS io_sum_shared_before_extends
   FROM pg_stat_io WHERE context = 'normal' AND object = 'relation' \gset
+SELECT sum(extends) AS my_io_sum_shared_before_extends
+  FROM pg_stat_get_backend_io(pg_backend_pid())
+  WHERE context = 'normal' AND object = 'relation' \gset
 SELECT sum(writes) AS writes, sum(fsyncs) AS fsyncs
   FROM pg_stat_io
   WHERE object = 'relation' \gset io_sum_shared_before_
+SELECT sum(writes) AS writes, sum(fsyncs) AS fsyncs
+  FROM pg_stat_get_backend_io(pg_backend_pid())
+  WHERE object = 'relation' \gset my_io_sum_shared_before_
+SELECT sum(writes) AS writes, sum(fsyncs) AS fsyncs
+  FROM pg_stat_io
+  WHERE context = 'normal' AND object = 'wal' \gset io_sum_wal_normal_before_
 CREATE TABLE test_io_shared(a int);
 INSERT INTO test_io_shared SELECT i FROM generate_series(1,100)i;
 SELECT pg_stat_force_next_flush();
 SELECT sum(extends) AS io_sum_shared_after_extends
   FROM pg_stat_io WHERE context = 'normal' AND object = 'relation' \gset
 SELECT :io_sum_shared_after_extends > :io_sum_shared_before_extends;
+SELECT sum(extends) AS my_io_sum_shared_after_extends
+  FROM pg_stat_get_backend_io(pg_backend_pid())
+  WHERE context = 'normal' AND object = 'relation' \gset
+SELECT :my_io_sum_shared_after_extends > :my_io_sum_shared_before_extends;
 
 -- After a checkpoint, there should be some additional IOCONTEXT_NORMAL writes
--- and fsyncs.
+-- and fsyncs in the global stats (usually not for the backend).
 -- See comment above for rationale for two explicit CHECKPOINTs.
 CHECKPOINT;
 CHECKPOINT;
@@ -630,6 +660,20 @@ SELECT sum(writes) AS writes, sum(fsyncs) AS fsyncs
 SELECT :io_sum_shared_after_writes > :io_sum_shared_before_writes;
 SELECT current_setting('fsync') = 'off'
   OR :io_sum_shared_after_fsyncs > :io_sum_shared_before_fsyncs;
+SELECT sum(writes) AS writes, sum(fsyncs) AS fsyncs
+  FROM pg_stat_get_backend_io(pg_backend_pid())
+  WHERE object = 'relation' \gset my_io_sum_shared_after_
+SELECT :my_io_sum_shared_after_writes >= :my_io_sum_shared_before_writes;
+SELECT current_setting('fsync') = 'off'
+  OR :my_io_sum_shared_after_fsyncs >= :my_io_sum_shared_before_fsyncs;
+SELECT sum(writes) AS writes, sum(fsyncs) AS fsyncs
+  FROM pg_stat_io
+  WHERE context = 'normal' AND object = 'wal' \gset io_sum_wal_normal_after_
+SELECT current_setting('synchronous_commit') = 'on';
+SELECT :io_sum_wal_normal_after_writes > :io_sum_wal_normal_before_writes;
+SELECT current_setting('fsync') = 'off'
+  OR current_setting('wal_sync_method') IN ('open_sync', 'open_datasync')
+  OR :io_sum_wal_normal_after_fsyncs > :io_sum_wal_normal_before_fsyncs;
 
 -- Change the tablespace so that the table is rewritten directly, then SELECT
 -- from it to cause it to be read back into shared buffers.
@@ -762,11 +806,27 @@ SELECT :io_sum_bulkwrite_strategy_extends_after > :io_sum_bulkwrite_strategy_ext
 SELECT pg_stat_have_stats('io', 0, 0);
 SELECT sum(evictions) + sum(reuses) + sum(extends) + sum(fsyncs) + sum(reads) + sum(writes) + sum(writebacks) + sum(hits) AS io_stats_pre_reset
   FROM pg_stat_io \gset
+SELECT sum(evictions) + sum(reuses) + sum(extends) + sum(fsyncs) + sum(reads) + sum(writes) + sum(writebacks) + sum(hits) AS my_io_stats_pre_reset
+  FROM pg_stat_get_backend_io(pg_backend_pid()) \gset
 SELECT pg_stat_reset_shared('io');
 SELECT sum(evictions) + sum(reuses) + sum(extends) + sum(fsyncs) + sum(reads) + sum(writes) + sum(writebacks) + sum(hits) AS io_stats_post_reset
   FROM pg_stat_io \gset
 SELECT :io_stats_post_reset < :io_stats_pre_reset;
+SELECT sum(evictions) + sum(reuses) + sum(extends) + sum(fsyncs) + sum(reads) + sum(writes) + sum(writebacks) + sum(hits) AS my_io_stats_post_reset
+  FROM pg_stat_get_backend_io(pg_backend_pid()) \gset
+-- pg_stat_reset_shared() did not reset backend IO stats
+SELECT :my_io_stats_pre_reset <= :my_io_stats_post_reset;
+-- but pg_stat_reset_backend_stats() does
+SELECT pg_stat_reset_backend_stats(pg_backend_pid());
+SELECT sum(evictions) + sum(reuses) + sum(extends) + sum(fsyncs) + sum(reads) + sum(writes) + sum(writebacks) + sum(hits) AS my_io_stats_post_backend_reset
+  FROM pg_stat_get_backend_io(pg_backend_pid()) \gset
+SELECT :my_io_stats_pre_reset > :my_io_stats_post_backend_reset;
 
+-- Check invalid input for pg_stat_get_backend_io()
+SELECT pg_stat_get_backend_io(NULL);
+SELECT pg_stat_get_backend_io(0);
+-- Auxiliary processes return no data.
+SELECT pg_stat_get_backend_io(:checkpointer_pid);
 
 -- test BRIN index doesn't block HOT update
 CREATE TABLE brin_hot (
@@ -848,5 +908,21 @@ SELECT COUNT(*) FROM brin_hot_3 WHERE a = 2;
 DROP TABLE brin_hot_3;
 
 SET enable_seqscan = on;
+
+-- Test that estimation of relation size works with tuples wider than the
+-- relation fillfactor. We create a table with wide inline attributes and
+-- low fillfactor, insert rows and then see how many rows EXPLAIN shows
+-- before running analyze. We disable autovacuum so that it does not
+-- interfere with the test.
+CREATE TABLE table_fillfactor (
+  n char(1000)
+) with (fillfactor=10, autovacuum_enabled=off);
+
+INSERT INTO table_fillfactor
+SELECT 'x' FROM generate_series(1,1000);
+
+SELECT * FROM check_estimated_rows('SELECT * FROM table_fillfactor');
+
+DROP TABLE table_fillfactor;
 
 -- End of Stats Test

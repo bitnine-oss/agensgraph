@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 #
 # Test situation where a target data directory contains
@@ -142,8 +142,10 @@ copy(
 
 command_ok(
 	[
-		'pg_rewind', "--source-server=$node_1_connstr",
-		"--target-pgdata=$node_2_pgdata", "--debug"
+		'pg_rewind',
+		'--source-server' => $node_1_connstr,
+		'--target-pgdata' => $node_2_pgdata,
+		'--debug',
 	],
 	'run pg_rewind');
 

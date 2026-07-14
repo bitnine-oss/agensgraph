@@ -818,7 +818,7 @@ ReplaceLabelDefaultExpression(RenameStmt *stmt)
 
 	/* Update */
 	RemoveAttrDefault(rel->rd_id, attnum, DROP_RESTRICT, false, true);
-	StoreAttrDefault(rel, attnum, (Node *) graphIdFuncExpr, true, false);
+	StoreAttrDefault(rel, attnum, (Node *) graphIdFuncExpr, true);
 
 	relation_close(rel, AccessExclusiveLock);
 	heap_freetuple(tup);

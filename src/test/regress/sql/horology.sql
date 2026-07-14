@@ -1,9 +1,9 @@
 --
 -- HOROLOGY
 --
-SET DateStyle = 'Postgres, MDY';
 
-SHOW TimeZone;  -- Many of these tests depend on the prevailing setting
+SHOW TimeZone;  -- Many of these tests depend on the prevailing settings
+SHOW DateStyle;
 
 --
 -- Test various input formats
@@ -101,6 +101,10 @@ SELECT date 'J J 1520447';
 -- of ISO8601, and it was never documented anyway
 SELECT timestamp with time zone 'Y2001M12D27H04M05S06.789+08';
 SELECT timestamp with time zone 'Y2001M12D27H04MM05S06.789-08';
+
+-- More examples we used to accept and should not
+SELECT timestamp with time zone 'J2452271 T X03456-08';
+SELECT timestamp with time zone 'J2452271 T X03456.001e6-08';
 
 -- conflicting fields should throw errors
 SELECT date '1995-08-06 epoch';
@@ -538,6 +542,7 @@ SELECT to_timestamp('2011-12-18 11:38 EST', 'YYYY-MM-DD HH12:MI TZ');
 SELECT to_timestamp('2011-12-18 11:38 -05', 'YYYY-MM-DD HH12:MI TZ');
 SELECT to_timestamp('2011-12-18 11:38 +01:30', 'YYYY-MM-DD HH12:MI TZ');
 SELECT to_timestamp('2011-12-18 11:38 MSK', 'YYYY-MM-DD HH12:MI TZ');  -- dyntz
+SELECT to_timestamp('2011-12-18 00:00 LMT', 'YYYY-MM-DD HH24:MI TZ');  -- dyntz
 SELECT to_timestamp('2011-12-18 11:38ESTFOO24', 'YYYY-MM-DD HH12:MITZFOOSS');
 SELECT to_timestamp('2011-12-18 11:38-05FOO24', 'YYYY-MM-DD HH12:MITZFOOSS');
 SELECT to_timestamp('2011-12-18 11:38 JUNK', 'YYYY-MM-DD HH12:MI TZ');  -- error
@@ -558,6 +563,7 @@ SELECT i, to_timestamp('2018-11-02 12:34:56.1234', 'YYYY-MM-DD HH24:MI:SS.FF' ||
 SELECT i, to_timestamp('2018-11-02 12:34:56.12345', 'YYYY-MM-DD HH24:MI:SS.FF' || i) FROM generate_series(1, 6) i;
 SELECT i, to_timestamp('2018-11-02 12:34:56.123456', 'YYYY-MM-DD HH24:MI:SS.FF' || i) FROM generate_series(1, 6) i;
 SELECT i, to_timestamp('2018-11-02 12:34:56.123456789', 'YYYY-MM-DD HH24:MI:SS.FF' || i) FROM generate_series(1, 6) i;
+SELECT i, to_timestamp('20181102123456123456', 'YYYYMMDDHH24MISSFF' || i) FROM generate_series(1, 6) i;
 
 SELECT to_date('1 4 1902', 'Q MM YYYY');  -- Q is ignored
 SELECT to_date('3 4 21 01', 'W MM CC YY');
@@ -650,6 +656,10 @@ SELECT to_timestamp('2015-02-11 86000', 'YYYY-MM-DD SSSS');  -- ok
 SELECT to_timestamp('2015-02-11 86400', 'YYYY-MM-DD SSSS');
 SELECT to_timestamp('2015-02-11 86000', 'YYYY-MM-DD SSSSS');  -- ok
 SELECT to_timestamp('2015-02-11 86400', 'YYYY-MM-DD SSSSS');
+SELECT to_timestamp('1000000000,999', 'Y,YYY');
+SELECT to_timestamp('0.-2147483648', 'SS.MS');
+SELECT to_timestamp('613566758', 'W');
+SELECT to_timestamp('2024 613566758 1', 'YYYY WW D');
 SELECT to_date('2016-13-10', 'YYYY-MM-DD');
 SELECT to_date('2016-02-30', 'YYYY-MM-DD');
 SELECT to_date('2016-02-29', 'YYYY-MM-DD');  -- ok
@@ -660,6 +670,10 @@ SELECT to_date('2016 365', 'YYYY DDD');  -- ok
 SELECT to_date('2016 366', 'YYYY DDD');  -- ok
 SELECT to_date('2016 367', 'YYYY DDD');
 SELECT to_date('0000-02-01','YYYY-MM-DD');  -- allowed, though it shouldn't be
+SELECT to_date('100000000', 'CC');
+SELECT to_date('-100000000', 'CC');
+SELECT to_date('-2147483648 01', 'CC YY');
+SELECT to_date('2147483647 01', 'CC YY');
 
 -- to_char's TZ format code produces zone abbrev if known
 SELECT to_char('2012-12-12 12:00'::timestamptz, 'YYYY-MM-DD HH:MI:SS TZ');

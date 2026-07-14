@@ -3,7 +3,7 @@
  * test_regex.c
  *		Test harness for the regular expression package.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -15,7 +15,6 @@
 #include "postgres.h"
 
 #include "funcapi.h"
-#include "miscadmin.h"
 #include "regex/regex.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
@@ -114,7 +113,7 @@ test_regex(PG_FUNCTION_ARGS)
 										  (matchctx->npatterns + 1));
 
 		MemoryContextSwitchTo(oldcontext);
-		funcctx->user_fctx = (void *) matchctx;
+		funcctx->user_fctx = matchctx;
 
 		/*
 		 * Return the first result row, which is info equivalent to Tcl's

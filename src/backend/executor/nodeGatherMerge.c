@@ -3,7 +3,7 @@
  * nodeGatherMerge.c
  *		Scan a plan in multiple workers, and do order-preserving merge.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -222,6 +222,13 @@ ExecGatherMerge(PlanState *pstate)
 			LaunchParallelWorkers(pcxt);
 			/* We save # workers launched for the benefit of EXPLAIN */
 			node->nworkers_launched = pcxt->nworkers_launched;
+
+			/*
+			 * Count number of workers originally wanted and actually
+			 * launched.
+			 */
+			estate->es_parallel_workers_to_launch += pcxt->nworkers_to_launch;
+			estate->es_parallel_workers_launched += pcxt->nworkers_launched;
 
 			/* Set up tuple queue readers to read the results. */
 			if (pcxt->nworkers_launched > 0)
@@ -728,7 +735,7 @@ gm_readnext_tuple(GatherMergeState *gm_state, int nreader, bool nowait,
 	 * Since we'll be buffering these across multiple calls, we need to make a
 	 * copy.
 	 */
-	return tup ? heap_copy_minimal_tuple(tup) : NULL;
+	return tup ? heap_copy_minimal_tuple(tup, 0) : NULL;
 }
 
 /*

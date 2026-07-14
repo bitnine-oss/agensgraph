@@ -3,7 +3,7 @@
  * clauses.c
  *	  routines to manipulate qualification clauses
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -40,7 +40,9 @@
 #include "optimizer/planmain.h"
 #include "parser/analyze.h"
 #include "parser/parse_coerce.h"
+#include "parser/parse_collate.h"
 #include "parser/parse_func.h"
+#include "parser/parse_oper.h"
 #include "rewrite/rewriteHandler.h"
 #include "rewrite/rewriteManip.h"
 #include "tcop/tcopprot.h"
@@ -265,8 +267,7 @@ find_window_functions_walker(Node *node, WindowFuncLists *lists)
 		return false;
 	}
 	Assert(!IsA(node, SubLink));
-	return expression_tree_walker(node, find_window_functions_walker,
-								  (void *) lists);
+	return expression_tree_walker(node, find_window_functions_walker, lists);
 }
 
 
@@ -1217,7 +1218,7 @@ contain_context_dependent_node_walker(Node *node, int *flags)
 			*flags |= CCDN_CASETESTEXPR_OK;
 			res = expression_tree_walker(node,
 										 contain_context_dependent_node_walker,
-										 (void *) flags);
+										 flags);
 			*flags = save_flags;
 			return res;
 		}
@@ -1241,7 +1242,7 @@ contain_context_dependent_node_walker(Node *node, int *flags)
 		return res;
 	}
 	return expression_tree_walker(node, contain_context_dependent_node_walker,
-								  (void *) flags);
+								  flags);
 }
 
 /*****************************************************************************
@@ -1296,6 +1297,7 @@ contain_leaked_vars_walker(Node *node, void *context)
 		case T_NullTest:
 		case T_BooleanTest:
 		case T_NextValueExpr:
+		case T_ReturningExpr:
 		case T_List:
 
 			/*
@@ -2326,7 +2328,7 @@ convert_saop_to_hashed_saop_walker(Node *node, void *context)
 						/* Looks good. Fill in the hash functions */
 						saop->hashfuncid = lefthashfunc;
 					}
-					return true;
+					return false;
 				}
 			}
 			else				/* !saop->useOr */
@@ -2364,7 +2366,7 @@ convert_saop_to_hashed_saop_walker(Node *node, void *context)
 						 */
 						saop->negfuncid = get_opcode(negator);
 					}
-					return true;
+					return false;
 				}
 			}
 		}
@@ -2416,7 +2418,7 @@ estimate_expression_value(PlannerInfo *root, Node *node)
  */
 #define ece_generic_processing(node) \
 	expression_tree_mutator((Node *) (node), eval_const_expressions_mutator, \
-							(void *) context)
+							context)
 
 /*
  * Check whether all arguments of the given node were reduced to Consts.
@@ -2552,7 +2554,7 @@ eval_const_expressions_mutator(Node *node,
 				args = (List *)
 					expression_tree_mutator((Node *) args,
 											eval_const_expressions_mutator,
-											(void *) context);
+											context);
 				/* ... and the filter expression, which isn't */
 				aggfilter = (Expr *)
 					eval_const_expressions_mutator((Node *) expr->aggfilter,
@@ -2697,7 +2699,7 @@ eval_const_expressions_mutator(Node *node,
 				 */
 				args = (List *) expression_tree_mutator((Node *) expr->args,
 														eval_const_expressions_mutator,
-														(void *) context);
+														context);
 
 				/*
 				 * We must do our own check for NULLs because DistinctExpr has
@@ -2915,13 +2917,25 @@ eval_const_expressions_mutator(Node *node,
 		case T_JsonValueExpr:
 			{
 				JsonValueExpr *jve = (JsonValueExpr *) node;
-				Node	   *formatted;
+				Node	   *raw_expr = (Node *) jve->raw_expr;
+				Node	   *formatted_expr = (Node *) jve->formatted_expr;
 
-				formatted = eval_const_expressions_mutator((Node *) jve->formatted_expr,
-														   context);
-				if (formatted && IsA(formatted, Const))
-					return formatted;
-				break;
+				/*
+				 * If we can fold formatted_expr to a constant, we can elide
+				 * the JsonValueExpr altogether.  Otherwise we must process
+				 * raw_expr too.  But JsonFormat is a flat node and requires
+				 * no simplification, only copying.
+				 */
+				formatted_expr = eval_const_expressions_mutator(formatted_expr,
+																context);
+				if (formatted_expr && IsA(formatted_expr, Const))
+					return formatted_expr;
+
+				raw_expr = eval_const_expressions_mutator(raw_expr, context);
+
+				return (Node *) makeJsonValueExpr((Expr *) raw_expr,
+												  (Expr *) formatted_expr,
+												  copyObject(jve->format));
 			}
 
 		case T_SubPlan:
@@ -3393,6 +3407,8 @@ eval_const_expressions_mutator(Node *node,
 										 fselect->resulttypmod,
 										 fselect->resultcollid,
 										 ((Var *) arg)->varlevelsup);
+						/* New Var has same OLD/NEW returning as old one */
+						newvar->varreturningtype = ((Var *) arg)->varreturningtype;
 						/* New Var is nullable by same rels as the old one */
 						newvar->varnullingrels = ((Var *) arg)->varnullingrels;
 						return (Node *) newvar;
@@ -4242,7 +4258,7 @@ simplify_function(Oid funcid, Oid result_type, int32 result_typmod,
 		args = expand_function_arguments(args, false, result_type, func_tuple);
 		args = (List *) expression_tree_mutator((Node *) args,
 												eval_const_expressions_mutator,
-												(void *) context);
+												context);
 		/* Argument processing done, give it back to the caller */
 		*args_p = args;
 	}
@@ -4784,7 +4800,7 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 	callback_arg.prosrc = src;
 
 	sqlerrcontext.callback = sql_inline_error_callback;
-	sqlerrcontext.arg = (void *) &callback_arg;
+	sqlerrcontext.arg = &callback_arg;
 	sqlerrcontext.previous = error_context_stack;
 	error_context_stack = &sqlerrcontext;
 
@@ -4888,7 +4904,7 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 	if (check_sql_fn_retval(list_make1(querytree_list),
 							result_type, rettupdesc,
 							funcform->prokind,
-							false, NULL))
+							false))
 		goto fail;				/* reject whole-tuple-result cases */
 
 	/*
@@ -5086,8 +5102,7 @@ substitute_actual_parameters_mutator(Node *node,
 		/* We don't need to copy at this time (it'll get done later) */
 		return list_nth(context->args, param->paramid - 1);
 	}
-	return expression_tree_mutator(node, substitute_actual_parameters_mutator,
-								   (void *) context);
+	return expression_tree_mutator(node, substitute_actual_parameters_mutator, context);
 }
 
 /*
@@ -5338,7 +5353,7 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	callback_arg.prosrc = src;
 
 	sqlerrcontext.callback = sql_inline_error_callback;
-	sqlerrcontext.arg = (void *) &callback_arg;
+	sqlerrcontext.arg = &callback_arg;
 	sqlerrcontext.previous = error_context_stack;
 	error_context_stack = &sqlerrcontext;
 
@@ -5435,7 +5450,7 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	if (!check_sql_fn_retval(list_make1(querytree_list),
 							 fexpr->funcresulttype, rettupdesc,
 							 funcform->prokind,
-							 true, NULL) &&
+							 true) &&
 		(functypclass == TYPEFUNC_COMPOSITE ||
 		 functypclass == TYPEFUNC_COMPOSITE_DOMAIN ||
 		 functypclass == TYPEFUNC_RECORD))
@@ -5530,7 +5545,7 @@ substitute_actual_srf_parameters_mutator(Node *node,
 		context->sublevels_up++;
 		result = (Node *) query_tree_mutator((Query *) node,
 											 substitute_actual_srf_parameters_mutator,
-											 (void *) context,
+											 context,
 											 0);
 		context->sublevels_up--;
 		return result;
@@ -5555,7 +5570,7 @@ substitute_actual_srf_parameters_mutator(Node *node,
 	}
 	return expression_tree_mutator(node,
 								   substitute_actual_srf_parameters_mutator,
-								   (void *) context);
+								   context);
 }
 
 /*
@@ -5584,6 +5599,88 @@ pull_paramids_walker(Node *node, Bitmapset **context)
 		*context = bms_add_member(*context, param->paramid);
 		return false;
 	}
-	return expression_tree_walker(node, pull_paramids_walker,
-								  (void *) context);
+	return expression_tree_walker(node, pull_paramids_walker, context);
+}
+
+/*
+ * Build ScalarArrayOpExpr on top of 'exprs.' 'haveNonConst' indicates
+ * whether at least one of the expressions is not Const.  When it's false,
+ * the array constant is built directly; otherwise, we have to build a child
+ * ArrayExpr. The 'exprs' list gets freed if not directly used in the output
+ * expression tree.
+ */
+ScalarArrayOpExpr *
+make_SAOP_expr(Oid oper, Node *leftexpr, Oid coltype, Oid arraycollid,
+			   Oid inputcollid, List *exprs, bool haveNonConst)
+{
+	Node	   *arrayNode = NULL;
+	ScalarArrayOpExpr *saopexpr = NULL;
+	Oid			arraytype = get_array_type(coltype);
+
+	if (!OidIsValid(arraytype))
+		return NULL;
+
+	/*
+	 * Assemble an array from the list of constants.  It seems more profitable
+	 * to build a const array.  But in the presence of other nodes, we don't
+	 * have a specific value here and must employ an ArrayExpr instead.
+	 */
+	if (haveNonConst)
+	{
+		ArrayExpr  *arrayExpr = makeNode(ArrayExpr);
+
+		/* array_collid will be set by parse_collate.c */
+		arrayExpr->element_typeid = coltype;
+		arrayExpr->array_typeid = arraytype;
+		arrayExpr->multidims = false;
+		arrayExpr->elements = exprs;
+		arrayExpr->location = -1;
+
+		arrayNode = (Node *) arrayExpr;
+	}
+	else
+	{
+		int16		typlen;
+		bool		typbyval;
+		char		typalign;
+		Datum	   *elems;
+		bool	   *nulls;
+		int			i = 0;
+		ArrayType  *arrayConst;
+		int			dims[1] = {list_length(exprs)};
+		int			lbs[1] = {1};
+
+		get_typlenbyvalalign(coltype, &typlen, &typbyval, &typalign);
+
+		elems = (Datum *) palloc(sizeof(Datum) * list_length(exprs));
+		nulls = (bool *) palloc(sizeof(bool) * list_length(exprs));
+		foreach_node(Const, value, exprs)
+		{
+			elems[i] = value->constvalue;
+			nulls[i++] = value->constisnull;
+		}
+
+		arrayConst = construct_md_array(elems, nulls, 1, dims, lbs,
+										coltype, typlen, typbyval, typalign);
+		arrayNode = (Node *) makeConst(arraytype, -1, arraycollid,
+									   -1, PointerGetDatum(arrayConst),
+									   false, false);
+
+		pfree(elems);
+		pfree(nulls);
+		list_free(exprs);
+	}
+
+	/* Build the SAOP expression node */
+	saopexpr = makeNode(ScalarArrayOpExpr);
+	saopexpr->opno = oper;
+	saopexpr->opfuncid = get_opcode(oper);
+	saopexpr->hashfuncid = InvalidOid;
+	saopexpr->negfuncid = InvalidOid;
+	saopexpr->useOr = true;
+	saopexpr->inputcollid = inputcollid;
+	saopexpr->args = list_make2(leftexpr, arrayNode);
+	saopexpr->location = -1;
+
+	return saopexpr;
 }

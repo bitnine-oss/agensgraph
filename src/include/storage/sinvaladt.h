@@ -12,7 +12,7 @@
  * The struct type SharedInvalidationMessage, defining the contents of
  * a single message, is defined in sinval.h.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/sinvaladt.h
@@ -28,8 +28,8 @@
 /*
  * prototypes for functions in sinvaladt.c
  */
-extern Size SInvalShmemSize(void);
-extern void CreateSharedInvalidationState(void);
+extern Size SharedInvalShmemSize(void);
+extern void SharedInvalShmemInit(void);
 extern void SharedInvalBackendInit(bool sendOnly);
 
 extern void SIInsertDataEntries(const SharedInvalidationMessage *data, int n);

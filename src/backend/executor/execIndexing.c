@@ -95,7 +95,7 @@
  * with the higher XID backs out.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -114,6 +114,8 @@
 #include "executor/executor.h"
 #include "nodes/nodeFuncs.h"
 #include "storage/lmgr.h"
+#include "utils/multirangetypes.h"
+#include "utils/rangetypes.h"
 #include "utils/snapmgr.h"
 
 /* waitMode argument to check_exclusion_or_unique_constraint() */
@@ -141,6 +143,8 @@ static bool index_unchanged_by_update(ResultRelInfo *resultRelInfo,
 									  Relation indexRelation);
 static bool index_expression_changed_walker(Node *node,
 											Bitmapset *allUpdatedCols);
+static void ExecWithoutOverlapsNotEmpty(Relation rel, NameData attname, Datum attval,
+										char typtype, Oid atttypid);
 
 /* ----------------------------------------------------------------
  *		ExecOpenIndices
@@ -177,6 +181,9 @@ ExecOpenIndices(ResultRelInfo *resultRelInfo, bool speculative)
 	if (len == 0)
 		return;
 
+	/* This Assert will fail if ExecOpenIndices is called twice */
+	Assert(resultRelInfo->ri_IndexRelationDescs == NULL);
+
 	/*
 	 * allocate space for result arrays
 	 */
@@ -210,7 +217,7 @@ ExecOpenIndices(ResultRelInfo *resultRelInfo, bool speculative)
 		 * If the indexes are to be used for speculative insertion, add extra
 		 * information required by unique index entries.
 		 */
-		if (speculative && ii->ii_Unique)
+		if (speculative && ii->ii_Unique && !indexDesc->rd_index->indisexclusion)
 			BuildSpeculativeIndexInfo(indexDesc, ii);
 
 		relationDescs[i] = indexDesc;
@@ -241,19 +248,23 @@ ExecCloseIndices(ResultRelInfo *resultRelInfo)
 
 	for (i = 0; i < numIndices; i++)
 	{
-		if (indexDescs[i] == NULL)
-			continue;			/* shouldn't happen? */
+		/* This Assert will fail if ExecCloseIndices is called twice */
+		Assert(indexDescs[i] != NULL);
 
 		/* Give the index a chance to do some post-insert cleanup */
 		index_insert_cleanup(indexDescs[i], indexInfos[i]);
 
 		/* Drop lock acquired by ExecOpenIndices */
 		index_close(indexDescs[i], RowExclusiveLock);
+
+		/* Mark the index as closed */
+		indexDescs[i] = NULL;
 	}
 
 	/*
-	 * XXX should free indexInfo array here too?  Currently we assume that
-	 * such stuff will be cleaned up automatically in FreeExecutorState.
+	 * We don't attempt to free the IndexInfo data structures or the arrays,
+	 * instead assuming that such stuff will be cleaned up automatically in
+	 * FreeExecutorState.
 	 */
 }
 
@@ -519,14 +530,18 @@ ExecInsertIndexTuples(ResultRelInfo *resultRelInfo,
  *
  *		Note that this doesn't lock the values in any way, so it's
  *		possible that a conflicting tuple is inserted immediately
- *		after this returns.  But this can be used for a pre-check
- *		before insertion.
+ *		after this returns.  This can be used for either a pre-check
+ *		before insertion or a re-check after finding a conflict.
+ *
+ *		'tupleid' should be the TID of the tuple that has been recently
+ *		inserted (or can be invalid if we haven't inserted a new tuple yet).
+ *		This tuple will be excluded from conflict checking.
  * ----------------------------------------------------------------
  */
 bool
 ExecCheckIndexConstraints(ResultRelInfo *resultRelInfo, TupleTableSlot *slot,
 						  EState *estate, ItemPointer conflictTid,
-						  List *arbiterIndexes)
+						  ItemPointer tupleid, List *arbiterIndexes)
 {
 	int			i;
 	int			numIndices;
@@ -629,7 +644,7 @@ ExecCheckIndexConstraints(ResultRelInfo *resultRelInfo, TupleTableSlot *slot,
 
 		satisfiesConstraint =
 			check_exclusion_or_unique_constraint(heapRelation, indexRelation,
-												 indexInfo, &invalidItemPtr,
+												 indexInfo, tupleid,
 												 values, isnull, estate, false,
 												 CEOUC_WAIT, true,
 												 conflictTid);
@@ -721,6 +736,32 @@ check_exclusion_or_unique_constraint(Relation heap, Relation index,
 	}
 
 	/*
+	 * If this is a WITHOUT OVERLAPS constraint, we must also forbid empty
+	 * ranges/multiranges. This must happen before we look for NULLs below, or
+	 * a UNIQUE constraint could insert an empty range along with a NULL
+	 * scalar part.
+	 */
+	if (indexInfo->ii_WithoutOverlaps)
+	{
+		/*
+		 * Look up the type from the heap tuple, but check the Datum from the
+		 * index tuple.
+		 */
+		AttrNumber	attno = indexInfo->ii_IndexAttrNumbers[indnkeyatts - 1];
+
+		if (!isnull[indnkeyatts - 1])
+		{
+			TupleDesc	tupdesc = RelationGetDescr(heap);
+			Form_pg_attribute att = TupleDescAttr(tupdesc, attno - 1);
+			TypeCacheEntry *typcache = lookup_type_cache(att->atttypid, 0);
+
+			ExecWithoutOverlapsNotEmpty(heap, att->attname,
+										values[indnkeyatts - 1],
+										typcache->typtype, att->atttypid);
+		}
+	}
+
+	/*
 	 * If any of the input values are NULL, and the index uses the default
 	 * nulls-are-distinct mode, the constraint check is assumed to pass (i.e.,
 	 * we assume the operators are strict).  Otherwise, we interpret the
@@ -774,7 +815,7 @@ check_exclusion_or_unique_constraint(Relation heap, Relation index,
 retry:
 	conflict = false;
 	found_self = false;
-	index_scan = index_beginscan(heap, index, &DirtySnapshot, indnkeyatts, 0);
+	index_scan = index_beginscan(heap, index, &DirtySnapshot, NULL, indnkeyatts, 0);
 	index_rescan(index_scan, scankeys, indnkeyatts, NULL, 0);
 
 	while (index_getnext_slot(index_scan, ForwardScanDirection, existing_slot))
@@ -1095,5 +1136,39 @@ index_expression_changed_walker(Node *node, Bitmapset *allUpdatedCols)
 	}
 
 	return expression_tree_walker(node, index_expression_changed_walker,
-								  (void *) allUpdatedCols);
+								  allUpdatedCols);
+}
+
+/*
+ * ExecWithoutOverlapsNotEmpty - raise an error if the tuple has an empty
+ * range or multirange in the given attribute.
+ */
+static void
+ExecWithoutOverlapsNotEmpty(Relation rel, NameData attname, Datum attval, char typtype, Oid atttypid)
+{
+	bool		isempty;
+	RangeType  *r;
+	MultirangeType *mr;
+
+	switch (typtype)
+	{
+		case TYPTYPE_RANGE:
+			r = DatumGetRangeTypeP(attval);
+			isempty = RangeIsEmpty(r);
+			break;
+		case TYPTYPE_MULTIRANGE:
+			mr = DatumGetMultirangeTypeP(attval);
+			isempty = MultirangeIsEmpty(mr);
+			break;
+		default:
+			elog(ERROR, "WITHOUT OVERLAPS column \"%s\" is not a range or multirange",
+				 NameStr(attname));
+	}
+
+	/* Report a CHECK_VIOLATION */
+	if (isempty)
+		ereport(ERROR,
+				(errcode(ERRCODE_CHECK_VIOLATION),
+				 errmsg("empty WITHOUT OVERLAPS value found in column \"%s\" in relation \"%s\"",
+						NameStr(attname), RelationGetRelationName(rel))));
 }

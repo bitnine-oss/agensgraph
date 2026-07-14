@@ -9,7 +9,7 @@
  * contains variables.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,6 +22,7 @@
 
 #include "access/sysattr.h"
 #include "nodes/nodeFuncs.h"
+#include "optimizer/clauses.h"
 #include "optimizer/optimizer.h"
 #include "optimizer/placeholder.h"
 #include "optimizer/prep.h"
@@ -75,12 +76,17 @@ static bool pull_varattnos_walker(Node *node, pull_varattnos_context *context);
 static bool pull_vars_walker(Node *node, pull_vars_context *context);
 static bool contain_var_clause_walker(Node *node, void *context);
 static bool contain_vars_of_level_walker(Node *node, int *sublevels_up);
+static bool contain_vars_returning_old_or_new_walker(Node *node, void *context);
 static bool locate_var_of_level_walker(Node *node,
 									   locate_var_of_level_context *context);
 static bool pull_var_clause_walker(Node *node,
 								   pull_var_clause_context *context);
 static Node *flatten_join_alias_vars_mutator(Node *node,
 											 flatten_join_alias_vars_context *context);
+static Node *flatten_group_exprs_mutator(Node *node,
+										 flatten_join_alias_vars_context *context);
+static Node *mark_nullable_by_grouping(PlannerInfo *root, Node *newnode,
+									   Var *oldvar);
 static Node *add_nullingrels_if_needed(PlannerInfo *root, Node *newnode,
 									   Var *oldvar);
 static bool is_standard_join_alias_expression(Node *newnode, Var *oldvar);
@@ -119,7 +125,7 @@ pull_varnos(PlannerInfo *root, Node *node)
 	 */
 	query_or_expression_tree_walker(node,
 									pull_varnos_walker,
-									(void *) &context,
+									&context,
 									0);
 
 	return context.varnos;
@@ -145,7 +151,7 @@ pull_varnos_of_level(PlannerInfo *root, Node *node, int levelsup)
 	 */
 	query_or_expression_tree_walker(node,
 									pull_varnos_walker,
-									(void *) &context,
+									&context,
 									0);
 
 	return context.varnos;
@@ -264,12 +270,11 @@ pull_varnos_walker(Node *node, pull_varnos_context *context)
 
 		context->sublevels_up++;
 		result = query_tree_walker((Query *) node, pull_varnos_walker,
-								   (void *) context, 0);
+								   context, 0);
 		context->sublevels_up--;
 		return result;
 	}
-	return expression_tree_walker(node, pull_varnos_walker,
-								  (void *) context);
+	return expression_tree_walker(node, pull_varnos_walker, context);
 }
 
 
@@ -319,8 +324,7 @@ pull_varattnos_walker(Node *node, pull_varattnos_context *context)
 	/* Should not find an unplanned subquery */
 	Assert(!IsA(node, Query));
 
-	return expression_tree_walker(node, pull_varattnos_walker,
-								  (void *) context);
+	return expression_tree_walker(node, pull_varattnos_walker, context);
 }
 
 
@@ -345,7 +349,7 @@ pull_vars_of_level(Node *node, int levelsup)
 	 */
 	query_or_expression_tree_walker(node,
 									pull_vars_walker,
-									(void *) &context,
+									&context,
 									0);
 
 	return context.vars;
@@ -380,12 +384,11 @@ pull_vars_walker(Node *node, pull_vars_context *context)
 
 		context->sublevels_up++;
 		result = query_tree_walker((Query *) node, pull_vars_walker,
-								   (void *) context, 0);
+								   context, 0);
 		context->sublevels_up--;
 		return result;
 	}
-	return expression_tree_walker(node, pull_vars_walker,
-								  (void *) context);
+	return expression_tree_walker(node, pull_vars_walker, context);
 }
 
 
@@ -444,7 +447,7 @@ contain_vars_of_level(Node *node, int levelsup)
 
 	return query_or_expression_tree_walker(node,
 										   contain_vars_of_level_walker,
-										   (void *) &sublevels_up,
+										   &sublevels_up,
 										   0);
 }
 
@@ -479,14 +482,57 @@ contain_vars_of_level_walker(Node *node, int *sublevels_up)
 		(*sublevels_up)++;
 		result = query_tree_walker((Query *) node,
 								   contain_vars_of_level_walker,
-								   (void *) sublevels_up,
+								   sublevels_up,
 								   0);
 		(*sublevels_up)--;
 		return result;
 	}
 	return expression_tree_walker(node,
 								  contain_vars_of_level_walker,
-								  (void *) sublevels_up);
+								  sublevels_up);
+}
+
+
+/*
+ * contain_vars_returning_old_or_new
+ *	  Recursively scan a clause to discover whether it contains any Var nodes
+ *	  (of the current query level) whose varreturningtype is VAR_RETURNING_OLD
+ *	  or VAR_RETURNING_NEW.
+ *
+ *	  Returns true if any found.
+ *
+ * Any ReturningExprs are also detected --- if an OLD/NEW Var was rewritten,
+ * we still regard this as a clause that returns OLD/NEW values.
+ *
+ * Does not examine subqueries, therefore must only be used after reduction
+ * of sublinks to subplans!
+ */
+bool
+contain_vars_returning_old_or_new(Node *node)
+{
+	return contain_vars_returning_old_or_new_walker(node, NULL);
+}
+
+static bool
+contain_vars_returning_old_or_new_walker(Node *node, void *context)
+{
+	if (node == NULL)
+		return false;
+	if (IsA(node, Var))
+	{
+		if (((Var *) node)->varlevelsup == 0 &&
+			((Var *) node)->varreturningtype != VAR_RETURNING_DEFAULT)
+			return true;		/* abort the tree traversal and return true */
+		return false;
+	}
+	if (IsA(node, ReturningExpr))
+	{
+		if (((ReturningExpr *) node)->retlevelsup == 0)
+			return true;		/* abort the tree traversal and return true */
+		return false;
+	}
+	return expression_tree_walker(node, contain_vars_returning_old_or_new_walker,
+								  context);
 }
 
 
@@ -515,7 +561,7 @@ locate_var_of_level(Node *node, int levelsup)
 
 	(void) query_or_expression_tree_walker(node,
 										   locate_var_of_level_walker,
-										   (void *) &context,
+										   &context,
 										   0);
 
 	return context.var_location;
@@ -553,14 +599,14 @@ locate_var_of_level_walker(Node *node,
 		context->sublevels_up++;
 		result = query_tree_walker((Query *) node,
 								   locate_var_of_level_walker,
-								   (void *) context,
+								   context,
 								   0);
 		context->sublevels_up--;
 		return result;
 	}
 	return expression_tree_walker(node,
 								  locate_var_of_level_walker,
-								  (void *) context);
+								  context);
 }
 
 
@@ -702,8 +748,7 @@ pull_var_clause_walker(Node *node, pull_var_clause_context *context)
 		else
 			elog(ERROR, "PlaceHolderVar found where not expected");
 	}
-	return expression_tree_walker(node, pull_var_clause_walker,
-								  (void *) context);
+	return expression_tree_walker(node, pull_var_clause_walker, context);
 }
 
 
@@ -862,7 +907,7 @@ flatten_join_alias_vars_mutator(Node *node,
 
 		phv = (PlaceHolderVar *) expression_tree_mutator(node,
 														 flatten_join_alias_vars_mutator,
-														 (void *) context);
+														 context);
 		/* now fix PlaceHolderVar's relid sets */
 		if (phv->phlevelsup == context->sublevels_up)
 		{
@@ -884,7 +929,7 @@ flatten_join_alias_vars_mutator(Node *node,
 		context->inserted_sublink = ((Query *) node)->hasSubLinks;
 		newnode = query_tree_mutator((Query *) node,
 									 flatten_join_alias_vars_mutator,
-									 (void *) context,
+									 context,
 									 QTW_IGNORE_JOINALIASES);
 		newnode->hasSubLinks |= context->inserted_sublink;
 		context->inserted_sublink = save_inserted_sublink;
@@ -893,13 +938,231 @@ flatten_join_alias_vars_mutator(Node *node,
 	}
 	/* Already-planned tree not supported */
 	Assert(!IsA(node, SubPlan));
+	Assert(!IsA(node, AlternativeSubPlan));
 	/* Shouldn't need to handle these planner auxiliary nodes here */
 	Assert(!IsA(node, SpecialJoinInfo));
 	Assert(!IsA(node, PlaceHolderInfo));
 	Assert(!IsA(node, MinMaxAggInfo));
 
-	return expression_tree_mutator(node, flatten_join_alias_vars_mutator,
-								   (void *) context);
+	return expression_tree_mutator(node, flatten_join_alias_vars_mutator, context);
+}
+
+/*
+ * flatten_group_exprs
+ *	  Replace Vars that reference GROUP outputs with the underlying grouping
+ *	  expressions.
+ *
+ * We have to preserve any varnullingrels info attached to the group Vars we're
+ * replacing.  If the replacement expression is a Var or PlaceHolderVar or
+ * constructed from those, we can just add the varnullingrels bits to the
+ * existing nullingrels field(s); otherwise we have to add a PlaceHolderVar
+ * wrapper.
+ *
+ * NOTE: this is also used by ruleutils.c, to deparse one query parsetree back
+ * to source text.  For that use-case, root will be NULL, which is why we have
+ * to pass the Query separately.  We need the root itself only for preserving
+ * varnullingrels.  We can avoid preserving varnullingrels in the ruleutils.c's
+ * usage because it does not make any difference to the deparsed source text.
+ */
+Node *
+flatten_group_exprs(PlannerInfo *root, Query *query, Node *node)
+{
+	flatten_join_alias_vars_context context;
+
+	/*
+	 * We do not expect this to be applied to the whole Query, only to
+	 * expressions or LATERAL subqueries.  Hence, if the top node is a Query,
+	 * it's okay to immediately increment sublevels_up.
+	 */
+	Assert(node != (Node *) query);
+
+	context.root = root;
+	context.query = query;
+	context.sublevels_up = 0;
+	/* flag whether grouping expressions could possibly contain SubLinks */
+	context.possible_sublink = query->hasSubLinks;
+	/* if hasSubLinks is already true, no need to work hard */
+	context.inserted_sublink = query->hasSubLinks;
+
+	return flatten_group_exprs_mutator(node, &context);
+}
+
+static Node *
+flatten_group_exprs_mutator(Node *node,
+							flatten_join_alias_vars_context *context)
+{
+	if (node == NULL)
+		return NULL;
+	if (IsA(node, Var))
+	{
+		Var		   *var = (Var *) node;
+		RangeTblEntry *rte;
+		Node	   *newvar;
+
+		/* No change unless Var belongs to the GROUP of the target level */
+		if (var->varlevelsup != context->sublevels_up)
+			return node;		/* no need to copy, really */
+		rte = rt_fetch(var->varno, context->query->rtable);
+		if (rte->rtekind != RTE_GROUP)
+			return node;
+
+		/* Expand group exprs reference */
+		Assert(var->varattno > 0);
+		newvar = (Node *) list_nth(rte->groupexprs, var->varattno - 1);
+		Assert(newvar != NULL);
+		newvar = copyObject(newvar);
+
+		/*
+		 * If we are expanding an expr carried down from an upper query, must
+		 * adjust its varlevelsup fields.
+		 */
+		if (context->sublevels_up != 0)
+			IncrementVarSublevelsUp(newvar, context->sublevels_up, 0);
+
+		/* Preserve original Var's location, if possible */
+		if (IsA(newvar, Var))
+			((Var *) newvar)->location = var->location;
+
+		/* Detect if we are adding a sublink to query */
+		if (context->possible_sublink && !context->inserted_sublink)
+			context->inserted_sublink = checkExprHasSubLink(newvar);
+
+		/* Lastly, add any varnullingrels to the replacement expression */
+		return mark_nullable_by_grouping(context->root, newvar, var);
+	}
+
+	if (IsA(node, Aggref))
+	{
+		Aggref	   *agg = (Aggref *) node;
+
+		if ((int) agg->agglevelsup == context->sublevels_up)
+		{
+			/*
+			 * If we find an aggregate call of the original level, do not
+			 * recurse into its normal arguments, ORDER BY arguments, or
+			 * filter; there are no grouped vars there.  But we should check
+			 * direct arguments as though they weren't in an aggregate.
+			 */
+			agg = copyObject(agg);
+			agg->aggdirectargs = (List *)
+				flatten_group_exprs_mutator((Node *) agg->aggdirectargs, context);
+
+			return (Node *) agg;
+		}
+
+		/*
+		 * We can skip recursing into aggregates of higher levels altogether,
+		 * since they could not possibly contain Vars of concern to us (see
+		 * transformAggregateCall).  We do need to look at aggregates of lower
+		 * levels, however.
+		 */
+		if ((int) agg->agglevelsup > context->sublevels_up)
+			return node;
+	}
+
+	if (IsA(node, GroupingFunc))
+	{
+		GroupingFunc *grp = (GroupingFunc *) node;
+
+		/*
+		 * If we find a GroupingFunc node of the original or higher level, do
+		 * not recurse into its arguments; there are no grouped vars there.
+		 */
+		if ((int) grp->agglevelsup >= context->sublevels_up)
+			return node;
+	}
+
+	if (IsA(node, Query))
+	{
+		/* Recurse into RTE subquery or not-yet-planned sublink subquery */
+		Query	   *newnode;
+		bool		save_inserted_sublink;
+
+		context->sublevels_up++;
+		save_inserted_sublink = context->inserted_sublink;
+		context->inserted_sublink = ((Query *) node)->hasSubLinks;
+		newnode = query_tree_mutator((Query *) node,
+									 flatten_group_exprs_mutator,
+									 context,
+									 QTW_IGNORE_GROUPEXPRS);
+		newnode->hasSubLinks |= context->inserted_sublink;
+		context->inserted_sublink = save_inserted_sublink;
+		context->sublevels_up--;
+		return (Node *) newnode;
+	}
+
+	return expression_tree_mutator(node, flatten_group_exprs_mutator,
+								   context);
+}
+
+/*
+ * Add oldvar's varnullingrels, if any, to a flattened grouping expression.
+ * The newnode has been copied, so we can modify it freely.
+ */
+static Node *
+mark_nullable_by_grouping(PlannerInfo *root, Node *newnode, Var *oldvar)
+{
+	Relids		relids;
+
+	if (root == NULL)
+		return newnode;
+	if (oldvar->varnullingrels == NULL)
+		return newnode;			/* nothing to do */
+
+	Assert(bms_equal(oldvar->varnullingrels,
+					 bms_make_singleton(root->group_rtindex)));
+
+	relids = pull_varnos_of_level(root, newnode, oldvar->varlevelsup);
+
+	if (!bms_is_empty(relids))
+	{
+		/*
+		 * If the newnode is not variable-free, we set the nullingrels of Vars
+		 * or PHVs that are contained in the expression.  This is not really
+		 * 'correct' in theory, because it is the whole expression that can be
+		 * nullable by grouping sets, not its individual vars.  But it works
+		 * in practice, because what we need is that the expression can be
+		 * somehow distinguished from the same expression in ECs, and marking
+		 * its vars is sufficient for this purpose.
+		 */
+		newnode = add_nulling_relids(newnode,
+									 relids,
+									 oldvar->varnullingrels);
+	}
+	else						/* variable-free? */
+	{
+		/*
+		 * If the newnode is variable-free and does not contain volatile
+		 * functions or set-returning functions, it can be treated as a member
+		 * of EC that is redundant.  So wrap it in a new PlaceHolderVar to
+		 * carry the nullingrels.  Otherwise we do not bother to make any
+		 * changes.
+		 *
+		 * Aggregate functions and window functions are not allowed in
+		 * grouping expressions.
+		 */
+		Assert(!contain_agg_clause(newnode));
+		Assert(!contain_window_function(newnode));
+
+		if (!contain_volatile_functions(newnode) &&
+			!expression_returns_set(newnode))
+		{
+			PlaceHolderVar *newphv;
+			Relids		phrels;
+
+			phrels = get_relids_in_jointree((Node *) root->parse->jointree,
+											true, false);
+			Assert(!bms_is_empty(phrels));
+
+			newphv = make_placeholder_expr(root, (Expr *) newnode, phrels);
+			/* newphv has zero phlevelsup and NULL phnullingrels; fix it */
+			newphv->phlevelsup = oldvar->varlevelsup;
+			newphv->phnullingrels = bms_copy(oldvar->varnullingrels);
+			newnode = (Node *) newphv;
+		}
+	}
+
+	return newnode;
 }
 
 /*

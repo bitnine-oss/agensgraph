@@ -2,7 +2,7 @@
  * backend_status.c
  *	  Backend status reporting infrastructure.
  *
- * Copyright (c) 2001-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2025, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -16,11 +16,9 @@
 #include "miscadmin.h"
 #include "pg_trace.h"
 #include "pgstat.h"
-#include "port/atomics.h"		/* for memory barriers */
 #include "storage/ipc.h"
 #include "storage/proc.h"		/* for MyProc */
 #include "storage/procarray.h"
-#include "storage/sinvaladt.h"
 #include "utils/ascii.h"
 #include "utils/guc.h"			/* for application_name */
 #include "utils/memutils.h"
@@ -77,7 +75,7 @@ static void pgstat_setup_backend_status_context(void);
 
 
 /*
- * Report shared-memory space needed by CreateSharedBackendStatus.
+ * Report shared-memory space needed by BackendStatusShmemInit.
  */
 Size
 BackendStatusShmemSize(void)
@@ -113,7 +111,7 @@ BackendStatusShmemSize(void)
  * during postmaster startup.
  */
 void
-CreateSharedBackendStatus(void)
+BackendStatusShmemInit(void)
 {
 	Size		size;
 	bool		found;
@@ -257,29 +255,22 @@ pgstat_beinit(void)
 
 
 /* ----------
- * pgstat_bestart() -
+ * pgstat_bestart_initial() -
  *
- *	Initialize this backend's entry in the PgBackendStatus array.
- *	Called from InitPostgres.
+ * Initialize this backend's entry in the PgBackendStatus array.  Called
+ * from InitPostgres and AuxiliaryProcessMain.
  *
- *	Apart from auxiliary processes, MyDatabaseId, session userid, and
- *	application_name must already be set (hence, this cannot be combined
- *	with pgstat_beinit).  Note also that we must be inside a transaction
- *	if this isn't an aux process, as we may need to do encoding conversion
- *	on some strings.
- *----------
+ * Clears out a new pgstat entry, initializing it to suitable defaults and
+ * reporting STATE_STARTING.  Backends should continue filling in any
+ * transport security details as needed with pgstat_bestart_security(), and
+ * must finally exit STATE_STARTING by calling pgstat_bestart_final().
+ * ----------
  */
 void
-pgstat_bestart(void)
+pgstat_bestart_initial(void)
 {
 	volatile PgBackendStatus *vbeentry = MyBEEntry;
 	PgBackendStatus lbeentry;
-#ifdef USE_SSL
-	PgBackendSSLStatus lsslstatus;
-#endif
-#ifdef ENABLE_GSS
-	PgBackendGSSStatus lgssstatus;
-#endif
 
 	/* pgstats state must be initialized from pgstat_beinit() */
 	Assert(vbeentry != NULL);
@@ -299,14 +290,6 @@ pgstat_bestart(void)
 		   unvolatize(PgBackendStatus *, vbeentry),
 		   sizeof(PgBackendStatus));
 
-	/* These structs can just start from zeroes each time, though */
-#ifdef USE_SSL
-	memset(&lsslstatus, 0, sizeof(lsslstatus));
-#endif
-#ifdef ENABLE_GSS
-	memset(&lgssstatus, 0, sizeof(lgssstatus));
-#endif
-
 	/*
 	 * Now fill in all the fields of lbeentry, except for strings that are
 	 * out-of-line data.  Those have to be handled separately, below.
@@ -317,15 +300,8 @@ pgstat_bestart(void)
 	lbeentry.st_activity_start_timestamp = 0;
 	lbeentry.st_state_start_timestamp = 0;
 	lbeentry.st_xact_start_timestamp = 0;
-	lbeentry.st_databaseid = MyDatabaseId;
-
-	/* We have userid for client-backends, wal-sender and bgworker processes */
-	if (lbeentry.st_backendType == B_BACKEND
-		|| lbeentry.st_backendType == B_WAL_SENDER
-		|| lbeentry.st_backendType == B_BG_WORKER)
-		lbeentry.st_userid = GetSessionUserId();
-	else
-		lbeentry.st_userid = InvalidOid;
+	lbeentry.st_databaseid = InvalidOid;
+	lbeentry.st_userid = InvalidOid;
 
 	/*
 	 * We may not have a MyProcPort (eg, if this is the autovacuum process).
@@ -338,49 +314,14 @@ pgstat_bestart(void)
 	else
 		MemSet(&lbeentry.st_clientaddr, 0, sizeof(lbeentry.st_clientaddr));
 
-#ifdef USE_SSL
-	if (MyProcPort && MyProcPort->ssl_in_use)
-	{
-		lbeentry.st_ssl = true;
-		lsslstatus.ssl_bits = be_tls_get_cipher_bits(MyProcPort);
-		strlcpy(lsslstatus.ssl_version, be_tls_get_version(MyProcPort), NAMEDATALEN);
-		strlcpy(lsslstatus.ssl_cipher, be_tls_get_cipher(MyProcPort), NAMEDATALEN);
-		be_tls_get_peer_subject_name(MyProcPort, lsslstatus.ssl_client_dn, NAMEDATALEN);
-		be_tls_get_peer_serial(MyProcPort, lsslstatus.ssl_client_serial, NAMEDATALEN);
-		be_tls_get_peer_issuer_name(MyProcPort, lsslstatus.ssl_issuer_dn, NAMEDATALEN);
-	}
-	else
-	{
-		lbeentry.st_ssl = false;
-	}
-#else
 	lbeentry.st_ssl = false;
-#endif
-
-#ifdef ENABLE_GSS
-	if (MyProcPort && MyProcPort->gss != NULL)
-	{
-		const char *princ = be_gssapi_get_princ(MyProcPort);
-
-		lbeentry.st_gss = true;
-		lgssstatus.gss_auth = be_gssapi_get_auth(MyProcPort);
-		lgssstatus.gss_enc = be_gssapi_get_enc(MyProcPort);
-		lgssstatus.gss_delegation = be_gssapi_get_delegation(MyProcPort);
-		if (princ)
-			strlcpy(lgssstatus.gss_princ, princ, NAMEDATALEN);
-	}
-	else
-	{
-		lbeentry.st_gss = false;
-	}
-#else
 	lbeentry.st_gss = false;
-#endif
 
-	lbeentry.st_state = STATE_UNDEFINED;
+	lbeentry.st_state = STATE_STARTING;
 	lbeentry.st_progress_command = PROGRESS_COMMAND_INVALID;
 	lbeentry.st_progress_command_target = InvalidOid;
-	lbeentry.st_query_id = UINT64CONST(0);
+	lbeentry.st_query_id = INT64CONST(0);
+	lbeentry.st_plan_id = INT64CONST(0);
 
 	/*
 	 * we don't zero st_progress_param here to save cycles; nobody should
@@ -419,14 +360,142 @@ pgstat_bestart(void)
 	lbeentry.st_clienthostname[NAMEDATALEN - 1] = '\0';
 	lbeentry.st_activity_raw[pgstat_track_activity_query_size - 1] = '\0';
 
+	/* These structs can just start from zeroes each time */
 #ifdef USE_SSL
-	memcpy(lbeentry.st_sslstatus, &lsslstatus, sizeof(PgBackendSSLStatus));
+	memset(lbeentry.st_sslstatus, 0, sizeof(PgBackendSSLStatus));
 #endif
 #ifdef ENABLE_GSS
-	memcpy(lbeentry.st_gssstatus, &lgssstatus, sizeof(PgBackendGSSStatus));
+	memset(lbeentry.st_gssstatus, 0, sizeof(PgBackendGSSStatus));
 #endif
 
 	PGSTAT_END_WRITE_ACTIVITY(vbeentry);
+}
+
+/* ----------
+ * pgstat_bestart_security() -
+ *
+ * Fill in SSL and GSS information for the pgstat entry.  This is the second
+ * optional step taken when filling a backend's entry, not required for
+ * auxiliary processes.
+ *
+ * This should only be called from backends with a MyProcPort.
+ * ----------
+ */
+void
+pgstat_bestart_security(void)
+{
+	volatile PgBackendStatus *beentry = MyBEEntry;
+	bool		ssl = false;
+	bool		gss = false;
+#ifdef USE_SSL
+	PgBackendSSLStatus lsslstatus;
+	PgBackendSSLStatus *st_sslstatus;
+#endif
+#ifdef ENABLE_GSS
+	PgBackendGSSStatus lgssstatus;
+	PgBackendGSSStatus *st_gssstatus;
+#endif
+
+	/* pgstats state must be initialized from pgstat_beinit() */
+	Assert(beentry != NULL);
+	Assert(MyProcPort);			/* otherwise there's no point */
+
+#ifdef USE_SSL
+	st_sslstatus = beentry->st_sslstatus;
+	memset(&lsslstatus, 0, sizeof(lsslstatus));
+
+	if (MyProcPort->ssl_in_use)
+	{
+		ssl = true;
+		lsslstatus.ssl_bits = be_tls_get_cipher_bits(MyProcPort);
+		strlcpy(lsslstatus.ssl_version, be_tls_get_version(MyProcPort), NAMEDATALEN);
+		strlcpy(lsslstatus.ssl_cipher, be_tls_get_cipher(MyProcPort), NAMEDATALEN);
+		be_tls_get_peer_subject_name(MyProcPort, lsslstatus.ssl_client_dn, NAMEDATALEN);
+		be_tls_get_peer_serial(MyProcPort, lsslstatus.ssl_client_serial, NAMEDATALEN);
+		be_tls_get_peer_issuer_name(MyProcPort, lsslstatus.ssl_issuer_dn, NAMEDATALEN);
+	}
+#endif
+
+#ifdef ENABLE_GSS
+	st_gssstatus = beentry->st_gssstatus;
+	memset(&lgssstatus, 0, sizeof(lgssstatus));
+
+	if (MyProcPort->gss != NULL)
+	{
+		const char *princ = be_gssapi_get_princ(MyProcPort);
+
+		gss = true;
+		lgssstatus.gss_auth = be_gssapi_get_auth(MyProcPort);
+		lgssstatus.gss_enc = be_gssapi_get_enc(MyProcPort);
+		lgssstatus.gss_delegation = be_gssapi_get_delegation(MyProcPort);
+		if (princ)
+			strlcpy(lgssstatus.gss_princ, princ, NAMEDATALEN);
+	}
+#endif
+
+	/*
+	 * Update my status entry, following the protocol of bumping
+	 * st_changecount before and after.  We use a volatile pointer here to
+	 * ensure the compiler doesn't try to get cute.
+	 */
+	PGSTAT_BEGIN_WRITE_ACTIVITY(beentry);
+
+	beentry->st_ssl = ssl;
+	beentry->st_gss = gss;
+
+#ifdef USE_SSL
+	memcpy(st_sslstatus, &lsslstatus, sizeof(PgBackendSSLStatus));
+#endif
+#ifdef ENABLE_GSS
+	memcpy(st_gssstatus, &lgssstatus, sizeof(PgBackendGSSStatus));
+#endif
+
+	PGSTAT_END_WRITE_ACTIVITY(beentry);
+}
+
+/* ----------
+ * pgstat_bestart_final() -
+ *
+ * Finalizes the state of this backend's entry by filling in the user and
+ * database IDs, clearing STATE_STARTING, and reporting the application_name.
+ *
+ * We must be inside a transaction if this is not an auxiliary process, as
+ * we may need to do encoding conversion.
+ * ----------
+ */
+void
+pgstat_bestart_final(void)
+{
+	volatile PgBackendStatus *beentry = MyBEEntry;
+	Oid			userid;
+
+	/* pgstats state must be initialized from pgstat_beinit() */
+	Assert(beentry != NULL);
+
+	/* We have userid for client-backends, wal-sender and bgworker processes */
+	if (MyBackendType == B_BACKEND
+		|| MyBackendType == B_WAL_SENDER
+		|| MyBackendType == B_BG_WORKER)
+		userid = GetSessionUserId();
+	else
+		userid = InvalidOid;
+
+	/*
+	 * Update my status entry, following the protocol of bumping
+	 * st_changecount before and after.  We use a volatile pointer here to
+	 * ensure the compiler doesn't try to get cute.
+	 */
+	PGSTAT_BEGIN_WRITE_ACTIVITY(beentry);
+
+	beentry->st_databaseid = MyDatabaseId;
+	beentry->st_userid = userid;
+	beentry->st_state = STATE_UNDEFINED;
+
+	PGSTAT_END_WRITE_ACTIVITY(beentry);
+
+	/* Create the backend statistics entry */
+	if (pgstat_tracks_backend_bktype(MyBackendType))
+		pgstat_create_backend(MyProcNumber);
 
 	/* Update app name to current GUC setting */
 	if (application_name)
@@ -530,7 +599,8 @@ pgstat_report_activity(BackendState state, const char *cmd_str)
 			beentry->st_activity_start_timestamp = 0;
 			/* st_xact_start_timestamp and wait_event_info are also disabled */
 			beentry->st_xact_start_timestamp = 0;
-			beentry->st_query_id = UINT64CONST(0);
+			beentry->st_query_id = INT64CONST(0);
+			beentry->st_plan_id = INT64CONST(0);
 			proc->wait_event_info = 0;
 			PGSTAT_END_WRITE_ACTIVITY(beentry);
 		}
@@ -591,11 +661,14 @@ pgstat_report_activity(BackendState state, const char *cmd_str)
 	 * identifier.
 	 */
 	if (state == STATE_RUNNING)
-		beentry->st_query_id = UINT64CONST(0);
+	{
+		beentry->st_query_id = INT64CONST(0);
+		beentry->st_plan_id = INT64CONST(0);
+	}
 
 	if (cmd_str != NULL)
 	{
-		memcpy((char *) beentry->st_activity_raw, cmd_str, len);
+		memcpy(beentry->st_activity_raw, cmd_str, len);
 		beentry->st_activity_raw[len] = '\0';
 		beentry->st_activity_start_timestamp = start_timestamp;
 	}
@@ -610,7 +683,7 @@ pgstat_report_activity(BackendState state, const char *cmd_str)
  * --------
  */
 void
-pgstat_report_query_id(uint64 query_id, bool force)
+pgstat_report_query_id(int64 query_id, bool force)
 {
 	volatile PgBackendStatus *beentry = MyBEEntry;
 
@@ -629,7 +702,7 @@ pgstat_report_query_id(uint64 query_id, bool force)
 	 * command, so ignore the one provided unless it's an explicit call to
 	 * reset the identifier.
 	 */
-	if (beentry->st_query_id != 0 && !force)
+	if (beentry->st_query_id != INT64CONST(0) && !force)
 		return;
 
 	/*
@@ -642,6 +715,44 @@ pgstat_report_query_id(uint64 query_id, bool force)
 	PGSTAT_END_WRITE_ACTIVITY(beentry);
 }
 
+/* --------
+ * pgstat_report_plan_id() -
+ *
+ * Called to update top-level plan identifier.
+ * --------
+ */
+void
+pgstat_report_plan_id(int64 plan_id, bool force)
+{
+	volatile PgBackendStatus *beentry = MyBEEntry;
+
+	/*
+	 * if track_activities is disabled, st_plan_id should already have been
+	 * reset
+	 */
+	if (!beentry || !pgstat_track_activities)
+		return;
+
+	/*
+	 * We only report the top-level plan identifiers.  The stored plan_id is
+	 * reset when a backend calls pgstat_report_activity(STATE_RUNNING), or
+	 * with an explicit call to this function using the force flag.  If the
+	 * saved plan identifier is not zero it means that it's not a top-level
+	 * command, so ignore the one provided unless it's an explicit call to
+	 * reset the identifier.
+	 */
+	if (beentry->st_plan_id != 0 && !force)
+		return;
+
+	/*
+	 * Update my status entry, following the protocol of bumping
+	 * st_changecount before and after.  We use a volatile pointer here to
+	 * ensure the compiler doesn't try to get cute.
+	 */
+	PGSTAT_BEGIN_WRITE_ACTIVITY(beentry);
+	beentry->st_plan_id = plan_id;
+	PGSTAT_END_WRITE_ACTIVITY(beentry);
+}
 
 /* ----------
  * pgstat_report_appname() -
@@ -668,7 +779,7 @@ pgstat_report_appname(const char *appname)
 	 */
 	PGSTAT_BEGIN_WRITE_ACTIVITY(beentry);
 
-	memcpy((char *) beentry->st_appname, appname, len);
+	memcpy(beentry->st_appname, appname, len);
 	beentry->st_appname[len] = '\0';
 
 	PGSTAT_END_WRITE_ACTIVITY(beentry);
@@ -793,11 +904,11 @@ pgstat_read_current_status(void)
 				 * strcpy is safe even if the string is modified concurrently,
 				 * because there's always a \0 at the end of the buffer.
 				 */
-				strcpy(localappname, (char *) beentry->st_appname);
+				strcpy(localappname, beentry->st_appname);
 				localentry->backendStatus.st_appname = localappname;
-				strcpy(localclienthostname, (char *) beentry->st_clienthostname);
+				strcpy(localclienthostname, beentry->st_clienthostname);
 				localentry->backendStatus.st_clienthostname = localclienthostname;
-				strcpy(localactivity, (char *) beentry->st_activity_raw);
+				strcpy(localactivity, beentry->st_activity_raw);
 				localentry->backendStatus.st_activity_raw = localactivity;
 #ifdef USE_SSL
 				if (beentry->st_ssl)
@@ -1023,7 +1134,7 @@ pgstat_get_crashed_backend_activity(int pid, char *buffer, int buflen)
  *
  * Return current backend's query identifier.
  */
-uint64
+int64
 pgstat_get_my_query_id(void)
 {
 	if (!MyBEEntry)
@@ -1036,6 +1147,46 @@ pgstat_get_my_query_id(void)
 	 * backend which means that there won't be concurrent writes.
 	 */
 	return MyBEEntry->st_query_id;
+}
+
+/* ----------
+ * pgstat_get_my_plan_id() -
+ *
+ * Return current backend's plan identifier.
+ */
+int64
+pgstat_get_my_plan_id(void)
+{
+	if (!MyBEEntry)
+		return 0;
+
+	/* No need for a lock, for roughly the same reasons as above. */
+	return MyBEEntry->st_plan_id;
+}
+
+/* ----------
+ * pgstat_get_backend_type_by_proc_number() -
+ *
+ *	Return the type of the backend with the specified ProcNumber.  This looks
+ *	directly at the BackendStatusArray, so the return value may be out of date.
+ *	The only current use of this function is in pg_signal_backend(), which is
+ *	inherently racy, so we don't worry too much about this.
+ *
+ *	It is the caller's responsibility to use this wisely; at minimum, callers
+ *	should ensure that procNumber is valid and perform the required permissions
+ *	checks.
+ * ----------
+ */
+BackendType
+pgstat_get_backend_type_by_proc_number(ProcNumber procNumber)
+{
+	volatile PgBackendStatus *status = &BackendStatusArray[procNumber];
+
+	/*
+	 * We bypass the changecount mechanism since fetching and storing an int
+	 * is almost certainly atomic.
+	 */
+	return status->st_backendType;
 }
 
 /* ----------

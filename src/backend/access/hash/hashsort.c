@@ -14,7 +14,7 @@
  * plenty of locality of access.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -147,6 +147,9 @@ _h_indexbuild(HSpool *hspool, Relation heapRel)
 
 		/* the tuples are sorted by hashkey, so pass 'sorted' as true */
 		_hash_doinsert(hspool->index, itup, heapRel, true);
+
+		/* allow insertion phase to be interrupted, and track progress */
+		CHECK_FOR_INTERRUPTS();
 
 		pgstat_progress_update_param(PROGRESS_CREATEIDX_TUPLES_DONE,
 									 ++tups_done);

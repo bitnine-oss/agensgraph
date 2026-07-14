@@ -14,7 +14,7 @@
 #include "plpy_elog.h"
 #include "plpy_main.h"
 #include "plpy_typeio.h"
-#include "plpython.h"
+#include "plpy_util.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
@@ -723,7 +723,7 @@ PLyList_FromArray_recurse(PLyDatumToOb *elm, int *dims, int ndim, int dim,
 
 			sublist = PLyList_FromArray_recurse(elm, dims, ndim, dim + 1,
 												dataptr_p, bitmap_p, bitmask_p);
-			PyList_SET_ITEM(list, i, sublist);
+			PyList_SetItem(list, i, sublist);
 		}
 	}
 	else
@@ -742,14 +742,14 @@ PLyList_FromArray_recurse(PLyDatumToOb *elm, int *dims, int ndim, int dim,
 			if (bitmap && (*bitmap & bitmask) == 0)
 			{
 				Py_INCREF(Py_None);
-				PyList_SET_ITEM(list, i, Py_None);
+				PyList_SetItem(list, i, Py_None);
 			}
 			else
 			{
 				Datum		itemvalue;
 
 				itemvalue = fetch_att(dataptr, elm->typbyval, elm->typlen);
-				PyList_SET_ITEM(list, i, elm->func(elm, itemvalue));
+				PyList_SetItem(list, i, elm->func(elm, itemvalue));
 				dataptr = att_addlength_pointer(dataptr, elm->typlen, dataptr);
 				dataptr = (char *) att_align_nominal(dataptr, elm->typalign);
 			}
@@ -843,6 +843,9 @@ PLyDict_FromTuple(PLyDatumToOb *arg, HeapTuple tuple, TupleDesc desc, bool inclu
 			{
 				/* don't include unless requested */
 				if (!include_generated)
+					continue;
+				/* never include virtual columns */
+				if (attr->attgenerated == ATTRIBUTE_GENERATED_VIRTUAL)
 					continue;
 			}
 

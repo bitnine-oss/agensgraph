@@ -3,7 +3,7 @@
  * basebackup.c
  *	  code for taking a base backup and streaming it to a standby
  *
- * Portions Copyright (c) 2010-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/backup/basebackup.c
@@ -33,9 +33,9 @@
 #include "nodes/pg_list.h"
 #include "pgstat.h"
 #include "pgtar.h"
-#include "port.h"
 #include "postmaster/syslogger.h"
 #include "postmaster/walsummarizer.h"
+#include "replication/slot.h"
 #include "replication/walsender.h"
 #include "replication/walsender_private.h"
 #include "storage/bufpage.h"
@@ -161,7 +161,7 @@ static const char *const excludeDirContents[] =
 	 * even if the intention is to restore to another primary. See backup.sgml
 	 * for a more detailed description.
 	 */
-	"pg_replslot",
+	PG_REPLSLOT_DIR,
 
 	/* Contents removed on startup, see dsm_cleanup_for_mmap(). */
 	PG_DYNSHMEM_DIR,
@@ -249,8 +249,10 @@ perform_base_backup(basebackup_options *opt, bbsink *sink,
 	state.bytes_total_is_valid = false;
 
 	/* we're going to use a BufFile, so we need a ResourceOwner */
-	Assert(CurrentResourceOwner == NULL);
-	CurrentResourceOwner = ResourceOwnerCreate(NULL, "base backup");
+	Assert(AuxProcessResourceOwner != NULL);
+	Assert(CurrentResourceOwner == AuxProcessResourceOwner ||
+		   CurrentResourceOwner == NULL);
+	CurrentResourceOwner = AuxProcessResourceOwner;
 
 	backup_started_in_recovery = RecoveryInProgress();
 
@@ -671,7 +673,7 @@ perform_base_backup(basebackup_options *opt, bbsink *sink,
 	FreeBackupManifest(&manifest);
 
 	/* clean up the resource owner we created */
-	WalSndResourceCleanup(true);
+	ReleaseAuxProcessResources(true);
 
 	basebackup_progress_done();
 }
@@ -1347,7 +1349,7 @@ sendDir(bbsink *sink, const char *path, int basepathlen, bool sizeonly,
 		snprintf(pathbuf, sizeof(pathbuf), "%s/%s", path, de->d_name);
 
 		/* Skip pg_control here to back up it last */
-		if (strcmp(pathbuf, "./global/pg_control") == 0)
+		if (strcmp(pathbuf, "./" XLOG_CONTROL_FILE) == 0)
 			continue;
 
 		if (lstat(pathbuf, &statbuf) != 0)
@@ -1487,7 +1489,7 @@ sendDir(bbsink *sink, const char *path, int basepathlen, bool sizeonly,
 				if (OidIsValid(spcoid))
 				{
 					relspcoid = spcoid;
-					lookup_path = psprintf("pg_tblspc/%u/%s", spcoid,
+					lookup_path = psprintf("%s/%u/%s", PG_TBLSPC_DIR, spcoid,
 										   tarfilename);
 				}
 				else
@@ -1815,6 +1817,7 @@ sendFile(bbsink *sink, const char *readfilename, const char *tarfilename,
 							   checksum_failures,
 							   readfilename, checksum_failures)));
 
+		pgstat_prepare_report_checksum_failure(dboid);
 		pgstat_report_checksum_failures_in_db(dboid, checksum_failures);
 	}
 
@@ -2045,12 +2048,14 @@ _tarWriteHeader(bbsink *sink, const char *filename, const char *linktarget,
 				break;
 			case TAR_NAME_TOO_LONG:
 				ereport(ERROR,
-						(errmsg("file name too long for tar format: \"%s\"",
+						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+						 errmsg("file name too long for tar format: \"%s\"",
 								filename)));
 				break;
 			case TAR_SYMLINK_TOO_LONG:
 				ereport(ERROR,
-						(errmsg("symbolic link target too long for tar format: "
+						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+						 errmsg("symbolic link target too long for tar format: "
 								"file name \"%s\", target \"%s\"",
 								filename, linktarget)));
 				break;

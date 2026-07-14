@@ -20,7 +20,7 @@
  *
  * Code originally contributed by Adriaan Joubert.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -361,7 +361,7 @@ bit_recv(PG_FUNCTION_ARGS)
 	SET_VARSIZE(result, len);
 	VARBITLEN(result) = bitlen;
 
-	pq_copymsgbytes(buf, (char *) VARBITS(result), VARBITBYTES(result));
+	pq_copymsgbytes(buf, VARBITS(result), VARBITBYTES(result));
 
 	/* Make sure last byte is correctly zero-padded */
 	VARBIT_PAD(result);
@@ -666,7 +666,7 @@ varbit_recv(PG_FUNCTION_ARGS)
 	SET_VARSIZE(result, len);
 	VARBITLEN(result) = bitlen;
 
-	pq_copymsgbytes(buf, (char *) VARBITS(result), VARBITBYTES(result));
+	pq_copymsgbytes(buf, VARBITS(result), VARBITBYTES(result));
 
 	/* Make sure last byte is correctly zero-padded */
 	VARBIT_PAD(result);

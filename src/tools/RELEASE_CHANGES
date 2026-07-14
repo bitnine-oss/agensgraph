@@ -10,6 +10,7 @@ For All Releases (major, minor, beta, RC)
 	o update doc/src/sgml/release-NN.sgml in relevant branches
 	o run spellchecker on result
 	o add SGML markup
+	o run src/tools/add_commit_links.pl
 
 * Update timezone data to match latest IANA timezone database and new
   Windows releases, if any (see src/timezone/README)
@@ -87,6 +88,9 @@ Starting a New Development Cycle
 
 * Typically, we do pgindent and perltidy runs just before branching,
   as well as before beta (complete steps from src/tools/pgindent/README)
+
+* It's also advisable to check that copyright years are up-to-date
+  (run src/tools/copyright.pl, commit any changes it finds)
 
 * Create a branch in git for maintenance of the previous release
 	o on master branch, do:

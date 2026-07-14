@@ -3,7 +3,7 @@
  * path.c
  *	  portable path handling routines
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -32,9 +32,11 @@
 #define near
 #include <shlobj.h>
 #else
+#include <pwd.h>
 #include <unistd.h>
 #endif
 
+#include "mb/pg_wchar.h"
 #include "pg_config_paths.h"
 
 
@@ -44,6 +46,10 @@
 #define IS_PATH_VAR_SEP(ch) ((ch) == ';')
 #endif
 
+#ifdef WIN32
+static void debackslash_path(char *path, int encoding);
+static int	pg_sjis_mblen(const unsigned char *s);
+#endif
 static void make_relative_path(char *ret_path, const char *target_path,
 							   const char *bin_path, const char *my_exec_path);
 static char *trim_directory(char *path);
@@ -148,10 +154,73 @@ last_dir_separator(const char *filename)
 }
 
 
+#ifdef WIN32
+
 /*
- *	make_native_path - on WIN32, change / to \ in the path
+ * Convert '\' to '/' within the given path, assuming the path
+ * is in the specified encoding.
+ */
+static void
+debackslash_path(char *path, int encoding)
+{
+	char	   *p;
+
+	/*
+	 * Of the supported encodings, only Shift-JIS has multibyte characters
+	 * that can include a byte equal to '\' (0x5C).  So rather than implement
+	 * a fully encoding-aware conversion, we special-case SJIS.  (Invoking the
+	 * general encoding-aware logic in wchar.c is impractical here for
+	 * assorted reasons.)
+	 */
+	if (encoding == PG_SJIS)
+	{
+		for (p = path; *p; p += pg_sjis_mblen((const unsigned char *) p))
+		{
+			if (*p == '\\')
+				*p = '/';
+		}
+	}
+	else
+	{
+		for (p = path; *p; p++)
+		{
+			if (*p == '\\')
+				*p = '/';
+		}
+	}
+}
+
+/*
+ * SJIS character length
  *
- *	This effectively undoes canonicalize_path.
+ * This must match the behavior of
+ *		pg_encoding_mblen_bounded(PG_SJIS, s)
+ * In particular, unlike the version of pg_sjis_mblen in src/common/wchar.c,
+ * do not allow caller to accidentally step past end-of-string.
+ */
+static int
+pg_sjis_mblen(const unsigned char *s)
+{
+	int			len;
+
+	if (*s >= 0xa1 && *s <= 0xdf)
+		len = 1;				/* 1 byte kana? */
+	else if (IS_HIGHBIT_SET(*s) && s[1] != '\0')
+		len = 2;				/* kanji? */
+	else
+		len = 1;				/* should be ASCII */
+	return len;
+}
+
+#endif							/* WIN32 */
+
+
+/*
+ *	make_native_path - on WIN32, change '/' to '\' in the path
+ *
+ *	This reverses the '\'-to-'/' transformation of debackslash_path.
+ *	We need not worry about encodings here, since '/' does not appear
+ *	as a byte of a multibyte character in any supported encoding.
  *
  *	This is required because WIN32 COPY is an internal CMD.EXE
  *	command and doesn't process forward slashes in the same way
@@ -181,13 +250,14 @@ make_native_path(char *filename)
  * on Windows. We need them to use filenames without spaces, for which a
  * short filename is the safest equivalent, eg:
  *		C:/Progra~1/
+ *
+ * Presently, this is only used on paths that we can assume are in a
+ * server-safe encoding, so there's no need for an encoding-aware variant.
  */
 void
 cleanup_path(char *path)
 {
 #ifdef WIN32
-	char	   *ptr;
-
 	/*
 	 * GetShortPathName() will fail if the path does not exist, or short names
 	 * are disabled on this file system.  In both cases, we just return the
@@ -197,11 +267,8 @@ cleanup_path(char *path)
 	GetShortPathName(path, path, MAXPGPATH - 1);
 
 	/* Replace '\' with '/' */
-	for (ptr = path; *ptr; ptr++)
-	{
-		if (*ptr == '\\')
-			*ptr = '/';
-	}
+	/* All server-safe encodings are alike here, so just use PG_SQL_ASCII */
+	debackslash_path(path, PG_SQL_ASCII);
 #endif
 }
 
@@ -252,6 +319,8 @@ typedef enum
 } canonicalize_state;
 
 /*
+ * canonicalize_path()
+ *
  *	Clean up path by:
  *		o  make Win32 path use Unix slashes
  *		o  remove trailing quote on Win32
@@ -259,9 +328,20 @@ typedef enum
  *		o  remove duplicate (adjacent) separators
  *		o  remove '.' (unless path reduces to only '.')
  *		o  process '..' ourselves, removing it if possible
+ *	Modifies path in-place.
+ *
+ * This comes in two variants: encoding-aware and not.  The non-aware version
+ * is only safe to use on strings that are in a server-safe encoding.
  */
 void
 canonicalize_path(char *path)
+{
+	/* All server-safe encodings are alike here, so just use PG_SQL_ASCII */
+	canonicalize_path_enc(path, PG_SQL_ASCII);
+}
+
+void
+canonicalize_path_enc(char *path, int encoding)
 {
 	char	   *p,
 			   *to_p;
@@ -277,17 +357,15 @@ canonicalize_path(char *path)
 	/*
 	 * The Windows command processor will accept suitably quoted paths with
 	 * forward slashes, but barfs badly with mixed forward and back slashes.
+	 * Hence, start by converting all back slashes to forward slashes.
 	 */
-	for (p = path; *p; p++)
-	{
-		if (*p == '\\')
-			*p = '/';
-	}
+	debackslash_path(path, encoding);
 
 	/*
 	 * In Win32, if you do: prog.exe "a b" "\c\d\" the system will pass \c\d"
 	 * as argv[2], so trim off trailing quote.
 	 */
+	p = path + strlen(path);
 	if (p > path && *(p - 1) == '"')
 		*(p - 1) = '/';
 #endif
@@ -934,10 +1012,24 @@ get_home_path(char *ret_path)
 	const char *home;
 
 	home = getenv("HOME");
-	if (home == NULL || home[0] == '\0')
-		return pg_get_user_home_dir(geteuid(), ret_path, MAXPGPATH);
-	strlcpy(ret_path, home, MAXPGPATH);
-	return true;
+	if (home && home[0])
+	{
+		strlcpy(ret_path, home, MAXPGPATH);
+		return true;
+	}
+	else
+	{
+		struct passwd pwbuf;
+		struct passwd *pw;
+		char		buf[1024];
+		int			rc;
+
+		rc = getpwuid_r(geteuid(), &pwbuf, buf, sizeof buf, &pw);
+		if (rc != 0 || !pw)
+			return false;
+		strlcpy(ret_path, pw->pw_dir, MAXPGPATH);
+		return true;
+	}
 #else
 	char	   *tmppath;
 

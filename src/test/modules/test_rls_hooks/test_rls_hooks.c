@@ -3,7 +3,7 @@
  * test_rls_hooks.c
  *		Code for testing RLS hooks.
  *
- * Copyright (c) 2015-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2015-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/test_rls_hooks/test_rls_hooks.c
@@ -15,7 +15,6 @@
 
 #include "catalog/pg_type.h"
 #include "fmgr.h"
-#include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "parser/parse_clause.h"
 #include "parser/parse_collate.h"

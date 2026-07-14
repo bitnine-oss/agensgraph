@@ -19,6 +19,7 @@ SELECT pg_get_serial_sequence('itest1', 'a');
 CREATE TABLE itest4 (a int, b text);
 ALTER TABLE itest4 ALTER COLUMN a ADD GENERATED ALWAYS AS IDENTITY;  -- error, requires NOT NULL
 ALTER TABLE itest4 ALTER COLUMN a SET NOT NULL;
+ALTER TABLE itest4 ALTER COLUMN c ADD GENERATED ALWAYS AS IDENTITY;  -- error, column c does not exist
 ALTER TABLE itest4 ALTER COLUMN a ADD GENERATED ALWAYS AS IDENTITY;  -- ok
 ALTER TABLE itest4 ALTER COLUMN a DROP NOT NULL;  -- error, disallowed
 ALTER TABLE itest4 ALTER COLUMN a ADD GENERATED ALWAYS AS IDENTITY;  -- error, already set
@@ -528,3 +529,12 @@ SELECT * FROM itest15;
 SELECT * FROM itest16;
 DROP TABLE itest15;
 DROP TABLE itest16;
+
+-- For testing of pg_dump and pg_upgrade, leave behind some identity
+-- sequences whose logged-ness doesn't match their owning table's.
+CREATE TABLE identity_dump_logged (a INT GENERATED ALWAYS AS IDENTITY);
+ALTER SEQUENCE identity_dump_logged_a_seq SET UNLOGGED;
+CREATE UNLOGGED TABLE identity_dump_unlogged (a INT GENERATED ALWAYS AS IDENTITY);
+ALTER SEQUENCE identity_dump_unlogged_a_seq SET LOGGED;
+SELECT relname, relpersistence FROM pg_class
+  WHERE relname ~ '^identity_dump_' ORDER BY 1;

@@ -196,6 +196,17 @@ ALTER USER MAPPING FOR public SERVER testserver1
 -- permitted to check validation.
 ALTER USER MAPPING FOR public SERVER testserver1
 	OPTIONS (ADD sslkey 'value', ADD sslcert 'value');
+-- OAuth options are not allowed in either context
+ALTER SERVER testserver1 OPTIONS (ADD oauth_issuer 'https://example.com');
+ERROR:  invalid option "oauth_issuer"
+ALTER SERVER testserver1 OPTIONS (ADD oauth_client_id 'myID');
+ERROR:  invalid option "oauth_client_id"
+ALTER USER MAPPING FOR public SERVER testserver1
+	OPTIONS (ADD oauth_issuer 'https://example.com');
+ERROR:  invalid option "oauth_issuer"
+ALTER USER MAPPING FOR public SERVER testserver1
+	OPTIONS (ADD oauth_client_id 'myID');
+ERROR:  invalid option "oauth_client_id"
 ALTER FOREIGN TABLE ft1 OPTIONS (schema_name 'S 1', table_name 'T 1');
 ALTER FOREIGN TABLE ft2 OPTIONS (schema_name 'S 1', table_name 'T 1');
 ALTER FOREIGN TABLE ft1 ALTER COLUMN c1 OPTIONS (column_name 'C 1');
@@ -637,6 +648,17 @@ EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft_empty ORDER BY c1;
    Remote SQL: SELECT c1, c2 FROM public.loct_empty ORDER BY c1 ASC NULLS LAST
 (3 rows)
 
+-- test restriction on non-system foreign tables.
+SET restrict_nonsystem_relation_kind TO 'foreign-table';
+SELECT * from ft1 where c1 < 1; -- ERROR
+ERROR:  access to non-system foreign table is restricted
+INSERT INTO ft1 (c1) VALUES (1); -- ERROR
+ERROR:  access to non-system foreign table is restricted
+DELETE FROM ft1 WHERE c1 = 1; -- ERROR
+ERROR:  access to non-system foreign table is restricted
+TRUNCATE ft1; -- ERROR
+ERROR:  access to non-system foreign table is restricted
+RESET restrict_nonsystem_relation_kind;
 -- ===================================================================
 -- WHERE with remotely-executable conditions
 -- ===================================================================
@@ -2543,6 +2565,70 @@ SELECT * FROM ft1, ft2, ft4, ft5, local_tbl WHERE ft1.c1 = ft2.c1 AND ft1.c2 = f
  96 |  6 | 00096 | Tue Apr 07 00:00:00 1970 PST | Tue Apr 07 00:00:00 1970 | 6  | 6          | foo | 96 |  6 | 00096 | Tue Apr 07 00:00:00 1970 PST | Tue Apr 07 00:00:00 1970 | 6  | 6          | foo |  6 |  7 | AAA006 |  6 |  7 | AAA006 |  6 |  6 | 0006
 (10 rows)
 
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM ft1, ft4, ft5, local_tbl WHERE ft1.c1 = ft4.c1 AND ft1.c1 = ft5.c1
+    AND ft1.c2 = local_tbl.c1 AND ft1.c1 < 100 AND ft5.c1 < 100 FOR UPDATE;
+                                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                                            
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ LockRows
+   Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft4.c1, ft4.c2, ft4.c3, ft5.c1, ft5.c2, ft5.c3, local_tbl.c1, local_tbl.c2, local_tbl.c3, ft1.*, ft4.*, ft5.*, local_tbl.ctid
+   ->  Merge Join
+         Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft4.c1, ft4.c2, ft4.c3, ft5.c1, ft5.c2, ft5.c3, local_tbl.c1, local_tbl.c2, local_tbl.c3, ft1.*, ft4.*, ft5.*, local_tbl.ctid
+         Merge Cond: (local_tbl.c1 = ft1.c2)
+         ->  Index Scan using local_tbl_pkey on public.local_tbl
+               Output: local_tbl.c1, local_tbl.c2, local_tbl.c3, local_tbl.ctid
+         ->  Sort
+               Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft1.*, ft4.c1, ft4.c2, ft4.c3, ft4.*, ft5.c1, ft5.c2, ft5.c3, ft5.*
+               Sort Key: ft1.c2
+               ->  Foreign Scan
+                     Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft1.*, ft4.c1, ft4.c2, ft4.c3, ft4.*, ft5.c1, ft5.c2, ft5.c3, ft5.*
+                     Relations: ((public.ft1) INNER JOIN (public.ft4)) INNER JOIN (public.ft5)
+                     Remote SQL: SELECT r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c7, r1.c8, CASE WHEN (r1.*)::text IS NOT NULL THEN ROW(r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c7, r1.c8) END, r2.c1, r2.c2, r2.c3, CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2.c1, r2.c2, r2.c3) END, r3.c1, r3.c2, r3.c3, CASE WHEN (r3.*)::text IS NOT NULL THEN ROW(r3.c1, r3.c2, r3.c3) END FROM (("S 1"."T 1" r1 INNER JOIN "S 1"."T 3" r2 ON (((r1."C 1" = r2.c1)) AND ((r1."C 1" < 100)))) INNER JOIN "S 1"."T 4" r3 ON (((r1."C 1" = r3.c1)) AND ((r3.c1 < 100)))) FOR UPDATE OF r1 FOR UPDATE OF r2 FOR UPDATE OF r3
+                     ->  Merge Join
+                           Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft1.*, ft4.c1, ft4.c2, ft4.c3, ft4.*, ft5.c1, ft5.c2, ft5.c3, ft5.*
+                           Merge Cond: (ft1.c1 = ft5.c1)
+                           ->  Merge Join
+                                 Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft1.*, ft4.c1, ft4.c2, ft4.c3, ft4.*
+                                 Merge Cond: (ft1.c1 = ft4.c1)
+                                 ->  Sort
+                                       Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft1.*
+                                       Sort Key: ft1.c1
+                                       ->  Foreign Scan on public.ft1
+                                             Output: ft1.c1, ft1.c2, ft1.c3, ft1.c4, ft1.c5, ft1.c6, ft1.c7, ft1.c8, ft1.*
+                                             Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8 FROM "S 1"."T 1" WHERE (("C 1" < 100)) FOR UPDATE
+                                 ->  Sort
+                                       Output: ft4.c1, ft4.c2, ft4.c3, ft4.*
+                                       Sort Key: ft4.c1
+                                       ->  Foreign Scan on public.ft4
+                                             Output: ft4.c1, ft4.c2, ft4.c3, ft4.*
+                                             Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 3" FOR UPDATE
+                           ->  Sort
+                                 Output: ft5.c1, ft5.c2, ft5.c3, ft5.*
+                                 Sort Key: ft5.c1
+                                 ->  Foreign Scan on public.ft5
+                                       Output: ft5.c1, ft5.c2, ft5.c3, ft5.*
+                                       Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 4" WHERE ((c1 < 100)) FOR UPDATE
+(38 rows)
+
+SELECT * FROM ft1, ft4, ft5, local_tbl WHERE ft1.c1 = ft4.c1 AND ft1.c1 = ft5.c1
+    AND ft1.c2 = local_tbl.c1 AND ft1.c1 < 100 AND ft5.c1 < 100 FOR UPDATE;
+ c1 | c2 |  c3   |              c4              |            c5            | c6 |     c7     | c8  | c1 | c2 |   c3   | c1 | c2 |   c3   | c1 | c2 |  c3  
+----+----+-------+------------------------------+--------------------------+----+------------+-----+----+----+--------+----+----+--------+----+----+------
+ 12 |  2 | 00012 | Tue Jan 13 00:00:00 1970 PST | Tue Jan 13 00:00:00 1970 | 2  | 2          | foo | 12 | 13 | AAA012 | 12 | 13 | AAA012 |  2 |  2 | 0002
+ 42 |  2 | 00042 | Thu Feb 12 00:00:00 1970 PST | Thu Feb 12 00:00:00 1970 | 2  | 2          | foo | 42 | 43 | AAA042 | 42 | 43 | AAA042 |  2 |  2 | 0002
+ 72 |  2 | 00072 | Sat Mar 14 00:00:00 1970 PST | Sat Mar 14 00:00:00 1970 | 2  | 2          | foo | 72 | 73 | AAA072 | 72 | 73 |        |  2 |  2 | 0002
+ 24 |  4 | 00024 | Sun Jan 25 00:00:00 1970 PST | Sun Jan 25 00:00:00 1970 | 4  | 4          | foo | 24 | 25 | AAA024 | 24 | 25 | AAA024 |  4 |  4 | 0004
+ 54 |  4 | 00054 | Tue Feb 24 00:00:00 1970 PST | Tue Feb 24 00:00:00 1970 | 4  | 4          | foo | 54 | 55 | AAA054 | 54 | 55 |        |  4 |  4 | 0004
+ 84 |  4 | 00084 | Thu Mar 26 00:00:00 1970 PST | Thu Mar 26 00:00:00 1970 | 4  | 4          | foo | 84 | 85 | AAA084 | 84 | 85 | AAA084 |  4 |  4 | 0004
+ 96 |  6 | 00096 | Tue Apr 07 00:00:00 1970 PST | Tue Apr 07 00:00:00 1970 | 6  | 6          | foo | 96 | 97 | AAA096 | 96 | 97 | AAA096 |  6 |  6 | 0006
+ 36 |  6 | 00036 | Fri Feb 06 00:00:00 1970 PST | Fri Feb 06 00:00:00 1970 | 6  | 6          | foo | 36 | 37 | AAA036 | 36 | 37 |        |  6 |  6 | 0006
+ 66 |  6 | 00066 | Sun Mar 08 00:00:00 1970 PST | Sun Mar 08 00:00:00 1970 | 6  | 6          | foo | 66 | 67 | AAA066 | 66 | 67 | AAA066 |  6 |  6 | 0006
+  6 |  6 | 00006 | Wed Jan 07 00:00:00 1970 PST | Wed Jan 07 00:00:00 1970 | 6  | 6          | foo |  6 |  7 | AAA006 |  6 |  7 | AAA006 |  6 |  6 | 0006
+ 48 |  8 | 00048 | Wed Feb 18 00:00:00 1970 PST | Wed Feb 18 00:00:00 1970 | 8  | 8          | foo | 48 | 49 | AAA048 | 48 | 49 | AAA048 |  8 |  8 | 0008
+ 18 |  8 | 00018 | Mon Jan 19 00:00:00 1970 PST | Mon Jan 19 00:00:00 1970 | 8  | 8          | foo | 18 | 19 | AAA018 | 18 | 19 |        |  8 |  8 | 0008
+ 78 |  8 | 00078 | Fri Mar 20 00:00:00 1970 PST | Fri Mar 20 00:00:00 1970 | 8  | 8          | foo | 78 | 79 | AAA078 | 78 | 79 | AAA078 |  8 |  8 | 0008
+(13 rows)
+
 RESET enable_nestloop;
 RESET enable_hashjoin;
 -- test that add_paths_with_pathkeys_for_rel() arranges for the epq_path to
@@ -2760,22 +2846,6 @@ SELECT t1.c1, t2.c2 FROM v4 t1 LEFT JOIN ft5 t2 ON (t1.c1 = t2.c1) ORDER BY t1.c
 (10 rows)
 
 ALTER VIEW v4 OWNER TO regress_view_owner;
--- Make sure this big CROSS JOIN query is pushed down
-EXPLAIN (VERBOSE, COSTS OFF) SELECT count(*) FROM ft1 CROSS JOIN ft2 CROSS JOIN ft4 CROSS JOIN ft5;
-                                                                             QUERY PLAN                                                                              
----------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Foreign Scan
-   Output: (count(*))
-   Relations: Aggregate on ((((public.ft1) INNER JOIN (public.ft2)) INNER JOIN (public.ft4)) INNER JOIN (public.ft5))
-   Remote SQL: SELECT count(*) FROM ((("S 1"."T 1" r1 INNER JOIN "S 1"."T 1" r2 ON (TRUE)) INNER JOIN "S 1"."T 3" r4 ON (TRUE)) INNER JOIN "S 1"."T 4" r6 ON (TRUE))
-(4 rows)
-
--- Make sure query cancellation works
-BEGIN;
-SET LOCAL statement_timeout = '10ms';
-select count(*) from ft1 CROSS JOIN ft2 CROSS JOIN ft4 CROSS JOIN ft5; -- this takes very long
-ERROR:  canceling statement due to statement timeout
-COMMIT;
 -- ====================================================================
 -- Check that userid to use when querying the remote table is correctly
 -- propagated into foreign rels present in subqueries under an UNION ALL
@@ -3774,15 +3844,19 @@ ORDER BY ref_0."C 1";
          ->  Index Scan using t1_pkey on "S 1"."T 1" ref_0
                Output: ref_0."C 1", ref_0.c2, ref_0.c3, ref_0.c4, ref_0.c5, ref_0.c6, ref_0.c7, ref_0.c8
                Index Cond: (ref_0."C 1" < 10)
-         ->  Foreign Scan on public.ft1 ref_1
-               Output: ref_1.c3, ref_0.c2
-               Remote SQL: SELECT c3 FROM "S 1"."T 1" WHERE ((c3 = '00001'))
+         ->  Memoize
+               Output: ref_1.c3, (ref_0.c2)
+               Cache Key: ref_0.c2
+               Cache Mode: binary
+               ->  Foreign Scan on public.ft1 ref_1
+                     Output: ref_1.c3, ref_0.c2
+                     Remote SQL: SELECT c3 FROM "S 1"."T 1" WHERE ((c3 = '00001'))
    ->  Materialize
          Output: ref_3.c3
          ->  Foreign Scan on public.ft2 ref_3
                Output: ref_3.c3
                Remote SQL: SELECT c3 FROM "S 1"."T 1" WHERE ((c3 = '00001'))
-(15 rows)
+(19 rows)
 
 SELECT ref_0.c2, subq_1.*
 FROM
@@ -3969,10 +4043,11 @@ select c2, sum(c2), count(c2) over (partition by c2%2) from ft2 where c2 < 10 gr
                                                  QUERY PLAN                                                 
 ------------------------------------------------------------------------------------------------------------
  Sort
-   Output: c2, (sum(c2)), (count(c2) OVER (?)), ((c2 % 2))
+   Output: c2, (sum(c2)), (count(c2) OVER w1), ((c2 % 2))
    Sort Key: ft2.c2
    ->  WindowAgg
-         Output: c2, (sum(c2)), count(c2) OVER (?), ((c2 % 2))
+         Output: c2, (sum(c2)), count(c2) OVER w1, ((c2 % 2))
+         Window: w1 AS (PARTITION BY ((ft2.c2 % 2)))
          ->  Sort
                Output: c2, ((c2 % 2)), (sum(c2))
                Sort Key: ((ft2.c2 % 2))
@@ -3980,7 +4055,7 @@ select c2, sum(c2), count(c2) over (partition by c2%2) from ft2 where c2 < 10 gr
                      Output: c2, ((c2 % 2)), (sum(c2))
                      Relations: Aggregate on (public.ft2)
                      Remote SQL: SELECT c2, (c2 % 2), sum(c2) FROM "S 1"."T 1" WHERE ((c2 < 10)) GROUP BY 1
-(12 rows)
+(13 rows)
 
 select c2, sum(c2), count(c2) over (partition by c2%2) from ft2 where c2 < 10 group by c2 order by 1;
  c2 | sum | count 
@@ -4002,10 +4077,11 @@ select c2, array_agg(c2) over (partition by c2%2 order by c2 desc) from ft1 wher
                                             QUERY PLAN                                             
 ---------------------------------------------------------------------------------------------------
  Sort
-   Output: c2, (array_agg(c2) OVER (?)), ((c2 % 2))
+   Output: c2, (array_agg(c2) OVER w1), ((c2 % 2))
    Sort Key: ft1.c2
    ->  WindowAgg
-         Output: c2, array_agg(c2) OVER (?), ((c2 % 2))
+         Output: c2, array_agg(c2) OVER w1, ((c2 % 2))
+         Window: w1 AS (PARTITION BY ((ft1.c2 % 2)) ORDER BY ft1.c2)
          ->  Sort
                Output: c2, ((c2 % 2))
                Sort Key: ((ft1.c2 % 2)), ft1.c2 DESC
@@ -4013,7 +4089,7 @@ select c2, array_agg(c2) over (partition by c2%2 order by c2 desc) from ft1 wher
                      Output: c2, ((c2 % 2))
                      Relations: Aggregate on (public.ft1)
                      Remote SQL: SELECT c2, (c2 % 2) FROM "S 1"."T 1" WHERE ((c2 < 10)) GROUP BY 1
-(12 rows)
+(13 rows)
 
 select c2, array_agg(c2) over (partition by c2%2 order by c2 desc) from ft1 where c2 < 10 group by c2 order by 1;
  c2 |  array_agg  
@@ -4032,13 +4108,14 @@ select c2, array_agg(c2) over (partition by c2%2 order by c2 desc) from ft1 wher
 
 explain (verbose, costs off)
 select c2, array_agg(c2) over (partition by c2%2 order by c2 range between current row and unbounded following) from ft1 where c2 < 10 group by c2 order by 1;
-                                            QUERY PLAN                                             
----------------------------------------------------------------------------------------------------
+                                                      QUERY PLAN                                                       
+-----------------------------------------------------------------------------------------------------------------------
  Sort
-   Output: c2, (array_agg(c2) OVER (?)), ((c2 % 2))
+   Output: c2, (array_agg(c2) OVER w1), ((c2 % 2))
    Sort Key: ft1.c2
    ->  WindowAgg
-         Output: c2, array_agg(c2) OVER (?), ((c2 % 2))
+         Output: c2, array_agg(c2) OVER w1, ((c2 % 2))
+         Window: w1 AS (PARTITION BY ((ft1.c2 % 2)) ORDER BY ft1.c2 RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)
          ->  Sort
                Output: c2, ((c2 % 2))
                Sort Key: ((ft1.c2 % 2)), ft1.c2
@@ -4046,7 +4123,7 @@ select c2, array_agg(c2) over (partition by c2%2 order by c2 range between curre
                      Output: c2, ((c2 % 2))
                      Relations: Aggregate on (public.ft1)
                      Remote SQL: SELECT c2, (c2 % 2) FROM "S 1"."T 1" WHERE ((c2 < 10)) GROUP BY 1
-(12 rows)
+(13 rows)
 
 select c2, array_agg(c2) over (partition by c2%2 order by c2 range between current row and unbounded following) from ft1 where c2 < 10 group by c2 order by 1;
  c2 |  array_agg  
@@ -4127,13 +4204,16 @@ RESET enable_sort;
 -- subquery using immutable function (can be sent to remote)
 PREPARE st3(int) AS SELECT * FROM ft1 t1 WHERE t1.c1 < $2 AND t1.c3 IN (SELECT c3 FROM ft2 t2 WHERE c1 > $1 AND date(c5) = '1970-01-17'::date) ORDER BY c1;
 EXPLAIN (VERBOSE, COSTS OFF) EXECUTE st3(10, 20);
-                                                                                                                                           QUERY PLAN                                                                                                                                            
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Foreign Scan
+                                                                                                                              QUERY PLAN                                                                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
    Output: t1.c1, t1.c2, t1.c3, t1.c4, t1.c5, t1.c6, t1.c7, t1.c8
-   Relations: (public.ft1 t1) SEMI JOIN (public.ft2 t2)
-   Remote SQL: SELECT r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c7, r1.c8 FROM "S 1"."T 1" r1 WHERE ((r1."C 1" < 20)) AND EXISTS (SELECT NULL FROM "S 1"."T 1" r3 WHERE ((r3."C 1" > 10)) AND ((date(r3.c5) = '1970-01-17'::date)) AND ((r3.c3 = r1.c3))) ORDER BY r1."C 1" ASC NULLS LAST
-(4 rows)
+   Sort Key: t1.c1
+   ->  Foreign Scan
+         Output: t1.c1, t1.c2, t1.c3, t1.c4, t1.c5, t1.c6, t1.c7, t1.c8
+         Relations: (public.ft1 t1) SEMI JOIN (public.ft2 t2)
+         Remote SQL: SELECT r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c7, r1.c8 FROM "S 1"."T 1" r1 WHERE ((r1."C 1" < 20)) AND EXISTS (SELECT NULL FROM "S 1"."T 1" r3 WHERE ((r3."C 1" > 10)) AND ((date(r3.c5) = '1970-01-17'::date)) AND ((r3.c3 = r1.c3)))
+(7 rows)
 
 EXECUTE st3(10, 20);
  c1 | c2 |  c3   |              c4              |            c5            | c6 |     c7     | c8  
@@ -4271,13 +4351,13 @@ EXPLAIN (VERBOSE, COSTS OFF) EXECUTE st6;
 
 PREPARE st7 AS INSERT INTO ft1 (c1,c2,c3) VALUES (1001,101,'foo');
 EXPLAIN (VERBOSE, COSTS OFF) EXECUTE st7;
-                                                                                           QUERY PLAN                                                                                            
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                             QUERY PLAN                                                                                              
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Insert on public.ft1
    Remote SQL: INSERT INTO "S 1"."T 1"("C 1", c2, c3, c4, c5, c6, c7, c8) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
    Batch Size: 1
    ->  Result
-         Output: NULL::integer, 1001, 101, 'foo'::text, NULL::timestamp with time zone, NULL::timestamp without time zone, NULL::character varying, 'ft1       '::character(10), NULL::user_enum
+         Output: NULL::integer, 1001, 101, 'foo'::text, NULL::timestamp with time zone, NULL::timestamp without time zone, NULL::character varying(10), 'ft1       '::character(10), NULL::user_enum
 (5 rows)
 
 ALTER TABLE "S 1"."T 1" RENAME TO "T 0";
@@ -4305,13 +4385,13 @@ EXECUTE st6;
 (9 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF) EXECUTE st7;
-                                                                                           QUERY PLAN                                                                                            
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                             QUERY PLAN                                                                                              
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Insert on public.ft1
    Remote SQL: INSERT INTO "S 1"."T 0"("C 1", c2, c3, c4, c5, c6, c7, c8) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
    Batch Size: 1
    ->  Result
-         Output: NULL::integer, 1001, 101, 'foo'::text, NULL::timestamp with time zone, NULL::timestamp without time zone, NULL::character varying, 'ft1       '::character(10), NULL::user_enum
+         Output: NULL::integer, 1001, 101, 'foo'::text, NULL::timestamp with time zone, NULL::timestamp without time zone, NULL::character varying(10), 'ft1       '::character(10), NULL::user_enum
 (5 rows)
 
 ALTER TABLE "S 1"."T 0" RENAME TO "T 1";
@@ -4931,6 +5011,44 @@ SELECT ft2.*, ft4.* FROM ft2 INNER JOIN
 ----+----+----+----+----+----+----+----+----+----+----
 (0 rows)
 
+-- Semi-join conditions shouldn't pop up as left/right join clauses.
+SET enable_material TO off;
+EXPLAIN (verbose, costs off)
+SELECT x1.c1 FROM
+		(SELECT * FROM ft2 WHERE EXISTS (SELECT 1 FROM ft4 WHERE ft4.c1 = ft2.c1 AND ft2.c2 < 10)) x1
+	RIGHT JOIN
+		(SELECT * FROM ft2 WHERE EXISTS (SELECT 1 FROM ft4 WHERE ft4.c1 = ft2.c1 AND ft2.c2 < 10)) x2
+	ON (x1.c1 = x2.c1)
+ORDER BY x1.c1 LIMIT 10;
+                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Foreign Scan
+   Output: ft2.c1
+   Relations: ((public.ft2 ft2_1) LEFT JOIN ((public.ft2) SEMI JOIN (public.ft4))) SEMI JOIN (public.ft4 ft4_1)
+   Remote SQL: SELECT s9.c1 FROM ("S 1"."T 1" r6 LEFT JOIN (SELECT r4."C 1" FROM "S 1"."T 1" r4 WHERE ((r4.c2 < 10)) AND EXISTS (SELECT NULL FROM "S 1"."T 3" r5 WHERE ((r4."C 1" = r5.c1)))) s9(c1) ON (((s9.c1 = r6."C 1")))) WHERE ((r6.c2 < 10)) AND EXISTS (SELECT NULL FROM "S 1"."T 3" r7 WHERE ((r6."C 1" = r7.c1))) ORDER BY s9.c1 ASC NULLS LAST LIMIT 10::bigint
+(4 rows)
+
+SELECT x1.c1 FROM
+		(SELECT * FROM ft2 WHERE EXISTS (SELECT 1 FROM ft4 WHERE ft4.c1 = ft2.c1 AND ft2.c2 < 10)) x1
+	RIGHT JOIN
+		(SELECT * FROM ft2 WHERE EXISTS (SELECT 1 FROM ft4 WHERE ft4.c1 = ft2.c1 AND ft2.c2 < 10)) x2
+	ON (x1.c1 = x2.c1)
+ORDER BY x1.c1 LIMIT 10;
+ c1 
+----
+  2
+  4
+  6
+  8
+ 10
+ 12
+ 14
+ 16
+ 18
+ 20
+(10 rows)
+
+RESET enable_material;
 -- Can't push down semi-join with inner rel vars in targetlist
 EXPLAIN (verbose, costs off)
 SELECT ft1.c1 FROM ft1 JOIN ft2 on ft1.c1 = ft2.c1 WHERE
@@ -4959,13 +5077,13 @@ SELECT ft1.c1 FROM ft1 JOIN ft2 on ft1.c1 = ft2.c1 WHERE
 -- ===================================================================
 EXPLAIN (verbose, costs off)
 INSERT INTO ft2 (c1,c2,c3) SELECT c1+1000,c2+100, c3 || c3 FROM ft2 LIMIT 20;
-                                                                                                                    QUERY PLAN                                                                                                                    
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                      QUERY PLAN                                                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Insert on public.ft2
    Remote SQL: INSERT INTO "S 1"."T 1"("C 1", c2, c3, c4, c5, c6, c7, c8) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
    Batch Size: 1
    ->  Subquery Scan on "*SELECT*"
-         Output: "*SELECT*"."?column?", "*SELECT*"."?column?_1", NULL::integer, "*SELECT*"."?column?_2", NULL::timestamp with time zone, NULL::timestamp without time zone, NULL::character varying, 'ft2       '::character(10), NULL::user_enum
+         Output: "*SELECT*"."?column?", "*SELECT*"."?column?_1", NULL::integer, "*SELECT*"."?column?_2", NULL::timestamp with time zone, NULL::timestamp without time zone, NULL::character varying(10), 'ft2       '::character(10), NULL::user_enum
          ->  Foreign Scan on public.ft2 ft2_1
                Output: (ft2_1.c1 + 1000), (ft2_1.c2 + 100), (ft2_1.c3 || ft2_1.c3)
                Remote SQL: SELECT "C 1", c2, c3 FROM "S 1"."T 1" LIMIT 20::bigint
@@ -4973,12 +5091,12 @@ INSERT INTO ft2 (c1,c2,c3) SELECT c1+1000,c2+100, c3 || c3 FROM ft2 LIMIT 20;
 
 INSERT INTO ft2 (c1,c2,c3) SELECT c1+1000,c2+100, c3 || c3 FROM ft2 LIMIT 20;
 INSERT INTO ft2 (c1,c2,c3)
-  VALUES (1101,201,'aaa'), (1102,202,'bbb'), (1103,203,'ccc') RETURNING *;
-  c1  | c2  | c3  | c4 | c5 | c6 |     c7     | c8 
-------+-----+-----+----+----+----+------------+----
- 1101 | 201 | aaa |    |    |    | ft2        | 
- 1102 | 202 | bbb |    |    |    | ft2        | 
- 1103 | 203 | ccc |    |    |    | ft2        | 
+  VALUES (1101,201,'aaa'), (1102,202,'bbb'), (1103,203,'ccc') RETURNING old, new, old.*, new.*;
+ old |               new               | c1 | c2 | c3 | c4 | c5 | c6 | c7 | c8 |  c1  | c2  | c3  | c4 | c5 | c6 |     c7     | c8 
+-----+---------------------------------+----+----+----+----+----+----+----+----+------+-----+-----+----+----+----+------------+----
+     | (1101,201,aaa,,,,"ft2       ",) |    |    |    |    |    |    |    |    | 1101 | 201 | aaa |    |    |    | ft2        | 
+     | (1102,202,bbb,,,,"ft2       ",) |    |    |    |    |    |    |    |    | 1102 | 202 | bbb |    |    |    | ft2        | 
+     | (1103,203,ccc,,,,"ft2       ",) |    |    |    |    |    |    |    |    | 1103 | 203 | ccc |    |    |    | ft2        | 
 (3 rows)
 
 INSERT INTO ft2 (c1,c2,c3) VALUES (1104,204,'ddd'), (1105,205,'eee');
@@ -5109,6 +5227,31 @@ UPDATE ft2 SET c2 = c2 + 400, c3 = c3 || '_update7' WHERE c1 % 10 = 7 RETURNING 
  1017 | 507 | 0001700017_update7 |                              |                          |    | ft2        | 
 (102 rows)
 
+BEGIN;
+  EXPLAIN (verbose, costs off)
+  UPDATE ft2 SET c2 = c2 + 400, c3 = c3 || '_update7b' WHERE c1 % 10 = 7 AND c1 < 40
+    RETURNING old.*, new.*;                                                         -- can't be pushed down
+                                                                  QUERY PLAN                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Update on public.ft2
+   Output: old.c1, old.c2, old.c3, old.c4, old.c5, old.c6, old.c7, old.c8, new.c1, new.c2, new.c3, new.c4, new.c5, new.c6, new.c7, new.c8
+   Remote SQL: UPDATE "S 1"."T 1" SET c2 = $2, c3 = $3 WHERE ctid = $1 RETURNING "C 1", c2, c3, c4, c5, c6, c7, c8
+   ->  Foreign Scan on public.ft2
+         Output: (c2 + 400), (c3 || '_update7b'::text), ctid, ft2.*
+         Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8, ctid FROM "S 1"."T 1" WHERE (("C 1" < 40)) AND ((("C 1" % 10) = 7)) FOR UPDATE
+(6 rows)
+
+  UPDATE ft2 SET c2 = c2 + 400, c3 = c3 || '_update7b' WHERE c1 % 10 = 7 AND c1 < 40
+    RETURNING old.*, new.*;
+ c1 | c2  |      c3       |              c4              |            c5            | c6 |     c7     | c8  | c1 | c2  |           c3           |              c4              |            c5            | c6 |     c7     | c8  
+----+-----+---------------+------------------------------+--------------------------+----+------------+-----+----+-----+------------------------+------------------------------+--------------------------+----+------------+-----
+  7 | 407 | 00007_update7 | Thu Jan 08 00:00:00 1970 PST | Thu Jan 08 00:00:00 1970 | 7  | 7          | foo |  7 | 807 | 00007_update7_update7b | Thu Jan 08 00:00:00 1970 PST | Thu Jan 08 00:00:00 1970 | 7  | 7          | foo
+ 17 | 407 | 00017_update7 | Sun Jan 18 00:00:00 1970 PST | Sun Jan 18 00:00:00 1970 | 7  | 7          | foo | 17 | 807 | 00017_update7_update7b | Sun Jan 18 00:00:00 1970 PST | Sun Jan 18 00:00:00 1970 | 7  | 7          | foo
+ 27 | 407 | 00027_update7 | Wed Jan 28 00:00:00 1970 PST | Wed Jan 28 00:00:00 1970 | 7  | 7          | foo | 27 | 807 | 00027_update7_update7b | Wed Jan 28 00:00:00 1970 PST | Wed Jan 28 00:00:00 1970 | 7  | 7          | foo
+ 37 | 407 | 00037_update7 | Sat Feb 07 00:00:00 1970 PST | Sat Feb 07 00:00:00 1970 | 7  | 7          | foo | 37 | 807 | 00037_update7_update7b | Sat Feb 07 00:00:00 1970 PST | Sat Feb 07 00:00:00 1970 | 7  | 7          | foo
+(4 rows)
+
+ROLLBACK;
 EXPLAIN (verbose, costs off)
 UPDATE ft2 SET c2 = ft2.c2 + 500, c3 = ft2.c3 || '_update9', c7 = DEFAULT
   FROM ft1 WHERE ft1.c1 = ft2.c2 AND ft1.c1 % 10 = 9;                               -- can be pushed down
@@ -5239,6 +5382,29 @@ DELETE FROM ft2 WHERE c1 % 10 = 5 RETURNING c1, c4;
  1105 | 
 (103 rows)
 
+BEGIN;
+  EXPLAIN (verbose, costs off)
+  DELETE FROM ft2 WHERE c1 % 10 = 6 AND c1 < 40 RETURNING old.c1, c4;               -- can't be pushed down
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Delete on public.ft2
+   Output: old.c1, c4
+   Remote SQL: DELETE FROM "S 1"."T 1" WHERE ctid = $1 RETURNING "C 1", c4
+   ->  Foreign Scan on public.ft2
+         Output: ctid
+         Remote SQL: SELECT ctid FROM "S 1"."T 1" WHERE (("C 1" < 40)) AND ((("C 1" % 10) = 6)) FOR UPDATE
+(6 rows)
+
+  DELETE FROM ft2 WHERE c1 % 10 = 6 AND c1 < 40 RETURNING old.c1, c4;
+ c1 |              c4              
+----+------------------------------
+  6 | Wed Jan 07 00:00:00 1970 PST
+ 16 | Sat Jan 17 00:00:00 1970 PST
+ 26 | Tue Jan 27 00:00:00 1970 PST
+ 36 | Fri Feb 06 00:00:00 1970 PST
+(4 rows)
+
+ROLLBACK;
 EXPLAIN (verbose, costs off)
 DELETE FROM ft2 USING ft1 WHERE ft1.c1 = ft2.c2 AND ft1.c1 % 10 = 2;                -- can be pushed down
                                                          QUERY PLAN                                                         
@@ -6075,14 +6241,14 @@ SELECT c1,c2,c3,c4 FROM ft2 ORDER BY c1;
 
 EXPLAIN (verbose, costs off)
 INSERT INTO ft2 (c1,c2,c3) VALUES (1200,999,'foo') RETURNING tableoid::regclass;
-                                                                                           QUERY PLAN                                                                                            
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                             QUERY PLAN                                                                                              
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Insert on public.ft2
    Output: (ft2.tableoid)::regclass
    Remote SQL: INSERT INTO "S 1"."T 1"("C 1", c2, c3, c4, c5, c6, c7, c8) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
    Batch Size: 1
    ->  Result
-         Output: 1200, 999, NULL::integer, 'foo'::text, NULL::timestamp with time zone, NULL::timestamp without time zone, NULL::character varying, 'ft2       '::character(10), NULL::user_enum
+         Output: 1200, 999, NULL::integer, 'foo'::text, NULL::timestamp with time zone, NULL::timestamp without time zone, NULL::character varying(10), 'ft2       '::character(10), NULL::user_enum
 (6 rows)
 
 INSERT INTO ft2 (c1,c2,c3) VALUES (1200,999,'foo') RETURNING tableoid::regclass;
@@ -6163,6 +6329,70 @@ UPDATE ft2 SET c3 = 'foo'
  (1296,96,foo,,,,"ft2       ",) | 1296 | 96 | foo |    |    |    | ft2        |    | (96,97,AAA096) | 96 | 97 | AAA096
 (16 rows)
 
+BEGIN;
+  EXPLAIN (verbose, costs off)
+  UPDATE ft2 SET c3 = 'bar'
+    FROM ft4 INNER JOIN ft5 ON (ft4.c1 = ft5.c1)
+    WHERE ft2.c1 > 1200 AND ft2.c2 = ft4.c1
+    RETURNING old, new, ft2, ft2.*, ft4, ft4.*;  -- can't be pushed down
+                                                                                                                                                                                                                                     QUERY PLAN                                                                                                                                                                                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Update on public.ft2
+   Output: old.*, new.*, ft2.*, ft2.c1, ft2.c2, ft2.c3, ft2.c4, ft2.c5, ft2.c6, ft2.c7, ft2.c8, ft4.*, ft4.c1, ft4.c2, ft4.c3
+   Remote SQL: UPDATE "S 1"."T 1" SET c3 = $2 WHERE ctid = $1 RETURNING "C 1", c2, c3, c4, c5, c6, c7, c8
+   ->  Foreign Scan
+         Output: 'bar'::text, ft2.ctid, ft2.*, ft4.*, ft5.*, ft4.c1, ft4.c2, ft4.c3
+         Relations: ((public.ft2) INNER JOIN (public.ft4)) INNER JOIN (public.ft5)
+         Remote SQL: SELECT r1.ctid, CASE WHEN (r1.*)::text IS NOT NULL THEN ROW(r1."C 1", r1.c2, r1.c3, r1.c4, r1.c5, r1.c6, r1.c7, r1.c8) END, CASE WHEN (r2.*)::text IS NOT NULL THEN ROW(r2.c1, r2.c2, r2.c3) END, CASE WHEN (r3.*)::text IS NOT NULL THEN ROW(r3.c1, r3.c2, r3.c3) END, r2.c1, r2.c2, r2.c3 FROM (("S 1"."T 1" r1 INNER JOIN "S 1"."T 3" r2 ON (((r1.c2 = r2.c1)) AND ((r1."C 1" > 1200)))) INNER JOIN "S 1"."T 4" r3 ON (((r2.c1 = r3.c1)))) FOR UPDATE OF r1
+         ->  Nested Loop
+               Output: ft2.ctid, ft2.*, ft4.*, ft5.*, ft4.c1, ft4.c2, ft4.c3
+               Join Filter: (ft4.c1 = ft5.c1)
+               ->  Sort
+                     Output: ft2.ctid, ft2.*, ft2.c2, ft4.*, ft4.c1, ft4.c2, ft4.c3
+                     Sort Key: ft2.c2
+                     ->  Hash Join
+                           Output: ft2.ctid, ft2.*, ft2.c2, ft4.*, ft4.c1, ft4.c2, ft4.c3
+                           Hash Cond: (ft2.c2 = ft4.c1)
+                           ->  Foreign Scan on public.ft2
+                                 Output: ft2.ctid, ft2.*, ft2.c2
+                                 Remote SQL: SELECT "C 1", c2, c3, c4, c5, c6, c7, c8, ctid FROM "S 1"."T 1" WHERE (("C 1" > 1200)) FOR UPDATE
+                           ->  Hash
+                                 Output: ft4.*, ft4.c1, ft4.c2, ft4.c3
+                                 ->  Foreign Scan on public.ft4
+                                       Output: ft4.*, ft4.c1, ft4.c2, ft4.c3
+                                       Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 3"
+               ->  Materialize
+                     Output: ft5.*, ft5.c1
+                     ->  Foreign Scan on public.ft5
+                           Output: ft5.*, ft5.c1
+                           Remote SQL: SELECT c1, c2, c3 FROM "S 1"."T 4"
+(29 rows)
+
+  UPDATE ft2 SET c3 = 'bar'
+    FROM ft4 INNER JOIN ft5 ON (ft4.c1 = ft5.c1)
+    WHERE ft2.c1 > 1200 AND ft2.c2 = ft4.c1
+    RETURNING old, new, ft2, ft2.*, ft4, ft4.*;
+              old               |              new               |              ft2               |  c1  | c2 | c3  | c4 | c5 | c6 |     c7     | c8 |      ft4       | c1 | c2 |   c3   
+--------------------------------+--------------------------------+--------------------------------+------+----+-----+----+----+----+------------+----+----------------+----+----+--------
+ (1206,6,foo,,,,"ft2       ",)  | (1206,6,bar,,,,"ft2       ",)  | (1206,6,bar,,,,"ft2       ",)  | 1206 |  6 | bar |    |    |    | ft2        |    | (6,7,AAA006)   |  6 |  7 | AAA006
+ (1212,12,foo,,,,"ft2       ",) | (1212,12,bar,,,,"ft2       ",) | (1212,12,bar,,,,"ft2       ",) | 1212 | 12 | bar |    |    |    | ft2        |    | (12,13,AAA012) | 12 | 13 | AAA012
+ (1224,24,foo,,,,"ft2       ",) | (1224,24,bar,,,,"ft2       ",) | (1224,24,bar,,,,"ft2       ",) | 1224 | 24 | bar |    |    |    | ft2        |    | (24,25,AAA024) | 24 | 25 | AAA024
+ (1230,30,foo,,,,"ft2       ",) | (1230,30,bar,,,,"ft2       ",) | (1230,30,bar,,,,"ft2       ",) | 1230 | 30 | bar |    |    |    | ft2        |    | (30,31,AAA030) | 30 | 31 | AAA030
+ (1242,42,foo,,,,"ft2       ",) | (1242,42,bar,,,,"ft2       ",) | (1242,42,bar,,,,"ft2       ",) | 1242 | 42 | bar |    |    |    | ft2        |    | (42,43,AAA042) | 42 | 43 | AAA042
+ (1248,48,foo,,,,"ft2       ",) | (1248,48,bar,,,,"ft2       ",) | (1248,48,bar,,,,"ft2       ",) | 1248 | 48 | bar |    |    |    | ft2        |    | (48,49,AAA048) | 48 | 49 | AAA048
+ (1260,60,foo,,,,"ft2       ",) | (1260,60,bar,,,,"ft2       ",) | (1260,60,bar,,,,"ft2       ",) | 1260 | 60 | bar |    |    |    | ft2        |    | (60,61,AAA060) | 60 | 61 | AAA060
+ (1266,66,foo,,,,"ft2       ",) | (1266,66,bar,,,,"ft2       ",) | (1266,66,bar,,,,"ft2       ",) | 1266 | 66 | bar |    |    |    | ft2        |    | (66,67,AAA066) | 66 | 67 | AAA066
+ (1278,78,foo,,,,"ft2       ",) | (1278,78,bar,,,,"ft2       ",) | (1278,78,bar,,,,"ft2       ",) | 1278 | 78 | bar |    |    |    | ft2        |    | (78,79,AAA078) | 78 | 79 | AAA078
+ (1284,84,foo,,,,"ft2       ",) | (1284,84,bar,,,,"ft2       ",) | (1284,84,bar,,,,"ft2       ",) | 1284 | 84 | bar |    |    |    | ft2        |    | (84,85,AAA084) | 84 | 85 | AAA084
+ (1296,96,foo,,,,"ft2       ",) | (1296,96,bar,,,,"ft2       ",) | (1296,96,bar,,,,"ft2       ",) | 1296 | 96 | bar |    |    |    | ft2        |    | (96,97,AAA096) | 96 | 97 | AAA096
+ (1218,18,foo,,,,"ft2       ",) | (1218,18,bar,,,,"ft2       ",) | (1218,18,bar,,,,"ft2       ",) | 1218 | 18 | bar |    |    |    | ft2        |    | (18,19,AAA018) | 18 | 19 | AAA018
+ (1236,36,foo,,,,"ft2       ",) | (1236,36,bar,,,,"ft2       ",) | (1236,36,bar,,,,"ft2       ",) | 1236 | 36 | bar |    |    |    | ft2        |    | (36,37,AAA036) | 36 | 37 | AAA036
+ (1254,54,foo,,,,"ft2       ",) | (1254,54,bar,,,,"ft2       ",) | (1254,54,bar,,,,"ft2       ",) | 1254 | 54 | bar |    |    |    | ft2        |    | (54,55,AAA054) | 54 | 55 | AAA054
+ (1272,72,foo,,,,"ft2       ",) | (1272,72,bar,,,,"ft2       ",) | (1272,72,bar,,,,"ft2       ",) | 1272 | 72 | bar |    |    |    | ft2        |    | (72,73,AAA072) | 72 | 73 | AAA072
+ (1290,90,foo,,,,"ft2       ",) | (1290,90,bar,,,,"ft2       ",) | (1290,90,bar,,,,"ft2       ",) | 1290 | 90 | bar |    |    |    | ft2        |    | (90,91,AAA090) | 90 | 91 | AAA090
+(16 rows)
+
+ROLLBACK;
 EXPLAIN (verbose, costs off)
 DELETE FROM ft2
   USING ft4 LEFT JOIN ft5 ON (ft4.c1 = ft5.c1)
@@ -6846,6 +7076,51 @@ SELECT * FROM ft1 ORDER BY c6 ASC NULLS FIRST, c1 OFFSET 15 LIMIT 10;
    40 |  42 | 00040_trig_update | Tue Feb 10 00:00:00 1970 PST | Tue Feb 10 00:00:00 1970 | 0    | 0          | foo
 (10 rows)
 
+-- Test ReScan code path that recreates the cursor even when no parameters
+-- change (bug #17889)
+CREATE TABLE loct1 (c1 int);
+CREATE TABLE loct2 (c1 int, c2 text);
+INSERT INTO loct1 VALUES (1001);
+INSERT INTO loct1 VALUES (1002);
+INSERT INTO loct2 SELECT id, to_char(id, 'FM0000') FROM generate_series(1, 1000) id;
+INSERT INTO loct2 VALUES (1001, 'foo');
+INSERT INTO loct2 VALUES (1002, 'bar');
+CREATE FOREIGN TABLE remt2 (c1 int, c2 text) SERVER loopback OPTIONS (table_name 'loct2');
+ANALYZE loct1;
+ANALYZE remt2;
+SET enable_mergejoin TO false;
+SET enable_hashjoin TO false;
+SET enable_material TO false;
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE remt2 SET c2 = remt2.c2 || remt2.c2 FROM loct1 WHERE loct1.c1 = remt2.c1 RETURNING remt2.*;
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Update on public.remt2
+   Output: remt2.c1, remt2.c2
+   Remote SQL: UPDATE public.loct2 SET c2 = $2 WHERE ctid = $1 RETURNING c1, c2
+   ->  Nested Loop
+         Output: (remt2.c2 || remt2.c2), remt2.ctid, remt2.*, loct1.ctid
+         Join Filter: (remt2.c1 = loct1.c1)
+         ->  Seq Scan on public.loct1
+               Output: loct1.ctid, loct1.c1
+         ->  Foreign Scan on public.remt2
+               Output: remt2.c2, remt2.ctid, remt2.*, remt2.c1
+               Remote SQL: SELECT c1, c2, ctid FROM public.loct2 FOR UPDATE
+(11 rows)
+
+UPDATE remt2 SET c2 = remt2.c2 || remt2.c2 FROM loct1 WHERE loct1.c1 = remt2.c1 RETURNING remt2.*;
+  c1  |   c2   
+------+--------
+ 1001 | foofoo
+ 1002 | barbar
+(2 rows)
+
+RESET enable_mergejoin;
+RESET enable_hashjoin;
+RESET enable_material;
+DROP FOREIGN TABLE remt2;
+DROP TABLE loct1;
+DROP TABLE loct2;
 -- ===================================================================
 -- test check constraints
 -- ===================================================================
@@ -7236,65 +7511,68 @@ select * from rem1;
 -- ===================================================================
 create table gloc1 (
   a int,
-  b int generated always as (a * 2) stored);
+  b int generated always as (a * 2) stored,
+  c int
+);
 alter table gloc1 set (autovacuum_enabled = 'false');
 create foreign table grem1 (
   a int,
-  b int generated always as (a * 2) stored)
-  server loopback options(table_name 'gloc1');
+  b int generated always as (a * 2) stored,
+  c int generated always as (a * 3) virtual
+) server loopback options(table_name 'gloc1');
 explain (verbose, costs off)
 insert into grem1 (a) values (1), (2);
-                            QUERY PLAN                             
--------------------------------------------------------------------
+                                  QUERY PLAN                                   
+-------------------------------------------------------------------------------
  Insert on public.grem1
-   Remote SQL: INSERT INTO public.gloc1(a, b) VALUES ($1, DEFAULT)
+   Remote SQL: INSERT INTO public.gloc1(a, b, c) VALUES ($1, DEFAULT, DEFAULT)
    Batch Size: 1
    ->  Values Scan on "*VALUES*"
-         Output: "*VALUES*".column1, NULL::integer
+         Output: "*VALUES*".column1, NULL::integer, NULL::integer
 (5 rows)
 
 insert into grem1 (a) values (1), (2);
 explain (verbose, costs off)
 update grem1 set a = 22 where a = 2;
-                                     QUERY PLAN                                     
-------------------------------------------------------------------------------------
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
  Update on public.grem1
-   Remote SQL: UPDATE public.gloc1 SET a = $2, b = DEFAULT WHERE ctid = $1
+   Remote SQL: UPDATE public.gloc1 SET a = $2, b = DEFAULT, c = DEFAULT WHERE ctid = $1
    ->  Foreign Scan on public.grem1
          Output: 22, ctid, grem1.*
-         Remote SQL: SELECT a, b, ctid FROM public.gloc1 WHERE ((a = 2)) FOR UPDATE
+         Remote SQL: SELECT a, b, c, ctid FROM public.gloc1 WHERE ((a = 2)) FOR UPDATE
 (5 rows)
 
 update grem1 set a = 22 where a = 2;
 select * from gloc1;
- a  | b  
-----+----
-  1 |  2
- 22 | 44
+ a  | b  | c 
+----+----+---
+  1 |  2 |  
+ 22 | 44 |  
 (2 rows)
 
 select * from grem1;
- a  | b  
-----+----
-  1 |  2
- 22 | 44
+ a  | b  | c  
+----+----+----
+  1 |  2 |  3
+ 22 | 44 | 66
 (2 rows)
 
 delete from grem1;
 -- test copy from
 copy grem1 from stdin;
 select * from gloc1;
- a | b 
----+---
- 1 | 2
- 2 | 4
+ a | b | c 
+---+---+---
+ 1 | 2 |  
+ 2 | 4 |  
 (2 rows)
 
 select * from grem1;
- a | b 
----+---
- 1 | 2
- 2 | 4
+ a | b | c 
+---+---+---
+ 1 | 2 | 3
+ 2 | 4 | 6
 (2 rows)
 
 delete from grem1;
@@ -7302,28 +7580,28 @@ delete from grem1;
 alter server loopback options (add batch_size '10');
 explain (verbose, costs off)
 insert into grem1 (a) values (1), (2);
-                            QUERY PLAN                             
--------------------------------------------------------------------
+                                  QUERY PLAN                                   
+-------------------------------------------------------------------------------
  Insert on public.grem1
-   Remote SQL: INSERT INTO public.gloc1(a, b) VALUES ($1, DEFAULT)
+   Remote SQL: INSERT INTO public.gloc1(a, b, c) VALUES ($1, DEFAULT, DEFAULT)
    Batch Size: 10
    ->  Values Scan on "*VALUES*"
-         Output: "*VALUES*".column1, NULL::integer
+         Output: "*VALUES*".column1, NULL::integer, NULL::integer
 (5 rows)
 
 insert into grem1 (a) values (1), (2);
 select * from gloc1;
- a | b 
----+---
- 1 | 2
- 2 | 4
+ a | b | c 
+---+---+---
+ 1 | 2 |  
+ 2 | 4 |  
 (2 rows)
 
 select * from grem1;
- a | b 
----+---
- 1 | 2
- 2 | 4
+ a | b | c 
+---+---+---
+ 1 | 2 | 3
+ 2 | 4 | 6
 (2 rows)
 
 delete from grem1;
@@ -10254,7 +10532,7 @@ CREATE FOREIGN TABLE pg_temp.ft1_nopw (
 ) SERVER loopback_nopw OPTIONS (schema_name 'public', table_name 'ft1');
 SELECT 1 FROM ft1_nopw LIMIT 1;
 ERROR:  password or GSSAPI delegated credentials required
-DETAIL:  Non-superusers must delegate GSSAPI credentials or provide a password in the user mapping.
+DETAIL:  Non-superusers must delegate GSSAPI credentials, provide a password, or enable SCRAM pass-through in user mapping.
 -- If we add a password to the connstr it'll fail, because we don't allow passwords
 -- in connstrs only in user mappings.
 ALTER SERVER loopback_nopw OPTIONS (ADD password 'dummypw');
@@ -10304,7 +10582,7 @@ DROP USER MAPPING FOR CURRENT_USER SERVER loopback_nopw;
 -- lacks password_required=false
 SELECT 1 FROM ft1_nopw LIMIT 1;
 ERROR:  password or GSSAPI delegated credentials required
-DETAIL:  Non-superusers must delegate GSSAPI credentials or provide a password in the user mapping.
+DETAIL:  Non-superusers must delegate GSSAPI credentials, provide a password, or enable SCRAM pass-through in user mapping.
 RESET ROLE;
 -- The user mapping for public is passwordless and lacks the password_required=false
 -- mapping option, but will work because the current user is a superuser.
@@ -10425,13 +10703,20 @@ NOTICE:  drop cascades to 2 other objects
 DETAIL:  drop cascades to user mapping for public on server loopback3
 drop cascades to foreign table ft7
 -- List all the existing cached connections. loopback and loopback3
--- should be output as invalid connections. Also the server name for
--- loopback3 should be NULL because the server was dropped.
-SELECT * FROM postgres_fdw_get_connections() ORDER BY 1;
- server_name | valid 
--------------+-------
- loopback    | f
-             | f
+-- should be output as invalid connections. Also the server name and user name
+-- for loopback3 should be NULL because both server and user mapping were
+-- dropped. In this test, the PIDs of remote backends can be gathered from
+-- pg_stat_activity, and remote_backend_pid should match one of those PIDs.
+SELECT server_name, user_name = CURRENT_USER as "user_name = CURRENT_USER",
+  valid, used_in_xact, closed,
+  remote_backend_pid = ANY(SELECT pid FROM pg_stat_activity
+  WHERE backend_type = 'client backend' AND pid <> pg_backend_pid())
+  as remote_backend_pid
+  FROM postgres_fdw_get_connections() ORDER BY 1;
+ server_name | user_name = CURRENT_USER | valid | used_in_xact | closed | remote_backend_pid 
+-------------+--------------------------+-------+--------------+--------+--------------------
+ loopback    | t                        | f     | t            |        | t
+             |                          | f     | t            |        | t
 (2 rows)
 
 -- The invalid connections get closed in pgfdw_xact_callback during commit.
@@ -11504,17 +11789,17 @@ SELECT * FROM local_tbl, async_pt WHERE local_tbl.a = async_pt.a AND local_tbl.c
                Filter: (async_pt_3.a = local_tbl.a)
 (15 rows)
 
-EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
 SELECT * FROM local_tbl, async_pt WHERE local_tbl.a = async_pt.a AND local_tbl.c = 'bar';
-                                  QUERY PLAN                                   
--------------------------------------------------------------------------------
- Nested Loop (actual rows=1 loops=1)
-   ->  Seq Scan on local_tbl (actual rows=1 loops=1)
+                                    QUERY PLAN                                    
+----------------------------------------------------------------------------------
+ Nested Loop (actual rows=1.00 loops=1)
+   ->  Seq Scan on local_tbl (actual rows=1.00 loops=1)
          Filter: (c = 'bar'::text)
          Rows Removed by Filter: 1
-   ->  Append (actual rows=1 loops=1)
+   ->  Append (actual rows=1.00 loops=1)
          ->  Async Foreign Scan on async_p1 async_pt_1 (never executed)
-         ->  Async Foreign Scan on async_p2 async_pt_2 (actual rows=1 loops=1)
+         ->  Async Foreign Scan on async_p2 async_pt_2 (actual rows=1.00 loops=1)
          ->  Seq Scan on async_p3 async_pt_3 (never executed)
                Filter: (a = local_tbl.a)
 (9 rows)
@@ -11750,22 +12035,22 @@ SELECT * FROM local_tbl t1 LEFT JOIN (SELECT *, (SELECT count(*) FROM async_pt W
                Remote SQL: SELECT a, b, c FROM public.base_tbl2 WHERE ((a < 3000))
 (20 rows)
 
-EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
 SELECT * FROM local_tbl t1 LEFT JOIN (SELECT *, (SELECT count(*) FROM async_pt WHERE a < 3000) FROM async_pt WHERE a < 3000) t2 ON t1.a = t2.a;
-                                       QUERY PLAN                                        
------------------------------------------------------------------------------------------
- Nested Loop Left Join (actual rows=1 loops=1)
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
+ Nested Loop Left Join (actual rows=1.00 loops=1)
    Join Filter: (t1.a = async_pt.a)
    Rows Removed by Join Filter: 399
    InitPlan 1
-     ->  Aggregate (actual rows=1 loops=1)
-           ->  Append (actual rows=400 loops=1)
-                 ->  Async Foreign Scan on async_p1 async_pt_4 (actual rows=200 loops=1)
-                 ->  Async Foreign Scan on async_p2 async_pt_5 (actual rows=200 loops=1)
-   ->  Seq Scan on local_tbl t1 (actual rows=1 loops=1)
-   ->  Append (actual rows=400 loops=1)
-         ->  Async Foreign Scan on async_p1 async_pt_1 (actual rows=200 loops=1)
-         ->  Async Foreign Scan on async_p2 async_pt_2 (actual rows=200 loops=1)
+     ->  Aggregate (actual rows=1.00 loops=1)
+           ->  Append (actual rows=400.00 loops=1)
+                 ->  Async Foreign Scan on async_p1 async_pt_4 (actual rows=200.00 loops=1)
+                 ->  Async Foreign Scan on async_p2 async_pt_5 (actual rows=200.00 loops=1)
+   ->  Seq Scan on local_tbl t1 (actual rows=1.00 loops=1)
+   ->  Append (actual rows=400.00 loops=1)
+         ->  Async Foreign Scan on async_p1 async_pt_1 (actual rows=200.00 loops=1)
+         ->  Async Foreign Scan on async_p2 async_pt_2 (actual rows=200.00 loops=1)
 (12 rows)
 
 SELECT * FROM local_tbl t1 LEFT JOIN (SELECT *, (SELECT count(*) FROM async_pt WHERE a < 3000) FROM async_pt WHERE a < 3000) t2 ON t1.a = t2.a;
@@ -11794,17 +12079,17 @@ SELECT * FROM async_pt t1 WHERE t1.b === 505 LIMIT 1;
                Filter: (t1_3.b === 505)
 (14 rows)
 
-EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
 SELECT * FROM async_pt t1 WHERE t1.b === 505 LIMIT 1;
-                               QUERY PLAN                                
--------------------------------------------------------------------------
- Limit (actual rows=1 loops=1)
-   ->  Append (actual rows=1 loops=1)
-         ->  Async Foreign Scan on async_p1 t1_1 (actual rows=0 loops=1)
+                                 QUERY PLAN                                 
+----------------------------------------------------------------------------
+ Limit (actual rows=1.00 loops=1)
+   ->  Append (actual rows=1.00 loops=1)
+         ->  Async Foreign Scan on async_p1 t1_1 (actual rows=0.00 loops=1)
                Filter: (b === 505)
-         ->  Async Foreign Scan on async_p2 t1_2 (actual rows=0 loops=1)
+         ->  Async Foreign Scan on async_p2 t1_2 (actual rows=0.00 loops=1)
                Filter: (b === 505)
-         ->  Seq Scan on async_p3 t1_3 (actual rows=1 loops=1)
+         ->  Seq Scan on async_p3 t1_3 (actual rows=1.00 loops=1)
                Filter: (b === 505)
                Rows Removed by Filter: 101
 (9 rows)
@@ -11954,14 +12239,14 @@ DELETE FROM async_pt WHERE b = 0 RETURNING *;
 DELETE FROM async_p1;
 DELETE FROM async_p2;
 DELETE FROM async_p3;
-EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF)
+EXPLAIN (ANALYZE, COSTS OFF, SUMMARY OFF, TIMING OFF, BUFFERS OFF)
 SELECT * FROM async_pt;
-                               QUERY PLAN                                
--------------------------------------------------------------------------
- Append (actual rows=0 loops=1)
-   ->  Async Foreign Scan on async_p1 async_pt_1 (actual rows=0 loops=1)
-   ->  Async Foreign Scan on async_p2 async_pt_2 (actual rows=0 loops=1)
-   ->  Seq Scan on async_p3 async_pt_3 (actual rows=0 loops=1)
+                                 QUERY PLAN                                 
+----------------------------------------------------------------------------
+ Append (actual rows=0.00 loops=1)
+   ->  Async Foreign Scan on async_p1 async_pt_1 (actual rows=0.00 loops=1)
+   ->  Async Foreign Scan on async_p2 async_pt_2 (actual rows=0.00 loops=1)
+   ->  Seq Scan on async_p3 async_pt_3 (actual rows=0.00 loops=1)
 (4 rows)
 
 -- Clean up
@@ -12250,3 +12535,58 @@ ANALYZE analyze_table;
 -- cleanup
 DROP FOREIGN TABLE analyze_ftable;
 DROP TABLE analyze_table;
+-- ===================================================================
+-- test for postgres_fdw_get_connections function with check_conn = true
+-- ===================================================================
+-- Disable debug_discard_caches in order to manage remote connections
+SET debug_discard_caches TO '0';
+-- The text of the error might vary across platforms, so only show SQLSTATE.
+\set VERBOSITY sqlstate
+SELECT 1 FROM postgres_fdw_disconnect_all();
+ ?column? 
+----------
+        1
+(1 row)
+
+ALTER SERVER loopback OPTIONS (SET application_name 'fdw_conn_check');
+SELECT 1 FROM ft1 LIMIT 1;
+ ?column? 
+----------
+        1
+(1 row)
+
+-- Since the remote server is still connected, "closed" should be FALSE,
+-- or NULL if the connection status check is not available.
+-- In this test, the remote backend handling this connection should have
+-- application_name set to "fdw_conn_check", so remote_backend_pid should
+-- match the PID from the pg_stat_activity entry with that application_name.
+SELECT server_name,
+  CASE WHEN closed IS NOT true THEN false ELSE true END AS closed,
+  remote_backend_pid = (SELECT pid FROM pg_stat_activity
+  WHERE application_name = 'fdw_conn_check') AS remote_backend_pid
+  FROM postgres_fdw_get_connections(true);
+ server_name | closed | remote_backend_pid 
+-------------+--------+--------------------
+ loopback    | f      | t
+(1 row)
+
+-- After terminating the remote backend, since the connection is closed,
+-- "closed" should be TRUE, or NULL if the connection status check
+-- is not available. Despite the termination, remote_backend_pid should
+-- still show the non-zero PID of the terminated remote backend.
+DO $$ BEGIN
+PERFORM pg_terminate_backend(pid, 180000) FROM pg_stat_activity
+  WHERE application_name = 'fdw_conn_check';
+END $$;
+SELECT server_name,
+  CASE WHEN closed IS NOT false THEN true ELSE false END AS closed,
+  remote_backend_pid <> 0 AS remote_backend_pid
+  FROM postgres_fdw_get_connections(true);
+ server_name | closed | remote_backend_pid 
+-------------+--------+--------------------
+ loopback    | t      | t
+(1 row)
+
+-- Clean up
+\set VERBOSITY default
+RESET debug_discard_caches;

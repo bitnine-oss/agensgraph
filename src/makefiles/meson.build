@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2024, PostgreSQL Global Development Group
+# Copyright (c) 2022-2025, PostgreSQL Global Development Group
 
 ### Compute pgxs_data, used in src/meson.build to generate Makefile.global
 ### etc, that's complete enough for PGXS to work.
@@ -98,12 +98,12 @@ pgxs_kv = {
   'CXXFLAGS_SL_MODULE': ' '.join(cxxflags_mod),
   'PERMIT_DECLARATION_AFTER_STATEMENT':
     ' '.join(cflags_no_decl_after_statement),
+  'PERMIT_MISSING_VARIABLE_DECLARATIONS':
+    ' '.join(cflags_no_missing_var_decls),
 
   'CFLAGS_CRC': ' '.join(cflags_crc),
-  'CFLAGS_POPCNT': ' '.join(cflags_popcnt),
   'CFLAGS_UNROLL_LOOPS': ' '.join(unroll_loops_cflags),
   'CFLAGS_VECTORIZE': ' '.join(vectorize_cflags),
-  'CFLAGS_XSAVE': ' '.join(cflags_xsave),
 
   'LDFLAGS': var_ldflags,
   'LDFLAGS_EX': var_ldflags_ex,
@@ -179,7 +179,8 @@ pgxs_empty = [
   'WANTED_LANGUAGES',
 
   # Not needed because we don't build the server / PLs with the generated makefile
-  'LIBOBJS', 'PG_CRC32C_OBJS', 'PG_POPCNT_OBJS', 'TAS',
+  'LIBOBJS', 'PG_CRC32C_OBJS', 'TAS',
+  'PG_TEST_EXTRA',
   'DTRACEFLAGS', # only server has dtrace probes
 
   'perl_archlibexp', 'perl_embed_ccflags', 'perl_embed_ldflags', 'perl_includespec', 'perl_privlibexp',
@@ -198,6 +199,12 @@ pgxs_empty = [
   'PTHREAD_CFLAGS', 'PTHREAD_LIBS',
 
   'ICU_LIBS',
+
+  'LIBNUMA_CFLAGS', 'LIBNUMA_LIBS',
+
+  'LIBURING_CFLAGS', 'LIBURING_LIBS',
+
+  'LIBCURL_CPPFLAGS', 'LIBCURL_LDFLAGS', 'LIBCURL_LDLIBS',
 ]
 
 if host_system == 'windows' and cc.get_argument_syntax() != 'msvc'
@@ -228,6 +235,9 @@ pgxs_deps = {
   'gssapi': gssapi,
   'icu': icu,
   'ldap': ldap,
+  'libcurl': libcurl,
+  'libnuma': libnuma,
+  'liburing': liburing,
   'libxml': libxml,
   'libxslt': libxslt,
   'llvm': llvm,

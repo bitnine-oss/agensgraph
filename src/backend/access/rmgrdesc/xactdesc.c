@@ -3,7 +3,7 @@
  * xactdesc.c
  *	  rmgr descriptor routines for access/transam/xact.c
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -252,6 +252,8 @@ ParsePrepareRecord(uint8 info, xl_xact_prepare *xlrec, xl_xact_parsed_prepare *p
 	parsed->nsubxacts = xlrec->nsubxacts;
 	parsed->nrels = xlrec->ncommitrels;
 	parsed->nabortrels = xlrec->nabortrels;
+	parsed->nstats = xlrec->ncommitstats;
+	parsed->nabortstats = xlrec->nabortstats;
 	parsed->nmsgs = xlrec->ninvalmsgs;
 
 	strncpy(parsed->twophase_gid, bufptr, xlrec->gidlen);
@@ -287,10 +289,8 @@ xact_desc_relations(StringInfo buf, char *label, int nrels,
 		appendStringInfo(buf, "; %s:", label);
 		for (i = 0; i < nrels; i++)
 		{
-			char	   *path = relpathperm(xlocators[i], MAIN_FORKNUM);
-
-			appendStringInfo(buf, " %s", path);
-			pfree(path);
+			appendStringInfo(buf, " %s",
+							 relpathperm(xlocators[i], MAIN_FORKNUM).str);
 		}
 	}
 }
@@ -319,10 +319,13 @@ xact_desc_stats(StringInfo buf, const char *label,
 		appendStringInfo(buf, "; %sdropped stats:", label);
 		for (i = 0; i < ndropped; i++)
 		{
-			appendStringInfo(buf, " %d/%u/%u",
+			uint64		objid =
+				((uint64) dropped_stats[i].objid_hi) << 32 | dropped_stats[i].objid_lo;
+
+			appendStringInfo(buf, " %d/%u/%" PRIu64,
 							 dropped_stats[i].kind,
 							 dropped_stats[i].dboid,
-							 dropped_stats[i].objoid);
+							 objid);
 		}
 	}
 }

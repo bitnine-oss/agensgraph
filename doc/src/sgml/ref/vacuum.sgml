@@ -42,7 +42,7 @@ VACUUM [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] [ <re
 
 <phrase>and <replaceable class="parameter">table_and_columns</replaceable> is:</phrase>
 
-    <replaceable class="parameter">table_name</replaceable> [ ( <replaceable class="parameter">column_name</replaceable> [, ...] ) ]
+    [ ONLY ] <replaceable class="parameter">table_name</replaceable> [ * ] [ ( <replaceable class="parameter">column_name</replaceable> [, ...] ) ]
 </synopsis>
  </refsynopsisdiv>
 
@@ -129,7 +129,8 @@ VACUUM [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] [ <re
     <term><literal>VERBOSE</literal></term>
     <listitem>
      <para>
-      Prints a detailed vacuum activity report for each table.
+      Prints a detailed vacuum activity report for each table
+      at <literal>INFO</literal> level.
      </para>
     </listitem>
    </varlistentry>
@@ -264,7 +265,8 @@ VACUUM [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] [ <re
       truncate off any empty pages at the end of the table and allow
       the disk space for the truncated pages to be returned to
       the operating system. This is normally the desired behavior
-      and is the default unless the <literal>vacuum_truncate</literal>
+      and is the default unless <xref linkend="guc-vacuum-truncate"/>
+      is set to false or the <literal>vacuum_truncate</literal>
       option has been set to false for the table to be vacuumed.
       Setting this option to false may be useful to avoid
       <literal>ACCESS EXCLUSIVE</literal> lock on the table that
@@ -401,8 +403,13 @@ VACUUM [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] [ <re
     <listitem>
      <para>
       The name (optionally schema-qualified) of a specific table or
-      materialized view to vacuum.  If the specified table is a partitioned
-      table, all of its leaf partitions are vacuumed.
+      materialized view to vacuum.  If <literal>ONLY</literal> is specified
+      before the table name, only that table is vacuumed.  If
+      <literal>ONLY</literal> is not specified, the table and all its
+      inheritance child tables or partitions (if any) are also vacuumed.
+      Optionally, <literal>*</literal> can be specified after the table name
+      to explicitly indicate that inheritance child tables (or partitions) are
+      to be vacuumed.
      </para>
     </listitem>
    </varlistentry>

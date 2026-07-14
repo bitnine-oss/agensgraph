@@ -18,7 +18,7 @@ PostgreSQL documentation
   <refname>pg_dump</refname>
 
   <refpurpose>
-   extract a <productname>PostgreSQL</productname> database into a script file or other archive file
+   export a <productname>PostgreSQL</productname> database as an SQL script or to other formats
   </refpurpose>
  </refnamediv>
 
@@ -36,16 +36,20 @@ PostgreSQL documentation
   <title>Description</title>
 
   <para>
-   <application>pg_dump</application> is a utility for backing up a
+   <application>pg_dump</application> is a utility for exporting a
    <productname>PostgreSQL</productname> database. It makes consistent
-   backups even if the database is being used concurrently.
+   exports even if the database is being used concurrently.
    <application>pg_dump</application> does not block other users
    accessing the database (readers or writers).
+   Note, however, that except in simple cases,
+   <application>pg_dump</application> is generally not the right choice for
+   taking regular backups of production databases.  See <xref
+   linkend="backup"/> for further discussion.
   </para>
 
   <para>
    <application>pg_dump</application> only dumps a single database.
-   To back up an entire cluster, or to back up global objects that are
+   To export an entire cluster, or to export global objects that are
    common to all databases in a cluster (such as roles and tablespaces),
    use <xref linkend="app-pg-dumpall"/>.
   </para>
@@ -76,7 +80,7 @@ PostgreSQL documentation
    <application>pg_restore</application>,
    <application>pg_dump</application> provides a flexible archival and
    transfer mechanism. <application>pg_dump</application> can be used to
-   backup an entire database, then <application>pg_restore</application>
+   export an entire database, then <application>pg_restore</application>
    can be used to examine the archive and/or select which parts of the
    database are to be restored. The most flexible output file formats are
    the <quote>custom</quote> format (<option>-Fc</option>) and the
@@ -119,7 +123,7 @@ PostgreSQL documentation
       <term><option>--data-only</option></term>
       <listitem>
        <para>
-        Dump only the data, not the schema (data definitions).
+        Dump only the data, not the schema (data definitions) or statistics.
         Table data, large objects, and sequence values are dumped.
        </para>
 
@@ -137,13 +141,15 @@ PostgreSQL documentation
       <listitem>
        <para>
         Include large objects in the dump.  This is the default behavior
-        except when <option>--schema</option>, <option>--table</option>, or
-        <option>--schema-only</option> is specified.  The <option>-b</option>
-        switch is therefore only useful to add large objects to dumps
-        where a specific schema or table has been requested.  Note that
-        large objects are considered data and therefore will be included when
-        <option>--data-only</option> is used, but not
-        when <option>--schema-only</option> is.
+        except when <option>--schema</option>, <option>--table</option>,
+        <option>--schema-only</option>, <option>--statistics-only</option>, or
+        <option>--no-data</option> is specified.  The <option>-b</option>
+        switch is therefore only useful to add large objects to dumps where a
+        specific schema or table has been requested.  Note that large objects
+        are considered data and therefore will be included when
+        <option>--data-only</option> is used, but not when
+        <option>--schema-only</option> or <option>--statistics-only</option>
+        is.
        </para>
       </listitem>
      </varlistentry>
@@ -512,10 +518,11 @@ PostgreSQL documentation
       <term><option>--schema-only</option></term>
       <listitem>
        <para>
-        Dump only the object definitions (schema), not data.
+        Dump only the object definitions (schema), not data or statistics.
        </para>
        <para>
-        This option is the inverse of <option>--data-only</option>.
+        This option cannot be used with <option>--data-only</option>
+        or <option>--statistics-only</option>.
         It is similar to, but for historical reasons not identical to,
         specifying
         <option>--section=pre-data --section=post-data</option>.
@@ -737,7 +744,8 @@ PostgreSQL documentation
       <term><option>--disable-triggers</option></term>
       <listitem>
        <para>
-        This option is relevant only when creating a data-only dump.
+        This option is relevant only when creating a dump that includes data
+        but does not include schema.
         It instructs <application>pg_dump</application> to include commands
         to temporarily disable triggers on the target tables while
         the data is restored.  Use this if you have referential
@@ -829,7 +837,8 @@ PostgreSQL documentation
         though you do not need the data in it.
        </para>
        <para>
-        To exclude data for all tables in the database, see <option>--schema-only</option>.
+        To exclude data for all tables in the database, see <option>--schema-only</option>
+        or <option>--statistics-only</option>.
        </para>
       </listitem>
      </varlistentry>
@@ -999,6 +1008,14 @@ PostgreSQL documentation
 
        <note>
         <para>
+         Using wildcards in <option>--include-foreign-data</option> may result
+         in access to unexpected foreign servers. Also, to use this option securely,
+         make sure that the named server must have a trusted owner.
+        </para>
+       </note>
+
+       <note>
+        <para>
          When <option>--include-foreign-data</option> is specified,
          <application>pg_dump</application> does not check that the foreign
          table is writable.  Therefore, there is no guarantee that the
@@ -1063,7 +1080,25 @@ PostgreSQL documentation
       <term><option>--no-comments</option></term>
       <listitem>
        <para>
-        Do not dump comments.
+        Do not dump <command>COMMENT</command> commands.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--no-data</option></term>
+      <listitem>
+       <para>
+        Do not dump data.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--no-policies</option></term>
+      <listitem>
+       <para>
+        Do not dump row security policies.
        </para>
       </listitem>
      </varlistentry>
@@ -1078,10 +1113,28 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>--no-schema</option></term>
+      <listitem>
+       <para>
+        Do not dump schema (data definitions).
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>--no-security-labels</option></term>
       <listitem>
        <para>
         Do not dump security labels.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--no-statistics</option></term>
+      <listitem>
+       <para>
+        Do not dump statistics. This is the default.
        </para>
       </listitem>
      </varlistentry>
@@ -1224,12 +1277,25 @@ PostgreSQL documentation
          </para>
          <para>
           The data section contains actual table data, large-object
-          contents, and sequence values.
+          contents, sequence values, and statistics for tables,
+          materialized views, and foreign tables.
           Post-data items include definitions of indexes, triggers, rules,
-          and constraints other than validated check constraints.
+          statistics for indexes, and constraints other than validated check
+          and not-null constraints.
           Pre-data items include all other data definition items.
          </para>
        </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--sequence-data</option></term>
+      <listitem>
+       <para>
+        Include sequence data in the dump.  This is the default behavior except
+        when <option>--no-data</option>, <option>--schema-only</option>, or
+        <option>--statistics-only</option> is specified.
+       </para>
+      </listitem>
      </varlistentry>
 
      <varlistentry>
@@ -1286,6 +1352,17 @@ PostgreSQL documentation
           option is used rather than taking a new snapshot.
          </para>
        </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--statistics-only</option></term>
+      <listitem>
+       <para>
+        Dump only the statistics, not the schema (data definitions) or data.
+        Statistics for tables, materialized views, foreign tables,
+        and indexes are dumped.
+       </para>
+      </listitem>
      </varlistentry>
 
      <varlistentry>
@@ -1359,6 +1436,33 @@ PostgreSQL documentation
         properly.  Also, a dump using <command>SET SESSION AUTHORIZATION</command>
         will certainly require superuser privileges to restore correctly,
         whereas <command>ALTER OWNER</command> requires lesser privileges.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--with-data</option></term>
+      <listitem>
+       <para>
+        Dump data. This is the default.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--with-schema</option></term>
+      <listitem>
+       <para>
+        Dump schema (data definitions). This is the default.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--with-statistics</option></term>
+      <listitem>
+       <para>
+        Dump statistics.
        </para>
       </listitem>
      </varlistentry>
@@ -1569,7 +1673,7 @@ CREATE DATABASE foo WITH TEMPLATE template0;
   </para>
 
   <para>
-   When a data-only dump is chosen and the option <option>--disable-triggers</option>
+   When a dump without schema is chosen and the option <option>--disable-triggers</option>
    is used, <application>pg_dump</application> emits commands
    to disable triggers on user tables before inserting the data,
    and then commands to re-enable them after the data has been
@@ -1578,12 +1682,14 @@ CREATE DATABASE foo WITH TEMPLATE template0;
   </para>
 
   <para>
-   The dump file produced by <application>pg_dump</application>
-   does not contain the statistics used by the optimizer to make
-   query planning decisions.  Therefore, it is wise to run
-   <command>ANALYZE</command> after restoring from a dump file
-   to ensure optimal performance; see <xref linkend="vacuum-for-statistics"/>
-   and <xref linkend="autovacuum"/> for more information.
+   If <option>--with-statistics</option> is specified,
+   <command>pg_dump</command> will include most optimizer statistics in the
+   resulting dump file.  However, some statistics may not be included, such as
+   those created explicitly with <xref linkend="sql-createstatistics"/> or
+   custom statistics added by an extension.  Therefore, it may be useful to
+   run <command>ANALYZE</command> after restoring from a dump file to ensure
+   optimal performance; see <xref linkend="vacuum-for-statistics"/> and <xref
+   linkend="autovacuum"/> for more information.
   </para>
 
   <para>
@@ -1624,6 +1730,14 @@ CREATE DATABASE foo WITH TEMPLATE template0;
    option will be automatically enabled by the subscriber if the subscription
    had been originally created with <literal>two_phase = true</literal> option.
   </para>
+
+  <para>
+   It is generally recommended to use the <option>-X</option>
+   (<option>--no-psqlrc</option>) option when restoring a database from a
+   plain-text <application>pg_dump</application> script to ensure a clean
+   restore process and prevent potential conflicts with
+   non-default <application>psql</application> configurations.
+  </para>
  </refsect1>
 
  <refsect1 id="pg-dump-examples" xreflabel="Examples">
@@ -1641,7 +1755,7 @@ CREATE DATABASE foo WITH TEMPLATE template0;
    <literal>newdb</literal>:
 
 <screen>
-<prompt>$</prompt> <userinput>psql -d newdb -f db.sql</userinput>
+<prompt>$</prompt> <userinput>psql -X -d newdb -f db.sql</userinput>
 </screen>
   </para>
 

@@ -11,14 +11,17 @@ SUBDIRS = \
 		  dummy_index_am \
 		  dummy_seclabel \
 		  libpq_pipeline \
+		  oauth_validator \
 		  plsample \
 		  spgist_name_ops \
+		  test_aio \
 		  test_bloomfilter \
 		  test_copy_callbacks \
 		  test_custom_rmgrs \
 		  test_ddl_deparse \
 		  test_dsa \
 		  test_dsm_registry \
+		  test_escape \
 		  test_extensions \
 		  test_ginpostinglist \
 		  test_integerset \
@@ -43,9 +46,9 @@ SUBDIRS = \
 
 
 ifeq ($(enable_injection_points),yes)
-SUBDIRS += injection_points gin
+SUBDIRS += injection_points gin typcache
 else
-ALWAYS_SUBDIRS += injection_points gin
+ALWAYS_SUBDIRS += injection_points gin typcache
 endif
 
 ifeq ($(with_ssl),openssl)

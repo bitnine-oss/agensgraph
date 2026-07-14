@@ -3,7 +3,7 @@
  * parse_clause.c
  *	  handle clauses in parser
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -40,11 +40,9 @@
 #include "parser/parse_target.h"
 #include "parser/parse_type.h"
 #include "parser/parser.h"
-#include "parser/parsetree.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
-#include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
@@ -1588,6 +1586,7 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 			jnsitem->p_cols_visible = true;
 			jnsitem->p_lateral_only = false;
 			jnsitem->p_lateral_ok = true;
+			jnsitem->p_returning_type = VAR_RETURNING_DEFAULT;
 			/* Per SQL, we must check for alias conflicts */
 			checkNameSpaceConflicts(pstate, list_make1(jnsitem), my_namespace);
 			my_namespace = lappend(my_namespace, jnsitem);
@@ -1650,6 +1649,7 @@ buildVarFromNSColumn(ParseState *pstate, ParseNamespaceColumn *nscol)
 				  nscol->p_varcollid,
 				  0);
 	/* makeVar doesn't offer parameters for these, so set by hand: */
+	var->varreturningtype = nscol->p_varreturningtype;
 	var->varnosyn = nscol->p_varnosyn;
 	var->varattnosyn = nscol->p_varattnosyn;
 
@@ -2918,7 +2918,7 @@ transformWindowDefinitions(ParseState *pstate,
 		{
 			SortGroupClause *sortcl;
 			Node	   *sortkey;
-			int16		rangestrategy;
+			CompareType rangecmptype;
 
 			if (list_length(wc->orderClause) != 1)
 				ereport(ERROR,
@@ -2931,12 +2931,12 @@ transformWindowDefinitions(ParseState *pstate,
 			if (!get_ordering_op_properties(sortcl->sortop,
 											&rangeopfamily,
 											&rangeopcintype,
-											&rangestrategy))
+											&rangecmptype))
 				elog(ERROR, "operator %u is not a valid ordering operator",
 					 sortcl->sortop);
 			/* Record properties of sort ordering */
 			wc->inRangeColl = exprCollation(sortkey);
-			wc->inRangeAsc = (rangestrategy == BTLessStrategyNumber);
+			wc->inRangeAsc = !sortcl->reverse_sort;
 			wc->inRangeNullsFirst = sortcl->nulls_first;
 		}
 
@@ -3492,6 +3492,7 @@ addTargetToSortList(ParseState *pstate, TargetEntry *tle,
 		sortcl->eqop = eqop;
 		sortcl->sortop = sortop;
 		sortcl->hashable = hashable;
+		sortcl->reverse_sort = reverse;
 
 		switch (sortby->sortby_nulls)
 		{
@@ -3574,6 +3575,8 @@ addTargetToGroupList(ParseState *pstate, TargetEntry *tle,
 		grpcl->tleSortGroupRef = assignSortGroupRef(tle, targetlist);
 		grpcl->eqop = eqop;
 		grpcl->sortop = sortop;
+		grpcl->reverse_sort = false;	/* sortop is "less than", or
+										 * InvalidOid */
 		grpcl->nulls_first = false; /* OK with or without sortop */
 		grpcl->hashable = hashable;
 

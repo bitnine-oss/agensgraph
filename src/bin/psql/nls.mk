@@ -24,8 +24,6 @@ GETTEXT_FILES    = $(FRONTEND_COMMON_GETTEXT_FILES) \
                    ../../common/fe_memutils.c \
                    ../../common/username.c \
                    ../../common/wait_error.c \
-                   ../../port/thread.c \
-                   ../../port/user.c \
                    cypher_describe.c
 GETTEXT_TRIGGERS = $(FRONTEND_COMMON_GETTEXT_TRIGGERS) \
                    HELP0 HELPN N_ simple_prompt simple_prompt_extended

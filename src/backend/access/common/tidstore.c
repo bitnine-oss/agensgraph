@@ -11,7 +11,7 @@
  * TidStoreCreateShared(). Other backends can attach to the shared TidStore
  * by TidStoreAttach().
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -113,10 +113,10 @@ typedef struct BlocktableEntry
 /* Per-backend state for a TidStore */
 struct TidStore
 {
-	/* MemoryContext where the TidStore is allocated */
-	MemoryContext context;
-
-	/* MemoryContext that the radix tree uses */
+	/*
+	 * MemoryContext for the radix tree when using local memory, NULL for
+	 * shared memory
+	 */
 	MemoryContext rt_context;
 
 	/* Storage for TIDs. Use either one depending on TidStoreIsShared() */
@@ -147,9 +147,6 @@ struct TidStoreIter
 	TidStoreIterResult output;
 };
 
-static void tidstore_iter_extract_tids(TidStoreIter *iter, BlockNumber blkno,
-									   BlocktableEntry *page);
-
 /*
  * Create a TidStore. The TidStore will live in the memory context that is
  * CurrentMemoryContext at the time of this call. The TID storage, backed
@@ -170,7 +167,6 @@ TidStoreCreateLocal(size_t max_bytes, bool insert_only)
 	size_t		maxBlockSize = ALLOCSET_DEFAULT_MAXSIZE;
 
 	ts = palloc0(sizeof(TidStore));
-	ts->context = CurrentMemoryContext;
 
 	/* choose the maxBlockSize to be no larger than 1/16 of max_bytes */
 	while (16 * maxBlockSize > max_bytes)
@@ -204,8 +200,7 @@ TidStoreCreateLocal(size_t max_bytes, bool insert_only)
 
 /*
  * Similar to TidStoreCreateLocal() but create a shared TidStore on a
- * DSA area. The TID storage will live in the DSA area, and the memory
- * context rt_context will have only meta data of the radix tree.
+ * DSA area.
  *
  * The returned object is allocated in backend-local memory.
  */
@@ -218,11 +213,6 @@ TidStoreCreateShared(size_t max_bytes, int tranche_id)
 	size_t		dsa_max_size = DSA_MAX_SEGMENT_SIZE;
 
 	ts = palloc0(sizeof(TidStore));
-	ts->context = CurrentMemoryContext;
-
-	ts->rt_context = AllocSetContextCreate(CurrentMemoryContext,
-										   "TID storage meta data",
-										   ALLOCSET_SMALL_SIZES);
 
 	/*
 	 * Choose the initial and maximum DSA segment sizes to be no longer than
@@ -238,8 +228,7 @@ TidStoreCreateShared(size_t max_bytes, int tranche_id)
 		dsa_init_size = dsa_max_size;
 
 	area = dsa_create_ext(tranche_id, dsa_init_size, dsa_max_size);
-	ts->tree.shared = shared_ts_create(ts->rt_context, area,
-									   tranche_id);
+	ts->tree.shared = shared_ts_create(area, tranche_id);
 	ts->area = area;
 
 	return ts;
@@ -331,13 +320,13 @@ TidStoreDestroy(TidStore *ts)
 	if (TidStoreIsShared(ts))
 	{
 		shared_ts_free(ts->tree.shared);
-
 		dsa_detach(ts->area);
 	}
 	else
+	{
 		local_ts_free(ts->tree.local);
-
-	MemoryContextDelete(ts->rt_context);
+		MemoryContextDelete(ts->rt_context);
+	}
 
 	pfree(ts);
 }
@@ -486,13 +475,6 @@ TidStoreBeginIterate(TidStore *ts)
 	iter = palloc0(sizeof(TidStoreIter));
 	iter->ts = ts;
 
-	/*
-	 * We start with an array large enough to contain at least the offsets
-	 * from one completely full bitmap element.
-	 */
-	iter->output.max_offset = 2 * BITS_PER_BITMAPWORD;
-	iter->output.offsets = palloc(sizeof(OffsetNumber) * iter->output.max_offset);
-
 	if (TidStoreIsShared(ts))
 		iter->tree_iter.shared = shared_ts_begin_iterate(ts->tree.shared);
 	else
@@ -503,9 +485,9 @@ TidStoreBeginIterate(TidStore *ts)
 
 
 /*
- * Scan the TidStore and return the TIDs of the next block. The offsets in
- * each iteration result are ordered, as are the block numbers over all
- * iterations.
+ * Return a result that contains the next block number and that can be used to
+ * obtain the set of offsets by calling TidStoreGetBlockOffsets().  The result
+ * is copyable.
  */
 TidStoreIterResult *
 TidStoreIterateNext(TidStoreIter *iter)
@@ -521,8 +503,8 @@ TidStoreIterateNext(TidStoreIter *iter)
 	if (page == NULL)
 		return NULL;
 
-	/* Collect TIDs from the key-value pair */
-	tidstore_iter_extract_tids(iter, (BlockNumber) key, page);
+	iter->output.blkno = key;
+	iter->output.internal_page = page;
 
 	return &(iter->output);
 }
@@ -540,7 +522,6 @@ TidStoreEndIterate(TidStoreIter *iter)
 	else
 		local_ts_end_iterate(iter->tree_iter.local);
 
-	pfree(iter->output.offsets);
 	pfree(iter);
 }
 
@@ -575,16 +556,20 @@ TidStoreGetHandle(TidStore *ts)
 	return (dsa_pointer) shared_ts_get_handle(ts->tree.shared);
 }
 
-/* Extract TIDs from the given key-value pair */
-static void
-tidstore_iter_extract_tids(TidStoreIter *iter, BlockNumber blkno,
-						   BlocktableEntry *page)
+/*
+ * Given a TidStoreIterResult returned by TidStoreIterateNext(), extract the
+ * offset numbers.  Returns the number of offsets filled in, if <=
+ * max_offsets.  Otherwise, fills in as much as it can in the given space, and
+ * returns the size of the buffer that would be needed.
+ */
+int
+TidStoreGetBlockOffsets(TidStoreIterResult *result,
+						OffsetNumber *offsets,
+						int max_offsets)
 {
-	TidStoreIterResult *result = (&iter->output);
+	BlocktableEntry *page = result->internal_page;
+	int			num_offsets = 0;
 	int			wordnum;
-
-	result->num_offsets = 0;
-	result->blkno = blkno;
 
 	if (page->header.nwords == 0)
 	{
@@ -592,7 +577,11 @@ tidstore_iter_extract_tids(TidStoreIter *iter, BlockNumber blkno,
 		for (int i = 0; i < NUM_FULL_OFFSETS; i++)
 		{
 			if (page->header.full_offsets[i] != InvalidOffsetNumber)
-				result->offsets[result->num_offsets++] = page->header.full_offsets[i];
+			{
+				if (num_offsets < max_offsets)
+					offsets[num_offsets] = page->header.full_offsets[i];
+				num_offsets++;
+			}
 		}
 	}
 	else
@@ -602,21 +591,19 @@ tidstore_iter_extract_tids(TidStoreIter *iter, BlockNumber blkno,
 			bitmapword	w = page->words[wordnum];
 			int			off = wordnum * BITS_PER_BITMAPWORD;
 
-			/* Make sure there is enough space to add offsets */
-			if ((result->num_offsets + BITS_PER_BITMAPWORD) > result->max_offset)
-			{
-				result->max_offset *= 2;
-				result->offsets = repalloc(result->offsets,
-										   sizeof(OffsetNumber) * result->max_offset);
-			}
-
 			while (w != 0)
 			{
 				if (w & 1)
-					result->offsets[result->num_offsets++] = (OffsetNumber) off;
+				{
+					if (num_offsets < max_offsets)
+						offsets[num_offsets] = (OffsetNumber) off;
+					num_offsets++;
+				}
 				off++;
 				w >>= 1;
 			}
 		}
 	}
+
+	return num_offsets;
 }

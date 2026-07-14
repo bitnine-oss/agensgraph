@@ -15,7 +15,7 @@
  * forked backends, but they could not be accessed by exec'd backends.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -217,8 +217,7 @@ PGReserveSemaphores(int maxSemas)
 
 	/*
 	 * We must use ShmemAllocUnlocked(), since the spinlock protecting
-	 * ShmemAlloc() won't be ready yet.  (This ordering is necessary when we
-	 * are emulating spinlocks with semaphores.)
+	 * ShmemAlloc() won't be ready yet.
 	 */
 	sharedSemas = (PGSemaphore)
 		ShmemAllocUnlocked(PGSemaphoreShmemSize(maxSemas));

@@ -2,7 +2,7 @@
  * launcher.c
  *	   PostgreSQL logical replication worker launcher process
  *
- * Copyright (c) 2016-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/launcher.c
@@ -31,7 +31,7 @@
 #include "postmaster/bgworker.h"
 #include "postmaster/interrupt.h"
 #include "replication/logicallauncher.h"
-#include "replication/slot.h"
+#include "replication/origin.h"
 #include "replication/walreceiver.h"
 #include "replication/worker_internal.h"
 #include "storage/ipc.h"
@@ -121,18 +121,9 @@ get_subscription_list(void)
 	resultcxt = CurrentMemoryContext;
 
 	/*
-	 * Start a transaction so we can access pg_database, and get a snapshot.
-	 * We don't have a use for the snapshot itself, but we're interested in
-	 * the secondary effect that it sets RecentGlobalXmin.  (This is critical
-	 * for anything that reads heap pages, because HOT may decide to prune
-	 * them even if the process doesn't attempt to modify any tuples.)
-	 *
-	 * FIXME: This comment is inaccurate / the code buggy. A snapshot that is
-	 * not pushed/active does not reliably prevent HOT pruning (->xmin could
-	 * e.g. be cleared when cache invalidations are processed).
+	 * Start a transaction so we can access pg_subscription.
 	 */
 	StartTransactionCommand();
-	(void) GetTransactionSnapshot();
 
 	rel = table_open(SubscriptionRelationId, AccessShareLock);
 	scan = table_beginscan_catalog(rel, 0, NULL);
@@ -184,12 +175,14 @@ WaitForReplicationWorkerAttach(LogicalRepWorker *worker,
 							   uint16 generation,
 							   BackgroundWorkerHandle *handle)
 {
-	BgwHandleStatus status;
-	int			rc;
+	bool		result = false;
+	bool		dropped_latch = false;
 
 	for (;;)
 	{
+		BgwHandleStatus status;
 		pid_t		pid;
+		int			rc;
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -198,8 +191,9 @@ WaitForReplicationWorkerAttach(LogicalRepWorker *worker,
 		/* Worker either died or has started. Return false if died. */
 		if (!worker->in_use || worker->proc)
 		{
+			result = worker->in_use;
 			LWLockRelease(LogicalRepWorkerLock);
-			return worker->in_use;
+			break;
 		}
 
 		LWLockRelease(LogicalRepWorkerLock);
@@ -214,7 +208,7 @@ WaitForReplicationWorkerAttach(LogicalRepWorker *worker,
 			if (generation == worker->generation)
 				logicalrep_worker_cleanup(worker);
 			LWLockRelease(LogicalRepWorkerLock);
-			return false;
+			break;				/* result is already false */
 		}
 
 		/*
@@ -229,8 +223,18 @@ WaitForReplicationWorkerAttach(LogicalRepWorker *worker,
 		{
 			ResetLatch(MyLatch);
 			CHECK_FOR_INTERRUPTS();
+			dropped_latch = true;
 		}
 	}
+
+	/*
+	 * If we had to clear a latch event in order to wait, be sure to restore
+	 * it before exiting.  Otherwise caller may miss events.
+	 */
+	if (dropped_latch)
+		SetLatch(MyLatch);
+
+	return result;
 }
 
 /*
@@ -272,10 +276,13 @@ logicalrep_worker_find(Oid subid, Oid relid, bool only_running)
  * the subscription, instead of just one.
  */
 List *
-logicalrep_workers_find(Oid subid, bool only_running)
+logicalrep_workers_find(Oid subid, bool only_running, bool acquire_lock)
 {
 	int			i;
 	List	   *res = NIL;
+
+	if (acquire_lock)
+		LWLockAcquire(LogicalRepWorkerLock, LW_SHARED);
 
 	Assert(LWLockHeldByMe(LogicalRepWorkerLock));
 
@@ -287,6 +294,9 @@ logicalrep_workers_find(Oid subid, bool only_running)
 		if (w->in_use && w->subid == subid && (!only_running || w->proc))
 			res = lappend(res, w);
 	}
+
+	if (acquire_lock)
+		LWLockRelease(LogicalRepWorkerLock);
 
 	return res;
 }
@@ -328,10 +338,10 @@ logicalrep_worker_launch(LogicalRepWorkerType wtype,
 							 subname)));
 
 	/* Report this after the initial starting message for consistency. */
-	if (max_replication_slots == 0)
+	if (max_active_replication_origins == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_CONFIGURATION_LIMIT_EXCEEDED),
-				 errmsg("cannot start logical replication workers when max_replication_slots = 0")));
+				 errmsg("cannot start logical replication workers when \"max_active_replication_origins\" is 0")));
 
 	/*
 	 * We need to do the modification of the shared memory under lock so that
@@ -759,7 +769,7 @@ logicalrep_worker_detach(void)
 
 		LWLockAcquire(LogicalRepWorkerLock, LW_SHARED);
 
-		workers = logicalrep_workers_find(MyLogicalRepWorker->subid, true);
+		workers = logicalrep_workers_find(MyLogicalRepWorker->subid, true, false);
 		foreach(lc, workers)
 		{
 			LogicalRepWorker *w = (LogicalRepWorker *) lfirst(lc);
@@ -1019,7 +1029,7 @@ logicalrep_launcher_attach_dshmem(void)
 		last_start_times_dsa = dsa_attach(LogicalRepCtx->last_start_dsa);
 		dsa_pin_mapping(last_start_times_dsa);
 		last_start_times = dshash_attach(last_start_times_dsa, &dsh_params,
-										 LogicalRepCtx->last_start_dsh, 0);
+										 LogicalRepCtx->last_start_dsh, NULL);
 	}
 
 	MemoryContextSwitchTo(oldcontext);
@@ -1197,10 +1207,21 @@ ApplyLauncherMain(Datum main_arg)
 				(elapsed = TimestampDifferenceMilliseconds(last_start, now)) >= wal_retrieve_retry_interval)
 			{
 				ApplyLauncherSetWorkerStartTime(sub->oid, now);
-				logicalrep_worker_launch(WORKERTYPE_APPLY,
-										 sub->dbid, sub->oid, sub->name,
-										 sub->owner, InvalidOid,
-										 DSM_HANDLE_INVALID);
+				if (!logicalrep_worker_launch(WORKERTYPE_APPLY,
+											  sub->dbid, sub->oid, sub->name,
+											  sub->owner, InvalidOid,
+											  DSM_HANDLE_INVALID))
+				{
+					/*
+					 * We get here either if we failed to launch a worker
+					 * (perhaps for resource-exhaustion reasons) or if we
+					 * launched one but it immediately quit.  Either way, it
+					 * seems appropriate to try again after
+					 * wal_retrieve_retry_interval.
+					 */
+					wait_time = Min(wait_time,
+									wal_retrieve_retry_interval);
+				}
 			}
 			else
 			{

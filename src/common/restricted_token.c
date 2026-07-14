@@ -4,7 +4,7 @@
  *		helper routine to ensure restricted token on Windows
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -26,7 +26,7 @@
 #ifdef WIN32
 
 /* internal vars */
-char	   *restrict_env;
+static char *restrict_env;
 
 /* Windows API define missing from some versions of MingW headers */
 #ifndef  DISABLE_MAX_PRIVILEGE

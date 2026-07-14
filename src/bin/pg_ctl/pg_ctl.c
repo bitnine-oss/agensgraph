@@ -2,7 +2,7 @@
  *
  * pg_ctl --- start/stops/restarts the PostgreSQL server
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  *
  * src/bin/pg_ctl/pg_ctl.c
  *
@@ -48,6 +48,7 @@ typedef enum
 {
 	POSTMASTER_READY,
 	POSTMASTER_STILL_STARTING,
+	POSTMASTER_SHUTDOWN_IN_RECOVERY,
 	POSTMASTER_FAILED,
 } WaitPMResult;
 
@@ -555,11 +556,11 @@ start_postmaster(void)
 		else
 			close(fd);
 
-		cmd = psprintf("\"%s\" /D /C \"\"%s\" %s%s < \"%s\" >> \"%s\" 2>&1\"",
+		cmd = psprintf("\"%s\" /C \"\"%s\" %s%s < \"%s\" >> \"%s\" 2>&1\"",
 					   comspec, exec_path, pgdata_opt, post_opts, DEVNULL, log_file);
 	}
 	else
-		cmd = psprintf("\"%s\" /D /C \"\"%s\" %s%s < \"%s\" 2>&1\"",
+		cmd = psprintf("\"%s\" /C \"\"%s\" %s%s < \"%s\" 2>&1\"",
 					   comspec, exec_path, pgdata_opt, post_opts, DEVNULL);
 
 	if (!CreateRestrictedProcess(cmd, &pi, false))
@@ -620,7 +621,7 @@ wait_for_postmaster_start(pid_t pm_pid, bool do_checkpoint)
 			 * Allow 2 seconds slop for possible cross-process clock skew.
 			 */
 			pmpid = atol(optlines[LOCK_FILE_LINE_PID - 1]);
-			pmstart = atol(optlines[LOCK_FILE_LINE_START_TIME - 1]);
+			pmstart = atoll(optlines[LOCK_FILE_LINE_START_TIME - 1]);
 			if (pmstart >= start_time - 2 &&
 #ifndef WIN32
 				pmpid == pm_pid
@@ -660,17 +661,24 @@ wait_for_postmaster_start(pid_t pm_pid, bool do_checkpoint)
 		 * On Windows, we may be checking the postmaster's parent shell, but
 		 * that's fine for this purpose.
 		 */
-#ifndef WIN32
 		{
+			bool		pm_died;
+#ifndef WIN32
 			int			exitstatus;
 
-			if (waitpid(pm_pid, &exitstatus, WNOHANG) == pm_pid)
-				return POSTMASTER_FAILED;
-		}
+			pm_died = (waitpid(pm_pid, &exitstatus, WNOHANG) == pm_pid);
 #else
-		if (WaitForSingleObject(postmasterProcess, 0) == WAIT_OBJECT_0)
-			return POSTMASTER_FAILED;
+			pm_died = (WaitForSingleObject(postmasterProcess, 0) == WAIT_OBJECT_0);
 #endif
+			if (pm_died)
+			{
+				/* See if postmaster terminated intentionally */
+				if (get_control_dbstate() == DB_SHUTDOWNED_IN_RECOVERY)
+					return POSTMASTER_SHUTDOWN_IN_RECOVERY;
+				else
+					return POSTMASTER_FAILED;
+			}
+		}
 
 		/* Startup still in process; wait, printing a dot once per second */
 		if (i % WAITS_PER_SEC == 0)
@@ -993,6 +1001,10 @@ do_start(void)
 				write_stderr(_("%s: server did not start in time\n"),
 							 progname);
 				exit(1);
+				break;
+			case POSTMASTER_SHUTDOWN_IN_RECOVERY:
+				print_msg(_(" done\n"));
+				print_msg(_("server shut down because of recovery target settings\n"));
 				break;
 			case POSTMASTER_FAILED:
 				print_msg(_(" stopped waiting\n"));

@@ -2,7 +2,7 @@
 #
 # Makefile for src/interfaces/ecpg/preproc
 #
-# Copyright (c) 1998-2024, PostgreSQL Global Development Group
+# Copyright (c) 1998-2025, PostgreSQL Global Development Group
 #
 # src/interfaces/ecpg/preproc/Makefile
 #
@@ -36,6 +36,7 @@ OBJS = \
 	preproc.o \
 	type.o \
 	typename.o \
+	util.o \
 	variable.o
 
 # where to find gen_keywordlist.pl and subsidiary files
@@ -64,8 +65,7 @@ preproc.h: preproc.c
 
 preproc.c: BISONFLAGS += -d
 
-preproc.y: ../../../backend/parser/gram.y parse.pl check_rules.pl ecpg.addons ecpg.header ecpg.tokens ecpg.trailer ecpg.type
-	$(PERL) $(srcdir)/check_rules.pl --srcdir $(srcdir) --parser $<
+preproc.y: ../../../backend/parser/gram.y parse.pl ecpg.addons ecpg.header ecpg.tokens ecpg.trailer ecpg.type
 	$(PERL) $(srcdir)/parse.pl --srcdir $(srcdir) --parser $< --output $@
 
 # generate keyword headers
@@ -81,6 +81,9 @@ ecpg_keywords.o: ecpg_kwlist_d.h
 c_keywords.o: c_kwlist_d.h
 keywords.o: $(top_srcdir)/src/include/parser/kwlist.h
 
+check:
+	$(prove_check)
+
 install: all installdirs
 	$(INSTALL_PROGRAM) ecpg$(X) '$(DESTDIR)$(bindir)'
 
@@ -94,3 +97,4 @@ clean distclean:
 	rm -f *.o ecpg$(X)
 	rm -f typename.c
 	rm -f preproc.y preproc.c preproc.h pgc.c c_kwlist_d.h ecpg_kwlist_d.h
+	rm -rf tmp_check

@@ -4,7 +4,7 @@
  * exprparse.y
  *	  bison grammar for a simple expression syntax
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pgbench/exprparse.y
@@ -20,8 +20,6 @@
 #define PGBENCH_NARGS_CASE		(-2)
 #define PGBENCH_NARGS_HASH		(-3)
 #define PGBENCH_NARGS_PERMUTE	(-4)
-
-PgBenchExpr *expr_parse_result;
 
 static PgBenchExprList *make_elist(PgBenchExpr *expr, PgBenchExprList *list);
 static PgBenchExpr *make_null_constant(void);
@@ -42,6 +40,7 @@ static PgBenchExpr *make_case(yyscan_t yyscanner, PgBenchExprList *when_then_lis
 %expect 0
 %name-prefix="expr_yy"
 
+%parse-param {PgBenchExpr **expr_parse_result_p}
 %parse-param {yyscan_t yyscanner}
 %lex-param   {yyscan_t yyscanner}
 
@@ -81,7 +80,7 @@ static PgBenchExpr *make_case(yyscan_t yyscanner, PgBenchExprList *when_then_lis
 %%
 
 result: expr				{
-								expr_parse_result = $1;
+								*expr_parse_result_p = $1;
 								(void) yynerrs; /* suppress compiler warning */
 							}
 
@@ -252,7 +251,8 @@ static const struct
 	const char *fname;
 	int			nargs;
 	PgBenchFunction tag;
-}	PGBENCH_FUNCTIONS[] =
+}			PGBENCH_FUNCTIONS[] =
+
 {
 	/* parsed as operators, executed as functions */
 	{
@@ -451,7 +451,7 @@ elist_length(PgBenchExprList *list)
 static PgBenchExpr *
 make_func(yyscan_t yyscanner, int fnumber, PgBenchExprList *args)
 {
-	int len = elist_length(args);
+	int			len = elist_length(args);
 
 	PgBenchExpr *expr = pg_malloc(sizeof(PgBenchExpr));
 
@@ -460,14 +460,14 @@ make_func(yyscan_t yyscanner, int fnumber, PgBenchExprList *args)
 	/* validate arguments number including few special cases */
 	switch (PGBENCH_FUNCTIONS[fnumber].nargs)
 	{
-		/* check at least one arg for least & greatest */
+			/* check at least one arg for least & greatest */
 		case PGBENCH_NARGS_VARIABLE:
 			if (len == 0)
 				expr_yyerror_more(yyscanner, "at least one argument expected",
 								  PGBENCH_FUNCTIONS[fnumber].fname);
 			break;
 
-		/* case (when ... then ...)+ (else ...)? end */
+			/* case (when ... then ...)+ (else ...)? end */
 		case PGBENCH_NARGS_CASE:
 			/* 'else' branch is always present, but could be a NULL-constant */
 			if (len < 3 || len % 2 != 1)
@@ -476,7 +476,7 @@ make_func(yyscan_t yyscanner, int fnumber, PgBenchExprList *args)
 								  "case control structure");
 			break;
 
-		/* hash functions with optional seed argument */
+			/* hash functions with optional seed argument */
 		case PGBENCH_NARGS_HASH:
 			if (len < 1 || len > 2)
 				expr_yyerror_more(yyscanner, "unexpected number of arguments",
@@ -485,11 +485,12 @@ make_func(yyscan_t yyscanner, int fnumber, PgBenchExprList *args)
 			if (len == 1)
 			{
 				PgBenchExpr *var = make_variable("default_seed");
+
 				args = make_elist(var, args);
 			}
 			break;
 
-		/* pseudorandom permutation function with optional seed argument */
+			/* pseudorandom permutation function with optional seed argument */
 		case PGBENCH_NARGS_PERMUTE:
 			if (len < 2 || len > 3)
 				expr_yyerror_more(yyscanner, "unexpected number of arguments",
@@ -498,11 +499,12 @@ make_func(yyscan_t yyscanner, int fnumber, PgBenchExprList *args)
 			if (len == 2)
 			{
 				PgBenchExpr *var = make_variable("default_seed");
+
 				args = make_elist(var, args);
 			}
 			break;
 
-		/* common case: positive arguments number */
+			/* common case: positive arguments number */
 		default:
 			Assert(PGBENCH_FUNCTIONS[fnumber].nargs >= 0);
 

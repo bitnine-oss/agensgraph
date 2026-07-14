@@ -1,8 +1,8 @@
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 use strict;
 use warnings FATAL => 'all';
-use File::Compare;
+use File::Compare qw(compare_text);
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -58,9 +58,11 @@ my $tsbackup1path = $tempdir . '/ts1backup';
 mkdir($tsbackup1path) || die "mkdir $tsbackup1path: $!";
 $primary->command_ok(
 	[
-		'pg_basebackup', '-D',
-		$backup1path, '--no-sync',
-		'-cfast', "-T${tsprimary}=${tsbackup1path}"
+		'pg_basebackup',
+		'--no-sync',
+		'--pgdata' => $backup1path,
+		'--checkpoint' => 'fast',
+		'--tablespace-mapping' => "${tsprimary}=${tsbackup1path}"
 	],
 	"full backup");
 
@@ -89,10 +91,12 @@ my $tsbackup2path = $tempdir . '/tsbackup2';
 mkdir($tsbackup2path) || die "mkdir $tsbackup2path: $!";
 $primary->command_ok(
 	[
-		'pg_basebackup', '-D',
-		$backup2path, '--no-sync',
-		'-cfast', "-T${tsprimary}=${tsbackup2path}",
-		'--incremental', $backup1path . '/backup_manifest'
+		'pg_basebackup',
+		'--no-sync',
+		'--pgdata' => $backup2path,
+		'--checkpoint' => 'fast',
+		'--tablespace-mapping' => "${tsprimary}=${tsbackup2path}",
+		'--incremental' => $backup1path . '/backup_manifest'
 	],
 	"incremental backup");
 
@@ -169,38 +173,31 @@ my $dump1 = $backupdir . '/pitr1.dump';
 my $dump2 = $backupdir . '/pitr2.dump';
 $pitr1->command_ok(
 	[
-		'pg_dumpall', '-f',
-		$dump1, '--no-sync',
-		'--no-unlogged-table-data', '-d',
-		$pitr1->connstr('postgres'),
+		'pg_dumpall',
+		'--no-sync',
+		'--no-unlogged-table-data',
+		'--file' => $dump1,
+		'--dbname' => $pitr1->connstr('postgres'),
 	],
 	'dump from PITR 1');
-$pitr1->command_ok(
+$pitr2->command_ok(
 	[
-		'pg_dumpall', '-f',
-		$dump2, '--no-sync',
-		'--no-unlogged-table-data', '-d',
-		$pitr1->connstr('postgres'),
+		'pg_dumpall',
+		'--no-sync',
+		'--no-unlogged-table-data',
+		'--file' => $dump2,
+		'--dbname' => $pitr2->connstr('postgres'),
 	],
 	'dump from PITR 2');
 
-# Compare the two dumps, there should be no differences.
-my $compare_res = compare($dump1, $dump2);
-note($dump1);
-note($dump2);
-is($compare_res, 0, "dumps are identical");
-
-# Provide more context if the dumps do not match.
-if ($compare_res != 0)
-{
-	my ($stdout, $stderr) =
-	  run_command([ 'diff', '-u', $dump1, $dump2 ]);
-	print "=== diff of $dump1 and $dump2\n";
-	print "=== stdout ===\n";
-	print $stdout;
-	print "=== stderr ===\n";
-	print $stderr;
-	print "=== EOF ===\n";
-}
+# Compare the two dumps, there should be no differences other than
+# the tablespace paths.
+compare_files(
+	$dump1, $dump2,
+	"contents of dumps match for both PITRs",
+	sub {
+		s{create tablespace .* location .*\btspitr\K[12]}{N}i for @_;
+		return $_[0] ne $_[1];
+	});
 
 done_testing();

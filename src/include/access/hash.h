@@ -4,7 +4,7 @@
  *	  header file for postgres hash access method implementation
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/hash.h
@@ -386,6 +386,9 @@ extern void hashadjustmembers(Oid opfamilyoid,
 							  Oid opclassoid,
 							  List *operators,
 							  List *functions);
+
+extern CompareType hashtranslatestrategy(StrategyNumber strategy, Oid opfamily);
+extern StrategyNumber hashtranslatecmptype(CompareType cmptype, Oid opfamily);
 
 /* private routines */
 

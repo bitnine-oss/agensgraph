@@ -4,7 +4,7 @@
  *	  page utilities routines for the postgres inverted index access method.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -423,7 +423,7 @@ ginPlaceToPage(GinBtree btree, GinBtreeStack *stack,
 
 			xlrec.flags = xlflags;
 
-			XLogRegisterData((char *) &xlrec, sizeof(ginxlogInsert));
+			XLogRegisterData(&xlrec, sizeof(ginxlogInsert));
 
 			/*
 			 * Log information about child if this was an insertion of a
@@ -433,7 +433,7 @@ ginPlaceToPage(GinBtree btree, GinBtreeStack *stack,
 			{
 				BlockIdSet(&childblknos[0], BufferGetBlockNumber(childbuf));
 				BlockIdSet(&childblknos[1], GinPageGetOpaque(childpage)->rightlink);
-				XLogRegisterData((char *) childblknos,
+				XLogRegisterData(childblknos,
 								 sizeof(BlockIdData) * 2);
 			}
 
@@ -617,7 +617,7 @@ ginPlaceToPage(GinBtree btree, GinBtreeStack *stack,
 			if (BufferIsValid(childbuf))
 				XLogRegisterBuffer(3, childbuf, REGBUF_STANDARD);
 
-			XLogRegisterData((char *) &data, sizeof(ginxlogSplit));
+			XLogRegisterData(&data, sizeof(ginxlogSplit));
 
 			recptr = XLogInsert(RM_GIN_ID, XLOG_GIN_SPLIT);
 
@@ -685,9 +685,9 @@ ginFinishSplit(GinBtree btree, GinBtreeStack *stack, bool freestack,
 
 #ifdef USE_INJECTION_POINTS
 		if (GinPageIsLeaf(BufferGetPage(stack->buffer)))
-			INJECTION_POINT("gin-leave-leaf-split-incomplete");
+			INJECTION_POINT("gin-leave-leaf-split-incomplete", NULL);
 		else
-			INJECTION_POINT("gin-leave-internal-split-incomplete");
+			INJECTION_POINT("gin-leave-internal-split-incomplete", NULL);
 #endif
 
 		/* search parent to lock */
@@ -778,7 +778,7 @@ ginFinishSplit(GinBtree btree, GinBtreeStack *stack, bool freestack,
 static void
 ginFinishOldSplit(GinBtree btree, GinBtreeStack *stack, GinStatsData *buildStats, int access)
 {
-	INJECTION_POINT("gin-finish-incomplete-split");
+	INJECTION_POINT("gin-finish-incomplete-split", NULL);
 	elog(DEBUG1, "finishing incomplete split of block %u in gin index \"%s\"",
 		 stack->blkno, RelationGetRelationName(btree->index));
 

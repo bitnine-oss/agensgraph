@@ -28,7 +28,7 @@ test: strings md5 numerology point lseg line box path polygon circle date time t
 # geometry depends on point, lseg, line, box, path, polygon, circle
 # horology depends on date, time, timetz, timestamp, timestamptz, interval
 # ----------
-test: geometry horology tstypes regex type_sanity opr_sanity misc_sanity comments expressions unicode xid mvcc database
+test: geometry horology tstypes regex type_sanity opr_sanity misc_sanity comments expressions unicode xid mvcc database stats_import
 
 # ----------
 # Load huge amounts of data
@@ -36,7 +36,7 @@ test: geometry horology tstypes regex type_sanity opr_sanity misc_sanity comment
 # execute two copy tests in parallel, to check that copy itself
 # is concurrent safe.
 # ----------
-test: copy copyselect copydml insert insert_conflict
+test: copy copyselect copydml copyencoding insert insert_conflict
 
 # ----------
 # More groups of parallel tests
@@ -66,7 +66,7 @@ test: select_into select_distinct select_distinct_on select_implicit select_havi
 # ----------
 # Another group of parallel tests
 # ----------
-test: brin gin gist spgist privileges init_privs security_label collate matview lock replica_identity rowsecurity object_address tablesample groupingsets drop_operator password identity generated join_hash
+test: brin gin gist spgist privileges init_privs security_label collate matview lock replica_identity rowsecurity object_address tablesample groupingsets drop_operator password identity generated_stored join_hash
 
 # ----------
 # Additional BRIN tests
@@ -78,10 +78,10 @@ test: brin_bloom brin_multi
 # psql depends on create_am
 # amutils depends on geometry, create_index_spgist, hash_index, brin
 # ----------
-test: create_table_like alter_generic alter_operator misc async dbsize merge misc_functions sysviews tsrf tid tidscan tidrangescan collate.utf8 collate.icu.utf8 incremental_sort create_role
+test: create_table_like alter_generic alter_operator misc async dbsize merge misc_functions sysviews tsrf tid tidscan tidrangescan collate.utf8 collate.icu.utf8 incremental_sort create_role without_overlaps generated_virtual
 
 # collate.linux.utf8 and collate.icu.utf8 tests cannot be run in parallel with each other
-test: rules psql psql_crosstab amutils stats_ext collate.linux.utf8 collate.windows.win1252
+test: rules psql psql_crosstab psql_pipeline amutils stats_ext collate.linux.utf8 collate.windows.win1252
 
 # ----------
 # Run these alone so they don't run out of parallel workers
@@ -90,6 +90,10 @@ test: rules psql psql_crosstab amutils stats_ext collate.linux.utf8 collate.wind
 test: select_parallel
 test: write_parallel
 test: vacuum_parallel
+
+# Run this alone, because concurrent DROP TABLE would make non-superuser
+# "ANALYZE;" fail with "relation with OID $n does not exist".
+test: maintain_every
 
 # no relation related tests can be put in this group
 test: publication subscription
@@ -108,7 +112,7 @@ test: json jsonb json_encoding jsonpath jsonpath_encoding jsonb_jsonpath sqljson
 # ----------
 # Another group of parallel tests
 # with depends on create_misc
-# NB: temp.sql does a reconnect which transiently uses 2 connections,
+# NB: temp.sql does reconnects which transiently use 2 connections,
 # so keep this parallel group to at most 19 tests
 # ----------
 test: plancache limit plpgsql copy2 temp domain rangefuncs prepare conversion truncate alter_table sequence polymorphism rowtypes returning largeobject with xml
@@ -119,7 +123,7 @@ test: plancache limit plpgsql copy2 temp domain rangefuncs prepare conversion tr
 # The stats test resets stats, so nothing else needing stats access can be in
 # this group.
 # ----------
-test: partition_merge partition_split partition_join partition_prune reloptions hash_part indexing partition_aggregate partition_info tuplesort explain compression memoize stats predicate
+test: partition_join partition_prune reloptions hash_part indexing partition_aggregate partition_info tuplesort explain compression memoize stats predicate numa
 
 # event_trigger depends on create_am and cannot run concurrently with
 # any test that runs DDL

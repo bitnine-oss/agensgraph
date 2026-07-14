@@ -2,7 +2,7 @@
  *
  * partdesc.h
  *
- * Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Copyright (c) 1996-2025, PostgreSQL Global Development Group
  *
  * src/include/partitioning/partdesc.h
  *
@@ -72,4 +72,4 @@ extern void DestroyPartitionDirectory(PartitionDirectory pdir);
 
 extern Oid	get_default_oid_from_partdesc(PartitionDesc partdesc);
 
-#endif							/* PARTCACHE_H */
+#endif							/* PARTDESC_H */

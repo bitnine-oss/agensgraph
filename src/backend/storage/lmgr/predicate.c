@@ -140,7 +140,7 @@
  *	SLRU per-bank locks
  *		- Protects SerialSlruCtl
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -153,7 +153,7 @@
  * INTERFACE ROUTINES
  *
  * housekeeping for setting up shared memory predicate lock structures
- *		InitPredicateLocks(void)
+ *		PredicateLockShmemInit(void)
  *		PredicateLockShmemSize(void)
  *
  * predicate lock reporting
@@ -344,7 +344,7 @@ static SlruCtlData SerialSlruCtlData;
 
 typedef struct SerialControlData
 {
-	int			headPage;		/* newest initialized page */
+	int64		headPage;		/* newest initialized page */
 	TransactionId headXid;		/* newest valid Xid in the SLRU */
 	TransactionId tailXid;		/* oldest xmin we might be interested in */
 }			SerialControlData;
@@ -877,12 +877,17 @@ SerialAdd(TransactionId xid, SerCommitSeqNo minConflictCommitSeqNo)
 	LWLockAcquire(SerialControlLock, LW_EXCLUSIVE);
 
 	/*
-	 * If no serializable transactions are active, there shouldn't be anything
-	 * to push out to the SLRU.  Hitting this assert would mean there's
-	 * something wrong with the earlier cleanup logic.
+	 * If 'xid' is older than the global xmin (== tailXid), there's no need to
+	 * store it, after all. This can happen if the oldest transaction holding
+	 * back the global xmin just finished, making 'xid' uninteresting, but
+	 * ClearOldPredicateLocks() has not yet run.
 	 */
 	tailXid = serialControl->tailXid;
-	Assert(TransactionIdIsValid(tailXid));
+	if (!TransactionIdIsValid(tailXid) || TransactionIdPrecedes(xid, tailXid))
+	{
+		LWLockRelease(SerialControlLock);
+		return;
+	}
 
 	/*
 	 * If the SLRU is currently unused, zero out the whole active region from
@@ -1035,7 +1040,7 @@ SerialSetActiveSerXmin(TransactionId xid)
 void
 CheckPointPredicate(void)
 {
-	int			truncateCutoffPage;
+	int64		truncateCutoffPage;
 
 	LWLockAcquire(SerialControlLock, LW_EXCLUSIVE);
 
@@ -1048,7 +1053,7 @@ CheckPointPredicate(void)
 
 	if (TransactionIdIsValid(serialControl->tailXid))
 	{
-		int			tailPage;
+		int64		tailPage;
 
 		tailPage = SerialPage(serialControl->tailXid);
 
@@ -1127,7 +1132,7 @@ CheckPointPredicate(void)
 /*------------------------------------------------------------------------*/
 
 /*
- * InitPredicateLocks -- Initialize the predicate locking data structures.
+ * PredicateLockShmemInit -- Initialize the predicate locking data structures.
  *
  * This is called from CreateSharedMemoryAndSemaphores(), which see for
  * more comments.  In the normal postmaster case, the shared hash tables
@@ -1137,7 +1142,7 @@ CheckPointPredicate(void)
  * shared hash tables.
  */
 void
-InitPredicateLocks(void)
+PredicateLockShmemInit(void)
 {
 	HASHCTL		info;
 	long		max_table_size;
@@ -1221,13 +1226,20 @@ InitPredicateLocks(void)
 	 */
 	max_table_size *= 10;
 
+	requestSize = add_size(PredXactListDataSize,
+						   (mul_size((Size) max_table_size,
+									 sizeof(SERIALIZABLEXACT))));
+
 	PredXact = ShmemInitStruct("PredXactList",
-							   PredXactListDataSize,
+							   requestSize,
 							   &found);
 	Assert(found == IsUnderPostmaster);
 	if (!found)
 	{
 		int			i;
+
+		/* clean everything, both the header and the element */
+		memset(PredXact, 0, requestSize);
 
 		dlist_init(&PredXact->availableList);
 		dlist_init(&PredXact->activeList);
@@ -1237,11 +1249,9 @@ InitPredicateLocks(void)
 		PredXact->LastSxactCommitSeqNo = FirstNormalSerCommitSeqNo - 1;
 		PredXact->CanPartialClearThrough = 0;
 		PredXact->HavePartialClearedThrough = 0;
-		requestSize = mul_size((Size) max_table_size,
-							   sizeof(SERIALIZABLEXACT));
-		PredXact->element = ShmemAlloc(requestSize);
+		PredXact->element
+			= (SERIALIZABLEXACT *) ((char *) PredXact + PredXactListDataSize);
 		/* Add all elements to available list, clean. */
-		memset(PredXact->element, 0, requestSize);
 		for (i = 0; i < max_table_size; i++)
 		{
 			LWLockInitialize(&PredXact->element[i].perXactPredicateListLock,
@@ -1295,20 +1305,25 @@ InitPredicateLocks(void)
 	 */
 	max_table_size *= 5;
 
+	requestSize = RWConflictPoolHeaderDataSize +
+		mul_size((Size) max_table_size,
+				 RWConflictDataSize);
+
 	RWConflictPool = ShmemInitStruct("RWConflictPool",
-									 RWConflictPoolHeaderDataSize,
+									 requestSize,
 									 &found);
 	Assert(found == IsUnderPostmaster);
 	if (!found)
 	{
 		int			i;
 
+		/* clean everything, including the elements */
+		memset(RWConflictPool, 0, requestSize);
+
 		dlist_init(&RWConflictPool->availableList);
-		requestSize = mul_size((Size) max_table_size,
-							   RWConflictDataSize);
-		RWConflictPool->element = ShmemAlloc(requestSize);
+		RWConflictPool->element = (RWConflict) ((char *) RWConflictPool +
+												RWConflictPoolHeaderDataSize);
 		/* Add all elements to available list, clean. */
-		memset(RWConflictPool->element, 0, requestSize);
 		for (i = 0; i < max_table_size; i++)
 		{
 			dlist_push_tail(&RWConflictPool->availableList,

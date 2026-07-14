@@ -1316,6 +1316,22 @@ ag_property_indexes| SELECT n.nspname AS graphname,
      LEFT JOIN pg_namespace n ON ((n.oid = c.relnamespace)))
      LEFT JOIN pg_tablespace t ON ((t.oid = i.reltablespace)))
   WHERE ((c.relkind = 'r'::"char") AND (i.relkind = 'i'::"char") AND (x.indisexclusion = false) AND (x.indexprs IS NOT NULL));
+pg_aios| SELECT pid,
+    io_id,
+    io_generation,
+    state,
+    operation,
+    off,
+    length,
+    target,
+    handle_data_len,
+    raw_result,
+    result,
+    target_desc,
+    f_sync,
+    f_localmem,
+    f_buffered
+   FROM pg_get_aios() pg_get_aios(pid, io_id, io_generation, state, operation, off, length, target, handle_data_len, raw_result, result, target_desc, f_sync, f_localmem, f_buffered);
 pg_available_extension_versions| SELECT e.name,
     e.version,
     (x.extname IS NOT NULL) AS installed,
@@ -1335,14 +1351,15 @@ pg_available_extensions| SELECT e.name,
      LEFT JOIN pg_extension x ON ((e.name = x.extname)));
 pg_backend_memory_contexts| SELECT name,
     ident,
-    parent,
+    type,
     level,
+    path,
     total_bytes,
     total_nblocks,
     free_bytes,
     free_chunks,
     used_bytes
-   FROM pg_get_backend_memory_contexts() pg_get_backend_memory_contexts(name, ident, parent, level, total_bytes, total_nblocks, free_bytes, free_chunks, used_bytes);
+   FROM pg_get_backend_memory_contexts() pg_get_backend_memory_contexts(name, ident, type, level, path, total_bytes, total_nblocks, free_bytes, free_chunks, used_bytes);
 pg_config| SELECT name,
     setting
    FROM pg_config() pg_config(name, setting);
@@ -1503,12 +1520,13 @@ pg_replication_slots| SELECT l.slot_name,
     l.wal_status,
     l.safe_wal_size,
     l.two_phase,
+    l.two_phase_at,
     l.inactive_since,
     l.conflicting,
     l.invalidation_reason,
     l.failover,
     l.synced
-   FROM (pg_get_replication_slots() l(slot_name, plugin, slot_type, datoid, temporary, active, active_pid, xmin, catalog_xmin, restart_lsn, confirmed_flush_lsn, wal_status, safe_wal_size, two_phase, inactive_since, conflicting, invalidation_reason, failover, synced)
+   FROM (pg_get_replication_slots() l(slot_name, plugin, slot_type, datoid, temporary, active, active_pid, xmin, catalog_xmin, restart_lsn, confirmed_flush_lsn, wal_status, safe_wal_size, two_phase, two_phase_at, inactive_since, conflicting, invalidation_reason, failover, synced)
      LEFT JOIN pg_database d ON ((l.datoid = d.oid)));
 pg_roles| SELECT pg_authid.rolname,
     pg_authid.rolsuper,
@@ -1729,10 +1747,7 @@ pg_sequences| SELECT n.nspname AS schemaname,
     s.seqincrement AS increment_by,
     s.seqcycle AS cycle,
     s.seqcache AS cache_size,
-        CASE
-            WHEN has_sequence_privilege(c.oid, 'SELECT,USAGE'::text) THEN pg_sequence_last_value((c.oid)::regclass)
-            ELSE NULL::bigint
-        END AS last_value
+    pg_sequence_last_value((c.oid)::regclass) AS last_value
    FROM ((pg_sequence s
      JOIN pg_class c ON ((c.oid = s.seqrelid)))
      LEFT JOIN pg_namespace n ON ((n.oid = c.relnamespace)))
@@ -1772,6 +1787,10 @@ pg_shmem_allocations| SELECT name,
     size,
     allocated_size
    FROM pg_get_shmem_allocations() pg_get_shmem_allocations(name, off, size, allocated_size);
+pg_shmem_allocations_numa| SELECT name,
+    numa_node,
+    size
+   FROM pg_get_shmem_allocations_numa() pg_get_shmem_allocations_numa(name, numa_node, size);
 pg_stat_activity| SELECT s.datid,
     d.datname,
     s.pid,
@@ -1836,7 +1855,11 @@ pg_stat_all_tables| SELECT c.oid AS relid,
     pg_stat_get_vacuum_count(c.oid) AS vacuum_count,
     pg_stat_get_autovacuum_count(c.oid) AS autovacuum_count,
     pg_stat_get_analyze_count(c.oid) AS analyze_count,
-    pg_stat_get_autoanalyze_count(c.oid) AS autoanalyze_count
+    pg_stat_get_autoanalyze_count(c.oid) AS autoanalyze_count,
+    pg_stat_get_total_vacuum_time(c.oid) AS total_vacuum_time,
+    pg_stat_get_total_autovacuum_time(c.oid) AS total_autovacuum_time,
+    pg_stat_get_total_analyze_time(c.oid) AS total_analyze_time,
+    pg_stat_get_total_autoanalyze_time(c.oid) AS total_autoanalyze_time
    FROM ((pg_class c
      LEFT JOIN pg_index i ON ((c.oid = i.indrelid)))
      LEFT JOIN pg_namespace n ON ((n.oid = c.relnamespace)))
@@ -1856,12 +1879,14 @@ pg_stat_bgwriter| SELECT pg_stat_get_bgwriter_buf_written_clean() AS buffers_cle
     pg_stat_get_bgwriter_stat_reset_time() AS stats_reset;
 pg_stat_checkpointer| SELECT pg_stat_get_checkpointer_num_timed() AS num_timed,
     pg_stat_get_checkpointer_num_requested() AS num_requested,
+    pg_stat_get_checkpointer_num_performed() AS num_done,
     pg_stat_get_checkpointer_restartpoints_timed() AS restartpoints_timed,
     pg_stat_get_checkpointer_restartpoints_requested() AS restartpoints_req,
     pg_stat_get_checkpointer_restartpoints_performed() AS restartpoints_done,
     pg_stat_get_checkpointer_write_time() AS write_time,
     pg_stat_get_checkpointer_sync_time() AS sync_time,
     pg_stat_get_checkpointer_buffers_written() AS buffers_written,
+    pg_stat_get_checkpointer_slru_written() AS slru_written,
     pg_stat_get_checkpointer_stat_reset_time() AS stats_reset;
 pg_stat_database| SELECT oid AS datid,
     datname,
@@ -1893,6 +1918,8 @@ pg_stat_database| SELECT oid AS datid,
     pg_stat_get_db_sessions_abandoned(oid) AS sessions_abandoned,
     pg_stat_get_db_sessions_fatal(oid) AS sessions_fatal,
     pg_stat_get_db_sessions_killed(oid) AS sessions_killed,
+    pg_stat_get_db_parallel_workers_to_launch(oid) AS parallel_workers_to_launch,
+    pg_stat_get_db_parallel_workers_launched(oid) AS parallel_workers_launched,
     pg_stat_get_db_stat_reset_time(oid) AS stats_reset
    FROM ( SELECT 0 AS oid,
             NULL::name AS datname
@@ -1920,21 +1947,23 @@ pg_stat_io| SELECT backend_type,
     object,
     context,
     reads,
+    read_bytes,
     read_time,
     writes,
+    write_bytes,
     write_time,
     writebacks,
     writeback_time,
     extends,
+    extend_bytes,
     extend_time,
-    op_bytes,
     hits,
     evictions,
     reuses,
     fsyncs,
     fsync_time,
     stats_reset
-   FROM pg_stat_get_io() b(backend_type, object, context, reads, read_time, writes, write_time, writebacks, writeback_time, extends, extend_time, op_bytes, hits, evictions, reuses, fsyncs, fsync_time, stats_reset);
+   FROM pg_stat_get_io() b(backend_type, object, context, reads, read_bytes, read_time, writes, write_bytes, write_time, writebacks, writeback_time, extends, extend_bytes, extend_time, hits, evictions, reuses, fsyncs, fsync_time, stats_reset);
 pg_stat_progress_analyze| SELECT s.pid,
     s.datid,
     d.datname,
@@ -1954,7 +1983,8 @@ pg_stat_progress_analyze| SELECT s.pid,
     s.param5 AS ext_stats_computed,
     s.param6 AS child_tables_total,
     s.param7 AS child_tables_done,
-    (s.param8)::oid AS current_child_table_relid
+    (s.param8)::oid AS current_child_table_relid,
+    ((s.param9)::double precision / (1000000)::double precision) AS delay_time
    FROM (pg_stat_get_progress_info('ANALYZE'::text) s(pid, datid, relid, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14, param15, param16, param17, param18, param19, param20)
      LEFT JOIN pg_database d ON ((s.datid = d.oid)));
 pg_stat_progress_basebackup| SELECT pid,
@@ -2084,7 +2114,8 @@ pg_stat_progress_vacuum| SELECT s.pid,
     s.param7 AS dead_tuple_bytes,
     s.param8 AS num_dead_item_ids,
     s.param9 AS indexes_total,
-    s.param10 AS indexes_processed
+    s.param10 AS indexes_processed,
+    ((s.param11)::double precision / (1000000)::double precision) AS delay_time
    FROM (pg_stat_get_progress_info('VACUUM'::text) s(pid, datid, relid, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14, param15, param16, param17, param18, param19, param20)
      LEFT JOIN pg_database d ON ((s.datid = d.oid)));
 pg_stat_recovery_prefetch| SELECT stats_reset,
@@ -2171,9 +2202,16 @@ pg_stat_subscription_stats| SELECT ss.subid,
     s.subname,
     ss.apply_error_count,
     ss.sync_error_count,
+    ss.confl_insert_exists,
+    ss.confl_update_origin_differs,
+    ss.confl_update_exists,
+    ss.confl_update_missing,
+    ss.confl_delete_origin_differs,
+    ss.confl_delete_missing,
+    ss.confl_multiple_unique_conflicts,
     ss.stats_reset
    FROM pg_subscription s,
-    LATERAL pg_stat_get_subscription_stats(s.oid) ss(subid, apply_error_count, sync_error_count, stats_reset);
+    LATERAL pg_stat_get_subscription_stats(s.oid) ss(subid, apply_error_count, sync_error_count, confl_insert_exists, confl_update_origin_differs, confl_update_exists, confl_update_missing, confl_delete_origin_differs, confl_delete_missing, confl_multiple_unique_conflicts, stats_reset);
 pg_stat_sys_indexes| SELECT relid,
     indexrelid,
     schemaname,
@@ -2210,7 +2248,11 @@ pg_stat_sys_tables| SELECT relid,
     vacuum_count,
     autovacuum_count,
     analyze_count,
-    autoanalyze_count
+    autoanalyze_count,
+    total_vacuum_time,
+    total_autovacuum_time,
+    total_analyze_time,
+    total_autoanalyze_time
    FROM pg_stat_all_tables
   WHERE ((schemaname = ANY (ARRAY['pg_catalog'::name, 'information_schema'::name])) OR (schemaname ~ '^pg_toast'::text));
 pg_stat_user_functions| SELECT p.oid AS funcid,
@@ -2258,19 +2300,19 @@ pg_stat_user_tables| SELECT relid,
     vacuum_count,
     autovacuum_count,
     analyze_count,
-    autoanalyze_count
+    autoanalyze_count,
+    total_vacuum_time,
+    total_autovacuum_time,
+    total_analyze_time,
+    total_autoanalyze_time
    FROM pg_stat_all_tables
   WHERE ((schemaname <> ALL (ARRAY['pg_catalog'::name, 'information_schema'::name])) AND (schemaname !~ '^pg_toast'::text));
 pg_stat_wal| SELECT wal_records,
     wal_fpi,
     wal_bytes,
     wal_buffers_full,
-    wal_write,
-    wal_sync,
-    wal_write_time,
-    wal_sync_time,
     stats_reset
-   FROM pg_stat_get_wal() w(wal_records, wal_fpi, wal_bytes, wal_buffers_full, wal_write, wal_sync, wal_write_time, wal_sync_time, stats_reset);
+   FROM pg_stat_get_wal() w(wal_records, wal_fpi, wal_bytes, wal_buffers_full, stats_reset);
 pg_stat_wal_receiver| SELECT pid,
     status,
     receive_start_lsn,
@@ -2649,10 +2691,19 @@ pg_tables| SELECT n.nspname AS schemaname,
      LEFT JOIN pg_namespace n ON ((n.oid = c.relnamespace)))
      LEFT JOIN pg_tablespace t ON ((t.oid = c.reltablespace)))
   WHERE (c.relkind = ANY (ARRAY['r'::"char", 'p'::"char"]));
-pg_timezone_abbrevs| SELECT abbrev,
-    utc_offset,
-    is_dst
-   FROM pg_timezone_abbrevs() pg_timezone_abbrevs(abbrev, utc_offset, is_dst);
+pg_timezone_abbrevs| SELECT z.abbrev,
+    z.utc_offset,
+    z.is_dst
+   FROM pg_timezone_abbrevs_zone() z(abbrev, utc_offset, is_dst)
+UNION ALL
+ SELECT a.abbrev,
+    a.utc_offset,
+    a.is_dst
+   FROM pg_timezone_abbrevs_abbrevs() a(abbrev, utc_offset, is_dst)
+  WHERE (NOT (EXISTS ( SELECT 1
+           FROM pg_timezone_abbrevs_zone() z2(abbrev, utc_offset, is_dst)
+          WHERE (z2.abbrev = a.abbrev))))
+  ORDER BY 1;
 pg_timezone_names| SELECT name,
     abbrev,
     utc_offset,
@@ -3669,7 +3720,10 @@ MERGE INTO rule_merge1 t USING (SELECT 1 AS a) s
 -- test deparsing
 CREATE TABLE sf_target(id int, data text, filling int[]);
 CREATE FUNCTION merge_sf_test()
- RETURNS TABLE(action text, a int, b text, id int, data text, filling int[])
+ RETURNS TABLE(action text, a int, b text,
+               id int, data text, filling int[],
+               old_id int, old_data text, old_filling int[],
+               new_id int, new_data text, new_filling int[])
  LANGUAGE sql
 BEGIN ATOMIC
  MERGE INTO sf_target t
@@ -3708,11 +3762,12 @@ WHEN NOT MATCHED
    THEN INSERT (filling[1], id)
    VALUES (s.a, s.a)
 RETURNING
-   merge_action() AS action, *;
+   WITH (OLD AS o, NEW AS n)
+   merge_action() AS action, *, o.*, n.*;
 END;
 \sf merge_sf_test
 CREATE OR REPLACE FUNCTION public.merge_sf_test()
- RETURNS TABLE(action text, a integer, b text, id integer, data text, filling integer[])
+ RETURNS TABLE(action text, a integer, b text, id integer, data text, filling integer[], old_id integer, old_data text, old_filling integer[], new_id integer, new_data text, new_filling integer[])
  LANGUAGE sql
 BEGIN ATOMIC
  MERGE INTO sf_target t
@@ -3750,12 +3805,18 @@ BEGIN ATOMIC
     WHEN NOT MATCHED
      THEN INSERT (filling[1], id)
       VALUES (s.a, s.a)
-   RETURNING MERGE_ACTION() AS action,
+   RETURNING WITH (OLD AS o, NEW AS n) MERGE_ACTION() AS action,
      s.a,
      s.b,
      t.id,
      t.data,
-     t.filling;
+     t.filling,
+     o.id,
+     o.data,
+     o.filling,
+     n.id,
+     n.data,
+     n.filling;
 END
 CREATE FUNCTION merge_sf_test2()
  RETURNS void

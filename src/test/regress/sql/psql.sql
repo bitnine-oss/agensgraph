@@ -45,11 +45,45 @@ SELECT 1 as one, 2 as two \g (format=csv csv_fieldsep='\t')
 SELECT 1 as one, 2 as two \gx (title='foo bar')
 \g
 
--- \bind (extended query protocol)
+-- \parse (extended query protocol)
+\parse
+SELECT 1 \parse ''
+SELECT 2 \parse stmt1
+SELECT $1 \parse stmt2
+SELECT $1, $2 \parse stmt3
 
+-- \bind_named (extended query protocol)
+\bind_named
+\bind_named '' \g
+\bind_named stmt1 \g
+\bind_named stmt2 'foo' \g
+\bind_named stmt3 'foo' 'bar' \g
+-- Repeated calls.  The second call generates an error, cleaning up the
+-- statement name set by the first call.
+\bind_named stmt4
+\bind_named
+\g
+-- Last \bind_named wins
+\bind_named stmt2 'foo' \bind_named stmt3 'foo2' 'bar2' \g
+-- Multiple \g calls mean multiple executions
+\bind_named stmt2 'foo3' \g \bind_named stmt3 'foo4' 'bar4' \g
+
+-- \close_prepared (extended query protocol)
+\close_prepared
+\close_prepared ''
+\close_prepared stmt2
+\close_prepared stmt2
+SELECT name, statement FROM pg_prepared_statements ORDER BY name;
+
+-- \bind (extended query protocol)
 SELECT 1 \bind \g
 SELECT $1 \bind 'foo' \g
 SELECT $1, $2 \bind 'foo' 'bar' \g
+
+-- last \bind wins
+select $1::int as col \bind 'foo' \bind 2 \g
+-- Multiple \g calls mean multiple executions
+select $1::int as col \bind 1 \g \bind 2 \g
 
 -- errors
 -- parse error
@@ -58,6 +92,9 @@ SELECT foo \bind \g
 SELECT 1 \; SELECT 2 \bind \g
 -- bind error
 SELECT $1, $2 \bind 'foo' \g
+-- bind_named error
+\bind_named stmt2 'baz' \g
+\bind_named stmt3 'baz' \g
 
 -- \gset
 
@@ -461,6 +498,7 @@ create table psql_serial_tab (id serial);
 \d psql_serial_tab_id_seq
 \pset tuples_only true
 \df exp
+\dfx exp
 \pset tuples_only false
 \pset expanded on
 \d psql_serial_tab_id_seq
@@ -523,6 +561,9 @@ CREATE MATERIALIZED VIEW mat_view_heap_psql USING heap_psql AS SELECT f1 from tb
 \dv+
 \set HIDE_TABLEAM on
 \d+
+-- \d with 'x' enables expanded mode, but only without a pattern
+\d+x tbl_heap
+\d+x
 RESET ROLE;
 RESET search_path;
 DROP SCHEMA tableam_display CASCADE;
@@ -990,9 +1031,11 @@ select \if false \\ (bogus \else \\ 42 \endif \\ forty_two;
 	\pset fieldsep | `nosuchcommand` :foo :'foo' :"foo"
 	\a
 	SELECT $1 \bind 1 \g
+	\bind_named stmt1 1 2 \g
 	\C arg1
 	\c arg1 arg2 arg3 arg4
 	\cd arg1
+	\close_prepared stmt1
 	\conninfo
 	\copy arg1 arg2 arg3 arg4 arg5 arg6
 	\copyright
@@ -1004,11 +1047,15 @@ select \if false \\ (bogus \else \\ 42 \endif \\ forty_two;
 	\echo arg1 arg2 arg3 arg4 arg5
 	\echo arg1
 	\encoding arg1
+	\endpipeline
 	\errverbose
 	\f arg1
+	\flush
+	\flushrequest
 	\g arg1
 	\gx arg1
 	\gexec
+	\getresults
 	SELECT 1 AS one \gset
 	\h
 	\?
@@ -1020,16 +1067,20 @@ select \if false \\ (bogus \else \\ 42 \endif \\ forty_two;
 	\lo_list
 	\o arg1
 	\p
+	SELECT 1 \parse
 	\password arg1
 	\prompt arg1 arg2
 	\pset arg1 arg2
 	\q
 	\reset
 	\s arg1
+	\sendpipeline
 	\set arg1 arg2 arg3 arg4 arg5 arg6 arg7
 	\setenv arg1 arg2
 	\sf whole_line
 	\sv whole_line
+	\startpipeline
+	\syncpipeline
 	\t arg1
 	\T arg1
 	\timing arg1
@@ -1266,9 +1317,10 @@ drop role regress_partitioning_role;
 \dAc brin pg*.oid*
 \dAf spgist
 \dAf btree int4
-\dAo+ btree float_ops
+\dAo+ btree array_ops|float_ops
 \dAo * pg_catalog.jsonb_path_ops
 \dAp+ btree float_ops
+\dApx+ btree time_ops
 \dAp * pg_catalog.uuid_ops
 
 -- check \dconfig
@@ -1887,5 +1939,6 @@ ROLLBACK;
 CREATE TABLE defprivs (a int);
 \pset null '(default)'
 \z defprivs
+\zx defprivs
 \pset null ''
 DROP TABLE defprivs;

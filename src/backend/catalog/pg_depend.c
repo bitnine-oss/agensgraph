@@ -3,7 +3,7 @@
  * pg_depend.c
  *	  routines to support manipulation of the pg_depend relation
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -28,7 +28,6 @@
 #include "miscadmin.h"
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
-#include "utils/syscache.h"
 #include "utils/rel.h"
 
 
@@ -36,7 +35,7 @@ static bool isObjectPinned(const ObjectAddress *object);
 
 
 /*
- * Record a dependency between 2 objects via their respective objectAddress.
+ * Record a dependency between 2 objects via their respective ObjectAddress.
  * The first argument is the dependent object, the second the one it
  * references.
  *

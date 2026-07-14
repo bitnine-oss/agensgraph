@@ -2072,6 +2072,33 @@ INSERT INTO r1 VALUES (10)
 
 DROP TABLE r1;
 
+--
+-- Test policies using virtual generated columns
+--
+SET SESSION AUTHORIZATION regress_rls_alice;
+SET row_security = on;
+CREATE TABLE r1 (a int, b int GENERATED ALWAYS AS (a * 10) VIRTUAL);
+ALTER TABLE r1 ADD c int GENERATED ALWAYS AS (a * 100) VIRTUAL;
+INSERT INTO r1 VALUES (1), (2), (4);
+
+CREATE POLICY p0 ON r1 USING (b * 10 = c);
+CREATE POLICY p1 ON r1 AS RESTRICTIVE USING (b > 10);
+CREATE POLICY p2 ON r1 AS RESTRICTIVE USING ((SELECT c) < 400);
+ALTER TABLE r1 ENABLE ROW LEVEL SECURITY;
+ALTER TABLE r1 FORCE ROW LEVEL SECURITY;
+
+-- Should fail p1
+INSERT INTO r1 VALUES (0);
+
+-- Should fail p2
+INSERT INTO r1 VALUES (4);
+
+-- OK
+INSERT INTO r1 VALUES (3);
+SELECT * FROM r1;
+
+DROP TABLE r1;
+
 -- Check dependency handling
 RESET SESSION AUTHORIZATION;
 CREATE TABLE dep1 (c1 int);
@@ -2177,6 +2204,7 @@ CREATE FUNCTION op_leak(int, int) RETURNS bool
 CREATE OPERATOR <<< (procedure = op_leak, leftarg = int, rightarg = int,
                      restrict = scalarltsel);
 SELECT * FROM rls_tbl WHERE a <<< 1000;
+EXPLAIN (COSTS OFF) SELECT * FROM rls_tbl WHERE a <<< 1000 or a <<< 900;
 DROP OPERATOR <<< (int, int);
 DROP FUNCTION op_leak(int, int);
 RESET SESSION AUTHORIZATION;
@@ -2217,9 +2245,111 @@ execute q;
 set role regress_rls_bob;
 execute q;
 
+-- make sure RLS dependencies in CTEs are handled
+reset role;
+create or replace function rls_f() returns setof rls_t
+  stable language sql
+  as $$ with cte as (select * from rls_t) select * from cte $$;
+prepare r as select current_user, * from rls_f();
+set role regress_rls_alice;
+execute r;
+set role regress_rls_bob;
+execute r;
+
+-- make sure RLS dependencies in subqueries are handled
+reset role;
+create or replace function rls_f() returns setof rls_t
+  stable language sql
+  as $$ select * from (select * from rls_t) _ $$;
+prepare s as select current_user, * from rls_f();
+set role regress_rls_alice;
+execute s;
+set role regress_rls_bob;
+execute s;
+
+-- make sure RLS dependencies in sublinks are handled
+reset role;
+create or replace function rls_f() returns setof rls_t
+  stable language sql
+  as $$ select exists(select * from rls_t)::text $$;
+prepare t as select current_user, * from rls_f();
+set role regress_rls_alice;
+execute t;
+set role regress_rls_bob;
+execute t;
+
+-- make sure RLS dependencies are handled when coercion projections are inserted
+reset role;
+create or replace function rls_f() returns setof rls_t
+  stable language sql
+  as $$ select * from (select array_agg(c) as cs from rls_t) _ group by cs $$;
+prepare u as select current_user, * from rls_f();
+set role regress_rls_alice;
+execute u;
+set role regress_rls_bob;
+execute u;
+
+-- make sure RLS dependencies in security invoker views are handled
+reset role;
+create view rls_v with (security_invoker) as select * from rls_t;
+grant select on rls_v to regress_rls_alice, regress_rls_bob;
+create or replace function rls_f() returns setof rls_t
+  stable language sql
+  as $$ select * from rls_v $$;
+prepare v as select current_user, * from rls_f();
+set role regress_rls_alice;
+execute v;
+set role regress_rls_bob;
+execute v;
+
 RESET ROLE;
 DROP FUNCTION rls_f();
+DROP VIEW rls_v;
 DROP TABLE rls_t;
+
+-- Check that RLS changes invalidate SQL function plans
+create table rls_t (c text);
+create table test_t (c text);
+insert into rls_t values ('a'), ('b'), ('c'), ('d');
+insert into test_t values ('a'), ('b');
+alter table rls_t enable row level security;
+grant select on rls_t to regress_rls_alice;
+grant select on test_t to regress_rls_alice;
+create policy p1 on rls_t for select to regress_rls_alice
+  using (c = current_setting('rls_test.blah'));
+
+-- Function changes row_security setting and so invalidates plan
+create function rls_f(text) returns text
+begin atomic
+ select set_config('rls_test.blah', $1, true) || set_config('row_security', 'false', true) || string_agg(c, ',' order by c) from rls_t;
+end;
+
+set plan_cache_mode to force_custom_plan;
+
+-- Table owner bypasses RLS
+select rls_f(c) from test_t order by rls_f;
+
+-- For other users, changes in row_security setting
+-- should lead to RLS error during query rewrite
+set role regress_rls_alice;
+select rls_f(c) from test_t order by rls_f;
+reset role;
+
+set plan_cache_mode to force_generic_plan;
+
+-- Table owner bypasses RLS, although cached plan will be invalidated
+select rls_f(c) from test_t order by rls_f;
+
+-- For other users, changes in row_security setting
+-- should lead to plan invalidation and RLS error during query rewrite
+set role regress_rls_alice;
+select rls_f(c) from test_t order by rls_f;
+reset role;
+
+reset plan_cache_mode;
+reset rls_test.blah;
+drop function rls_f(text);
+drop table rls_t, test_t;
 
 --
 -- Clean up objects

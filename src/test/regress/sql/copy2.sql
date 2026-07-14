@@ -70,18 +70,26 @@ COPY x from stdin (on_error ignore, on_error ignore);
 COPY x from stdin (log_verbosity default, log_verbosity verbose);
 
 -- incorrect options
-COPY x to stdin (format BINARY, delimiter ',');
-COPY x to stdin (format BINARY, null 'x');
+COPY x from stdin (format BINARY, delimiter ',');
+COPY x from stdin (format BINARY, null 'x');
 COPY x from stdin (format BINARY, on_error ignore);
 COPY x from stdin (on_error unsupported);
-COPY x to stdin (format TEXT, force_quote(a));
+COPY x from stdin (format TEXT, force_quote(a));
+COPY x from stdin (format TEXT, force_quote *);
 COPY x from stdin (format CSV, force_quote(a));
-COPY x to stdout (format TEXT, force_not_null(a));
-COPY x to stdin (format CSV, force_not_null(a));
-COPY x to stdout (format TEXT, force_null(a));
-COPY x to stdin (format CSV, force_null(a));
-COPY x to stdin (format BINARY, on_error unsupported);
-COPY x to stdout (log_verbosity unsupported);
+COPY x from stdin (format CSV, force_quote *);
+COPY x from stdin (format TEXT, force_not_null(a));
+COPY x from stdin (format TEXT, force_not_null *);
+COPY x to stdout (format CSV, force_not_null(a));
+COPY x to stdout (format CSV, force_not_null *);
+COPY x from stdin (format TEXT, force_null(a));
+COPY x from stdin (format TEXT, force_null *);
+COPY x to stdout (format CSV, force_null(a));
+COPY x to stdout (format CSV, force_null *);
+COPY x to stdout (format BINARY, on_error unsupported);
+COPY x from stdin (log_verbosity unsupported);
+COPY x from stdin with (reject_limit 1);
+COPY x from stdin with (on_error ignore, reject_limit 0);
 
 -- too many columns in column list: should fail
 COPY x (a, b, c, d, e, d, c) from stdin;
@@ -533,6 +541,10 @@ COPY check_ign_err2 FROM STDIN WITH (on_error ignore, log_verbosity verbose);
 1	{1}	1	'foo'
 2	{2}	2	\N
 \.
+COPY check_ign_err2 FROM STDIN WITH (on_error ignore, log_verbosity silent);
+3	{3}	3	'bar'
+4	{4}	4	\N
+\.
 
 -- reset context choice
 \set SHOW_CONTEXT errors
@@ -555,6 +567,25 @@ COPY check_ign_err FROM STDIN WITH (on_error ignore);
 -- test extra data: should fail
 COPY check_ign_err FROM STDIN WITH (on_error ignore);
 1	{1}	3	abc
+\.
+
+-- tests for reject_limit option
+COPY check_ign_err FROM STDIN WITH (on_error ignore, reject_limit 3);
+6	{6}	6
+a	{7}	7
+8	{8}	8888888888
+9	{a, 9}	9
+
+10	{10}	10
+\.
+
+COPY check_ign_err FROM STDIN WITH (on_error ignore, reject_limit 4);
+6	{6}	6
+a	{7}	7
+8	{8}	8888888888
+9	{a, 9}	9
+
+10	{10}	10
 \.
 
 -- clean up

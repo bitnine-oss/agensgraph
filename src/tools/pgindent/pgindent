@@ -1,13 +1,20 @@
 #!/usr/bin/perl
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
+
+# Program to maintain uniform layout style in our C code.
+# Exit codes:
+#   0 -- all OK
+#   1 -- error invoking pgindent, nothing done
+#   2 -- --check mode and at least one file requires changes
+#   3 -- pg_bsd_indent failed on at least one file
 
 use strict;
 use warnings FATAL => 'all';
 
 use Cwd qw(abs_path getcwd);
 use File::Find;
-use File::Spec qw(devnull);
+use File::Spec;
 use File::Temp;
 use IO::Handle;
 use Getopt::Long;
@@ -21,8 +28,7 @@ my $indent_opts =
 
 my $devnull = File::Spec->devnull;
 
-my ($typedefs_file, $typedef_str, @excludes,
-	$indent, $build, $diff,
+my ($typedefs_file, $typedef_str, @excludes, $indent, $diff,
 	$check, $help, @commits,);
 
 $help = 0;
@@ -67,11 +73,14 @@ if ($sourcedir)
 # might make them so.  For the moment we just hardwire a list of names
 # to add and a list of names to exclude; eventually this may need to be
 # easier to configure.  Note that the typedefs need trailing newlines.
-my @additional = ("bool\n");
+my @additional = map { "$_\n" } qw(
+  bool regex_t regmatch_t regoff
+);
 
 my %excluded = map { +"$_\n" => 1 } qw(
-  ANY FD_SET U abs allocfunc boolean date digit ilist interval iterator other
-  pointer printfunc reference string timestamp type wrap
+  FD_SET LookupSet boolean date duration
+  element_type inquiry iterator other
+  pointer reference rep string timestamp type wrap
 );
 
 # globals
@@ -176,7 +185,7 @@ sub process_exclude
 		while (my $line = <$eh>)
 		{
 			chomp $line;
-			next if $line =~ m/^#/;
+			next if $line =~ m/^#/ || $line eq "";
 			my $rgx = qr!$line!;
 			@files = grep { $_ !~ /$rgx/ } @files if $rgx;
 		}
@@ -236,6 +245,14 @@ sub pre_indent
 	# Protect wrapping in CATALOG()
 	$source =~ s!^(CATALOG\(.*)$!/*$1*/!gm;
 
+	# Treat a CURL_IGNORE_DEPRECATION() as braces for the purposes of
+	# indentation. (The recursive regex comes from the perlre documentation; it
+	# matches balanced parentheses as group $1 and the contents as group $2.)
+	my $curlopen = '{ /* CURL_IGNORE_DEPRECATION */';
+	my $curlclose = '} /* CURL_IGNORE_DEPRECATION */';
+	$source =~
+	  s!^[ \t]+CURL_IGNORE_DEPRECATION(\(((?:(?>[^()]+)|(?1))*)\))!$curlopen$2$curlclose!gms;
+
 	return $source;
 }
 
@@ -249,6 +266,12 @@ sub post_indent
 	# Put back braces for extern "C"
 	$source =~ s!^/\* Open extern "C" \*/$!{!gm;
 	$source =~ s!^/\* Close extern "C" \*/$!}!gm;
+
+	# Restore the CURL_IGNORE_DEPRECATION() macro, keeping in mind that our
+	# markers may have been re-indented.
+	$source =~
+	  s!{[ \t]+/\* CURL_IGNORE_DEPRECATION \*/!CURL_IGNORE_DEPRECATION(!gm;
+	$source =~ s!}[ \t]+/\* CURL_IGNORE_DEPRECATION \*/!)!gm;
 
 	## Comments
 
@@ -409,6 +432,7 @@ foreach my $source_filename (@files)
 	if ($source eq "")
 	{
 		print STDERR "Failure in $source_filename: " . $error_message . "\n";
+		$status = 3;
 		next;
 	}
 
@@ -429,7 +453,7 @@ foreach my $source_filename (@files)
 
 			if ($check)
 			{
-				$status = 2;
+				$status ||= 2;
 				last unless $diff;
 			}
 		}

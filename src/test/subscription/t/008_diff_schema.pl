@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 # Test behavior with different schema on subscriber
 use strict;
@@ -117,6 +117,21 @@ is( $node_subscriber->safe_psql(
 		'postgres', "SELECT count(*), min(a), max(a) FROM test_tab2"),
 	qq(1|1|1),
 	'check replicated inserts on subscriber');
+
+# Test if the expected error is reported when the subscriber table is missing
+# columns which were specified on the publisher table.
+$node_publisher->safe_psql('postgres',
+	"CREATE TABLE test_tab3 (a int, b int, c int)");
+$node_subscriber->safe_psql('postgres', "CREATE TABLE test_tab3 (a int)");
+
+my $offset = -s $node_subscriber->logfile;
+
+$node_subscriber->safe_psql('postgres',
+	"ALTER SUBSCRIPTION tap_sub REFRESH PUBLICATION");
+
+$node_subscriber->wait_for_log(
+	qr/ERROR: ( [A-Z0-9]+:)? logical replication target relation "public.test_tab3" is missing replicated columns: "b", "c"/,
+	$offset);
 
 
 $node_subscriber->stop;

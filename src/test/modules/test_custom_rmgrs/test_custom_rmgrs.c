@@ -3,7 +3,7 @@
  * test_custom_rmgrs.c
  *		Code for testing custom WAL resource managers.
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -128,8 +128,8 @@ test_custom_rmgrs_insert_wal_record(PG_FUNCTION_ARGS)
 	xlrec.message_size = len;
 
 	XLogBeginInsert();
-	XLogRegisterData((char *) &xlrec, SizeOfTestCustomRmgrsMessage);
-	XLogRegisterData((char *) payload, len);
+	XLogRegisterData(&xlrec, SizeOfTestCustomRmgrsMessage);
+	XLogRegisterData(payload, len);
 
 	/* Let's mark this record as unimportant, just in case. */
 	XLogSetRecordFlags(XLOG_MARK_UNIMPORTANT);

@@ -3,7 +3,7 @@
  * mxactdesc.c
  *	  rmgr descriptor routines for access/transam/multixact.c
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -58,7 +58,7 @@ multixact_desc(StringInfo buf, XLogReaderState *record)
 		int64		pageno;
 
 		memcpy(&pageno, rec, sizeof(pageno));
-		appendStringInfo(buf, "%lld", (long long) pageno);
+		appendStringInfo(buf, "%" PRId64, pageno);
 	}
 	else if (info == XLOG_MULTIXACT_CREATE_ID)
 	{

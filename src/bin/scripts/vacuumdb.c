@@ -2,7 +2,7 @@
  *
  * vacuumdb
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/scripts/vacuumdb.c
@@ -47,6 +47,7 @@ typedef struct vacuumingOptions
 	bool		process_toast;
 	bool		skip_database_stats;
 	char	   *buffer_usage_limit;
+	bool		missing_stats_only;
 } vacuumingOptions;
 
 /* object filter options */
@@ -60,12 +61,18 @@ typedef enum
 	OBJFILTER_SCHEMA_EXCLUDE = (1 << 4),	/* -N | --exclude-schema */
 } VacObjFilter;
 
-VacObjFilter objfilter = OBJFILTER_NONE;
+static VacObjFilter objfilter = OBJFILTER_NONE;
+
+static SimpleStringList *retrieve_objects(PGconn *conn,
+										  vacuumingOptions *vacopts,
+										  SimpleStringList *objects,
+										  bool echo);
 
 static void vacuum_one_database(ConnParams *cparams,
 								vacuumingOptions *vacopts,
 								int stage,
 								SimpleStringList *objects,
+								SimpleStringList **found_objs,
 								int concurrentCons,
 								const char *progname, bool echo, bool quiet);
 
@@ -128,6 +135,7 @@ main(int argc, char *argv[])
 		{"no-process-toast", no_argument, NULL, 11},
 		{"no-process-main", no_argument, NULL, 12},
 		{"buffer-usage-limit", required_argument, NULL, 13},
+		{"missing-stats-only", no_argument, NULL, 14},
 		{NULL, 0, NULL, 0}
 	};
 
@@ -275,6 +283,9 @@ main(int argc, char *argv[])
 			case 13:
 				vacopts.buffer_usage_limit = escape_quotes(optarg);
 				break;
+			case 14:
+				vacopts.missing_stats_only = true;
+				break;
 			default:
 				/* getopt_long already emitted a complaint */
 				pg_log_error_hint("Try \"%s --help\" for more information.", progname);
@@ -360,6 +371,14 @@ main(int argc, char *argv[])
 		pg_fatal("cannot use the \"%s\" option with the \"%s\" option",
 				 "buffer-usage-limit", "full");
 
+	/*
+	 * Prohibit --missing-stats-only without --analyze-only or
+	 * --analyze-in-stages.
+	 */
+	if (vacopts.missing_stats_only && !vacopts.analyze_only)
+		pg_fatal("cannot use the \"%s\" option without \"%s\" or \"%s\"",
+				 "missing-stats-only", "analyze-only", "analyze-in-stages");
+
 	/* fill cparams except for dbname, which is set below */
 	cparams.pghost = host;
 	cparams.pgport = port;
@@ -400,12 +419,14 @@ main(int argc, char *argv[])
 		if (analyze_in_stages)
 		{
 			int			stage;
+			SimpleStringList *found_objs = NULL;
 
 			for (stage = 0; stage < ANALYZE_NUM_STAGES; stage++)
 			{
 				vacuum_one_database(&cparams, &vacopts,
 									stage,
 									&objects,
+									vacopts.missing_stats_only ? &found_objs : NULL,
 									concurrentCons,
 									progname, echo, quiet);
 			}
@@ -413,7 +434,7 @@ main(int argc, char *argv[])
 		else
 			vacuum_one_database(&cparams, &vacopts,
 								ANALYZE_NO_STAGE,
-								&objects,
+								&objects, NULL,
 								concurrentCons,
 								progname, echo, quiet);
 	}
@@ -461,38 +482,60 @@ escape_quotes(const char *src)
 /*
  * vacuum_one_database
  *
- * Process tables in the given database.  If the 'tables' list is empty,
- * process all tables in the database.
+ * Process tables in the given database.
+ *
+ * There are two ways to specify the list of objects to process:
+ *
+ * 1) The "found_objs" parameter is a double pointer to a fully qualified list
+ *    of objects to process, as returned by a previous call to
+ *    vacuum_one_database().
+ *
+ *     a) If both "found_objs" (the double pointer) and "*found_objs" (the
+ *        once-dereferenced double pointer) are not NULL, this list takes
+ *        priority, and anything specified in "objects" is ignored.
+ *
+ *     b) If "found_objs" (the double pointer) is not NULL but "*found_objs"
+ *        (the once-dereferenced double pointer) _is_ NULL, the "objects"
+ *        parameter takes priority, and the results of the catalog query
+ *        described in (2) are stored in "found_objs".
+ *
+ *     c) If "found_objs" (the double pointer) is NULL, the "objects"
+ *        parameter again takes priority, and the results of the catalog query
+ *        are not saved.
+ *
+ * 2) The "objects" parameter is a user-specified list of objects to process.
+ *    When (1b) or (1c) applies, this function performs a catalog query to
+ *    retrieve a fully qualified list of objects to process, as described
+ *    below.
+ *
+ *     a) If "objects" is not NULL, the catalog query gathers only the objects
+ *        listed in "objects".
+ *
+ *     b) If "objects" is NULL, all tables in the database are gathered.
  *
  * Note that this function is only concerned with running exactly one stage
  * when in analyze-in-stages mode; caller must iterate on us if necessary.
  *
  * If concurrentCons is > 1, multiple connections are used to vacuum tables
- * in parallel.  In this case and if the table list is empty, we first obtain
- * a list of tables from the database.
+ * in parallel.
  */
 static void
 vacuum_one_database(ConnParams *cparams,
 					vacuumingOptions *vacopts,
 					int stage,
 					SimpleStringList *objects,
+					SimpleStringList **found_objs,
 					int concurrentCons,
 					const char *progname, bool echo, bool quiet)
 {
 	PQExpBufferData sql;
-	PQExpBufferData buf;
-	PQExpBufferData catalog_query;
-	PGresult   *res;
 	PGconn	   *conn;
 	SimpleStringListCell *cell;
 	ParallelSlotArray *sa;
-	SimpleStringList dbtables = {NULL, NULL};
-	int			i;
-	int			ntups;
+	int			ntups = 0;
 	bool		failed = false;
-	bool		objects_listed = false;
-	bool		has_where = false;
 	const char *initcmd;
+	SimpleStringList *ret = NULL;
 	const char *stage_commands[] = {
 		"SET default_statistics_target=1; SET vacuum_cost_delay=0;",
 		"SET default_statistics_target=10; RESET vacuum_cost_delay;",
@@ -559,20 +602,39 @@ vacuum_one_database(ConnParams *cparams,
 	}
 
 	if (vacopts->min_xid_age != 0 && PQserverVersion(conn) < 90600)
+	{
+		PQfinish(conn);
 		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
 				 "--min-xid-age", "9.6");
+	}
 
 	if (vacopts->min_mxid_age != 0 && PQserverVersion(conn) < 90600)
+	{
+		PQfinish(conn);
 		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
 				 "--min-mxid-age", "9.6");
+	}
 
 	if (vacopts->parallel_workers >= 0 && PQserverVersion(conn) < 130000)
+	{
+		PQfinish(conn);
 		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
 				 "--parallel", "13");
+	}
 
 	if (vacopts->buffer_usage_limit && PQserverVersion(conn) < 160000)
+	{
+		PQfinish(conn);
 		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
 				 "--buffer-usage-limit", "16");
+	}
+
+	if (vacopts->missing_stats_only && PQserverVersion(conn) < 150000)
+	{
+		PQfinish(conn);
+		pg_fatal("cannot use the \"%s\" option on server versions older than PostgreSQL %s",
+				 "--missing-stats-only", "15");
+	}
 
 	/* skip_database_stats is used automatically if server supports it */
 	vacopts->skip_database_stats = (PQserverVersion(conn) >= 160000);
@@ -589,190 +651,31 @@ vacuum_one_database(ConnParams *cparams,
 	}
 
 	/*
-	 * Prepare the list of tables to process by querying the catalogs.
-	 *
-	 * Since we execute the constructed query with the default search_path
-	 * (which could be unsafe), everything in this query MUST be fully
-	 * qualified.
-	 *
-	 * First, build a WITH clause for the catalog query if any tables were
-	 * specified, with a set of values made of relation names and their
-	 * optional set of columns.  This is used to match any provided column
-	 * lists with the generated qualified identifiers and to filter for the
-	 * tables provided via --table.  If a listed table does not exist, the
-	 * catalog query will fail.
+	 * If the caller provided the results of a previous catalog query, just
+	 * use that.  Otherwise, run the catalog query ourselves and set the
+	 * return variable if provided.
 	 */
-	initPQExpBuffer(&catalog_query);
-	for (cell = objects ? objects->head : NULL; cell; cell = cell->next)
+	if (found_objs && *found_objs)
+		ret = *found_objs;
+	else
 	{
-		char	   *just_table = NULL;
-		const char *just_columns = NULL;
-
-		if (!objects_listed)
-		{
-			appendPQExpBufferStr(&catalog_query,
-								 "WITH listed_objects (object_oid, column_list) "
-								 "AS (\n  VALUES (");
-			objects_listed = true;
-		}
-		else
-			appendPQExpBufferStr(&catalog_query, ",\n  (");
-
-		if (objfilter & (OBJFILTER_SCHEMA | OBJFILTER_SCHEMA_EXCLUDE))
-		{
-			appendStringLiteralConn(&catalog_query, cell->val, conn);
-			appendPQExpBufferStr(&catalog_query, "::pg_catalog.regnamespace, ");
-		}
-
-		if (objfilter & OBJFILTER_TABLE)
-		{
-			/*
-			 * Split relation and column names given by the user, this is used
-			 * to feed the CTE with values on which are performed pre-run
-			 * validity checks as well.  For now these happen only on the
-			 * relation name.
-			 */
-			splitTableColumnsSpec(cell->val, PQclientEncoding(conn),
-								  &just_table, &just_columns);
-
-			appendStringLiteralConn(&catalog_query, just_table, conn);
-			appendPQExpBufferStr(&catalog_query, "::pg_catalog.regclass, ");
-		}
-
-		if (just_columns && just_columns[0] != '\0')
-			appendStringLiteralConn(&catalog_query, just_columns, conn);
-		else
-			appendPQExpBufferStr(&catalog_query, "NULL");
-
-		appendPQExpBufferStr(&catalog_query, "::pg_catalog.text)");
-
-		pg_free(just_table);
-	}
-
-	/* Finish formatting the CTE */
-	if (objects_listed)
-		appendPQExpBufferStr(&catalog_query, "\n)\n");
-
-	appendPQExpBufferStr(&catalog_query, "SELECT c.relname, ns.nspname");
-
-	if (objects_listed)
-		appendPQExpBufferStr(&catalog_query, ", listed_objects.column_list");
-
-	appendPQExpBufferStr(&catalog_query,
-						 " FROM pg_catalog.pg_class c\n"
-						 " JOIN pg_catalog.pg_namespace ns"
-						 " ON c.relnamespace OPERATOR(pg_catalog.=) ns.oid\n"
-						 " LEFT JOIN pg_catalog.pg_class t"
-						 " ON c.reltoastrelid OPERATOR(pg_catalog.=) t.oid\n");
-
-	/* Used to match the tables or schemas listed by the user */
-	if (objects_listed)
-	{
-		appendPQExpBufferStr(&catalog_query, " LEFT JOIN listed_objects"
-							 " ON listed_objects.object_oid"
-							 " OPERATOR(pg_catalog.=) ");
-
-		if (objfilter & OBJFILTER_TABLE)
-			appendPQExpBufferStr(&catalog_query, "c.oid\n");
-		else
-			appendPQExpBufferStr(&catalog_query, "ns.oid\n");
-
-		if (objfilter & OBJFILTER_SCHEMA_EXCLUDE)
-			appendPQExpBuffer(&catalog_query,
-							  " WHERE listed_objects.object_oid IS NULL\n");
-		else
-			appendPQExpBuffer(&catalog_query,
-							  " WHERE listed_objects.object_oid IS NOT NULL\n");
-		has_where = true;
+		ret = retrieve_objects(conn, vacopts, objects, echo);
+		if (found_objs)
+			*found_objs = ret;
 	}
 
 	/*
-	 * If no tables were listed, filter for the relevant relation types.  If
-	 * tables were given via --table, don't bother filtering by relation type.
-	 * Instead, let the server decide whether a given relation can be
-	 * processed in which case the user will know about it.
+	 * Count the number of objects in the catalog query result.  If there are
+	 * none, we are done.
 	 */
-	if ((objfilter & OBJFILTER_TABLE) == 0)
-	{
-		appendPQExpBuffer(&catalog_query,
-						  " %s c.relkind OPERATOR(pg_catalog.=) ANY (array["
-						  CppAsString2(RELKIND_RELATION) ", "
-						  CppAsString2(RELKIND_MATVIEW) "])\n",
-						  has_where ? "AND" : "WHERE");
-		has_where = true;
-	}
+	for (cell = ret ? ret->head : NULL; cell; cell = cell->next)
+		ntups++;
 
-	/*
-	 * For --min-xid-age and --min-mxid-age, the age of the relation is the
-	 * greatest of the ages of the main relation and its associated TOAST
-	 * table.  The commands generated by vacuumdb will also process the TOAST
-	 * table for the relation if necessary, so it does not need to be
-	 * considered separately.
-	 */
-	if (vacopts->min_xid_age != 0)
-	{
-		appendPQExpBuffer(&catalog_query,
-						  " %s GREATEST(pg_catalog.age(c.relfrozenxid),"
-						  " pg_catalog.age(t.relfrozenxid)) "
-						  " OPERATOR(pg_catalog.>=) '%d'::pg_catalog.int4\n"
-						  " AND c.relfrozenxid OPERATOR(pg_catalog.!=)"
-						  " '0'::pg_catalog.xid\n",
-						  has_where ? "AND" : "WHERE", vacopts->min_xid_age);
-		has_where = true;
-	}
-
-	if (vacopts->min_mxid_age != 0)
-	{
-		appendPQExpBuffer(&catalog_query,
-						  " %s GREATEST(pg_catalog.mxid_age(c.relminmxid),"
-						  " pg_catalog.mxid_age(t.relminmxid)) OPERATOR(pg_catalog.>=)"
-						  " '%d'::pg_catalog.int4\n"
-						  " AND c.relminmxid OPERATOR(pg_catalog.!=)"
-						  " '0'::pg_catalog.xid\n",
-						  has_where ? "AND" : "WHERE", vacopts->min_mxid_age);
-		has_where = true;
-	}
-
-	/*
-	 * Execute the catalog query.  We use the default search_path for this
-	 * query for consistency with table lookups done elsewhere by the user.
-	 */
-	appendPQExpBufferStr(&catalog_query, " ORDER BY c.relpages DESC;");
-	executeCommand(conn, "RESET search_path;", echo);
-	res = executeQuery(conn, catalog_query.data, echo);
-	termPQExpBuffer(&catalog_query);
-	PQclear(executeQuery(conn, ALWAYS_SECURE_SEARCH_PATH_SQL, echo));
-
-	/*
-	 * If no rows are returned, there are no matching tables, so we are done.
-	 */
-	ntups = PQntuples(res);
 	if (ntups == 0)
 	{
-		PQclear(res);
 		PQfinish(conn);
 		return;
 	}
-
-	/*
-	 * Build qualified identifiers for each table, including the column list
-	 * if given.
-	 */
-	initPQExpBuffer(&buf);
-	for (i = 0; i < ntups; i++)
-	{
-		appendPQExpBufferStr(&buf,
-							 fmtQualifiedId(PQgetvalue(res, i, 1),
-											PQgetvalue(res, i, 0)));
-
-		if (objects_listed && !PQgetisnull(res, i, 2))
-			appendPQExpBufferStr(&buf, PQgetvalue(res, i, 2));
-
-		simple_string_list_append(&dbtables, buf.data);
-		resetPQExpBuffer(&buf);
-	}
-	termPQExpBuffer(&buf);
-	PQclear(res);
 
 	/*
 	 * Ensure concurrentCons is sane.  If there are more connections than
@@ -806,7 +709,7 @@ vacuum_one_database(ConnParams *cparams,
 
 	initPQExpBuffer(&sql);
 
-	cell = dbtables.head;
+	cell = ret->head;
 	do
 	{
 		const char *tabname = cell->val;
@@ -875,6 +778,282 @@ finish:
 }
 
 /*
+ * Prepare the list of tables to process by querying the catalogs.
+ *
+ * Since we execute the constructed query with the default search_path (which
+ * could be unsafe), everything in this query MUST be fully qualified.
+ *
+ * First, build a WITH clause for the catalog query if any tables were
+ * specified, with a set of values made of relation names and their optional
+ * set of columns.  This is used to match any provided column lists with the
+ * generated qualified identifiers and to filter for the tables provided via
+ * --table.  If a listed table does not exist, the catalog query will fail.
+ */
+static SimpleStringList *
+retrieve_objects(PGconn *conn, vacuumingOptions *vacopts,
+				 SimpleStringList *objects, bool echo)
+{
+	PQExpBufferData buf;
+	PQExpBufferData catalog_query;
+	PGresult   *res;
+	SimpleStringListCell *cell;
+	SimpleStringList *found_objs = palloc0(sizeof(SimpleStringList));
+	bool		objects_listed = false;
+
+	initPQExpBuffer(&catalog_query);
+	for (cell = objects ? objects->head : NULL; cell; cell = cell->next)
+	{
+		char	   *just_table = NULL;
+		const char *just_columns = NULL;
+
+		if (!objects_listed)
+		{
+			appendPQExpBufferStr(&catalog_query,
+								 "WITH listed_objects (object_oid, column_list) "
+								 "AS (\n  VALUES (");
+			objects_listed = true;
+		}
+		else
+			appendPQExpBufferStr(&catalog_query, ",\n  (");
+
+		if (objfilter & (OBJFILTER_SCHEMA | OBJFILTER_SCHEMA_EXCLUDE))
+		{
+			appendStringLiteralConn(&catalog_query, cell->val, conn);
+			appendPQExpBufferStr(&catalog_query, "::pg_catalog.regnamespace, ");
+		}
+
+		if (objfilter & OBJFILTER_TABLE)
+		{
+			/*
+			 * Split relation and column names given by the user, this is used
+			 * to feed the CTE with values on which are performed pre-run
+			 * validity checks as well.  For now these happen only on the
+			 * relation name.
+			 */
+			splitTableColumnsSpec(cell->val, PQclientEncoding(conn),
+								  &just_table, &just_columns);
+
+			appendStringLiteralConn(&catalog_query, just_table, conn);
+			appendPQExpBufferStr(&catalog_query, "::pg_catalog.regclass, ");
+		}
+
+		if (just_columns && just_columns[0] != '\0')
+			appendStringLiteralConn(&catalog_query, just_columns, conn);
+		else
+			appendPQExpBufferStr(&catalog_query, "NULL");
+
+		appendPQExpBufferStr(&catalog_query, "::pg_catalog.text)");
+
+		pg_free(just_table);
+	}
+
+	/* Finish formatting the CTE */
+	if (objects_listed)
+		appendPQExpBufferStr(&catalog_query, "\n)\n");
+
+	appendPQExpBufferStr(&catalog_query, "SELECT c.relname, ns.nspname");
+
+	if (objects_listed)
+		appendPQExpBufferStr(&catalog_query, ", listed_objects.column_list");
+
+	appendPQExpBufferStr(&catalog_query,
+						 " FROM pg_catalog.pg_class c\n"
+						 " JOIN pg_catalog.pg_namespace ns"
+						 " ON c.relnamespace OPERATOR(pg_catalog.=) ns.oid\n"
+						 " CROSS JOIN LATERAL (SELECT c.relkind IN ("
+						 CppAsString2(RELKIND_PARTITIONED_TABLE) ", "
+						 CppAsString2(RELKIND_PARTITIONED_INDEX) ")) as p (inherited)\n"
+						 " LEFT JOIN pg_catalog.pg_class t"
+						 " ON c.reltoastrelid OPERATOR(pg_catalog.=) t.oid\n");
+
+	/*
+	 * Used to match the tables or schemas listed by the user, completing the
+	 * JOIN clause.
+	 */
+	if (objects_listed)
+	{
+		appendPQExpBufferStr(&catalog_query, " LEFT JOIN listed_objects"
+							 " ON listed_objects.object_oid"
+							 " OPERATOR(pg_catalog.=) ");
+
+		if (objfilter & OBJFILTER_TABLE)
+			appendPQExpBufferStr(&catalog_query, "c.oid\n");
+		else
+			appendPQExpBufferStr(&catalog_query, "ns.oid\n");
+	}
+
+	/*
+	 * Exclude temporary tables, beginning the WHERE clause.
+	 */
+	appendPQExpBufferStr(&catalog_query,
+						 " WHERE c.relpersistence OPERATOR(pg_catalog.!=) "
+						 CppAsString2(RELPERSISTENCE_TEMP) "\n");
+
+	/*
+	 * Used to match the tables or schemas listed by the user, for the WHERE
+	 * clause.
+	 */
+	if (objects_listed)
+	{
+		if (objfilter & OBJFILTER_SCHEMA_EXCLUDE)
+			appendPQExpBufferStr(&catalog_query,
+								 " AND listed_objects.object_oid IS NULL\n");
+		else
+			appendPQExpBufferStr(&catalog_query,
+								 " AND listed_objects.object_oid IS NOT NULL\n");
+	}
+
+	/*
+	 * If no tables were listed, filter for the relevant relation types.  If
+	 * tables were given via --table, don't bother filtering by relation type.
+	 * Instead, let the server decide whether a given relation can be
+	 * processed in which case the user will know about it.
+	 */
+	if ((objfilter & OBJFILTER_TABLE) == 0)
+	{
+		appendPQExpBufferStr(&catalog_query,
+							 " AND c.relkind OPERATOR(pg_catalog.=) ANY (array["
+							 CppAsString2(RELKIND_RELATION) ", "
+							 CppAsString2(RELKIND_MATVIEW) "])\n");
+	}
+
+	/*
+	 * For --min-xid-age and --min-mxid-age, the age of the relation is the
+	 * greatest of the ages of the main relation and its associated TOAST
+	 * table.  The commands generated by vacuumdb will also process the TOAST
+	 * table for the relation if necessary, so it does not need to be
+	 * considered separately.
+	 */
+	if (vacopts->min_xid_age != 0)
+	{
+		appendPQExpBuffer(&catalog_query,
+						  " AND GREATEST(pg_catalog.age(c.relfrozenxid),"
+						  " pg_catalog.age(t.relfrozenxid)) "
+						  " OPERATOR(pg_catalog.>=) '%d'::pg_catalog.int4\n"
+						  " AND c.relfrozenxid OPERATOR(pg_catalog.!=)"
+						  " '0'::pg_catalog.xid\n",
+						  vacopts->min_xid_age);
+	}
+
+	if (vacopts->min_mxid_age != 0)
+	{
+		appendPQExpBuffer(&catalog_query,
+						  " AND GREATEST(pg_catalog.mxid_age(c.relminmxid),"
+						  " pg_catalog.mxid_age(t.relminmxid)) OPERATOR(pg_catalog.>=)"
+						  " '%d'::pg_catalog.int4\n"
+						  " AND c.relminmxid OPERATOR(pg_catalog.!=)"
+						  " '0'::pg_catalog.xid\n",
+						  vacopts->min_mxid_age);
+	}
+
+	if (vacopts->missing_stats_only)
+	{
+		appendPQExpBufferStr(&catalog_query, " AND (\n");
+
+		/* regular stats */
+		appendPQExpBufferStr(&catalog_query,
+							 " EXISTS (SELECT NULL FROM pg_catalog.pg_attribute a\n"
+							 " WHERE a.attrelid OPERATOR(pg_catalog.=) c.oid\n"
+							 " AND a.attnum OPERATOR(pg_catalog.>) 0::pg_catalog.int2\n"
+							 " AND NOT a.attisdropped\n"
+							 " AND a.attstattarget IS DISTINCT FROM 0::pg_catalog.int2\n"
+							 " AND NOT EXISTS (SELECT NULL FROM pg_catalog.pg_statistic s\n"
+							 " WHERE s.starelid OPERATOR(pg_catalog.=) a.attrelid\n"
+							 " AND s.staattnum OPERATOR(pg_catalog.=) a.attnum\n"
+							 " AND s.stainherit OPERATOR(pg_catalog.=) p.inherited))\n");
+
+		/* extended stats */
+		appendPQExpBufferStr(&catalog_query,
+							 " OR EXISTS (SELECT NULL FROM pg_catalog.pg_statistic_ext e\n"
+							 " WHERE e.stxrelid OPERATOR(pg_catalog.=) c.oid\n"
+							 " AND e.stxstattarget IS DISTINCT FROM 0::pg_catalog.int2\n"
+							 " AND NOT EXISTS (SELECT NULL FROM pg_catalog.pg_statistic_ext_data d\n"
+							 " WHERE d.stxoid OPERATOR(pg_catalog.=) e.oid\n"
+							 " AND d.stxdinherit OPERATOR(pg_catalog.=) p.inherited))\n");
+
+		/* expression indexes */
+		appendPQExpBufferStr(&catalog_query,
+							 " OR EXISTS (SELECT NULL FROM pg_catalog.pg_attribute a\n"
+							 " JOIN pg_catalog.pg_index i"
+							 " ON i.indexrelid OPERATOR(pg_catalog.=) a.attrelid\n"
+							 " WHERE i.indrelid OPERATOR(pg_catalog.=) c.oid\n"
+							 " AND i.indkey[a.attnum OPERATOR(pg_catalog.-) 1::pg_catalog.int2]"
+							 " OPERATOR(pg_catalog.=) 0::pg_catalog.int2\n"
+							 " AND a.attnum OPERATOR(pg_catalog.>) 0::pg_catalog.int2\n"
+							 " AND NOT a.attisdropped\n"
+							 " AND a.attstattarget IS DISTINCT FROM 0::pg_catalog.int2\n"
+							 " AND NOT EXISTS (SELECT NULL FROM pg_catalog.pg_statistic s\n"
+							 " WHERE s.starelid OPERATOR(pg_catalog.=) a.attrelid\n"
+							 " AND s.staattnum OPERATOR(pg_catalog.=) a.attnum\n"
+							 " AND s.stainherit OPERATOR(pg_catalog.=) p.inherited))\n");
+
+		/* inheritance and regular stats */
+		appendPQExpBufferStr(&catalog_query,
+							 " OR EXISTS (SELECT NULL FROM pg_catalog.pg_attribute a\n"
+							 " WHERE a.attrelid OPERATOR(pg_catalog.=) c.oid\n"
+							 " AND a.attnum OPERATOR(pg_catalog.>) 0::pg_catalog.int2\n"
+							 " AND NOT a.attisdropped\n"
+							 " AND a.attstattarget IS DISTINCT FROM 0::pg_catalog.int2\n"
+							 " AND c.relhassubclass\n"
+							 " AND NOT p.inherited\n"
+							 " AND EXISTS (SELECT NULL FROM pg_catalog.pg_inherits h\n"
+							 " WHERE h.inhparent OPERATOR(pg_catalog.=) c.oid)\n"
+							 " AND NOT EXISTS (SELECT NULL FROM pg_catalog.pg_statistic s\n"
+							 " WHERE s.starelid OPERATOR(pg_catalog.=) a.attrelid\n"
+							 " AND s.staattnum OPERATOR(pg_catalog.=) a.attnum\n"
+							 " AND s.stainherit))\n");
+
+		/* inheritance and extended stats */
+		appendPQExpBufferStr(&catalog_query,
+							 " OR EXISTS (SELECT NULL FROM pg_catalog.pg_statistic_ext e\n"
+							 " WHERE e.stxrelid OPERATOR(pg_catalog.=) c.oid\n"
+							 " AND e.stxstattarget IS DISTINCT FROM 0::pg_catalog.int2\n"
+							 " AND c.relhassubclass\n"
+							 " AND NOT p.inherited\n"
+							 " AND EXISTS (SELECT NULL FROM pg_catalog.pg_inherits h\n"
+							 " WHERE h.inhparent OPERATOR(pg_catalog.=) c.oid)\n"
+							 " AND NOT EXISTS (SELECT NULL FROM pg_catalog.pg_statistic_ext_data d\n"
+							 " WHERE d.stxoid OPERATOR(pg_catalog.=) e.oid\n"
+							 " AND d.stxdinherit))\n");
+
+		appendPQExpBufferStr(&catalog_query, " )\n");
+	}
+
+	/*
+	 * Execute the catalog query.  We use the default search_path for this
+	 * query for consistency with table lookups done elsewhere by the user.
+	 */
+	appendPQExpBufferStr(&catalog_query, " ORDER BY c.relpages DESC;");
+	executeCommand(conn, "RESET search_path;", echo);
+	res = executeQuery(conn, catalog_query.data, echo);
+	termPQExpBuffer(&catalog_query);
+	PQclear(executeQuery(conn, ALWAYS_SECURE_SEARCH_PATH_SQL, echo));
+
+	/*
+	 * Build qualified identifiers for each table, including the column list
+	 * if given.
+	 */
+	initPQExpBuffer(&buf);
+	for (int i = 0; i < PQntuples(res); i++)
+	{
+		appendPQExpBufferStr(&buf,
+							 fmtQualifiedIdEnc(PQgetvalue(res, i, 1),
+											   PQgetvalue(res, i, 0),
+											   PQclientEncoding(conn)));
+
+		if (objects_listed && !PQgetisnull(res, i, 2))
+			appendPQExpBufferStr(&buf, PQgetvalue(res, i, 2));
+
+		simple_string_list_append(found_objs, buf.data);
+		resetPQExpBuffer(&buf);
+	}
+	termPQExpBuffer(&buf);
+	PQclear(res);
+
+	return found_objs;
+}
+
+/*
  * Vacuum/analyze all connectable databases.
  *
  * In analyze-in-stages mode, we process all databases in one stage before
@@ -902,6 +1081,11 @@ vacuum_all_databases(ConnParams *cparams,
 
 	if (analyze_in_stages)
 	{
+		SimpleStringList **found_objs = NULL;
+
+		if (vacopts->missing_stats_only)
+			found_objs = palloc0(PQntuples(result) * sizeof(SimpleStringList *));
+
 		/*
 		 * When analyzing all databases in stages, we analyze them all in the
 		 * fastest stage first, so that initial statistics become available
@@ -919,6 +1103,7 @@ vacuum_all_databases(ConnParams *cparams,
 				vacuum_one_database(cparams, vacopts,
 									stage,
 									objects,
+									vacopts->missing_stats_only ? &found_objs[i] : NULL,
 									concurrentCons,
 									progname, echo, quiet);
 			}
@@ -932,7 +1117,7 @@ vacuum_all_databases(ConnParams *cparams,
 
 			vacuum_one_database(cparams, vacopts,
 								ANALYZE_NO_STAGE,
-								objects,
+								objects, NULL,
 								concurrentCons,
 								progname, echo, quiet);
 		}
@@ -1158,6 +1343,7 @@ help(const char *progname)
 	printf(_("  -j, --jobs=NUM                  use this many concurrent connections to vacuum\n"));
 	printf(_("      --min-mxid-age=MXID_AGE     minimum multixact ID age of tables to vacuum\n"));
 	printf(_("      --min-xid-age=XID_AGE       minimum transaction ID age of tables to vacuum\n"));
+	printf(_("      --missing-stats-only        only analyze relations with missing statistics\n"));
 	printf(_("      --no-index-cleanup          don't remove index entries that point to dead tuples\n"));
 	printf(_("      --no-process-main           skip the main relation\n"));
 	printf(_("      --no-process-toast          skip the TOAST table associated with the table to vacuum\n"));

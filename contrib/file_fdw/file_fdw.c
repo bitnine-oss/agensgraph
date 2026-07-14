@@ -3,7 +3,7 @@
  * file_fdw.c
  *		  foreign-data wrapper for server-side flat files (or programs).
  *
- * Copyright (c) 2010-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/file_fdw/file_fdw.c
@@ -22,9 +22,12 @@
 #include "catalog/pg_authid.h"
 #include "catalog/pg_foreign_table.h"
 #include "commands/copy.h"
+#include "commands/copyfrom_internal.h"
 #include "commands/defrem.h"
-#include "commands/explain.h"
+#include "commands/explain_format.h"
+#include "commands/explain_state.h"
 #include "commands/vacuum.h"
+#include "executor/executor.h"
 #include "foreign/fdwapi.h"
 #include "foreign/foreign.h"
 #include "miscadmin.h"
@@ -39,7 +42,10 @@
 #include "utils/sampling.h"
 #include "utils/varlena.h"
 
-PG_MODULE_MAGIC;
+PG_MODULE_MAGIC_EXT(
+					.name = "file_fdw",
+					.version = PG_VERSION
+);
 
 /*
  * Describes the valid options for objects that use this wrapper.
@@ -74,6 +80,9 @@ static const struct FileFdwOption valid_options[] = {
 	{"null", ForeignTableRelationId},
 	{"default", ForeignTableRelationId},
 	{"encoding", ForeignTableRelationId},
+	{"on_error", ForeignTableRelationId},
+	{"log_verbosity", ForeignTableRelationId},
+	{"reject_limit", ForeignTableRelationId},
 	{"force_not_null", AttributeRelationId},
 	{"force_null", AttributeRelationId},
 
@@ -527,7 +536,7 @@ fileGetForeignRelSize(PlannerInfo *root,
 				   &fdw_private->filename,
 				   &fdw_private->is_program,
 				   &fdw_private->options);
-	baserel->fdw_private = (void *) fdw_private;
+	baserel->fdw_private = fdw_private;
 
 	/* Estimate relation size */
 	estimate_size(root, baserel, fdw_private);
@@ -576,6 +585,7 @@ fileGetForeignPaths(PlannerInfo *root,
 			 create_foreignscan_path(root, baserel,
 									 NULL,	/* default pathtarget */
 									 baserel->rows,
+									 0,
 									 startup_cost,
 									 total_cost,
 									 NIL,	/* no pathkeys */
@@ -708,7 +718,7 @@ fileBeginForeignScan(ForeignScanState *node, int eflags)
 	festate->options = options;
 	festate->cstate = cstate;
 
-	node->fdw_state = (void *) festate;
+	node->fdw_state = festate;
 }
 
 /*
@@ -722,16 +732,30 @@ fileIterateForeignScan(ForeignScanState *node)
 	FileFdwExecutionState *festate = (FileFdwExecutionState *) node->fdw_state;
 	EState	   *estate = CreateExecutorState();
 	ExprContext *econtext;
-	MemoryContext oldcontext;
+	MemoryContext oldcontext = CurrentMemoryContext;
 	TupleTableSlot *slot = node->ss.ss_ScanTupleSlot;
-	bool		found;
+	CopyFromState cstate = festate->cstate;
 	ErrorContextCallback errcallback;
 
 	/* Set up callback to identify error line number. */
 	errcallback.callback = CopyFromErrorCallback;
-	errcallback.arg = (void *) festate->cstate;
+	errcallback.arg = cstate;
 	errcallback.previous = error_context_stack;
 	error_context_stack = &errcallback;
+
+	/*
+	 * We pass ExprContext because there might be a use of the DEFAULT option
+	 * in COPY FROM, so we may need to evaluate default expressions.
+	 */
+	econtext = GetPerTupleExprContext(estate);
+
+retry:
+
+	/*
+	 * DEFAULT expressions need to be evaluated in a per-tuple context, so
+	 * switch in case we are doing that.
+	 */
+	MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 	/*
 	 * The protocol for loading a virtual tuple into a slot is first
@@ -739,21 +763,50 @@ fileIterateForeignScan(ForeignScanState *node)
 	 * ExecStoreVirtualTuple.  If we don't find another row in the file, we
 	 * just skip the last step, leaving the slot empty as required.
 	 *
-	 * We pass ExprContext because there might be a use of the DEFAULT option
-	 * in COPY FROM, so we may need to evaluate default expressions.
 	 */
 	ExecClearTuple(slot);
-	econtext = GetPerTupleExprContext(estate);
 
-	/*
-	 * DEFAULT expressions need to be evaluated in a per-tuple context, so
-	 * switch in case we are doing that.
-	 */
-	oldcontext = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-	found = NextCopyFrom(festate->cstate, econtext,
-						 slot->tts_values, slot->tts_isnull);
-	if (found)
+	if (NextCopyFrom(cstate, econtext, slot->tts_values, slot->tts_isnull))
+	{
+		if (cstate->opts.on_error == COPY_ON_ERROR_IGNORE &&
+			cstate->escontext->error_occurred)
+		{
+			/*
+			 * Soft error occurred, skip this tuple and just make
+			 * ErrorSaveContext ready for the next NextCopyFrom. Since we
+			 * don't set details_wanted and error_data is not to be filled,
+			 * just resetting error_occurred is enough.
+			 */
+			cstate->escontext->error_occurred = false;
+
+			/* Switch back to original memory context */
+			MemoryContextSwitchTo(oldcontext);
+
+			/*
+			 * Make sure we are interruptible while repeatedly calling
+			 * NextCopyFrom() until no soft error occurs.
+			 */
+			CHECK_FOR_INTERRUPTS();
+
+			/*
+			 * Reset the per-tuple exprcontext, to clean-up after expression
+			 * evaluations etc.
+			 */
+			ResetPerTupleExprContext(estate);
+
+			if (cstate->opts.reject_limit > 0 &&
+				cstate->num_errors > cstate->opts.reject_limit)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+						 errmsg("skipped more than REJECT_LIMIT (%" PRId64 ") rows due to data type incompatibility",
+								cstate->opts.reject_limit)));
+
+			/* Repeat NextCopyFrom() until no soft error occurs */
+			goto retry;
+		}
+
 		ExecStoreVirtualTuple(slot);
+	}
 
 	/* Switch back to original memory context */
 	MemoryContextSwitchTo(oldcontext);
@@ -795,8 +848,19 @@ fileEndForeignScan(ForeignScanState *node)
 	FileFdwExecutionState *festate = (FileFdwExecutionState *) node->fdw_state;
 
 	/* if festate is NULL, we are in EXPLAIN; nothing to do */
-	if (festate)
-		EndCopyFrom(festate->cstate);
+	if (!festate)
+		return;
+
+	if (festate->cstate->opts.on_error == COPY_ON_ERROR_IGNORE &&
+		festate->cstate->num_errors > 0 &&
+		festate->cstate->opts.log_verbosity >= COPY_LOG_VERBOSITY_DEFAULT)
+		ereport(NOTICE,
+				errmsg_plural("%" PRIu64 " row was skipped due to data type incompatibility",
+							  "%" PRIu64 " rows were skipped due to data type incompatibility",
+							  festate->cstate->num_errors,
+							  festate->cstate->num_errors));
+
+	EndCopyFrom(festate->cstate);
 }
 
 /*
@@ -1112,7 +1176,8 @@ estimate_costs(PlannerInfo *root, RelOptInfo *baserel,
  * which must have at least targrows entries.
  * The actual number of rows selected is returned as the function result.
  * We also count the total number of rows in the file and return it into
- * *totalrows.  Note that *totaldeadrows is always set to 0.
+ * *totalrows.  Rows skipped due to on_error = 'ignore' are not included
+ * in this count.  Note that *totaldeadrows is always set to 0.
  *
  * Note that the returned list of rows is not always in order by physical
  * position in the file.  Therefore, correlation estimates derived later
@@ -1168,7 +1233,7 @@ file_acquire_sample_rows(Relation onerel, int elevel,
 
 	/* Set up callback to identify error line number. */
 	errcallback.callback = CopyFromErrorCallback;
-	errcallback.arg = (void *) cstate;
+	errcallback.arg = cstate;
 	errcallback.previous = error_context_stack;
 	error_context_stack = &errcallback;
 
@@ -1177,7 +1242,7 @@ file_acquire_sample_rows(Relation onerel, int elevel,
 	for (;;)
 	{
 		/* Check for user-requested abort or sleep */
-		vacuum_delay_point();
+		vacuum_delay_point(true);
 
 		/* Fetch next row */
 		MemoryContextReset(tupcontext);
@@ -1189,6 +1254,21 @@ file_acquire_sample_rows(Relation onerel, int elevel,
 
 		if (!found)
 			break;
+
+		if (cstate->opts.on_error == COPY_ON_ERROR_IGNORE &&
+			cstate->escontext->error_occurred)
+		{
+			/*
+			 * Soft error occurred, skip this tuple and just make
+			 * ErrorSaveContext ready for the next NextCopyFrom. Since we
+			 * don't set details_wanted and error_data is not to be filled,
+			 * just resetting error_occurred is enough.
+			 */
+			cstate->escontext->error_occurred = false;
+
+			/* Repeat NextCopyFrom() until no soft error occurs */
+			continue;
+		}
 
 		/*
 		 * The first targrows sample rows are simply copied into the
@@ -1234,6 +1314,15 @@ file_acquire_sample_rows(Relation onerel, int elevel,
 
 	/* Clean up. */
 	MemoryContextDelete(tupcontext);
+
+	if (cstate->opts.on_error == COPY_ON_ERROR_IGNORE &&
+		cstate->num_errors > 0 &&
+		cstate->opts.log_verbosity >= COPY_LOG_VERBOSITY_DEFAULT)
+		ereport(NOTICE,
+				errmsg_plural("%" PRIu64 " row was skipped due to data type incompatibility",
+							  "%" PRIu64 " rows were skipped due to data type incompatibility",
+							  cstate->num_errors,
+							  cstate->num_errors));
 
 	EndCopyFrom(cstate);
 

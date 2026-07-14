@@ -16,7 +16,10 @@ PostgreSQL documentation
 
  <refnamediv>
   <refname>pg_dumpall</refname>
-  <refpurpose>extract a <productname>PostgreSQL</productname> database cluster into a script file</refpurpose>
+
+  <refpurpose>
+   export a <productname>PostgreSQL</productname> database cluster as an SQL script or to other formats
+  </refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
@@ -33,7 +36,7 @@ PostgreSQL documentation
   <para>
    <application>pg_dumpall</application> is a utility for writing out
    (<quote>dumping</quote>) all <productname>PostgreSQL</productname> databases
-   of a cluster into one script file.  The script file contains
+   of a cluster into an SQL script file or an archive.  The output contains
    <acronym>SQL</acronym> commands that can be used as input to <xref
    linkend="app-psql"/> to restore the databases.  It does this by
    calling <xref linkend="app-pgdump"/> for each database in the cluster.
@@ -52,9 +55,14 @@ PostgreSQL documentation
   </para>
 
   <para>
-   The SQL script will be written to the standard output.  Use the
+   Plain text SQL scripts will be written to the standard output.  Use the
    <option>-f</option>/<option>--file</option> option or shell operators to
    redirect it into a file.
+  </para>
+
+  <para>
+   Archives in other formats will be placed in a directory named using the
+   <option>-f</option>/<option>--file</option>, which is required in this case.
   </para>
 
   <para>
@@ -81,7 +89,7 @@ PostgreSQL documentation
       <term><option>--data-only</option></term>
       <listitem>
        <para>
-        Dump only the data, not the schema (data definitions).
+        Dump only the data, not the schema (data definitions) or statistics.
        </para>
       </listitem>
      </varlistentry>
@@ -121,38 +129,82 @@ PostgreSQL documentation
        <para>
         Send output to the specified file.  If this is omitted, the
         standard output is used.
+        Note: This option can only be omitted when <option>--format</option> is plain
        </para>
       </listitem>
      </varlistentry>
 
      <varlistentry>
-      <term><option>--filter=<replaceable class="parameter">filename</replaceable></option></term>
+      <term><option>-F <replaceable class="parameter">format</replaceable></option></term>
+      <term><option>--format=<replaceable class="parameter">format</replaceable></option></term>
       <listitem>
        <para>
-        Specify a filename from which to read patterns for databases excluded
-        from the dump. The patterns are interpreted according to the same rules
-        as <option>--exclude-database</option>.
-        To read from <literal>STDIN</literal>, use <filename>-</filename> as the
-        filename.  The <option>--filter</option> option can be specified in
-        conjunction with <option>--exclude-database</option> for excluding
-        databases, and can also be specified more than once for multiple filter
-        files.
-       </para>
+        Specify the format of dump files.  In plain format, all the dump data is
+        sent in a single text stream. This is the default.
 
-       <para>
-        The file lists one database pattern per row, with the following format:
-<synopsis>
-exclude database <replaceable class="parameter">PATTERN</replaceable>
-</synopsis>
-       </para>
+        In all other modes, <application>pg_dumpall</application> first creates two files:
+        <filename>global.dat</filename> and <filename>map.dat</filename>, in the directory
+        specified by <option>--file</option>.
+        The first file contains global data, such as roles and tablespaces. The second
+        contains a mapping between database oids and names. These files are used by
+        <application>pg_restore</application>. Data for individual databases is placed in
+        <filename>databases</filename> subdirectory, named using the database's <type>oid</type>.
 
-       <para>
-        Lines starting with <literal>#</literal> are considered comments and
-        ignored. Comments can be placed after an object pattern row as well.
-        Blank lines are also ignored. See <xref linkend="app-psql-patterns"/>
-        for how to perform quoting in patterns.
-       </para>
+       <variablelist>
+        <varlistentry>
+         <term><literal>d</literal></term>
+         <term><literal>directory</literal></term>
+         <listitem>
+          <para>
+           Output directory-format archives for each database,
+           suitable for input into pg_restore. The directory
+           will have database <type>oid</type> as its name.
+          </para>
+         </listitem>
+        </varlistentry>
 
+        <varlistentry>
+         <term><literal>p</literal></term>
+         <term><literal>plain</literal></term>
+         <listitem>
+          <para>
+           Output a plain-text SQL script file (the default).
+          </para>
+         </listitem>
+        </varlistentry>
+
+        <varlistentry>
+         <term><literal>c</literal></term>
+         <term><literal>custom</literal></term>
+         <listitem>
+          <para>
+           Output a custom-format archive for each database,
+           suitable for input into pg_restore. The archive
+           will be named <filename>dboid.dmp</filename> where <type>dboid</type> is the
+           <type>oid</type> of the database.
+          </para>
+         </listitem>
+        </varlistentry>
+
+         <varlistentry>
+         <term><literal>t</literal></term>
+         <term><literal>tar</literal></term>
+         <listitem>
+          <para>
+           Output a tar-format archive for each database,
+           suitable for input into pg_restore. The archive
+           will be named <filename>dboid.tar</filename> where <type>dboid</type> is the
+           <type>oid</type> of the database.
+          </para>
+         </listitem>
+        </varlistentry>
+
+        </variablelist>
+
+       Note: see <xref linkend="app-pgdump"/> for details
+       of how the various non plain text archives work.
+
+        </para>
       </listitem>
      </varlistentry>
 
@@ -307,7 +359,7 @@ exclude database <replaceable class="parameter">PATTERN</replaceable>
       <term><option>--disable-triggers</option></term>
       <listitem>
        <para>
-        This option is relevant only when creating a data-only dump.
+        This option is relevant only when creating a dump with data and without schema.
         It instructs <application>pg_dumpall</application> to include commands
         to temporarily disable triggers on the target tables while
         the data is restored.  Use this if you have referential
@@ -351,6 +403,37 @@ exclude database <replaceable class="parameter">PATTERN</replaceable>
         floating-point data, instead of the maximum available precision.
         Routine dumps made for backup purposes should not use this option.
        </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--filter=<replaceable class="parameter">filename</replaceable></option></term>
+      <listitem>
+       <para>
+        Specify a filename from which to read patterns for databases excluded
+        from the dump. The patterns are interpreted according to the same rules
+        as <option>--exclude-database</option>.
+        To read from <literal>STDIN</literal>, use <filename>-</filename> as the
+        filename.  The <option>--filter</option> option can be specified in
+        conjunction with <option>--exclude-database</option> for excluding
+        databases, and can also be specified more than once for multiple filter
+        files.
+       </para>
+
+       <para>
+        The file lists one database pattern per row, with the following format:
+<synopsis>
+exclude database <replaceable class="parameter">PATTERN</replaceable>
+</synopsis>
+       </para>
+
+       <para>
+        Lines starting with <literal>#</literal> are considered comments and
+        ignored. Comments can be placed after an object pattern row as well.
+        Blank lines are also ignored. See <xref linkend="app-psql-patterns"/>
+        for how to perform quoting in patterns.
+       </para>
+
       </listitem>
      </varlistentry>
 
@@ -417,7 +500,25 @@ exclude database <replaceable class="parameter">PATTERN</replaceable>
       <term><option>--no-comments</option></term>
       <listitem>
        <para>
-        Do not dump comments.
+        Do not dump <command>COMMENT</command> commands.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--no-data</option></term>
+      <listitem>
+       <para>
+        Do not dump data.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--no-policies</option></term>
+      <listitem>
+       <para>
+        Do not dump row security policies.
        </para>
       </listitem>
      </varlistentry>
@@ -448,10 +549,28 @@ exclude database <replaceable class="parameter">PATTERN</replaceable>
      </varlistentry>
 
      <varlistentry>
+      <term><option>--no-schema</option></term>
+      <listitem>
+       <para>
+        Do not dump schema (data definitions).
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>--no-security-labels</option></term>
       <listitem>
        <para>
         Do not dump security labels.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--no-statistics</option></term>
+      <listitem>
+       <para>
+        Do not dump statistics. This is the default.
        </para>
       </listitem>
      </varlistentry>
@@ -570,6 +689,28 @@ exclude database <replaceable class="parameter">PATTERN</replaceable>
      </varlistentry>
 
      <varlistentry>
+      <term><option>--statistics-only</option></term>
+      <listitem>
+       <para>
+        Dump only the statistics, not the schema (data definitions) or data.
+        Statistics for tables, materialized views, foreign tables,
+        and indexes are dumped.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--sequence-data</option></term>
+      <listitem>
+       <para>
+        Include sequence data in the dump.  This is the default behavior except
+        when <option>--no-data</option>, <option>--schema-only</option>, or
+        <option>--statistics-only</option> is specified.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>--use-set-session-authorization</option></term>
       <listitem>
        <para>
@@ -578,6 +719,33 @@ exclude database <replaceable class="parameter">PATTERN</replaceable>
         ownership.  This makes the dump more standards compatible, but
         depending on the history of the objects in the dump, might not restore
         properly.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--with-data</option></term>
+      <listitem>
+       <para>
+        Dump data. This is the default.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--with-schema</option></term>
+      <listitem>
+       <para>
+        Dump schema (data definitions). This is the default.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--with-statistics</option></term>
+      <listitem>
+       <para>
+        Dump statistics.
        </para>
       </listitem>
      </varlistentry>
@@ -793,10 +961,14 @@ exclude database <replaceable class="parameter">PATTERN</replaceable>
   </para>
 
   <para>
-   Once restored, it is wise to run <command>ANALYZE</command> on each
-   database so the optimizer has useful statistics. You
-   can also run <command>vacuumdb -a -z</command> to analyze all
-   databases.
+   If <option>--with-statistics</option> is specified,
+   <command>pg_dumpall</command> will include most optimizer statistics in the
+   resulting dump file.  However, some statistics may not be included, such as
+   those created explicitly with <xref linkend="sql-createstatistics"/> or
+   custom statistics added by an extension.  Therefore, it may be useful to
+   run <command>ANALYZE</command> on each database after restoring from a dump
+   file to ensure optimal performance.  You can also run <command>vacuumdb -a
+   -z</command> to analyze all databases.
   </para>
 
   <para>
@@ -817,6 +989,17 @@ exclude database <replaceable class="parameter">PATTERN</replaceable>
    database creation will fail for databases in non-default
    locations.
   </para>
+
+  <para>
+   It is generally recommended to use the <option>-X</option>
+   (<option>--no-psqlrc</option>) option when restoring a database from a
+   <application>pg_dumpall</application> script to ensure a clean restore
+   process and prevent potential conflicts with non-default
+   <application>psql</application> configurations. Additionally, because
+   the <application>pg_dumpall</application> script may
+   include <application>psql</application> meta-commands, it may be
+   incompatible with clients other than <application>psql</application>.
+  </para>
  </refsect1>
 
 
@@ -833,9 +1016,9 @@ exclude database <replaceable class="parameter">PATTERN</replaceable>
   <para>
    To restore database(s) from this file, you can use:
 <screen>
-<prompt>$</prompt> <userinput>psql -f db.out postgres</userinput>
+<prompt>$</prompt> <userinput>psql -X -f db.out -d postgres</userinput>
 </screen>
-   It is not important to which database you connect here since the
+   It is not important which database you connect to here since the
    script file created by <application>pg_dumpall</application> will
    contain the appropriate commands to create and connect to the saved
    databases.  An exception is that if you specified <option>--clean</option>,

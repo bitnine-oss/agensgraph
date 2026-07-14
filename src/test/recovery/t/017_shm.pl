@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 #
 # Tests of pg_shmem.h functions
@@ -29,11 +29,11 @@ my $tempdir = PostgreSQL::Test::Utils::tempdir;
 
 # Log "ipcs" diffs on a best-effort basis, swallowing any error.
 my $ipcs_before = "$tempdir/ipcs_before";
-eval { run_log [ 'ipcs', '-am' ], '>', $ipcs_before; };
+eval { run_log [ 'ipcs', '-am' ], '>' => $ipcs_before; };
 
 sub log_ipcs
 {
-	eval { run_log [ 'ipcs', '-am' ], '|', [ 'diff', $ipcs_before, '-' ] };
+	eval { run_log [ 'ipcs', '-am' ], '|' => [ 'diff', $ipcs_before, '-' ] };
 	return;
 }
 
@@ -122,15 +122,13 @@ my $slow_query = 'SELECT wait_pid(pg_backend_pid())';
 my ($stdout, $stderr);
 my $slow_client = IPC::Run::start(
 	[
-		'psql', '-X', '-qAt', '-d', $gnat->connstr('postgres'),
-		'-c', $slow_query
+		'psql', '--no-psqlrc', '--quiet', '--no-align', '--tuples-only',
+		'--dbname' => $gnat->connstr('postgres'),
+		'--command' => $slow_query
 	],
-	'<',
-	\undef,
-	'>',
-	\$stdout,
-	'2>',
-	\$stderr,
+	'<' => \undef,
+	'>' => \$stdout,
+	'2>' => \$stderr,
 	IPC::Run::timeout(5 * $PostgreSQL::Test::Utils::timeout_default));
 ok( $gnat->poll_query_until(
 		'postgres',
@@ -160,13 +158,13 @@ my $pre_existing_msg = qr/pre-existing shared memory block/;
 like(slurp_file($gnat->logfile),
 	$pre_existing_msg, 'detected live backend via shared memory');
 # Reject single-user startup.
-my $single_stderr;
-ok( !run_log(
-		[ 'postgres', '--single', '-D', $gnat->data_dir, 'template1' ],
-		'<', \undef, '2>', \$single_stderr),
-	'live query blocks --single');
-print STDERR $single_stderr;
-like($single_stderr, $pre_existing_msg,
+command_fails_like(
+	[
+		'postgres', '--single',
+		'-D' => $gnat->data_dir,
+		'template1'
+	],
+	$pre_existing_msg,
 	'single-user mode detected live backend via shared memory');
 log_ipcs();
 

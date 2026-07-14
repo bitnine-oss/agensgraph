@@ -4,7 +4,7 @@
  *		Definitions of the request/response codes for the wire protocol.
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/libpq/protocol.h
@@ -63,6 +63,10 @@
 
 #define PqMsg_CopyDone				'c'
 #define PqMsg_CopyData				'd'
+
+
+/* These are the codes sent by parallel workers to leader processes. */
+#define PqMsg_Progress              'P'
 
 
 /* These are the authentication request codes sent by the backend. */

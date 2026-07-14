@@ -3,7 +3,7 @@
  * lockfuncs.c
  *		Functions for SQL access to various lock-manager capabilities.
  *
- * Copyright (c) 2002-2024, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/backend/utils/adt/lockfuncs.c
@@ -153,7 +153,7 @@ pg_lock_status(PG_FUNCTION_ARGS)
 		 * out as a result set.
 		 */
 		mystatus = (PG_Lock_Status *) palloc(sizeof(PG_Lock_Status));
-		funcctx->user_fctx = (void *) mystatus;
+		funcctx->user_fctx = mystatus;
 
 		mystatus->lockData = GetLockStatusData();
 		mystatus->currIdx = 0;

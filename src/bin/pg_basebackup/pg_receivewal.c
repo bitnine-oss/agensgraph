@@ -5,7 +5,7 @@
  *
  * Author: Magnus Hagander <magnus@hagander.net>
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/pg_receivewal.c
@@ -342,7 +342,7 @@ FindStreamingStart(uint32 *tli)
 			if (lseek(fd, (off_t) (-4), SEEK_END) < 0)
 				pg_fatal("could not seek in compressed file \"%s\": %m",
 						 fullpath);
-			r = read(fd, (char *) buf, sizeof(buf));
+			r = read(fd, buf, sizeof(buf));
 			if (r != sizeof(buf))
 			{
 				if (r < 0)
@@ -889,7 +889,7 @@ main(int argc, char **argv)
 			pg_log_info("creating replication slot \"%s\"", replication_slot);
 
 		if (!CreateReplicationSlot(conn, replication_slot, NULL, false, true, false,
-								   slot_exists_ok, false))
+								   slot_exists_ok, false, false))
 			exit(1);
 		exit(0);
 	}

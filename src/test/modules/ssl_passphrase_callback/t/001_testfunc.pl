@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 use strict;
 use warnings FATAL => 'all';
@@ -15,7 +15,6 @@ unless (($ENV{with_ssl} || "") eq 'openssl')
 	plan skip_all => 'OpenSSL not supported by this build';
 }
 
-my $clearpass = "FooBaR1";
 my $rot13pass = "SbbOnE1";
 
 # see the Makefile for how the certificate and key have been generated
@@ -63,9 +62,11 @@ like(
 $node->append_conf('postgresql.conf', "ssl_passphrase.passphrase = 'blurfl'");
 
 # try to start the server again
-my $ret =
-  PostgreSQL::Test::Utils::system_log('pg_ctl', '-D', $node->data_dir, '-l',
-	$node->logfile, 'start');
+my $ret = PostgreSQL::Test::Utils::system_log(
+	'pg_ctl',
+	'--pgdata' => $node->data_dir,
+	'--log' => $node->logfile,
+	'start');
 
 
 # with a bad passphrase the server should not start

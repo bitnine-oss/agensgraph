@@ -201,8 +201,8 @@ ROLLBACK;
       query processing.
       The number of blocks shown for an
       upper-level node includes those used by all its child nodes.  In text
-      format, only non-zero values are printed.  This parameter defaults to
-      <literal>FALSE</literal>.
+      format, only non-zero values are printed.  Buffers information is
+      automatically included when <literal>ANALYZE</literal> is used.
      </para>
     </listitem>
    </varlistentry>
@@ -240,8 +240,9 @@ ROLLBACK;
     <listitem>
      <para>
       Include information on WAL record generation. Specifically, include the
-      number of records, number of full page images (fpi) and the amount of WAL
-      generated in bytes. In text format, only non-zero values are printed.
+      number of records, number of full page images (fpi), the amount of WAL
+      generated in bytes and the number of times the WAL buffers became full.
+      In text format, only non-zero values are printed.
       This parameter may only be used when <literal>ANALYZE</literal> is also
       enabled.  It defaults to <literal>FALSE</literal>.
      </para>
@@ -497,14 +498,17 @@ EXPLAIN ANALYZE EXECUTE query(100, 200);
 
                                                        QUERY PLAN
 -------------------------------------------------------------------&zwsp;------------------------------------------------------
- HashAggregate  (cost=10.77..10.87 rows=10 width=12) (actual time=0.043..0.044 rows=10 loops=1)
+ HashAggregate  (cost=10.77..10.87 rows=10 width=12) (actual time=0.043..0.044 rows=10.00 loops=1)
    Group Key: foo
    Batches: 1  Memory Usage: 24kB
-   -&gt;  Index Scan using test_pkey on test  (cost=0.29..10.27 rows=99 width=8) (actual time=0.009..0.025 rows=99 loops=1)
+   Buffers: shared hit=4
+   -&gt;  Index Scan using test_pkey on test  (cost=0.29..10.27 rows=99 width=8) (actual time=0.009..0.025 rows=99.00 loops=1)
          Index Cond: ((id &gt; 100) AND (id &lt; 200))
+         Index Searches: 1
+         Buffers: shared hit=4
  Planning Time: 0.244 ms
  Execution Time: 0.073 ms
-(7 rows)
+(10 rows)
 </programlisting>
   </para>
 

@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2024, PostgreSQL Global Development Group
+# Copyright (c) 2021-2025, PostgreSQL Global Development Group
 
 # Testing of logical decoding using SQL interface and/or pg_recvlogical
 #
@@ -149,8 +149,11 @@ SKIP:
 
 	my $pg_recvlogical = IPC::Run::start(
 		[
-			'pg_recvlogical', '-d', $node_primary->connstr('otherdb'),
-			'-S', 'otherdb_slot', '-f', '-', '--start'
+			'pg_recvlogical',
+			'--dbname' => $node_primary->connstr('otherdb'),
+			'--slot' => 'otherdb_slot',
+			'--file' => '-',
+			'--start'
 		]);
 	$node_primary->poll_query_until('otherdb',
 		"SELECT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = 'otherdb_slot' AND active_pid IS NOT NULL)"
@@ -158,8 +161,8 @@ SKIP:
 	is($node_primary->psql('postgres', 'DROP DATABASE otherdb'),
 		3, 'dropping a DB with active logical slots fails');
 	$pg_recvlogical->kill_kill;
-	is($node_primary->slot('otherdb_slot')->{'slot_name'},
-		undef, 'logical slot still exists');
+	is($node_primary->slot('otherdb_slot')->{'plugin'},
+		'test_decoding', 'logical slot still exists');
 }
 
 $node_primary->poll_query_until('otherdb',
@@ -168,8 +171,8 @@ $node_primary->poll_query_until('otherdb',
 
 is($node_primary->psql('postgres', 'DROP DATABASE otherdb'),
 	0, 'dropping a DB with inactive logical slots succeeds');
-is($node_primary->slot('otherdb_slot')->{'slot_name'},
-	undef, 'logical slot was actually dropped with DB');
+is($node_primary->slot('otherdb_slot')->{'plugin'},
+	'', 'logical slot was actually dropped with DB');
 
 # Test logical slot advancing and its durability.
 # Passing failover=true (last arg) should not have any impact on advancing.

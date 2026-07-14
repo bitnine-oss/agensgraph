@@ -4,7 +4,7 @@
  *	  definition of the "range type" system catalog (pg_range)
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_range.h
@@ -19,7 +19,7 @@
 #define PG_RANGE_H
 
 #include "catalog/genbki.h"
-#include "catalog/pg_range_d.h"
+#include "catalog/pg_range_d.h" /* IWYU pragma: export */
 
 /* ----------------
  *		pg_range definition.  cpp turns this into

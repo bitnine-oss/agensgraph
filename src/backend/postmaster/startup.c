@@ -9,7 +9,7 @@
  * though.)
  *
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -38,7 +38,7 @@
 #ifndef USE_POSTMASTER_DEATH_SIGNAL
 /*
  * On systems that need to make a system call to find out if the postmaster has
- * gone away, we'll do so only every Nth call to HandleStartupProcInterrupts().
+ * gone away, we'll do so only every Nth call to ProcessStartupProcInterrupts().
  * This only affects how long it takes us to detect the condition while we're
  * busy replaying WAL.  Latch waits and similar which should react immediately
  * through the usual techniques.
@@ -149,9 +149,9 @@ StartupRereadConfig(void)
 		StartupRequestWalReceiverRestart();
 }
 
-/* Handle various signals that might be sent to the startup process */
+/* Process various signals that might be sent to the startup process */
 void
-HandleStartupProcInterrupts(void)
+ProcessStartupProcInterrupts(void)
 {
 #ifdef POSTMASTER_POLL_RATE_LIMIT
 	static uint32 postmaster_poll_count = 0;
@@ -213,7 +213,7 @@ StartupProcExit(int code, Datum arg)
  * ----------------------------------
  */
 void
-StartupProcessMain(char *startup_data, size_t startup_data_len)
+StartupProcessMain(const void *startup_data, size_t startup_data_len)
 {
 	Assert(startup_data_len == 0);
 

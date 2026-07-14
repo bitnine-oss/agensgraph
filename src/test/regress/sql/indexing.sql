@@ -592,7 +592,7 @@ create table idxpart2 partition of idxpart for values from (0) to (1000) partiti
 create table idxpart21 partition of idxpart2 for values from (0) to (1000);
 select conname, contype, conrelid::regclass, conindid::regclass, conkey
   from pg_constraint where conrelid::regclass::text like 'idxpart%'
-  order by conname;
+  order by conrelid::regclass::text, conname;
 drop table idxpart;
 
 -- If a partitioned table has a unique/PK constraint, then it's not possible
@@ -671,7 +671,6 @@ alter table only idxpart add primary key (a);  -- fail, no not-null constraint
 alter table idxpart0 alter column a set not null;
 alter table only idxpart add primary key (a);  -- now it works
 alter index idxpart_pkey attach partition idxpart0_a_key;
-alter table idxpart0 alter column a drop not null;  -- fail, pkey needs it
 drop table idxpart;
 
 -- if a partition has a unique index without a constraint, does not attach
@@ -919,3 +918,19 @@ select indexrelid::regclass, indisvalid, indisreplident,
   where indexrelid::regclass::text like 'parted_replica%'
   order by indexrelid::regclass::text collate "C";
 drop table parted_replica_tab;
+
+-- test that indexing commands work with TOASTed values in pg_index
+create table test_pg_index_toast_table (a int);
+create or replace function test_pg_index_toast_func (a int, b int[])
+  returns bool as $$ select true $$ language sql immutable;
+select array_agg(n) b from generate_series(1, 10000) n \gset
+create index concurrently test_pg_index_toast_index
+  on test_pg_index_toast_table (test_pg_index_toast_func(a, :'b'));
+reindex index concurrently test_pg_index_toast_index;
+drop index concurrently test_pg_index_toast_index;
+create index test_pg_index_toast_index
+  on test_pg_index_toast_table (test_pg_index_toast_func(a, :'b'));
+reindex index test_pg_index_toast_index;
+drop index test_pg_index_toast_index;
+drop function test_pg_index_toast_func;
+drop table test_pg_index_toast_table;

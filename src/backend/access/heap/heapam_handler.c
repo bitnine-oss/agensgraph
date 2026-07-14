@@ -3,7 +3,7 @@
  * heapam_handler.c
  *	  heap table access method code
  *
- * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -56,7 +56,9 @@ static bool SampleHeapTupleVisible(TableScanDesc scan, Buffer buffer,
 
 static BlockNumber heapam_scan_get_blocks_done(HeapScanDesc hscan);
 
-static const TableAmRoutine heapam_methods;
+static bool BitmapHeapScanNextBlock(TableScanDesc scan,
+									bool *recheck,
+									uint64 *lossy_pages, uint64 *exact_pages);
 
 
 /* ------------------------------------------------------------------------
@@ -457,12 +459,12 @@ tuple_lock_retry:
 												  XLTW_FetchUpdated);
 								break;
 							case LockWaitSkip:
-								if (!ConditionalXactLockTableWait(SnapshotDirty.xmax))
+								if (!ConditionalXactLockTableWait(SnapshotDirty.xmax, false))
 									/* skip instead of waiting */
 									return TM_WouldBlock;
 								break;
 							case LockWaitError:
-								if (!ConditionalXactLockTableWait(SnapshotDirty.xmax))
+								if (!ConditionalXactLockTableWait(SnapshotDirty.xmax, log_lock_failures))
 									ereport(ERROR,
 											(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
 											 errmsg("could not obtain lock on row in relation \"%s\"",
@@ -607,14 +609,11 @@ heapam_relation_set_new_filelocator(Relation rel,
 
 	/*
 	 * If required, set up an init fork for an unlogged table so that it can
-	 * be correctly reinitialized on restart.  Recovery may remove it while
-	 * replaying, for example, an XLOG_DBASE_CREATE* or XLOG_TBLSPC_CREATE
-	 * record.  Therefore, logging is necessary even if wal_level=minimal.
+	 * be correctly reinitialized on restart.
 	 */
 	if (persistence == RELPERSISTENCE_UNLOGGED)
 	{
 		Assert(rel->rd_rel->relkind == RELKIND_RELATION ||
-			   rel->rd_rel->relkind == RELKIND_MATVIEW ||
 			   rel->rd_rel->relkind == RELKIND_TOASTVALUE);
 		smgrcreate(srel, INIT_FORKNUM, false);
 		log_smgrcreate(newrlocator, INIT_FORKNUM);
@@ -754,7 +753,7 @@ heapam_relation_copy_for_cluster(Relation OldHeap, Relation NewHeap,
 
 		tableScan = NULL;
 		heapScan = NULL;
-		indexScan = index_beginscan(OldHeap, OldIndex, SnapshotAny, 0, 0);
+		indexScan = index_beginscan(OldHeap, OldIndex, SnapshotAny, NULL, 0, 0);
 		index_rescan(indexScan, NULL, 0, NULL, 0);
 	}
 	else
@@ -2052,6 +2051,8 @@ heapam_relation_needs_toast_table(Relation rel)
 
 		if (att->attisdropped)
 			continue;
+		if (att->attgenerated == ATTRIBUTE_GENERATED_VIRTUAL)
+			continue;
 		data_length = att_align_nominal(data_length, att->attalign);
 		if (att->attlen > 0)
 		{
@@ -2119,163 +2120,30 @@ heapam_estimate_rel_size(Relation rel, int32 *attr_widths,
  */
 
 static bool
-heapam_scan_bitmap_next_block(TableScanDesc scan,
-							  TBMIterateResult *tbmres)
-{
-	HeapScanDesc hscan = (HeapScanDesc) scan;
-	BlockNumber block = tbmres->blockno;
-	Buffer		buffer;
-	Snapshot	snapshot;
-	int			ntup;
-
-	hscan->rs_cindex = 0;
-	hscan->rs_ntuples = 0;
-
-	/*
-	 * We can skip fetching the heap page if we don't need any fields from the
-	 * heap, the bitmap entries don't need rechecking, and all tuples on the
-	 * page are visible to our transaction.
-	 */
-	if (!(scan->rs_flags & SO_NEED_TUPLES) &&
-		!tbmres->recheck &&
-		VM_ALL_VISIBLE(scan->rs_rd, tbmres->blockno, &hscan->rs_vmbuffer))
-	{
-		/* can't be lossy in the skip_fetch case */
-		Assert(tbmres->ntuples >= 0);
-		Assert(hscan->rs_empty_tuples_pending >= 0);
-
-		hscan->rs_empty_tuples_pending += tbmres->ntuples;
-
-		return true;
-	}
-
-	/*
-	 * Ignore any claimed entries past what we think is the end of the
-	 * relation. It may have been extended after the start of our scan (we
-	 * only hold an AccessShareLock, and it could be inserts from this
-	 * backend).  We don't take this optimization in SERIALIZABLE isolation
-	 * though, as we need to examine all invisible tuples reachable by the
-	 * index.
-	 */
-	if (!IsolationIsSerializable() && block >= hscan->rs_nblocks)
-		return false;
-
-	/*
-	 * Acquire pin on the target heap page, trading in any pin we held before.
-	 */
-	hscan->rs_cbuf = ReleaseAndReadBuffer(hscan->rs_cbuf,
-										  scan->rs_rd,
-										  block);
-	hscan->rs_cblock = block;
-	buffer = hscan->rs_cbuf;
-	snapshot = scan->rs_snapshot;
-
-	ntup = 0;
-
-	/*
-	 * Prune and repair fragmentation for the whole page, if possible.
-	 */
-	heap_page_prune_opt(scan->rs_rd, buffer);
-
-	/*
-	 * We must hold share lock on the buffer content while examining tuple
-	 * visibility.  Afterwards, however, the tuples we have found to be
-	 * visible are guaranteed good as long as we hold the buffer pin.
-	 */
-	LockBuffer(buffer, BUFFER_LOCK_SHARE);
-
-	/*
-	 * We need two separate strategies for lossy and non-lossy cases.
-	 */
-	if (tbmres->ntuples >= 0)
-	{
-		/*
-		 * Bitmap is non-lossy, so we just look through the offsets listed in
-		 * tbmres; but we have to follow any HOT chain starting at each such
-		 * offset.
-		 */
-		int			curslot;
-
-		for (curslot = 0; curslot < tbmres->ntuples; curslot++)
-		{
-			OffsetNumber offnum = tbmres->offsets[curslot];
-			ItemPointerData tid;
-			HeapTupleData heapTuple;
-
-			ItemPointerSet(&tid, block, offnum);
-			if (heap_hot_search_buffer(&tid, scan->rs_rd, buffer, snapshot,
-									   &heapTuple, NULL, true))
-				hscan->rs_vistuples[ntup++] = ItemPointerGetOffsetNumber(&tid);
-		}
-	}
-	else
-	{
-		/*
-		 * Bitmap is lossy, so we must examine each line pointer on the page.
-		 * But we can ignore HOT chains, since we'll check each tuple anyway.
-		 */
-		Page		page = BufferGetPage(buffer);
-		OffsetNumber maxoff = PageGetMaxOffsetNumber(page);
-		OffsetNumber offnum;
-
-		for (offnum = FirstOffsetNumber; offnum <= maxoff; offnum = OffsetNumberNext(offnum))
-		{
-			ItemId		lp;
-			HeapTupleData loctup;
-			bool		valid;
-
-			lp = PageGetItemId(page, offnum);
-			if (!ItemIdIsNormal(lp))
-				continue;
-			loctup.t_data = (HeapTupleHeader) PageGetItem(page, lp);
-			loctup.t_len = ItemIdGetLength(lp);
-			loctup.t_tableOid = scan->rs_rd->rd_id;
-			ItemPointerSet(&loctup.t_self, block, offnum);
-			valid = HeapTupleSatisfiesVisibility(&loctup, snapshot, buffer);
-			if (valid)
-			{
-				hscan->rs_vistuples[ntup++] = offnum;
-				PredicateLockTID(scan->rs_rd, &loctup.t_self, snapshot,
-								 HeapTupleHeaderGetXmin(loctup.t_data));
-			}
-			HeapCheckForSerializableConflictOut(valid, scan->rs_rd, &loctup,
-												buffer, snapshot);
-		}
-	}
-
-	LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
-
-	Assert(ntup <= MaxHeapTuplesPerPage);
-	hscan->rs_ntuples = ntup;
-
-	return ntup > 0;
-}
-
-static bool
 heapam_scan_bitmap_next_tuple(TableScanDesc scan,
-							  TBMIterateResult *tbmres,
-							  TupleTableSlot *slot)
+							  TupleTableSlot *slot,
+							  bool *recheck,
+							  uint64 *lossy_pages,
+							  uint64 *exact_pages)
 {
-	HeapScanDesc hscan = (HeapScanDesc) scan;
+	BitmapHeapScanDesc bscan = (BitmapHeapScanDesc) scan;
+	HeapScanDesc hscan = (HeapScanDesc) bscan;
 	OffsetNumber targoffset;
 	Page		page;
 	ItemId		lp;
 
-	if (hscan->rs_empty_tuples_pending > 0)
-	{
-		/*
-		 * If we don't have to fetch the tuple, just return nulls.
-		 */
-		ExecStoreAllNullTuple(slot);
-		hscan->rs_empty_tuples_pending--;
-		return true;
-	}
-
 	/*
 	 * Out of range?  If so, nothing more to look at on this page
 	 */
-	if (hscan->rs_cindex < 0 || hscan->rs_cindex >= hscan->rs_ntuples)
-		return false;
+	while (hscan->rs_cindex >= hscan->rs_ntuples)
+	{
+		/*
+		 * Returns false if the bitmap is exhausted and there are no further
+		 * blocks we need to scan.
+		 */
+		if (!BitmapHeapScanNextBlock(scan, recheck, lossy_pages, exact_pages))
+			return false;
+	}
 
 	targoffset = hscan->rs_vistuples[hscan->rs_cindex];
 	page = BufferGetPage(hscan->rs_cbuf);
@@ -2524,7 +2392,7 @@ reform_and_rewrite_tuple(HeapTuple tuple,
 	/* Be sure to null out any dropped columns */
 	for (i = 0; i < newTupDesc->natts; i++)
 	{
-		if (TupleDescAttr(newTupDesc, i)->attisdropped)
+		if (TupleDescCompactAttr(newTupDesc, i)->attisdropped)
 			isnull[i] = true;
 	}
 
@@ -2548,6 +2416,9 @@ SampleHeapTupleVisible(TableScanDesc scan, Buffer buffer,
 
 	if (scan->rs_flags & SO_ALLOW_PAGEMODE)
 	{
+		uint32		start = 0,
+					end = hscan->rs_ntuples;
+
 		/*
 		 * In pageatatime mode, heap_prepare_pagescan() already did visibility
 		 * checks, so just look at the info it left in rs_vistuples[].
@@ -2557,18 +2428,15 @@ SampleHeapTupleVisible(TableScanDesc scan, Buffer buffer,
 		 * in increasing order, but it's not clear that there would be enough
 		 * gain to justify the restriction.
 		 */
-		int			start = 0,
-					end = hscan->rs_ntuples - 1;
-
-		while (start <= end)
+		while (start < end)
 		{
-			int			mid = (start + end) / 2;
+			uint32		mid = start + (end - start) / 2;
 			OffsetNumber curoffset = hscan->rs_vistuples[mid];
 
 			if (tupoffset == curoffset)
 				return true;
 			else if (tupoffset < curoffset)
-				end = mid - 1;
+				end = mid;
 			else
 				start = mid + 1;
 		}
@@ -2583,6 +2451,162 @@ SampleHeapTupleVisible(TableScanDesc scan, Buffer buffer,
 	}
 }
 
+/*
+ * Helper function get the next block of a bitmap heap scan. Returns true when
+ * it got the next block and saved it in the scan descriptor and false when
+ * the bitmap and or relation are exhausted.
+ */
+static bool
+BitmapHeapScanNextBlock(TableScanDesc scan,
+						bool *recheck,
+						uint64 *lossy_pages, uint64 *exact_pages)
+{
+	BitmapHeapScanDesc bscan = (BitmapHeapScanDesc) scan;
+	HeapScanDesc hscan = (HeapScanDesc) bscan;
+	BlockNumber block;
+	void	   *per_buffer_data;
+	Buffer		buffer;
+	Snapshot	snapshot;
+	int			ntup;
+	TBMIterateResult *tbmres;
+	OffsetNumber offsets[TBM_MAX_TUPLES_PER_PAGE];
+	int			noffsets = -1;
+
+	Assert(scan->rs_flags & SO_TYPE_BITMAPSCAN);
+	Assert(hscan->rs_read_stream);
+
+	hscan->rs_cindex = 0;
+	hscan->rs_ntuples = 0;
+
+	/* Release buffer containing previous block. */
+	if (BufferIsValid(hscan->rs_cbuf))
+	{
+		ReleaseBuffer(hscan->rs_cbuf);
+		hscan->rs_cbuf = InvalidBuffer;
+	}
+
+	hscan->rs_cbuf = read_stream_next_buffer(hscan->rs_read_stream,
+											 &per_buffer_data);
+
+	if (BufferIsInvalid(hscan->rs_cbuf))
+	{
+		/* the bitmap is exhausted */
+		return false;
+	}
+
+	Assert(per_buffer_data);
+
+	tbmres = per_buffer_data;
+
+	Assert(BlockNumberIsValid(tbmres->blockno));
+	Assert(BufferGetBlockNumber(hscan->rs_cbuf) == tbmres->blockno);
+
+	/* Exact pages need their tuple offsets extracted. */
+	if (!tbmres->lossy)
+		noffsets = tbm_extract_page_tuple(tbmres, offsets,
+										  TBM_MAX_TUPLES_PER_PAGE);
+
+	*recheck = tbmres->recheck;
+
+	block = hscan->rs_cblock = tbmres->blockno;
+	buffer = hscan->rs_cbuf;
+	snapshot = scan->rs_snapshot;
+
+	ntup = 0;
+
+	/*
+	 * Prune and repair fragmentation for the whole page, if possible.
+	 */
+	heap_page_prune_opt(scan->rs_rd, buffer);
+
+	/*
+	 * We must hold share lock on the buffer content while examining tuple
+	 * visibility.  Afterwards, however, the tuples we have found to be
+	 * visible are guaranteed good as long as we hold the buffer pin.
+	 */
+	LockBuffer(buffer, BUFFER_LOCK_SHARE);
+
+	/*
+	 * We need two separate strategies for lossy and non-lossy cases.
+	 */
+	if (!tbmres->lossy)
+	{
+		/*
+		 * Bitmap is non-lossy, so we just look through the offsets listed in
+		 * tbmres; but we have to follow any HOT chain starting at each such
+		 * offset.
+		 */
+		int			curslot;
+
+		/* We must have extracted the tuple offsets by now */
+		Assert(noffsets > -1);
+
+		for (curslot = 0; curslot < noffsets; curslot++)
+		{
+			OffsetNumber offnum = offsets[curslot];
+			ItemPointerData tid;
+			HeapTupleData heapTuple;
+
+			ItemPointerSet(&tid, block, offnum);
+			if (heap_hot_search_buffer(&tid, scan->rs_rd, buffer, snapshot,
+									   &heapTuple, NULL, true))
+				hscan->rs_vistuples[ntup++] = ItemPointerGetOffsetNumber(&tid);
+		}
+	}
+	else
+	{
+		/*
+		 * Bitmap is lossy, so we must examine each line pointer on the page.
+		 * But we can ignore HOT chains, since we'll check each tuple anyway.
+		 */
+		Page		page = BufferGetPage(buffer);
+		OffsetNumber maxoff = PageGetMaxOffsetNumber(page);
+		OffsetNumber offnum;
+
+		for (offnum = FirstOffsetNumber; offnum <= maxoff; offnum = OffsetNumberNext(offnum))
+		{
+			ItemId		lp;
+			HeapTupleData loctup;
+			bool		valid;
+
+			lp = PageGetItemId(page, offnum);
+			if (!ItemIdIsNormal(lp))
+				continue;
+			loctup.t_data = (HeapTupleHeader) PageGetItem(page, lp);
+			loctup.t_len = ItemIdGetLength(lp);
+			loctup.t_tableOid = scan->rs_rd->rd_id;
+			ItemPointerSet(&loctup.t_self, block, offnum);
+			valid = HeapTupleSatisfiesVisibility(&loctup, snapshot, buffer);
+			if (valid)
+			{
+				hscan->rs_vistuples[ntup++] = offnum;
+				PredicateLockTID(scan->rs_rd, &loctup.t_self, snapshot,
+								 HeapTupleHeaderGetXmin(loctup.t_data));
+			}
+			HeapCheckForSerializableConflictOut(valid, scan->rs_rd, &loctup,
+												buffer, snapshot);
+		}
+	}
+
+	LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
+
+	Assert(ntup <= MaxHeapTuplesPerPage);
+	hscan->rs_ntuples = ntup;
+
+	if (tbmres->lossy)
+		(*lossy_pages)++;
+	else
+		(*exact_pages)++;
+
+	/*
+	 * Return true to indicate that a valid block was found and the bitmap is
+	 * not exhausted. If there are no visible tuples on this page,
+	 * hscan->rs_ntuples will be 0 and heapam_scan_bitmap_next_tuple() will
+	 * return false returning control to this function to advance to the next
+	 * block in the bitmap.
+	 */
+	return true;
+}
 
 /* ------------------------------------------------------------------------
  * Definition of the heap table access method.
@@ -2642,7 +2666,6 @@ static const TableAmRoutine heapam_methods = {
 
 	.relation_estimate_size = heapam_estimate_rel_size,
 
-	.scan_bitmap_next_block = heapam_scan_bitmap_next_block,
 	.scan_bitmap_next_tuple = heapam_scan_bitmap_next_tuple,
 	.scan_sample_next_block = heapam_scan_sample_next_block,
 	.scan_sample_next_tuple = heapam_scan_sample_next_tuple

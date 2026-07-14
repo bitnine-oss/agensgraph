@@ -281,9 +281,6 @@ ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
 	int			nbuckets;
 	int			nbatch;
 	int			log2_nbuckets;
-	int			nkeys;
-	int			i;
-	ListCell   *ho;
 	MemoryContext oldcxt;
 
 	/*
@@ -313,7 +310,6 @@ ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
 	hashtable->log2_nbuckets = log2_nbuckets;
 	hashtable->log2_nbuckets_optimal = log2_nbuckets;
 	hashtable->buckets.unshared = NULL;
-	hashtable->keepNulls = false;
 	hashtable->skewEnabled = false;
 	hashtable->skewBucket = NULL;
 	hashtable->skewBucketLen = 0;
@@ -343,30 +339,10 @@ ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
 #endif
 
 	/*
-	 * Get info about the hash functions to be used for each hash key. Also
-	 * remember whether the join operators are strict.
+	 * The shortest-path engine always hashes a single fixed-width Graphid key
+	 * via hash_any() in nodeShortestpath.c, so no per-key hash function setup
+	 * is needed here (unlike the generic hash join in nodeHash.c).
 	 */
-	nkeys = list_length(hashOperators);
-	hashtable->outer_hashfunctions =
-		(FmgrInfo *) palloc(nkeys * sizeof(FmgrInfo));
-	hashtable->inner_hashfunctions =
-		(FmgrInfo *) palloc(nkeys * sizeof(FmgrInfo));
-	hashtable->hashStrict = (bool *) palloc(nkeys * sizeof(bool));
-	i = 0;
-	foreach(ho, hashOperators)
-	{
-		Oid			hashop = lfirst_oid(ho);
-		Oid			left_hashfn;
-		Oid			right_hashfn;
-
-		if (!get_op_hash_functions(hashop, &left_hashfn, &right_hashfn))
-			elog(ERROR, "could not find hash function for hash operator %u",
-				 hashop);
-		fmgr_info(left_hashfn, &hashtable->outer_hashfunctions[i]);
-		fmgr_info(right_hashfn, &hashtable->inner_hashfunctions[i]);
-		hashtable->hashStrict[i] = op_strict(hashop);
-		i++;
-	}
 
 	/*
 	 * Create temporary memory contexts in which to keep the hashtable working
@@ -417,9 +393,6 @@ ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 						HashJoinTable sourcetable, Size spacePeak)
 {
 	HashJoinTable hashtable;
-	int			nkeys;
-	int			i;
-	ListCell   *ho;
 	MemoryContext oldcxt;
 
 	/*
@@ -435,7 +408,6 @@ ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 	hashtable->log2_nbuckets = sourcetable->log2_nbuckets;
 	hashtable->log2_nbuckets_optimal = sourcetable->log2_nbuckets;
 	hashtable->buckets.unshared = NULL;
-	hashtable->keepNulls = false;
 	hashtable->skewEnabled = false;
 	hashtable->skewBucket = NULL;
 	hashtable->skewBucketLen = 0;
@@ -465,30 +437,10 @@ ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 #endif
 
 	/*
-	 * Get info about the hash functions to be used for each hash key. Also
-	 * remember whether the join operators are strict.
+	 * The shortest-path engine always hashes a single fixed-width Graphid key
+	 * via hash_any() in nodeShortestpath.c, so no per-key hash function setup
+	 * is needed here (unlike the generic hash join in nodeHash.c).
 	 */
-	nkeys = list_length(hashOperators);
-	hashtable->outer_hashfunctions =
-		(FmgrInfo *) palloc(nkeys * sizeof(FmgrInfo));
-	hashtable->inner_hashfunctions =
-		(FmgrInfo *) palloc(nkeys * sizeof(FmgrInfo));
-	hashtable->hashStrict = (bool *) palloc(nkeys * sizeof(bool));
-	i = 0;
-	foreach(ho, hashOperators)
-	{
-		Oid			hashop = lfirst_oid(ho);
-		Oid			left_hashfn;
-		Oid			right_hashfn;
-
-		if (!get_op_hash_functions(hashop, &left_hashfn, &right_hashfn))
-			elog(ERROR, "could not find hash function for hash operator %u",
-				 hashop);
-		fmgr_info(left_hashfn, &hashtable->outer_hashfunctions[i]);
-		fmgr_info(right_hashfn, &hashtable->inner_hashfunctions[i]);
-		hashtable->hashStrict[i] = op_strict(hashop);
-		i++;
-	}
 
 	/*
 	 * Create temporary memory contexts in which to keep the hashtable working
@@ -691,13 +643,6 @@ ExecHash2SideTableDestroy(HashJoinTable hashtable)
 			if (hashtable->outerBatchFile[i])
 				BufFileClose(hashtable->outerBatchFile[i]);
 	}
-
-	if (hashtable->outer_hashfunctions)
-		pfree(hashtable->outer_hashfunctions);
-	if (hashtable->inner_hashfunctions)
-		pfree(hashtable->inner_hashfunctions);
-	if (hashtable->hashStrict)
-		pfree(hashtable->hashStrict);
 
 	/* Release working memory (batchCxt is a child, so it goes away too) */
 	MemoryContextDelete(hashtable->hashCxt);
