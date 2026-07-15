@@ -208,6 +208,7 @@ static void preprocess_pubobj_list(List *pubobjspec_list,
 static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 
 static Node *makeCypherSetOp(SetOperation op, bool all, Node *larg, Node *rarg);
+static Node *makeCypherNext(Node *left, Node *right);
 static Node *wrapCypherWithSelect(Node *stmt);
 static bool has_internal_default_prefix(char *str);
 
@@ -695,7 +696,7 @@ static bool has_internal_default_prefix(char *str);
  * Cypher Query Language
  */
 
-%type <node>	CypherStmt cypher_with_parens cypher_no_parens
+%type <node>	CypherStmt cypher_stmt cypher_with_parens cypher_no_parens
 				cypher_clause_prev cypher_clause_head cypher_clause
 
 %type <node>	cypher_read_opt_parens cypher_read_with_parens cypher_read_stmt
@@ -19451,7 +19452,20 @@ index_including_prop_params: prop_idx_elem				{ $$ = list_make1($1); }
  * Cypher Query Language
  */
 
+/*
+ * A Cypher query is a composite of linear query statements chained with NEXT:
+ * the output table of one statement becomes the driving (input) table of the
+ * next.  Left-associative; each operand (cypher_stmt) must end with RETURN.
+ * NEXT binds looser than the set operators, which live inside cypher_no_parens.
+ */
 CypherStmt:
+			cypher_stmt
+					{ $$ = $1; }
+			| CypherStmt NEXT cypher_stmt
+					{ $$ = makeCypherNext($1, $3); }
+		;
+
+cypher_stmt:
 			cypher_no_parens
 			| cypher_with_parens
 		;
@@ -19470,11 +19484,11 @@ cypher_no_parens:
 					n->last = $1;
 					$$ = (Node *) n;
 				}
-			| CypherStmt UNION set_quantifier CypherStmt
+			| cypher_stmt UNION set_quantifier cypher_stmt
 					{ $$ = makeCypherSetOp(SETOP_UNION, $3 == SET_QUANTIFIER_ALL, $1, $4); }
-			| CypherStmt INTERSECT set_quantifier CypherStmt
+			| cypher_stmt INTERSECT set_quantifier cypher_stmt
 					{ $$ = makeCypherSetOp(SETOP_INTERSECT, $3 == SET_QUANTIFIER_ALL, $1, $4); }
-			| CypherStmt EXCEPT set_quantifier CypherStmt
+			| cypher_stmt EXCEPT set_quantifier cypher_stmt
 					{ $$ = makeCypherSetOp(SETOP_EXCEPT, $3 == SET_QUANTIFIER_ALL, $1, $4); }
 		;
 
@@ -23724,6 +23738,70 @@ makeCypherSetOp(SetOperation op, bool all, Node *larg, Node *rarg)
 		rarg = wrapCypherWithSelect(rarg);
 
 	return makeSetOp(op, all, larg, rarg);
+}
+
+/*
+ * makeCypherNext
+ *		Chain "left NEXT right": the left query's output table becomes the
+ *		driving table of the right query.  This is exactly the scope-resetting
+ *		boundary the pipeline already builds between clause groups, so it is
+ *		done by turning the left query's terminal RETURN into a WITH (carrying
+ *		its columns forward with native types) and continuing the right query's
+ *		clause chain from it.  No transform or executor support is needed.
+ */
+static Node *
+makeCypherNext(Node *left, Node *right)
+{
+	CypherClause *cur;
+	CypherProjection *proj;
+	CypherClause *rhead;
+
+	/*
+	 * Phase 1 chains linear query statements.  A set-operation composite
+	 * (UNION / INTERSECT / EXCEPT) is a SelectStmt, which is not yet supported
+	 * as a NEXT operand.
+	 */
+	if (!IsA(left, CypherStmt) || !IsA(right, CypherStmt))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("a set operation cannot be combined with NEXT")));
+
+	/*
+	 * Find the left query's terminating projection, looking past any trailing
+	 * ORDER BY / SKIP / LIMIT modifier clauses (folded into the projection
+	 * later).  A query before NEXT must produce a table, i.e. end with RETURN.
+	 */
+	cur = (CypherClause *) ((CypherStmt *) left)->last;
+	while (cur != NULL &&
+		   (cypherClauseTag(cur) == T_CypherOrderBy ||
+			cypherClauseTag(cur) == T_CypherSkip ||
+			cypherClauseTag(cur) == T_CypherLimit))
+		cur = (CypherClause *) cur->prev;
+
+	if (cur == NULL || cypherClauseTag(cur) != T_CypherProjection)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("a query statement before NEXT must end with RETURN")));
+
+	proj = (CypherProjection *) cur->detail;
+	if (proj->kind == CP_FINISH)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("FINISH cannot be followed by NEXT")));
+	if (proj->kind != CP_RETURN)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("a query statement before NEXT must end with RETURN")));
+
+	proj->kind = CP_WITH;
+
+	/* Continue the right query's clause chain from the left query's terminal. */
+	rhead = (CypherClause *) ((CypherStmt *) right)->last;
+	while (rhead->prev != NULL)
+		rhead = (CypherClause *) rhead->prev;
+	rhead->prev = ((CypherStmt *) left)->last;
+
+	return right;
 }
 
 static Node *
