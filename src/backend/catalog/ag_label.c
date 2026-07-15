@@ -18,6 +18,7 @@
 #include "catalog/ag_graphmeta.h"
 #include "catalog/ag_label.h"
 #include "catalog/ag_label_fn.h"
+#include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "commands/sequence.h"

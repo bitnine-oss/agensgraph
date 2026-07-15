@@ -16,6 +16,7 @@
 #include "access/xact.h"
 #include "catalog/ag_graph.h"
 #include "catalog/ag_graph_fn.h"
+#include "catalog/binary_upgrade.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_namespace.h"
