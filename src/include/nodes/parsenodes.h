@@ -4612,7 +4612,9 @@ typedef enum CPKind
 {
 	CP_RETURN,
 	CP_WITH,
-	CP_FINISH
+	CP_FINISH,
+	CP_LET						/* GQL LET: augment the working record with new
+								 * bindings, keeping the existing ones */
 } CPKind;
 
 /* Cypher RETURN and WITH clauses use this */
