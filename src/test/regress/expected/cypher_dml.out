@@ -6936,6 +6936,39 @@ MATCH (d:Dog) WITH d ORDER BY d.name RETURN collect(d.name) AS names;
  ["Andy", "Fido", "Ozzy"]
 (1 row)
 
+-- a LET/WITH-bound text literal inside a value subquery.  The projection casts
+-- the value to jsonb, so the subquery's result column is (correctly) uncollated.
+-- On an assert-enabled build these used to abort ("collation ... does not match
+-- ...") because the group-collation repair stamped the text collation onto the
+-- jsonb result even when it was not a grouping key.
+RETURN COLLECT { LET tag = 'x' RETURN tag } AS tags;
+ tags  
+-------
+ ["x"]
+(1 row)
+
+RETURN VALUE { LET v = 'y' RETURN v } AS val;
+ val 
+-----
+ "y"
+(1 row)
+
+RETURN COLLECT { MATCH (p:Person) WITH 'lit' AS w RETURN w ORDER BY w LIMIT 1 } AS ws;
+   ws    
+---------
+ ["lit"]
+(1 row)
+
+MATCH (person:Person)
+RETURN person.name AS name, VALUE { LET t = 'x' RETURN t } AS t
+ORDER BY name;
+   name    |  t  
+-----------+-----
+ "Andy"    | "x"
+ "Peter"   | "x"
+ "Timothy" | "x"
+(3 rows)
+
 --
 -- SQL + Cypher hybrid -- COLLECT returns jsonb, so it bridges the two
 -- languages: a Cypher subquery's COLLECT can be projected/filtered by an
