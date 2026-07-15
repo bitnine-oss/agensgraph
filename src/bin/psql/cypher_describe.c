@@ -12,6 +12,7 @@
  */
 #include "postgres_fe.h"
 
+#include "fe_utils/mbprint.h"
 #include "fe_utils/string_utils.h"
 
 #include "common.h"

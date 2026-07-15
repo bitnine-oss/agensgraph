@@ -22,6 +22,7 @@
 #endif
 
 #include "ag_const.h"
+#include "common.h"
 #include "help.h"
 #include "input.h"
 #include "settings.h"

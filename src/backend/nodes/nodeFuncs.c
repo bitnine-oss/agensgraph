@@ -5408,7 +5408,7 @@ raw_expression_tree_mutator_impl(Node *node,
 
 				FLATCOPY(newnode, into, IntoClause);
 				MUTATE(newnode->rel, into->rel, RangeVar *);
-				MUTATE(newnode->viewQuery, into->viewQuery, Node *);
+				MUTATE(newnode->viewQuery, into->viewQuery, Query *);
 				return (Node *) newnode;
 			}
 			break;

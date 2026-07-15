@@ -24,8 +24,8 @@
 static void merge_meta(Relation rel);
 static void scan_label(Oid relid, Oid graphid, Labid edge);
 
-HTAB	   *htab;
-HASHCTL		hash_ctl;
+static HTAB *htab;
+static HASHCTL hash_ctl;
 
 void
 merge_meta(Relation rel)
