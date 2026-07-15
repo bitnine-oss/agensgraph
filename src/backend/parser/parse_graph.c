@@ -1552,6 +1552,141 @@ transformCypherForClause(ParseState *pstate, CypherClause *clause)
 }
 
 /*
+ * transformCypherYieldCallClause
+ *		CALL func(args) YIELD ... -- invoke a table-returning routine and add its
+ *		yielded columns to the working table.
+ *
+ *		The routine is a set-returning or composite-returning function; the call
+ *		is analyzed as a function scan and joined in as a subquery RTE, exactly
+ *		like the FOR clause's unnest.  It is LATERAL when a previous clause
+ *		exists, so the arguments may reference the outer variables; the YIELD
+ *		list projects (and optionally renames) the routine's output columns,
+ *		which then surface to the clauses that follow.
+ */
+Query *
+transformCypherYieldCallClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherYieldCallClause *detail = (CypherYieldCallClause *) clause->detail;
+	Query	   *qry;
+	Query	   *subqry;
+	FuncCall   *fc;
+	RangeFunction *rf;
+	SelectStmt *subquery;
+	List	   *args = NIL;
+	List	   *body_tlist;
+	ParseNamespaceItem *nsitem;
+	ListCell   *lc;
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	/* Pass through the previous clause's variables. */
+	if (clause->prev != NULL)
+	{
+		nsitem = transformClause(pstate, clause->prev);
+		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
+	}
+
+	/* Wrap each argument so it is analyzed with Cypher expression semantics. */
+	foreach(lc, detail->args)
+	{
+		CypherGenericExpr *cge = makeNode(CypherGenericExpr);
+
+		cge->expr = lfirst(lc);
+		args = lappend(args, cge);
+	}
+
+	fc = makeFuncCall(detail->funcname, args, COERCE_EXPLICIT_CALL,
+					  detail->location);
+
+	rf = makeNode(RangeFunction);
+	rf->lateral = false;
+	rf->ordinality = false;
+	rf->is_rowsfrom = false;
+	rf->functions = list_make1(list_make2(fc, NIL));
+	/*
+	 * No alias on the function scan: the YIELD items reference the routine's
+	 * own output column names (its OUT parameters / composite fields, or the
+	 * routine name for a single-column set-returning function).  An alias here
+	 * would rename that single column and hide the natural name.
+	 */
+	rf->alias = NULL;
+	rf->coldeflist = NIL;
+
+	/* SELECT <yield items> FROM func(args) */
+	subquery = makeNode(SelectStmt);
+	subquery->targetList = detail->yielditems;
+	subquery->fromClause = list_make1(rf);
+
+	/*
+	 * Analyze the routine invocation and join it with the working table.  It is
+	 * LATERAL when there is a previous clause, since the arguments may reference
+	 * the previous clause's columns.
+	 */
+	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
+	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
+	pstate->p_lateral_active = (clause->prev != NULL);
+
+	subqry = parse_sub_analyze((Node *) subquery, pstate, NULL, false, true);
+
+	pstate->p_lateral_active = false;
+	pstate->p_expr_kind = EXPR_KIND_NONE;
+
+	nsitem = addRangeTableEntryForSubquery(pstate, subqry,
+										   makeAliasNoDup(CYPHER_YIELD_ALIAS, NIL),
+										   (clause->prev != NULL), true);
+	addNSItemToJoinlist(pstate, nsitem, true);
+
+	/*
+	 * A yielded column may not reuse a variable name already bound in the outer
+	 * query (it would shadow the outer one for the clauses that follow), nor may
+	 * two yielded columns share a name.  Rename with YIELD ... AS to resolve a
+	 * collision.
+	 */
+	body_tlist = makeTargetListFromNSItem(pstate, nsitem);
+	foreach(lc, body_tlist)
+	{
+		TargetEntry *yte = (TargetEntry *) lfirst(lc);
+		ListCell   *lc2;
+
+		if (yte->resjunk || yte->resname == NULL)
+			continue;
+		if (findTarget(qry->targetList, yte->resname) != NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_ALIAS),
+					 errmsg("variable \"%s\" yielded by CALL is already bound in the outer query",
+							yte->resname),
+					 parser_errposition(pstate, detail->location)));
+
+		for_each_cell(lc2, body_tlist, lnext(body_tlist, lc))
+		{
+			TargetEntry *yte2 = (TargetEntry *) lfirst(lc2);
+
+			if (!yte2->resjunk && yte2->resname != NULL &&
+				strcmp(yte->resname, yte2->resname) == 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_DUPLICATE_ALIAS),
+						 errmsg("variable \"%s\" is yielded more than once by CALL",
+								yte->resname),
+						 parser_errposition(pstate, detail->location)));
+		}
+	}
+
+	qry->targetList = list_concat(qry->targetList, body_tlist);
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+	qry->rteperminfos = pstate->p_rteperminfos;
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
+
+/*
  * callImportIsStar
  *		The CALL (*) sentinel: an import list that is the single A_Star node,
  *		meaning "import every outer variable".  makeCallImportNSItem skips its

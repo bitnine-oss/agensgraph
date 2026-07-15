@@ -161,6 +161,9 @@ test: cypher_let
 # run cypher NEXT clause test
 test: cypher_next
 
+# run cypher CALL ... YIELD clause test
+test: cypher_yield
+
 # run cypher priviledge test
 test: cypher_privileges
 

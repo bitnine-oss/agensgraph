@@ -4715,6 +4715,22 @@ typedef struct CypherCallClause
 	int			location;
 } CypherCallClause;
 
+/*
+ * CALL func(args) YIELD ... -- invoke a table-returning routine and add its
+ * yielded columns to the working table.  Modeled as a LATERAL function scan.
+ */
+typedef struct CypherYieldCallClause
+{
+	NodeTag		type;
+	List	   *funcname;		/* qualified routine name (list of String) */
+	List	   *args;			/* argument expressions */
+	List	   *yielditems;		/* YIELD projection: a list of ResTarget (the
+								 * routine's output column, optionally AS-aliased);
+								 * a single ResTarget whose val is an A_Star
+								 * ColumnRef is YIELD * (all columns) */
+	int			location;
+} CypherYieldCallClause;
+
 typedef enum CPathKind
 {
 	CPATH_NORMAL,

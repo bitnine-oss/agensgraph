@@ -21,6 +21,7 @@
 #define CYPHER_FOR_ALIAS		AGENS_DEFAULT_PREFIX"f"
 #define CYPHER_COUNT_ALIAS		AGENS_DEFAULT_PREFIX"c"
 #define CYPHER_CALL_ALIAS		AGENS_DEFAULT_PREFIX"call"
+#define CYPHER_YIELD_ALIAS		AGENS_DEFAULT_PREFIX"y"
 
 extern bool enable_eager;
 
@@ -50,6 +51,8 @@ extern Query *transformCypherForClause(ParseState *pstate,
 									   CypherClause *clause);
 extern Query *transformCypherCallClause(ParseState *pstate,
 										CypherClause *clause);
+extern Query *transformCypherYieldCallClause(ParseState *pstate,
+											 CypherClause *clause);
 extern Query *transformCypherCountClause(ParseState *pstate,
 										 CypherCountClause *clause);
 extern TargetEntry *makeCountTargetEntry(ParseState *pstate);
