@@ -172,6 +172,27 @@ SELECT meta.estimated_edge_density('graph1');
 SELECT meta.edge_density('unknown');
 SELECT meta.estimated_edge_density('unknown');
 
+--
+-- The table-returning meta functions work as Cypher CALL ... YIELD routines.
+-- CALL ... YIELD is a non-leading clause, so a preceding clause drives it; a
+-- single Alice keeps the routine's output un-multiplied.
+--
+MATCH (a:person {name: 'Alice'}) CALL meta.labels() YIELD label_name
+RETURN label_name ORDER BY label_name;
+MATCH (a:person {name: 'Alice'}) CALL meta.vertex_labels() YIELD label_name AS v
+RETURN v ORDER BY v;
+MATCH (a:person {name: 'Alice'}) CALL meta.edge_labels() YIELD label_name AS e
+RETURN e ORDER BY e;
+-- meta.graphs() returns SETOF name; the single column takes the routine's name
+MATCH (a:person {name: 'Alice'}) CALL meta.graphs() YIELD graphs AS g
+RETURN g ORDER BY g;
+-- an explicit graph-name argument, with YIELD *
+MATCH (a:person {name: 'Alice'}) CALL meta.labels('graph1') YIELD *
+RETURN label_name ORDER BY label_name;
+-- filter the yielded rows with a trailing FILTER clause
+MATCH (a:person {name: 'Alice'}) CALL meta.labels() YIELD label_name
+FILTER label_name = 'person' RETURN label_name;
+
 -- clean up
 DROP GRAPH graph1 CASCADE;
 

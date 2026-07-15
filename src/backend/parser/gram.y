@@ -748,7 +748,8 @@ static bool has_internal_default_prefix(char *str);
 				cypher_proj_tail_item
 %type <list>	cypher_return_items cypher_distinct_opt
 				cypher_sort_items cypher_proj_tail cypher_let_items
-%type <target>	cypher_return_item cypher_let_item
+				cypher_yield_items cypher_yield_item_list cypher_yield_call_args
+%type <target>	cypher_return_item cypher_let_item cypher_yield_item
 %type <sortby>	cypher_sort_item
 
 %type <node>	cypher_match
@@ -766,7 +767,7 @@ static bool has_internal_default_prefix(char *str);
 %type <list>	cypher_merge_sets_opt cypher_merge_set_list
 
 %type <node>	cypher_load
-%type <node>	cypher_call
+%type <node>	cypher_call cypher_yield_call
 %type <list>	cypher_call_import_opt cypher_call_import_vars
 
 /*
@@ -890,7 +891,7 @@ static bool has_internal_default_prefix(char *str);
 	XML_P XMLATTRIBUTES XMLCONCAT XMLELEMENT XMLEXISTS XMLFOREST XMLNAMESPACES
 	XMLPARSE XMLPI XMLROOT XMLSERIALIZE XMLTABLE XOR
 
-	YEAR_P YES_P
+	YEAR_P YES_P YIELD
 
 	ZONE
 
@@ -18334,6 +18335,7 @@ unreserved_keyword:
 			| XML_P
 			| YEAR_P
 			| YES_P
+			| YIELD
 			| ZONE
 		;
 
@@ -19528,6 +19530,7 @@ cypher_clause:
 			cypher_clause_head
 			| cypher_with
 			| cypher_let
+			| cypher_yield_call
 			| cypher_delete
 			| cypher_set
 			| cypher_remove
@@ -22392,6 +22395,85 @@ cypher_call:
 					n->importlist = list_make1(makeNode(A_Star));
 					n->location = @1;
 					$$ = (Node *) n;
+				}
+		;
+
+/*
+ * CALL func(args) YIELD ... -- invoke a table-returning routine (a set-
+ * returning or composite-returning function) and add its yielded columns to
+ * the working table.  This named-routine form is distinct from CALL { subquery }
+ * above; it keys off a plain CALL (base_yylex only rewrites CALL to CALL_LA
+ * before '(' or '{'), and it is a non-leading clause, so it never collides with
+ * the SQL CALL statement (which can only begin a statement).
+ */
+cypher_yield_call:
+			CALL func_name cypher_yield_call_args YIELD cypher_yield_items
+				{
+					CypherYieldCallClause *n;
+
+					n = makeNode(CypherYieldCallClause);
+					n->funcname = $2;
+					n->args = $3;
+					n->yielditems = $5;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_yield_call_args:
+			'(' ')'								{ $$ = NIL; }
+			| '(' cypher_expr_comma_list ')'	{ $$ = $2; }
+		;
+
+cypher_yield_items:
+			'*'
+				{
+					ColumnRef  *cref;
+					ResTarget  *rt;
+
+					cref = makeNode(ColumnRef);
+					cref->fields = list_make1(makeNode(A_Star));
+					cref->location = @1;
+
+					rt = makeNode(ResTarget);
+					rt->val = (Node *) cref;
+					rt->location = @1;
+					$$ = list_make1(rt);
+				}
+			| cypher_yield_item_list				{ $$ = $1; }
+		;
+
+cypher_yield_item_list:
+			cypher_yield_item							{ $$ = list_make1($1); }
+			| cypher_yield_item_list ',' cypher_yield_item
+														{ $$ = lappend($1, $3); }
+		;
+
+cypher_yield_item:
+			ColLabel
+				{
+					ColumnRef  *cref;
+
+					cref = makeNode(ColumnRef);
+					cref->fields = list_make1(makeString($1));
+					cref->location = @1;
+
+					$$ = makeNode(ResTarget);
+					$$->val = (Node *) cref;
+					$$->location = @1;
+				}
+			| ColLabel AS ColLabel
+				{
+					ColumnRef  *cref;
+
+					cref = makeNode(ColumnRef);
+					cref->fields = list_make1(makeString($1));
+					cref->location = @1;
+
+					$$ = makeNode(ResTarget);
+					$$->name = $3;
+					$$->val = (Node *) cref;
+					$$->location = @1;
 				}
 		;
 
