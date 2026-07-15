@@ -158,6 +158,9 @@ test: cypher_expr
 # run cypher LET clause test
 test: cypher_let
 
+# run cypher NEXT clause test
+test: cypher_next
+
 # run cypher priviledge test
 test: cypher_privileges
 
