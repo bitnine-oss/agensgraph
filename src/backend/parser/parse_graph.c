@@ -594,6 +594,17 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		 */
 		if (clause->prev != NULL)
 			transformClause(pstate, clause->prev);
+		else if (detail->kind == CP_LET)
+
+			/*
+			 * A leading LET has no incoming working table, so its implicit "*"
+			 * item -- which otherwise carries the existing bindings forward --
+			 * has nothing to expand and would trip the "RETURN * with no
+			 * accessible variables" check.  Drop it so the LET assignments
+			 * project over the implicit single-row input, just like a leading
+			 * RETURN.
+			 */
+			detail->items = list_delete_first(detail->items);
 
 		qry->targetList = transformItemList(pstate, detail->items,
 											EXPR_KIND_SELECT_TARGET);

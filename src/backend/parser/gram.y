@@ -18149,7 +18149,6 @@ unreserved_keyword:
 			| LARGE_P
 			| LAST_P
 			| LEAKPROOF
-			| LET
 			| LEVEL
 			| LISTEN
 			| LOAD
@@ -18513,6 +18512,7 @@ reserved_keyword:
 			| INTO
 			| LATERAL_P
 			| LEADING
+			| LET
 			| LIMIT
 			| LOCALTIME
 			| LOCALTIMESTAMP
@@ -19530,12 +19530,12 @@ cypher_clause_head:
 			| cypher_for
 			| cypher_call
 			| cypher_finish
+			| cypher_let
 		;
 
 cypher_clause:
 			cypher_clause_head
 			| cypher_with
-			| cypher_let
 			| cypher_yield_call
 			| cypher_delete
 			| cypher_set
@@ -19662,6 +19662,14 @@ cypher_read:
 					$$ = (Node *) n;
 				}
 			| cypher_call
+				{
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
+					n->detail = $1;
+					$$ = (Node *) n;
+				}
+			| cypher_let
 				{
 					CypherClause *n;
 

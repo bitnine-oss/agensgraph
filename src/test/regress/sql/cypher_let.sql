@@ -180,8 +180,16 @@ RETURN s;
 -- 7. Clause placement and modifier folding
 --
 
--- LET cannot be the first clause: it needs an incoming record (syntax error).
+-- LET may be the first clause: it projects over the implicit single-row input.
 LET a = 1 RETURN a;
+
+-- A leading LET may bind several variables at once.
+LET greeting = 'hi', doubled = 2 * 3 RETURN greeting, doubled;
+
+-- LET may also open the statement right after NEXT, carrying the prior table.
+MATCH (n:person) RETURN n.name AS name
+NEXT
+LET tag = 'seen' RETURN name, tag ORDER BY name;
 
 -- LET cannot be the terminal clause: a query must end with RETURN/FINISH/update.
 MATCH (n:person) LET a = 1;
@@ -276,16 +284,18 @@ RETURN nm;
 MATCH (n:wtmp) RETURN count(*) AS c;
 
 --
--- 11. Backward compatibility -- "let" is an unreserved keyword and remains
---     usable as an ordinary identifier
+-- 11. "let" is a reserved keyword: it can no longer be a bare variable name or
+--     label, but it remains usable as a quoted label, as a property key, in
+--     property access, and as a RETURN alias.
 --
 
--- as a variable name
-MATCH (let:person {id: 1}) RETURN let.name AS name;
+-- as a bare variable name or bare label: reserved, so these are syntax errors
+MATCH (let:person {id: 1}) RETURN 1;
+MATCH (x:let) RETURN 1;
 
--- as a label and as a property key
-CREATE (:let {let: 42});
-MATCH (x:let) RETURN x.let AS v;
+-- as a quoted label, with "let" as a property key and in property access
+CREATE (:"let" {let: 42});
+MATCH (x:"let") RETURN x.let AS v;
 
 -- as a RETURN alias
 RETURN 1 AS let;
