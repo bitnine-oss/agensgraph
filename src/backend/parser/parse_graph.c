@@ -477,7 +477,7 @@ updateSortOperatorsForJsonb(List *sortClause, List *targetList)
 		bool		hashable;
 		Oid			opfamily;
 		Oid			opcintype;
-		int16		strategy;
+		CompareType cmptype;
 
 		tle = get_sortgroupref_tle(sortcl->tleSortGroupRef, targetList);
 		if (tle == NULL)
@@ -487,15 +487,15 @@ updateSortOperatorsForJsonb(List *sortClause, List *targetList)
 
 		/* What ordering direction does the current operator represent? */
 		if (!get_ordering_op_properties(sortcl->sortop,
-										&opfamily, &opcintype, &strategy))
+										&opfamily, &opcintype, &cmptype))
 			continue;
 
-		if (strategy == BTLessStrategyNumber)
+		if (cmptype == COMPARE_LT)
 			get_sort_group_operators(restype,
 									 true, true, false,
 									 &sortop, &eqop, NULL,
 									 &hashable);
-		else if (strategy == BTGreaterStrategyNumber)
+		else if (cmptype == COMPARE_GT)
 			get_sort_group_operators(restype,
 									 false, true, true,
 									 NULL, &eqop, &sortop,
