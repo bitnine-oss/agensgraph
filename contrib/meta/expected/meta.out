@@ -569,10 +569,10 @@ MATCH (a:person {name: 'Alice'}) CALL meta.labels() YIELD label_name
 RETURN label_name ORDER BY label_name;
  label_name 
 ------------
- "animal"
- "employee"
  "HAS_PET"
  "KNOWS"
+ "animal"
+ "employee"
  "person"
 (5 rows)
 
@@ -606,10 +606,10 @@ MATCH (a:person {name: 'Alice'}) CALL meta.labels('graph1') YIELD *
 RETURN label_name ORDER BY label_name;
  label_name 
 ------------
- "animal"
- "employee"
  "HAS_PET"
  "KNOWS"
+ "animal"
+ "employee"
  "person"
 (5 rows)
 
