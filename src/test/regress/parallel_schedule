@@ -150,6 +150,9 @@ test: cypher_call
 # run cypher expr test
 test: cypher_expr
 
+# run cypher LET clause test
+test: cypher_let
+
 # run cypher priviledge test
 test: cypher_privileges
 

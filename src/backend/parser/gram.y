@@ -740,14 +740,14 @@ static bool has_internal_default_prefix(char *str);
 %type <str>		cypher_pattern_varname cypher_labelname
 %type <boolean>	cypher_rel_left cypher_rel_right
 
-%type <node>	cypher_return cypher_with cypher_finish
+%type <node>	cypher_return cypher_with cypher_finish cypher_let
 				cypher_order_by cypher_skip cypher_limit
 				cypher_where cypher_where_opt cypher_unwind cypher_filter
 				cypher_for cypher_for_offset cypher_for_offset_opt
 				cypher_proj_tail_item
 %type <list>	cypher_return_items cypher_distinct_opt
-				cypher_sort_items cypher_proj_tail
-%type <target>	cypher_return_item
+				cypher_sort_items cypher_proj_tail cypher_let_items
+%type <target>	cypher_return_item cypher_let_item
 %type <sortby>	cypher_sort_item
 
 %type <node>	cypher_match
@@ -839,7 +839,7 @@ static bool has_internal_default_prefix(char *str);
 	KEEP KEY KEYS
 
 	LABEL LANGUAGE LARGE_P LAST_P LATERAL_P
-	LEADING LEAKPROOF LEAST LEFT LEVEL LIKE LIMIT LISTEN LOAD LOCAL
+	LEADING LEAKPROOF LEAST LEFT LET LEVEL LIKE LIMIT LISTEN LOAD LOCAL
 	LOCALTIME LOCALTIMESTAMP LOCATION LOCK_P LOCKED LOGGED
 
 	MAPPING MATCH MATCHED MATERIALIZED MAXVALUE MERGE MERGE_ACTION METHOD
@@ -18141,6 +18141,7 @@ unreserved_keyword:
 			| LARGE_P
 			| LAST_P
 			| LEAKPROOF
+			| LET
 			| LEVEL
 			| LISTEN
 			| LOAD
@@ -19512,6 +19513,7 @@ cypher_clause_head:
 cypher_clause:
 			cypher_clause_head
 			| cypher_with
+			| cypher_let
 			| cypher_delete
 			| cypher_set
 			| cypher_remove
@@ -19658,6 +19660,7 @@ cypher_read:
 cypher_read_clauses:
 			cypher_match
 			| cypher_with
+			| cypher_let
 			| cypher_load
 			| cypher_unwind
 			| cypher_for
@@ -21906,6 +21909,56 @@ cypher_with:
 					n->limit = NULL;
 					n->where = $4;
 					$$ = (Node *) n;
+				}
+		;
+
+/*
+ * LET binds new variables and adds them to the working record while keeping
+ * every existing binding -- unlike WITH, which projects only the listed items.
+ * It is modeled as a projection (CP_LET) whose item list is an implicit leading
+ * "*" (carrying the existing bindings through) followed by the LET assignments.
+ */
+cypher_let:
+			LET cypher_let_items
+				{
+					CypherProjection *n;
+					ColumnRef  *cref;
+					ResTarget  *star;
+
+					cref = makeNode(ColumnRef);
+					cref->fields = list_make1(makeNode(A_Star));
+					cref->location = @1;
+
+					star = makeNode(ResTarget);
+					star->val = (Node *) cref;
+					star->location = @1;
+
+					n = makeNode(CypherProjection);
+					n->kind = CP_LET;
+					n->distinct = NIL;
+					n->items = lcons(star, $2);
+					n->order = NIL;
+					n->skip = NULL;
+					n->limit = NULL;
+					n->where = NULL;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_let_items:
+			cypher_let_item
+					{ $$ = list_make1($1); }
+			| cypher_let_items ',' cypher_let_item
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_let_item:
+			ColLabel '=' cypher_expr
+				{
+					$$ = makeNode(ResTarget);
+					$$->name = $1;
+					$$->val = (Node *) $3;
+					$$->location = @1;
 				}
 		;
 

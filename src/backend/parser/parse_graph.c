@@ -147,6 +147,7 @@ typedef struct
 
 /* projection (RETURN and WITH) */
 static void checkNameInItems(ParseState *pstate, List *items, List *targetList);
+static void checkCypherLetItems(ParseState *pstate, List *targetList);
 static void updateSortOperatorsForJsonb(List *sortClause, List *targetList);
 
 /* MATCH - OPTIONAL */
@@ -599,6 +600,8 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 
 		if (detail->kind == CP_WITH)
 			checkNameInItems(pstate, detail->items, qry->targetList);
+		else if (detail->kind == CP_LET)
+			checkCypherLetItems(pstate, qry->targetList);
 
 		if (detail->order != NULL)
 			qry->sortClause = transformCypherOrderBy(pstate, detail->order,
@@ -626,7 +629,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 											   qry->sortClause);
 	}
 
-	if (detail->kind == CP_WITH)
+	if (detail->kind == CP_WITH || detail->kind == CP_LET)
 	{
 		ListCell   *lt;
 
@@ -1983,6 +1986,47 @@ checkNameInItems(ParseState *pstate, List *items, List *targetList)
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("expression in WITH must be aliased (use AS)"),
 					 parser_errposition(pstate, exprLocation(res->val))));
+	}
+}
+
+/*
+ * checkCypherLetItems
+ *		Enforce the two rules that LET adds on top of a plain projection: it is
+ *		row-wise (no aggregates) and it may only INTRODUCE names -- it must not
+ *		redefine a variable that already exists in the working record, nor bind
+ *		the same name twice.  The target list here is the implicit "*" expansion
+ *		(every existing binding, always uniquely named) followed by the LET
+ *		items, so a duplicate output name can only come from a LET assignment.
+ */
+static void
+checkCypherLetItems(ParseState *pstate, List *targetList)
+{
+	ListCell   *la;
+
+	if (pstate->p_hasAggs)
+		ereport(ERROR,
+				(errcode(ERRCODE_GROUPING_ERROR),
+				 errmsg("aggregate functions are not allowed in LET")));
+
+	foreach(la, targetList)
+	{
+		TargetEntry *ta = lfirst(la);
+		ListCell   *lb;
+
+		if (ta->resjunk || ta->resname == NULL)
+			continue;
+
+		for_each_cell(lb, targetList, lnext(targetList, la))
+		{
+			TargetEntry *tb = lfirst(lb);
+
+			if (!tb->resjunk && tb->resname != NULL &&
+				strcmp(ta->resname, tb->resname) == 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_DUPLICATE_ALIAS),
+						 errmsg("variable \"%s\" already exists", tb->resname),
+						 errhint("LET cannot redefine an existing variable; use a different name.")));
+		}
 	}
 }
 
