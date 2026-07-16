@@ -238,15 +238,12 @@
 { aggfnoid => 'min(xid8)', aggtransfn => 'xid8_smaller',
   aggcombinefn => 'xid8_smaller', aggsortop => '<(xid8,xid8)',
   aggtranstype => 'xid8' },
-<<<<<<< HEAD
-{ aggfnoid => 'min(jsonb)', aggtransfn => 'jsonb_smaller',
-  aggcombinefn => 'jsonb_smaller', aggsortop => '<(jsonb,jsonb)',
-  aggtranstype => 'jsonb' },
-=======
 { aggfnoid => 'min(bytea)', aggtransfn => 'bytea_smaller',
   aggcombinefn => 'bytea_smaller', aggsortop => '<(bytea,bytea)',
   aggtranstype => 'bytea' },
->>>>>>> 9c5b9a280cb6089c011a01797868da83f97d0230
+{ aggfnoid => 'min(jsonb)', aggtransfn => 'jsonb_smaller',
+  aggcombinefn => 'jsonb_smaller', aggsortop => '<(jsonb,jsonb)',
+  aggtranstype => 'jsonb' },
 
 # count
 { aggfnoid => 'count(any)', aggtransfn => 'int8inc_any',
