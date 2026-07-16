@@ -402,5 +402,62 @@ MATCH (n:person) RETURN n.name AS nm
 NEXT
 MATCH (m:person {name: nm}) FINISH;
 
+--
+-- Row-operating clauses after NEXT (Cypher 25 parity)
+--
+-- Q2 (the query after NEXT) may begin with a projection / ordering / filter
+-- clause -- WITH, FILTER [WHERE], ORDER BY, SKIP / OFFSET, LIMIT -- operating on
+-- the table carried across the boundary.  These clauses may NOT begin a
+-- standalone statement (that would clash with the surrounding SQL grammar);
+-- they are reachable only after NEXT, so no ambiguity arises there.
+
+-- FILTER filters the carried rows.
+MATCH (p:person) RETURN p.name AS name, p.age AS age
+NEXT
+FILTER age >= 30
+RETURN name ORDER BY name;
+
+-- FILTER WHERE spelling is accepted too.
+MATCH (p:person) RETURN p.name AS name, p.age AS age
+NEXT
+FILTER WHERE age = 25
+RETURN name ORDER BY name;
+
+-- WITH re-projects the carried table.
+MATCH (p:person) RETURN p.age AS age
+NEXT
+WITH age * 2 AS doubled
+RETURN doubled ORDER BY doubled;
+
+-- ORDER BY, LIMIT and SKIP order and slice the carried table.
+MATCH (p:person) RETURN p.name AS name
+NEXT
+ORDER BY name
+RETURN name;
+
+MATCH (p:person) RETURN p.name AS name
+NEXT
+ORDER BY name LIMIT 2
+RETURN name;
+
+MATCH (p:person) RETURN p.name AS name
+NEXT
+ORDER BY name SKIP 3
+RETURN name;
+
+-- A row clause after NEXT can conclude with RETURN and be chained again.
+MATCH (p:person) RETURN p.name AS name, p.age AS age
+NEXT
+FILTER age = 25 RETURN name
+NEXT
+RETURN name ORDER BY name;
+
+-- Negative: bare WHERE cannot begin Q2 (WHERE is not a standalone clause).
+MATCH (p:person) RETURN p.name AS name NEXT WHERE name = 'alice' RETURN name;
+
+-- Negative: a middle segment ending in WITH (no RETURN) does not conclude a
+-- query, so it cannot precede another NEXT.
+MATCH (p:person) RETURN p.name AS name NEXT WITH name AS n NEXT RETURN n;
+
 -- Tear down
 DROP GRAPH cypher_next CASCADE;

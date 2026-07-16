@@ -698,6 +698,7 @@ static bool has_internal_default_prefix(char *str);
 
 %type <node>	CypherStmt cypher_stmt cypher_with_parens cypher_no_parens
 				cypher_clause_prev cypher_clause_head cypher_clause
+				cypher_next_chain cypher_next_lead
 
 %type <node>	cypher_read_opt_parens cypher_read_with_parens cypher_read_stmt
 				cypher_read_opt cypher_read cypher_read_clauses
@@ -19465,6 +19466,50 @@ CypherStmt:
 					{ $$ = $1; }
 			| CypherStmt NEXT cypher_stmt
 					{ $$ = makeCypherNext($1, $3); }
+			| CypherStmt NEXT cypher_next_chain
+					{
+						CypherStmt *n;
+
+						n = makeNode(CypherStmt);
+						n->last = $3;
+						$$ = makeCypherNext($1, (Node *) n);
+					}
+		;
+
+/*
+ * The right operand of NEXT is reached only after the NEXT keyword, so it is
+ * unambiguously Cypher (never a top-level statement that could clash with the
+ * surrounding SQL grammar).  That lets it begin with a projection/ordering/
+ * filter clause -- WITH, FILTER, ORDER BY, SKIP/OFFSET, LIMIT -- operating on
+ * the table carried across NEXT, matching Cypher 25.  makeCypherNext() splices
+ * this chain onto the left query's terminal (turned into a WITH boundary).
+ */
+cypher_next_chain:
+			cypher_next_lead
+				{
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
+					n->detail = $1;
+					$$ = (Node *) n;
+				}
+			| cypher_next_chain cypher_clause
+				{
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
+					n->detail = $2;
+					n->prev = $1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_next_lead:
+			cypher_with
+			| cypher_filter
+			| cypher_order_by
+			| cypher_skip
+			| cypher_limit
 		;
 
 cypher_stmt:
