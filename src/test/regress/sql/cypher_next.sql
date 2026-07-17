@@ -20,7 +20,7 @@
 --
 -- A set-operation composite (UNION / INTERSECT / EXCEPT) may be the LEFT
 -- operand of NEXT ("A UNION B NEXT C", whose whole union drives the next
--- query); as the RIGHT operand it is not supported.  NEXT lives only at the
+-- query) or the RIGHT operand ("A NEXT B UNION C").  NEXT lives only at the
 -- three statement entry points (top level, EXPLAIN, PREPARE), NOT inside a read
 -- subquery (EXISTS / COUNT / CALL {}) -- both are deliberate boundaries covered
 -- below as negative cases.
@@ -324,15 +324,40 @@ RETURN 1 AS a EXCEPT RETURN 2 AS a NEXT RETURN a;
 NEXT
 RETURN nm ORDER BY nm;
 
--- A set operation as the RIGHT operand of NEXT is not supported.
-MATCH (n:person {id: 1}) RETURN n.name AS nm
-NEXT
-MATCH (m:person) RETURN m.name AS nm
-UNION
-MATCH (m:person) RETURN m.name AS nm;
+--
+-- 11. Set-operation as the RIGHT operand of NEXT (Cypher 25)
+--
+-- The carried table drives the union and each branch is correlated with the
+-- carried columns.  Each branch runs per driving row, so UNION's DISTINCT is
+-- scoped PER driving row (identical rows arising from different driving rows
+-- are kept, unlike a plain whole-table UNION).
+
+-- Both branches see the carried column; the second is a constant.
+RETURN 1 AS a NEXT RETURN a UNION RETURN 2 AS a NEXT RETURN a ORDER BY a;
+
+-- Both branches reference the carried column; deduplicated within the row.
+RETURN 5 AS a NEXT RETURN a UNION RETURN a;
+
+-- UNION ALL keeps the per-branch duplicate.
+RETURN 1 AS a NEXT RETURN a AS x UNION ALL RETURN a AS x;
+
+-- Per-row DISTINCT: two driving rows each produce the same constant on both
+-- branches; the copies are NOT merged across driving rows.
+UNWIND [10, 20] AS a RETURN a NEXT RETURN 99 AS x UNION RETURN 99 AS x
+NEXT RETURN x ORDER BY x;
+
+-- Both operands are set operations: (A UNION B) drives (C UNION D).
+RETURN 1 AS a UNION RETURN 2 AS a NEXT RETURN a UNION RETURN 3 AS a
+NEXT RETURN a ORDER BY a;
+
+-- The union feeds a further NEXT, which may then aggregate over the whole table.
+RETURN 1 AS a NEXT RETURN a AS a UNION RETURN 2 AS a NEXT RETURN sum(a) AS s;
+
+-- A branch that aggregates (whole-table, not per-row) is not supported.
+RETURN 1 AS a UNION RETURN 2 AS a NEXT RETURN a AS x UNION RETURN count(*) AS x;
 
 --
--- 11. NEXT is not available inside a read subquery
+-- 12. NEXT is not available inside a read subquery
 --
 -- Read subqueries (EXISTS / COUNT / CALL {}) use the read-statement grammar,
 -- which does not include NEXT.  These document that boundary; they are syntax
@@ -351,7 +376,7 @@ CALL { MATCH (m:person) RETURN m NEXT RETURN m }
 RETURN n.name;
 
 --
--- 12. Backward compatibility -- "next" is an unreserved keyword and stays
+-- 13. Backward compatibility -- "next" is an unreserved keyword and stays
 --     usable as an ordinary identifier
 --
 
@@ -371,7 +396,7 @@ next
 RETURN nm;
 
 --
--- 13. Entry points -- a NEXT query can be EXPLAINed and PREPAREd
+-- 14. Entry points -- a NEXT query can be EXPLAINed and PREPAREd
 --
 
 -- (EXPLAIN is also exercised in section 8.)  PREPARE / EXECUTE round-trip.
@@ -383,7 +408,7 @@ EXECUTE np;
 DEALLOCATE np;
 
 --
--- 14. Q2 as a write clause and terminal endings after the last NEXT
+-- 15. Q2 as a write clause and terminal endings after the last NEXT
 --     (mutations are grouped here, last, so earlier golden output is stable)
 --
 

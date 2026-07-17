@@ -3838,6 +3838,9 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 		case T_CypherSetClause:
 		case T_CypherMergeClause:
 			break;
+		case T_CypherSubselectClause:
+			/* a set operation after NEXT produces a table */
+			break;
 		default:
 			valid = false;
 			break;
