@@ -23890,77 +23890,99 @@ makeCypherNext(Node *left, Node *right)
 	CypherClause *cur;
 	CypherProjection *proj;
 	CypherClause *rhead;
+	Node	   *left_terminal;
 
 	/*
-	 * Set-operation as the LEFT operand (A UNION B NEXT C): the union's rows
-	 * are the driving table of the right query.  A set-op is a SelectStmt with
-	 * no terminal RETURN to flip; instead wrap it in a CypherSubselectClause
-	 * and splice that as the head of the right query's clause chain, so the
-	 * right query reads the whole union as its input subquery.
+	 * Determine the boundary the right operand reads -- the "carried table"
+	 * produced by the left query.
+	 *
+	 * A linear left query (CypherStmt) carries its terminal RETURN, flipped to
+	 * a WITH so the right query continues its clause chain from it.  A
+	 * set-operation left (SelectStmt, e.g. "A UNION B") has no single terminal
+	 * RETURN; wrap it in a CypherSubselectClause head whose transform yields the
+	 * whole union as a driving subquery.
 	 */
-	if (IsA(left, SelectStmt) && IsA(right, CypherStmt))
+	if (IsA(left, CypherStmt))
+	{
+		/* Find the terminating projection, past trailing ORDER BY/SKIP/LIMIT. */
+		cur = (CypherClause *) ((CypherStmt *) left)->last;
+		while (cur != NULL &&
+			   (cypherClauseTag(cur) == T_CypherOrderBy ||
+				cypherClauseTag(cur) == T_CypherSkip ||
+				cypherClauseTag(cur) == T_CypherLimit))
+			cur = (CypherClause *) cur->prev;
+
+		if (cur != NULL && cypherClauseTag(cur) == T_CypherSubselectClause)
+		{
+			/*
+			 * The left query already ends in a set-operation boundary (a prior
+			 * "... NEXT B UNION C"): it produces a table, so there is no
+			 * terminal RETURN to flip.
+			 */
+		}
+		else if (cur == NULL || cypherClauseTag(cur) != T_CypherProjection)
+			ereport(ERROR,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("a query statement before NEXT must end with RETURN")));
+		else
+		{
+			proj = (CypherProjection *) cur->detail;
+			if (proj->kind == CP_FINISH)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("FINISH cannot be followed by NEXT")));
+			if (proj->kind != CP_RETURN)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("a query statement before NEXT must end with RETURN")));
+
+			proj->kind = CP_WITH;
+		}
+		left_terminal = ((CypherStmt *) left)->last;
+	}
+	else
 	{
 		CypherSubselectClause *ss = makeNode(CypherSubselectClause);
-		CypherClause *driver = makeNode(CypherClause);
+		CypherClause *head = makeNode(CypherClause);
 
+		Assert(IsA(left, SelectStmt));
 		ss->query = left;
 		ss->location = -1;
-		driver->detail = (Node *) ss;
-		driver->prev = NULL;
-
-		rhead = (CypherClause *) ((CypherStmt *) right)->last;
-		while (rhead->prev != NULL)
-			rhead = (CypherClause *) rhead->prev;
-		rhead->prev = (Node *) driver;
-
-		return right;
+		head->detail = (Node *) ss;
+		head->prev = NULL;
+		left_terminal = (Node *) head;
 	}
 
 	/*
-	 * A set-operation as the RIGHT operand (A NEXT B UNION C) is not yet
-	 * supported.
+	 * Attach the right operand to that boundary.  A linear right query
+	 * (CypherStmt) continues its clause chain from it.  A set-operation right
+	 * (SelectStmt, "B UNION C") becomes a CypherSubselectClause terminal whose
+	 * transform correlates each branch with the carried table.
 	 */
-	if (!IsA(left, CypherStmt) || !IsA(right, CypherStmt))
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("a set operation cannot be combined with NEXT")));
+	if (IsA(right, CypherStmt))
+	{
+		rhead = (CypherClause *) ((CypherStmt *) right)->last;
+		while (rhead->prev != NULL)
+			rhead = (CypherClause *) rhead->prev;
+		rhead->prev = left_terminal;
 
-	/*
-	 * Find the left query's terminating projection, looking past any trailing
-	 * ORDER BY / SKIP / LIMIT modifier clauses (folded into the projection
-	 * later).  A query before NEXT must produce a table, i.e. end with RETURN.
-	 */
-	cur = (CypherClause *) ((CypherStmt *) left)->last;
-	while (cur != NULL &&
-		   (cypherClauseTag(cur) == T_CypherOrderBy ||
-			cypherClauseTag(cur) == T_CypherSkip ||
-			cypherClauseTag(cur) == T_CypherLimit))
-		cur = (CypherClause *) cur->prev;
+		return right;
+	}
+	else
+	{
+		CypherSubselectClause *ss = makeNode(CypherSubselectClause);
+		CypherClause *term = makeNode(CypherClause);
+		CypherStmt *n = makeNode(CypherStmt);
 
-	if (cur == NULL || cypherClauseTag(cur) != T_CypherProjection)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("a query statement before NEXT must end with RETURN")));
+		Assert(IsA(right, SelectStmt));
+		ss->query = right;
+		ss->location = -1;
+		term->detail = (Node *) ss;
+		term->prev = left_terminal;
+		n->last = (Node *) term;
 
-	proj = (CypherProjection *) cur->detail;
-	if (proj->kind == CP_FINISH)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("FINISH cannot be followed by NEXT")));
-	if (proj->kind != CP_RETURN)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("a query statement before NEXT must end with RETURN")));
-
-	proj->kind = CP_WITH;
-
-	/* Continue the right query's clause chain from the left query's terminal. */
-	rhead = (CypherClause *) ((CypherStmt *) right)->last;
-	while (rhead->prev != NULL)
-		rhead = (CypherClause *) rhead->prev;
-	rhead->prev = ((CypherStmt *) left)->last;
-
-	return right;
+		return (Node *) n;
+	}
 }
 
 static Node *

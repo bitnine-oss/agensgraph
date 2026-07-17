@@ -2063,26 +2063,115 @@ transformCypherFilterClause(ParseState *pstate, CypherClause *clause)
 }
 
 /*
+ * cypherSetopBranchAggregates
+ *		Does any branch of a transformed cypher set-operation aggregate at the
+ *		branch level -- an aggregate or GROUP BY in the branch's own projection,
+ *		not merely inside a nested subquery expression?  Each branch is a
+ *		"SELECT * FROM (<cypher>)" wrapper (wrapCypherWithSelect), so the cypher
+ *		query that carries the branch's hasAggs is that wrapper's own subquery
+ *		RTE.  Used to reject an aggregating set-operation branch after NEXT,
+ *		which the correlated per-row lowering below does not implement.
+ */
+static bool
+cypherSetopBranchAggregates(Query *setopQuery)
+{
+	ListCell   *lc;
+
+	foreach(lc, setopQuery->rtable)
+	{
+		RangeTblEntry *leaf = lfirst_node(RangeTblEntry, lc);
+		ListCell   *lc2;
+
+		if (leaf->rtekind != RTE_SUBQUERY || leaf->subquery == NULL)
+			continue;
+		foreach(lc2, leaf->subquery->rtable)
+		{
+			RangeTblEntry *cyp = lfirst_node(RangeTblEntry, lc2);
+
+			if (cyp->rtekind == RTE_SUBQUERY && cyp->subquery != NULL &&
+				(cyp->subquery->hasAggs || cyp->subquery->groupClause != NIL))
+				return true;
+		}
+	}
+	return false;
+}
+
+/*
  * transformCypherSubselectClause
  *		Transform a set-operation (UNION / UNION ALL / INTERSECT / EXCEPT)
- *		carried across a NEXT boundary.  For the left-operand form
- *		(A UNION B NEXT C) the union is the sole driving input of the following
- *		clauses (clause->prev == NULL): analyze the set-op SelectStmt as a
- *		self-contained subquery and return the resulting Query.  The caller
- *		(transformClauseImpl) then wraps it once as the consuming query's
- *		driving range-table entry, so the whole union -- with its UNION /
- *		UNION ALL duplicate-elimination semantics -- becomes the input table
- *		that C's clauses read.
+ *		carried across a NEXT boundary.
+ *
+ *		Left-operand form (A UNION B NEXT C, clause->prev == NULL): the union is
+ *		the sole driving input.  Analyze the set-op SelectStmt as a
+ *		self-contained subquery and return it; transformClauseImpl wraps the
+ *		result once as the following clauses' driving RTE, so the whole union --
+ *		with its UNION / UNION ALL de-duplication -- becomes their input table.
+ *
+ *		Right-operand form (A NEXT B UNION C, clause->prev != NULL): the carried
+ *		table from the left query drives the union, and each branch is
+ *		correlated with the carried columns.  The union is analyzed LATERAL and
+ *		cross-joined with the carried table, giving Cypher 25's per-driving-row
+ *		union semantics (UNION's DISTINCT is scoped per carried row, and a branch
+ *		producing no rows for a carried row drops that row).  The output scope
+ *		resets to the union's columns only.  A branch that aggregates would
+ *		collapse over the whole carried table rather than per row -- a different
+ *		lowering -- so it is rejected here.
  */
 Query *
 transformCypherSubselectClause(ParseState *pstate, CypherClause *clause)
 {
 	CypherSubselectClause *detail = (CypherSubselectClause *) clause->detail;
+	Query	   *qry;
+	Query	   *subqry;
+	ParseNamespaceItem *nsitem;
+	ParseExprKind saved_expr_kind;
+	bool		saved_lateral;
 
-	/* Left-operand form only for now: the union is the entire input. */
-	Assert(clause->prev == NULL);
+	/* Left-operand form: the union is the entire driving input. */
+	if (clause->prev == NULL)
+		return parse_sub_analyze(detail->query, pstate, NULL, false, true);
 
-	return parse_sub_analyze(detail->query, pstate, NULL, false, true);
+	/* Right-operand form: correlate the union with the carried table. */
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	/* Bring in the carried table (adds it to the rtable/joinlist/namespace). */
+	(void) transformClause(pstate, clause->prev);
+
+	/* Analyze the union LATERAL so each branch sees the carried columns. */
+	saved_expr_kind = pstate->p_expr_kind;
+	saved_lateral = pstate->p_lateral_active;
+	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
+	pstate->p_lateral_active = true;
+
+	subqry = parse_sub_analyze(detail->query, pstate, NULL, false, true);
+
+	pstate->p_lateral_active = saved_lateral;
+	pstate->p_expr_kind = saved_expr_kind;
+
+	if (cypherSetopBranchAggregates(subqry))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("aggregation in a set operation after NEXT is not supported")));
+
+	nsitem = addRangeTableEntryForSubquery(pstate, subqry,
+										   makeAliasNoDup(CYPHER_CALL_ALIAS, NIL),
+										   true, true);
+	addNSItemToJoinlist(pstate, nsitem, true);
+
+	/* Scope reset: expose only the union's columns to the following clauses. */
+	qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+	qry->rteperminfos = pstate->p_rteperminfos;
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
 }
 
 /* check whether resulting columns have a name or not */
