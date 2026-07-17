@@ -114,7 +114,7 @@ my @nodetag_only_files = qw(
 # the generated nodetags.h; a stable upstream branch pins its own value, so after
 # merging one, re-sync $last_nodetag_no to AgensGraph's count here.
 my $last_nodetag = 'WindowObjectData';
-my $last_nodetag_no = 538;
+my $last_nodetag_no = 539;
 
 # output file names
 my @output_files;

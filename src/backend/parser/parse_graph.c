@@ -2062,6 +2062,29 @@ transformCypherFilterClause(ParseState *pstate, CypherClause *clause)
 	return qry;
 }
 
+/*
+ * transformCypherSubselectClause
+ *		Transform a set-operation (UNION / UNION ALL / INTERSECT / EXCEPT)
+ *		carried across a NEXT boundary.  For the left-operand form
+ *		(A UNION B NEXT C) the union is the sole driving input of the following
+ *		clauses (clause->prev == NULL): analyze the set-op SelectStmt as a
+ *		self-contained subquery and return the resulting Query.  The caller
+ *		(transformClauseImpl) then wraps it once as the consuming query's
+ *		driving range-table entry, so the whole union -- with its UNION /
+ *		UNION ALL duplicate-elimination semantics -- becomes the input table
+ *		that C's clauses read.
+ */
+Query *
+transformCypherSubselectClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherSubselectClause *detail = (CypherSubselectClause *) clause->detail;
+
+	/* Left-operand form only for now: the union is the entire input. */
+	Assert(clause->prev == NULL);
+
+	return parse_sub_analyze(detail->query, pstate, NULL, false, true);
+}
+
 /* check whether resulting columns have a name or not */
 static void
 checkNameInItems(ParseState *pstate, List *items, List *targetList)

@@ -53,6 +53,8 @@ extern Query *transformCypherCallClause(ParseState *pstate,
 										CypherClause *clause);
 extern Query *transformCypherYieldCallClause(ParseState *pstate,
 											 CypherClause *clause);
+extern Query *transformCypherSubselectClause(ParseState *pstate,
+											 CypherClause *clause);
 extern Query *transformCypherCountClause(ParseState *pstate,
 										 CypherCountClause *clause);
 extern TargetEntry *makeCountTargetEntry(ParseState *pstate);
