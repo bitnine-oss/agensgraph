@@ -18,8 +18,9 @@
 -- CALL / RETURN) -- it cannot begin with WITH, WHERE, SET, DELETE, REMOVE or an
 -- ORDER BY, exactly as a stand-alone Cypher statement cannot.
 --
--- Phase 1 chains LINEAR queries only; a set-operation composite (UNION /
--- INTERSECT / EXCEPT) as a NEXT operand errors cleanly.  NEXT lives only at the
+-- A set-operation composite (UNION / INTERSECT / EXCEPT) may be the LEFT
+-- operand of NEXT ("A UNION B NEXT C", whose whole union drives the next
+-- query); as the RIGHT operand it is not supported.  NEXT lives only at the
 -- three statement entry points (top level, EXPLAIN, PREPARE), NOT inside a read
 -- subquery (EXISTS / COUNT / CALL {}) -- both are deliberate boundaries covered
 -- below as negative cases.
@@ -30,7 +31,8 @@
 -- associativity, RETURN *, folding of trailing ORDER BY / SKIP / LIMIT /
 -- DISTINCT into the boundary, plan-shape equality with WITH (zero overhead),
 -- the guard errors (Q1 not ending in RETURN, FINISH before NEXT, unaliased
--- projection, set-op adjacency), Q2 as a write clause, terminal endings after
+-- projection, set-op as the right operand), Q2 as a write clause, set-operation
+-- as the left operand of NEXT (incl. INTERSECT/EXCEPT), terminal endings after
 -- the last NEXT, the EXPLAIN and PREPARE entry points, backward compatibility
 -- of "next" as an ordinary identifier, and the read-subquery boundary.
 --
@@ -276,25 +278,53 @@ NEXT
 RETURN 1;
 
 --
--- 10. Set-operation adjacency (Phase-1 limitation, not a bug)
+-- 10. Set-operation as the LEFT operand of NEXT (Cypher 25)
 --
+-- NEXT binds looser than the set operators, so "A UNION B NEXT C" groups as
+-- "(A UNION B) NEXT C": the whole union is Q1's output table and drives C, and
+-- C runs over the ENTIRE union (an aggregate sees every union row).
 
--- A set operation as the LEFT operand of NEXT.  NEXT binds looser than the set
--- operators, so "A UNION B NEXT C" groups as "(A UNION B) NEXT C".
+-- Whole-union aggregation / count / collect.
+RETURN 1 AS a UNION RETURN 2 AS a NEXT RETURN sum(a) AS s;
+RETURN 1 AS a UNION RETURN 2 AS a NEXT RETURN count(*) AS c;
+RETURN 1 AS a UNION RETURN 2 AS a NEXT RETURN collect(a) AS xs;
+
+-- UNION eliminates Q1 duplicates; UNION ALL keeps them.
+RETURN 1 AS a UNION RETURN 1 AS a NEXT RETURN count(*) AS c;
+RETURN 1 AS a UNION ALL RETURN 1 AS a NEXT RETURN count(*) AS c;
+
+-- A leading FILTER / WITH after the union operates on the carried table.
+RETURN 1 AS a UNION RETURN 2 AS a NEXT FILTER a > 1 RETURN a;
+RETURN 1 AS a UNION RETURN 2 AS a NEXT WITH a * 10 AS b RETURN b ORDER BY b;
+
+-- Multi-column union carried across the boundary.
+RETURN 1 AS a, 2 AS b UNION RETURN 3 AS a, 4 AS b NEXT RETURN a + b AS s ORDER BY s;
+
+-- Chained: the union feeds C, whose RETURN then feeds a further NEXT.
+RETURN 1 AS a UNION RETURN 2 AS a NEXT RETURN a * 10 AS a NEXT RETURN sum(a) AS s;
+
+-- Over the graph: the (deduplicated) union of names drives the next query.
 MATCH (n:person) RETURN n.name AS nm
 UNION
 MATCH (n:person) RETURN n.name AS nm
 NEXT
-RETURN nm;
+RETURN nm ORDER BY nm;
 
--- The same with explicit parentheses around the set operation.
+-- INTERSECT / EXCEPT as the left operand also work; standard Cypher has only
+-- UNION, so these are an agensgraph extension.
+RETURN 1 AS a INTERSECT RETURN 1 AS a NEXT RETURN a;
+RETURN 1 AS a EXCEPT RETURN 2 AS a NEXT RETURN a;
+
+-- Explicit parentheses around the set operation also work; they merely group
+-- the union.  (Cypher 25 rejects this parenthesized form, so accepting it is an
+-- agensgraph extension -- the parentheses are transparent at the NEXT boundary.)
 (MATCH (n:person) RETURN n.name AS nm
  UNION
  MATCH (n:person) RETURN n.name AS nm)
 NEXT
-RETURN nm;
+RETURN nm ORDER BY nm;
 
--- A set operation as the RIGHT operand of NEXT.
+-- A set operation as the RIGHT operand of NEXT is not supported.
 MATCH (n:person {id: 1}) RETURN n.name AS nm
 NEXT
 MATCH (m:person) RETURN m.name AS nm

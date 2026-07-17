@@ -4731,6 +4731,20 @@ typedef struct CypherYieldCallClause
 	int			location;
 } CypherYieldCallClause;
 
+/*
+ * A set-operation (UNION / UNION ALL / INTERSECT / EXCEPT) carried across a
+ * NEXT boundary.  `query` is the set-op SelectStmt.  For the left-operand form
+ * (A UNION B NEXT C) this clause heads the right query's chain (prev == NULL)
+ * and the union is the driving input table; the transformer analyzes it as a
+ * self-contained subquery that the following clauses read.
+ */
+typedef struct CypherSubselectClause
+{
+	NodeTag		type;
+	Node	   *query;			/* set-op SelectStmt */
+	int			location;
+} CypherSubselectClause;
+
 typedef enum CPathKind
 {
 	CPATH_NORMAL,

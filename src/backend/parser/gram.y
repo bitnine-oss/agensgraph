@@ -23892,9 +23892,33 @@ makeCypherNext(Node *left, Node *right)
 	CypherClause *rhead;
 
 	/*
-	 * Phase 1 chains linear query statements.  A set-operation composite
-	 * (UNION / INTERSECT / EXCEPT) is a SelectStmt, which is not yet supported
-	 * as a NEXT operand.
+	 * Set-operation as the LEFT operand (A UNION B NEXT C): the union's rows
+	 * are the driving table of the right query.  A set-op is a SelectStmt with
+	 * no terminal RETURN to flip; instead wrap it in a CypherSubselectClause
+	 * and splice that as the head of the right query's clause chain, so the
+	 * right query reads the whole union as its input subquery.
+	 */
+	if (IsA(left, SelectStmt) && IsA(right, CypherStmt))
+	{
+		CypherSubselectClause *ss = makeNode(CypherSubselectClause);
+		CypherClause *driver = makeNode(CypherClause);
+
+		ss->query = left;
+		ss->location = -1;
+		driver->detail = (Node *) ss;
+		driver->prev = NULL;
+
+		rhead = (CypherClause *) ((CypherStmt *) right)->last;
+		while (rhead->prev != NULL)
+			rhead = (CypherClause *) rhead->prev;
+		rhead->prev = (Node *) driver;
+
+		return right;
+	}
+
+	/*
+	 * A set-operation as the RIGHT operand (A NEXT B UNION C) is not yet
+	 * supported.
 	 */
 	if (!IsA(left, CypherStmt) || !IsA(right, CypherStmt))
 		ereport(ERROR,

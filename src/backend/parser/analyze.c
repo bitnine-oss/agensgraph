@@ -3849,6 +3849,7 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 			case T_CypherYieldCallClause:
 			case T_CypherModifier:
 			case T_CypherFilterClause:
+			case T_CypherSubselectClause:
 				/* do nothing. */
 				break;
 			case T_CypherProjection:
@@ -3915,6 +3916,9 @@ transformCypherClause(ParseState *pstate, CypherClause *clause)
 			break;
 		case T_CypherYieldCallClause:
 			qry = transformCypherYieldCallClause(pstate, clause);
+			break;
+		case T_CypherSubselectClause:
+			qry = transformCypherSubselectClause(pstate, clause);
 			break;
 		case T_CypherModifier:
 			qry = transformCypherModifier(pstate, clause);
