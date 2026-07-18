@@ -148,7 +148,8 @@ typedef struct
 /* projection (RETURN and WITH) */
 static void checkNameInItems(ParseState *pstate, List *items, List *targetList);
 static void checkCypherLetItems(ParseState *pstate, List *targetList);
-static void updateSortOperatorsForJsonb(List *sortClause, List *targetList);
+static void updateSortOperatorsForJsonb(List *sortClause, List **targetList,
+										bool allowUnbox);
 
 /* MATCH - OPTIONAL */
 static ParseNamespaceItem *transformMatchOptional(ParseState *pstate,
@@ -455,15 +456,66 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 }
 
 /*
+ * unboxAggregateJsonbSortKey
+ *		If a jsonb-coerced sort key is cypher_to_jsonb(<integer/numeric
+ *		aggregate>), return the un-boxed native aggregate expression, else NULL.
+ *
+ * Ordering such a key by its native value is identical to ordering the boxed
+ * jsonb: jsonb number ordering matches integer/numeric ordering, and
+ * cypher_to_jsonb() is strict, so a NULL aggregate (e.g. sum() over an empty
+ * group) stays SQL NULL and keeps the position its nulls_first flag already
+ * gives it.  But sorting a fixed-width number instead of a jsonb datum matters
+ * when a high-cardinality GROUP BY feeds a top-N sort (e.g. ORDER BY count(*)).
+ *
+ * Restricted to a bare aggregate of integer/numeric type: an aggregate is
+ * evaluated after grouping, so re-pointing the sort at it never creates a
+ * GROUP BY / DISTINCT-list dependency; integer/numeric avoids jsonb string
+ * ordering (collation-dependent) and float NaN/Infinity (which a jsonb number
+ * cannot represent, so boxing and native ordering could otherwise diverge).
+ */
+static Node *
+unboxAggregateJsonbSortKey(Node *expr)
+{
+	FuncExpr   *f;
+	Node	   *arg;
+	Oid			argtype;
+
+	if (!IsA(expr, FuncExpr))
+		return NULL;
+	f = (FuncExpr *) expr;
+	if (f->funcid != F_CYPHER_TO_JSONB || list_length(f->args) != 1)
+		return NULL;
+
+	arg = (Node *) linitial(f->args);
+	if (!IsA(arg, Aggref))
+		return NULL;
+
+	argtype = getBaseType(exprType(arg));
+	if (argtype == INT2OID || argtype == INT4OID || argtype == INT8OID ||
+		argtype == NUMERICOID)
+		return arg;
+
+	return NULL;
+}
+
+/*
  * After the RETURN target list is coerced to jsonb (resolveItemList), any sort
  * key that points at a coerced target entry still carries the comparison
  * operators chosen for the entry's original type.  Re-point such sort keys at
  * the operators for the entry's final (jsonb) type so that ordering matches
  * the returned values.  Sort keys whose type did not change keep their original
  * operators.
+ *
+ * As an optimization, a sort key that boxes an integer/numeric aggregate into
+ * jsonb purely for the returned value (e.g. ORDER BY count(*)) is re-pointed at
+ * the native aggregate instead (see unboxAggregateJsonbSortKey), so the sort
+ * compares fixed-width numbers rather than jsonb datums; the boxed jsonb entry
+ * is kept for the projection, only the sort key changes.  Disabled under
+ * DISTINCT (`allowUnbox' false), where ORDER BY keys must come from the
+ * projection list.
  */
 static void
-updateSortOperatorsForJsonb(List *sortClause, List *targetList)
+updateSortOperatorsForJsonb(List *sortClause, List **targetList, bool allowUnbox)
 {
 	ListCell   *lc;
 
@@ -471,6 +523,7 @@ updateSortOperatorsForJsonb(List *sortClause, List *targetList)
 	{
 		SortGroupClause *sortcl = (SortGroupClause *) lfirst(lc);
 		TargetEntry *tle;
+		Node	   *unboxed;
 		Oid			restype;
 		Oid			sortop;
 		Oid			eqop;
@@ -479,11 +532,29 @@ updateSortOperatorsForJsonb(List *sortClause, List *targetList)
 		Oid			opcintype;
 		CompareType cmptype;
 
-		tle = get_sortgroupref_tle(sortcl->tleSortGroupRef, targetList);
+		tle = get_sortgroupref_tle(sortcl->tleSortGroupRef, *targetList);
 		if (tle == NULL)
 			continue;
 
-		restype = exprType((Node *) tle->expr);
+		unboxed = allowUnbox ? unboxAggregateJsonbSortKey((Node *) tle->expr)
+			: NULL;
+		if (unboxed != NULL)
+		{
+			/*
+			 * Keep the boxed jsonb entry for the projection; sort a fresh
+			 * resjunk copy of the native aggregate instead.
+			 */
+			TargetEntry *ntle = makeTargetEntry((Expr *) copyObject(unboxed),
+												list_length(*targetList) + 1,
+												NULL, true);
+
+			assignSortGroupRef(ntle, *targetList);
+			*targetList = lappend(*targetList, ntle);
+			sortcl->tleSortGroupRef = ntle->ressortgroupref;
+			restype = exprType(unboxed);
+		}
+		else
+			restype = exprType((Node *) tle->expr);
 
 		/* What ordering direction does the current operator represent? */
 		if (!get_ordering_op_properties(sortcl->sortop,
@@ -684,7 +755,8 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		 * operators so they match the final (jsonb) type.
 		 */
 		if (qry->sortClause != NIL)
-			updateSortOperatorsForJsonb(qry->sortClause, qry->targetList);
+			updateSortOperatorsForJsonb(qry->sortClause, &qry->targetList,
+										qry->distinctClause == NIL);
 	}
 
 	qry->rtable = pstate->p_rtable;

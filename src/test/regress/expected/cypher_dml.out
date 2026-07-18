@@ -4620,6 +4620,58 @@ drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel person
 drop cascades to elabel knows
+-- ORDER BY over an integer/numeric aggregate sorts the native value rather than
+-- cypher_to_jsonb(agg): identical order (jsonb number order matches numeric
+-- order, and strict cypher_to_jsonb keeps a NULL aggregate's nulls_first
+-- placement), but the sort compares fixed-width numbers instead of jsonb.
+CREATE GRAPH ag_pd;
+SET graph_path = ag_pd;
+CREATE (:p {g:'a', v:10}); CREATE (:p {g:'a', v:20});
+CREATE (:p {g:'b', v:5}); CREATE (:p {g:'c'});
+-- the sort key is the native count(*), not cypher_to_jsonb(count(*))
+EXPLAIN (COSTS OFF) MATCH (n:p) RETURN n.g AS g, count(*) AS c ORDER BY c DESC;
+                QUERY PLAN                 
+-------------------------------------------
+ Sort
+   Sort Key: (count(*)) DESC
+   ->  HashAggregate
+         Group Key: n.properties.'g'::text
+         ->  Seq Scan on p n
+(5 rows)
+
+MATCH (n:p) RETURN n.g AS g, count(*) AS c ORDER BY c DESC, g;
+  g  | c 
+-----+---
+ "a" | 2
+ "b" | 1
+ "c" | 1
+(3 rows)
+
+-- a NULL aggregate (avg over the value-less group 'c') keeps its position:
+-- last ascending, first descending
+MATCH (n:p) RETURN n.g AS g, avg(n.v) AS a ORDER BY a DESC, g;
+  g  |          a          
+-----+---------------------
+ "c" | 
+ "a" | 15.0000000000000000
+ "b" | 5.0000000000000000
+(3 rows)
+
+MATCH (n:p) RETURN n.g AS g, avg(n.v) AS a ORDER BY a ASC, g;
+  g  |          a          
+-----+---------------------
+ "b" | 5.0000000000000000
+ "a" | 15.0000000000000000
+ "c" | 
+(3 rows)
+
+SET graph_path = DEFAULT;
+DROP GRAPH ag_pd CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence ag_pd.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel p
 -- AG-169, AG-170
 CREATE GRAPH ag170;
 SET GRAPH_PATH = ag170;

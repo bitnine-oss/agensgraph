@@ -1720,6 +1720,24 @@ MATCH (p:person) OPTIONAL MATCH (p)-[:knows]->(t)
 SET graph_path = DEFAULT;
 DROP GRAPH ag_count CASCADE;
 
+-- ORDER BY over an integer/numeric aggregate sorts the native value rather than
+-- cypher_to_jsonb(agg): identical order (jsonb number order matches numeric
+-- order, and strict cypher_to_jsonb keeps a NULL aggregate's nulls_first
+-- placement), but the sort compares fixed-width numbers instead of jsonb.
+CREATE GRAPH ag_pd;
+SET graph_path = ag_pd;
+CREATE (:p {g:'a', v:10}); CREATE (:p {g:'a', v:20});
+CREATE (:p {g:'b', v:5}); CREATE (:p {g:'c'});
+-- the sort key is the native count(*), not cypher_to_jsonb(count(*))
+EXPLAIN (COSTS OFF) MATCH (n:p) RETURN n.g AS g, count(*) AS c ORDER BY c DESC;
+MATCH (n:p) RETURN n.g AS g, count(*) AS c ORDER BY c DESC, g;
+-- a NULL aggregate (avg over the value-less group 'c') keeps its position:
+-- last ascending, first descending
+MATCH (n:p) RETURN n.g AS g, avg(n.v) AS a ORDER BY a DESC, g;
+MATCH (n:p) RETURN n.g AS g, avg(n.v) AS a ORDER BY a ASC, g;
+SET graph_path = DEFAULT;
+DROP GRAPH ag_pd CASCADE;
+
 -- AG-169, AG-170
 CREATE GRAPH ag170;
 SET GRAPH_PATH = ag170;
