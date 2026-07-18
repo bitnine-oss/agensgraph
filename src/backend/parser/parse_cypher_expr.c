@@ -993,6 +993,25 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 
 	args = preprocess_func_args(pstate, fn);
 
+	/*
+	 * count(v) / count(DISTINCT v) over a whole graph element only needs the
+	 * element's identity.  Cypher equality on vertices and edges is defined on
+	 * the graphid alone, and an element's id is NULL exactly when the element
+	 * itself is NULL, so counting -- and, under DISTINCT, sorting -- the graphid
+	 * is identical to doing so over the full ROW(id, properties, ...) composite,
+	 * but without dragging the property jsonb through the aggregate or its sort.
+	 * Replace a lone vertex/edge argument to count() with its graphid.
+	 */
+	if (list_length(fn->funcname) == 1 && list_length(args) == 1 &&
+		strcmp(strVal(linitial(fn->funcname)), "count") == 0)
+	{
+		Node	   *arg = (Node *) linitial(args);
+		Oid			argtype = exprType(arg);
+
+		if (argtype == VERTEXOID || argtype == EDGEOID)
+			args = list_make1(getExprField((Expr *) arg, AG_ELEM_ID));
+	}
+
 	return ParseFuncOrColumn(pstate, fn->funcname, args, last_srf, fn,
 							 false, fn->location);
 }

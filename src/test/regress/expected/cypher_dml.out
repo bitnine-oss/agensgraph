@@ -4527,27 +4527,53 @@ CREATE (:v3 {no:3});
 ALTER DATABASE regression SET GRAPH_PATH TO ag161;
 SET PARALLEL_SETUP_COST = 0;
 EXPLAIN (VERBOSE, COSTS OFF) MATCH (a) RETURN count(a);
-                                  QUERY PLAN                                  
-------------------------------------------------------------------------------
+                            QUERY PLAN                            
+------------------------------------------------------------------
  Finalize Aggregate
-   Output: cypher_to_jsonb(count(ROW(a.id, a.properties, a.ctid)::vertex))
+   Output: cypher_to_jsonb(count(a.id))
    ->  Gather
-         Output: (PARTIAL count(ROW(a.id, a.properties, a.ctid)::vertex))
+         Output: (PARTIAL count(a.id))
          Workers Planned: 2
          ->  Partial Aggregate
-               Output: PARTIAL count(ROW(a.id, a.properties, a.ctid)::vertex)
+               Output: PARTIAL count(a.id)
                ->  Parallel Append
                      ->  Parallel Seq Scan on ag161.v1 a_2
-                           Output: a_2.id, a_2.properties, a_2.ctid
+                           Output: a_2.id
                      ->  Parallel Seq Scan on ag161.v2 a_3
-                           Output: a_3.id, a_3.properties, a_3.ctid
+                           Output: a_3.id
                      ->  Parallel Seq Scan on ag161.v3 a_4
-                           Output: a_4.id, a_4.properties, a_4.ctid
+                           Output: a_4.id
                      ->  Parallel Seq Scan on ag161.ag_vertex a_1
-                           Output: a_1.id, a_1.properties, a_1.ctid
+                           Output: a_1.id
 (16 rows)
 
 MATCH (a) RETURN count(a);
+ count 
+-------
+ 3
+(1 row)
+
+-- count(v) / count(DISTINCT v) over a whole vertex count the graphid, not the
+-- ROW(id, properties, ctid) composite: the scan need not output properties, and
+-- DISTINCT de-duplicates on the 8-byte id.  Same value, cheaper.
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (a) RETURN count(DISTINCT a);
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Aggregate
+   Output: cypher_to_jsonb(count(DISTINCT a.id))
+   ->  Merge Append
+         Sort Key: a.id
+         ->  Index Only Scan using ag_vertex_pkey on ag161.ag_vertex a_1
+               Output: a_1.id
+         ->  Index Only Scan using v1_pkey on ag161.v1 a_2
+               Output: a_2.id
+         ->  Index Only Scan using v2_pkey on ag161.v2 a_3
+               Output: a_3.id
+         ->  Index Only Scan using v3_pkey on ag161.v3 a_4
+               Output: a_4.id
+(12 rows)
+
+MATCH (a) RETURN count(DISTINCT a);
  count 
 -------
  3

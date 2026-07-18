@@ -497,10 +497,10 @@ EXPLAIN MATCH (a),(a)-[*1..1]->(b) RETURN count(a);
                                       QUERY PLAN                                       
 ---------------------------------------------------------------------------------------
  Aggregate  (cost=101.16..101.17 rows=1 width=32)
-   ->  Hash Join  (cost=37.00..98.16 rows=1200 width=46)
+   ->  Hash Join  (cost=37.00..98.16 rows=1200 width=8)
          Hash Cond: ("<0000000021>"."end" = b.id)
-         ->  Nested Loop  (cost=0.00..58.00 rows=1200 width=54)
-               ->  Seq Scan on ag_vertex a  (cost=0.00..22.00 rows=1200 width=46)
+         ->  Nested Loop  (cost=0.00..58.00 rows=1200 width=16)
+               ->  Seq Scan on ag_vertex a  (cost=0.00..22.00 rows=1200 width=8)
                ->  Subquery Scan on "<0000000021>"  (cost=0.00..0.02 rows=1 width=8)
                      ->  Graph VLE on ag_edge [1..1]  (cost=0.00..0.01 rows=1 width=0)
                            ->  Result  (cost=0.00..0.01 rows=1 width=80)
@@ -518,10 +518,10 @@ EXPLAIN MATCH (a)-[*1..1]->(b) RETURN count(a);
                                       QUERY PLAN                                       
 ---------------------------------------------------------------------------------------
  Aggregate  (cost=101.16..101.17 rows=1 width=32)
-   ->  Hash Join  (cost=37.00..98.16 rows=1200 width=46)
+   ->  Hash Join  (cost=37.00..98.16 rows=1200 width=8)
          Hash Cond: ("<0000000023>"."end" = b.id)
-         ->  Nested Loop  (cost=0.00..58.00 rows=1200 width=54)
-               ->  Seq Scan on ag_vertex a  (cost=0.00..22.00 rows=1200 width=46)
+         ->  Nested Loop  (cost=0.00..58.00 rows=1200 width=16)
+               ->  Seq Scan on ag_vertex a  (cost=0.00..22.00 rows=1200 width=8)
                ->  Subquery Scan on "<0000000023>"  (cost=0.00..0.02 rows=1 width=8)
                      ->  Graph VLE on ag_edge [1..1]  (cost=0.00..0.01 rows=1 width=0)
                            ->  Result  (cost=0.00..0.01 rows=1 width=80)
