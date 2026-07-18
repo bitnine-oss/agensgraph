@@ -1696,6 +1696,12 @@ SET PARALLEL_SETUP_COST = 0;
 EXPLAIN (VERBOSE, COSTS OFF) MATCH (a) RETURN count(a);
 MATCH (a) RETURN count(a);
 
+-- count(v) / count(DISTINCT v) over a whole vertex count the graphid, not the
+-- ROW(id, properties, ctid) composite: the scan need not output properties, and
+-- DISTINCT de-duplicates on the 8-byte id.  Same value, cheaper.
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (a) RETURN count(DISTINCT a);
+MATCH (a) RETURN count(DISTINCT a);
+
 ALTER DATABASE regression SET GRAPH_PATH TO DEFAULT;
 DROP GRAPH ag161 CASCADE;
 
