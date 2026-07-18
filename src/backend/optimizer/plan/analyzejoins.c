@@ -23,6 +23,7 @@
 #include "postgres.h"
 
 #include "catalog/pg_class.h"
+#include "catalog/pg_type.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/joininfo.h"
 #include "optimizer/optimizer.h"
@@ -32,6 +33,7 @@
 #include "optimizer/planmain.h"
 #include "optimizer/restrictinfo.h"
 #include "rewrite/rewriteManip.h"
+#include "utils/graph.h"
 #include "utils/lsyscache.h"
 
 /*
@@ -65,6 +67,7 @@ typedef struct
 } SelfJoinCandidate;
 
 bool		enable_self_join_elimination;
+bool		enable_graph_endpoint_elision;
 
 /* local functions */
 static bool join_is_removable(PlannerInfo *root, SpecialJoinInfo *sjinfo);
@@ -92,6 +95,9 @@ static bool is_innerrel_unique_for(PlannerInfo *root,
 static int	self_join_candidates_cmp(const void *a, const void *b);
 static bool replace_relid_callback(Node *node,
 								   ChangeVarNodes_context *context);
+static bool graph_endpoint_is_elidable(PlannerInfo *root, Index rti);
+static void remove_graph_endpoint_from_eclass(EquivalenceClass *ec, int relid);
+static void remove_graph_endpoint_from_query(PlannerInfo *root, int relid);
 
 
 /*
@@ -2592,6 +2598,399 @@ remove_useless_self_joins(PlannerInfo *root, List *joinlist)
 			if (nremoved != 1)
 				elog(ERROR, "failed to find relation %d in joinlist", relid);
 		}
+	}
+
+	return joinlist;
+}
+
+
+/*
+ * Agensgraph: elision of unused anonymous graph-pattern endpoints.
+ *
+ * A Cypher MATCH that walks past a vertex it never uses -- the trailing "()"
+ * in MATCH (a)-[b]->(), the middle node of (a)-->()-->( b), etc. -- still
+ * forces the planner to scan that endpoint vertex and join it to the adjacent
+ * edge.  That join is provably redundant: the vertex id column is a PRIMARY
+ * KEY, so the join is 1:1 and cannot change row multiplicity, and every edge
+ * endpoint references a live vertex (the Cypher layer enforces this: CREATE
+ * builds edges from live vertices, and DELETE refuses to strand an edge unless
+ * DETACH removes it too), so the join cannot filter any row either.  Removing
+ * the scan and the join therefore preserves the result exactly.
+ *
+ * The endpoint equality "vertex.id = edge.{start,end}" is a graphid equality,
+ * which is mergejoinable, so the planner absorbs it into an EquivalenceClass
+ * rather than a join clause.  That is why remove_useless_joins (which only
+ * handles left joins) and remove_useless_self_joins (which needs a surviving
+ * same-table twin) never touch it.  We remove the endpoint by deleting its EC
+ * membership: for an intermediate endpoint the surviving members (e1.end and
+ * e2.start) still generate the edge-to-edge join at path time, so the two
+ * edges stay connected without the middle scan; for a terminal endpoint the EC
+ * collapses to a single member and the edge endpoint is simply unconstrained.
+ *
+ * This runs after the graphmeta constraint solver has frozen every surviving
+ * endpoint's pruned label set, so eliding an endpoint here cannot cost a
+ * neighbor its scan pruning.  It is purely structural and needs no ag_graphmeta
+ * statistics.
+ */
+
+/*
+ * Is this EquivalenceMember exactly the id column Var of relation rti?
+ *
+ * Mirrors the id-Var recognition used by the graphmeta pruning code: a plain
+ * graphid Var at attno 1 of rti (possibly wrapped in a RelabelType), belonging
+ * to no other relation.
+ */
+static bool
+em_is_endpoint_id(EquivalenceMember *em, Index rti)
+{
+	Node	   *node = (Node *) em->em_expr;
+
+	if (node && IsA(node, RelabelType))
+		node = (Node *) ((RelabelType *) node)->arg;
+	if (node == NULL || !IsA(node, Var))
+		return false;
+	if (bms_membership(em->em_relids) != BMS_SINGLETON)
+		return false;
+	else
+	{
+		Var		   *v = (Var *) node;
+
+		return (v->varno == rti &&
+				v->varattno == Anum_table_vertex_id &&
+				v->vartype == GRAPHIDOID &&
+				v->varlevelsup == 0);
+	}
+}
+
+/*
+ * Decide whether the base relation rti is an anonymous endpoint vertex that
+ * the rest of the query never uses, and can therefore be elided.
+ */
+static bool
+graph_endpoint_is_elidable(PlannerInfo *root, Index rti)
+{
+	RelOptInfo *rel = root->simple_rel_array[rti];
+	RangeTblEntry *rte = root->simple_rte_array[rti];
+	Relids		adjacent = NULL;
+	Relids		inputrelids;
+	bool		found_ec = false;
+	int			attroff;
+	int			r;
+	ListCell   *lc;
+	ListCell   *lc2;
+
+	/* Must be a plain base-relation scan of an unlabelled MATCH node. */
+	if (rel == NULL || rte == NULL)
+		return false;
+	if (rel->reloptkind != RELOPT_BASEREL)
+		return false;
+	if (rte->rtekind != RTE_RELATION || !rte->inh || !OidIsValid(rte->relid))
+		return false;
+	if (!OidIsValid(rte->graphPruneGraph) ||
+		rte->graphPruneRole != GRAPHPRUNE_ROLE_NODE ||
+		rte->graphPruneLabid != 0)
+		return false;
+
+	/*
+	 * Bail on anything whose references we cannot safely delete without a
+	 * substitution target.  A labelled endpoint (excluded above) is a label
+	 * filter and must be kept; these keep everything else honest.
+	 */
+	if ((int) rti == root->parse->resultRelation)
+		return false;
+	if (rel->baserestrictinfo != NIL)	/* inline {prop:...} or WHERE filter */
+		return false;
+	/*
+	 * A clean endpoint's only cross-relation reference is its mergejoinable id
+	 * equality, which lives in an EquivalenceClass -- never in joininfo.  So a
+	 * non-empty joininfo means some other join qual mentions this endpoint
+	 * (e.g. WHERE x.p <> b.p, which is not equivalence-absorbed and is not a
+	 * single-relation baserestrictinfo); dropping the endpoint would drop that
+	 * filter and change the result, so keep it.
+	 */
+	if (rel->joininfo != NIL)
+		return false;
+	if (!bms_is_empty(rel->lateral_relids))
+		return false;
+
+	/* A row mark (FOR UPDATE / EPQ) cannot be transferred by a pure delete. */
+	foreach(lc, root->rowMarks)
+	{
+		PlanRowMark *rc = (PlanRowMark *) lfirst(lc);
+
+		if (rc->rti == rti)
+			return false;
+	}
+
+	/*
+	 * An outer/semi join referencing rti (e.g. an OPTIONAL MATCH side) routes
+	 * the endpoint equality through a SpecialJoinInfo rather than an EC, and
+	 * would need its relid sets fixed up; leave those to PostgreSQL's own join
+	 * removal and keep this pass to plain inner endpoints.
+	 */
+	foreach(lc, root->join_info_list)
+	{
+		SpecialJoinInfo *sj = (SpecialJoinInfo *) lfirst(lc);
+
+		if (bms_is_member(rti, sj->min_lefthand) ||
+			bms_is_member(rti, sj->min_righthand) ||
+			bms_is_member(rti, sj->syn_lefthand) ||
+			bms_is_member(rti, sj->syn_righthand))
+			return false;
+	}
+
+	/* A PlaceHolderVar over rti has no substitution target on a pure delete. */
+	foreach(lc, root->placeholder_list)
+	{
+		PlaceHolderInfo *phi = (PlaceHolderInfo *) lfirst(lc);
+
+		if (bms_is_member(rti, phi->ph_eval_at) ||
+			bms_is_member(rti, phi->ph_lateral) ||
+			bms_is_member(rti, phi->ph_var->phrels))
+			return false;
+	}
+
+	/* Nor may another relation depend on rti laterally. */
+	for (r = 1; r < root->simple_rel_array_size; r++)
+	{
+		RelOptInfo *orel = root->simple_rel_array[r];
+
+		if (orel != NULL && bms_is_member(rti, orel->lateral_relids))
+			return false;
+	}
+
+	/*
+	 * Find the EquivalenceClass(es) that carry the endpoint's id column.  The
+	 * other relations in those classes are the edges it anchors.  If the id is
+	 * in no EC the node is disconnected (a cartesian scan whose cardinality is
+	 * load-bearing) and must be kept.  If any member touching rti is something
+	 * other than the bare id Var, this is not a clean endpoint -- bail.
+	 */
+	foreach(lc, root->eq_classes)
+	{
+		EquivalenceClass *ec = (EquivalenceClass *) lfirst(lc);
+
+		if (!bms_is_member(rti, ec->ec_relids))
+			continue;
+
+		foreach(lc2, ec->ec_members)
+		{
+			EquivalenceMember *em = (EquivalenceMember *) lfirst(lc2);
+
+			if (bms_is_member(rti, em->em_relids) && !em_is_endpoint_id(em, rti))
+			{
+				bms_free(adjacent);
+				return false;
+			}
+		}
+
+		found_ec = true;
+		adjacent = bms_add_members(adjacent, ec->ec_relids);
+	}
+
+	if (!found_ec)
+	{
+		bms_free(adjacent);
+		return false;
+	}
+	adjacent = bms_del_member(adjacent, rti);
+	if (bms_is_empty(adjacent))
+	{
+		bms_free(adjacent);
+		return false;
+	}
+
+	/*
+	 * Every anchoring relation must be a plain directed or undirected edge.
+	 * Variable-length (VLE) edges materialise the endpoint vid specially and
+	 * may lack the clean id equality; delete-join edge scans and stray node
+	 * relations are likewise off-limits.
+	 */
+	r = -1;
+	while ((r = bms_next_member(adjacent, r)) >= 0)
+	{
+		RangeTblEntry *ert = root->simple_rte_array[r];
+
+		if (ert == NULL ||
+			!OidIsValid(ert->graphPruneGraph) ||
+			(ert->graphPruneRole != GRAPHPRUNE_ROLE_DIR_EDGE &&
+			 ert->graphPruneRole != GRAPHPRUNE_ROLE_UNDIR_EDGE))
+		{
+			bms_free(adjacent);
+			return false;
+		}
+	}
+
+	/*
+	 * Finally, the endpoint must be used nowhere except at the joins to its
+	 * anchoring edges.  Mirroring join_is_removable, no column's attr_needed
+	 * may reach outside {rti} + adjacent edges; in particular a bit for
+	 * "relation 0" (final targetlist / HAVING, e.g. a named path that captures
+	 * the node) makes it non-elidable, as do references from any other rel.
+	 */
+	inputrelids = bms_add_member(bms_copy(adjacent), rti);
+	for (attroff = rel->max_attr - rel->min_attr; attroff >= 0; attroff--)
+	{
+		if (!bms_is_subset(rel->attr_needed[attroff], inputrelids))
+		{
+			bms_free(inputrelids);
+			bms_free(adjacent);
+			return false;
+		}
+	}
+
+	bms_free(inputrelids);
+	bms_free(adjacent);
+	return true;
+}
+
+/*
+ * Remove all references to the elided endpoint relid from an EquivalenceClass.
+ *
+ * Unlike remove_rel_from_eclass (which, for the no-SpecialJoinInfo case,
+ * rewrites source-clause Vars to a substitute relation), we are deleting the
+ * relation outright with no substitute.  So we drop the endpoint's id member
+ * when its em_relids empties, and drop -- rather than rewrite -- any source
+ * clause that mentions it.  The surviving members keep generating the correct
+ * join equalities from ec_members at path time.
+ */
+static void
+remove_graph_endpoint_from_eclass(EquivalenceClass *ec, int relid)
+{
+	ListCell   *lc;
+
+	ec->ec_relids = adjust_relid_set(ec->ec_relids, relid, -1);
+
+	/* This pass runs before appendrel expansion, so no child members exist. */
+	Assert(ec->ec_childmembers == NULL);
+
+	foreach(lc, ec->ec_members)
+	{
+		EquivalenceMember *cur_em = (EquivalenceMember *) lfirst(lc);
+
+		if (bms_is_member(relid, cur_em->em_relids))
+		{
+			Assert(!cur_em->em_is_const);
+			cur_em->em_relids = adjust_relid_set(cur_em->em_relids, relid, -1);
+			if (bms_is_empty(cur_em->em_relids))
+				ec->ec_members = foreach_delete_current(ec->ec_members, lc);
+		}
+	}
+
+	foreach(lc, ec->ec_sources)
+	{
+		RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
+
+		if (bms_is_member(relid, rinfo->clause_relids))
+			ec->ec_sources = foreach_delete_current(ec->ec_sources, lc);
+	}
+
+	/* Force re-derivation of join clauses from the surviving members. */
+	ec_clear_derived_clauses(ec);
+}
+
+/*
+ * Remove an elided endpoint relation from the planner's data structures.
+ *
+ * Modelled on remove_leftjoinrel_from_query, but for a plain inner relation
+ * deleted with no substitute.  The caller (graph_endpoint_is_elidable) has
+ * already proven that nothing outside the endpoint's own EC(s) references it,
+ * so there are no SpecialJoinInfo, PlaceHolderVar, or lateral references to fix
+ * up here; we assert that in assert-enabled builds.
+ */
+static void
+remove_graph_endpoint_from_query(PlannerInfo *root, int relid)
+{
+	RelOptInfo *rel = find_base_rel(root, relid);
+	ListCell   *l;
+
+	root->all_baserels = adjust_relid_set(root->all_baserels, relid, -1);
+	root->all_query_rels = adjust_relid_set(root->all_query_rels, relid, -1);
+
+#ifdef USE_ASSERT_CHECKING
+	foreach(l, root->join_info_list)
+	{
+		SpecialJoinInfo *sj = (SpecialJoinInfo *) lfirst(l);
+
+		Assert(!bms_is_member(relid, sj->min_lefthand));
+		Assert(!bms_is_member(relid, sj->min_righthand));
+		Assert(!bms_is_member(relid, sj->syn_lefthand));
+		Assert(!bms_is_member(relid, sj->syn_righthand));
+	}
+	foreach(l, root->placeholder_list)
+	{
+		PlaceHolderInfo *phi = (PlaceHolderInfo *) lfirst(l);
+
+		Assert(!bms_is_member(relid, phi->ph_eval_at));
+		Assert(!bms_is_member(relid, phi->ph_lateral));
+		Assert(!bms_is_member(relid, phi->ph_var->phrels));
+	}
+#endif
+
+	/* Drop the endpoint from every EquivalenceClass that carries it. */
+	foreach(l, root->eq_classes)
+	{
+		EquivalenceClass *ec = (EquivalenceClass *) lfirst(l);
+
+		if (bms_is_member(relid, ec->ec_relids))
+			remove_graph_endpoint_from_eclass(ec, relid);
+	}
+
+	/*
+	 * The endpoint's id equality to its edge lives in an EquivalenceClass, and
+	 * the caller rejected any endpoint carrying a non-EC join clause, so there
+	 * is nothing left in joininfo to remove.
+	 */
+	Assert(rel->joininfo == NIL);
+
+	root->simple_rel_array[relid] = NULL;
+	root->simple_rte_array[relid] = NULL;
+	pfree(rel);
+
+	/*
+	 * Recompute per-Var attr_needed from all remaining sources, so that a
+	 * later endpoint examined in the same pass sees accurate usage.
+	 */
+	rebuild_placeholder_attr_needed(root);
+	rebuild_joinclause_attr_needed(root);
+	rebuild_eclass_attr_needed(root);
+	rebuild_lateral_attr_needed(root);
+}
+
+/*
+ * remove_useless_graph_endpoints
+ *		Remove scans for anonymous graph-pattern endpoint vertices that the
+ *		query never uses, connecting their edges directly instead.
+ *
+ * We are passed the current joinlist and return the updated list.  Other data
+ * structures that have to be updated are accessible via "root".
+ */
+List *
+remove_useless_graph_endpoints(PlannerInfo *root, List *joinlist)
+{
+	int			rti;
+
+	if (!enable_graph_endpoint_elision)
+		return joinlist;
+
+	/*
+	 * A single forward pass is sufficient: eliding an endpoint only ever
+	 * removes constraints, so it can never turn a non-candidate into an unsound
+	 * candidate, and distinct anonymous endpoints never share an EC (Cypher
+	 * emits no node-to-node id equality), so removing one leaves the others'
+	 * connectivity intact.
+	 */
+	for (rti = 1; rti < root->simple_rel_array_size; rti++)
+	{
+		int			nremoved = 0;
+
+		if (!graph_endpoint_is_elidable(root, rti))
+			continue;
+
+		remove_graph_endpoint_from_query(root, rti);
+		joinlist = remove_rel_from_joinlist(joinlist, rti, &nremoved);
+		if (nremoved != 1)
+			elog(ERROR, "failed to find relation %d in joinlist", rti);
 	}
 
 	return joinlist;

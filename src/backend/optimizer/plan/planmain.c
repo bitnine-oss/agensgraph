@@ -279,6 +279,17 @@ query_planner(PlannerInfo *root,
 	prune_scans_by_id_const(root);
 
 	/*
+	 * Agensgraph: now that the constraint solver has run over the intact
+	 * pattern and frozen each surviving endpoint's pruned label set, drop the
+	 * scan+join for anonymous endpoint vertices that the query never uses (e.g.
+	 * the trailing "()" in MATCH (a)-[b]->()).  This runs after pruning so a
+	 * neighbor's pruning is preserved, and before appendrel expansion so each
+	 * endpoint is still a single parent baserel.  It is structural and needs no
+	 * ag_graphmeta statistics.
+	 */
+	joinlist = remove_useless_graph_endpoints(root, joinlist);
+
+	/*
 	 * Now expand appendrels by adding "otherrels" for their children.  We
 	 * delay this to the end so that we have as much information as possible
 	 * available for each baserel, including all restriction clauses.  That

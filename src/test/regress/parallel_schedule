@@ -173,6 +173,9 @@ test: graphmeta
 # run graphmeta scan pruning
 test: cypher_graphmeta_prune
 
+# run unused-endpoint elision
+test: cypher_endpoint_elision
+
 # run cypher ddl test
 test: cypher_ddl
 

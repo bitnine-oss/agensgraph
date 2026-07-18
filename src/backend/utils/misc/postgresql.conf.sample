@@ -432,6 +432,7 @@
 #enable_group_by_reordering = on
 #enable_distinct_reordering = on
 #enable_self_join_elimination = on
+#enable_graph_endpoint_elision = on
 
 # - Planner Cost Constants -
 
