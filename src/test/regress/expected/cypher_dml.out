@@ -4588,6 +4588,38 @@ drop cascades to elabel ag_edge
 drop cascades to vlabel v1
 drop cascades to vlabel v2
 drop cascades to vlabel v3
+-- count() over a graph element counts by graphid; verify it holds for edges and,
+-- crucially, that count() skips a NULL (unmatched OPTIONAL MATCH) element exactly
+-- as count(*) would -- the id is NULL precisely when the element is.
+CREATE GRAPH ag_count;
+SET graph_path = ag_count;
+CREATE (:person {name:'a'})-[:knows]->(:person {name:'b'});
+CREATE (:person {name:'c'});
+-- one knows edge: count(r) and count(DISTINCT r) are both 1
+MATCH ()-[r:knows]->() RETURN count(r) AS cr, count(DISTINCT r) AS cdr;
+ cr | cdr 
+----+-----
+ 1  | 1
+(1 row)
+
+-- only 'a' has an outgoing :knows, so count(t) is 0 for b and c (t is NULL there)
+MATCH (p:person) OPTIONAL MATCH (p)-[:knows]->(t)
+  RETURN p.name AS p, count(t) AS c ORDER BY p;
+  p  | c 
+-----+---
+ "a" | 1
+ "b" | 0
+ "c" | 0
+(3 rows)
+
+SET graph_path = DEFAULT;
+DROP GRAPH ag_count CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence ag_count.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
+drop cascades to elabel knows
 -- AG-169, AG-170
 CREATE GRAPH ag170;
 SET GRAPH_PATH = ag170;
