@@ -1025,6 +1025,16 @@ struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 	{
+		{"enable_graph_endpoint_elision", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enables removal of scans for unused anonymous graph pattern endpoints."),
+			NULL,
+			GUC_EXPLAIN
+		},
+		&enable_graph_endpoint_elision,
+		true,
+		NULL, NULL, NULL
+	},
+	{
 		{"enable_group_by_reordering", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables reordering of GROUP BY keys."),
 			NULL,

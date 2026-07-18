@@ -485,18 +485,14 @@ MATCH (a:n1)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
 
 -- Case 2: far node labelled -> b={e1}, a={n1}
 EXPLAIN (costs off) MATCH (a)-[b]->(c:n2) RETURN c;
-             QUERY PLAN              
--------------------------------------
+          QUERY PLAN           
+-------------------------------
  Hash Join
    Hash Cond: (b."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Seq Scan on e1 b
-         ->  Hash
-               ->  Seq Scan on n1 a
+   ->  Seq Scan on e1 b
    ->  Hash
          ->  Seq Scan on n2 c
-(9 rows)
+(5 rows)
 
 MATCH (a)-[b]->(c:n2) RETURN label(a) AS a, label(b) AS b ORDER BY a, b;
   a   |  b   
@@ -527,18 +523,14 @@ MATCH (a:n1)-[b]->(c:n2) RETURN label(b) AS b ORDER BY b;
 
 -- Case 4: edge labelled -> a={n1}, c={n2}
 EXPLAIN (costs off) MATCH (a)-[b:e1]->(c) RETURN c;
-             QUERY PLAN              
--------------------------------------
+          QUERY PLAN           
+-------------------------------
  Hash Join
    Hash Cond: (b."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Seq Scan on e1 b
-         ->  Hash
-               ->  Seq Scan on n1 a
+   ->  Seq Scan on e1 b
    ->  Hash
          ->  Seq Scan on n2 c
-(9 rows)
+(5 rows)
 
 MATCH (a)-[b:e1]->(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
   a   |  c   
@@ -549,27 +541,24 @@ MATCH (a)-[b:e1]->(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
 -- ---------- multi hop ----------
 -- Case 5: first node labelled drives the whole chain
 EXPLAIN (costs off) MATCH (a:n1)-[b]->(c)-[d]->(e) RETURN e;
-                      QUERY PLAN                       
--------------------------------------------------------
+                    QUERY PLAN                     
+---------------------------------------------------
  Hash Join
    Hash Cond: (d."end" = e.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Hash Join
-               Hash Cond: (d.start = c.id)
-               Join Filter: (b.id <> d.id)
-               ->  Seq Scan on e2 d
-               ->  Hash
-                     ->  Hash Join
-                           Hash Cond: (b."end" = c.id)
-                           ->  Seq Scan on e1 b
-                           ->  Hash
-                                 ->  Seq Scan on n2 c
-         ->  Hash
-               ->  Seq Scan on n1 a
+   ->  Merge Join
+         Merge Cond: (d.start = b."end")
+         Join Filter: (b.id <> d.id)
+         ->  Index Scan using e2_start_idx on e2 d
+         ->  Sort
+               Sort Key: b."end"
+               ->  Hash Join
+                     Hash Cond: (b.start = a.id)
+                     ->  Seq Scan on e1 b
+                     ->  Hash
+                           ->  Seq Scan on n1 a
    ->  Hash
          ->  Seq Scan on n3 e
-(18 rows)
+(15 rows)
 
 MATCH (a:n1)-[b]->(c)-[d]->(e) RETURN label(c) AS c, label(d) AS d, label(e) AS e ORDER BY c, d, e;
   c   |  d   |  e   
@@ -579,27 +568,23 @@ MATCH (a:n1)-[b]->(c)-[d]->(e) RETURN label(c) AS c, label(d) AS d, label(e) AS 
 
 -- Case 6: middle node labelled
 EXPLAIN (costs off) MATCH (a)-[b]->(c:n2)-[d]->(e) RETURN e;
-                      QUERY PLAN                       
--------------------------------------------------------
+                   QUERY PLAN                    
+-------------------------------------------------
  Hash Join
    Hash Cond: (d."end" = e.id)
    ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Hash Join
-               Hash Cond: (d.start = c.id)
-               Join Filter: (b.id <> d.id)
-               ->  Seq Scan on e2 d
-               ->  Hash
-                     ->  Hash Join
-                           Hash Cond: (b."end" = c.id)
-                           ->  Seq Scan on e1 b
-                           ->  Hash
-                                 ->  Seq Scan on n2 c
+         Hash Cond: (d.start = c.id)
+         Join Filter: (b.id <> d.id)
+         ->  Seq Scan on e2 d
          ->  Hash
-               ->  Seq Scan on n1 a
+               ->  Hash Join
+                     Hash Cond: (b."end" = c.id)
+                     ->  Seq Scan on e1 b
+                     ->  Hash
+                           ->  Seq Scan on n2 c
    ->  Hash
          ->  Seq Scan on n3 e
-(18 rows)
+(14 rows)
 
 MATCH (a)-[b]->(c:n2)-[d]->(e) RETURN label(a) AS a, label(b) AS b, label(e) AS e ORDER BY a, b, e;
   a   |  b   |  e   
@@ -609,27 +594,20 @@ MATCH (a)-[b]->(c:n2)-[d]->(e) RETURN label(a) AS a, label(b) AS b, label(e) AS 
 
 -- Case 7: last node labelled
 EXPLAIN (costs off) MATCH (a)-[b]->(c)-[d]->(e:n3) RETURN e;
-                      QUERY PLAN                       
--------------------------------------------------------
- Hash Join
-   Hash Cond: (d."end" = e.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
+                QUERY PLAN                 
+-------------------------------------------
+ Merge Join
+   Merge Cond: (b."end" = d.start)
+   Join Filter: (b.id <> d.id)
+   ->  Index Scan using e1_end_idx on e1 b
+   ->  Sort
+         Sort Key: d.start
          ->  Hash Join
-               Hash Cond: (d.start = c.id)
-               Join Filter: (b.id <> d.id)
+               Hash Cond: (d."end" = e.id)
                ->  Seq Scan on e2 d
                ->  Hash
-                     ->  Hash Join
-                           Hash Cond: (b."end" = c.id)
-                           ->  Seq Scan on e1 b
-                           ->  Hash
-                                 ->  Seq Scan on n2 c
-         ->  Hash
-               ->  Seq Scan on n1 a
-   ->  Hash
-         ->  Seq Scan on n3 e
-(18 rows)
+                     ->  Seq Scan on n3 e
+(11 rows)
 
 MATCH (a)-[b]->(c)-[d]->(e:n3) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
   a   |  c   
@@ -669,36 +647,24 @@ MATCH (a:n1)-[b]->(c:n2)-[d]->(e:n3) RETURN label(b) AS b, label(d) AS d ORDER B
 
 -- Case 9: first edge labelled drives the chain transitively
 EXPLAIN (costs off) MATCH (a)-[b:e1]->(c)-[d]->(e)-[f]->(g) RETURN g;
-                               QUERY PLAN                                
--------------------------------------------------------------------------
- Hash Join
-   Hash Cond: (f."end" = g.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
+                     QUERY PLAN                     
+----------------------------------------------------
+ Merge Join
+   Merge Cond: (d."end" = f.start)
+   Join Filter: ((b.id <> f.id) AND (d.id <> f.id))
+   ->  Nested Loop
+         ->  Index Scan using e2_end_idx on e2 d
+         ->  Index Scan using e1_end_idx on e1 b
+               Index Cond: ("end" = d.start)
+               Filter: (id <> d.id)
+   ->  Sort
+         Sort Key: f.start
          ->  Hash Join
-               Hash Cond: (f.start = e.id)
-               Join Filter: ((b.id <> f.id) AND (d.id <> f.id))
+               Hash Cond: (f."end" = g.id)
                ->  Seq Scan on e3 f
                ->  Hash
-                     ->  Hash Join
-                           Hash Cond: (d."end" = e.id)
-                           ->  Hash Join
-                                 Hash Cond: (d.start = c.id)
-                                 Join Filter: (b.id <> d.id)
-                                 ->  Seq Scan on e2 d
-                                 ->  Hash
-                                       ->  Hash Join
-                                             Hash Cond: (b."end" = c.id)
-                                             ->  Seq Scan on e1 b
-                                             ->  Hash
-                                                   ->  Seq Scan on n2 c
-                           ->  Hash
-                                 ->  Seq Scan on n3 e
-         ->  Hash
-               ->  Seq Scan on n1 a
-   ->  Hash
-         ->  Seq Scan on n4 g
-(27 rows)
+                     ->  Seq Scan on n4 g
+(15 rows)
 
 MATCH (a)-[b:e1]->(c)-[d]->(e)-[f]->(g) RETURN label(c) AS c, label(e) AS e, label(g) AS g ORDER BY c, e, g;
   c   |  e   |  g   
@@ -708,36 +674,24 @@ MATCH (a)-[b:e1]->(c)-[d]->(e)-[f]->(g) RETURN label(c) AS c, label(e) AS e, lab
 
 -- Case 10: middle edge labelled
 EXPLAIN (costs off) MATCH (a)-[b]->(c)-[d:e2]->(e)-[f]->(g) RETURN g;
-                               QUERY PLAN                                
--------------------------------------------------------------------------
- Hash Join
-   Hash Cond: (f."end" = g.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
+                     QUERY PLAN                     
+----------------------------------------------------
+ Merge Join
+   Merge Cond: (d."end" = f.start)
+   Join Filter: ((b.id <> f.id) AND (d.id <> f.id))
+   ->  Nested Loop
+         ->  Index Scan using e2_end_idx on e2 d
+         ->  Index Scan using e1_end_idx on e1 b
+               Index Cond: ("end" = d.start)
+               Filter: (id <> d.id)
+   ->  Sort
+         Sort Key: f.start
          ->  Hash Join
-               Hash Cond: (f.start = e.id)
-               Join Filter: ((b.id <> f.id) AND (d.id <> f.id))
+               Hash Cond: (f."end" = g.id)
                ->  Seq Scan on e3 f
                ->  Hash
-                     ->  Hash Join
-                           Hash Cond: (d."end" = e.id)
-                           ->  Hash Join
-                                 Hash Cond: (d.start = c.id)
-                                 Join Filter: (b.id <> d.id)
-                                 ->  Seq Scan on e2 d
-                                 ->  Hash
-                                       ->  Hash Join
-                                             Hash Cond: (b."end" = c.id)
-                                             ->  Seq Scan on e1 b
-                                             ->  Hash
-                                                   ->  Seq Scan on n2 c
-                           ->  Hash
-                                 ->  Seq Scan on n3 e
-         ->  Hash
-               ->  Seq Scan on n1 a
-   ->  Hash
-         ->  Seq Scan on n4 g
-(27 rows)
+                     ->  Seq Scan on n4 g
+(15 rows)
 
 MATCH (a)-[b]->(c)-[d:e2]->(e)-[f]->(g) RETURN label(a) AS a, label(g) AS g ORDER BY a, g;
   a   |  g   
@@ -747,36 +701,24 @@ MATCH (a)-[b]->(c)-[d:e2]->(e)-[f]->(g) RETURN label(a) AS a, label(g) AS g ORDE
 
 -- Case 11: last edge labelled
 EXPLAIN (costs off) MATCH (a)-[b]->(c)-[d]->(e)-[f:e4]->(g) RETURN g;
-                               QUERY PLAN                                
--------------------------------------------------------------------------
- Hash Join
-   Hash Cond: (f."end" = g.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
+                     QUERY PLAN                     
+----------------------------------------------------
+ Merge Join
+   Merge Cond: (d."end" = f.start)
+   Join Filter: ((b.id <> f.id) AND (d.id <> f.id))
+   ->  Nested Loop
+         ->  Index Scan using e3_end_idx on e3 d
+         ->  Index Scan using e2_end_idx on e2 b
+               Index Cond: ("end" = d.start)
+               Filter: (id <> d.id)
+   ->  Sort
+         Sort Key: f.start
          ->  Hash Join
-               Hash Cond: (f.start = e.id)
-               Join Filter: ((b.id <> f.id) AND (d.id <> f.id))
+               Hash Cond: (f."end" = g.id)
                ->  Seq Scan on e4 f
                ->  Hash
-                     ->  Hash Join
-                           Hash Cond: (d."end" = e.id)
-                           ->  Hash Join
-                                 Hash Cond: (d.start = c.id)
-                                 Join Filter: (b.id <> d.id)
-                                 ->  Seq Scan on e3 d
-                                 ->  Hash
-                                       ->  Hash Join
-                                             Hash Cond: (b."end" = c.id)
-                                             ->  Seq Scan on e2 b
-                                             ->  Hash
-                                                   ->  Seq Scan on n3 c
-                           ->  Hash
-                                 ->  Seq Scan on n4 e
-         ->  Hash
-               ->  Seq Scan on n2 a
-   ->  Hash
-         ->  Seq Scan on n5 g
-(27 rows)
+                     ->  Seq Scan on n5 g
+(15 rows)
 
 MATCH (a)-[b]->(c)-[d]->(e)-[f:e4]->(g) RETURN label(a) AS a, label(g) AS g ORDER BY a, g;
   a   |  g   
@@ -786,36 +728,24 @@ MATCH (a)-[b]->(c)-[d]->(e)-[f:e4]->(g) RETURN label(a) AS a, label(g) AS g ORDE
 
 -- Case 12: all edges labelled
 EXPLAIN (costs off) MATCH (a)-[b:e1]->(c)-[d:e2]->(e)-[f:e3]->(g) RETURN g;
-                               QUERY PLAN                                
--------------------------------------------------------------------------
- Hash Join
-   Hash Cond: (f."end" = g.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
+                     QUERY PLAN                     
+----------------------------------------------------
+ Merge Join
+   Merge Cond: (d."end" = f.start)
+   Join Filter: ((b.id <> f.id) AND (d.id <> f.id))
+   ->  Nested Loop
+         ->  Index Scan using e2_end_idx on e2 d
+         ->  Index Scan using e1_end_idx on e1 b
+               Index Cond: ("end" = d.start)
+               Filter: (id <> d.id)
+   ->  Sort
+         Sort Key: f.start
          ->  Hash Join
-               Hash Cond: (f.start = e.id)
-               Join Filter: ((b.id <> f.id) AND (d.id <> f.id))
+               Hash Cond: (f."end" = g.id)
                ->  Seq Scan on e3 f
                ->  Hash
-                     ->  Hash Join
-                           Hash Cond: (d."end" = e.id)
-                           ->  Hash Join
-                                 Hash Cond: (d.start = c.id)
-                                 Join Filter: (b.id <> d.id)
-                                 ->  Seq Scan on e2 d
-                                 ->  Hash
-                                       ->  Hash Join
-                                             Hash Cond: (b."end" = c.id)
-                                             ->  Seq Scan on e1 b
-                                             ->  Hash
-                                                   ->  Seq Scan on n2 c
-                           ->  Hash
-                                 ->  Seq Scan on n3 e
-         ->  Hash
-               ->  Seq Scan on n1 a
-   ->  Hash
-         ->  Seq Scan on n4 g
-(27 rows)
+                     ->  Seq Scan on n4 g
+(15 rows)
 
 MATCH (a)-[b:e1]->(c)-[d:e2]->(e)-[f:e3]->(g) RETURN label(a) AS a, label(g) AS g ORDER BY a, g;
   a   |  g   
@@ -869,24 +799,18 @@ MATCH (a:n2)<-[b]-(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
 -- ---------- undirected (node endpoints pruned; edge subquery not) ----------
 -- edge labelled: both endpoints prune to start(e1) UNION end(e1) = {n1,n2}
 EXPLAIN (costs off) MATCH (a)-[b:e1]-(c) RETURN c;
-                 QUERY PLAN                 
---------------------------------------------
+              QUERY PLAN              
+--------------------------------------
  Hash Join
    Hash Cond: (e1."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (e1.start = a.id)
-         ->  Append
-               ->  Seq Scan on e1
-               ->  Seq Scan on e1 e1_1
-         ->  Hash
-               ->  Append
-                     ->  Seq Scan on n1 a_1
-                     ->  Seq Scan on n2 a_2
+   ->  Append
+         ->  Seq Scan on e1
+         ->  Seq Scan on e1 e1_1
    ->  Hash
          ->  Append
                ->  Seq Scan on n1 c_1
                ->  Seq Scan on n2 c_2
-(15 rows)
+(9 rows)
 
 MATCH (a)-[b:e1]-(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
   a   |  c   
@@ -961,29 +885,25 @@ MATCH (a:n1 ONLY)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
 
 -- ---------- multiple comma-separated components: no false cross-component arc ----------
 EXPLAIN (costs off) MATCH (a:n1)-[b]->(c), (x)-[y:eX]->(z) RETURN c, z;
-                         QUERY PLAN                          
--------------------------------------------------------------
+                      QUERY PLAN                       
+-------------------------------------------------------
  Hash Join
    Hash Cond: (y."end" = z.id)
-   ->  Hash Join
-         Hash Cond: (y.start = x.id)
-         ->  Nested Loop
-               ->  Index Only Scan using ex_end_idx on ex y
-               ->  Materialize
+   ->  Nested Loop
+         ->  Index Only Scan using ex_end_idx on ex y
+         ->  Materialize
+               ->  Hash Join
+                     Hash Cond: (b."end" = c.id)
                      ->  Hash Join
-                           Hash Cond: (b."end" = c.id)
-                           ->  Hash Join
-                                 Hash Cond: (b.start = a.id)
-                                 ->  Seq Scan on e1 b
-                                 ->  Hash
-                                       ->  Seq Scan on n1 a
+                           Hash Cond: (b.start = a.id)
+                           ->  Seq Scan on e1 b
                            ->  Hash
-                                 ->  Seq Scan on n2 c
-         ->  Hash
-               ->  Seq Scan on q1 x
+                                 ->  Seq Scan on n1 a
+                     ->  Hash
+                           ->  Seq Scan on n2 c
    ->  Hash
          ->  Seq Scan on q2 z
-(20 rows)
+(16 rows)
 
 MATCH (a:n1)-[b]->(c), (x)-[y:eX]->(z)
   RETURN label(c) AS c, label(x) AS x, label(z) AS z ORDER BY c, x, z;
@@ -1327,22 +1247,16 @@ MATCH (a:n1)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
 
 -- eA connects {n1,na}->{n2,nb}: both endpoints scan two labels each
 EXPLAIN (costs off) MATCH (a)-[b:eA]->(c) RETURN c;
-                 QUERY PLAN                 
---------------------------------------------
+              QUERY PLAN              
+--------------------------------------
  Hash Join
    Hash Cond: (b."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Seq Scan on ea b
-         ->  Hash
-               ->  Append
-                     ->  Seq Scan on n1 a_1
-                     ->  Seq Scan on na a_2
+   ->  Seq Scan on ea b
    ->  Hash
          ->  Append
                ->  Seq Scan on n2 c_1
                ->  Seq Scan on nb c_2
-(13 rows)
+(7 rows)
 
 MATCH (a)-[b:eA]->(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
   a   |  c   
@@ -1550,36 +1464,28 @@ MATCH (a:sl)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
 
 -- cycle: three hops around the triangle land back on t1
 EXPLAIN (costs off) MATCH (a:t1)-[b]->(c)-[d]->(e)-[f]->(g) RETURN g;
-                               QUERY PLAN                                
--------------------------------------------------------------------------
+                        QUERY PLAN                        
+----------------------------------------------------------
  Hash Join
    Hash Cond: (f."end" = g.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Hash Join
-               Hash Cond: (f.start = e.id)
-               Join Filter: ((b.id <> f.id) AND (d.id <> f.id))
-               ->  Seq Scan on te f
-               ->  Hash
-                     ->  Hash Join
-                           Hash Cond: (d."end" = e.id)
-                           ->  Hash Join
-                                 Hash Cond: (d.start = c.id)
-                                 Join Filter: (b.id <> d.id)
-                                 ->  Seq Scan on te d
-                                 ->  Hash
-                                       ->  Hash Join
-                                             Hash Cond: (b."end" = c.id)
-                                             ->  Seq Scan on te b
-                                             ->  Hash
-                                                   ->  Seq Scan on t2 c
-                           ->  Hash
-                                 ->  Seq Scan on t3 e
-         ->  Hash
-               ->  Seq Scan on t1 a
+   ->  Merge Join
+         Merge Cond: (d.start = b."end")
+         Join Filter: ((b.id <> d.id) AND (b.id <> f.id))
+         ->  Nested Loop
+               ->  Index Scan using te_start_idx on te d
+               ->  Index Scan using te_start_idx on te f
+                     Index Cond: (start = d."end")
+                     Filter: (d.id <> id)
+         ->  Sort
+               Sort Key: b."end"
+               ->  Hash Join
+                     Hash Cond: (b.start = a.id)
+                     ->  Seq Scan on te b
+                     ->  Hash
+                           ->  Seq Scan on t1 a
    ->  Hash
          ->  Seq Scan on t1 g
-(27 rows)
+(19 rows)
 
 MATCH (a:t1)-[b]->(c)-[d]->(e)-[f]->(g)
   RETURN label(c) AS c, label(e) AS e, label(g) AS g ORDER BY c, e, g;
@@ -1827,27 +1733,24 @@ SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
 
 -- pruning uses the COPY-loaded connectivity: chain from src reaches dst
 EXPLAIN (costs off) MATCH (a:src)-[b]->(c)-[d]->(e) RETURN e;
-                      QUERY PLAN                       
--------------------------------------------------------
+                     QUERY PLAN                      
+-----------------------------------------------------
  Hash Join
    Hash Cond: (d."end" = e.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Hash Join
-               Hash Cond: (d.start = c.id)
-               Join Filter: (b.id <> d.id)
-               ->  Seq Scan on rel d
-               ->  Hash
-                     ->  Hash Join
-                           Hash Cond: (b."end" = c.id)
-                           ->  Seq Scan on rel b
-                           ->  Hash
-                                 ->  Seq Scan on mid c
-         ->  Hash
-               ->  Seq Scan on src a
+   ->  Merge Join
+         Merge Cond: (d.start = b."end")
+         Join Filter: (b.id <> d.id)
+         ->  Index Scan using rel_start_idx on rel d
+         ->  Sort
+               Sort Key: b."end"
+               ->  Hash Join
+                     Hash Cond: (b.start = a.id)
+                     ->  Seq Scan on rel b
+                     ->  Hash
+                           ->  Seq Scan on src a
    ->  Hash
          ->  Seq Scan on dst e
-(18 rows)
+(15 rows)
 
 MATCH (a:src)-[b]->(c)-[d]->(e) RETURN label(c) AS c, label(e) AS e ORDER BY c, e;
    c   |   e   
@@ -2031,24 +1934,18 @@ MATCH (a:dog)-[b]->(c) RETURN label(b) AS lb, label(c) AS lc ORDER BY lb, lc;
 
 -- parent edge-label anchor: b covers the {rel,subrel} subtree; endpoints span both hops
 EXPLAIN (costs off) MATCH (a)-[b:rel]->(c) RETURN c;
-                   QUERY PLAN                   
-------------------------------------------------
+              QUERY PLAN               
+---------------------------------------
  Hash Join
    Hash Cond: (b."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Append
-               ->  Seq Scan on rel b_1
-               ->  Seq Scan on subrel b_2
-         ->  Hash
-               ->  Append
-                     ->  Seq Scan on animal a_1
-                     ->  Seq Scan on dog a_2
+   ->  Append
+         ->  Seq Scan on rel b_1
+         ->  Seq Scan on subrel b_2
    ->  Hash
          ->  Append
                ->  Seq Scan on dog c_1
                ->  Seq Scan on cat c_2
-(15 rows)
+(9 rows)
 
 MATCH (a)-[b:rel]->(c) RETURN label(a) AS la, label(b) AS lb, label(c) AS lc ORDER BY la, lb, lc;
     la    |    lb    |  lc   
@@ -3675,29 +3572,12 @@ MATCH (u) WHERE id(u) = '99.1'::graphid RETURN count(*) AS n;
 
 -- edge id: scans only knows
 EXPLAIN (costs off) MATCH ()-[e]->() WHERE id(e) = '6.1'::graphid RETURN e;
-                                        QUERY PLAN                                        
-------------------------------------------------------------------------------------------
- Hash Join
-   Hash Cond: ("<0000000111>".id = e."end")
-   ->  Append
-         ->  Seq Scan on ag_vertex "<0000000111>_1"
-         ->  Seq Scan on person "<0000000111>_2"
-         ->  Seq Scan on city "<0000000111>_3"
-         ->  Seq Scan on employee "<0000000111>_4"
-   ->  Hash
-         ->  Nested Loop
-               ->  Seq Scan on knows e
-                     Filter: (id = '6.1'::graphid)
-               ->  Append
-                     ->  Seq Scan on ag_vertex "<0000000110>_1"
-                           Filter: (id = e.start)
-                     ->  Seq Scan on person "<0000000110>_2"
-                           Filter: (id = e.start)
-                     ->  Index Only Scan using city_pkey on city "<0000000110>_3"
-                           Index Cond: (id = e.start)
-                     ->  Index Only Scan using employee_pkey on employee "<0000000110>_4"
-                           Index Cond: (id = e.start)
-(20 rows)
+              QUERY PLAN               
+---------------------------------------
+ Result
+   ->  Seq Scan on knows e
+         Filter: (id = '6.1'::graphid)
+(3 rows)
 
 MATCH ()-[e]->() WHERE id(e) = '6.1'::graphid RETURN label(e) AS l;
     l    

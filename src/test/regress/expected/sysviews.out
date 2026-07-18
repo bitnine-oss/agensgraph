@@ -154,6 +154,7 @@ select name, setting from pg_settings where name like 'enable%';
  enable_eager                   | on
  enable_gathermerge             | on
  enable_graph_dml               | off
+ enable_graph_endpoint_elision  | on
  enable_group_by_reordering     | on
  enable_hashagg                 | on
  enable_hashjoin                | on
@@ -175,7 +176,7 @@ select name, setting from pg_settings where name like 'enable%';
  enable_seqscan                 | on
  enable_sort                    | on
  enable_tidscan                 | on
-(27 rows)
+(28 rows)
 
 -- There are always wait event descriptions for various types.  InjectionPoint
 -- may be present or absent, depending on history since last postmaster start.
