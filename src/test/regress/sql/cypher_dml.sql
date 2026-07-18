@@ -1705,6 +1705,21 @@ MATCH (a) RETURN count(DISTINCT a);
 ALTER DATABASE regression SET GRAPH_PATH TO DEFAULT;
 DROP GRAPH ag161 CASCADE;
 
+-- count() over a graph element counts by graphid; verify it holds for edges and,
+-- crucially, that count() skips a NULL (unmatched OPTIONAL MATCH) element exactly
+-- as count(*) would -- the id is NULL precisely when the element is.
+CREATE GRAPH ag_count;
+SET graph_path = ag_count;
+CREATE (:person {name:'a'})-[:knows]->(:person {name:'b'});
+CREATE (:person {name:'c'});
+-- one knows edge: count(r) and count(DISTINCT r) are both 1
+MATCH ()-[r:knows]->() RETURN count(r) AS cr, count(DISTINCT r) AS cdr;
+-- only 'a' has an outgoing :knows, so count(t) is 0 for b and c (t is NULL there)
+MATCH (p:person) OPTIONAL MATCH (p)-[:knows]->(t)
+  RETURN p.name AS p, count(t) AS c ORDER BY p;
+SET graph_path = DEFAULT;
+DROP GRAPH ag_count CASCADE;
+
 -- AG-169, AG-170
 CREATE GRAPH ag170;
 SET GRAPH_PATH = ag170;
