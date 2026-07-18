@@ -36,9 +36,14 @@
 #include "catalog/ag_vertex_d.h"
 #include "catalog/ag_edge_d.h"
 #include "catalog/ag_graphpath_d.h"
+#include "access/genam.h"
+#include "access/relscan.h"
 #include "access/table.h"
 #include "access/tableam.h"
+#include "catalog/pg_am_d.h"
 #include "utils/fmgroids.h"
+#include "utils/rel.h"
+#include "utils/relcache.h"
 
 #define GRAPHID_FMTSTR			"%hu." UINT64_FORMAT
 #define GRAPHID_BUFLEN			32	/* "65535.281474976710655" */
@@ -1180,7 +1185,9 @@ get_vertex_from_graphid(Graphid vertex_id)
 	Oid			vertex_label_relid;
 	Oid			graph_path_oid = get_graph_path_oid();
 	Relation	vertex_rel;
-	TableScanDesc scan_desc;
+	Relation	id_index_rel = NULL;
+	List	   *index_oids;
+	ListCell   *lc;
 	ScanKeyData scan_key_data;
 	TupleTableSlot *slot;
 	Datum		ret = (Datum) 0;
@@ -1191,22 +1198,79 @@ get_vertex_from_graphid(Graphid vertex_id)
 	vertex_rel = table_open(vertex_label_relid, AccessShareLock);
 	slot = table_slot_create(vertex_rel, NULL);
 
-	ScanKeyInit(&scan_key_data,
-				Anum_table_vertex_id,
-				BTEqualStrategyNumber, F_GRAPHID_EQ,
-				GraphidGetDatum(vertex_id));
-
-	scan_desc = table_beginscan(vertex_rel,
-								GetActiveSnapshot(),
-								1, &scan_key_data);
-
-	if (table_scan_getnextslot(scan_desc, ForwardScanDirection, slot))
+	/*
+	 * Probe the vertex id primary-key btree rather than scanning the whole
+	 * label.  Every vertex label carries a unique btree on id (the PK), so
+	 * this turns an O(N) heap scan into an O(log N) index probe -- and this
+	 * lookup runs once per vertex materialized along a path, so a full scan
+	 * per vertex is quadratic on large labels.  Locate that index by its
+	 * leading key column (Anum_table_vertex_id); if it is missing, disabled,
+	 * not yet ready, or partial (e.g. under DISABLE INDEX or an in-progress
+	 * CREATE INDEX), fall back to the always-correct heap scan.
+	 */
+	index_oids = RelationGetIndexList(vertex_rel);
+	foreach(lc, index_oids)
 	{
-		slot_getallattrs(slot);
-		ret = make_vertex_from_tuple(slot);
+		Relation	idx = index_open(lfirst_oid(lc), AccessShareLock);
+
+		if (idx->rd_rel->relam == BTREE_AM_OID &&
+			idx->rd_index->indisvalid && idx->rd_index->indisready &&
+			RelationGetIndexPredicate(idx) == NIL &&
+			idx->rd_index->indkey.values[0] == Anum_table_vertex_id)
+		{
+			id_index_rel = idx;
+			break;
+		}
+
+		index_close(idx, AccessShareLock);
+	}
+	list_free(index_oids);
+
+	if (id_index_rel != NULL)
+	{
+		IndexScanDesc index_scan_desc;
+
+		/* scan key targets the index's leading (id) column */
+		ScanKeyInit(&scan_key_data,
+					1,
+					BTEqualStrategyNumber, F_GRAPHID_EQ,
+					GraphidGetDatum(vertex_id));
+
+		index_scan_desc = index_beginscan(vertex_rel, id_index_rel,
+										  GetActiveSnapshot(), NULL, 1, 0);
+		index_rescan(index_scan_desc, &scan_key_data, 1, NULL, 0);
+
+		if (index_getnext_slot(index_scan_desc, ForwardScanDirection, slot))
+		{
+			slot_getallattrs(slot);
+			ret = make_vertex_from_tuple(slot);
+		}
+
+		index_endscan(index_scan_desc);
+		index_close(id_index_rel, AccessShareLock);
+	}
+	else
+	{
+		TableScanDesc scan_desc;
+
+		ScanKeyInit(&scan_key_data,
+					Anum_table_vertex_id,
+					BTEqualStrategyNumber, F_GRAPHID_EQ,
+					GraphidGetDatum(vertex_id));
+
+		scan_desc = table_beginscan(vertex_rel,
+									GetActiveSnapshot(),
+									1, &scan_key_data);
+
+		if (table_scan_getnextslot(scan_desc, ForwardScanDirection, slot))
+		{
+			slot_getallattrs(slot);
+			ret = make_vertex_from_tuple(slot);
+		}
+
+		table_endscan(scan_desc);
 	}
 
-	table_endscan(scan_desc);
 	table_close(vertex_rel, NoLock);
 	ExecDropSingleTupleTableSlot(slot);
 
