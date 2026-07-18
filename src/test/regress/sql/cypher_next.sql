@@ -18,12 +18,21 @@
 -- CALL / RETURN) -- it cannot begin with WITH, WHERE, SET, DELETE, REMOVE or an
 -- ORDER BY, exactly as a stand-alone Cypher statement cannot.
 --
--- A set-operation composite (UNION / INTERSECT / EXCEPT) may be the LEFT
--- operand of NEXT ("A UNION B NEXT C", whose whole union drives the next
--- query) or the RIGHT operand ("A NEXT B UNION C").  NEXT lives only at the
--- three statement entry points (top level, EXPLAIN, PREPARE), NOT inside a read
--- subquery (EXISTS / COUNT / CALL {}) -- both are deliberate boundaries covered
--- below as negative cases.
+-- A set-operation composite (UNION / UNION ALL, and -- as an agensgraph
+-- extension -- INTERSECT / EXCEPT) may be either operand of NEXT.  As the LEFT
+-- operand ("A UNION B NEXT C") the whole union drives the next query, so an
+-- aggregate after NEXT sees every union row.  As the RIGHT operand
+-- ("A NEXT B UNION C") the carried table drives the union and each branch is
+-- correlated per driving row, so UNION's DISTINCT is scoped per row; a branch
+-- that aggregates over the whole carried table is not supported and is cleanly
+-- rejected.  NEXT lives only at the three statement entry
+-- points (top level, EXPLAIN, PREPARE), NOT inside a read subquery (EXISTS /
+-- COUNT / CALL {}) -- both are deliberate boundaries covered below as negatives.
+--
+-- The query after NEXT may also begin with a row-operating clause -- WITH,
+-- FILTER [WHERE], ORDER BY, SKIP / OFFSET, LIMIT -- acting on the carried table
+-- (these may not begin a standalone statement, so they are reachable only after
+-- NEXT).
 --
 -- These tests cover: basic chaining and equality against the hand-written WITH
 -- form, scope reset, native-type preservation (vertex / edge / path), grouping
@@ -31,10 +40,13 @@
 -- associativity, RETURN *, folding of trailing ORDER BY / SKIP / LIMIT /
 -- DISTINCT into the boundary, plan-shape equality with WITH (zero overhead),
 -- the guard errors (Q1 not ending in RETURN, FINISH before NEXT, unaliased
--- projection, set-op as the right operand), Q2 as a write clause, set-operation
--- as the left operand of NEXT (incl. INTERSECT/EXCEPT), terminal endings after
--- the last NEXT, the EXPLAIN and PREPARE entry points, backward compatibility
--- of "next" as an ordinary identifier, and the read-subquery boundary.
+-- projection, column-count mismatch, aggregating right-operand branch), Q2 as a
+-- write clause, set-operation as the left AND right operand of NEXT (incl.
+-- INTERSECT / EXCEPT, both-sides composition, correlated branches, per-row
+-- DISTINCT and the Phase-3 rejection), row-operating clauses after NEXT,
+-- terminal endings after the last NEXT, the EXPLAIN and PREPARE entry points,
+-- backward compatibility of "next" as an ordinary identifier, and the read-
+-- subquery boundary.
 --
 
 -- Set up
@@ -324,6 +336,56 @@ RETURN 1 AS a EXCEPT RETURN 2 AS a NEXT RETURN a;
 NEXT
 RETURN nm ORDER BY nm;
 
+-- A multi-branch union (three or more branches) drives the next query; the whole
+-- union is one table, so an aggregate after NEXT sees every distinct row.
+RETURN 1 AS a UNION RETURN 2 AS a UNION RETURN 3 AS a
+NEXT
+RETURN sum(a) AS s, count(*) AS c;
+
+-- UNION ALL keeps every branch row (1, 1, 2 -> sum 4, count 3).
+RETURN 1 AS a UNION ALL RETURN 1 AS a UNION ALL RETURN 2 AS a
+NEXT
+RETURN sum(a) AS s, count(*) AS c;
+
+-- Output column names come from the leftmost branch, so the next query refers to
+-- the carried table by that name even when a later branch aliased it differently.
+-- (Cypher 25 requires all branches to share column names and rejects this; matching
+-- by leftmost name / position is an agensgraph extension.)
+RETURN 1 AS a UNION RETURN 2 AS b NEXT RETURN a ORDER BY a;
+
+-- UNION eliminates duplicate NULLs (NULLs compare equal for set operations), so
+-- two NULL rows collapse to one before the boundary.
+RETURN NULL AS a UNION RETURN NULL AS a NEXT RETURN count(*) AS c;
+
+-- An empty union (both branches empty) still forms a table: a count over it is 0
+-- (an aggregate over no rows yields its identity, matching a plain empty input).
+MATCH (p:person) WHERE p.id > 100 RETURN p.name AS nm
+UNION
+MATCH (p:person) WHERE p.id > 100 RETURN p.name AS nm
+NEXT
+RETURN count(*) AS c;
+
+-- Native types survive the union boundary: a whole vertex carried through a UNION
+-- (deduplicated by graph identity) is still a vertex in the next query and can be
+-- re-traversed.  The union of persons {id 1, id 2} drives a knows-traversal.
+MATCH (n:person {id: 1}) RETURN n
+UNION
+MATCH (n:person {id: 2}) RETURN n
+NEXT
+MATCH (n)-[:knows]->(w) RETURN w.name AS wn ORDER BY wn;
+
+-- A mixed-type union unifies to the common cypher value type (no error); the two
+-- distinct-typed values are both kept.  (Ordering matches Cypher 25.)
+RETURN 1 AS a UNION RETURN 'x' AS a NEXT RETURN a ORDER BY a;
+
+-- A leading ORDER BY / LIMIT after the union orders and slices the whole union.
+RETURN 3 AS a UNION RETURN 1 AS a UNION RETURN 2 AS a
+NEXT
+ORDER BY a LIMIT 2 RETURN a ORDER BY a;
+
+-- Negative: the union branches must have the same number of columns.
+RETURN 1 AS a UNION RETURN 2 AS a, 3 AS b NEXT RETURN a;
+
 --
 -- 11. Set-operation as the RIGHT operand of NEXT (Cypher 25)
 --
@@ -353,8 +415,92 @@ NEXT RETURN a ORDER BY a;
 -- The union feeds a further NEXT, which may then aggregate over the whole table.
 RETURN 1 AS a NEXT RETURN a AS a UNION RETURN 2 AS a NEXT RETURN sum(a) AS s;
 
+-- Multiple carried columns are all visible to every branch; each branch picks a
+-- different one, so the per-row union yields both.
+RETURN 1 AS a, 2 AS b NEXT RETURN a AS x UNION RETURN b AS x NEXT RETURN x ORDER BY x;
+
+-- A carried NULL is visible to the branches like any other value and is kept
+-- (per-row, it does not merge with the other branch's non-NULL row).
+RETURN NULL AS a NEXT RETURN a AS x UNION RETURN 'k' AS x NEXT RETURN x ORDER BY x;
+
+-- An empty driving table runs no branches, so the whole result is empty (each
+-- branch is correlated with the carried row, of which there are none).
+MATCH (p:person) WHERE p.id > 100 RETURN p.name AS a
+NEXT
+RETURN a AS x UNION RETURN 'z' AS x;
+
+-- A three-branch union after NEXT: per driving row the branches are de-duplicated
+-- together (1, 1, 2 -> {1, 2}).
+RETURN 1 AS a NEXT RETURN a AS x UNION RETURN a AS x UNION RETURN a + 1 AS x
+NEXT RETURN x ORDER BY x;
+
+-- INTERSECT / EXCEPT are accepted as the right operand too (an agensgraph
+-- extension; standard Cypher has only UNION).  They are still scoped per driving
+-- row: INTERSECT of equal branches keeps the row, of unequal branches drops it.
+RETURN 1 AS a NEXT RETURN a AS x INTERSECT RETURN a AS x;
+RETURN 1 AS a NEXT RETURN a AS x INTERSECT RETURN a + 1 AS x;
+-- EXCEPT removes the second branch's rows from the first, per driving row.
+RETURN 1 AS a NEXT RETURN a AS x EXCEPT RETURN a + 1 AS x;
+RETURN 1 AS a NEXT RETURN a AS x EXCEPT RETURN a AS x;
+
+-- Branches may run correlated MATCHes against a carried vertex.  Per person the
+-- union is {friends' names} together with {own name}; identical names arising
+-- from different driving rows are NOT merged (per-row DISTINCT), so "carol"
+-- appears once per driving person that produces it.  This also exercises the
+-- coexistence of the carried-table alias and the correlated-union alias.
+MATCH (p:person) RETURN p
+NEXT
+MATCH (p)-[:knows]->(f) RETURN f.name AS x UNION RETURN p.name AS x
+NEXT RETURN x ORDER BY x;
+
+-- A branch may begin with any head clause, e.g. LET, and still see the carried
+-- columns.
+RETURN 10 AS a NEXT LET b = a * 2 RETURN b AS x UNION RETURN a AS x
+NEXT RETURN x ORDER BY x;
+
+-- Detection precision: an aggregate nested inside a subquery expression (here a
+-- COUNT { ... } sublink) is NOT a branch-level aggregate, so it is allowed and
+-- evaluated per driving row (the per-row union keeps the carried value and the
+-- whole-graph vertex count).
+RETURN 1 AS a NEXT RETURN a AS x UNION RETURN COUNT { MATCH (p:person) RETURN p } AS x
+NEXT RETURN x ORDER BY x;
+
+-- A set-operation right operand may be followed by a further NEXT that filters the
+-- per-row union table (combining the row-clause-after-NEXT and right-operand
+-- features).
+UNWIND [1, 2, 3] AS a RETURN a
+NEXT RETURN a AS x UNION RETURN a * 10 AS x
+NEXT FILTER x > 5 RETURN x ORDER BY x;
+
+-- A whole vertex may be carried through a right-operand union and re-traversed in
+-- the following segment: per person the union is {friends} with {self}, and the
+-- next segment follows each of those vertices' knows edges.
+MATCH (p:person) RETURN p
+NEXT
+MATCH (p)-[:knows]->(f) RETURN f AS x UNION RETURN p AS x
+NEXT
+MATCH (x)-[:knows]->(z) RETURN z.name AS zn ORDER BY zn;
+
+-- Deep composition: set operations on both sides of several NEXT boundaries in a
+-- row, ending in a whole-table aggregate.
+RETURN 1 AS a UNION RETURN 2 AS a
+NEXT RETURN a AS x UNION RETURN 3 AS x
+NEXT RETURN x AS y UNION RETURN 99 AS y
+NEXT RETURN sum(y) AS z;
+
 -- A branch that aggregates (whole-table, not per-row) is not supported.
 RETURN 1 AS a UNION RETURN 2 AS a NEXT RETURN a AS x UNION RETURN count(*) AS x;
+
+-- The aggregating-branch rejection is independent of branch order and of how many
+-- branches aggregate.
+RETURN 1 AS a NEXT RETURN count(*) AS x UNION RETURN a AS x;
+RETURN 1 AS a NEXT RETURN count(*) AS x UNION RETURN count(*) AS x;
+
+-- An aggregate over a CORRELATED carried column is rejected earlier, by the
+-- analyzer's lateral-aggregate check (a less specific message, but still a clean
+-- error -- never a silently wrong whole-table result).
+RETURN 5 AS a NEXT RETURN sum(a) AS x UNION RETURN a AS x;
+RETURN 1 AS a NEXT RETURN collect(a) AS x UNION RETURN a AS x;
 
 --
 -- 12. NEXT is not available inside a read subquery
@@ -407,6 +553,35 @@ RETURN name ORDER BY name;
 EXECUTE np;
 DEALLOCATE np;
 
+-- A set-operation LEFT operand lowers to the aggregate reading the union directly
+-- (the whole union is one input table with its de-duplication machinery).
+EXPLAIN (COSTS OFF)
+RETURN 1 AS a UNION RETURN 2 AS a NEXT RETURN sum(a) AS s;
+
+-- A set-operation RIGHT operand lowers to a correlated cross join: the
+-- driving table (the person scan) on the outer side of a nested loop, and the
+-- per-driving-row union on the inner side -- the plan shape that realizes the
+-- per-row DISTINCT semantics.
+EXPLAIN (COSTS OFF)
+MATCH (p:person) RETURN p.name AS nm
+NEXT
+RETURN nm AS x UNION RETURN 'z' AS x;
+
+-- PREPARE / EXECUTE round-trip on the set-op shapes (exercises parse-node copy /
+-- output support for the carried set-operation clause).
+PREPARE npl AS
+RETURN 1 AS a UNION RETURN 2 AS a NEXT RETURN sum(a) AS s;
+EXECUTE npl;
+DEALLOCATE npl;
+
+PREPARE npr AS
+MATCH (p:person) RETURN p.name AS nm
+NEXT
+RETURN nm AS x UNION RETURN 'z' AS x
+NEXT RETURN x ORDER BY x LIMIT 3;
+EXECUTE npr;
+DEALLOCATE npr;
+
 --
 -- 15. Q2 as a write clause and terminal endings after the last NEXT
 --     (mutations are grouped here, last, so earlier golden output is stable)
@@ -458,7 +633,7 @@ NEXT
 MATCH (m:person {name: nm}) FINISH;
 
 --
--- Row-operating clauses after NEXT (Cypher 25 parity)
+-- 16. Row-operating clauses after NEXT (Cypher 25 parity)
 --
 -- Q2 (the query after NEXT) may begin with a projection / ordering / filter
 -- clause -- WITH, FILTER [WHERE], ORDER BY, SKIP / OFFSET, LIMIT -- operating on
@@ -506,6 +681,40 @@ NEXT
 FILTER age = 25 RETURN name
 NEXT
 RETURN name ORDER BY name;
+
+-- A bare SKIP / OFFSET or LIMIT (no ORDER BY) leads too, slicing the carried
+-- table; a following count is order-independent, so the result is deterministic.
+MATCH (p:person) RETURN p.name AS name NEXT OFFSET 1 RETURN count(*) AS c;
+MATCH (p:person) RETURN p.name AS name NEXT SKIP 1 RETURN count(*) AS c;
+MATCH (p:person) RETURN p.name AS name NEXT LIMIT 2 RETURN count(*) AS c;
+
+-- A leading WITH may carry its own WHERE, which reaches the aggregate-then-filter
+-- shape (a grouped RETURN in Q1, then WITH ... WHERE on the aggregate after NEXT)
+-- that a bare NEXT could not express (Q2 cannot begin with WHERE).
+MATCH (s:person)-[:knows]->() RETURN s.id AS sid, count(*) AS deg
+NEXT
+WITH sid, deg WHERE deg >= 2
+RETURN sid, deg ORDER BY sid;
+
+-- A leading WITH DISTINCT de-duplicates the carried table.
+MATCH (p:person) RETURN p.age AS age
+NEXT
+WITH DISTINCT age
+RETURN age ORDER BY age;
+
+-- A leading ORDER BY can be followed by SKIP and LIMIT clauses, all applied to
+-- the carried table before the final projection.
+MATCH (p:person) RETURN p.name AS name, p.age AS age
+NEXT
+ORDER BY age DESC, name SKIP 1 LIMIT 2
+RETURN name ORDER BY name;
+
+-- Native types survive a leading row clause: a carried vertex filtered by FILTER
+-- is still a vertex for id() / labels().
+MATCH (v:person {id: 1}) RETURN v, v.age AS age
+NEXT
+FILTER age > 20
+RETURN id(v) AS vid, labels(v) AS lbls;
 
 -- Negative: bare WHERE cannot begin Q2 (WHERE is not a standalone clause).
 MATCH (p:person) RETURN p.name AS name NEXT WHERE name = 'alice' RETURN name;
