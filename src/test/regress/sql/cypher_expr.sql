@@ -632,6 +632,11 @@ MATCH (n:aggnum) RETURN count(ALL DISTINCT n.v);
 MATCH (n:aggnum) RETURN count(DISTINCT ALL n.v);
 MATCH (n:aggnum) RETURN count(ALL *);
 
+-- min() and max() over jsonb compare by value and return the true extremes; the
+-- plain, ALL, and DISTINCT forms all agree on them.
+MATCH (n:aggnum) RETURN min(n.v) AS mn, max(n.v) AS mx,
+                        min(ALL n.v) AS mn_all, max(DISTINCT n.v) AS mx_dist;
+
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;

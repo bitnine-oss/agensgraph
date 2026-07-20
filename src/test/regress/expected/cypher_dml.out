@@ -3216,9 +3216,9 @@ MATCH (u) RETURN min(u.year), max(u.year), count(u.year), count(*);
 (1 row)
 
 MATCH (u) RETURN min(u.name), max(u.name), count(u.name), count(*);
-        min         |      max      | count | count 
---------------------+---------------+-------+-------
- "agens-graph-odbc" | "agens-graph" | 4     | 5
+      min      |        max         | count | count 
+---------------+--------------------+-------+-------
+ "agens-graph" | "agens-graph-odbc" | 4     | 5
 (1 row)
 
 -- should return null
