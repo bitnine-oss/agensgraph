@@ -637,6 +637,23 @@ MATCH (n:aggnum) RETURN count(ALL *);
 MATCH (n:aggnum) RETURN min(n.v) AS mn, max(n.v) AS mx,
                         min(ALL n.v) AS mn_all, max(DISTINCT n.v) AS mx_dist;
 
+-- The ALL set quantifier on RETURN / WITH keeps every row, including duplicates
+-- (the explicit spelling of the default); DISTINCT removes duplicates.  ALL
+-- applies to both RETURN and WITH and to "*", and cannot be combined with
+-- DISTINCT.
+MATCH (n:aggnum) RETURN ALL n.v AS v ORDER BY v;
+MATCH (n:aggnum) RETURN DISTINCT n.v AS v ORDER BY v;
+MATCH (n:aggnum) WITH ALL n.v AS v RETURN v ORDER BY v;
+MATCH (n:aggnum) WITH n.v AS v RETURN ALL * ORDER BY v;
+
+-- ALL does not disturb the all()/any()/none()/single() list predicates when one
+-- is a return item.
+RETURN all(x IN [1, 2, 3] WHERE x > 0) AS a, none(x IN [1] WHERE x > 5) AS b;
+
+-- ALL and DISTINCT are mutually exclusive.
+MATCH (n:aggnum) RETURN ALL DISTINCT n.v;
+MATCH (n:aggnum) RETURN DISTINCT ALL n.v;
+
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;

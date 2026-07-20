@@ -209,6 +209,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 
 static Node *makeCypherSetOp(SetOperation op, bool all, Node *larg, Node *rarg);
 static Node *makeCypherNext(Node *left, Node *right);
+static Node *makeCypherProjection(CPKind kind, List *distinct, List *items,
+								  Node *where);
 static Node *wrapCypherWithSelect(Node *stmt);
 static bool has_internal_default_prefix(char *str);
 
@@ -747,7 +749,7 @@ static bool has_internal_default_prefix(char *str);
 				cypher_where cypher_where_opt cypher_unwind cypher_filter
 				cypher_for cypher_for_offset cypher_for_offset_opt
 				cypher_proj_tail_item
-%type <list>	cypher_return_items cypher_distinct_opt
+%type <list>	cypher_return_items
 				cypher_sort_items cypher_proj_tail cypher_let_items
 				cypher_yield_items cypher_yield_item_list cypher_yield_call_args
 %type <target>	cypher_return_item cypher_let_item cypher_yield_item
@@ -21975,38 +21977,21 @@ cypher_finish:
 		;
 
 cypher_return:
-			RETURN cypher_distinct_opt cypher_return_items
-				{
-					CypherProjection *n;
-
-					n = makeNode(CypherProjection);
-					n->kind = CP_RETURN;
-					n->distinct = $2;
-					n->items = $3;
-					n->order = NIL;
-					n->skip = NULL;
-					n->limit = NULL;
-					n->where = NULL;
-					$$ = (Node *) n;
-				}
+			RETURN cypher_return_items
+				{ $$ = makeCypherProjection(CP_RETURN, NIL, $2, NULL); }
+			| RETURN DISTINCT cypher_return_items
+				{ $$ = makeCypherProjection(CP_RETURN, list_make1(NIL), $3, NULL); }
+			| RETURN ALL cypher_return_items
+				{ $$ = makeCypherProjection(CP_RETURN, NIL, $3, NULL); }
 		;
 
 cypher_with:
-			WITH cypher_distinct_opt cypher_return_items
-			cypher_where_opt
-				{
-					CypherProjection *n;
-
-					n = makeNode(CypherProjection);
-					n->kind = CP_WITH;
-					n->distinct = $2;
-					n->items = $3;
-					n->order = NIL;
-					n->skip = NULL;
-					n->limit = NULL;
-					n->where = $4;
-					$$ = (Node *) n;
-				}
+			WITH cypher_return_items cypher_where_opt
+				{ $$ = makeCypherProjection(CP_WITH, NIL, $2, $3); }
+			| WITH DISTINCT cypher_return_items cypher_where_opt
+				{ $$ = makeCypherProjection(CP_WITH, list_make1(NIL), $3, $4); }
+			| WITH ALL cypher_return_items cypher_where_opt
+				{ $$ = makeCypherProjection(CP_WITH, NIL, $3, $4); }
 		;
 
 /*
@@ -22092,11 +22077,6 @@ cypher_return_item:
 					$$->val = (Node *) cref;
 					$$->location = @1;
 				}
-		;
-
-cypher_distinct_opt:
-			DISTINCT			{ $$ = list_make1(NIL); }
-			| /* EMPTY */		{ $$ = NIL; }
 		;
 
 cypher_order_by:
@@ -23889,6 +23869,27 @@ makeRecursiveViewSelect(char *relname, List *aliases, Node *query)
 	s->fromClause = list_make1(makeRangeVar(NULL, relname, -1));
 
 	return (Node *) s;
+}
+
+/*
+ * Build a RETURN/WITH projection.  RETURN and WITH each spell the set
+ * quantifier three ways -- no quantifier, DISTINCT, and the explicit ALL --
+ * which all share this builder; distinct is non-NIL only for DISTINCT.
+ */
+static Node *
+makeCypherProjection(CPKind kind, List *distinct, List *items, Node *where)
+{
+	CypherProjection *n = makeNode(CypherProjection);
+
+	n->kind = kind;
+	n->distinct = distinct;
+	n->items = items;
+	n->order = NIL;
+	n->skip = NULL;
+	n->limit = NULL;
+	n->where = where;
+
+	return (Node *) n;
 }
 
 static Node *
