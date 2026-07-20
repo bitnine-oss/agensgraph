@@ -593,6 +593,45 @@ MATCH ()-[r:NEDGE]->()
 RETURN nullIf(r, r) IS NULL AS same_edge,
        nullIf(id(r), id(r)) IS NULL AS same_edge_id;
 
+-- ALL quantifier in aggregate functions (GQL clause 22.15; Neo4j 5.15+).  ALL is
+-- the explicit dual of DISTINCT: it keeps every value, including duplicates, so
+-- "agg(ALL x)" is identical to the unquantified "agg(x)", whereas DISTINCT drops
+-- duplicates.  A label with repeated values makes the difference observable.  It
+-- is created here, at the end, so it does not renumber the labels above.
+SET graph_path = test_cypher_expr;
+CREATE (:aggnum {v: 1});
+CREATE (:aggnum {v: 1});
+CREATE (:aggnum {v: 2});
+CREATE (:aggnum {v: 3});
+CREATE (:aggnum {v: 3});
+
+-- count / sum / collect: ALL matches the plain form and keeps duplicates,
+-- DISTINCT drops them.
+MATCH (n:aggnum) RETURN count(n.v) AS c_plain, count(ALL n.v) AS c_all, count(DISTINCT n.v) AS c_dist;
+MATCH (n:aggnum) RETURN sum(n.v) AS s_plain, sum(ALL n.v) AS s_all, sum(DISTINCT n.v) AS s_dist;
+MATCH (n:aggnum) RETURN collect(ALL n.v) AS all_list, collect(DISTINCT n.v) AS dist_list ORDER BY 1;
+MATCH (n:aggnum) RETURN avg(ALL n.v) AS a_all;
+
+-- ALL over an arbitrary expression, and over a whole graph element.
+MATCH (n:aggnum) RETURN count(ALL n.v + 1) AS c, sum(ALL n.v * 2) AS s;
+MATCH (n:aggnum) RETURN count(ALL n) AS c;
+
+-- The ALL quantifier leaves the all()/any()/none()/single() list predicates
+-- untouched ...
+RETURN all(x IN [1, 2, 3] WHERE x > 0) AS a,
+       any(x IN [1, 2, 3] WHERE x > 2) AS b,
+       none(x IN [1, 2, 3] WHERE x > 5) AS c,
+       single(x IN [1, 2, 3] WHERE x = 2) AS d;
+-- ... and IN membership unaffected ...
+RETURN 2 IN [1, 2, 3] AS present, 9 IN [1, 2, 3] AS absent;
+-- ... and an all() predicate passed as an aggregate argument stays the predicate.
+MATCH (n:aggnum) RETURN count(all(x IN [n.v] WHERE x > 0)) AS c;
+
+-- ALL and DISTINCT cannot be combined, and ALL is not allowed before '*'.
+MATCH (n:aggnum) RETURN count(ALL DISTINCT n.v);
+MATCH (n:aggnum) RETURN count(DISTINCT ALL n.v);
+MATCH (n:aggnum) RETURN count(ALL *);
+
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;

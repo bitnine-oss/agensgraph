@@ -935,6 +935,15 @@ static bool has_internal_default_prefix(char *str);
 %right		NOT
 %nonassoc	IS ISNULL NOTNULL	/* IS sets precedence for IS NULL, etc */
 %nonassoc	'<' '>' '=' LESS_EQUALS GREATER_EQUALS NOT_EQUALS ADD_EQUALS
+/*
+ * CYPHER_VAR_PREC gives a bare Cypher variable a precedence just below IN_P.
+ * It matters in exactly one spot: a variable that directly follows the '(' of
+ * a list predicate -- all()/any()/none()/single() -- or of an aggregate call
+ * carrying the ALL quantifier.  Shifting the IN that follows (rather than
+ * reducing the variable) keeps "all(x IN list ...)" a list predicate while
+ * still letting "count(ALL x)" accept the ALL aggregate quantifier.
+ */
+%nonassoc	CYPHER_VAR_PREC
 %nonassoc	BETWEEN IN_P LIKE ILIKE SIMILAR NOT_LA
 %nonassoc	ESCAPE			/* ESCAPE must be just above LIKE/ILIKE/SIMILAR */
 
@@ -21187,6 +21196,18 @@ cypher_expr_func_norm:
 					n->agg_distinct = true;
 					$$ = (Node *) n;
 				}
+			| type_function_name '(' ALL cypher_expr_comma_list ')'
+				{
+					/*
+					 * ALL is the explicit spelling of the default all-rows
+					 * aggregation (the dual of DISTINCT): it keeps duplicates,
+					 * so it lowers to the same call as "func(args)" with
+					 * agg_distinct left false.
+					 */
+					$$ = (Node *) makeFuncCall(list_make1(makeString($1)),
+											   $4,
+											   COERCE_EXPLICIT_CALL, @1);
+				}
 			| type_function_name '(' '*' ')'
 				{
 					FuncCall   *n;
@@ -21398,7 +21419,7 @@ cypher_expr_shortestpath:
 		;
 
 cypher_expr_var:
-			cypher_expr_varname
+			cypher_expr_varname %prec CYPHER_VAR_PREC
 				{
 					ColumnRef  *n;
 
