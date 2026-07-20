@@ -1629,10 +1629,98 @@ RETURN nullIf(r, r) IS NULL AS same_edge,
  t         | t
 (1 row)
 
+-- ALL quantifier in aggregate functions (GQL clause 22.15; Neo4j 5.15+).  ALL is
+-- the explicit dual of DISTINCT: it keeps every value, including duplicates, so
+-- "agg(ALL x)" is identical to the unquantified "agg(x)", whereas DISTINCT drops
+-- duplicates.  A label with repeated values makes the difference observable.  It
+-- is created here, at the end, so it does not renumber the labels above.
+SET graph_path = test_cypher_expr;
+CREATE (:aggnum {v: 1});
+CREATE (:aggnum {v: 1});
+CREATE (:aggnum {v: 2});
+CREATE (:aggnum {v: 3});
+CREATE (:aggnum {v: 3});
+-- count / sum / collect: ALL matches the plain form and keeps duplicates,
+-- DISTINCT drops them.
+MATCH (n:aggnum) RETURN count(n.v) AS c_plain, count(ALL n.v) AS c_all, count(DISTINCT n.v) AS c_dist;
+ c_plain | c_all | c_dist 
+---------+-------+--------
+ 5       | 5     | 3
+(1 row)
+
+MATCH (n:aggnum) RETURN sum(n.v) AS s_plain, sum(ALL n.v) AS s_all, sum(DISTINCT n.v) AS s_dist;
+ s_plain | s_all | s_dist 
+---------+-------+--------
+ 10      | 10    | 6
+(1 row)
+
+MATCH (n:aggnum) RETURN collect(ALL n.v) AS all_list, collect(DISTINCT n.v) AS dist_list ORDER BY 1;
+    all_list     | dist_list 
+-----------------+-----------
+ [1, 1, 2, 3, 3] | [1, 2, 3]
+(1 row)
+
+MATCH (n:aggnum) RETURN avg(ALL n.v) AS a_all;
+       a_all        
+--------------------
+ 2.0000000000000000
+(1 row)
+
+-- ALL over an arbitrary expression, and over a whole graph element.
+MATCH (n:aggnum) RETURN count(ALL n.v + 1) AS c, sum(ALL n.v * 2) AS s;
+ c | s  
+---+----
+ 5 | 20
+(1 row)
+
+MATCH (n:aggnum) RETURN count(ALL n) AS c;
+ c 
+---
+ 5
+(1 row)
+
+-- The ALL quantifier leaves the all()/any()/none()/single() list predicates
+-- untouched ...
+RETURN all(x IN [1, 2, 3] WHERE x > 0) AS a,
+       any(x IN [1, 2, 3] WHERE x > 2) AS b,
+       none(x IN [1, 2, 3] WHERE x > 5) AS c,
+       single(x IN [1, 2, 3] WHERE x = 2) AS d;
+ a | b | c | d 
+---+---+---+---
+ t | t | t | t
+(1 row)
+
+-- ... and IN membership unaffected ...
+RETURN 2 IN [1, 2, 3] AS present, 9 IN [1, 2, 3] AS absent;
+ present | absent 
+---------+--------
+ t       | f
+(1 row)
+
+-- ... and an all() predicate passed as an aggregate argument stays the predicate.
+MATCH (n:aggnum) RETURN count(all(x IN [n.v] WHERE x > 0)) AS c;
+ c 
+---
+ 5
+(1 row)
+
+-- ALL and DISTINCT cannot be combined, and ALL is not allowed before '*'.
+MATCH (n:aggnum) RETURN count(ALL DISTINCT n.v);
+ERROR:  syntax error at or near "DISTINCT"
+LINE 1: MATCH (n:aggnum) RETURN count(ALL DISTINCT n.v);
+                                          ^
+MATCH (n:aggnum) RETURN count(DISTINCT ALL n.v);
+ERROR:  syntax error at or near "n"
+LINE 1: MATCH (n:aggnum) RETURN count(DISTINCT ALL n.v);
+                                                   ^
+MATCH (n:aggnum) RETURN count(ALL *);
+ERROR:  syntax error at or near "*"
+LINE 1: MATCH (n:aggnum) RETURN count(ALL *);
+                                          ^
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;
-NOTICE:  drop cascades to 11 other objects
+NOTICE:  drop cascades to 12 other objects
 DETAIL:  drop cascades to sequence test_cypher_expr.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -1644,3 +1732,4 @@ drop cascades to vlabel coll
 drop cascades to vlabel ts
 drop cascades to vlabel tc
 drop cascades to elabel nedge
+drop cascades to vlabel aggnum
