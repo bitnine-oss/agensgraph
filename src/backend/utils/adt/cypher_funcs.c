@@ -3031,10 +3031,15 @@ percentiledisc(PG_FUNCTION_ARGS)
 	PG_RETURN_NULL();
 }
 
+/*
+ * jsonb_cmp returns its int32 result as a Datum, which is unsigned.  The result
+ * must be read back with DatumGetInt32 before its sign is tested; comparing the
+ * raw Datum makes a negative (less-than) result read as a large positive value.
+ */
 Datum
 jsonb_larger(PG_FUNCTION_ARGS)
 {
-	if (jsonb_cmp(fcinfo) > 0)
+	if (DatumGetInt32(jsonb_cmp(fcinfo)) > 0)
 		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 	else
 		PG_RETURN_DATUM(PG_GETARG_DATUM(1));
@@ -3043,7 +3048,7 @@ jsonb_larger(PG_FUNCTION_ARGS)
 Datum
 jsonb_smaller(PG_FUNCTION_ARGS)
 {
-	if (jsonb_cmp(fcinfo) < 0)
+	if (DatumGetInt32(jsonb_cmp(fcinfo)) < 0)
 		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 	else
 		PG_RETURN_DATUM(PG_GETARG_DATUM(1));
