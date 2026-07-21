@@ -4811,6 +4811,46 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		elog(ERROR, "unknown label type: %d", labelStmt->labelKind);
 	}
 
+	/*
+	 * Append any promoted typed properties as extra columns, AFTER the jsonb
+	 * `properties` bag, so the fixed id/start/end/properties attnums (relied on
+	 * throughout the graph parser and executor) are preserved.  They are
+	 * ordinary generated ColumnDefs and flow through the standard
+	 * column-definition transform in the loop below.
+	 */
+	if (labelStmt->promoted_props != NIL)
+	{
+		ListCell   *pc;
+
+		if (labelStmt->only_base)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("a base label cannot declare promoted properties")));
+
+		/*
+		 * A promoted column cannot reuse a name reserved for the fixed graph
+		 * element columns; reject it up front with a clear message rather than
+		 * letting DefineRelation fail on a duplicate or the id/serial handling
+		 * misfire on it.
+		 */
+		foreach(pc, labelStmt->promoted_props)
+		{
+			ColumnDef  *col = (ColumnDef *) lfirst(pc);
+
+			if (strcmp(col->colname, AG_ELEM_LOCAL_ID) == 0 ||
+				strcmp(col->colname, AG_ELEM_PROP_MAP) == 0 ||
+				strcmp(col->colname, AG_START_ID) == 0 ||
+				strcmp(col->colname, AG_END_ID) == 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_DUPLICATE_COLUMN),
+						 errmsg("promoted property name \"%s\" is reserved",
+								col->colname)));
+		}
+
+		stmt->tableElts = list_concat(stmt->tableElts,
+									  copyObject(labelStmt->promoted_props));
+	}
+
 	if (labelStmt->only_base)
 	{
 		resetColumnDefsToNotNull(stmt->tableElts);

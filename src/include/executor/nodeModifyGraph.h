@@ -42,6 +42,10 @@ extern AttrNumber findAttrInSlotByName(TupleTableSlot *slot, char *name);
 extern void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
 extern void setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum);
 extern Datum *makeDatumArray(int len);
+extern void markStoredGeneratedColsNull(TupleTableSlot *slot);
+extern void computeLabelStoredGenerated(ResultRelInfo *resultRelInfo,
+										EState *estate, TupleTableSlot *slot,
+										CmdType cmdtype);
 
 extern Datum getElementFromEleTable(ModifyGraphState *mgstate, Oid type_oid,
 									Datum orig_elem, Datum gid, bool *found);

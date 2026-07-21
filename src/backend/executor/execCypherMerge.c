@@ -209,6 +209,7 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	insertSlot->tts_values[1] = vertexProp;
 	MemSet(insertSlot->tts_isnull, false,
 		   insertSlot->tts_tupleDescriptor->natts * sizeof(bool));
+	markStoredGeneratedColsNull(insertSlot);
 	ExecStoreVirtualTuple(insertSlot);
 
 	ExecMaterializeSlot(insertSlot);
@@ -225,6 +226,9 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
 		}
 	}
+
+	/* Compute any promoted typed columns from the property bag (see createVertex). */
+	computeLabelStoredGenerated(resultRelInfo, estate, insertSlot, CMD_INSERT);
 
 	/*
 	 * ExecWithCheckOptions() will skip any WCOs which are not of the kind we
@@ -302,6 +306,7 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	insertSlot->tts_values[3] = edgeProp;
 	MemSet(insertSlot->tts_isnull, false,
 		   insertSlot->tts_tupleDescriptor->natts * sizeof(bool));
+	markStoredGeneratedColsNull(insertSlot);
 	ExecStoreVirtualTuple(insertSlot);
 
 	ExecMaterializeSlot(insertSlot);
@@ -319,6 +324,9 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
 		}
 	}
+
+	/* Compute any promoted typed columns from the property bag (see createVertex). */
+	computeLabelStoredGenerated(resultRelInfo, estate, insertSlot, CMD_INSERT);
 
 	/*
 	 * ExecWithCheckOptions() will skip any WCOs which are not of the kind we
