@@ -20037,6 +20037,30 @@ cypher_expr:
 					n->location = @2;
 					$$ = (Node *) n;
 				}
+			| cypher_expr IS UNKNOWN						%prec IS
+				{
+					/*
+					 * The unknown truth value is null in cypher, so
+					 * IS [NOT] UNKNOWN is the same test as IS [NOT] NULL.
+					 */
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_expr IS NOT UNKNOWN					%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NOT_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
 			| cypher_expr TYPECAST type_function_name
 				{
 					TypeName   *n;
@@ -20293,6 +20317,26 @@ cypher_i_expr:
 					$$ = (Node *) n;
 				}
 			| cypher_i_expr IS NOT NULL_P					%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NOT_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_i_expr IS UNKNOWN						%prec IS
+				{
+					NullTest   *n;		/* IS [NOT] UNKNOWN == IS [NOT] NULL */
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_i_expr IS NOT UNKNOWN					%prec IS
 				{
 					NullTest   *n;
 
@@ -20636,6 +20680,26 @@ cypher_w_expr:
 					n->location = @2;
 					$$ = (Node *) n;
 				}
+			| cypher_w_expr IS UNKNOWN						%prec IS
+				{
+					NullTest   *n;		/* IS [NOT] UNKNOWN == IS [NOT] NULL */
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_w_expr IS NOT UNKNOWN					%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NOT_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
 			| cypher_w_expr TYPECAST type_function_name
 				{
 					TypeName   *n;
@@ -20906,6 +20970,26 @@ cypher_in_expr:
 					$$ = (Node *) n;
 				}
 			| cypher_in_expr IS NOT NULL_P					%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NOT_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_in_expr IS UNKNOWN						%prec IS
+				{
+					NullTest   *n;		/* IS [NOT] UNKNOWN == IS [NOT] NULL */
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_in_expr IS NOT UNKNOWN					%prec IS
 				{
 					NullTest   *n;
 
