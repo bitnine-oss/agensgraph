@@ -654,6 +654,12 @@ RETURN all(x IN [1, 2, 3] WHERE x > 0) AS a, none(x IN [1] WHERE x > 5) AS b;
 MATCH (n:aggnum) RETURN ALL DISTINCT n.v;
 MATCH (n:aggnum) RETURN DISTINCT ALL n.v;
 
+-- IS [NOT] UNKNOWN: the unknown truth value is null, so the test is the same as
+-- IS [NOT] NULL.  It composes normally with comparisons that yield unknown.
+RETURN (1 = null) IS UNKNOWN AS a, (1 = 1) IS UNKNOWN AS b, 5 IS UNKNOWN AS c;
+RETURN null IS NOT UNKNOWN AS a, 5 IS NOT UNKNOWN AS b;
+MATCH (n:aggnum) WHERE n.v IS NOT UNKNOWN RETURN count(*) AS c;
+
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;

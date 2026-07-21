@@ -1785,6 +1785,26 @@ MATCH (n:aggnum) RETURN DISTINCT ALL n.v;
 ERROR:  syntax error at or near "n"
 LINE 1: MATCH (n:aggnum) RETURN DISTINCT ALL n.v;
                                              ^
+-- IS [NOT] UNKNOWN: the unknown truth value is null, so the test is the same as
+-- IS [NOT] NULL.  It composes normally with comparisons that yield unknown.
+RETURN (1 = null) IS UNKNOWN AS a, (1 = 1) IS UNKNOWN AS b, 5 IS UNKNOWN AS c;
+ a | b | c 
+---+---+---
+ t | f | f
+(1 row)
+
+RETURN null IS NOT UNKNOWN AS a, 5 IS NOT UNKNOWN AS b;
+ a | b 
+---+---
+ f | t
+(1 row)
+
+MATCH (n:aggnum) WHERE n.v IS NOT UNKNOWN RETURN count(*) AS c;
+ c 
+---
+ 5
+(1 row)
+
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;
