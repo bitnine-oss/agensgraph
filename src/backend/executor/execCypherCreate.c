@@ -179,6 +179,7 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	elemTupleSlot->tts_values[1] = vertexProp;
 	MemSet(elemTupleSlot->tts_isnull, false,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
+	markStoredGeneratedColsNull(elemTupleSlot);
 	ExecStoreVirtualTuple(elemTupleSlot);
 
 	ExecMaterializeSlot(elemTupleSlot);
@@ -200,6 +201,14 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
 		}
 	}
+
+	/*
+	 * Compute any promoted typed columns from the property bag, after
+	 * BEFORE-ROW triggers (which may alter the bag) and before constraints and
+	 * the physical insert.
+	 */
+	computeLabelStoredGenerated(resultRelInfo, estate, elemTupleSlot,
+								CMD_INSERT);
 
 	/*
 	 * ExecWithCheckOptions() will skip any WCOs which are not of the kind we
@@ -277,6 +286,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	elemTupleSlot->tts_values[3] = edgeProp;
 	MemSet(elemTupleSlot->tts_isnull, false,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
+	markStoredGeneratedColsNull(elemTupleSlot);
 	ExecStoreVirtualTuple(elemTupleSlot);
 
 	ExecMaterializeSlot(elemTupleSlot);
@@ -293,6 +303,10 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 			elog(ERROR, "Trigger must not be NULL on Cypher Clause.");
 		}
 	}
+
+	/* Compute any promoted typed columns from the property bag (see createVertex). */
+	computeLabelStoredGenerated(resultRelInfo, estate, elemTupleSlot,
+								CMD_INSERT);
 
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, elemTupleSlot, estate);

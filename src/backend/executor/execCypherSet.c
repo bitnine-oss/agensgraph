@@ -381,6 +381,7 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	}
 	MemSet(elemTupleSlot->tts_isnull, false,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
+	markStoredGeneratedColsNull(elemTupleSlot);
 	ExecStoreVirtualTuple(elemTupleSlot);
 
 	/* BEFORE ROW UPDATE Triggers */
@@ -393,6 +394,21 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	}
 
 lreplace:
+
+	/*
+	 * Recompute the promoted typed columns from the property bag before the
+	 * update.  Placed at the lreplace join point so it also runs on the EPQ
+	 * re-entry path; the generated columns are always derived from the same bag
+	 * that is about to be persisted, so they never diverge from it.
+	 *
+	 * This relies on graph-write range table entries carrying no updated-column
+	 * bitmap (ExecGetUpdatedCols returns empty), so ExecComputeStoredGenerated
+	 * does not skip a column as "independent of the updated columns" -- a SET
+	 * rewrites the whole bag, so every promoted column must be recomputed.
+	 */
+	computeLabelStoredGenerated(resultRelInfo, estate, elemTupleSlot,
+								CMD_UPDATE);
+
 	ExecMaterializeSlot(elemTupleSlot);
 	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelationDesc);
 
@@ -604,6 +620,7 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	}
 	MemSet(elemTupleSlot->tts_isnull, false,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
+	markStoredGeneratedColsNull(elemTupleSlot);
 	ExecStoreVirtualTuple(elemTupleSlot);
 
 	/* BEFORE ROW UPDATE Triggers */
@@ -617,6 +634,10 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 			return NULL;
 		}
 	}
+
+	/* Recompute the promoted typed columns from the new bag (see above). */
+	computeLabelStoredGenerated(resultRelInfo, estate, elemTupleSlot,
+								CMD_UPDATE);
 
 	ExecMaterializeSlot(elemTupleSlot);
 	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelationDesc);

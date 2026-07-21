@@ -17,6 +17,7 @@
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_type.h"
 #include "executor/executor.h"
+#include "executor/nodeModifyTable.h"
 #include "executor/nodeModifyGraph.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
@@ -1113,6 +1114,58 @@ makeDatumArray(int len)
 		return NULL;
 
 	return palloc(len * sizeof(Datum));
+}
+
+/*
+ * markStoredGeneratedColsNull
+ *
+ * The Cypher write path fills a label tuple's base columns (id/start/end and
+ * the jsonb property bag) directly and blanket-marks every attribute non-null.
+ * Any promoted typed property, however, is a STORED generated column that is
+ * not filled until ExecComputeStoredGenerated runs.  Mark those columns NULL
+ * first, so that a tuple materialization occurring before the generated values
+ * are computed (an intervening ExecMaterializeSlot, or a BEFORE-ROW trigger)
+ * never reads an uninitialized generated Datum.  A no-op for labels without any
+ * promoted columns.
+ */
+void
+markStoredGeneratedColsNull(TupleTableSlot *slot)
+{
+	TupleDesc	tupdesc = slot->tts_tupleDescriptor;
+	int			i;
+
+	if (tupdesc->constr == NULL || !tupdesc->constr->has_generated_stored)
+		return;
+
+	for (i = 0; i < tupdesc->natts; i++)
+	{
+		if (TupleDescAttr(tupdesc, i)->attgenerated == ATTRIBUTE_GENERATED_STORED)
+			slot->tts_isnull[i] = true;
+	}
+}
+
+/*
+ * computeLabelStoredGenerated
+ *
+ * Materialize the STORED generated columns (promoted typed properties) of a
+ * label element tuple that the Cypher write path filled directly, rather than
+ * through nodeModifyTable.  A no-op for a label without promoted columns.
+ *
+ * This pairs with markStoredGeneratedColsNull(): a write path marks the
+ * generated columns null before storing the slot (so any intervening
+ * materialization is safe), then calls this just before the physical
+ * insert/update to compute them from the property bag.  Routing every write
+ * path through this one function keeps a new path from silently omitting the
+ * computation and persisting a stale or uninitialized generated column.
+ */
+void
+computeLabelStoredGenerated(ResultRelInfo *resultRelInfo, EState *estate,
+							TupleTableSlot *slot, CmdType cmdtype)
+{
+	TupleConstr *constr = resultRelInfo->ri_RelationDesc->rd_att->constr;
+
+	if (constr != NULL && constr->has_generated_stored)
+		ExecComputeStoredGenerated(resultRelInfo, estate, slot, cmdtype);
 }
 
 static bool

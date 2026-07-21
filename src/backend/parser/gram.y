@@ -159,6 +159,8 @@ static Node *makeColumnRef(char *colname, List *indirection,
 						   int location, core_yyscan_t yyscanner);
 static Node *makeTypeCast(Node *arg, TypeName *typename, int location);
 static Node *makeStringConstCast(char *str, int location, TypeName *typename);
+static Node *makeJsonbPropCast(char *srckey, TypeName *typname, int location,
+							   core_yyscan_t yyscanner);
 static Node *makeIntConst(int val, int location);
 static Node *makeFloatConst(char *str, int location);
 static Node *makeBoolAConst(bool state, int location);
@@ -686,13 +688,15 @@ static bool has_internal_default_prefix(char *str);
 %type <node>	CreateGraphStmt CreateLabelStmt AlterLabelStmt alter_label_cmd
 				CreateConstraintStmt DropConstraintStmt
 				CreatePropertyIndexStmt
+%type <node>	label_prop
 %type <list>	alter_label_cmds prop_idx_params opt_prop_include
 				index_including_prop_params
+				opt_label_props label_prop_list
 %type <str>		opt_constraint_name
 %type <ielem>	prop_idx_elem
 %type <boolean> opt_disable_index
 %type <ival>	reindex_target_label
-%type <ival>    elabel_or_vlabel
+%type <ival>    elabel_or_vlabel opt_label_gen_storage
 
 /*
  * Cypher Query Language
@@ -19106,33 +19110,35 @@ CreateGraphStmt:
 		;
 
 CreateLabelStmt:
-			CREATE OptNoLog elabel_or_vlabel name opt_disable_index
+			CREATE OptNoLog elabel_or_vlabel name opt_label_props opt_disable_index
 			OptInherit opt_reloptions OptTableSpace
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
 					n->labelKind = $3;
 					n->relation = makeRangeVar(NULL, $4, -1);
 					n->relation->relpersistence = $2;
-					n->inhRelations = $6;
-					n->options = $7;
-					n->tablespacename = $8;
+					n->promoted_props = $5;
+					n->inhRelations = $7;
+					n->options = $8;
+					n->tablespacename = $9;
 					n->if_not_exists = false;
-					n->disable_index = $5;
+					n->disable_index = $6;
 					n->only_base = false;
 					$$ = (Node *)n;
 				}
-			| CREATE OptNoLog elabel_or_vlabel IF_P NOT EXISTS name opt_disable_index
+			| CREATE OptNoLog elabel_or_vlabel IF_P NOT EXISTS name opt_label_props opt_disable_index
 			OptInherit opt_reloptions OptTableSpace
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
 					n->labelKind = $3;
 					n->relation = makeRangeVar(NULL, $7, -1);
 					n->relation->relpersistence = $2;
-					n->inhRelations = $9;
-					n->options = $10;
-					n->tablespacename = $11;
+					n->promoted_props = $8;
+					n->inhRelations = $10;
+					n->options = $11;
+					n->tablespacename = $12;
 					n->if_not_exists = $4;
-					n->disable_index = $8;
+					n->disable_index = $9;
 					n->only_base = false;
 					$$ = (Node *)n;
 				}
@@ -19143,6 +19149,7 @@ CreateLabelStmt:
 					n->labelKind = $3;
 					n->relation = makeRangeVar(NULL, $5, -1);
 					n->relation->relpersistence = $2;
+					n->promoted_props = NIL;
 					n->inhRelations = $10;
 					n->options = $11;
 					n->tablespacename = $12;
@@ -19152,6 +19159,132 @@ CreateLabelStmt:
 					n->fixed_id = $7;
 					$$ = (Node *)n;
 				}
+		;
+
+/*
+ * Optional list of promoted typed properties on a label:
+ *
+ *   CREATE VLABEL Doc (emb vector(1024) GENERATED, age int GENERATED (years))
+ *
+ * Each entry becomes a real typed column beside the jsonb "properties" bag.
+ * A GENERATED property is materialized (STORED) from the bag; the shorthand
+ * form derives it from a source key (defaulting to the column name), while the
+ * long form takes an explicit GENERATED ALWAYS AS (...) expression.  A plain
+ * PROPERTY column is not yet supported.
+ */
+opt_label_props:
+			'(' label_prop_list ')'					{ $$ = $2; }
+			| /*EMPTY*/								{ $$ = NIL; }
+		;
+
+label_prop_list:
+			label_prop								{ $$ = list_make1($1); }
+			| label_prop_list ',' label_prop		{ $$ = lappend($1, $3); }
+		;
+
+label_prop:
+			/* shorthand: source key defaults to the column name */
+			ColId Typename GENERATED
+				{
+					ColumnDef  *c = makeNode(ColumnDef);
+					Constraint *g = makeNode(Constraint);
+
+					g->contype = CONSTR_GENERATED;
+					g->generated_when = ATTRIBUTE_IDENTITY_ALWAYS;
+					g->raw_expr = makeJsonbPropCast($1, $2, @2, yyscanner);
+					g->cooked_expr = NULL;
+					g->generated_kind = ATTRIBUTE_GENERATED_STORED;
+					g->location = @3;
+
+					c->colname = $1;
+					c->typeName = $2;
+					c->is_local = true;
+					c->constraints = list_make1(g);
+					c->location = @1;
+					$$ = (Node *) c;
+				}
+			/*
+			 * shorthand with an explicit source key.  The key is an identifier
+			 * and so is down-cased, matching Cypher, which stores map property
+			 * keys down-cased (e.g. {createdAt: ...} is stored under
+			 * "createdat").  Use this form when the promoted column's name
+			 * should differ from the source property key.
+			 */
+			| ColId Typename GENERATED '(' ColId ')'
+				{
+					ColumnDef  *c = makeNode(ColumnDef);
+					Constraint *g = makeNode(Constraint);
+
+					g->contype = CONSTR_GENERATED;
+					g->generated_when = ATTRIBUTE_IDENTITY_ALWAYS;
+					g->raw_expr = makeJsonbPropCast($5, $2, @2, yyscanner);
+					g->cooked_expr = NULL;
+					g->generated_kind = ATTRIBUTE_GENERATED_STORED;
+					g->location = @3;
+
+					c->colname = $1;
+					c->typeName = $2;
+					c->is_local = true;
+					c->constraints = list_make1(g);
+					c->location = @1;
+					$$ = (Node *) c;
+				}
+			/* long form: an explicit generated expression over the bag */
+			| ColId Typename GENERATED generated_when AS '(' a_expr ')' opt_label_gen_storage
+				{
+					ColumnDef  *c = makeNode(ColumnDef);
+					Constraint *g = makeNode(Constraint);
+
+					if ($4 != ATTRIBUTE_IDENTITY_ALWAYS)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("for a generated property, GENERATED ALWAYS must be specified"),
+								 parser_errposition(@4)));
+
+					g->contype = CONSTR_GENERATED;
+					g->generated_when = $4;
+					g->raw_expr = $7;
+					g->cooked_expr = NULL;
+					g->generated_kind = $9;
+					g->location = @3;
+
+					c->colname = $1;
+					c->typeName = $2;
+					c->is_local = true;
+					c->constraints = list_make1(g);
+					c->location = @1;
+					$$ = (Node *) c;
+				}
+			/* a plain typed PROPERTY column is not yet supported */
+			| ColId Typename PROPERTY
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("PROPERTY columns are not supported yet"),
+							 errhint("Use GENERATED instead, e.g. \"%s %s GENERATED\".",
+									 $1, "<type>"),
+							 parser_errposition(@3)));
+					$$ = NULL;		/* not reached */
+				}
+		;
+
+/*
+ * Storage for a long-form generated property.  Unlike opt_virtual_or_stored,
+ * this defaults to STORED (a promoted column must be materialized to carry a
+ * btree/HNSW index) and rejects an explicit VIRTUAL.
+ */
+opt_label_gen_storage:
+			STORED			{ $$ = ATTRIBUTE_GENERATED_STORED; }
+			| VIRTUAL
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("promoted generated properties must be STORED"),
+							 errhint("A VIRTUAL generated column cannot carry an index."),
+							 parser_errposition(@1)));
+					$$ = ATTRIBUTE_GENERATED_STORED;	/* not reached */
+				}
+			| /*EMPTY*/		{ $$ = ATTRIBUTE_GENERATED_STORED; }
 		;
 
 opt_disable_index:
@@ -23027,6 +23160,31 @@ makeStringConstCast(char *str, int location, TypeName *typename)
 	Node	   *s = makeStringConst(str, location);
 
 	return makeTypeCast(s, typename, -1);
+}
+
+/*
+ * Build the derivation expression of a shorthand GENERATED property:
+ *
+ *		(properties ->> 'srckey')::typname
+ *
+ * The ->> operator yields SQL NULL for both a missing key and a stored JSON
+ * null, which matches Cypher's missing-property contract, and the cast reparses
+ * the text through the target type's input function (fail-fast on, e.g., a
+ * vector dimension mismatch).
+ */
+static Node *
+makeJsonbPropCast(char *srckey, TypeName *typname, int location,
+				  core_yyscan_t yyscanner)
+{
+	Node	   *propref;
+	Node	   *keyconst;
+	Node	   *extract;
+
+	propref = makeColumnRef(pstrdup("properties"), NIL, location, yyscanner);
+	keyconst = makeStringConst(srckey, location);
+	extract = (Node *) makeSimpleA_Expr(AEXPR_OP, "->>", propref, keyconst,
+										location);
+	return makeTypeCast(extract, typname, location);
 }
 
 static Node *

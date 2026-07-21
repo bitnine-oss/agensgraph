@@ -4473,6 +4473,14 @@ typedef struct CreateLabelStmt
 	bool		if_not_exists;	/* just do nothing if it already exists? */
 	bool		disable_index;	/* create invalid and not ready index if true */
 
+	/*
+	 * Promoted typed properties: a list of ColumnDef for properties stored as
+	 * real typed columns beside the jsonb bag.  Each ColumnDef carries a
+	 * GENERATED clause (a STORED column derived from the bag).  NIL for a label
+	 * with no promoted properties.
+	 */
+	List	   *promoted_props;
+
 	/* Supports for binary upgrade */
 	bool		only_base;
 	int			fixed_id;
