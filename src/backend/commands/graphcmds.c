@@ -330,6 +330,7 @@ extractPromotedSourceKey(Node *raw_expr)
 {
 	A_Expr	   *aexpr;
 	ColumnRef  *bag;
+	Node	   *keynode;
 	A_Const    *key;
 
 	/* peel off the cast to the column's declared type */
@@ -344,7 +345,7 @@ extractPromotedSourceKey(Node *raw_expr)
 		list_length(aexpr->name) != 1 ||
 		strcmp(strVal(linitial(aexpr->name)), "->>") != 0 ||
 		aexpr->lexpr == NULL || !IsA(aexpr->lexpr, ColumnRef) ||
-		aexpr->rexpr == NULL || !IsA(aexpr->rexpr, A_Const))
+		aexpr->rexpr == NULL)
 		return NULL;
 
 	/* the extraction must be from the label's own "properties" bag */
@@ -354,7 +355,17 @@ extractPromotedSourceKey(Node *raw_expr)
 		strcmp(strVal(linitial(bag->fields)), AG_ELEM_PROP_MAP) != 0)
 		return NULL;
 
-	key = (A_Const *) aexpr->rexpr;
+	/*
+	 * The key is a string constant.  A dumped-then-reparsed generation
+	 * expression spells it as 'key'::text, so peel any cast first.
+	 */
+	keynode = aexpr->rexpr;
+	while (keynode != NULL && IsA(keynode, TypeCast))
+		keynode = ((TypeCast *) keynode)->arg;
+	if (keynode == NULL || !IsA(keynode, A_Const))
+		return NULL;
+
+	key = (A_Const *) keynode;
 	if (key->isnull || !IsA(&key->val, String))
 		return NULL;
 
