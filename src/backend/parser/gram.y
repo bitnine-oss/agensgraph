@@ -59,6 +59,7 @@
 #include "nodes/nodeFuncs.h"
 #include "parser/parser.h"
 #include "parser/parse_graph.h"
+#include "parser/scansup.h"
 #include "utils/datetime.h"
 #include "utils/xml.h"
 
@@ -23165,6 +23166,11 @@ makeStringConstCast(char *str, int location, TypeName *typename)
  * null, which matches Cypher's missing-property contract, and the cast reparses
  * the text through the target type's input function (fail-fast on, e.g., a
  * vector dimension mismatch).
+ *
+ * The source key is down-cased the same way the scanner down-cases an unquoted
+ * identifier, because Cypher stores map property keys down-cased ({createdAt:1}
+ * becomes "createdat").  Without this a quoted source key like ("createdAt")
+ * would never match any Cypher-written data and the column would stay NULL.
  */
 static Node *
 makeJsonbPropCast(char *srckey, TypeName *typname, int location,
@@ -23174,6 +23180,7 @@ makeJsonbPropCast(char *srckey, TypeName *typname, int location,
 	Node	   *keyconst;
 	Node	   *extract;
 
+	srckey = downcase_truncate_identifier(srckey, strlen(srckey), false);
 	propref = makeColumnRef(pstrdup("properties"), NIL, location, yyscanner);
 	keyconst = makeStringConst(srckey, location);
 	extract = (Node *) makeSimpleA_Expr(AEXPR_OP, "->>", propref, keyconst,

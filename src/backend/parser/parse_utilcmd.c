@@ -73,6 +73,7 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 #include "parser/parse_cypher_utils.h"
+#include "catalog/ag_label_fn.h"
 
 
 /* State shared by transformCreateStmt and its subroutines */
@@ -156,6 +157,7 @@ static bool isLabelKind(RangeVar *label, char labkind);
 static void transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col);
 static CommentStmt *makeComment(ObjectType type, RangeVar *name, char *desc);
 static Node *prop_ref_mutator(Node *node, void *context);
+static bool ConvertPromotedColumnRefForIndex(Node *node, Oid relid);
 static ObjectType getLabelObjectType(char *labname, Oid graphid);
 static bool figure_prop_index_colname_walker(Node *node, char **colname);
 static void resetColumnDefsToNotNull(List *columnDefs);
@@ -5539,6 +5541,70 @@ prop_ref_mutator(Node *node, void *context)
 	return raw_expression_tree_mutator(node, prop_ref_mutator, NULL);
 }
 
+/*
+ * ConvertPromotedColumnRefForIndex
+ *
+ * If a property-index element names a promoted property of the label, rewrite
+ * its ColumnRef to reference the typed column that materializes it (so the
+ * index binds the real column, e.g. a btree or pgvector index, instead of a
+ * jsonb (properties ->> 'key') expression).  Returns true when it did so, in
+ * which case the caller must NOT wrap the element with prop_ref_mutator().
+ */
+static bool
+ConvertPromotedColumnRefForIndex(Node *node, Oid relid)
+{
+	ColumnRef  *columnRef;
+	Node	   *field;
+	Oid			laboid;
+	AttrNumber	attnum;
+
+	if (!IsA(node, ColumnRef))
+		return false;
+	columnRef = (ColumnRef *) node;
+	if (list_length(columnRef->fields) != 1)
+		return false;
+	field = linitial(columnRef->fields);
+	if (!IsA(field, String))
+		return false;
+
+	laboid = get_relid_laboid(relid);
+	if (!OidIsValid(laboid))
+		return false;
+
+	attnum = get_label_property_attnum(laboid, strVal(field));
+	if (attnum == InvalidAttrNumber)
+		return false;
+
+	/*
+	 * Bind the storage column that materializes this property -- but only if it
+	 * is still a live column.  A raw ALTER TABLE ... DROP COLUMN can drop a
+	 * promoted column without maintaining ag_label_property, leaving a stale
+	 * row; ignore it (fall back to the jsonb path) rather than reference a
+	 * dropped attribute.
+	 */
+	{
+		HeapTuple	atttup;
+		Form_pg_attribute att;
+		char	   *colname;
+
+		atttup = SearchSysCache2(ATTNUM, ObjectIdGetDatum(relid),
+								 Int16GetDatum(attnum));
+		if (!HeapTupleIsValid(atttup))
+			return false;
+		att = (Form_pg_attribute) GETSTRUCT(atttup);
+		if (att->attisdropped)
+		{
+			ReleaseSysCache(atttup);
+			return false;
+		}
+		colname = pstrdup(NameStr(att->attname));
+		ReleaseSysCache(atttup);
+
+		columnRef->fields = list_make1(makeString(colname));
+	}
+	return true;
+}
+
 static ObjectType
 getLabelObjectType(char *labname, Oid graphid)
 {
@@ -5633,7 +5699,8 @@ transformCreatePropertyIndexStmt(Oid relid, IndexStmt *stmt,
 
 		is_reserved_property = ConvertReservedColumnRefForIndex(ielem->expr,
 																relid);
-		if (!is_reserved_property)
+		if (!is_reserved_property &&
+			!ConvertPromotedColumnRefForIndex(ielem->expr, relid))
 		{
 			ielem->expr = prop_ref_mutator(ielem->expr, NULL);
 		}

@@ -11,12 +11,14 @@
 #include "postgres.h"
 
 #include "ag_const.h"
+#include "access/genam.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label_fn.h"
 #include "catalog/ag_graphmeta.h"
 #include "catalog/ag_label.h"
+#include "catalog/ag_label_property.h"
 #include "catalog/ag_label_fn.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
@@ -82,6 +84,9 @@ label_drop_with_catalog(Oid laboid)
 	Relation	ag_label_desc;
 	HeapTuple	tup;
 
+	/* forget any promoted typed properties this label declared */
+	DeleteAgLabelProperties(laboid);
+
 	ag_label_desc = table_open(LabelRelationId, RowExclusiveLock);
 
 	tup = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
@@ -93,6 +98,87 @@ label_drop_with_catalog(Oid laboid)
 	ReleaseSysCache(tup);
 
 	table_close(ag_label_desc, RowExclusiveLock);
+}
+
+/*
+ * InsertAgLabelProperty - register a promoted typed property in
+ * ag_label_property, mapping the (down-cased) Cypher key to the storage column
+ * that materializes it.
+ */
+void
+InsertAgLabelProperty(Oid laboid, const char *propname, int16 attnum,
+					   char semantics)
+{
+	Relation	desc;
+	Datum		values[Natts_ag_label_property];
+	bool		nulls[Natts_ag_label_property];
+	NameData	pname;
+	HeapTuple	tup;
+
+	namestrcpy(&pname, propname);
+
+	desc = table_open(LabelPropertyRelationId, RowExclusiveLock);
+
+	values[Anum_ag_label_property_laboid - 1] = ObjectIdGetDatum(laboid);
+	values[Anum_ag_label_property_propname - 1] = NameGetDatum(&pname);
+	values[Anum_ag_label_property_attnum - 1] = Int16GetDatum(attnum);
+	values[Anum_ag_label_property_semantics - 1] = CharGetDatum(semantics);
+	memset(nulls, false, sizeof(nulls));
+
+	tup = heap_form_tuple(RelationGetDescr(desc), values, nulls);
+	CatalogTupleInsert(desc, tup);
+	heap_freetuple(tup);
+
+	table_close(desc, RowExclusiveLock);
+}
+
+/*
+ * DeleteAgLabelProperties - remove every ag_label_property row for a label.
+ */
+void
+DeleteAgLabelProperties(Oid laboid)
+{
+	Relation	desc;
+	ScanKeyData skey;
+	SysScanDesc scan;
+	HeapTuple	tup;
+
+	desc = table_open(LabelPropertyRelationId, RowExclusiveLock);
+
+	ScanKeyInit(&skey, Anum_ag_label_property_laboid,
+				BTEqualStrategyNumber, F_OIDEQ, ObjectIdGetDatum(laboid));
+
+	scan = systable_beginscan(desc, LabelPropertyLabidPropIndexId, true,
+							  NULL, 1, &skey);
+
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+		CatalogTupleDelete(desc, &tup->t_self);
+
+	systable_endscan(scan);
+
+	table_close(desc, RowExclusiveLock);
+}
+
+/*
+ * get_label_property_attnum - attnum of the typed column that materializes a
+ * promoted property key on a label, or InvalidAttrNumber if the key is not a
+ * promoted property of that label.
+ */
+AttrNumber
+get_label_property_attnum(Oid laboid, const char *propname)
+{
+	HeapTuple	tup;
+	AttrNumber	attnum = InvalidAttrNumber;
+
+	tup = SearchSysCache2(LABELPROPNAME, ObjectIdGetDatum(laboid),
+						  PointerGetDatum(propname));
+	if (HeapTupleIsValid(tup))
+	{
+		attnum = ((Form_ag_label_property) GETSTRUCT(tup))->attnum;
+		ReleaseSysCache(tup);
+	}
+
+	return attnum;
 }
 
 /*
