@@ -19143,19 +19143,19 @@ CreateLabelStmt:
 					n->only_base = false;
 					$$ = (Node *)n;
 				}
-			| CREATE OptNoLog elabel_or_vlabel ONLY name '(' Iconst ')' opt_disable_index
+			| CREATE OptNoLog elabel_or_vlabel ONLY name '(' Iconst ')' opt_label_props opt_disable_index
 			OptInherit opt_reloptions OptTableSpace
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
 					n->labelKind = $3;
 					n->relation = makeRangeVar(NULL, $5, -1);
 					n->relation->relpersistence = $2;
-					n->promoted_props = NIL;
-					n->inhRelations = $10;
-					n->options = $11;
-					n->tablespacename = $12;
+					n->promoted_props = $9;
+					n->inhRelations = $11;
+					n->options = $12;
+					n->tablespacename = $13;
 					n->if_not_exists = false;
-					n->disable_index = $9;
+					n->disable_index = $10;
 					n->only_base = true;
 					n->fixed_id = $7;
 					$$ = (Node *)n;

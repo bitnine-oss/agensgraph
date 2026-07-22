@@ -20673,6 +20673,33 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 					  tblinfo->ag_labid);
 
 	/*
+	 * Promoted typed properties are local STORED generated columns.  Emit them
+	 * as a column list so a dump/restore recreates them (which repopulates
+	 * ag_label_property) instead of silently dropping them.  Their generation
+	 * expressions are handled here, not in the per-column default loop below.
+	 */
+	{
+		bool		firstprop = true;
+
+		for (j = 0; j < tblinfo->numatts; j++)
+		{
+			if (tblinfo->attgenerated[j] != ATTRIBUTE_GENERATED_STORED ||
+				tblinfo->attisdropped[j] || !tblinfo->attislocal[j] ||
+				tblinfo->attrdefs[j] == NULL)
+				continue;
+
+			appendPQExpBufferStr(q, firstprop ? " (" : ", ");
+			firstprop = false;
+			appendPQExpBuffer(q, "%s %s GENERATED ALWAYS AS (%s) STORED",
+							  fmtId(tblinfo->attnames[j]),
+							  tblinfo->atttypnames[j],
+							  tblinfo->attrdefs[j]->adef_expr);
+		}
+		if (!firstprop)
+			appendPQExpBufferChar(q, ')');
+	}
+
+	/*
 	 * Emit the INHERITS clause (not for partitions), except in binary-upgrade
 	 * mode.
 	 */
@@ -20913,13 +20940,14 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 		 * These lines resolve that error.
 		 */
 		if (tblinfo->attrdefs[j] != NULL &&
-			!tblinfo->attrdefs[j]->separate)
+			!tblinfo->attrdefs[j]->separate &&
+			!tblinfo->attgenerated[j])
 		{
 			appendPQExpBuffer(q, "ALTER TABLE %s.%s "
 							  "ALTER COLUMN %s SET DEFAULT %s;",
 							  tblinfo->dobj.namespace->dobj.name,
 							  qrelname,
-							  AG_ELEM_PROP_MAP,
+							  fmtId(tblinfo->attnames[j]),
 							  tblinfo->attrdefs[j]->adef_expr);
 		}
 

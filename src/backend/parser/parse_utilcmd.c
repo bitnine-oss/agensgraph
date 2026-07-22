@@ -4822,21 +4822,25 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		elog(ERROR, "unknown label type: %d", labelStmt->labelKind);
 	}
 
+	if (labelStmt->only_base)
+	{
+		resetColumnDefsToNotNull(stmt->tableElts);
+		indexlist = NIL;
+	}
+
 	/*
 	 * Append any promoted typed properties as extra columns, AFTER the jsonb
 	 * `properties` bag, so the fixed id/start/end/properties attnums (relied on
 	 * throughout the graph parser and executor) are preserved.  They are
 	 * ordinary generated ColumnDefs and flow through the standard
-	 * column-definition transform in the loop below.
+	 * column-definition transform in the loop below.  This runs after the
+	 * only_base reset above so the promoted columns keep their generation
+	 * clause (only_base is used when a label -- possibly with promoted columns
+	 * -- is recreated with a fixed id by pg_dump/pg_upgrade).
 	 */
 	if (labelStmt->promoted_props != NIL)
 	{
 		ListCell   *pc;
-
-		if (labelStmt->only_base)
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("a base label cannot declare promoted properties")));
 
 		/*
 		 * A promoted column cannot reuse a name reserved for the fixed graph
@@ -4860,12 +4864,6 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 
 		stmt->tableElts = list_concat(stmt->tableElts,
 									  copyObject(labelStmt->promoted_props));
-	}
-
-	if (labelStmt->only_base)
-	{
-		resetColumnDefsToNotNull(stmt->tableElts);
-		indexlist = NIL;
 	}
 
 	if (strcmp(labelStmt->relation->relname, AG_VERTEX) != 0 &&
