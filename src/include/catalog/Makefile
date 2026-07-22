@@ -83,6 +83,7 @@ CATALOG_HEADERS := \
 	pg_subscription.h \
 	pg_subscription_rel.h \
 	ag_graph.h ag_label.h \
+	ag_label_property.h \
 	ag_graphmeta.h \
 	ag_vertex.h \
 	ag_edge.h \

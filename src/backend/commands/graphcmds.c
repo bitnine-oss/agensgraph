@@ -19,6 +19,7 @@
 #include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
 #include "catalog/ag_label_fn.h"
+#include "catalog/ag_label_property.h"
 #include "catalog/index.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
@@ -51,7 +52,10 @@
 
 static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind,
 								 const char *queryString, bool is_fixed_id,
-								 int32 fixed_id);
+								 int32 fixed_id, List *promoted_props);
+static char *extractPromotedSourceKey(Node *raw_expr);
+static void recordPromotedProperties(Oid laboid, Oid relid,
+									 List *promoted_props);
 static void GetSuperOids(List *supers, char labkind, List **supOids);
 static void AgInheritanceDependancy(Oid laboid, List *supers);
 static void SetMaxStatisticsTarget(Oid laboid);
@@ -217,7 +221,8 @@ CreateLabelCommand(CreateLabelStmt *labelStmt, const char *queryString,
 		if (IsA(stmt, CreateStmt))
 		{
 			DefineLabel((CreateStmt *) stmt, labkind, queryString,
-						labelStmt->only_base, labelStmt->fixed_id);
+						labelStmt->only_base, labelStmt->fixed_id,
+						labelStmt->promoted_props);
 		}
 		else
 		{
@@ -247,7 +252,7 @@ CreateLabelCommand(CreateLabelStmt *labelStmt, const char *queryString,
 /* creates a new graph label */
 static ObjectAddress
 DefineLabel(CreateStmt *stmt, char labkind, const char *queryString,
-			bool is_fixed_id, int32 fixed_id)
+			bool is_fixed_id, int32 fixed_id, List *promoted_props)
 {
 	static const char *const validnsps[] = HEAP_RELOPT_NAMESPACES;
 	ObjectAddress reladdr;
@@ -293,6 +298,9 @@ DefineLabel(CreateStmt *stmt, char labkind, const char *queryString,
 									   labkind, tablespaceId, is_fixed_id,
 									   fixed_id);
 
+	/* register any promoted typed properties in ag_label_property */
+	recordPromotedProperties(laboid, reladdr.objectId, promoted_props);
+
 	GetSuperOids(stmt->inhRelations, labkind, &inheritOids);
 	AgInheritanceDependancy(laboid, inheritOids);
 
@@ -306,6 +314,90 @@ DefineLabel(CreateStmt *stmt, char labkind, const char *queryString,
 	recordDependencyOn(&reladdr, &labaddr, DEPENDENCY_INTERNAL);
 
 	return labaddr;
+}
+
+/*
+ * extractPromotedSourceKey
+ *
+ * A shorthand-form promoted property is generated from a single jsonb key:
+ * its raw generation expression is (properties ->> 'key')::type.  Return that
+ * key, or NULL when the expression is not of that form (e.g. a long-form
+ * GENERATED ALWAYS AS (...) column derived from more than one key), in which
+ * case the column is not resolvable from a single Cypher property key.
+ */
+static char *
+extractPromotedSourceKey(Node *raw_expr)
+{
+	A_Expr	   *aexpr;
+	ColumnRef  *bag;
+	A_Const    *key;
+
+	/* peel off the cast to the column's declared type */
+	while (raw_expr != NULL && IsA(raw_expr, TypeCast))
+		raw_expr = ((TypeCast *) raw_expr)->arg;
+
+	if (raw_expr == NULL || !IsA(raw_expr, A_Expr))
+		return NULL;
+
+	aexpr = (A_Expr *) raw_expr;
+	if (aexpr->kind != AEXPR_OP ||
+		list_length(aexpr->name) != 1 ||
+		strcmp(strVal(linitial(aexpr->name)), "->>") != 0 ||
+		aexpr->lexpr == NULL || !IsA(aexpr->lexpr, ColumnRef) ||
+		aexpr->rexpr == NULL || !IsA(aexpr->rexpr, A_Const))
+		return NULL;
+
+	/* the extraction must be from the label's own "properties" bag */
+	bag = (ColumnRef *) aexpr->lexpr;
+	if (list_length(bag->fields) != 1 ||
+		!IsA(linitial(bag->fields), String) ||
+		strcmp(strVal(linitial(bag->fields)), AG_ELEM_PROP_MAP) != 0)
+		return NULL;
+
+	key = (A_Const *) aexpr->rexpr;
+	if (key->isnull || !IsA(&key->val, String))
+		return NULL;
+
+	return strVal(&key->val);
+}
+
+/*
+ * recordPromotedProperties
+ *
+ * Register each shorthand-form promoted property of a freshly created label in
+ * ag_label_property, mapping its source key to the storage column's attnum.
+ */
+static void
+recordPromotedProperties(Oid laboid, Oid relid, List *promoted_props)
+{
+	ListCell   *lc;
+
+	foreach(lc, promoted_props)
+	{
+		ColumnDef  *col = (ColumnDef *) lfirst(lc);
+		ListCell   *lcon;
+
+		foreach(lcon, col->constraints)
+		{
+			Constraint *con = (Constraint *) lfirst(lcon);
+			char	   *srckey;
+			AttrNumber	attnum;
+
+			if (con->contype != CONSTR_GENERATED)
+				continue;
+
+			srckey = extractPromotedSourceKey(con->raw_expr);
+			if (srckey == NULL)
+				continue;		/* long-form column: not key-resolvable */
+
+			attnum = get_attnum(relid, col->colname);
+			if (attnum == InvalidAttrNumber)
+				continue;		/* should not happen */
+
+			InsertAgLabelProperty(laboid, srckey, (int16) attnum,
+								  PROMOTED_SEMANTICS_LEGACY);
+		}
+	}
 }
 
 /*
