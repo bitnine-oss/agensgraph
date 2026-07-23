@@ -1384,11 +1384,14 @@ CREATE VIEW ag_property_indexes AS
     WHERE C.relkind = 'r' AND I.relkind = 'i' AND
         X.indisexclusion = false AND
         -- a property index over the jsonb bag (an expression index), or one that
-        -- binds a promoted typed column (a plain-column index on a column the
-        -- label records in ag_label_property)
+        -- binds a promoted typed column: a plain-column index on a generated
+        -- column, which on a label table materializes a promoted property.
+        -- Testing the column (not ag_label_property) covers a key inherited from
+        -- an ancestor label too, since the child has its own generated copy.
         (X.indexprs IS NOT NULL OR
-         EXISTS (SELECT 1 FROM ag_label_property ap
-                 WHERE ap.laboid = L.oid AND ap.attnum = ANY(X.indkey)));
+         EXISTS (SELECT 1 FROM pg_attribute a
+                 WHERE a.attrelid = C.oid AND a.attnum = ANY(X.indkey) AND
+                       NOT a.attisdropped AND a.attgenerated <> ''));
 
 CREATE VIEW ag_graphmeta_view AS
 	SELECT (SELECT graphname FROM ag_graph WHERE oid = graph),

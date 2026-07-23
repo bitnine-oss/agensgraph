@@ -1316,8 +1316,8 @@ ag_property_indexes| SELECT n.nspname AS graphname,
      LEFT JOIN pg_namespace n ON ((n.oid = c.relnamespace)))
      LEFT JOIN pg_tablespace t ON ((t.oid = i.reltablespace)))
   WHERE ((c.relkind = 'r'::"char") AND (i.relkind = 'i'::"char") AND (x.indisexclusion = false) AND ((x.indexprs IS NOT NULL) OR (EXISTS ( SELECT 1
-           FROM ag_label_property ap
-          WHERE ((ap.laboid = l.oid) AND (ap.attnum = ANY ((x.indkey)::smallint[])))))));
+           FROM pg_attribute a
+          WHERE ((a.attrelid = c.oid) AND (a.attnum = ANY ((x.indkey)::smallint[])) AND (NOT a.attisdropped) AND (a.attgenerated <> ''::"char"))))));
 pg_aios| SELECT pid,
     io_id,
     io_generation,
