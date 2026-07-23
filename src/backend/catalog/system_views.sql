@@ -1382,7 +1382,13 @@ CREATE VIEW ag_property_indexes AS
         LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
         LEFT JOIN pg_tablespace T ON (T.oid = I.reltablespace)
     WHERE C.relkind = 'r' AND I.relkind = 'i' AND
-        X.indisexclusion = false AND X.indexprs IS NOT NULL;
+        X.indisexclusion = false AND
+        -- a property index over the jsonb bag (an expression index), or one that
+        -- binds a promoted typed column (a plain-column index on a column the
+        -- label records in ag_label_property)
+        (X.indexprs IS NOT NULL OR
+         EXISTS (SELECT 1 FROM ag_label_property ap
+                 WHERE ap.laboid = L.oid AND ap.attnum = ANY(X.indkey)));
 
 CREATE VIEW ag_graphmeta_view AS
 	SELECT (SELECT graphname FROM ag_graph WHERE oid = graph),
