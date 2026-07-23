@@ -69,6 +69,14 @@
 #define DELETE_EDGE_ALIAS		"e"
 
 bool		enable_eager = true;
+
+/*
+ * Whether n.key resolves to a promoted typed column.  NB: unlike the cost-only
+ * enable_* planner toggles, this can change query RESULTS -- a resolved read
+ * uses the column's native (numeric/collation/type-aware) semantics, the
+ * jsonb-bag fallback uses jsonb semantics -- so it is not merely a performance
+ * switch.
+ */
 bool		enable_property_promotion = true;
 
 typedef struct
@@ -249,7 +257,7 @@ static Oid	getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno,
 						   bool *sawGraphWrite);
 static bool hasGinOnProp(Oid relid);
 
-/* PROTOTYPE (Approach B): promoted typed-column projection/resolution */
+/* promoted typed-column projection and resolution */
 #define PROMOTED_SENTINEL_PREFIX	AGENS_DEFAULT_PREFIX "prop:"
 static char *makePromotedSentinelName(const char *varname, const char *key);
 static void appendPromotedSentinels(ParseState *pstate,
@@ -469,25 +477,30 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 }
 
 /*
- * unboxAggregateJsonbSortKey
- *		If a jsonb-coerced sort key is cypher_to_jsonb(<integer/numeric
- *		aggregate>), return the un-boxed native aggregate expression, else NULL.
+ * unboxNativeJsonbSortKey
+ *		If a sort key is cypher_to_jsonb(<native value>) whose native value can
+ *		be ordered directly, return that native value, else NULL.  Two kinds of
+ *		boxed value qualify:
  *
- * Ordering such a key by its native value is identical to ordering the boxed
- * jsonb: jsonb number ordering matches integer/numeric ordering, and
- * cypher_to_jsonb() is strict, so a NULL aggregate (e.g. sum() over an empty
- * group) stays SQL NULL and keeps the position its nulls_first flag already
- * gives it.  But sorting a fixed-width number instead of a jsonb datum matters
- * when a high-cardinality GROUP BY feeds a top-N sort (e.g. ORDER BY count(*)).
+ *		- a promoted property, projected as cypher_to_jsonb(<typed column Var>):
+ *		  ordering by the native column gives the typed semantics that are the
+ *		  point of promotion (numbers by value, text by collation) and lets the
+ *		  column's btree/HNSW index bind.
+ *		- an integer/numeric aggregate, e.g. cypher_to_jsonb(count(*)): ordering
+ *		  the fixed-width number rather than a jsonb datum matters when a high-
+ *		  cardinality GROUP BY feeds a top-N sort.  Restricted to integer/numeric
+ *		  because jsonb number ordering matches those exactly, whereas jsonb has
+ *		  no NaN/Infinity and its string ordering is not the collation ordering.
  *
- * Restricted to a bare aggregate of integer/numeric type: an aggregate is
- * evaluated after grouping, so re-pointing the sort at it never creates a
- * GROUP BY / DISTINCT-list dependency; integer/numeric avoids jsonb string
- * ordering (collation-dependent) and float NaN/Infinity (which a jsonb number
- * cannot represent, so boxing and native ordering could otherwise diverge).
+ * In both cases cypher_to_jsonb() is strict, so a NULL native value stays SQL
+ * NULL and keeps the position its nulls_first flag already gives it.  Whether
+ * re-pointing is actually SAFE depends on the surrounding query and is decided
+ * by the caller (updateSortOperatorsForJsonb): a promoted column is a candidate
+ * grouping key, so it may be unboxed only for a free ORDER BY; an aggregate is
+ * evaluated after grouping, so it may be unboxed whenever there is no DISTINCT.
  */
 static Node *
-unboxAggregateJsonbSortKey(Node *expr)
+unboxNativeJsonbSortKey(Node *expr)
 {
 	FuncExpr   *f;
 	Node	   *arg;
@@ -501,18 +514,11 @@ unboxAggregateJsonbSortKey(Node *expr)
 
 	arg = (Node *) linitial(f->args);
 
-	/*
-	 * A promoted property is projected as cypher_to_jsonb(<typed column Var>).
-	 * Re-point the sort at the native column so it orders by the typed semantics
-	 * (the whole point of promotion -- numeric by value, text by collation) and
-	 * the column's btree binds; the boxed jsonb entry stays for the projection.
-	 * The column is a plain Var, so re-pointing creates no GROUP BY / DISTINCT
-	 * dependency (and this runs only when unboxing is allowed, i.e. not under
-	 * DISTINCT).
-	 */
+	/* a promoted property's typed column */
 	if (IsA(arg, Var))
 		return arg;
 
+	/* an integer/numeric aggregate */
 	if (!IsA(arg, Aggref))
 		return NULL;
 
@@ -525,20 +531,25 @@ unboxAggregateJsonbSortKey(Node *expr)
 }
 
 /*
- * After the RETURN target list is coerced to jsonb (resolveItemList), any sort
- * key that points at a coerced target entry still carries the comparison
- * operators chosen for the entry's original type.  Re-point such sort keys at
- * the operators for the entry's final (jsonb) type so that ordering matches
- * the returned values.  Sort keys whose type did not change keep their original
- * operators.
+ * A RETURN target list is coerced to jsonb (resolveItemList), and a promoted
+ * property is projected as cypher_to_jsonb(column) everywhere; either way a sort
+ * key pointing at such an entry carries operators for a type that differs from
+ * the entry's final one.  Re-point each sort key at the operators for its final
+ * type so ordering matches the values, leaving unchanged-type keys alone.
  *
- * As an optimization, a sort key that boxes an integer/numeric aggregate into
- * jsonb purely for the returned value (e.g. ORDER BY count(*)) is re-pointed at
- * the native aggregate instead (see unboxAggregateJsonbSortKey), so the sort
- * compares fixed-width numbers rather than jsonb datums; the boxed jsonb entry
- * is kept for the projection, only the sort key changes.  Disabled under
- * DISTINCT (`allowUnbox' false), where ORDER BY keys must come from the
- * projection list.
+ * Where it is safe (see unboxNativeJsonbSortKey and the per-key gate below), a
+ * key that boxes a native value purely for the returned form -- an integer/
+ * numeric aggregate, or a promoted column -- is instead sorted on that native
+ * value: the boxed entry stays for the projection while a resjunk copy of the
+ * native value becomes the sort key, so the sort compares fixed-width numbers
+ * or binds the typed index rather than comparing jsonb datums.
+ *
+ * `allowUnbox' permits the aggregate case (no DISTINCT); `allowNativeUnbox'
+ * permits the promoted-column case, which is stricter -- a free ORDER BY only
+ * (no DISTINCT, no GROUP BY, no aggregates) -- because a column is a candidate
+ * grouping key.  Runs for RETURN and for a transparent WITH/LET (whose
+ * projection boxes a promoted property identically), so `WITH ... ORDER BY
+ * n.prop' keeps the native index too.
  */
 static void
 updateSortOperatorsForJsonb(List *sortClause, List **targetList,
@@ -563,7 +574,7 @@ updateSortOperatorsForJsonb(List *sortClause, List **targetList,
 		if (tle == NULL)
 			continue;
 
-		unboxed = unboxAggregateJsonbSortKey((Node *) tle->expr);
+		unboxed = unboxNativeJsonbSortKey((Node *) tle->expr);
 		if (unboxed != NULL)
 		{
 			/*
@@ -728,7 +739,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 			checkCypherLetItems(pstate, qry->targetList);
 
 		/*
-		 * PROTOTYPE: forward each carried element's promoted sentinels through
+		 * Forward each carried element's promoted sentinels through
 		 * this transparent WITH/LET so a later clause's WHERE/ORDER BY still
 		 * resolves n.prop to the typed column.  Insert here, before ORDER BY
 		 * appends its resjunk sort keys, so the sentinels stay among the leading
@@ -821,22 +832,28 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 
 	qual = qualAndExpr(qual, pstate->p_resolved_qual);
 
+	/* a terminal RETURN coerces its output list to jsonb */
 	if (detail->kind == CP_RETURN)
-	{
 		resolveItemList(pstate, qry->targetList);
 
-		/*
-		 * resolveItemList() coerces returned target entries to jsonb, which
-		 * can change the type a sort key resolves to; refresh the sort
-		 * operators so they match the final (jsonb) type.
-		 */
-		if (qry->sortClause != NIL)
-			updateSortOperatorsForJsonb(qry->sortClause, &qry->targetList,
-										qry->distinctClause == NIL,
-										qry->distinctClause == NIL &&
-										qry->groupClause == NIL &&
-										!qry->hasAggs);
-	}
+	/*
+	 * Refresh the sort operators to each key's final type (RETURN's coercion
+	 * above, or the cypher_to_jsonb(column) a promoted property is projected
+	 * as), and re-point a native-orderable boxed key at its native value where
+	 * safe -- so an integer/numeric aggregate sorts fixed-width and, for a free
+	 * ORDER BY, a promoted column sorts on its typed index.  This must also run
+	 * for a transparent WITH/LET: its projection boxes a promoted property just
+	 * like RETURN, so without it "WITH ... ORDER BY n.prop" would sort the jsonb
+	 * form and lose the native index.
+	 */
+	if (qry->sortClause != NIL &&
+		(detail->kind == CP_RETURN || detail->kind == CP_WITH ||
+		 detail->kind == CP_LET))
+		updateSortOperatorsForJsonb(qry->sortClause, &qry->targetList,
+									qry->distinctClause == NIL,
+									qry->distinctClause == NIL &&
+									qry->groupClause == NIL &&
+									!qry->hasAggs);
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
@@ -3428,7 +3445,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList,
 			addElemQual(pstate, te->resno, cnode->prop_map);
 			*targetList = lappend(*targetList, te);
 
-			/* PROTOTYPE: project hidden typed columns beside the composite */
+			/* project the hidden typed columns beside the composite */
 			appendPromotedSentinels(pstate, nsitem, nsitem->p_rte->relid,
 									alias->aliasname, targetList);
 		}
@@ -3594,8 +3611,8 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 			*targetList = lappend(*targetList, _te);
 
 			/*
-			 * PROTOTYPE: project hidden typed columns beside the composite.
-			 * A direction-less edge is scanned through an addEdgeUnion()
+			 * Project the hidden typed columns beside the composite.  A
+			 * direction-less edge is scanned through an addEdgeUnion()
 			 * subquery; genEdgeUnion() exposes the promoted columns through it,
 			 * and edge_relid names the label so they can be found.
 			 */
@@ -3663,33 +3680,30 @@ genEdgeUnion(char *edge_label, bool only, int location, bool include_promoted)
 	lsel->fromClause = list_make1(r);
 
 	/*
-	 * PROTOTYPE: expose the edge label's promoted typed columns as real outputs
-	 * of BOTH union arms (added before the copy below, so the arms stay type-
-	 * aligned as the set operation requires).  e.prop then resolves through the
-	 * union to a native column, and a qual/sort on it pushes into each arm's
-	 * base scan, binding the edge label's typed index (an Append of index scans
-	 * over the two directions).  Skipped for the VLE union, whose arms must keep
-	 * their existing shape.
+	 * Expose the edge label's promoted typed columns as real outputs of BOTH
+	 * union arms (added before the copy below, so the arms stay type-aligned as
+	 * the set operation requires).  e.prop then resolves through the union to a
+	 * native column, and a qual/sort on it pushes into each arm's base scan,
+	 * binding the edge label's typed index (an Append of index scans over the
+	 * two directions).  Skipped for the VLE union, whose arms must keep their
+	 * existing shape.
 	 */
 	if (include_promoted)
 	{
 		Oid			relid = RangeVarGetRelid(r, AccessShareLock, true);
+		List	   *props = OidIsValid(relid) ?
+			get_label_promoted_properties(relid) : NIL;
+		ListCell   *lc;
 
-		if (OidIsValid(relid) && label_relid_has_promoted_property(relid))
+		foreach(lc, props)
 		{
-			List	   *props = get_label_promoted_properties(relid);
-			ListCell   *lc;
+			PromotedPropInfo *info = lfirst(lc);
+			char	   *colname = get_attname(relid, info->attnum, true);
 
-			foreach(lc, props)
-			{
-				PromotedPropInfo *info = lfirst(lc);
-				char	   *colname = get_attname(relid, info->attnum, true);
-
-				if (colname != NULL)
-					lsel->targetList =
-						lappend(lsel->targetList,
-								makeSimpleResTarget(colname, NULL));
-			}
+			if (colname != NULL)
+				lsel->targetList =
+					lappend(lsel->targetList,
+							makeSimpleResTarget(colname, NULL));
 		}
 	}
 
@@ -4969,23 +4983,27 @@ getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno,
 			case RTE_FUNCTION:
 			case RTE_VALUES:
 			case RTE_CTE:
-				return InvalidOid;
-			default:
+			case RTE_GROUP:
+			case RTE_RESULT:
+			case RTE_TABLEFUNC:
+			case RTE_NAMEDTUPLESTORE:
 
 				/*
-				 * Any other range-table kind (RTE_GROUP / RTE_RESULT /
-				 * RTE_TABLEFUNC / ...) has no reachable base label relation:
-				 * report "not promoted" so resolution falls back gracefully,
-				 * rather than erroring.  An aggregating WITH, for instance,
-				 * introduces an RTE_GROUP the walk would otherwise trip on.
+				 * These kinds have no reachable base label relation, so report
+				 * "not promoted" and let resolution fall back gracefully.  An
+				 * aggregating WITH, for instance, interposes an RTE_GROUP the
+				 * walk would otherwise trip on.
 				 */
 				return InvalidOid;
+			default:
+				/* a genuinely unknown kind is a programming error */
+				elog(ERROR, "unrecognized RTE kind: %d", (int) rte->rtekind);
 		}
 	}
 }
 
 /*
- * PROTOTYPE (Approach B): hidden, non-junk, prunable projected typed column.
+ * Hidden, non-junk, prunable projected typed column.
  *
  * A promoted property key is projected across a pattern-subquery boundary as an
  * extra NON-JUNK target entry (so it pulls up onto the base scan and reaches
@@ -5030,8 +5048,6 @@ appendPromotedSentinels(ParseState *pstate, ParseNamespaceItem *nsitem,
 		return;
 	is_union = (nsitem->p_rte->rtekind == RTE_SUBQUERY);
 	if (nsitem->p_rte->rtekind != RTE_RELATION && !is_union)
-		return;
-	if (!label_relid_has_promoted_property(relid))
 		return;
 
 	props = get_label_promoted_properties(relid);
@@ -5113,6 +5129,12 @@ appendForwardedSentinels(ParseState *pstate, Var *composite,
 		composite->varattno > list_length(rte->eref->colnames))
 		return;
 
+	/*
+	 * A sentinel name is PROMOTED_SENTINEL_PREFIX + varname + ':' + key.  A
+	 * Cypher variable name is an identifier and never contains ':', so
+	 * "<prefix><oldname>:" is an unambiguous prefix of exactly this element's
+	 * sentinels, and the remainder after it is the key.
+	 */
 	oldprefix = psprintf(PROMOTED_SENTINEL_PREFIX "%s:",
 						 strVal(list_nth(rte->eref->colnames,
 										 composite->varattno - 1)));
@@ -5141,7 +5163,6 @@ appendForwardedSentinels(ParseState *pstate, Var *composite,
 					exprTypmod((Node *) ste->expr),
 					exprCollation((Node *) ste->expr),
 					composite->varlevelsup);
-		v->location = -1;
 		/* skip markVarForSelectPriv(): the referenced RTE is a subquery */
 
 		fte = makeTargetEntry((Expr *) v,
@@ -8034,15 +8055,17 @@ makeTargetListFromNSItem(ParseState *pstate, ParseNamespaceItem *nsitem)
 		Assert(varattno == te->resno);
 
 		/*
-		 * PROTOTYPE: a hidden promoted-column sentinel is a real (non-junk)
-		 * subquery output, so it is re-projected here like any other column,
-		 * name preserved.  Forwarding it (rather than dropping it) is what lets
+		 * A hidden promoted-column sentinel is a real (non-junk) subquery
+		 * output, so it is re-projected here like any other column, name
+		 * preserved.  Forwarding it (rather than dropping it) is what lets
 		 * promoted resolution cross this re-scoping boundary: the sentinel keeps
 		 * pulling up onto the base scan through each intervening clause, so a
 		 * post-WITH / cross-MATCH / RETURN-level WHERE or ORDER BY still binds
-		 * the typed index.  It stays hidden from the user because RETURN * and
-		 * grouping/distinct skip sentinel-named targets, and it is pruned when
-		 * no surviving clause references it.
+		 * the typed index.  It stays hidden from the user because RETURN * / *
+		 * expansion filters sentinel-named columns out by name (transformA_Star)
+		 * -- grouping/DISTINCT never see one, because forwarding a sentinel into
+		 * a projection is gated off under aggregation/DISTINCT to begin with --
+		 * and it is pruned when no surviving clause references it.
 		 */
 
 		/* no transform here, just use `te->expr` */

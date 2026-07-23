@@ -2175,7 +2175,11 @@ struct config_bool ConfigureNamesBool[] =
 	{
 		{"enable_property_promotion", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Resolve Cypher n.key to a promoted typed column when available."),
-			NULL
+			gettext_noop("Unlike the cost-only planner toggles, turning this off "
+						 "can change query RESULTS: a resolved n.key uses the typed "
+						 "column's native semantics (numeric/collation ordering, "
+						 "type-aware comparison), whereas the jsonb-bag fallback "
+						 "uses jsonb ordering and comparison."),
 		},
 		&enable_property_promotion,
 		true,

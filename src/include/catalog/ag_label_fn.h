@@ -32,11 +32,18 @@ typedef struct PromotedPropInfo
 {
 	char		propname[NAMEDATALEN];	/* down-cased Cypher key */
 	AttrNumber	attnum;			/* typed column attnum in the label table */
-	char		semantics;		/* PROMOTED_SEMANTICS_* */
+	char		semantics;		/* PROMOTED_SEMANTICS_*; forward-looking, not
+								 * consulted by the current read resolution */
 } PromotedPropInfo;
 
 extern bool label_relid_has_promoted_property(Oid relid);
 extern List *get_label_promoted_properties(Oid relid);
+
+/*
+ * The `semantics' out-param is forward-looking (for a future typed-semantics
+ * opt-in) and is not consulted by the current read resolution; callers pass
+ * NULL for it.
+ */
 extern bool get_label_property_column(Oid relid, const char *propname,
 									  AttrNumber *attnum, char *semantics);
 
