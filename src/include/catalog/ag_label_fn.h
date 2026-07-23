@@ -23,4 +23,21 @@ extern void InsertAgLabelProperty(Oid laboid, const char *propname,
 extern void DeleteAgLabelProperties(Oid laboid);
 extern AttrNumber get_label_property_attnum(Oid laboid, const char *propname);
 
+/*
+ * One promoted typed property of a label, keyed by relid (storage table oid)
+ * rather than the ag_label oid, so the Cypher compiler can enumerate/resolve
+ * promoted columns starting from a range-table relation.
+ */
+typedef struct PromotedPropInfo
+{
+	char		propname[NAMEDATALEN];	/* down-cased Cypher key */
+	AttrNumber	attnum;			/* typed column attnum in the label table */
+	char		semantics;		/* PROMOTED_SEMANTICS_* */
+} PromotedPropInfo;
+
+extern bool label_relid_has_promoted_property(Oid relid);
+extern List *get_label_promoted_properties(Oid relid);
+extern bool get_label_property_column(Oid relid, const char *propname,
+									  AttrNumber *attnum, char *semantics);
+
 #endif							/* AG_LABEL_FN_H */

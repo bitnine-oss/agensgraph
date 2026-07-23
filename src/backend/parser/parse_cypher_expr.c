@@ -545,6 +545,26 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 	if (lf == NULL)
 		return res;
 
+	/*
+	 * PROTOTYPE (Approach B): before emitting the jsonb accessor for a single
+	 * key on a graph element (e.g. n.age), try to resolve the key to a promoted
+	 * typed column projected across the pattern-subquery boundary.  Succeeds
+	 * only in comparison/ordering contexts for order-preserving types, so the
+	 * qual/sort rides the typed column's index; otherwise falls through to the
+	 * byte-identical jsonb path.
+	 */
+	if ((restype == VERTEXOID || restype == EDGEOID) &&
+		list_length(fields) == 1 &&
+		IsA(linitial(fields), String))
+	{
+		Node	   *promoted;
+
+		promoted = resolvePromotedProperty(pstate, res,
+										   strVal(linitial(fields)), location);
+		if (promoted != NULL)
+			return promoted;
+	}
+
 	res = filterAccessArg(pstate, res, location, "map");
 
 	for_each_cell(lf, fields, lf)

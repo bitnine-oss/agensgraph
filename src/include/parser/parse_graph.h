@@ -24,6 +24,17 @@
 #define CYPHER_YIELD_ALIAS		AGENS_DEFAULT_PREFIX"y"
 
 extern bool enable_eager;
+extern bool enable_property_promotion;
+
+/*
+ * PROTOTYPE (Approach B): resolve a graph-element property reference n.key to a
+ * promoted typed column projected across the pattern-subquery boundary under a
+ * hidden sentinel name.  Returns the resolved (native) Var, or NULL to fall
+ * back to the jsonb property path.  Defined in parse_graph.c so it can reuse
+ * getSourceRelid.
+ */
+extern Node *resolvePromotedProperty(ParseState *pstate, Node *basenode,
+									 char *key, int location);
 
 extern Query *transformCypherSubPattern(ParseState *pstate,
 										CypherSubPattern *subpat);
