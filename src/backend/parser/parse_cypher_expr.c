@@ -3152,5 +3152,39 @@ transformA_Star(ParseState *pstate, int location)
 				 errmsg("RETURN * with no accessible variables is invalid"),
 				 parser_errposition(pstate, location)));
 
+	/*
+	 * PROTOTYPE: hidden promoted-column sentinels are non-junk subquery outputs
+	 * (so they cross clause boundaries and pull up), but must never surface as
+	 * user columns.  Drop them from the * expansion; for WITH *, the projection
+	 * re-appends them keyed to the carried element (see transformCypherProjection).
+	 *
+	 * expandNSItemAttrs() numbered every expanded column consecutively out of
+	 * p_next_resno, so removing some would leave gaps in the target resnos --
+	 * which the planner's final apply_tlist_labeling() forbids.  Renumber the
+	 * survivors from the same base and rewind p_next_resno to match, so a later
+	 * projection item (or the sentinel re-append) keeps contiguous resnos.
+	 */
+	{
+		List	   *filtered = NIL;
+		ListCell   *lc;
+		AttrNumber	resno;
+
+		if (targets == NIL)
+			return targets;
+		resno = ((TargetEntry *) linitial(targets))->resno;
+
+		foreach(lc, targets)
+		{
+			TargetEntry *te = lfirst(lc);
+
+			if (te->resname != NULL && isPromotedSentinelName(te->resname))
+				continue;
+			te->resno = resno++;
+			filtered = lappend(filtered, te);
+		}
+		pstate->p_next_resno = resno;
+		targets = filtered;
+	}
+
 	return targets;
 }

@@ -250,11 +250,12 @@ static bool hasGinOnProp(Oid relid);
 /* PROTOTYPE (Approach B): promoted typed-column projection/resolution */
 #define PROMOTED_SENTINEL_PREFIX	AGENS_DEFAULT_PREFIX "prop:"
 static char *makePromotedSentinelName(const char *varname, const char *key);
-static bool isPromotedSentinelName(const char *resname);
 static bool promotedTypeNativelyOrdered(Oid coltype);
 static void appendPromotedSentinels(ParseState *pstate,
 									ParseNamespaceItem *nsitem,
 									const char *varname, List **targetList);
+static void appendForwardedSentinels(ParseState *pstate, Var *composite,
+									 const char *newname, List **targetList);
 
 /* MATCH - future vertex */
 static void addFutureVertex(ParseState *pstate, AttrNumber varattno,
@@ -694,6 +695,39 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 			checkNameInItems(pstate, detail->items, qry->targetList);
 		else if (detail->kind == CP_LET)
 			checkCypherLetItems(pstate, qry->targetList);
+
+		/*
+		 * PROTOTYPE: forward each carried element's promoted sentinels through
+		 * this transparent WITH/LET so a later clause's WHERE/ORDER BY still
+		 * resolves n.prop to the typed column.  Insert here, before ORDER BY
+		 * appends its resjunk sort keys, so the sentinels stay among the leading
+		 * non-junk outputs (a subquery RTE requires non-junk resnos to be
+		 * contiguous).  Only when the projection neither aggregates nor
+		 * de-duplicates: those collapse rows, so an ungrouped base-column
+		 * reference would be invalid or meaningless -- the element is no longer
+		 * a live single base row.  RETURN is terminal and intentionally
+		 * excluded, keeping its projection byte-identical.
+		 */
+		if ((detail->kind == CP_WITH || detail->kind == CP_LET) &&
+			!pstate->p_hasAggs && detail->distinct == NULL)
+		{
+			List	   *fwd = NIL;
+			ListCell   *lt;
+
+			foreach(lt, qry->targetList)
+			{
+				TargetEntry *te = lfirst(lt);
+				Oid			etype;
+
+				if (te->resjunk || te->resname == NULL || !IsA(te->expr, Var))
+					continue;
+				etype = exprType((Node *) te->expr);
+				if (etype == VERTEXOID || etype == EDGEOID)
+					appendForwardedSentinels(pstate, (Var *) te->expr,
+											 te->resname, &fwd);
+			}
+			qry->targetList = list_concat(qry->targetList, fwd);
+		}
 
 		if (detail->order != NULL)
 			qry->sortClause = transformCypherOrderBy(pstate, detail->order,
@@ -4832,7 +4866,7 @@ makePromotedSentinelName(const char *varname, const char *key)
 	return psprintf(PROMOTED_SENTINEL_PREFIX "%s:%s", varname, key);
 }
 
-static bool
+bool
 isPromotedSentinelName(const char *resname)
 {
 	return resname != NULL &&
@@ -4915,6 +4949,78 @@ appendPromotedSentinels(ParseState *pstate, ParseNamespaceItem *nsitem,
 							 false);
 		*targetList = lappend(*targetList, te);
 	}
+}
+
+/*
+ * appendForwardedSentinels - propagate a graph element's promoted sentinels
+ * across a re-scoping projection (a transparent WITH/LET, or a star expansion).
+ * "composite" is the element's vertex/edge Var already placed in the projection
+ * under output name "newname"; find that element's sentinel columns in the
+ * source subquery (named for the element's source name) and re-project each
+ * under "newname", so the pull-up chain -- and hence promoted resolution --
+ * survives the boundary.  The re-key handles a rename such as WITH n AS m.
+ */
+static void
+appendForwardedSentinels(ParseState *pstate, Var *composite,
+						 const char *newname, List **targetList)
+{
+	RangeTblEntry *rte;
+	char	   *oldprefix;
+	size_t		oldprefixlen;
+	ListCell   *lc;
+	AttrNumber	attno;
+
+	if (!enable_property_promotion)
+		return;
+
+	/* the element must come from a subquery that can carry sentinel columns */
+	rte = GetRTEByRangeTablePosn(pstate, composite->varno,
+								 composite->varlevelsup);
+	if (rte->rtekind != RTE_SUBQUERY)
+		return;
+	if (composite->varattno < 1 ||
+		composite->varattno > list_length(rte->eref->colnames))
+		return;
+
+	oldprefix = psprintf(PROMOTED_SENTINEL_PREFIX "%s:",
+						 strVal(list_nth(rte->eref->colnames,
+										 composite->varattno - 1)));
+	oldprefixlen = strlen(oldprefix);
+
+	attno = 0;
+	foreach(lc, rte->eref->colnames)
+	{
+		const char *colname = strVal(lfirst(lc));
+		const char *key;
+		TargetEntry *ste;
+		Var		   *v;
+		TargetEntry *fte;
+
+		attno++;
+		if (strncmp(colname, oldprefix, oldprefixlen) != 0)
+			continue;
+
+		key = colname + oldprefixlen;
+		ste = get_tle_by_resno(rte->subquery->targetList, attno);
+		if (ste == NULL)
+			continue;
+
+		v = makeVar(composite->varno, attno,
+					exprType((Node *) ste->expr),
+					exprTypmod((Node *) ste->expr),
+					exprCollation((Node *) ste->expr),
+					composite->varlevelsup);
+		v->location = -1;
+		/* skip markVarForSelectPriv(): the referenced RTE is a subquery */
+
+		fte = makeTargetEntry((Expr *) v,
+							  (AttrNumber) pstate->p_next_resno++,
+							  makePromotedSentinelName(newname, key),
+							  false);
+		*targetList = lappend(*targetList, fte);
+	}
+
+	pfree(oldprefix);
 }
 
 /*
@@ -7768,19 +7874,15 @@ makeTargetListFromNSItem(ParseState *pstate, ParseNamespaceItem *nsitem)
 
 		/*
 		 * PROTOTYPE: a hidden promoted-column sentinel is a real (non-junk)
-		 * subquery output -- so it occupies a range-table column position and
-		 * a colname slot, which we must advance past -- but it must never be
-		 * re-projected: it would otherwise leak into RETURN *, the vertex
-		 * composite, or an implicit grouping/distinct/order target.  Dropping
-		 * it here also means promoted resolution does not cross this boundary
-		 * (a later clause falls back to the jsonb path).
+		 * subquery output, so it is re-projected here like any other column,
+		 * name preserved.  Forwarding it (rather than dropping it) is what lets
+		 * promoted resolution cross this re-scoping boundary: the sentinel keeps
+		 * pulling up onto the base scan through each intervening clause, so a
+		 * post-WITH / cross-MATCH / RETURN-level WHERE or ORDER BY still binds
+		 * the typed index.  It stays hidden from the user because RETURN * and
+		 * grouping/distinct skip sentinel-named targets, and it is pruned when
+		 * no surviving clause references it.
 		 */
-		if (isPromotedSentinelName(strVal(lfirst(ln))))
-		{
-			varattno++;
-			ln = lnext(nsitem->p_rte->eref->colnames, ln);
-			continue;
-		}
 
 		/* no transform here, just use `te->expr` */
 		varnode = makeVar(nsitem->p_rtindex, varattno,
