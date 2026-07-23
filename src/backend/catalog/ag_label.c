@@ -23,6 +23,7 @@
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
+#include "catalog/pg_inherits.h"
 #include "commands/sequence.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
@@ -215,13 +216,12 @@ label_relid_has_promoted_property(Oid relid)
 }
 
 /*
- * get_label_promoted_properties - list every promoted typed property of the
- * label whose storage table is `relid`, as a list of palloc'd PromotedPropInfo.
+ * scan_own_promoted_properties - the promoted properties declared directly on
+ * one label (by its ag_label oid), as a list of palloc'd PromotedPropInfo.
  */
-List *
-get_label_promoted_properties(Oid relid)
+static List *
+scan_own_promoted_properties(Oid laboid)
 {
-	Oid			laboid = get_relid_laboid(relid);
 	Relation	desc;
 	ScanKeyData skey;
 	SysScanDesc scan;
@@ -258,10 +258,81 @@ get_label_promoted_properties(Oid relid)
 }
 
 /*
+ * get_label_promoted_properties - every promoted typed property RESOLVABLE on
+ * the label whose storage table is `relid`: its own, plus those it inherits
+ * from ancestor labels.
+ *
+ * A promoted property is recorded in ag_label_property only for the label that
+ * declares it, but table inheritance gives a child label a physical copy of the
+ * ancestor's typed column (same name, possibly a different attnum).  So each
+ * inherited property is re-mapped to the CHILD relation's column by name; the
+ * ancestor's attnum is used only to name the column, never reused directly.  A
+ * nearer label wins a name clash (ancestors are walked child-first), so a key a
+ * child re-declares keeps the child's own column.
+ */
+List *
+get_label_promoted_properties(Oid relid)
+{
+	List	   *result = NIL;
+	List	   *ancestors;
+	ListCell   *la;
+
+	/* find_all_ancestors() returns `relid' itself first, then its ancestors */
+	ancestors = find_all_ancestors(relid, AccessShareLock);
+
+	foreach(la, ancestors)
+	{
+		Oid			ancestor = lfirst_oid(la);
+		List	   *own = scan_own_promoted_properties(get_relid_laboid(ancestor));
+		ListCell   *lp;
+
+		foreach(lp, own)
+		{
+			PromotedPropInfo *ap = lfirst(lp);
+			char	   *colname;
+			AttrNumber	child_attnum;
+			PromotedPropInfo *info;
+			ListCell   *lr;
+			bool		seen = false;
+
+			/* a nearer label already resolves this key */
+			foreach(lr, result)
+			{
+				if (strcmp(((PromotedPropInfo *) lfirst(lr))->propname,
+						   ap->propname) == 0)
+				{
+					seen = true;
+					break;
+				}
+			}
+			if (seen)
+				continue;
+
+			/* map the ancestor's column to the child's own column by name */
+			colname = get_attname(ancestor, ap->attnum, true);
+			child_attnum = (colname != NULL) ? get_attnum(relid, colname)
+				: InvalidAttrNumber;
+			if (child_attnum == InvalidAttrNumber)
+				continue;
+
+			info = palloc0(sizeof(PromotedPropInfo));
+			strlcpy(info->propname, ap->propname, NAMEDATALEN);
+			info->attnum = child_attnum;
+			info->semantics = ap->semantics;
+			result = lappend(result, info);
+		}
+	}
+
+	return result;
+}
+
+/*
  * get_label_property_column - resolve a (down-cased) Cypher property key to the
  * typed column that materializes it on the label whose storage table is
- * `relid`.  Returns true and fills *attnum / *semantics when the key is a
- * promoted property; false otherwise.  Either out-param may be NULL.
+ * `relid`, whether the key is promoted on the label itself or inherited from an
+ * ancestor label.  Returns true and fills *attnum (the CHILD relation's column)
+ * / *semantics when the key resolves; false otherwise.  Either out-param may be
+ * NULL.
  */
 bool
 get_label_property_column(Oid relid, const char *propname,
@@ -269,22 +340,61 @@ get_label_property_column(Oid relid, const char *propname,
 {
 	Oid			laboid = get_relid_laboid(relid);
 	HeapTuple	tup;
+	List	   *ancestors;
+	ListCell   *la;
 
-	if (!OidIsValid(laboid))
-		return false;
+	/* fast path: a key the label declares itself */
+	if (OidIsValid(laboid))
+	{
+		tup = SearchSysCache2(LABELPROPNAME, ObjectIdGetDatum(laboid),
+							  PointerGetDatum(propname));
+		if (HeapTupleIsValid(tup))
+		{
+			if (attnum != NULL)
+				*attnum = ((Form_ag_label_property) GETSTRUCT(tup))->attnum;
+			if (semantics != NULL)
+				*semantics = ((Form_ag_label_property) GETSTRUCT(tup))->semantics;
+			ReleaseSysCache(tup);
+			return true;
+		}
+	}
 
-	tup = SearchSysCache2(LABELPROPNAME, ObjectIdGetDatum(laboid),
-						  PointerGetDatum(propname));
-	if (!HeapTupleIsValid(tup))
-		return false;
+	/* otherwise look for the key on an ancestor and map it to `relid's column */
+	ancestors = find_all_ancestors(relid, AccessShareLock);
+	foreach(la, ancestors)
+	{
+		Oid			ancestor = lfirst_oid(la);
+		Oid			alaboid = get_relid_laboid(ancestor);
+		AttrNumber	a_attnum;
+		char		a_semantics;
+		char	   *colname;
+		AttrNumber	child_attnum;
 
-	if (attnum != NULL)
-		*attnum = ((Form_ag_label_property) GETSTRUCT(tup))->attnum;
-	if (semantics != NULL)
-		*semantics = ((Form_ag_label_property) GETSTRUCT(tup))->semantics;
+		if (ancestor == relid || !OidIsValid(alaboid))
+			continue;
 
-	ReleaseSysCache(tup);
-	return true;
+		tup = SearchSysCache2(LABELPROPNAME, ObjectIdGetDatum(alaboid),
+							  PointerGetDatum(propname));
+		if (!HeapTupleIsValid(tup))
+			continue;
+		a_attnum = ((Form_ag_label_property) GETSTRUCT(tup))->attnum;
+		a_semantics = ((Form_ag_label_property) GETSTRUCT(tup))->semantics;
+		ReleaseSysCache(tup);
+
+		colname = get_attname(ancestor, a_attnum, true);
+		child_attnum = (colname != NULL) ? get_attnum(relid, colname)
+			: InvalidAttrNumber;
+		if (child_attnum == InvalidAttrNumber)
+			continue;
+
+		if (attnum != NULL)
+			*attnum = child_attnum;
+		if (semantics != NULL)
+			*semantics = a_semantics;
+		return true;
+	}
+
+	return false;
 }
 
 /*
