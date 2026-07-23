@@ -36,6 +36,9 @@ extern bool enable_property_promotion;
 extern Node *resolvePromotedProperty(ParseState *pstate, Node *basenode,
 									 char *key, int location);
 
+/* True for a reserved hidden promoted-column sentinel output name. */
+extern bool isPromotedSentinelName(const char *resname);
+
 extern Query *transformCypherSubPattern(ParseState *pstate,
 										CypherSubPattern *subpat);
 extern Query *transformCypherProjection(ParseState *pstate,
