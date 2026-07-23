@@ -2182,6 +2182,16 @@ struct config_bool ConfigureNamesBool[] =
 	},
 
 	{
+		{"enable_property_promotion", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Resolve Cypher n.key to a promoted typed column when available."),
+			NULL
+		},
+		&enable_property_promotion,
+		true,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"enable_multiple_update", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables multiple update on the same graph element."),
 			NULL

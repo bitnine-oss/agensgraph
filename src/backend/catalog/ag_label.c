@@ -182,6 +182,112 @@ get_label_property_attnum(Oid laboid, const char *propname)
 }
 
 /*
+ * label_relid_has_promoted_property - does the label whose storage table is
+ * `relid` declare any promoted typed property?  Gates the Cypher compiler so
+ * a plain (non-promoted) label emits byte-identical output.
+ */
+bool
+label_relid_has_promoted_property(Oid relid)
+{
+	Oid			laboid = get_relid_laboid(relid);
+	Relation	desc;
+	ScanKeyData skey;
+	SysScanDesc scan;
+	bool		found;
+
+	if (!OidIsValid(laboid))
+		return false;
+
+	desc = table_open(LabelPropertyRelationId, AccessShareLock);
+
+	ScanKeyInit(&skey, Anum_ag_label_property_laboid,
+				BTEqualStrategyNumber, F_OIDEQ, ObjectIdGetDatum(laboid));
+
+	scan = systable_beginscan(desc, LabelPropertyLabidPropIndexId, true,
+							  NULL, 1, &skey);
+
+	found = HeapTupleIsValid(systable_getnext(scan));
+
+	systable_endscan(scan);
+	table_close(desc, AccessShareLock);
+
+	return found;
+}
+
+/*
+ * get_label_promoted_properties - list every promoted typed property of the
+ * label whose storage table is `relid`, as a list of palloc'd PromotedPropInfo.
+ */
+List *
+get_label_promoted_properties(Oid relid)
+{
+	Oid			laboid = get_relid_laboid(relid);
+	Relation	desc;
+	ScanKeyData skey;
+	SysScanDesc scan;
+	HeapTuple	tup;
+	List	   *result = NIL;
+
+	if (!OidIsValid(laboid))
+		return NIL;
+
+	desc = table_open(LabelPropertyRelationId, AccessShareLock);
+
+	ScanKeyInit(&skey, Anum_ag_label_property_laboid,
+				BTEqualStrategyNumber, F_OIDEQ, ObjectIdGetDatum(laboid));
+
+	scan = systable_beginscan(desc, LabelPropertyLabidPropIndexId, true,
+							  NULL, 1, &skey);
+
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		Form_ag_label_property form = (Form_ag_label_property) GETSTRUCT(tup);
+		PromotedPropInfo *info = palloc0(sizeof(PromotedPropInfo));
+
+		strlcpy(info->propname, NameStr(form->propname), NAMEDATALEN);
+		info->attnum = form->attnum;
+		info->semantics = form->semantics;
+
+		result = lappend(result, info);
+	}
+
+	systable_endscan(scan);
+	table_close(desc, AccessShareLock);
+
+	return result;
+}
+
+/*
+ * get_label_property_column - resolve a (down-cased) Cypher property key to the
+ * typed column that materializes it on the label whose storage table is
+ * `relid`.  Returns true and fills *attnum / *semantics when the key is a
+ * promoted property; false otherwise.  Either out-param may be NULL.
+ */
+bool
+get_label_property_column(Oid relid, const char *propname,
+						  AttrNumber *attnum, char *semantics)
+{
+	Oid			laboid = get_relid_laboid(relid);
+	HeapTuple	tup;
+
+	if (!OidIsValid(laboid))
+		return false;
+
+	tup = SearchSysCache2(LABELPROPNAME, ObjectIdGetDatum(laboid),
+						  PointerGetDatum(propname));
+	if (!HeapTupleIsValid(tup))
+		return false;
+
+	if (attnum != NULL)
+		*attnum = ((Form_ag_label_property) GETSTRUCT(tup))->attnum;
+	if (semantics != NULL)
+		*semantics = ((Form_ag_label_property) GETSTRUCT(tup))->semantics;
+
+	ReleaseSysCache(tup);
+	return true;
+}
+
+/*
  * InsertAgLabelTuple - register the new label in ag_label
  *
  * See InsertPgClassTuple()

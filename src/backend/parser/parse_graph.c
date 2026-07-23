@@ -25,6 +25,7 @@
 #include "catalog/pg_class.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_operator.h"
+#include "catalog/pg_type.h"
 #include "executor/spi.h"
 #include "miscadmin.h"
 #include "nodes/graphnodes.h"
@@ -68,6 +69,7 @@
 #define DELETE_EDGE_ALIAS		"e"
 
 bool		enable_eager = true;
+bool		enable_property_promotion = true;
 
 typedef struct
 {
@@ -244,6 +246,15 @@ static void transform_prop_constr_worker(Node *node, prop_constr_context *ctx);
 static bool ginAvail(ParseState *pstate, Index varno, AttrNumber varattno);
 static Oid	getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno);
 static bool hasGinOnProp(Oid relid);
+
+/* PROTOTYPE (Approach B): promoted typed-column projection/resolution */
+#define PROMOTED_SENTINEL_PREFIX	AGENS_DEFAULT_PREFIX "prop:"
+static char *makePromotedSentinelName(const char *varname, const char *key);
+static bool isPromotedSentinelName(const char *resname);
+static bool promotedTypeNativelyOrdered(Oid coltype);
+static void appendPromotedSentinels(ParseState *pstate,
+									ParseNamespaceItem *nsitem,
+									const char *varname, List **targetList);
 
 /* MATCH - future vertex */
 static void addFutureVertex(ParseState *pstate, AttrNumber varattno,
@@ -3348,6 +3359,10 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList,
 		{
 			addElemQual(pstate, te->resno, cnode->prop_map);
 			*targetList = lappend(*targetList, te);
+
+			/* PROTOTYPE: project hidden typed columns beside the composite */
+			appendPromotedSentinels(pstate, nsitem, alias->aliasname,
+									targetList);
 		}
 	}
 
@@ -3503,6 +3518,14 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 		{
 			addElemQual(pstate, _te->resno, crel->prop_map);
 			*targetList = lappend(*targetList, _te);
+
+			/*
+			 * PROTOTYPE: project hidden typed columns beside the composite.
+			 * A direction-less edge is an addEdgeUnion() (RTE_SUBQUERY), not a
+			 * base relation; appendPromotedSentinels() no-ops on those.
+			 */
+			appendPromotedSentinels(pstate, nsitem, alias->aliasname,
+									targetList);
 		}
 	}
 
@@ -4791,6 +4814,182 @@ getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno)
 				elog(ERROR, "invalid RTEKind %d", rte->rtekind);
 		}
 	}
+}
+
+/*
+ * PROTOTYPE (Approach B): hidden, non-junk, prunable projected typed column.
+ *
+ * A promoted property key is projected across a pattern-subquery boundary as an
+ * extra NON-JUNK target entry (so it pulls up onto the base scan and reaches
+ * the typed column's btree/HNSW index, and is pruned when unreferenced), but is
+ * hidden from RETURN-star and the vertex composite by giving it a reserved
+ * sentinel resname.  The sentinel encodes the variable name and the key so it
+ * can be resolved unambiguously via the ordinary column-name namespace lookup.
+ */
+static char *
+makePromotedSentinelName(const char *varname, const char *key)
+{
+	return psprintf(PROMOTED_SENTINEL_PREFIX "%s:%s", varname, key);
+}
+
+static bool
+isPromotedSentinelName(const char *resname)
+{
+	return resname != NULL &&
+		strncmp(resname, PROMOTED_SENTINEL_PREFIX,
+				strlen(PROMOTED_SENTINEL_PREFIX)) == 0;
+}
+
+/*
+ * Semantics gate: only resolve n.key to the native typed column when the typed
+ * order equals the jsonb scalar order (so filter/sort results stay byte-for-
+ * byte identical to the jsonb path), or when the type has no jsonb form and is
+ * only ever used through operators (vector, via distance ops).  Everything else
+ * (text/numeric/float/timestamptz) falls back to the jsonb path.
+ */
+static bool
+promotedTypeNativelyOrdered(Oid coltype)
+{
+	HeapTuple	tup;
+	bool		ok;
+
+	switch (coltype)
+	{
+		case INT2OID:
+		case INT4OID:
+		case INT8OID:
+		case BOOLOID:
+			return true;
+		default:
+			break;
+	}
+
+	/* vector (pgvector) is not a builtin OID; match by type name */
+	tup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(coltype));
+	if (!HeapTupleIsValid(tup))
+		return false;
+	ok = (strcmp(NameStr(((Form_pg_type) GETSTRUCT(tup))->typname),
+				 "vector") == 0);
+	ReleaseSysCache(tup);
+	return ok;
+}
+
+/*
+ * For each promoted property of the element's label, append one hidden non-junk
+ * target entry projecting the base relation's typed column.  `nsitem` is the
+ * base label relation; `varname` is the element's Cypher variable.  Emits
+ * nothing for a non-promoted label, so those stay byte-identical.
+ */
+static void
+appendPromotedSentinels(ParseState *pstate, ParseNamespaceItem *nsitem,
+						const char *varname, List **targetList)
+{
+	Oid			relid = nsitem->p_rte->relid;
+	List	   *props;
+	ListCell   *lc;
+
+	if (!enable_property_promotion || varname == NULL)
+		return;
+	if (nsitem->p_rte->rtekind != RTE_RELATION || !OidIsValid(relid))
+		return;
+	if (!label_relid_has_promoted_property(relid))
+		return;
+
+	props = get_label_promoted_properties(relid);
+	foreach(lc, props)
+	{
+		PromotedPropInfo *info = lfirst(lc);
+		Var		   *colvar;
+		TargetEntry *te;
+
+		/* only project columns we would actually resolve against */
+		if (!promotedTypeNativelyOrdered(get_atttype(relid, info->attnum)))
+			continue;
+
+		colvar = make_var(pstate, nsitem, info->attnum, -1);
+		markVarForSelectPriv(pstate, colvar);
+
+		te = makeTargetEntry((Expr *) colvar,
+							 (AttrNumber) pstate->p_next_resno++,
+							 makePromotedSentinelName(varname, info->propname),
+							 false);
+		*targetList = lappend(*targetList, te);
+	}
+}
+
+/*
+ * resolvePromotedProperty - resolve a graph-element property reference n.key to
+ * the promoted typed column projected under a sentinel name, or NULL to fall
+ * back to the jsonb property path.  See parse_cypher_expr.c transformFields.
+ */
+Node *
+resolvePromotedProperty(ParseState *pstate, Node *basenode, char *key,
+						int location)
+{
+	Var		   *var;
+	ParseState *relpstate;
+	int			i;
+	Oid			relid;
+	AttrNumber	attnum;
+	RangeTblEntry *rte;
+	char	   *varname;
+	char	   *sentinel;
+
+	if (!enable_property_promotion)
+		return NULL;
+	if (basenode == NULL || !IsA(basenode, Var))
+		return NULL;
+
+	var = (Var *) basenode;
+	if (var->vartype != VERTEXOID && var->vartype != EDGEOID)
+		return NULL;
+
+	/*
+	 * Only resolve to the native column in comparison/ordering contexts, where
+	 * riding the typed column's index/native sort is the whole point and the
+	 * order-equivalence gate keeps results identical.  Pure projection (RETURN)
+	 * keeps the jsonb path, which is trivially byte-identical (incl. non-
+	 * canonical numbers and boolean spelling).
+	 */
+	if (pstate->p_expr_kind != EXPR_KIND_WHERE &&
+		pstate->p_expr_kind != EXPR_KIND_ORDER_BY)
+		return NULL;
+
+	/* find the ParseState level whose range table holds the composite Var */
+	relpstate = pstate;
+	for (i = 0; i < var->varlevelsup; i++)
+	{
+		if (relpstate == NULL)
+			return NULL;
+		relpstate = relpstate->parentParseState;
+	}
+	if (relpstate == NULL)
+		return NULL;
+
+	relid = getSourceRelid(relpstate, var->varno, var->varattno);
+	if (!OidIsValid(relid))
+		return NULL;
+
+	if (!get_label_property_column(relid, key, &attnum, NULL))
+		return NULL;
+	if (!promotedTypeNativelyOrdered(get_atttype(relid, attnum)))
+		return NULL;
+
+	/* recover the element's variable name from the composite column alias */
+	rte = GetRTEByRangeTablePosn(pstate, var->varno, var->varlevelsup);
+	if (var->varattno < 1 ||
+		var->varattno > list_length(rte->eref->colnames))
+		return NULL;
+	varname = strVal(list_nth(rte->eref->colnames, var->varattno - 1));
+
+	/*
+	 * Resolve the sentinel column through the ordinary namespace lookup, which
+	 * finds it as a sibling output of the same subquery (correct varlevelsup)
+	 * or returns NULL when it was not projected across a boundary (e.g. after a
+	 * WITH), in which case we fall back to jsonb.
+	 */
+	sentinel = makePromotedSentinelName(varname, key);
+	return colNameToVar(pstate, sentinel, false, location);
 }
 
 /* See get_relation_info() */
@@ -7566,6 +7765,22 @@ makeTargetListFromNSItem(ParseState *pstate, ParseNamespaceItem *nsitem)
 			continue;
 
 		Assert(varattno == te->resno);
+
+		/*
+		 * PROTOTYPE: a hidden promoted-column sentinel is a real (non-junk)
+		 * subquery output -- so it occupies a range-table column position and
+		 * a colname slot, which we must advance past -- but it must never be
+		 * re-projected: it would otherwise leak into RETURN *, the vertex
+		 * composite, or an implicit grouping/distinct/order target.  Dropping
+		 * it here also means promoted resolution does not cross this boundary
+		 * (a later clause falls back to the jsonb path).
+		 */
+		if (isPromotedSentinelName(strVal(lfirst(ln))))
+		{
+			varattno++;
+			ln = lnext(nsitem->p_rte->eref->colnames, ln);
+			continue;
+		}
 
 		/* no transform here, just use `te->expr` */
 		varnode = makeVar(nsitem->p_rtindex, varattno,
