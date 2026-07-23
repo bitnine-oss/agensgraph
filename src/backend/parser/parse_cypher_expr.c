@@ -548,11 +548,16 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 	/*
 	 * Resolve a single-key property access on a graph element (e.g. n.age) to
 	 * its promoted typed column when the label has one.  The typed column is the
-	 * source of truth: WHERE / ORDER BY get the native (indexable) column, and a
-	 * projection gets cypher_to_jsonb(column) -- the typed value, and a query
-	 * that reads only columns becomes index-only.  Cross-type comparison
-	 * correctness is handled by transformAExprOp.  A whole-element reference
-	 * (RETURN n, properties(n), ...) is not a field access and is unaffected.
+	 * source of truth, but every use is emitted as cypher_to_jsonb(column): a
+	 * projection then returns the typed value (and a column-only query becomes
+	 * index-only), and every other use -- WHERE, ORDER BY, function args -- is
+	 * byte-identical to the projection, which is what lets DISTINCT / GROUP BY
+	 * accept an ORDER BY key over the same property.  The index is not lost:
+	 * a comparison is re-bound to the native operator in transformAExprOp when
+	 * the other operand is type-compatible, and a free (non-DISTINCT, non-
+	 * grouped) ORDER BY is re-pointed to the native column in
+	 * updateSortOperatorsForJsonb.  A whole-element reference (RETURN n,
+	 * properties(n), ...) is not a field access and is unaffected.
 	 */
 	if ((restype == VERTEXOID || restype == EDGEOID) &&
 		list_length(fields) == 1 &&
@@ -563,25 +568,9 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 		promoted = resolvePromotedProperty(pstate, res,
 										   strVal(linitial(fields)), location);
 		if (promoted != NULL)
-		{
-			/*
-			 * ORDER BY sorts by the native column so its btree/HNSW binds and
-			 * the ordering is the typed one.  Everywhere else -- WHERE,
-			 * projection, function args -- box to cypher_to_jsonb(column): the
-			 * typed value, and column-only reads become index-only.  A WHERE
-			 * comparison is then re-bound to the native operator (index) by
-			 * transformAExprOp when the other operand is type-compatible, so
-			 * boxing here does not lose the index; and it keeps every
-			 * non-comparison use type-correct with no effect on non-promoted
-			 * comparisons.
-			 */
-			if (pstate->p_expr_kind == EXPR_KIND_ORDER_BY)
-				return promoted;
-
 			return (Node *) makeFuncExpr(F_CYPHER_TO_JSONB, JSONBOID,
 										 list_make1(promoted), InvalidOid,
 										 InvalidOid, COERCE_EXPLICIT_CALL);
-		}
 	}
 
 	res = filterAccessArg(pstate, res, location, "map");
@@ -2181,6 +2170,27 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 										a->location);
 			}
 		}
+		else if (strcmp(opname, "<->") == 0 || strcmp(opname, "<#>") == 0 ||
+				 strcmp(opname, "<=>") == 0 || strcmp(opname, "<+>") == 0)
+		{
+			Node	   *lx = unboxCypherToJsonb(l);
+			Node	   *rx = unboxCypherToJsonb(r);
+
+			/*
+			 * A vector distance operator has no jsonb form, so a promoted vector
+			 * column -- which arrives boxed as cypher_to_jsonb(column) like any
+			 * other promoted property -- must be unboxed to the native vector
+			 * for the operator, and its HNSW index, to resolve.  Mirrors the
+			 * comparison unboxing done in transformPromotedComparison.
+			 */
+			if (lx != NULL)
+				l = lx;
+			if (rx != NULL)
+				r = rx;
+
+			return (Node *) make_op(pstate, a->name, l, r, last_srf,
+									a->location);
+		}
 	}
 
 	return (Node *) make_op(pstate, a->name, l, r, last_srf, a->location);
@@ -3145,27 +3155,10 @@ transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
 			{
 				TargetEntry *tmp;
 				Node	   *texpr;
-				Node	   *tunboxed;
 
 				tmp = lfirst(lt);
 				texpr = strip_implicit_coercions((Node *) tmp->expr);
 				if (equal(texpr, expr))
-				{
-					te = tmp;
-					break;
-				}
-
-				/*
-				 * A promoted property projected as cypher_to_jsonb(column) is
-				 * the same value this ORDER BY key (the native column) sorts by.
-				 * Reuse the projected entry so DISTINCT / GROUP BY -- which
-				 * require every sort key to appear in the select list -- accept
-				 * it.  For a plain (non-DISTINCT) RETURN the sort is then
-				 * re-pointed back to the native column by
-				 * updateSortOperatorsForJsonb(), so the index still binds.
-				 */
-				tunboxed = unboxCypherToJsonb(texpr);
-				if (tunboxed != NULL && equal(tunboxed, expr))
 				{
 					te = tmp;
 					break;
@@ -3305,9 +3298,9 @@ transformA_Star(ParseState *pstate, int location)
 				 parser_errposition(pstate, location)));
 
 	/*
-	 * PROTOTYPE: hidden promoted-column sentinels are non-junk subquery outputs
-	 * (so they cross clause boundaries and pull up), but must never surface as
-	 * user columns.  Drop them from the * expansion; for WITH *, the projection
+	 * Hidden promoted-column sentinels are non-junk subquery outputs (so they
+	 * cross clause boundaries and pull up), but must never surface as user
+	 * columns.  Drop them from the * expansion; for WITH *, the projection
 	 * re-appends them keyed to the carried element (see transformCypherProjection).
 	 *
 	 * expandNSItemAttrs() numbered every expanded column consecutively out of
