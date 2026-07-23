@@ -888,7 +888,8 @@ SELECT name FROM tab_settings_flags
  default_statistics_target
  enable_eager
  enable_multiple_update
-(3 rows)
+ enable_property_promotion
+(4 rows)
 
 -- Runtime-computed GUCs should be part of the preset category.
 SELECT name FROM tab_settings_flags

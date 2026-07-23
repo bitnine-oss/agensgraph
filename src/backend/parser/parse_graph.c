@@ -151,7 +151,7 @@ typedef struct
 static void checkNameInItems(ParseState *pstate, List *items, List *targetList);
 static void checkCypherLetItems(ParseState *pstate, List *targetList);
 static void updateSortOperatorsForJsonb(List *sortClause, List **targetList,
-										bool allowUnbox);
+										bool allowUnbox, bool allowNativeUnbox);
 
 /* MATCH - OPTIONAL */
 static ParseNamespaceItem *transformMatchOptional(ParseState *pstate,
@@ -244,13 +244,13 @@ static Node *transform_prop_constr(ParseState *pstate, Node *qual,
 								   Node *prop_map, Node *prop_constr);
 static void transform_prop_constr_worker(Node *node, prop_constr_context *ctx);
 static bool ginAvail(ParseState *pstate, Index varno, AttrNumber varattno);
-static Oid	getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno);
+static Oid	getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno,
+						   bool *sawGraphWrite);
 static bool hasGinOnProp(Oid relid);
 
 /* PROTOTYPE (Approach B): promoted typed-column projection/resolution */
 #define PROMOTED_SENTINEL_PREFIX	AGENS_DEFAULT_PREFIX "prop:"
 static char *makePromotedSentinelName(const char *varname, const char *key);
-static bool promotedTypeNativelyOrdered(Oid coltype);
 static void appendPromotedSentinels(ParseState *pstate,
 									ParseNamespaceItem *nsitem,
 									const char *varname, List **targetList);
@@ -499,6 +499,19 @@ unboxAggregateJsonbSortKey(Node *expr)
 		return NULL;
 
 	arg = (Node *) linitial(f->args);
+
+	/*
+	 * A promoted property is projected as cypher_to_jsonb(<typed column Var>).
+	 * Re-point the sort at the native column so it orders by the typed semantics
+	 * (the whole point of promotion -- numeric by value, text by collation) and
+	 * the column's btree binds; the boxed jsonb entry stays for the projection.
+	 * The column is a plain Var, so re-pointing creates no GROUP BY / DISTINCT
+	 * dependency (and this runs only when unboxing is allowed, i.e. not under
+	 * DISTINCT).
+	 */
+	if (IsA(arg, Var))
+		return arg;
+
 	if (!IsA(arg, Aggref))
 		return NULL;
 
@@ -527,7 +540,8 @@ unboxAggregateJsonbSortKey(Node *expr)
  * projection list.
  */
 static void
-updateSortOperatorsForJsonb(List *sortClause, List **targetList, bool allowUnbox)
+updateSortOperatorsForJsonb(List *sortClause, List **targetList,
+							bool allowUnbox, bool allowNativeUnbox)
 {
 	ListCell   *lc;
 
@@ -548,13 +562,29 @@ updateSortOperatorsForJsonb(List *sortClause, List **targetList, bool allowUnbox
 		if (tle == NULL)
 			continue;
 
-		unboxed = allowUnbox ? unboxAggregateJsonbSortKey((Node *) tle->expr)
-			: NULL;
+		unboxed = unboxAggregateJsonbSortKey((Node *) tle->expr);
+		if (unboxed != NULL)
+		{
+			/*
+			 * Re-pointing the sort at the unboxed native value is allowed only
+			 * where it introduces no GROUP BY / DISTINCT-list dependency:
+			 *
+			 *  - a native aggregate is evaluated after grouping, so it is safe
+			 *    whenever there is no DISTINCT (allowUnbox);
+			 *  - a native promoted column IS a candidate grouping key, so it is
+			 *    safe only for a free ORDER BY -- no aggregation/implicit GROUP
+			 *    BY and no DISTINCT (allowNativeUnbox).  Under grouping/DISTINCT
+			 *    the sort must keep the projected cypher_to_jsonb(column), which
+			 *    is exactly the group/distinct key (correct, just not indexed).
+			 */
+			if (IsA(unboxed, Var) ? !allowNativeUnbox : !allowUnbox)
+				unboxed = NULL;
+		}
 		if (unboxed != NULL)
 		{
 			/*
 			 * Keep the boxed jsonb entry for the projection; sort a fresh
-			 * resjunk copy of the native aggregate instead.
+			 * resjunk copy of the native value instead.
 			 */
 			TargetEntry *ntle = makeTargetEntry((Expr *) copyObject(unboxed),
 												list_length(*targetList) + 1,
@@ -801,7 +831,10 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		 */
 		if (qry->sortClause != NIL)
 			updateSortOperatorsForJsonb(qry->sortClause, &qry->targetList,
-										qry->distinctClause == NIL);
+										qry->distinctClause == NIL,
+										qry->distinctClause == NIL &&
+										qry->groupClause == NIL &&
+										!qry->hasAggs);
 	}
 
 	qry->rtable = pstate->p_rtable;
@@ -4752,7 +4785,7 @@ ginAvail(ParseState *pstate, Index varno, AttrNumber varattno)
 	List	   *inhoids;
 	ListCell   *li;
 
-	relid = getSourceRelid(pstate, varno, varattno);
+	relid = getSourceRelid(pstate, varno, varattno, NULL);
 	if (!OidIsValid(relid))
 		return false;
 
@@ -4772,7 +4805,8 @@ ginAvail(ParseState *pstate, Index varno, AttrNumber varattno)
 }
 
 static Oid
-getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno)
+getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno,
+			   bool *sawGraphWrite)
 {
 	FutureVertex *fv;
 	List	   *rtable;
@@ -4795,6 +4829,16 @@ getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno)
 		RangeTblEntry *rte;
 		Var		   *var;
 
+		/*
+		 * The descent below rewrites (rtable, varno) to a subquery's own range
+		 * table.  A composite carried in from an outer scope (e.g. a variable
+		 * imported into a CALL/COUNT sub-pattern) is a Var with varlevelsup > 0,
+		 * whose varno does not index this rtable -- so guard the position and
+		 * report "not promoted" instead of walking off the end.
+		 */
+		if (varno < 1 || varno > list_length(rtable))
+			return InvalidOid;
+
 		rte = rt_fetch(varno, rtable);
 		switch (rte->rtekind)
 		{
@@ -4806,7 +4850,27 @@ getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno)
 					TargetEntry *te;
 					Oid			type;
 
+					/*
+					 * Record graph-write provenance anywhere in the descent: a
+					 * value that flows out of a CREATE/MERGE/SET/DELETE (even
+					 * forwarded through one or more transparent WITHs) must be
+					 * read from the bag, because a create branch pads the typed
+					 * column with NULL.  Pure-MATCH provenance never trips this.
+					 */
+					if (sawGraphWrite != NULL &&
+						rte->subquery->commandType == CMD_GRAPHWRITE)
+						*sawGraphWrite = true;
+
 					te = get_tle_by_resno(rte->subquery->targetList, varattno);
+
+					/*
+					 * No matching (non-junk) output -- e.g. the Var addresses a
+					 * resjunk column, or a synthetic output of a CALL/COUNT
+					 * sub-pattern.  Resolution now runs in every context, so
+					 * report "not promoted" rather than dereferencing NULL.
+					 */
+					if (te == NULL)
+						return InvalidOid;
 
 					type = exprType((Node *) te->expr);
 					if (type != VERTEXOID && type != EDGEOID)
@@ -4815,9 +4879,15 @@ getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno)
 					/* In RowExpr case, `(id, ...)` is assumed */
 					if (IsA(te->expr, Var))
 						var = (Var *) te->expr;
-					else if (IsA(te->expr, RowExpr))
+					else if (IsA(te->expr, RowExpr) &&
+							 ((RowExpr *) te->expr)->args != NIL &&
+							 IsA(linitial(((RowExpr *) te->expr)->args), Var))
 						var = linitial(((RowExpr *) te->expr)->args);
 					else
+						return InvalidOid;
+
+					/* a composite from an outer scope is not reachable here */
+					if (var->varlevelsup != 0)
 						return InvalidOid;
 
 					rtable = rte->subquery->rtable;
@@ -4829,12 +4899,18 @@ getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno)
 				{
 					Expr	   *expr;
 
+					if (varattno < 1 ||
+						varattno > list_length(rte->joinaliasvars))
+						return InvalidOid;
 					expr = list_nth(rte->joinaliasvars, varattno - 1);
-					if (!IsA(expr, Var))
+					if (expr == NULL || !IsA(expr, Var))
 						return InvalidOid;
 
 					var = (Var *) expr;
 					/* XXX: Do we need type check? */
+
+					if (var->varlevelsup != 0)
+						return InvalidOid;
 
 					varno = var->varno;
 					varattno = var->varattno;
@@ -4845,7 +4921,15 @@ getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno)
 			case RTE_CTE:
 				return InvalidOid;
 			default:
-				elog(ERROR, "invalid RTEKind %d", rte->rtekind);
+
+				/*
+				 * Any other range-table kind (RTE_GROUP / RTE_RESULT /
+				 * RTE_TABLEFUNC / ...) has no reachable base label relation:
+				 * report "not promoted" so resolution falls back gracefully,
+				 * rather than erroring.  An aggregating WITH, for instance,
+				 * introduces an RTE_GROUP the walk would otherwise trip on.
+				 */
+				return InvalidOid;
 		}
 	}
 }
@@ -4872,40 +4956,6 @@ isPromotedSentinelName(const char *resname)
 	return resname != NULL &&
 		strncmp(resname, PROMOTED_SENTINEL_PREFIX,
 				strlen(PROMOTED_SENTINEL_PREFIX)) == 0;
-}
-
-/*
- * Semantics gate: only resolve n.key to the native typed column when the typed
- * order equals the jsonb scalar order (so filter/sort results stay byte-for-
- * byte identical to the jsonb path), or when the type has no jsonb form and is
- * only ever used through operators (vector, via distance ops).  Everything else
- * (text/numeric/float/timestamptz) falls back to the jsonb path.
- */
-static bool
-promotedTypeNativelyOrdered(Oid coltype)
-{
-	HeapTuple	tup;
-	bool		ok;
-
-	switch (coltype)
-	{
-		case INT2OID:
-		case INT4OID:
-		case INT8OID:
-		case BOOLOID:
-			return true;
-		default:
-			break;
-	}
-
-	/* vector (pgvector) is not a builtin OID; match by type name */
-	tup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(coltype));
-	if (!HeapTupleIsValid(tup))
-		return false;
-	ok = (strcmp(NameStr(((Form_pg_type) GETSTRUCT(tup))->typname),
-				 "vector") == 0);
-	ReleaseSysCache(tup);
-	return ok;
 }
 
 /*
@@ -4936,10 +4986,8 @@ appendPromotedSentinels(ParseState *pstate, ParseNamespaceItem *nsitem,
 		Var		   *colvar;
 		TargetEntry *te;
 
-		/* only project columns we would actually resolve against */
-		if (!promotedTypeNativelyOrdered(get_atttype(relid, info->attnum)))
-			continue;
-
+		/* project every promoted property's column; n.prop now resolves for
+		 * all types, so all are candidates to pull up to the base scan */
 		colvar = make_var(pstate, nsitem, info->attnum, -1);
 		markVarForSelectPriv(pstate, colvar);
 
@@ -5040,6 +5088,7 @@ resolvePromotedProperty(ParseState *pstate, Node *basenode, char *key,
 	RangeTblEntry *rte;
 	char	   *varname;
 	char	   *sentinel;
+	bool		sawGraphWrite = false;
 
 	if (!enable_property_promotion)
 		return NULL;
@@ -5051,14 +5100,22 @@ resolvePromotedProperty(ParseState *pstate, Node *basenode, char *key,
 		return NULL;
 
 	/*
-	 * Only resolve to the native column in comparison/ordering contexts, where
-	 * riding the typed column's index/native sort is the whole point and the
-	 * order-equivalence gate keeps results identical.  Pure projection (RETURN)
-	 * keeps the jsonb path, which is trivially byte-identical (incl. non-
-	 * canonical numbers and boolean spelling).
+	 * The typed column is the source of truth, so n.prop resolves to it in
+	 * every READ context and for every promoted type.  The caller decides the
+	 * form: native (indexable) for WHERE/ORDER BY, cypher_to_jsonb(column) for a
+	 * projection (typed value, and column-only reads become index-only).
+	 * Cross-type comparison correctness is enforced in transformAExprOp.
+	 *
+	 * A SET/REMOVE/ON-CREATE-SET target (and the SET assignment source) is
+	 * transformed in the update-source context.  There the write path needs the
+	 * jsonb property path -- it lowers to a mutation of the bag, from which the
+	 * generated typed column is recomputed -- and the "vertex or edge is
+	 * expected" check requires the element itself, not a value.  So never
+	 * resolve in that context; every read context still resolves.  (If a SET
+	 * right-hand side references a promoted property it too stays on the bag
+	 * here, an acceptable minor cost.)
 	 */
-	if (pstate->p_expr_kind != EXPR_KIND_WHERE &&
-		pstate->p_expr_kind != EXPR_KIND_ORDER_BY)
+	if (pstate->p_expr_kind == EXPR_KIND_UPDATE_SOURCE)
 		return NULL;
 
 	/* find the ParseState level whose range table holds the composite Var */
@@ -5072,14 +5129,35 @@ resolvePromotedProperty(ParseState *pstate, Node *basenode, char *key,
 	if (relpstate == NULL)
 		return NULL;
 
-	relid = getSourceRelid(relpstate, var->varno, var->varattno);
+	relid = getSourceRelid(relpstate, var->varno, var->varattno, &sawGraphWrite);
 	if (!OidIsValid(relid))
+		return NULL;
+
+	/*
+	 * A RETURN over a graph write (CREATE / MERGE / SET / DELETE), including one
+	 * reached through a re-scoping WITH, reads the element the write produced.
+	 * A create branch constructs the row and pads the projected typed column
+	 * with NULL -- it is not scanned -- so reading the sentinel would return
+	 * NULL for a freshly created row.  The jsonb bag is populated correctly in
+	 * every branch, so read the property from the bag here.  A write's RETURN is
+	 * not index-bound anyway.  Pure-MATCH provenance (no write in the chain)
+	 * still resolves to the column, so cross-WITH reads stay index-accelerated.
+	 */
+	if (sawGraphWrite)
 		return NULL;
 
 	if (!get_label_property_column(relid, key, &attnum, NULL))
 		return NULL;
-	if (!promotedTypeNativelyOrdered(get_atttype(relid, attnum)))
-		return NULL;
+
+	/*
+	 * NOTE: the promoted column's DECLARED type governs a resolved read.  If a
+	 * value stored under the key has a different type than declared (e.g. the
+	 * string "42" written to an int-declared key), n.prop reads the typed
+	 * column (42) while the jsonb bag -- and a whole-element RETURN n -- keep
+	 * the raw value ("42").  That is garbage-in under the typed contract, and
+	 * it converges once the bag copy is dropped under true promotion; no
+	 * behavior change is made here.
+	 */
 
 	/* recover the element's variable name from the composite column alias */
 	rte = GetRTEByRangeTablePosn(pstate, var->varno, var->varlevelsup);

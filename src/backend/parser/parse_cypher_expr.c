@@ -546,12 +546,13 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 		return res;
 
 	/*
-	 * PROTOTYPE (Approach B): before emitting the jsonb accessor for a single
-	 * key on a graph element (e.g. n.age), try to resolve the key to a promoted
-	 * typed column projected across the pattern-subquery boundary.  Succeeds
-	 * only in comparison/ordering contexts for order-preserving types, so the
-	 * qual/sort rides the typed column's index; otherwise falls through to the
-	 * byte-identical jsonb path.
+	 * Resolve a single-key property access on a graph element (e.g. n.age) to
+	 * its promoted typed column when the label has one.  The typed column is the
+	 * source of truth: WHERE / ORDER BY get the native (indexable) column, and a
+	 * projection gets cypher_to_jsonb(column) -- the typed value, and a query
+	 * that reads only columns becomes index-only.  Cross-type comparison
+	 * correctness is handled by transformAExprOp.  A whole-element reference
+	 * (RETURN n, properties(n), ...) is not a field access and is unaffected.
 	 */
 	if ((restype == VERTEXOID || restype == EDGEOID) &&
 		list_length(fields) == 1 &&
@@ -562,7 +563,25 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 		promoted = resolvePromotedProperty(pstate, res,
 										   strVal(linitial(fields)), location);
 		if (promoted != NULL)
-			return promoted;
+		{
+			/*
+			 * ORDER BY sorts by the native column so its btree/HNSW binds and
+			 * the ordering is the typed one.  Everywhere else -- WHERE,
+			 * projection, function args -- box to cypher_to_jsonb(column): the
+			 * typed value, and column-only reads become index-only.  A WHERE
+			 * comparison is then re-bound to the native operator (index) by
+			 * transformAExprOp when the other operand is type-compatible, so
+			 * boxing here does not lose the index; and it keeps every
+			 * non-comparison use type-correct with no effect on non-promoted
+			 * comparisons.
+			 */
+			if (pstate->p_expr_kind == EXPR_KIND_ORDER_BY)
+				return promoted;
+
+			return (Node *) makeFuncExpr(F_CYPHER_TO_JSONB, JSONBOID,
+										 list_make1(promoted), InvalidOid,
+										 InvalidOid, COERCE_EXPLICIT_CALL);
+		}
 	}
 
 	res = filterAccessArg(pstate, res, location, "map");
@@ -1952,6 +1971,106 @@ adjustListIndexType(ParseState *pstate, Node *idx)
 	}
 }
 
+/*
+ * Cypher scalar type families, for type-aware comparison of a promoted column
+ * against another operand.  Cypher compares by type: two values compare
+ * "natively" only within the same family (all numbers together, all strings
+ * together, booleans together); across families they are never equal and order
+ * by type rank, which the jsonb comparison path reproduces.  An untyped literal
+ * (UNKNOWNOID) is a Cypher string.
+ */
+typedef enum
+{
+	CF_OTHER,
+	CF_NUMERIC,
+	CF_STRING,
+	CF_BOOL
+}			CypherScalarFamily;
+
+static CypherScalarFamily
+cypherScalarFamily(Oid t)
+{
+	switch (t)
+	{
+		case INT2OID:
+		case INT4OID:
+		case INT8OID:
+		case FLOAT4OID:
+		case FLOAT8OID:
+		case NUMERICOID:
+			return CF_NUMERIC;
+		case TEXTOID:
+		case VARCHAROID:
+		case BPCHAROID:
+		case UNKNOWNOID:
+		case CSTRINGOID:
+			return CF_STRING;
+		case BOOLOID:
+			return CF_BOOL;
+		default:
+			return CF_OTHER;
+	}
+}
+
+/* If `n' is cypher_to_jsonb(x), return x (the native value); else NULL. */
+static Node *
+unboxCypherToJsonb(Node *n)
+{
+	if (n != NULL && IsA(n, FuncExpr))
+	{
+		FuncExpr   *f = (FuncExpr *) n;
+
+		if (f->funcid == F_CYPHER_TO_JSONB && list_length(f->args) == 1)
+			return (Node *) linitial(f->args);
+	}
+	return NULL;
+}
+
+/*
+ * transformPromotedComparison
+ *
+ * A promoted property access arrives at a comparison boxed as
+ * cypher_to_jsonb(column).  When one side is such a box, rebind the comparison
+ * by Cypher type: if the other operand is the same Cypher scalar family, unify
+ * both to their common type and emit the native operator -- so the column's
+ * btree binds, and, e.g., an integer column against a fractional literal still
+ * compares as numbers without rounding.  Otherwise compare through jsonb, which
+ * yields the correct type-aware result (values of different Cypher types are
+ * never equal, and order by type rank).  Returns NULL when neither side is a
+ * promoted column, leaving every ordinary comparison exactly as it was.
+ */
+static Node *
+transformPromotedComparison(ParseState *pstate, List *opname,
+							Node *l, Node *r, Node *last_srf, int location)
+{
+	Node	   *lx = unboxCypherToJsonb(l);
+	Node	   *rx = unboxCypherToJsonb(r);
+	Node	   *lu;
+	Node	   *ru;
+	CypherScalarFamily lf;
+
+	if (lx == NULL && rx == NULL)
+		return NULL;
+
+	lu = (lx != NULL) ? lx : l;
+	ru = (rx != NULL) ? rx : r;
+	lf = cypherScalarFamily(exprType(lu));
+
+	if (lf != CF_OTHER && lf == cypherScalarFamily(exprType(ru)))
+	{
+		Oid			common = select_common_type(pstate, list_make2(lu, ru),
+												"comparison", NULL);
+
+		lu = coerce_to_common_type(pstate, lu, common, "comparison");
+		ru = coerce_to_common_type(pstate, ru, common, "comparison");
+		return (Node *) make_op(pstate, opname, lu, ru, last_srf, location);
+	}
+
+	l = coerce_to_jsonb(pstate, l, "jsonb");
+	r = coerce_to_jsonb(pstate, r, "jsonb");
+	return (Node *) make_op(pstate, opname, l, r, last_srf, location);
+}
+
 static Node *
 transformAExprOp(ParseState *pstate, A_Expr *a)
 {
@@ -2026,6 +2145,22 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 				 strcmp(opname, "<=") == 0 ||
 				 strcmp(opname, ">=") == 0)
 		{
+			Node	   *promoted;
+
+			/*
+			 * If a promoted property is being compared (it arrives boxed as
+			 * cypher_to_jsonb(column)), rebind the comparison type-aware: bind
+			 * the native, index-usable operator when the other operand is the
+			 * same Cypher scalar family, else compare through jsonb (Cypher says
+			 * different types are never equal / order by type rank).  Returns
+			 * NULL when neither side is a promoted column, leaving every other
+			 * comparison exactly as before.
+			 */
+			promoted = transformPromotedComparison(pstate, a->name, l, r,
+												   last_srf, a->location);
+			if (promoted != NULL)
+				return promoted;
+
 			if (ltype != InvalidOid && rtype == UNKNOWNOID)
 				rtype = ltype;
 			else if (ltype == UNKNOWNOID && rtype != InvalidOid)
@@ -3010,10 +3145,27 @@ transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
 			{
 				TargetEntry *tmp;
 				Node	   *texpr;
+				Node	   *tunboxed;
 
 				tmp = lfirst(lt);
 				texpr = strip_implicit_coercions((Node *) tmp->expr);
 				if (equal(texpr, expr))
+				{
+					te = tmp;
+					break;
+				}
+
+				/*
+				 * A promoted property projected as cypher_to_jsonb(column) is
+				 * the same value this ORDER BY key (the native column) sorts by.
+				 * Reuse the projected entry so DISTINCT / GROUP BY -- which
+				 * require every sort key to appear in the select list -- accept
+				 * it.  For a plain (non-DISTINCT) RETURN the sort is then
+				 * re-pointed back to the native column by
+				 * updateSortOperatorsForJsonb(), so the index still binds.
+				 */
+				tunboxed = unboxCypherToJsonb(texpr);
+				if (tunboxed != NULL && equal(tunboxed, expr))
 				{
 					te = tmp;
 					break;
