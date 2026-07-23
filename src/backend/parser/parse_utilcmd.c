@@ -5553,7 +5553,6 @@ ConvertPromotedColumnRefForIndex(Node *node, Oid relid)
 {
 	ColumnRef  *columnRef;
 	Node	   *field;
-	Oid			laboid;
 	AttrNumber	attnum;
 
 	if (!IsA(node, ColumnRef))
@@ -5565,12 +5564,14 @@ ConvertPromotedColumnRefForIndex(Node *node, Oid relid)
 	if (!IsA(field, String))
 		return false;
 
-	laboid = get_relid_laboid(relid);
-	if (!OidIsValid(laboid))
-		return false;
-
-	attnum = get_label_property_attnum(laboid, strVal(field));
-	if (attnum == InvalidAttrNumber)
+	/*
+	 * Resolve the key the same way a read does (get_label_property_column is
+	 * inheritance-aware): it returns this relation's own column, whether the key
+	 * is promoted on the label itself or inherited from an ancestor label, so a
+	 * property index on an inherited key binds the child's typed column rather
+	 * than falling back to a jsonb expression.
+	 */
+	if (!get_label_property_column(relid, strVal(field), &attnum, NULL))
 		return false;
 
 	/*
