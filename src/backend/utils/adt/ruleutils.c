@@ -14272,8 +14272,8 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 		pfree(exprsString);
 	}
 	else
-		elog(ERROR, "property index '%s' must be expression index",
-			 NameStr(idxrelrec->relname));
+		/* a plain-column property index (binds promoted typed columns) */
+		indexprs = NIL;
 
 	indexpr_item = list_head(indexprs);
 
@@ -14311,20 +14311,34 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 		sep = ", ";
 
 		if (attnum != 0)
-			elog(ERROR, "invalid property index, attnum: %u", attnum);
+		{
+			/*
+			 * A plain-column key binds a promoted typed column (CREATE PROPERTY
+			 * INDEX ON label (key) materialized as a btree/HNSW on the column,
+			 * not a jsonb expression).  Report it by the column's name, which is
+			 * the promoted property.
+			 */
+			char	   *attname = get_attname(indrelid, attnum, false);
 
-		if (indexpr_item == NULL)
-			elog(ERROR, "too few entries in indexprs list");
-		indexkey = (Node *) lfirst(indexpr_item);
-		indexpr_item = lnext(indexprs, indexpr_item);
-		/* Deparse */
-		str = deparse_prop_expression_pretty(indexkey, context, prettyFlags);
-		if (IsA(indexkey, CypherAccessExpr))
-			appendStringInfo(&buf, "%s", str);
+			appendStringInfoString(&buf, quote_identifier(attname));
+			keycoltype = get_atttype(indrelid, attnum);
+			keycolcollation = get_typcollation(keycoltype);
+		}
 		else
-			appendStringInfo(&buf, "(%s)", str);
-		keycoltype = exprType(indexkey);
-		keycolcollation = exprCollation(indexkey);
+		{
+			if (indexpr_item == NULL)
+				elog(ERROR, "too few entries in indexprs list");
+			indexkey = (Node *) lfirst(indexpr_item);
+			indexpr_item = lnext(indexprs, indexpr_item);
+			/* Deparse */
+			str = deparse_prop_expression_pretty(indexkey, context, prettyFlags);
+			if (IsA(indexkey, CypherAccessExpr))
+				appendStringInfo(&buf, "%s", str);
+			else
+				appendStringInfo(&buf, "(%s)", str);
+			keycoltype = exprType(indexkey);
+			keycolcollation = exprCollation(indexkey);
+		}
 
 		/* Add collation, if not default for column */
 		indcoll = indcollation->values[keyno];
