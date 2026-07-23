@@ -1145,6 +1145,26 @@ markStoredGeneratedColsNull(TupleTableSlot *slot)
 }
 
 /*
+ * promotedGeneratedErrorCallback
+ *
+ * Add a graph-aware CONTEXT line to any error the generated-column computation
+ * raises.  A promoted typed property is materialized by casting the jsonb bag
+ * value to the column's type, so a value that does not fit the type (e.g. SET
+ * n.age = 5.5 on an integer property) fails with a bare cast error; this tells
+ * the user the failure came from a promoted property of a graph label.  The
+ * relation name is the label name, and reading it from the already-open
+ * relation avoids any catalog access while an error is being unwound.
+ */
+static void
+promotedGeneratedErrorCallback(void *arg)
+{
+	Relation	rel = (Relation) arg;
+
+	errcontext("while computing the promoted typed columns of graph label \"%s\"",
+			   RelationGetRelationName(rel));
+}
+
+/*
  * computeLabelStoredGenerated
  *
  * Materialize the STORED generated columns (promoted typed properties) of a
@@ -1165,7 +1185,23 @@ computeLabelStoredGenerated(ResultRelInfo *resultRelInfo, EState *estate,
 	TupleConstr *constr = resultRelInfo->ri_RelationDesc->rd_att->constr;
 
 	if (constr != NULL && constr->has_generated_stored)
+	{
+		ErrorContextCallback errcallback;
+
+		/*
+		 * Only consulted if the computation raises, so a successful write is
+		 * unaffected; the underlying cast error stays the primary message and
+		 * gains a CONTEXT line naming the graph label.
+		 */
+		errcallback.callback = promotedGeneratedErrorCallback;
+		errcallback.arg = (void *) resultRelInfo->ri_RelationDesc;
+		errcallback.previous = error_context_stack;
+		error_context_stack = &errcallback;
+
 		ExecComputeStoredGenerated(resultRelInfo, estate, slot, cmdtype);
+
+		error_context_stack = errcallback.previous;
+	}
 }
 
 static bool
