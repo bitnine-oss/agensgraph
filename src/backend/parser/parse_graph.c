@@ -195,7 +195,8 @@ static Node *transformMatchSR(ParseState *pstate, CypherRel *crel,
 							  bool *is_nsitem);
 static ParseNamespaceItem *addEdgeUnion(ParseState *pstate, char *edge_label,
 										bool only, int location, Alias *alias);
-static Node *genEdgeUnion(char *edge_label, bool only, int location);
+static Node *genEdgeUnion(char *edge_label, bool only, int location,
+						  bool include_promoted);
 static void setInitialVidForVLE(ParseState *pstate, CypherRel *crel,
 								Node *vertex, bool vertex_is_nsitem,
 								CypherRel *prev_crel, Node *prev_edge,
@@ -252,7 +253,7 @@ static bool hasGinOnProp(Oid relid);
 #define PROMOTED_SENTINEL_PREFIX	AGENS_DEFAULT_PREFIX "prop:"
 static char *makePromotedSentinelName(const char *varname, const char *key);
 static void appendPromotedSentinels(ParseState *pstate,
-									ParseNamespaceItem *nsitem,
+									ParseNamespaceItem *nsitem, Oid relid,
 									const char *varname, List **targetList);
 static void appendForwardedSentinels(ParseState *pstate, Var *composite,
 									 const char *newname, List **targetList);
@@ -3428,8 +3429,8 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList,
 			*targetList = lappend(*targetList, te);
 
 			/* PROTOTYPE: project hidden typed columns beside the composite */
-			appendPromotedSentinels(pstate, nsitem, alias->aliasname,
-									targetList);
+			appendPromotedSentinels(pstate, nsitem, nsitem->p_rte->relid,
+									alias->aliasname, targetList);
 		}
 	}
 
@@ -3458,6 +3459,7 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 	int			typloc = -1;
 	Alias	   *alias;
 	ParseNamespaceItem *nsitem;
+	Oid			edge_relid = InvalidOid;
 	TargetEntry *te;
 
 	*is_nsitem = false;
@@ -3542,6 +3544,10 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 
 	if (crel->direction == CYPHER_REL_DIR_NONE)
 	{
+		/* the edge label relation the union scans, for its promoted columns */
+		edge_relid = RangeVarGetRelid(makeRangeVar(get_graph_path(true),
+												   typname, typloc),
+									  AccessShareLock, true);
 		nsitem = addEdgeUnion(pstate, typname, crel->only, typloc, alias);
 	}
 	else
@@ -3552,6 +3558,7 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 		r->inh = !crel->only;
 
 		nsitem = addRangeTableEntry(pstate, r, alias, r->inh, true);
+		edge_relid = nsitem->p_rte->relid;
 	}
 	addNSItemToJoinlist(pstate, nsitem, false);
 
@@ -3588,11 +3595,12 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 
 			/*
 			 * PROTOTYPE: project hidden typed columns beside the composite.
-			 * A direction-less edge is an addEdgeUnion() (RTE_SUBQUERY), not a
-			 * base relation; appendPromotedSentinels() no-ops on those.
+			 * A direction-less edge is scanned through an addEdgeUnion()
+			 * subquery; genEdgeUnion() exposes the promoted columns through it,
+			 * and edge_relid names the label so they can be found.
 			 */
-			appendPromotedSentinels(pstate, nsitem, alias->aliasname,
-									targetList);
+			appendPromotedSentinels(pstate, nsitem, edge_relid,
+									alias->aliasname, targetList);
 		}
 	}
 
@@ -3612,7 +3620,7 @@ addEdgeUnion(ParseState *pstate, char *edge_label, bool only, int location,
 	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
 	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
 
-	u = genEdgeUnion(edge_label, only, location);
+	u = genEdgeUnion(edge_label, only, location, true);
 	qry = parse_sub_analyze(u, pstate, NULL,
 							isLockedRefname(pstate, alias->aliasname), true);
 
@@ -3629,7 +3637,7 @@ addEdgeUnion(ParseState *pstate, char *edge_label, bool only, int location,
  * FROM `get_graph_path()`.`edge_label`
  */
 static Node *
-genEdgeUnion(char *edge_label, bool only, int location)
+genEdgeUnion(char *edge_label, bool only, int location, bool include_promoted)
 {
 	ResTarget  *id;
 	ResTarget  *start;
@@ -3653,6 +3661,37 @@ genEdgeUnion(char *edge_label, bool only, int location)
 	lsel = makeNode(SelectStmt);
 	lsel->targetList = list_make5(id, start, end, prop_map, tid);
 	lsel->fromClause = list_make1(r);
+
+	/*
+	 * PROTOTYPE: expose the edge label's promoted typed columns as real outputs
+	 * of BOTH union arms (added before the copy below, so the arms stay type-
+	 * aligned as the set operation requires).  e.prop then resolves through the
+	 * union to a native column, and a qual/sort on it pushes into each arm's
+	 * base scan, binding the edge label's typed index (an Append of index scans
+	 * over the two directions).  Skipped for the VLE union, whose arms must keep
+	 * their existing shape.
+	 */
+	if (include_promoted)
+	{
+		Oid			relid = RangeVarGetRelid(r, AccessShareLock, true);
+
+		if (OidIsValid(relid) && label_relid_has_promoted_property(relid))
+		{
+			List	   *props = get_label_promoted_properties(relid);
+			ListCell   *lc;
+
+			foreach(lc, props)
+			{
+				PromotedPropInfo *info = lfirst(lc);
+				char	   *colname = get_attname(relid, info->attnum, true);
+
+				if (colname != NULL)
+					lsel->targetList =
+						lappend(lsel->targetList,
+								makeSimpleResTarget(colname, NULL));
+			}
+		}
+	}
 
 	rsel = copyObject(lsel);
 
@@ -4134,7 +4173,7 @@ genVLEEdgeSubselect(ParseState *pstate, CypherRel *crel, char *aliasname)
 
 		/* id, start, "end", properties, ctid, _start, _end */
 		sub = makeNode(RangeSubselect);
-		sub->subquery = genEdgeUnion(typname, crel->only, typloc);
+		sub->subquery = genEdgeUnion(typname, crel->only, typloc, false);
 		sub->alias = alias;
 		edge = (Node *) sub;
 	}
@@ -4873,7 +4912,18 @@ getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno,
 						return InvalidOid;
 
 					type = exprType((Node *) te->expr);
-					if (type != VERTEXOID && type != EDGEOID)
+
+					/*
+					 * Follow a vertex/edge composite, or the element's graphid
+					 * "id" column on its own.  The latter matters for a
+					 * direction-less edge: its composite is built over the
+					 * edge-direction UNION, so descending through the composite's
+					 * id reaches the union's id output (a plain graphid) before
+					 * the base edge relation.  A graphid always originates from
+					 * its element's base relation, so following it stays correct.
+					 */
+					if (type != VERTEXOID && type != EDGEOID &&
+						type != GRAPHIDOID)
 						return InvalidOid;
 
 					/* In RowExpr case, `(id, ...)` is assumed */
@@ -4959,22 +5009,27 @@ isPromotedSentinelName(const char *resname)
 }
 
 /*
- * For each promoted property of the element's label, append one hidden non-junk
- * target entry projecting the base relation's typed column.  `nsitem` is the
- * base label relation; `varname` is the element's Cypher variable.  Emits
- * nothing for a non-promoted label, so those stay byte-identical.
+ * For each promoted property of the element's label (`relid'), append one
+ * hidden non-junk target entry projecting the typed column.  `nsitem' is where
+ * the element is scanned: the base label relation for a vertex or a directional
+ * edge (the column is at its base attnum), or -- for a direction-less edge --
+ * the edge-direction UNION subquery, which genEdgeUnion() exposed the promoted
+ * columns through, so the column is found by name among the subquery outputs.
+ * `varname' is the element's Cypher variable.  Emits nothing for a non-promoted
+ * label.
  */
 static void
 appendPromotedSentinels(ParseState *pstate, ParseNamespaceItem *nsitem,
-						const char *varname, List **targetList)
+						Oid relid, const char *varname, List **targetList)
 {
-	Oid			relid = nsitem->p_rte->relid;
+	bool		is_union;
 	List	   *props;
 	ListCell   *lc;
 
-	if (!enable_property_promotion || varname == NULL)
+	if (!enable_property_promotion || varname == NULL || !OidIsValid(relid))
 		return;
-	if (nsitem->p_rte->rtekind != RTE_RELATION || !OidIsValid(relid))
+	is_union = (nsitem->p_rte->rtekind == RTE_SUBQUERY);
+	if (nsitem->p_rte->rtekind != RTE_RELATION && !is_union)
 		return;
 	if (!label_relid_has_promoted_property(relid))
 		return;
@@ -4983,13 +5038,41 @@ appendPromotedSentinels(ParseState *pstate, ParseNamespaceItem *nsitem,
 	foreach(lc, props)
 	{
 		PromotedPropInfo *info = lfirst(lc);
+		AttrNumber	attno = info->attnum;
 		Var		   *colvar;
 		TargetEntry *te;
 
-		/* project every promoted property's column; n.prop now resolves for
-		 * all types, so all are candidates to pull up to the base scan */
-		colvar = make_var(pstate, nsitem, info->attnum, -1);
-		markVarForSelectPriv(pstate, colvar);
+		/*
+		 * For the edge UNION the typed column is exposed as a named output, at
+		 * a different position than its base attnum; find it by the base column
+		 * name.  (A direction-less edge whose column is not exposed -- should
+		 * not happen -- is simply skipped.)
+		 */
+		if (is_union)
+		{
+			char	   *colname = get_attname(relid, info->attnum, true);
+			ListCell   *lcn;
+			int			pos = 1;
+
+			attno = InvalidAttrNumber;
+			if (colname == NULL)
+				continue;
+			foreach(lcn, nsitem->p_rte->eref->colnames)
+			{
+				if (strcmp(strVal(lfirst(lcn)), colname) == 0)
+				{
+					attno = pos;
+					break;
+				}
+				pos++;
+			}
+			if (attno == InvalidAttrNumber)
+				continue;
+		}
+
+		colvar = make_var(pstate, nsitem, attno, -1);
+		if (!is_union)			/* subquery outputs need no column privilege */
+			markVarForSelectPriv(pstate, colvar);
 
 		te = makeTargetEntry((Expr *) colvar,
 							 (AttrNumber) pstate->p_next_resno++,
