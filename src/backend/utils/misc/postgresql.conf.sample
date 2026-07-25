@@ -429,6 +429,7 @@
 #enable_distinct_reordering = on
 #enable_self_join_elimination = on
 #enable_graph_endpoint_elision = on
+#enable_property_promotion = on
 
 # - Planner Cost Constants -
 
