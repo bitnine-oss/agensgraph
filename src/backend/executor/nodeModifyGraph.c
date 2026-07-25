@@ -1121,25 +1121,39 @@ makeDatumArray(int len)
  *
  * The Cypher write path fills a label tuple's base columns (id/start/end and
  * the jsonb property bag) directly and blanket-marks every attribute non-null.
- * Any promoted typed property, however, is a STORED generated column that is
- * not filled until ExecComputeStoredGenerated runs.  Mark those columns NULL
- * first, so that a tuple materialization occurring before the generated values
- * are computed (an intervening ExecMaterializeSlot, or a BEFORE-ROW trigger)
- * never reads an uninitialized generated Datum.  A no-op for labels without any
- * promoted columns.
+ * Two kinds of column are not filled by that direct assignment and would leave
+ * an uninitialized tts_values[] entry wrongly flagged non-null; mark both NULL
+ * here so a tuple materialization (an intervening ExecMaterializeSlot, or a
+ * BEFORE-ROW trigger) never reads a garbage Datum:
+ *
+ *   - A dropped column keeps its physical slot in the tuple descriptor but is
+ *     never assigned, so its tts_values[] entry is uninitialized.  A label
+ *     accumulates such dropped-column gaps from ADD/DROP-COLUMN churn; leaving
+ *     a dropped varlena slot non-null makes heap_form_*_tuple dereference the
+ *     garbage value and crash.  This must run even for a label with no
+ *     generated columns, so it is not gated on has_generated_stored.
+ *
+ *   - A promoted typed property is a STORED generated column that is not filled
+ *     until ExecComputeStoredGenerated runs later.
+ *
+ * A no-op for a plain label (no dropped columns, no promoted columns).
  */
 void
 markStoredGeneratedColsNull(TupleTableSlot *slot)
 {
 	TupleDesc	tupdesc = slot->tts_tupleDescriptor;
+	bool		has_generated_stored = tupdesc->constr != NULL &&
+									   tupdesc->constr->has_generated_stored;
 	int			i;
-
-	if (tupdesc->constr == NULL || !tupdesc->constr->has_generated_stored)
-		return;
 
 	for (i = 0; i < tupdesc->natts; i++)
 	{
-		if (TupleDescAttr(tupdesc, i)->attgenerated == ATTRIBUTE_GENERATED_STORED)
+		Form_pg_attribute att = TupleDescAttr(tupdesc, i);
+
+		if (att->attisdropped)
+			slot->tts_isnull[i] = true;
+		else if (has_generated_stored &&
+				 att->attgenerated == ATTRIBUTE_GENERATED_STORED)
 			slot->tts_isnull[i] = true;
 	}
 }
