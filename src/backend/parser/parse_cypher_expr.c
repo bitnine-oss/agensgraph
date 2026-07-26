@@ -92,6 +92,7 @@ static Node *makeArrayIndex(ParseState *pstate, Node *idx, Node *arr, bool exclu
 static Node *adjustListIndexType(ParseState *pstate, Node *idx);
 static Node *transformAExprOp(ParseState *pstate, A_Expr *a);
 static Node *transformAExprIn(ParseState *pstate, A_Expr *a);
+static Node *transformPromotedInList(ParseState *pstate, Node *lexpr, A_Expr *a);
 static Node *transformCypherNullIf(ParseState *pstate, A_Expr *a);
 static Node *unboxCypherToJsonb(Node *n);
 static Node *transformBoolExpr(ParseState *pstate, BoolExpr *b);
@@ -2347,6 +2348,86 @@ reduce_graph_elem_to_id(ParseState *pstate, Node *elem, int location)
 	return id;
 }
 
+/*
+ * transformPromotedInList
+ *
+ * "x IN [e1, e2, ...]" is a chain of "x = ei", so a promoted property on the
+ * left -- boxed as cypher_to_jsonb(column) -- is rebound natively for the same
+ * reason transformPromotedComparison rebinds "=": when the right side is a
+ * literal list whose every element is of the column's Cypher scalar family,
+ * unify to the common type and emit "col = ANY(array)", so the typed index
+ * binds.  Each element keeps its exact "=" behaviour, including three-valued
+ * logic for a null element -- a native null array element and the boxed jsonb
+ * null both make a non-match evaluate to null, not false.
+ *
+ * An element of a different family (Cypher makes unlike types unequal without
+ * erroring, which coercing to one array type could not reproduce), a non-literal
+ * right side, or an empty list returns NULL, leaving the jsonb membership path
+ * below exactly as it was.
+ */
+static Node *
+transformPromotedInList(ParseState *pstate, Node *lexpr, A_Expr *a)
+{
+	Node	   *native = unboxCypherToJsonb(lexpr);
+	CypherScalarFamily fam;
+	List	   *elems;
+	List	   *telems = NIL;
+	List	   *allexprs;
+	Oid			scalar_type;
+	Oid			array_type;
+	ArrayExpr  *newa;
+	ListCell   *l;
+
+	if (native == NULL || !IsA(native, Var))
+		return NULL;
+
+	fam = cypherScalarFamily(exprType(native));
+	if (fam == CF_OTHER)
+		return NULL;
+
+	if (!IsA(a->rexpr, CypherListExpr))
+		return NULL;
+	elems = ((CypherListExpr *) a->rexpr)->elems;
+	if (elems == NIL)
+		return NULL;
+
+	foreach(l, elems)
+	{
+		Node	   *elem = transformCypherExprRecurse(pstate, lfirst(l));
+
+		if (cypherScalarFamily(exprType(elem)) != fam)
+			return NULL;		/* unlike type: leave the jsonb path to it */
+		telems = lappend(telems, elem);
+	}
+
+	/*
+	 * Common native type of the column and every element.  The column is first,
+	 * so it is preferred when a type is ambiguous, and an integer column against
+	 * a fractional literal still unifies as numbers (no rounding), matching the
+	 * per-element "=".
+	 */
+	allexprs = lcons(native, list_copy(telems));
+	scalar_type = select_common_type(pstate, allexprs, "IN", NULL);
+	array_type = OidIsValid(scalar_type) ? get_array_type(scalar_type) : InvalidOid;
+	if (!OidIsValid(array_type))
+		return NULL;
+
+	native = coerce_to_common_type(pstate, native, scalar_type, "IN");
+
+	newa = makeNode(ArrayExpr);
+	newa->array_typeid = array_type;
+	newa->element_typeid = scalar_type;
+	newa->multidims = false;
+	newa->location = -1;
+	foreach(l, telems)
+		newa->elements = lappend(newa->elements,
+								 coerce_to_common_type(pstate, lfirst(l),
+													   scalar_type, "IN"));
+
+	return (Node *) make_scalar_array_op(pstate, a->name, true, native,
+										 (Node *) newa, a->location);
+}
+
 static Node *
 transformAExprIn(ParseState *pstate, A_Expr *a)
 {
@@ -2360,6 +2441,16 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 	lexpr = transformCypherExprRecurse(pstate, a->lexpr);
 
 	rexprs = rvars = rnonvars = NIL;
+
+	/*
+	 * A promoted scalar property on the left of IN is a chain of native "="
+	 * comparisons; rebind it to "col = ANY(array)" so the typed index binds
+	 * when every element is a literal of the column's scalar family.  NULL falls
+	 * through to the jsonb membership path below, unchanged.
+	 */
+	result = transformPromotedInList(pstate, lexpr, a);
+	if (result != NULL)
+		return result;
 
 	/*
 	 * A graph element (vertex/edge/graphid) on the left of IN is a membership
