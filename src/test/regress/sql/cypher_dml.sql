@@ -3493,3 +3493,38 @@ DROP GRAPH agens CASCADE;
 DROP TABLE history;
 
 DROP GRAPH rename_test CASCADE;
+
+-- A text value extracted from the jsonb property bag (n.prop #>> '{}') carries
+-- no collation.  A DISTINCT, GROUP BY, ORDER BY or min()/max() over such a value
+-- is compared with the database default collation -- the same collation jsonb
+-- uses for its own strings -- so these must run and give a stable result, incl.
+-- when a key is NULL (a missing property).  (Regression: PostgreSQL 18 refuses
+-- to hash or compare an uncollated string, so each once failed with "could not
+-- determine which collation to use".)
+CREATE GRAPH collate_jsonb;
+SET graph_path = collate_jsonb;
+CREATE VLABEL person;
+CREATE (:person {name: 'bob', city: 'rome'}),
+       (:person {name: 'amy', city: 'rome'}),
+       (:person {name: 'bob', city: 'oslo'}),
+       (:person {name: 'cat', city: 'oslo'}),
+       (:person {city: 'oslo'});                    -- no name: the key is NULL text
+-- terminal RETURN DISTINCT over the extracted text (hash + sort), incl. the NULL
+MATCH (n:person) RETURN DISTINCT (n.name #>> '{}') AS nm ORDER BY nm NULLS FIRST;
+-- RETURN DISTINCT of a text carried through WITH, DESC with NULLS LAST
+MATCH (n:person) WITH (n.name #>> '{}') AS nm RETURN DISTINCT nm ORDER BY nm DESC NULLS LAST;
+-- a non-terminal WITH that orders by the extracted text
+MATCH (n:person) WITH (n.name #>> '{}') AS nm, count(*) AS c ORDER BY nm NULLS FIRST RETURN nm, c;
+-- an implicit GROUP BY on two extracted-text keys
+MATCH (n:person)
+RETURN (n.name #>> '{}') AS nm, (n.city #>> '{}') AS ct, count(*) AS c
+ORDER BY nm NULLS FIRST, ct;
+-- min()/max() over the extracted text
+MATCH (n:person) RETURN min(n.name #>> '{}') AS lo, max(n.name #>> '{}') AS hi;
+-- collect(DISTINCT ...) and count(DISTINCT ...) over the extracted text
+MATCH (n:person)
+RETURN collect(DISTINCT (n.name #>> '{}')) AS names, count(DISTINCT (n.city #>> '{}')) AS ncity;
+-- DISTINCT on two extracted-text keys with a compound ORDER BY
+MATCH (n:person)
+RETURN DISTINCT (n.name #>> '{}') AS nm, (n.city #>> '{}') AS ct ORDER BY ct, nm NULLS LAST;
+DROP GRAPH collate_jsonb CASCADE;

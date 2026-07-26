@@ -160,6 +160,8 @@ static void checkNameInItems(ParseState *pstate, List *items, List *targetList);
 static void checkCypherLetItems(ParseState *pstate, List *targetList);
 static void updateSortOperatorsForJsonb(List *sortClause, List **targetList,
 										bool allowUnbox, bool allowNativeUnbox);
+static void setDefaultCollationOnKeys(List *clause, List *targetList);
+static void updateGroupingOperatorsForJsonb(List *clause, List *targetList);
 
 /* MATCH - OPTIONAL */
 static ParseNamespaceItem *transformMatchOptional(ParseState *pstate,
@@ -634,6 +636,85 @@ updateSortOperatorsForJsonb(List *sortClause, List **targetList,
 }
 
 /*
+ * setDefaultCollationOnKeys
+ *		A text value derived from jsonb -- e.g. n.prop #>> '{}', which extracts a
+ *		property as text -- carries no collation: jsonb is not collatable and the
+ *		path-array literal supplies none, so assign_query_collations has nothing
+ *		to propagate.  PostgreSQL 18 refuses to hash or compare a collatable value
+ *		with no determinable collation, so a DISTINCT, GROUP BY or ORDER BY over
+ *		such a key errors ("could not determine which collation to use"); 17
+ *		tolerated it.  A comparison against a text literal is unaffected -- the
+ *		literal supplies the default collation -- so only a lone grouping/ordering
+ *		key is left indeterminate.  jsonb compares its own strings with the
+ *		database default collation, so give such a key that default collation:
+ *		this matches jsonb semantics and restores the pre-18 behavior.
+ */
+static void
+setDefaultCollationOnKeys(List *clause, List *targetList)
+{
+	ListCell   *lc;
+
+	foreach(lc, clause)
+	{
+		SortGroupClause *sgc = (SortGroupClause *) lfirst(lc);
+		TargetEntry *tle = get_sortgroupref_tle(sgc->tleSortGroupRef, targetList);
+
+		if (tle == NULL)
+			continue;
+
+		if (OidIsValid(get_typcollation(exprType((Node *) tle->expr))) &&
+			!OidIsValid(exprCollation((Node *) tle->expr)))
+			exprSetCollation((Node *) tle->expr, DEFAULT_COLLATION_OID);
+	}
+}
+
+/*
+ * updateGroupingOperatorsForJsonb
+ *		A terminal RETURN coerces its output to jsonb (resolveItemList) after the
+ *		DISTINCT / GROUP BY clauses were built, so a key that started as some
+ *		other type -- notably a text extracted from jsonb, whose grouping equality
+ *		is texteq -- now points at a cypher_to_jsonb() value while its recorded
+ *		equality operator still expects the original type.  That mismatch makes
+ *		the executor hash the boxed value with the wrong (text) operator, which on
+ *		PostgreSQL 18 fails for want of a collation.  Re-derive each key's grouping
+ *		operators from its final (boxed) type -- the sibling of
+ *		updateSortOperatorsForJsonb, which already refreshes the sort operators.
+ */
+static void
+updateGroupingOperatorsForJsonb(List *clause, List *targetList)
+{
+	ListCell   *lc;
+
+	foreach(lc, clause)
+	{
+		SortGroupClause *sgc = (SortGroupClause *) lfirst(lc);
+		TargetEntry *tle = get_sortgroupref_tle(sgc->tleSortGroupRef, targetList);
+		Oid			restype;
+		Oid			lefttype;
+		Oid			righttype;
+		Oid			sortop;
+		Oid			eqop;
+		bool		hashable;
+		bool		need_sort;
+
+		if (tle == NULL || !OidIsValid(sgc->eqop))
+			continue;
+
+		restype = exprType((Node *) tle->expr);
+		op_input_types(sgc->eqop, &lefttype, &righttype);
+		if (lefttype == restype)
+			continue;			/* operators already match the key's type */
+
+		need_sort = OidIsValid(sgc->sortop);
+		get_sort_group_operators(restype, need_sort, true, false,
+								 &sortop, &eqop, NULL, &hashable);
+		sgc->eqop = eqop;
+		sgc->sortop = need_sort ? sortop : InvalidOid;
+		sgc->hashable = hashable;
+	}
+}
+
+/*
  * IsGraphWriteClause
  *		Is this Cypher clause a graph-write clause (CREATE/DELETE/SET/MERGE)?
  */
@@ -795,6 +876,16 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 
 		qry->groupClause = generateGroupClause(pstate, &qry->targetList,
 											   qry->sortClause);
+
+		/*
+		 * A grouping/ordering/distinct key that is a collatable value with no
+		 * collation -- a text extracted from jsonb (n.prop #>> '{}') -- cannot
+		 * be hashed or compared on PostgreSQL 18.  Give such a key the database
+		 * default collation, matching how jsonb compares its own strings.
+		 */
+		setDefaultCollationOnKeys(qry->sortClause, qry->targetList);
+		setDefaultCollationOnKeys(qry->distinctClause, qry->targetList);
+		setDefaultCollationOnKeys(qry->groupClause, qry->targetList);
 	}
 
 	if (detail->kind == CP_WITH || detail->kind == CP_LET)
@@ -854,6 +945,18 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 									qry->distinctClause == NIL &&
 									qry->groupClause == NIL &&
 									!qry->hasAggs);
+
+	/*
+	 * RETURN's jsonb coercion above can leave a DISTINCT / GROUP BY key's
+	 * equality operator expecting the pre-coercion type (e.g. texteq over a
+	 * value now boxed as jsonb); refresh them to the boxed type so the executor
+	 * hashes and groups with the matching operator.
+	 */
+	if (detail->kind == CP_RETURN)
+	{
+		updateGroupingOperatorsForJsonb(qry->distinctClause, qry->targetList);
+		updateGroupingOperatorsForJsonb(qry->groupClause, qry->targetList);
+	}
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
