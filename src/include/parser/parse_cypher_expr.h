@@ -42,4 +42,14 @@ extern void resolveItemList(ParseState *pstate, List *items);
 extern List *transformCypherExprList(ParseState *pstate, List *exprlist,
 									 ParseExprKind exprKind);
 
+/*
+ * Rebind a comparison whose promoted-property operand arrives boxed as
+ * cypher_to_jsonb(column) to the native, index-usable operator; used by the map
+ * property-constraint lowering so "{key: val}" binds the typed column like a
+ * WHERE comparison does.
+ */
+extern Node *transformPromotedComparison(ParseState *pstate, List *opname,
+										 Node *l, Node *r, Node *last_srf,
+										 int location);
+
 #endif							/* PARSE_CYPHER_EXPR_H */
