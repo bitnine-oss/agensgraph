@@ -160,6 +160,7 @@ static void checkNameInItems(ParseState *pstate, List *items, List *targetList);
 static void checkCypherLetItems(ParseState *pstate, List *targetList);
 static void updateSortOperatorsForJsonb(List *sortClause, List **targetList,
 										bool allowUnbox, bool allowNativeUnbox);
+static void unboxPromotedGroupKeys(List *groupClause, List **targetList);
 static void setDefaultCollationOnKeys(List *clause, List *targetList);
 static void updateGroupingOperatorsForJsonb(List *clause, List *targetList);
 
@@ -636,6 +637,72 @@ updateSortOperatorsForJsonb(List *sortClause, List **targetList,
 }
 
 /*
+ * unboxPromotedGroupKeys
+ *		A promoted property is projected as cypher_to_jsonb(column), so the
+ *		implicit GROUP BY built from the projection groups on that boxed jsonb
+ *		value -- extracting jsonb and comparing jsonb datums for every row, and
+ *		dragging the element's heap.  Where a grouping key is such a box over a
+ *		promoted column, group on the native typed column instead: keep the
+ *		boxed entry as the projected output and add a resjunk copy of the column
+ *		as the grouping key, carrying the column type's grouping operators.  The
+ *		returned value is unchanged (the projection is a function of the native
+ *		grouping key, so it stays valid), while grouping now compares native
+ *		values and can hash or bind the typed index.
+ *
+ *		Only a plain promoted column (a Var) is unboxed; an aggregate or any
+ *		other boxed expression keeps its jsonb key.  ORDER BY / DISTINCT keys are
+ *		left untouched -- a sort on the same key stays boxed, still correct as a
+ *		function of the native grouping key.
+ */
+static void
+unboxPromotedGroupKeys(List *groupClause, List **targetList)
+{
+	ListCell   *lc;
+
+	foreach(lc, groupClause)
+	{
+		SortGroupClause *grpcl = (SortGroupClause *) lfirst(lc);
+		TargetEntry *tle;
+		TargetEntry *ntle;
+		Node	   *nativeval;
+		Oid			restype;
+		Oid			sortop;
+		Oid			eqop;
+		bool		hashable;
+
+		tle = get_sortgroupref_tle(grpcl->tleSortGroupRef, *targetList);
+		if (tle == NULL)
+			continue;
+
+		/* only a promoted column projected as cypher_to_jsonb(Var) */
+		nativeval = unboxNativeJsonbSortKey((Node *) tle->expr);
+		if (nativeval == NULL || !IsA(nativeval, Var))
+			continue;
+
+		restype = exprType(nativeval);
+
+		/* the native type's grouping operators (see addTargetToGroupList) */
+		get_sort_group_operators(restype,
+								 false, true, false,
+								 &sortop, &eqop, NULL,
+								 &hashable);
+
+		/* keep the boxed projection; group a resjunk copy of the column */
+		ntle = makeTargetEntry((Expr *) copyObject(nativeval),
+							   list_length(*targetList) + 1, NULL, true);
+		assignSortGroupRef(ntle, *targetList);
+		*targetList = lappend(*targetList, ntle);
+
+		grpcl->tleSortGroupRef = ntle->ressortgroupref;
+		grpcl->eqop = eqop;
+		grpcl->sortop = sortop;
+		grpcl->reverse_sort = false;
+		grpcl->nulls_first = false;
+		grpcl->hashable = hashable;
+	}
+}
+
+/*
  * setDefaultCollationOnKeys
  *		A text value derived from jsonb -- e.g. n.prop #>> '{}', which extracts a
  *		property as text -- carries no collation: jsonb is not collatable and the
@@ -876,6 +943,14 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 
 		qry->groupClause = generateGroupClause(pstate, &qry->targetList,
 											   qry->sortClause);
+
+		/*
+		 * The implicit GROUP BY built above groups on each promoted property's
+		 * projected form, cypher_to_jsonb(column); re-point those keys at the
+		 * native typed column so grouping compares native values instead of
+		 * boxed jsonb (the projection stays as the returned value).
+		 */
+		unboxPromotedGroupKeys(qry->groupClause, &qry->targetList);
 
 		/*
 		 * A grouping/ordering/distinct key that is a collatable value with no

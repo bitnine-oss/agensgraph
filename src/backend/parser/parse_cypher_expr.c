@@ -93,6 +93,7 @@ static Node *adjustListIndexType(ParseState *pstate, Node *idx);
 static Node *transformAExprOp(ParseState *pstate, A_Expr *a);
 static Node *transformAExprIn(ParseState *pstate, A_Expr *a);
 static Node *transformCypherNullIf(ParseState *pstate, A_Expr *a);
+static Node *unboxCypherToJsonb(Node *n);
 static Node *transformBoolExpr(ParseState *pstate, BoolExpr *b);
 static Node *coerce_unknown_const(ParseState *pstate, Node *expr, Oid ityp,
 								  Oid otyp);
@@ -195,10 +196,22 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 		case T_NullTest:
 			{
 				NullTest   *n = (NullTest *) expr;
+				Node	   *native;
 
 				n->arg = (Expr *) transformCypherExprRecurse(pstate,
 															 (Node *) n->arg);
 				n->argisrow = false;
+
+				/*
+				 * A promoted property is boxed as cypher_to_jsonb(column).
+				 * cypher_to_jsonb is strict, so IS [NOT] NULL over the box is
+				 * exactly the test on the native column; drop the box so the
+				 * test reads the column directly instead of boxing every row to
+				 * jsonb.
+				 */
+				native = unboxCypherToJsonb((Node *) n->arg);
+				if (native != NULL && IsA(native, Var))
+					n->arg = (Expr *) native;
 
 				return expr;
 			}
@@ -1107,6 +1120,49 @@ preprocess_func_args(ParseState *pstate, FuncCall *fn)
 		arg = transformCypherExprRecurse(pstate, lfirst(la));
 		if (IsA(arg, NamedArgExpr))
 			named = true;
+
+		/*
+		 * An aggregate over a promoted property boxes the column to jsonb per
+		 * row, then aggregates the jsonb.  Unbox here -- before the argument type
+		 * is read and the aggregate candidate chosen -- so a native aggregate is
+		 * selected and the accumulation stays native.
+		 *
+		 * count() only counts the non-null rows and cypher_to_jsonb is strict,
+		 * so it is unboxed for a column of any type.  avg/sum are unboxed for a
+		 * numeric column, where a native aggregate exists and gives the same
+		 * value.  min/max are unboxed for a numeric or text column: jsonb string
+		 * comparison orders by the database default collation -- the same
+		 * collation the promoted text column uses -- so native and boxed pick the
+		 * same value.  A type with no native min/max (e.g. a bool or vector
+		 * column) keeps the box.
+		 */
+		if (list_length(fn->args) == 1 && list_length(fn->funcname) == 1)
+		{
+			char	   *fname = strVal(linitial(fn->funcname));
+			bool		is_count = (strcmp(fname, "count") == 0);
+			bool		is_minmax = (strcmp(fname, "min") == 0 ||
+									 strcmp(fname, "max") == 0);
+			bool		is_sumavg = (strcmp(fname, "avg") == 0 ||
+									 strcmp(fname, "sum") == 0);
+
+			if (is_count || is_minmax || is_sumavg)
+			{
+				Node	   *nv = unboxCypherToJsonb(arg);
+
+				if (nv != NULL && IsA(nv, Var))
+				{
+					Oid			nt = getBaseType(exprType(nv));
+					bool		is_num = (nt == INT2OID || nt == INT4OID ||
+										  nt == INT8OID || nt == NUMERICOID ||
+										  nt == FLOAT4OID || nt == FLOAT8OID);
+
+					if (is_count ||
+						(is_sumavg && is_num) ||
+						(is_minmax && (is_num || nt == TEXTOID)))
+						arg = nv;
+				}
+			}
+		}
 
 		argtype = exprType(arg);
 
