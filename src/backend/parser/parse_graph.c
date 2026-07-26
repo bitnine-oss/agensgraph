@@ -108,6 +108,7 @@ typedef struct prop_constr_context
 	ParseState *pstate;
 	Node	   *qual;
 	Node	   *prop_map;
+	Node	   *elem;			/* the vertex/edge composite Var, for promotion */
 	List	   *pathelems;
 } prop_constr_context;
 
@@ -253,7 +254,7 @@ static void addElemQual(ParseState *pstate, AttrNumber varattno,
 static void adjustElemQuals(List *elem_quals, ParseNamespaceItem *nsitem);
 static Node *transformElemQuals(ParseState *pstate, Node *qual);
 static Node *transform_prop_constr(ParseState *pstate, Node *qual,
-								   Node *prop_map, Node *prop_constr);
+								   Node *prop_map, Node *elem, Node *prop_constr);
 static void transform_prop_constr_worker(Node *node, prop_constr_context *ctx);
 static bool ginAvail(ParseState *pstate, Index varno, AttrNumber varattno);
 static Oid	getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno,
@@ -3429,7 +3430,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 
 			if (is_cyphermap)
 				qual = transform_prop_constr(pstate, qual, prop_map,
-											 eqo->prop_map);
+											 (Node *) te->expr, eqo->prop_map);
 
 			if ((is_cyphermap && ginAvail(pstate, eqo->varno, 1)) ||
 				!is_cyphermap)
@@ -4910,7 +4911,7 @@ transformElemQuals(ParseState *pstate, Node *qual)
 		is_cyphermap = IsA(eq->prop_constr, CypherMapExpr);
 
 		if (is_cyphermap)
-			qual = transform_prop_constr(pstate, qual, prop_map,
+			qual = transform_prop_constr(pstate, qual, prop_map, (Node *) var,
 										 eq->prop_constr);
 
 		if ((is_cyphermap && ginAvail(pstate, eq->varno, eq->varattno)) ||
@@ -4934,13 +4935,14 @@ transformElemQuals(ParseState *pstate, Node *qual)
 
 static Node *
 transform_prop_constr(ParseState *pstate, Node *qual, Node *prop_map,
-					  Node *prop_constr)
+					  Node *elem, Node *prop_constr)
 {
 	prop_constr_context ctx;
 
 	ctx.pstate = pstate;
 	ctx.qual = qual;
 	ctx.prop_map = prop_map;
+	ctx.elem = elem;
 	ctx.pathelems = NIL;
 
 	transform_prop_constr_worker(prop_constr, &ctx);
@@ -4983,25 +4985,57 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 			Oid			rvaltype;
 			int			rvalloc;
 			Expr	   *expr;
+			Node	   *native = NULL;
 
-			lval = (Node *) makeJsonbFuncAccessor(ctx->pstate, ctx->prop_map, copyObject(ctx->pathelems));
+			/*
+			 * A single top-level key that is a promoted property resolves to its
+			 * native typed column -- the same resolution a WHERE comparison of
+			 * n.key gets -- so a pattern constraint like "{id: 5867}" binds the
+			 * typed column and its index instead of the jsonb (properties->>'id')
+			 * path.  The value is compared through transformPromotedComparison,
+			 * which unifies same-family operands to the native operator and falls
+			 * back to jsonb for an unlike type (never erroring).  A nested key, an
+			 * unpromoted key, or an unresolvable element (promotion off, across a
+			 * WITH, a write's RETURN) leaves native NULL and takes the jsonb path.
+			 */
+			if (list_length(ctx->pathelems) == 1 && ctx->elem != NULL)
+				native = resolvePromotedProperty(ctx->pstate, ctx->elem,
+												 strVal(k), -1);
 
-			rval = transformCypherExpr(ctx->pstate, v, EXPR_KIND_WHERE);
-			rvaltype = exprType(rval);
-			rvalloc = exprLocation(rval);
-			rval = coerce_expr(ctx->pstate, rval, rvaltype, JSONBOID, -1,
-							   COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
-			if (rval == NULL)
-				ereport(ERROR,
-						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("expression must be of type jsonb but %s",
-								format_type_be(rvaltype)),
-						 parser_errposition(ctx->pstate, rvalloc)));
+			if (native != NULL)
+			{
+				Node	   *boxed;
 
-			expr = make_op(ctx->pstate, list_make1(makeString("=")),
-						   lval, rval, ctx->pstate->p_last_srf, -1);
+				boxed = (Node *) makeFuncExpr(F_CYPHER_TO_JSONB, JSONBOID,
+											  list_make1(native), InvalidOid,
+											  InvalidOid, COERCE_EXPLICIT_CALL);
+				rval = transformCypherExpr(ctx->pstate, v, EXPR_KIND_WHERE);
+				ctx->qual = qualAndExpr(ctx->qual,
+										transformPromotedComparison(ctx->pstate,
+											list_make1(makeString("=")), boxed,
+											rval, ctx->pstate->p_last_srf, -1));
+			}
+			else
+			{
+				lval = (Node *) makeJsonbFuncAccessor(ctx->pstate, ctx->prop_map, copyObject(ctx->pathelems));
 
-			ctx->qual = qualAndExpr(ctx->qual, (Node *) expr);
+				rval = transformCypherExpr(ctx->pstate, v, EXPR_KIND_WHERE);
+				rvaltype = exprType(rval);
+				rvalloc = exprLocation(rval);
+				rval = coerce_expr(ctx->pstate, rval, rvaltype, JSONBOID, -1,
+								   COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
+				if (rval == NULL)
+					ereport(ERROR,
+							(errcode(ERRCODE_DATATYPE_MISMATCH),
+							 errmsg("expression must be of type jsonb but %s",
+									format_type_be(rvaltype)),
+							 parser_errposition(ctx->pstate, rvalloc)));
+
+				expr = make_op(ctx->pstate, list_make1(makeString("=")),
+							   lval, rval, ctx->pstate->p_last_srf, -1);
+
+				ctx->qual = qualAndExpr(ctx->qual, (Node *) expr);
+			}
 		}
 
 		ctx->pathelems = list_delete_cell(ctx->pathelems,

@@ -2085,7 +2085,7 @@ unboxCypherToJsonb(Node *n)
  * never equal, and order by type rank).  Returns NULL when neither side is a
  * promoted column, leaving every ordinary comparison exactly as it was.
  */
-static Node *
+Node *
 transformPromotedComparison(ParseState *pstate, List *opname,
 							Node *l, Node *r, Node *last_srf, int location)
 {
