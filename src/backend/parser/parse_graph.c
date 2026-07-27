@@ -101,6 +101,7 @@ typedef struct
 	Node	   *prop_map;
 	Index		varno;			/* RTE of the (anonymous) element, for
 								 * ginAvail */
+	ParseNamespaceItem *nsitem; /* the element's scan RTE, for promotion */
 } ElemQualOnly;
 
 typedef struct prop_constr_context
@@ -109,6 +110,9 @@ typedef struct prop_constr_context
 	Node	   *qual;
 	Node	   *prop_map;
 	Node	   *elem;			/* the vertex/edge composite Var, for promotion */
+	ParseNamespaceItem *elem_nsitem;	/* the element's scan RTE, set for an
+										 * anonymous element whose constraint is
+										 * applied inside the pattern query */
 	List	   *pathelems;
 } prop_constr_context;
 
@@ -254,7 +258,12 @@ static void addElemQual(ParseState *pstate, AttrNumber varattno,
 static void adjustElemQuals(List *elem_quals, ParseNamespaceItem *nsitem);
 static Node *transformElemQuals(ParseState *pstate, Node *qual);
 static Node *transform_prop_constr(ParseState *pstate, Node *qual,
-								   Node *prop_map, Node *elem, Node *prop_constr);
+								   Node *prop_map, Node *elem,
+								   ParseNamespaceItem *elem_nsitem,
+								   Node *prop_constr);
+static Node *resolvePromotedPropertyOnNSItem(ParseState *pstate,
+											 ParseNamespaceItem *nsitem,
+											 char *key);
 static void transform_prop_constr_worker(Node *node, prop_constr_context *ctx);
 static bool ginAvail(ParseState *pstate, Index varno, AttrNumber varattno);
 static Oid	getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno,
@@ -3430,7 +3439,8 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 
 			if (is_cyphermap)
 				qual = transform_prop_constr(pstate, qual, prop_map,
-											 (Node *) te->expr, eqo->prop_map);
+											 (Node *) te->expr, eqo->nsitem,
+											 eqo->prop_map);
 
 			if ((is_cyphermap && ginAvail(pstate, eqo->varno, 1)) ||
 				!is_cyphermap)
@@ -3616,6 +3626,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList,
 			eqo->te = te;
 			eqo->prop_map = cnode->prop_map;
 			eqo->varno = nsitem->p_rtindex;
+			eqo->nsitem = nsitem;
 
 			*eqoList = lappend(*eqoList, eqo);
 		}
@@ -3781,6 +3792,7 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 			eqo->te = _te;
 			eqo->prop_map = crel->prop_map;
 			eqo->varno = nsitem->p_rtindex;
+			eqo->nsitem = nsitem;
 
 			*eqoList = lappend(*eqoList, eqo);
 		}
@@ -4912,7 +4924,7 @@ transformElemQuals(ParseState *pstate, Node *qual)
 
 		if (is_cyphermap)
 			qual = transform_prop_constr(pstate, qual, prop_map, (Node *) var,
-										 eq->prop_constr);
+										 NULL, eq->prop_constr);
 
 		if ((is_cyphermap && ginAvail(pstate, eq->varno, eq->varattno)) ||
 			!is_cyphermap)
@@ -4935,7 +4947,8 @@ transformElemQuals(ParseState *pstate, Node *qual)
 
 static Node *
 transform_prop_constr(ParseState *pstate, Node *qual, Node *prop_map,
-					  Node *elem, Node *prop_constr)
+					  Node *elem, ParseNamespaceItem *elem_nsitem,
+					  Node *prop_constr)
 {
 	prop_constr_context ctx;
 
@@ -4943,6 +4956,7 @@ transform_prop_constr(ParseState *pstate, Node *qual, Node *prop_map,
 	ctx.qual = qual;
 	ctx.prop_map = prop_map;
 	ctx.elem = elem;
+	ctx.elem_nsitem = elem_nsitem;
 	ctx.pathelems = NIL;
 
 	transform_prop_constr_worker(prop_constr, &ctx);
@@ -4997,10 +5011,24 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 			 * back to jsonb for an unlike type (never erroring).  A nested key, an
 			 * unpromoted key, or an unresolvable element (promotion off, across a
 			 * WITH, a write's RETURN) leaves native NULL and takes the jsonb path.
+			 *
+			 * An anonymous element -- "(:person {id: 5867})", with no variable to
+			 * project a sentinel column across the pattern subquery boundary --
+			 * carries its scan RTE directly (elem_nsitem), so the column is bound
+			 * on that relation here, inside the pattern query, where the
+			 * constraint is applied.  A named element instead resolves through the
+			 * sentinel projected under its alias (the elem Var).
 			 */
-			if (list_length(ctx->pathelems) == 1 && ctx->elem != NULL)
-				native = resolvePromotedProperty(ctx->pstate, ctx->elem,
-												 strVal(k), -1);
+			if (list_length(ctx->pathelems) == 1)
+			{
+				if (ctx->elem_nsitem != NULL)
+					native = resolvePromotedPropertyOnNSItem(ctx->pstate,
+															 ctx->elem_nsitem,
+															 strVal(k));
+				else if (ctx->elem != NULL)
+					native = resolvePromotedProperty(ctx->pstate, ctx->elem,
+													 strVal(k), -1);
+			}
 
 			if (native != NULL)
 			{
@@ -5385,6 +5413,40 @@ appendForwardedSentinels(ParseState *pstate, Var *composite,
 	}
 
 	pfree(oldprefix);
+}
+
+/*
+ * resolvePromotedPropertyOnNSItem - resolve a property key to the promoted
+ * typed column directly on an element's scan RTE, returning a Var on that
+ * column (native typed value, as resolvePromotedProperty returns), or NULL to
+ * fall back to the jsonb path.
+ *
+ * Used for an anonymous pattern element, whose map constraint is applied inside
+ * the pattern query against the scan itself -- there is no alias, so no sentinel
+ * column is projected across the subquery boundary for resolvePromotedProperty
+ * to find.  The RTE is the label relation (a VLE edge or other non-relation RTE
+ * offers no promoted column and takes the jsonb path), so the column is bound
+ * with make_var, exactly as makeVertexExpr/getColumnVar bind the id and
+ * properties columns of the same scan.
+ */
+static Node *
+resolvePromotedPropertyOnNSItem(ParseState *pstate, ParseNamespaceItem *nsitem,
+								char *key)
+{
+	RangeTblEntry *rte = nsitem->p_rte;
+	AttrNumber	attnum;
+	Var		   *var;
+
+	if (!enable_property_promotion)
+		return NULL;
+	if (rte->rtekind != RTE_RELATION || !OidIsValid(rte->relid))
+		return NULL;
+	if (!get_label_property_column(rte->relid, key, &attnum, NULL))
+		return NULL;
+
+	var = make_var(pstate, nsitem, attnum, -1);
+	markVarForSelectPriv(pstate, var);
+	return (Node *) var;
 }
 
 /*
