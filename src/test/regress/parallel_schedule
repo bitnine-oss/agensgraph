@@ -191,5 +191,8 @@ test: sql_restriction
 # run property index
 test: propertyindex
 
+# run cypher typed-column property promotion (read resolution)
+test: cypher_typed_column
+
 # run cypher finalize
 test: cypher_finalize
