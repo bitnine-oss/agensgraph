@@ -323,6 +323,9 @@ overexplain_debug(PlannedStmt *plannedstmt, ExplainState *es)
 		case CMD_NOTHING:
 			commandType = "nothing";
 			break;
+		case CMD_GRAPHWRITE:
+			commandType = "graphwrite";
+			break;
 	}
 	ExplainPropertyText("Command Type", commandType, es);
 
