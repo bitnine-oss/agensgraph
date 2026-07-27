@@ -989,9 +989,6 @@ GraphmetaRecordEdgeInsertFromSlot(Relation rel, TupleTableSlot *slot)
 	bool		startnull;
 	bool		endnull;
 
-	if (!auto_gather_graphmeta)
-		return;
-
 	/*
 	 * Resolving (is-edge-label, graph, edge labid) from the relation is
 	 * invariant for a given target, so a bulk load repeats it per row.  This is
@@ -1020,9 +1017,17 @@ GraphmetaRecordEdgeInsertFromSlot(Relation rel, TupleTableSlot *slot)
 	if (startnull || endnull)
 		return;
 
-	agstat_count_edge_create_ext(graph, edge_labid,
-								 GraphidGetLabid(DatumGetGraphid(startd)),
-								 GraphidGetLabid(DatumGetGraphid(endd)));
+	if (auto_gather_graphmeta)
+		agstat_count_edge_create_ext(graph, edge_labid,
+									 GraphidGetLabid(DatumGetGraphid(startd)),
+									 GraphidGetLabid(DatumGetGraphid(endd)));
+	else
+		/*
+		 * The edge is committing while gathering is off, so ag_graphmeta is not
+		 * being maintained: mark this graph's baseline stale (cleared at commit)
+		 * so pruning stops trusting it until a regather.
+		 */
+		agstat_note_off_edge_write(graph);
 }
 
 Datum

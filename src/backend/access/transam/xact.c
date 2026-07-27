@@ -2325,6 +2325,14 @@ CommitTransaction(void)
 	if (auto_gather_graphmeta)
 		AtEOXact_AgStat(true);
 
+	/*
+	 * Runs unconditionally: an edge write that changed connectivity while
+	 * auto_gather_graphmeta was off is exactly what we must react to here, and it
+	 * happened with the GUC off.  Clearing the affected graphs' baseline flags in
+	 * this same transaction keeps the flag change atomic with the write commit.
+	 */
+	AtEOXact_GraphmetaValidClear(true);
+
 	/* close large objects before lower-level cleanup */
 	AtEOXact_LargeObject(true);
 
@@ -3000,6 +3008,7 @@ AbortTransaction(void)
 		AtEOXact_HashTables(false);
 		if (auto_gather_graphmeta)
 			AtEOXact_AgStat(false);
+		AtEOXact_GraphmetaValidClear(false);
 		AtEOXact_PgStat(false, is_parallel_worker);
 		AtEOXact_ApplyLauncher(false);
 		AtEOXact_LogicalRepWorkers(false);

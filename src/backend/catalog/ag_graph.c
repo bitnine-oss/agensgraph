@@ -16,6 +16,7 @@
 #include "access/xact.h"
 #include "catalog/ag_graph.h"
 #include "catalog/ag_graph_fn.h"
+#include "catalog/ag_graphmeta.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
@@ -26,8 +27,10 @@
 #include "utils/guc.h"
 #include "utils/guc_hooks.h"
 #include "utils/lsyscache.h"
+#include "utils/inval.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "storage/lmgr.h"
 #include "catalog/catalog.h"
 #include "miscadmin.h"
 #include "pgstat.h"
@@ -103,20 +106,83 @@ auto_gather_graphmeta_assign(bool newval, void *extra)
 }
 
 /*
- * graphmeta_baseline_gathered
- *		True iff this backend holds a complete, maintained ag_graphmeta baseline
- *		-- i.e. auto_gather_graphmeta was turned on inside a transaction (or
- *		inherited by a parallel worker), so the false->true regather actually
- *		ran.  Graphmeta scan pruning must gate on this rather than the raw
- *		auto_gather_graphmeta GUC: the GUC can read "on" while no baseline was
- *		ever gathered -- enabled from postgresql.conf outside any transaction,
- *		or restored by rolling back a "SET ... = off" -- and pruning against an
- *		incomplete catalog would silently drop rows.
+ * graphmeta_baseline_valid
+ *		True iff graphmeta scan pruning may trust ag_graphmeta for `graph':
+ *		gathering is on (so the catalog is being maintained) AND a complete
+ *		baseline is on record for this graph (ag_graph.graphmeta_valid).  The
+ *		durable per-graph flag replaces the old per-backend "did this session
+ *		regather" static, so a session that merely inherited auto_gather_graphmeta
+ *		= on (ALTER DATABASE / postgresql.conf) -- which never runs the assign
+ *		hook's regather -- still prunes, without a per-session rescan.  Read
+ *		through the GRAPHOID syscache: cheap, and auto-invalidated when the flag
+ *		flips (graphmeta_set_valid).  The GUC gate stays because the flag can read
+ *		valid while gathering is off (an off write has not happened yet), and an
+ *		off session does not maintain the catalog going forward.
  */
 bool
-graphmeta_baseline_gathered(void)
+graphmeta_baseline_valid(Oid graph)
 {
-	return prev_auto_gather_graphmeta;
+	HeapTuple	tup;
+	bool		valid;
+
+	if (!auto_gather_graphmeta)
+		return false;
+
+	tup = SearchSysCache1(GRAPHOID, ObjectIdGetDatum(graph));
+	if (!HeapTupleIsValid(tup))
+		return false;
+	valid = ((Form_ag_graph) GETSTRUCT(tup))->graphmeta_valid;
+	ReleaseSysCache(tup);
+
+	return valid;
+}
+
+/*
+ * graphmeta_set_valid
+ *		Flip ag_graph.graphmeta_valid for one graph.  regather_graphmeta() sets it
+ *		true after rebuilding the baseline; the transaction that commits an edge
+ *		write while gathering is off clears it (that write changed connectivity
+ *		without maintaining ag_graphmeta).  A per-graph object lock serializes
+ *		concurrent flippers, so two off-write committers never collide on the row
+ *		and error with "tuple concurrently updated"; the loser re-reads the
+ *		committed value and the update is idempotent (a no-op when the flag
+ *		already holds `valid').
+ */
+void
+graphmeta_set_valid(Oid graph, bool valid)
+{
+	Relation	rel;
+	HeapTuple	tup;
+
+	if (!OidIsValid(graph))
+		return;
+
+	LockDatabaseObject(GraphRelationId, graph, 0, AccessExclusiveLock);
+
+	rel = table_open(GraphRelationId, RowExclusiveLock);
+	tup = SearchSysCacheCopy1(GRAPHOID, ObjectIdGetDatum(graph));
+	if (HeapTupleIsValid(tup))
+	{
+		Form_ag_graph g = (Form_ag_graph) GETSTRUCT(tup);
+
+		if (g->graphmeta_valid != valid)
+		{
+			g->graphmeta_valid = valid;
+			CatalogTupleUpdate(rel, &tup->t_self, tup);
+
+			/*
+			 * The flag lives on ag_graph, but cached graphmeta-pruned plans
+			 * depend on GraphMetaRelationId (see inherit.c), not on ag_graph, so
+			 * the automatic GRAPHOID syscache invalidation the update above emits
+			 * (which refreshes the read path) would not re-plan them.  Invalidate
+			 * ag_graphmeta's relcache too so those plans re-plan against the
+			 * changed validity -- mirroring regather and the delta path.
+			 */
+			CacheInvalidateRelcacheByRelid(GraphMetaRelationId);
+		}
+		heap_freetuple(tup);
+	}
+	table_close(rel, RowExclusiveLock);
 }
 
 /* check_hook: validate new graph_path value */
@@ -267,6 +333,16 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString,
 	values[Anum_ag_graph_oid - 1] = graphoid;
 	values[Anum_ag_graph_graphname - 1] = NameGetDatum(&gname);
 	values[Anum_ag_graph_nspid - 1] = ObjectIdGetDatum(schemaoid);
+
+	/*
+	 * A genuinely new graph is empty, so its (empty) ag_graphmeta baseline is
+	 * trivially complete -- start it valid.  A binary-upgrade recreation is
+	 * different: the edge data files are linked in behind the maintained write
+	 * path (no COPY, so the off-write clear hook never fires) while ag_graphmeta
+	 * is recreated empty by the new cluster's initdb, so it must start invalid
+	 * and force a post-upgrade regather_graphmeta().
+	 */
+	values[Anum_ag_graph_graphmeta_valid - 1] = BoolGetDatum(!IsBinaryUpgrade);
 
 	tup = heap_form_tuple(tupDesc, values, isnull);
 

@@ -853,6 +853,8 @@ extern void agstat_count_edge_create(Labid edge, Labid start, Labid end);
 extern void agstat_count_edge_delete(Labid edge, Labid start, Labid end);
 extern void agstat_count_edge_create_ext(Oid graph, Labid edge, Labid start, Labid end);
 extern bool has_pending_graphmeta_writes(void);
+extern void agstat_note_off_edge_write(Oid graph);
+extern void AtEOXact_GraphmetaValidClear(bool isCommit);
 extern void agstat_drop_vlabel(const char *vlab);
 extern void agstat_drop_elabel(const char *elab);
 extern void agstat_drop_graph(const char *graph);

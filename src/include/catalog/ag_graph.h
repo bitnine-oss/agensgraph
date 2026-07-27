@@ -26,6 +26,16 @@ CATALOG(ag_graph,7040,GraphRelationId) BKI_SCHEMA_MACRO
 	Oid			oid;
 	NameData	graphname;
 	Oid			nspid;
+
+	/*
+	 * True iff this graph's ag_graphmeta baseline is complete and has been
+	 * maintained continuously since it was gathered -- i.e. it is safe for the
+	 * planner to prune scans against it.  Set by regather_graphmeta(); cleared
+	 * when an edge write commits while auto_gather_graphmeta is off (that write
+	 * changed connectivity without maintaining the catalog).  A new empty graph
+	 * is trivially valid (see GraphCreate).
+	 */
+	bool		graphmeta_valid;
 } FormData_ag_graph;
 
 /* ----------------
