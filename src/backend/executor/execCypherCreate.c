@@ -16,6 +16,7 @@
 #include "utils/jsonb.h"
 #include "utils/rel.h"
 #include "access/tableam.h"
+#include "catalog/ag_graph_fn.h"
 #include "pgstat.h"
 #include "commands/trigger.h"
 #include "tcop/tcopprot.h"
@@ -344,6 +345,8 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 								 GraphidGetLabid(end)
 			);
 	}
+	else
+		agstat_note_off_edge_write(get_graph_path_oid());
 
 	return edge;
 }

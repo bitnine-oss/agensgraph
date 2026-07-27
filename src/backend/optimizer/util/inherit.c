@@ -600,7 +600,13 @@ propagate_graphmeta_constraints(PlannerInfo *root)
 	bool		empty = false;
 	int			rti;
 
-	if (!graphmeta_baseline_gathered() || has_pending_graphmeta_writes())
+	/*
+	 * Cheap pre-gate: skip the RTE walk entirely when gathering is off or this
+	 * transaction has uncommitted connectivity changes.  The per-graph baseline
+	 * check needs the graph oid, so it is applied below once the first pass has
+	 * resolved it.
+	 */
+	if (!auto_gather_graphmeta || has_pending_graphmeta_writes())
 		return;
 
 	/* First pass: find the graph and whether there is anything to do. */
@@ -639,6 +645,16 @@ propagate_graphmeta_constraints(PlannerInfo *root)
 			any_anchor = true;
 	}
 	if (!OidIsValid(graph) || (!any_anchor && !has_delete_edge))
+		return;
+
+	/*
+	 * Now that the target graph is known, require a complete, maintained
+	 * ag_graphmeta baseline for it before pruning.  This is the durable per-graph
+	 * gate that lets an inherited auto_gather_graphmeta=on session prune (it
+	 * never ran the assign-hook regather) yet refuses to prune a graph whose
+	 * baseline went stale from an edge write committed while gathering was off.
+	 */
+	if (!graphmeta_baseline_valid(graph))
 		return;
 
 	/*

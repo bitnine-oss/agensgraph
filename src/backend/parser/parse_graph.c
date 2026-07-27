@@ -7249,7 +7249,7 @@ transformDeleteJoinNSItem(ParseState *pstate, CypherClause *clause)
 							  true);
 	Assert(r_qry->commandType == CMD_SELECT);
 
-	if (graphmeta_baseline_gathered() &&
+	if (graphmeta_baseline_valid(graph_oid) &&
 		!has_pending_graphmeta_writes() &&
 		list_length(exprs) == 1 &&
 		exprType(linitial(exprs)) == VERTEXOID)

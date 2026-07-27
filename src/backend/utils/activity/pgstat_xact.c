@@ -19,6 +19,7 @@
 #include "catalog/ag_graphmeta.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/indexing.h"
+#include "nodes/pg_list.h"
 #include "pgstat.h"
 #include "utils/inval.h"
 #include "utils/memutils.h"
@@ -59,6 +60,17 @@ typedef struct AgStat_SubXactStatus
 static AgStat_SubXactStatus *agStatXactStack = NULL;
 
 /*
+ * Graphs that had a connectivity-adding edge write in this transaction while
+ * auto_gather_graphmeta was off.  Such a write changed connectivity without
+ * maintaining ag_graphmeta, so each listed graph's baseline is now stale and its
+ * ag_graph.graphmeta_valid flag must be cleared at commit
+ * (AtEOXact_GraphmetaValidClear).  Lives in TopTransactionContext; the one-entry
+ * cache keeps the per-row set-site O(1) for the common single-graph bulk load.
+ */
+static List *graphmeta_off_write_graphs = NIL;
+static Oid	graphmeta_off_write_last = InvalidOid;
+
+/*
  * Returns true if the current transaction has accumulated, but not yet flushed,
  * edge-connectivity changes destined for ag_graphmeta.  Those deltas are merged
  * into the catalog only at PreCommit (AtEOXact_AgStat), so while they are pending
@@ -81,6 +93,54 @@ has_pending_graphmeta_writes(void)
 	}
 
 	return false;
+}
+
+/*
+ * Record that a connectivity-adding edge write is happening in `graph' while
+ * auto_gather_graphmeta is off.  Called from the edge-insert write paths on the
+ * gathering-off branch (the on branch instead counts the edge into ag_graphmeta).
+ * Deletes are deliberately NOT recorded: a stale over-count only makes pruning
+ * keep a label with no live edges (scans a superset, never drops rows), whereas
+ * an unrecorded insert could make pruning drop rows.
+ */
+void
+agstat_note_off_edge_write(Oid graph)
+{
+	MemoryContext old;
+
+	if (!OidIsValid(graph) || graph == graphmeta_off_write_last)
+		return;					/* hot path: a single-graph bulk load */
+
+	old = MemoryContextSwitchTo(TopTransactionContext);
+	graphmeta_off_write_graphs = list_append_unique_oid(graphmeta_off_write_graphs,
+														graph);
+	MemoryContextSwitchTo(old);
+	graphmeta_off_write_last = graph;
+}
+
+/*
+ * Called from access/transam/xact.c at top-level commit/abort.  On commit, clear
+ * the baseline flag of every graph that took an off-write this transaction, so
+ * later planning stops pruning against the now-stale baseline until a regather.
+ * The clear runs here -- in the same transaction that made the edge write -- so
+ * the flag change and the write commit atomically; a crash between them cannot
+ * happen.  On abort nothing is cleared (the writes rolled back); just reset the
+ * per-transaction tracking.
+ */
+void
+AtEOXact_GraphmetaValidClear(bool isCommit)
+{
+	if (isCommit && graphmeta_off_write_graphs != NIL)
+	{
+		ListCell   *lc;
+
+		foreach(lc, graphmeta_off_write_graphs)
+			graphmeta_set_valid(lfirst_oid(lc), false);
+	}
+
+	/* TopTransactionContext teardown frees the list nodes themselves. */
+	graphmeta_off_write_graphs = NIL;
+	graphmeta_off_write_last = InvalidOid;
 }
 
 /*

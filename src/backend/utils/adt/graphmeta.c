@@ -13,10 +13,13 @@
 #include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/xact.h"
+#include "catalog/ag_graph.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/ag_graphmeta.h"
 #include "catalog/ag_label.h"
 #include "catalog/ag_edge_d.h"
 #include "catalog/indexing.h"
+#include "nodes/pg_list.h"
 #include "utils/inval.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
@@ -249,6 +252,37 @@ regather_graphmeta_internal(void)
 	table_endscan(scan);
 	UnregisterSnapshot(snapshot);
 	table_close(rel, RowExclusiveLock);
+
+	/*
+	 * The rebuild rewrote ag_graphmeta for every edge label of every graph, so
+	 * each graph's baseline is now complete: mark them all valid, which is what
+	 * lets an inherited auto_gather_graphmeta=on session prune.  Collect the oids
+	 * first, then flip through graphmeta_set_valid, so ag_graph is never updated
+	 * while it is being scanned.
+	 */
+	{
+		Relation	agraph;
+		TableScanDesc gscan;
+		HeapTuple	gtup;
+		Snapshot	gsnap;
+		List	   *graphoids = NIL;
+		ListCell   *lc;
+
+		agraph = table_open(GraphRelationId, AccessShareLock);
+		gsnap = RegisterSnapshot(GetLatestSnapshot());
+		gscan = table_beginscan(agraph, gsnap, 0, NULL);
+		while ((gtup = heap_getnext(gscan, ForwardScanDirection)) != NULL)
+			graphoids = lappend_oid(graphoids,
+									((Form_ag_graph) GETSTRUCT(gtup))->oid);
+		table_endscan(gscan);
+		UnregisterSnapshot(gsnap);
+		table_close(agraph, AccessShareLock);
+
+		foreach(lc, graphoids)
+			graphmeta_set_valid(lfirst_oid(lc), true);
+
+		list_free(graphoids);
+	}
 
 	/*
 	 * Rewriting ag_graphmeta's data rows emits only catcache invalidations,
