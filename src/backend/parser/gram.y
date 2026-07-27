@@ -19250,16 +19250,28 @@ label_prop:
 					c->location = @1;
 					$$ = (Node *) c;
 				}
-			/* a plain typed PROPERTY column is not yet supported */
-			| ColId Typename PROPERTY
+			/*
+			 * A bare, non-generated promoted column (a type with no GENERATED
+			 * clause) is the deferred write-routed form: the column would be
+			 * written directly rather than mirrored from the jsonb bag, which
+			 * this release does not implement.  It is spelled with no storage
+			 * keyword at all -- PROPERTY is reserved for CREATE / DROP PROPERTY
+			 * INDEX and is not a column form here.  The parse builds a plain
+			 * (non-generated) ColumnDef and the CREATE / ALTER label transform
+			 * rejects it with a GENERATED-guiding message; keeping the rejection
+			 * out of the grammar action lets a trailing token (e.g. the retired
+			 * PROPERTY keyword) surface as an ordinary syntax error.
+			 */
+			| ColId Typename
 				{
-					ereport(ERROR,
-							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("PROPERTY columns are not supported yet"),
-							 errhint("Use GENERATED instead, e.g. \"%s %s GENERATED\".",
-									 $1, "<type>"),
-							 parser_errposition(@3)));
-					$$ = NULL;		/* not reached */
+					ColumnDef  *c = makeNode(ColumnDef);
+
+					c->colname = $1;
+					c->typeName = $2;
+					c->is_local = true;
+					c->constraints = NIL;	/* no GENERATED -> rejected downstream */
+					c->location = @1;
+					$$ = (Node *) c;
 				}
 		;
 
@@ -19421,6 +19433,25 @@ alter_label_cmd:
 					AlterTableCmd *n = makeNode(AlterTableCmd);
 					n->subtype = AT_DisableIndex;
 					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> ADD [COLUMN] <label_prop> */
+			| ADD_P opt_column label_prop
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_AddColumn;
+					n->def = $3;
+					n->missing_ok = false;
+					$$ = (Node *) n;
+				}
+			/* ALTER VLABEL <name> DROP [COLUMN] <name> [RESTRICT|CASCADE] */
+			| DROP opt_column ColId opt_drop_behavior
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_DropColumn;
+					n->name = $3;
+					n->behavior = $4;
+					n->missing_ok = false;
+					$$ = (Node *) n;
 				}
 		;
 

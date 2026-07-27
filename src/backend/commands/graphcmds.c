@@ -412,6 +412,193 @@ recordPromotedProperties(Oid laboid, Oid relid, List *promoted_props)
 }
 
 /*
+ * State carried from BeginAlterLabelProperties() to FinishAlterLabelProperties()
+ * across the AlterTable() that adds/drops the columns.
+ */
+struct AlterLabelPropertyState
+{
+	List	   *addDefs;		/* copied ColumnDefs of the added properties */
+	List	   *dropKeys;		/* property keys of the dropped columns (char *) */
+};
+
+/*
+ * BeginAlterLabelProperties
+ *
+ * Before AlterTable() adds/drops the columns, capture what the catalog sync
+ * will need afterwards.  For an added column, copy the ColumnDef now:
+ * ATExecAddColumn re-transforms it in place (moving the generation expression
+ * out of the CONSTR_GENERATED constraint), which would leave nothing for
+ * recordPromotedProperties to read from.  For a dropped column, capture the
+ * property key now: the column --
+ * and its ag_label_property row's attnum -- is gone once AlterTable() runs, and
+ * the key is looked up by attnum because the explicit-key form records a key
+ * that differs from the column name.  Returns NULL when there is nothing to
+ * sync (e.g. ALTER VLABEL ... SET STORAGE), so plain label alters are untouched.
+ */
+AlterLabelPropertyState *
+BeginAlterLabelProperties(Oid relid, List *cmds)
+{
+	Oid			laboid = get_relid_laboid(relid);
+	List	   *addDefs = NIL;
+	List	   *dropKeys = NIL;
+	ListCell   *lc;
+	AlterLabelPropertyState *state;
+
+	if (!OidIsValid(laboid))
+		return NULL;
+
+	foreach(lc, cmds)
+	{
+		AlterTableCmd *cmd = (AlterTableCmd *) lfirst(lc);
+
+		if (cmd->subtype == AT_AddColumn && cmd->def != NULL)
+			addDefs = lappend(addDefs, copyObject(cmd->def));
+		else if (cmd->subtype == AT_DropColumn && cmd->name != NULL)
+		{
+			AttrNumber	attnum;
+			char	   *propname;
+
+			/*
+			 * Refuse to drop a fixed structural column of the label -- these
+			 * define the vertex/edge shape and are not user-droppable.  Any
+			 * other column is droppable: a recorded promoted property (whose
+			 * ag_label_property row we then forget below), a long-form/derived
+			 * generated column (never recorded, so nothing to forget), or a
+			 * plain column.  Keying the refusal on structural name rather than
+			 * "has no ag_label_property row" is what lets a derived column drop.
+			 */
+			if (strcmp(cmd->name, AG_ELEM_LOCAL_ID) == 0 ||
+				strcmp(cmd->name, AG_ELEM_PROP_MAP) == 0 ||
+				strcmp(cmd->name, AG_START_ID) == 0 ||
+				strcmp(cmd->name, AG_END_ID) == 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("cannot drop column \"%s\" of graph label \"%s\"",
+								cmd->name, get_rel_name(relid)),
+						 errhint("It is a structural column of the graph label.")));
+
+			attnum = get_attnum(relid, cmd->name);
+
+			/* a nonexistent column: let AlterTable report it */
+			if (attnum == InvalidAttrNumber)
+				continue;
+
+			/* forget the promotion mapping only if the column has one */
+			propname = get_label_property_name_by_attnum(laboid, attnum);
+			if (propname != NULL)
+				dropKeys = lappend(dropKeys, propname);
+		}
+	}
+
+	/*
+	 * Reject an ADD whose promotion source key is already promoted on the label
+	 * (unless the same statement drops it), or is promoted twice in one
+	 * statement.  ag_label_property is unique on (laboid, propname), so such a
+	 * collision would otherwise surface only in FinishAlterLabelProperties --
+	 * after a full table rewrite has already run -- as an opaque unique_violation.
+	 * Catch it here, before any rewrite, with an actionable message.
+	 */
+	{
+		ListCell   *la;
+		List	   *seen = NIL;		/* source keys added by this statement */
+
+		foreach(la, addDefs)
+		{
+			ColumnDef  *col = (ColumnDef *) lfirst(la);
+			ListCell   *lc2;
+			char	   *key = NULL;
+			bool		dropped = false;
+
+			/*
+			 * A column whose NAME already exists is reported by ALTER TABLE's own
+			 * duplicate-column guard (which also runs before any rewrite), and its
+			 * "column already exists" is the more direct message.  Leave that case
+			 * to it; only pre-check source-key collisions for genuinely new columns.
+			 */
+			if (get_attnum(relid, col->colname) != InvalidAttrNumber)
+				continue;
+
+			foreach(lc2, col->constraints)
+			{
+				Constraint *con = (Constraint *) lfirst(lc2);
+
+				if (con->contype == CONSTR_GENERATED)
+				{
+					key = extractPromotedSourceKey(con->raw_expr);
+					break;
+				}
+			}
+			if (key == NULL)		/* long-form/derived or non-generated */
+				continue;
+
+			foreach(lc2, seen)
+				if (strcmp((char *) lfirst(lc2), key) == 0)
+					ereport(ERROR,
+							(errcode(ERRCODE_DUPLICATE_COLUMN),
+							 errmsg("property \"%s\" is promoted more than once in the same statement",
+									key)));
+
+			foreach(lc2, dropKeys)
+				if (strcmp((char *) lfirst(lc2), key) == 0)
+				{
+					dropped = true;
+					break;
+				}
+
+			if (!dropped && get_label_property_column(relid, key, NULL, NULL))
+				ereport(ERROR,
+						(errcode(ERRCODE_DUPLICATE_COLUMN),
+						 errmsg("property \"%s\" is already promoted on graph label \"%s\"",
+								key, get_rel_name(relid)),
+						 errhint("Drop the existing promoted column first, or promote the property to a different column name.")));
+
+			seen = lappend(seen, key);
+		}
+	}
+
+	if (addDefs == NIL && dropKeys == NIL)
+		return NULL;
+
+	state = (AlterLabelPropertyState *) palloc0(sizeof(*state));
+	state->addDefs = addDefs;
+	state->dropKeys = dropKeys;
+	return state;
+}
+
+/*
+ * FinishAlterLabelProperties
+ *
+ * After AlterTable() has added/dropped the columns, sync ag_label_property:
+ * record each added shorthand property (reusing recordPromotedProperties, which
+ * resolves the now-existing column's attnum and skips a long-form/derived column
+ * that maps to no single key), and forget each dropped property's key.
+ */
+void
+FinishAlterLabelProperties(Oid relid, AlterLabelPropertyState *state)
+{
+	Oid			laboid;
+	ListCell   *lc;
+
+	if (state == NULL)
+		return;
+
+	laboid = get_relid_laboid(relid);
+	if (!OidIsValid(laboid))
+		return;
+
+	/*
+	 * Delete dropped keys BEFORE recording added ones so a single statement
+	 * that drops and re-adds a column mapping to the same source key
+	 * (ALTER ... DROP c, ADD c) does not collide on ag_label_property's unique
+	 * (laboid, propname) index.
+	 */
+	foreach(lc, state->dropKeys)
+		DeleteAgLabelProperty(laboid, (char *) lfirst(lc));
+
+	recordPromotedProperties(laboid, relid, state->addDefs);
+}
+
+/*
  * Raise the statistics target on an edge label's start/end columns so the
  * planner has good cardinality for traversal joins on a skewed (power-law)
  * degree distribution.

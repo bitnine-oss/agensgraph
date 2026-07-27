@@ -4720,6 +4720,31 @@ makeDefaultCreateAGLabelStmt(char *graph_name, LabelKind labKind, int location)
 }
 
 /*
+ * label_prop_is_generated - does a promoted-column ColumnDef carry a GENERATED
+ * clause?
+ *
+ * The label_prop grammar attaches a CONSTR_GENERATED constraint to the working
+ * (STORED generated) forms and leaves the bare "col type" form with no
+ * constraints.  A bare, non-generated promoted column is the deferred
+ * write-routed form, which this release does not implement; the CREATE / ALTER
+ * label transforms use this to reject it with a GENERATED-guiding message.
+ */
+static bool
+label_prop_is_generated(ColumnDef *col)
+{
+	ListCell   *lc;
+
+	foreach(lc, col->constraints)
+	{
+		Constraint *con = (Constraint *) lfirst(lc);
+
+		if (IsA(con, Constraint) && con->contype == CONSTR_GENERATED)
+			return true;
+	}
+	return false;
+}
+
+/*
  * transformCreateLabelStmt - parse analysis for CREATE VLABEL/ELABEL
  *
  * This function is based on transformCreateStmt().
@@ -4851,6 +4876,25 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 						(errcode(ERRCODE_DUPLICATE_COLUMN),
 						 errmsg("promoted property name \"%s\" is reserved",
 								col->colname)));
+
+			/*
+			 * A promoted column must be GENERATED (it mirrors a jsonb-bag
+			 * property).  The bare "col type" form is the deferred, not-yet
+			 * implemented non-generated column; reject it here with a message
+			 * that points at GENERATED.
+			 *
+			 * Exception: in binary upgrade, pg_dump reconstructs a dropped
+			 * column's original attnum by emitting a bare-typename placeholder
+			 * ("........pg.dropped.N........" integer) in this list, which it then
+			 * drops.  Let that through so the physical column layout is restored
+			 * exactly; it is never recorded in ag_label_property (no generation
+			 * expression) and does not survive the restore.
+			 */
+			if (!label_prop_is_generated(col) && !IsBinaryUpgrade)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("a non-generated promoted column is not supported yet"),
+						 errhint("Use GENERATED to mirror the property from the jsonb bag.")));
 		}
 
 		stmt->tableElts = list_concat(stmt->tableElts,
@@ -5373,6 +5417,42 @@ transformAlterLabelStmt(AlterTableStmt *stmt)
 								 errmsg("cannot ALTER inheritance with base label")));
 
 					par->schemaname = get_graph_path(false);
+
+					newcmds = lappend(newcmds, cmd);
+					break;
+				}
+			case AT_AddColumn:
+				{
+					ColumnDef  *col = (ColumnDef *) cmd->def;
+
+					/*
+					 * ADD [COLUMN] carries a label_prop ColumnDef; reject a
+					 * reserved structural column name up front with the same
+					 * message CREATE VLABEL gives, before the generic ADD COLUMN
+					 * machinery reports a less specific error.  Everything else
+					 * about the column (generation expression, immutability,
+					 * backfill) is checked by the ordinary ADD COLUMN path.
+					 */
+					if (col != NULL && col->colname != NULL &&
+						(strcmp(col->colname, AG_ELEM_LOCAL_ID) == 0 ||
+						 strcmp(col->colname, AG_ELEM_PROP_MAP) == 0 ||
+						 strcmp(col->colname, AG_START_ID) == 0 ||
+						 strcmp(col->colname, AG_END_ID) == 0))
+						ereport(ERROR,
+								(errcode(ERRCODE_DUPLICATE_COLUMN),
+								 errmsg("promoted property name \"%s\" is reserved",
+										col->colname)));
+
+					/*
+					 * As for CREATE, a promoted column must be GENERATED; the
+					 * bare "col type" form is the deferred non-generated column,
+					 * rejected here with a GENERATED-guiding message.
+					 */
+					if (col != NULL && !label_prop_is_generated(col))
+						ereport(ERROR,
+								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+								 errmsg("a non-generated promoted column is not supported yet"),
+								 errhint("Use GENERATED to mirror the property from the jsonb bag.")));
 
 					newcmds = lappend(newcmds, cmd);
 					break;

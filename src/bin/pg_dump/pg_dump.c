@@ -20489,23 +20489,58 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 	 * as a column list so a dump/restore recreates them (which repopulates
 	 * ag_label_property) instead of silently dropping them.  Their generation
 	 * expressions are handled here, not in the per-column default loop below.
+	 *
+	 * In binary upgrade we must also emit a dummy placeholder for every dropped
+	 * column, in attnum order, exactly as dumpTableSchema does: the linked heap
+	 * files require the restored relation to have byte-identical physical column
+	 * layout, so a dropped column between/among the promoted columns has to
+	 * occupy its original attnum.  The "recreate dropped column" block below
+	 * then fixes each placeholder's physical shape and drops it.  Without this,
+	 * the promoted columns pack up with no gap (mis-aligning the heap) and the
+	 * DROP COLUMN below targets a column that was never created.
 	 */
 	{
 		bool		firstprop = true;
 
 		for (j = 0; j < tblinfo->numatts; j++)
 		{
-			if (tblinfo->attgenerated[j] != ATTRIBUTE_GENERATED_STORED ||
-				tblinfo->attisdropped[j] || !tblinfo->attislocal[j] ||
-				tblinfo->attrdefs[j] == NULL)
+			/*
+			 * A live promoted (STORED generated) column.  In a plain dump we
+			 * emit only LOCAL ones; inherited promoted columns arrive via the
+			 * INHERITS clause below.  In binary upgrade, though, the label is
+			 * created with ONLY (no inheritance) and inheritance is re-established
+			 * afterwards -- so, exactly as dumpTableSchema does, we must emit
+			 * EVERY column (inherited included) at its original attnum here, and
+			 * the "recreate inherited column" block below resets attislocal.
+			 * Otherwise the child lacks its inherited promoted columns and the
+			 * later ALTER TABLE ... INHERIT fails ("child is missing column").
+			 */
+			bool		live_prop = (tblinfo->attgenerated[j] == ATTRIBUTE_GENERATED_STORED &&
+									 !tblinfo->attisdropped[j] &&
+									 (tblinfo->attislocal[j] || dopt->binary_upgrade) &&
+									 tblinfo->attrdefs[j] != NULL);
+			bool		drop_ph = (dopt->binary_upgrade && tblinfo->attisdropped[j]);
+
+			/*
+			 * Fixed columns (id/properties/start/end) are never dropped, so a
+			 * dropped attnum here is always a former promoted/local column.
+			 */
+			if (!live_prop && !drop_ph)
 				continue;
 
 			appendPQExpBufferStr(q, firstprop ? " (" : ", ");
 			firstprop = false;
-			appendPQExpBuffer(q, "%s %s GENERATED ALWAYS AS (%s) STORED",
-							  fmtId(tblinfo->attnames[j]),
-							  tblinfo->atttypnames[j],
-							  tblinfo->attrdefs[j]->adef_expr);
+
+			if (drop_ph)
+				/* atttypid is 0 for a dropped column; use a stopgap type like
+				 * dumpTableSchema -- the recreate block resets attlen/attalign. */
+				appendPQExpBuffer(q, "%s INTEGER /* dummy */",
+								  fmtId(tblinfo->attnames[j]));
+			else
+				appendPQExpBuffer(q, "%s %s GENERATED ALWAYS AS (%s) STORED",
+								  fmtId(tblinfo->attnames[j]),
+								  tblinfo->atttypnames[j],
+								  tblinfo->attrdefs[j]->adef_expr);
 		}
 		if (!firstprop)
 			appendPQExpBufferChar(q, ')');
