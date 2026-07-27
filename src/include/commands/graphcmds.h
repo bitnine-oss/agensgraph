@@ -39,4 +39,19 @@ extern Oid	DisableIndexCommand(DisableIndexStmt *disableStmt);
 extern bool isEmptyLabel(char *label_name);
 extern void deleteRelatedEdges(const char *vlab);
 
+/*
+ * ALTER label ADD/DROP [COLUMN] of a promoted property lowers to a generic
+ * ALTER TABLE ADD/DROP COLUMN;
+ * these bracket that AlterTable() call to keep ag_label_property in sync.
+ * Begin runs with the lock held but before the column is added/dropped (it must
+ * copy an ADD's ColumnDef before AlterTable mutates it, and capture a DROP's
+ * property key before the column vanishes); Finish runs after.  An opaque state
+ * is carried between them, or NULL when there is nothing to sync.
+ */
+typedef struct AlterLabelPropertyState AlterLabelPropertyState;
+
+extern AlterLabelPropertyState *BeginAlterLabelProperties(Oid relid, List *cmds);
+extern void FinishAlterLabelProperties(Oid relid,
+									   AlterLabelPropertyState *state);
+
 #endif							/* GRAPHCMDS_H */

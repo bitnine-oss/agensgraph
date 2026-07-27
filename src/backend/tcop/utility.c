@@ -1334,6 +1334,7 @@ ProcessUtilitySlow(ParseState *pstate,
 					if (OidIsValid(relid))
 					{
 						AlterTableUtilityContext atcontext;
+						AlterLabelPropertyState *lpstate = NULL;
 
 						/* Set up info needed for recursive callbacks ... */
 						atcontext.pstmt = pstmt;
@@ -1341,6 +1342,12 @@ ProcessUtilitySlow(ParseState *pstate,
 						atcontext.relid = relid;
 						atcontext.params = params;
 						atcontext.queryEnv = queryEnv;
+
+						/* keep ag_label_property in sync for ADD/DROP PROPERTY */
+						if (atstmt->objtype == OBJECT_VLABEL ||
+							atstmt->objtype == OBJECT_ELABEL)
+							lpstate = BeginAlterLabelProperties(relid,
+																atstmt->cmds);
 
 						/* ... ensure we have an event trigger context ... */
 						EventTriggerAlterTableStart(parsetree);
@@ -1351,6 +1358,9 @@ ProcessUtilitySlow(ParseState *pstate,
 
 						/* done */
 						EventTriggerAlterTableEnd();
+
+						if (lpstate != NULL)
+							FinishAlterLabelProperties(relid, lpstate);
 					}
 					else
 						ereport(NOTICE,

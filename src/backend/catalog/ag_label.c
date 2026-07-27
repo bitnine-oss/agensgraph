@@ -161,6 +161,72 @@ DeleteAgLabelProperties(Oid laboid)
 }
 
 /*
+ * DeleteAgLabelProperty - remove the single ag_label_property row that maps a
+ * promoted property key to a label's typed column.  A no-op if the key is not
+ * recorded for the label.  Used when a promoted typed column is dropped and the
+ * label must forget it.
+ */
+void
+DeleteAgLabelProperty(Oid laboid, const char *propname)
+{
+	Relation	desc;
+	HeapTuple	tup;
+
+	desc = table_open(LabelPropertyRelationId, RowExclusiveLock);
+
+	tup = SearchSysCache2(LABELPROPNAME, ObjectIdGetDatum(laboid),
+						  PointerGetDatum(propname));
+	if (HeapTupleIsValid(tup))
+	{
+		CatalogTupleDelete(desc, &tup->t_self);
+		ReleaseSysCache(tup);
+	}
+
+	table_close(desc, RowExclusiveLock);
+}
+
+/*
+ * get_label_property_name_by_attnum - the promoted property key a label
+ * materializes at a given typed column attnum, or NULL if no promoted property
+ * maps to that column.  Keys by attnum (not name) because the explicit-key form
+ * "col type GENERATED (srckey)" records propname = srckey, which differs from
+ * the column name; dropping a column names the column but must forget its key.
+ */
+char *
+get_label_property_name_by_attnum(Oid laboid, AttrNumber attnum)
+{
+	Relation	desc;
+	ScanKeyData skey;
+	SysScanDesc scan;
+	HeapTuple	tup;
+	char	   *propname = NULL;
+
+	desc = table_open(LabelPropertyRelationId, AccessShareLock);
+
+	ScanKeyInit(&skey, Anum_ag_label_property_laboid,
+				BTEqualStrategyNumber, F_OIDEQ, ObjectIdGetDatum(laboid));
+
+	scan = systable_beginscan(desc, LabelPropertyLabidPropIndexId, true,
+							  NULL, 1, &skey);
+
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		Form_ag_label_property form = (Form_ag_label_property) GETSTRUCT(tup);
+
+		if (form->attnum == attnum)
+		{
+			propname = pstrdup(NameStr(form->propname));
+			break;
+		}
+	}
+
+	systable_endscan(scan);
+	table_close(desc, AccessShareLock);
+
+	return propname;
+}
+
+/*
  * get_label_property_attnum - attnum of the typed column that materializes a
  * promoted property key on a label, or InvalidAttrNumber if the key is not a
  * promoted property of that label.

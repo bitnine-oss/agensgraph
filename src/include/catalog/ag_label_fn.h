@@ -21,7 +21,9 @@ extern void label_drop_with_catalog(Oid laboid);
 extern void InsertAgLabelProperty(Oid laboid, const char *propname,
 								  int16 attnum, char semantics);
 extern void DeleteAgLabelProperties(Oid laboid);
+extern void DeleteAgLabelProperty(Oid laboid, const char *propname);
 extern AttrNumber get_label_property_attnum(Oid laboid, const char *propname);
+extern char *get_label_property_name_by_attnum(Oid laboid, AttrNumber attnum);
 
 /*
  * One promoted typed property of a label, keyed by relid (storage table oid)
