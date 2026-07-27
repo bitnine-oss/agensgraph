@@ -23,6 +23,7 @@
 #include "commands/schemacmds.h"
 #include "utils/builtins.h"
 #include "utils/graph.h"
+#include "utils/guc.h"
 #include "utils/guc_hooks.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -41,9 +42,31 @@ Oid			binary_upgrade_next_ag_graph_oid = InvalidOid;
 
 /* assign_hook for auto_gather_graphmeta */
 static bool prev_auto_gather_graphmeta = false;
+
+/*
+ * check_hook: stash the GUC source so the assign hook can tell an explicit
+ * interactive SET (which safely regathers a baseline) from a value inherited at
+ * session startup (ALTER DATABASE / postgresql.conf), where running a regather
+ * is both unsafe -- the snapshot machinery is not ready and it would abort --
+ * and wasteful, since every new session would rescan the whole graph.
+ */
+bool
+check_auto_gather_graphmeta(bool *newval, void **extra, GucSource source)
+{
+	GucSource  *stored = (GucSource *) guc_malloc(LOG, sizeof(GucSource));
+
+	if (stored == NULL)
+		return false;
+	*stored = source;
+	*extra = stored;
+	return true;
+}
+
 void
 auto_gather_graphmeta_assign(bool newval, void *extra)
 {
+	GucSource	source = (extra != NULL) ? *((GucSource *) extra) : PGC_S_DEFAULT;
+
 	/* Turning gathering off: the next enable must regather a fresh baseline. */
 	if (!newval)
 	{
@@ -62,23 +85,20 @@ auto_gather_graphmeta_assign(bool newval, void *extra)
 	}
 
 	/*
-	 * false->true transition: gather a complete baseline so that "gathering is
-	 * on" implies "ag_graphmeta is complete".  Only record the transition as
-	 * handled once the regather actually ran -- otherwise (e.g. enabled from
-	 * postgresql.conf, before any transaction) we must leave the flag unset so a
-	 * later in-transaction SET still regathers, rather than silently leaving
-	 * ag_graphmeta stale while reporting "on".
+	 * false->true transition.  Gather a complete baseline only for an explicit
+	 * interactive SET in a live session (source >= PGC_S_INTERACTIVE), where
+	 * query execution is safe -- this is the "regather on SET" behaviour, kept
+	 * intact.  A value applied at session startup (inherited from ALTER DATABASE
+	 * / postgresql.conf, source < PGC_S_INTERACTIVE) must NOT regather here: the
+	 * snapshot machinery is not ready (it would abort), and re-gathering on every
+	 * new session would rescan the whole graph each time.  The write path
+	 * maintains ag_graphmeta incrementally from the persistent baseline; a later
+	 * interactive SET or regather_graphmeta() refreshes it.
 	 */
-	if (IsTransactionState())
+	if (source >= PGC_S_INTERACTIVE && IsTransactionState())
 	{
 		regather_graphmeta_internal();
 		prev_auto_gather_graphmeta = true;
-	}
-	else
-	{
-		ereport(WARNING,
-				(errmsg("auto_gather_graphmeta: cannot gather metadata outside transaction"),
-				 errhint("Metadata will be gathered when set within a transaction.")));
 	}
 }
 

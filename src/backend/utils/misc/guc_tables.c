@@ -2203,7 +2203,7 @@ struct config_bool ConfigureNamesBool[] =
 		},
 		&auto_gather_graphmeta,
 		false,
-		NULL, auto_gather_graphmeta_assign, NULL
+		check_auto_gather_graphmeta, auto_gather_graphmeta_assign, NULL
 	},
 
 	{

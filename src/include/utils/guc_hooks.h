@@ -182,6 +182,8 @@ extern bool check_idle_replication_slot_timeout(int *newval, void **extra,
 
 /* Agensgraph - in catalog/ag_graph.c */
 extern bool check_graph_path(char **newval, void **extra, GucSource source);
+extern bool check_auto_gather_graphmeta(bool *newval, void **extra,
+										GucSource source);
 extern void auto_gather_graphmeta_assign(bool newval, void *extra);
 
 #endif							/* GUC_HOOKS_H */
