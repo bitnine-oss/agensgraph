@@ -1324,6 +1324,28 @@ RETURN a.no;
 MATCH (a:multiple_update)
 RETURN a.no;
 
+-- A SET that ends the statement is not eager, so it takes a different path from
+-- the cases above, which all carry a RETURN.  It still records what it wrote, so
+-- that a second write to the same element is recognised.  Kept on its own label
+-- so it does not disturb the rows the cases below read.
+CREATE (:trailing_set {no:1}), (:trailing_set {no:1});
+
+MATCH (a:trailing_set)
+SET a.no = 20;
+
+MATCH (a:trailing_set)
+RETURN a.no;
+
+-- two variables binding the same element: the second write is refused
+MATCH (a:trailing_set), (b:trailing_set)
+SET a.no = 30, b.no = 40;
+
+MATCH (a:trailing_set)
+RETURN a.no;
+
+MATCH (a:trailing_set) DETACH DELETE (a);
+DROP VLABEL trailing_set;
+
 SET enable_multiple_update = true;
 
 MATCH (a:multiple_update), (b:multiple_update)
