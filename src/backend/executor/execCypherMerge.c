@@ -208,9 +208,7 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 						  RelationGetDescr(resultRelInfo->ri_RelationDesc));
 	insertSlot->tts_values[0] = vertexId;
 	insertSlot->tts_values[1] = vertexProp;
-	MemSet(insertSlot->tts_isnull, false,
-		   insertSlot->tts_tupleDescriptor->natts * sizeof(bool));
-	markStoredGeneratedColsNull(insertSlot);
+	markUnassignedLabelColsNull(insertSlot, Anum_table_vertex_prop_map);
 	ExecStoreVirtualTuple(insertSlot);
 
 	ExecMaterializeSlot(insertSlot);
@@ -305,9 +303,7 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	insertSlot->tts_values[1] = GraphidGetDatum(start);
 	insertSlot->tts_values[2] = GraphidGetDatum(end);
 	insertSlot->tts_values[3] = edgeProp;
-	MemSet(insertSlot->tts_isnull, false,
-		   insertSlot->tts_tupleDescriptor->natts * sizeof(bool));
-	markStoredGeneratedColsNull(insertSlot);
+	markUnassignedLabelColsNull(insertSlot, Anum_table_edge_prop_map);
 	ExecStoreVirtualTuple(insertSlot);
 
 	ExecMaterializeSlot(insertSlot);

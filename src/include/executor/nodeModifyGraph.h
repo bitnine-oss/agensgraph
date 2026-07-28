@@ -42,7 +42,7 @@ extern AttrNumber findAttrInSlotByName(TupleTableSlot *slot, char *name);
 extern void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
 extern void setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum);
 extern Datum *makeDatumArray(int len);
-extern void markStoredGeneratedColsNull(TupleTableSlot *slot);
+extern void markUnassignedLabelColsNull(TupleTableSlot *slot, int nstructural);
 extern void computeLabelStoredGenerated(ResultRelInfo *resultRelInfo,
 										EState *estate, TupleTableSlot *slot,
 										CmdType cmdtype);
