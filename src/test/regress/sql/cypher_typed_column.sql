@@ -661,6 +661,28 @@ MATCH (a:doc), (b:doc) WHERE a.name='n1' AND b.name='n3'
   RETURN length(shortestpath((a)-[:knows*..5]->(b))) AS len;
 MATCH p=(a:doc)-[:knows]->(b:doc) RETURN a.name AS an, b.name AS bn ORDER BY an, bn;
 
+-- 11f. A CALL body reading a promoted property of an IMPORTED element.  The
+--      sentinel that carries the typed column is not a Cypher variable and so is
+--      never named by an import list, but it belongs to the element it describes
+--      and has to travel with it: an element imported into a subquery body keeps
+--      the enclosing scope's column list, and a column left out of the import is
+--      reported as nonexistent rather than absent, so the read would fail rather
+--      than fall back.
+SET enable_property_promotion = on;
+MATCH (n:doc) CALL { WITH n RETURN n.name AS nm } RETURN nm ORDER BY nm;
+MATCH (n:doc) CALL { WITH n RETURN n.age AS a } RETURN a ORDER BY a;
+MATCH (n:doc) CALL (*) { RETURN n.name AS nm } RETURN nm ORDER BY nm;
+SET enable_property_promotion = off;
+MATCH (n:doc) CALL { WITH n RETURN n.name AS nm } RETURN nm ORDER BY nm;
+MATCH (n:doc) CALL { WITH n RETURN n.age AS a } RETURN a ORDER BY a;
+MATCH (n:doc) CALL (*) { RETURN n.name AS nm } RETURN nm ORDER BY nm;
+
+-- 11g. The import restriction itself is unchanged: a variable that was not
+--      imported stays invisible inside the body, and so does its sentinel.
+SET enable_property_promotion = on;
+MATCH (n:doc), (o:doc) CALL { WITH n RETURN o.name AS nm } RETURN nm;
+MATCH (n:doc) CALL () { RETURN n.name AS nm } RETURN nm;
+
 -- ============================================================================
 -- SECTION 12 -- NULL / missing-key semantics (on == off)
 --

@@ -273,6 +273,7 @@ static bool hasGinOnProp(Oid relid);
 /* promoted typed-column projection and resolution */
 #define PROMOTED_SENTINEL_PREFIX	AGENS_DEFAULT_PREFIX "prop:"
 static char *makePromotedSentinelName(const char *varname, const char *key);
+static char *promotedSentinelOwner(const char *colname);
 static void appendPromotedSentinels(ParseState *pstate,
 									ParseNamespaceItem *nsitem, Oid relid,
 									const char *varname, List **targetList);
@@ -2226,14 +2227,30 @@ makeCallImportNSItem(ParseState *pstate, ParseNamespaceItem *prev_nsitem,
 
 		if (!import_all && cname[0] != '\0')
 		{
+			/*
+			 * A promoted-property sentinel is not named by an import list -- it
+			 * is a hidden column, not a Cypher variable -- but it belongs to the
+			 * element it describes, so it travels with it.  Match on that owner,
+			 * so a property read inside the body resolves to the typed column
+			 * exactly as it does outside.  Leaving the sentinel invalidated here
+			 * does not merely lose the optimization: resolution looks the name up
+			 * through the namespace, which reports an invalidated column as
+			 * nonexistent rather than absent, so the read fails outright.
+			 */
+			char	   *owner = promotedSentinelOwner(cname);
+			const char *name = owner != NULL ? owner : cname;
+
 			foreach(il, importlist)
 			{
-				if (strcmp(strVal(lfirst(il)), cname) == 0)
+				if (strcmp(strVal(lfirst(il)), name) == 0)
 				{
 					imported = true;
 					break;
 				}
 			}
+
+			if (owner != NULL)
+				pfree(owner);
 		}
 		if (!imported)
 			nscolumns[idx].p_varno = 0;
@@ -5378,6 +5395,32 @@ isPromotedSentinelName(const char *resname)
 	return resname != NULL &&
 		strncmp(resname, PROMOTED_SENTINEL_PREFIX,
 				strlen(PROMOTED_SENTINEL_PREFIX)) == 0;
+}
+
+/*
+ * promotedSentinelOwner - the Cypher variable a sentinel column describes, or
+ * NULL if `colname' is not a sentinel.
+ *
+ * A sentinel is named PROMOTED_SENTINEL_PREFIX + varname + ':' + key, and a
+ * Cypher variable is an identifier that never contains ':', so the text up to
+ * the first ':' after the prefix is exactly the element's name.  The result is
+ * palloc'd.
+ */
+static char *
+promotedSentinelOwner(const char *colname)
+{
+	const char *name;
+	const char *colon;
+
+	if (!isPromotedSentinelName(colname))
+		return NULL;
+
+	name = colname + strlen(PROMOTED_SENTINEL_PREFIX);
+	colon = strchr(name, ':');
+	if (colon == NULL)
+		return NULL;
+
+	return pnstrdup(name, colon - name);
 }
 
 /*
