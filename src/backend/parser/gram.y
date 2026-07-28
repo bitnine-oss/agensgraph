@@ -22672,37 +22672,47 @@ cypher_for:
  * "CALL proc()" statement (CALL followed by a name) untouched.  A leading WITH
  * inside the braces is unambiguous because a read subquery never otherwise
  * begins with WITH.
+ *
+ * OPTIONAL CALL keeps an input row whose body yields no rows, binding the
+ * body's variables to null for it -- the CALL counterpart of OPTIONAL MATCH.
+ * OPTIONAL is an unreserved keyword, but prefixing it here is unambiguous:
+ * every clause begins with a keyword, never a bare identifier, so the token
+ * after it (MATCH, CALL_LA, or CALL) is what picks the clause.
  */
 cypher_call:
-			CALL_LA cypher_call_import_opt '{' cypher_read_stmt '}'
+			cypher_optional_opt CALL_LA cypher_call_import_opt '{'
+			cypher_read_stmt '}'
 				{
 					CypherCallClause *n;
 
 					n = makeNode(CypherCallClause);
-					n->subquery = $4;
-					n->importlist = $2;
-					n->location = @1;
+					n->subquery = $5;
+					n->importlist = $3;
+					n->optional = $1;
+					n->location = @2;
 					$$ = (Node *) n;
 				}
-			| CALL_LA cypher_call_import_opt '{' WITH cypher_call_import_vars
-			  cypher_read_stmt '}'
+			| cypher_optional_opt CALL_LA cypher_call_import_opt '{' WITH
+			  cypher_call_import_vars cypher_read_stmt '}'
 				{
 					CypherCallClause *n;
 
 					n = makeNode(CypherCallClause);
-					n->subquery = $6;
-					n->importlist = list_concat($2, $5);
-					n->location = @1;
+					n->subquery = $7;
+					n->importlist = list_concat($3, $6);
+					n->optional = $1;
+					n->location = @2;
 					$$ = (Node *) n;
 				}
-			| CALL_LA '(' '*' ')' '{' cypher_read_stmt '}'
+			| cypher_optional_opt CALL_LA '(' '*' ')' '{' cypher_read_stmt '}'
 				{
 					CypherCallClause *n;
 
 					n = makeNode(CypherCallClause);
-					n->subquery = $6;
+					n->subquery = $7;
 					n->importlist = list_make1(makeNode(A_Star));
-					n->location = @1;
+					n->optional = $1;
+					n->location = @2;
 					$$ = (Node *) n;
 				}
 		;
@@ -22714,17 +22724,22 @@ cypher_call:
  * above; it keys off a plain CALL (base_yylex only rewrites CALL to CALL_LA
  * before '(' or '{'), and it is a non-leading clause, so it never collides with
  * the SQL CALL statement (which can only begin a statement).
+ *
+ * OPTIONAL applies here too: the standard puts it on the call statement, which
+ * covers the named-routine call as well as the inline subquery above.
  */
 cypher_yield_call:
-			CALL func_name cypher_yield_call_args YIELD cypher_yield_items
+			cypher_optional_opt CALL func_name cypher_yield_call_args YIELD
+			cypher_yield_items
 				{
 					CypherYieldCallClause *n;
 
 					n = makeNode(CypherYieldCallClause);
-					n->funcname = $2;
-					n->args = $3;
-					n->yielditems = $5;
-					n->location = @1;
+					n->funcname = $3;
+					n->args = $4;
+					n->yielditems = $6;
+					n->optional = $1;
+					n->location = @2;
 					$$ = (Node *) n;
 				}
 		;

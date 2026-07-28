@@ -32,6 +32,12 @@
 -- therefore fails resolution.  Routines taking jsonb / text parameters accept
 -- properties directly.  This interop constraint is covered as a negative case.
 --
+-- OPTIONAL CALL is the input-preserving form: a routine that yields no rows for
+-- an input row keeps that row instead of dropping it, with every yielded column
+-- bound to null.  The standard puts OPTIONAL on the call statement rather than on
+-- either call form, so it covers this named-routine call as well as the inline
+-- "OPTIONAL CALL { subquery }" the cypher_call suite exercises.
+--
 -- These tests cover: multi-column TABLE routines with every YIELD form, composite
 -- / OUT-parameter routines and single-column set-returning functions yielded by
 -- natural name, uncorrelated cross-join cardinality, correlated per-row execution
@@ -39,8 +45,12 @@
 -- zero-argument form, composition with FILTER / WITH / aggregation / a following
 -- MATCH, chaining several CALL ... YIELD clauses (including one correlated on a
 -- prior yielded column), the placement guard errors, the jsonb-property/int-
--- parameter typing boundary, empty-result inner-join semantics, and backward
--- compatibility of "yield" as an ordinary identifier plus keyword case-folding.
+-- parameter typing boundary, empty-result inner-join semantics, and then OPTIONAL
+-- CALL in full -- per-row nulling and cardinality, the YIELD forms and the type
+-- matrix of a nulled column, null semantics downstream, composition with the
+-- surrounding pipeline and with the inline call form, plan shapes, the errors and
+-- placement guards it does not relax -- followed by backward compatibility of
+-- "yield" as an ordinary identifier plus keyword case-folding.
 --
 
 -- Set up
@@ -302,13 +312,245 @@ MATCH (p:person) CALL yc_int(p.age) YIELD x RETURN x;
 --
 -- yc_ge30 returns a row only for age >= 30, so persons younger than 30 produce no
 -- yielded row and, under the CALL's inner-join semantics, are dropped from the
--- output entirely (OPTIONAL CALL is not implemented).
+-- output entirely.
 
 MATCH (p:person) CALL yc_ge30(p.age) YIELD ok
 RETURN p.name AS nm, ok ORDER BY nm;
 
 --
--- 13. Built-in PostgreSQL set-returning functions as CALL routines
+-- 13. OPTIONAL CALL -- the input-preserving form
+--
+-- OPTIONAL CALL keeps an input row for which the routine yields nothing, binding
+-- every yielded column to null for it, instead of dropping the row.  The
+-- standard puts OPTIONAL on the call statement rather than on either call form,
+-- so it applies to this named-routine call exactly as it does to the inline
+-- "OPTIONAL CALL { subquery }" form (covered in cypher_call).  The nulling is per
+-- input row: a routine called with per-row arguments nulls only the rows it
+-- returns nothing for.
+--
+-- yc_ge30 is the workhorse here: it yields one row for alice (30) and carol (40)
+-- and none for bob and dave (25), so a single query shows both outcomes.  Where
+-- a many-row case is wanted, yc_dup and yc_out take a row count computed from the
+-- person, which gives the zero / one / many spread in one query.
+
+-- 13.1 per-input-row nulling and cardinality ---------------------------------
+
+-- bob and dave are preserved with ok null; alice and carol are untouched
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok
+RETURN p.name AS nm, ok, ok IS NULL AS missing ORDER BY nm;
+-- the zero / one / many spread in one query: carol gets two rows, alice one, and
+-- bob and dave one preserved row each
+MATCH (p:person)
+OPTIONAL CALL yc_dup(p.name, CASE WHEN p.age = 40 THEN 2 WHEN p.age = 30 THEN 1 ELSE 0 END)
+YIELD seq, tag
+RETURN p.name AS nm, seq, tag ORDER BY nm, seq;
+-- ... which the row counts state directly
+MATCH (p:person)
+OPTIONAL CALL yc_out(CASE WHEN p.age >= 30 THEN 2 ELSE 0 END) YIELD lo
+RETURN p.name AS nm, count(*) AS rows, count(lo) AS matched ORDER BY nm;
+-- a routine that yields for every input row leaves nothing to preserve
+MATCH (p:person) OPTIONAL CALL yc_zero() YIELD z
+RETURN p.name AS nm, z ORDER BY nm;
+-- an uncorrelated routine that yields nothing at all preserves every input row
+MATCH (p:person) OPTIONAL CALL generate_series(1, 0) YIELD generate_series AS g
+RETURN p.name AS nm, g ORDER BY nm;
+-- OPTIONAL preserves input rows, it does not invent them: an empty input still
+-- produces no output
+MATCH (p:person {id: 99}) OPTIONAL CALL yc_zero() YIELD z
+RETURN p.name AS nm, z;
+-- a preserved row is an ordinary row afterwards, so a later non-empty routine
+-- multiplies it like any other
+MATCH (p:person)
+OPTIONAL CALL yc_ge30(p.age) YIELD ok
+OPTIONAL CALL yc_table() YIELD a
+RETURN p.name AS nm, ok, a ORDER BY nm, a;
+
+-- 13.2 the YIELD forms under OPTIONAL ----------------------------------------
+
+-- YIELD ... AS renaming
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok AS flag
+RETURN p.name AS nm, flag ORDER BY nm;
+-- YIELD * over a routine that yields no row nulls every output column
+MATCH (p:person) OPTIONAL CALL yc_out(0) YIELD *
+RETURN p.name AS nm, lo, hi ORDER BY nm;
+-- YIELD * where only some input rows are empty
+MATCH (p:person) OPTIONAL CALL yc_out(CASE WHEN p.age >= 40 THEN 1 ELSE 0 END) YIELD *
+RETURN p.name AS nm, lo, hi ORDER BY nm;
+-- a yielded subset: the column not yielded is simply absent, and the yielded one
+-- is nulled on its own
+MATCH (p:person) OPTIONAL CALL yc_out(CASE WHEN p.age >= 40 THEN 1 ELSE 0 END) YIELD lo
+RETURN p.name AS nm, lo ORDER BY nm;
+-- every yielded column is nulled together whatever its SQL type -- an int and a
+-- jsonb from one routine, two ints from another, a text and a jsonb from a
+-- built-in
+MATCH (p:person)
+OPTIONAL CALL yc_dup(p.name, 0) YIELD seq, tag
+OPTIONAL CALL yc_out(0) YIELD lo, hi
+OPTIONAL CALL jsonb_each('{}') YIELD key, value
+RETURN p.name AS nm, seq IS NULL AS seq_n, tag IS NULL AS tag_n,
+       lo IS NULL AS lo_n, hi IS NULL AS hi_n, key IS NULL AS key_n,
+       value IS NULL AS value_n
+ORDER BY nm;
+
+-- 13.3 null semantics in the clauses that follow -----------------------------
+
+-- IS NULL selects exactly the preserved rows, IS NOT NULL exactly the yielded
+-- ones
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok
+WITH p, ok WHERE ok IS NULL
+RETURN p.name AS nm ORDER BY nm;
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok
+WITH p, ok WHERE ok IS NOT NULL
+RETURN p.name AS nm ORDER BY nm;
+-- three-valued logic: the preserved row fails an ordinary predicate and its
+-- negation alike
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok
+WITH p, ok WHERE ok = 1
+RETURN p.name AS nm ORDER BY nm;
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok
+WITH p, ok WHERE NOT (ok = 1)
+RETURN p.name AS nm ORDER BY nm;
+-- COALESCE substitutes for the preserved row, over an int and over a jsonb
+-- yielded column alike
+MATCH (p:person)
+OPTIONAL CALL yc_dup(p.name, CASE WHEN p.age >= 30 THEN 1 ELSE 0 END) YIELD seq, tag
+RETURN p.name AS nm, coalesce(seq, -1) AS seq, coalesce(tag, 'none') AS tag
+ORDER BY nm;
+-- count(*) counts the preserved rows, count(col) does not
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok
+RETURN count(*) AS rows, count(ok) AS yielded;
+-- the aggregates that ignore nulls do so over the yielded column too
+MATCH (p:person)
+OPTIONAL CALL yc_out(CASE WHEN p.age >= 30 THEN 2 ELSE 0 END) YIELD lo, hi
+RETURN count(*) AS rows, count(lo) AS matched, min(lo) AS smallest,
+       max(hi) AS largest, sum(lo) AS total;
+-- collect() drops the nulls, DISTINCT keeps them as one value
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok
+RETURN collect(ok) AS oks;
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok
+RETURN DISTINCT ok ORDER BY ok;
+-- null placement in ORDER BY: last ascending, first descending, and movable
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok
+RETURN p.name AS nm, ok ORDER BY ok, nm;
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok
+RETURN p.name AS nm, ok ORDER BY ok DESC, nm;
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok
+RETURN p.name AS nm, ok ORDER BY ok NULLS FIRST, nm;
+
+-- 13.4 composition with the surrounding pipeline -----------------------------
+
+-- the arguments may come from a WITH, an UNWIND or a LET rather than a MATCH
+MATCH (p:person) WITH p, p.age AS age OPTIONAL CALL yc_ge30(age) YIELD ok
+RETURN p.name AS nm, ok ORDER BY nm;
+UNWIND [25, 30] AS age OPTIONAL CALL yc_ge30(age) YIELD ok
+RETURN age, ok ORDER BY age;
+MATCH (p:person) LET age = p.age OPTIONAL CALL yc_ge30(age) YIELD ok
+RETURN p.name AS nm, ok ORDER BY nm;
+-- FILTER and LET after the clause see the null
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok
+FILTER ok IS NULL
+RETURN p.name AS nm ORDER BY nm;
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok
+LET missing = ok IS NULL
+RETURN p.name AS nm, missing ORDER BY nm;
+-- a following MATCH joins on the yielded column, which drops the preserved rows:
+-- only carol yields a row here, so only carol survives the join
+MATCH (p:person) OPTIONAL CALL yc_out(CASE WHEN p.age >= 40 THEN 1 ELSE 0 END) YIELD lo
+MATCH (q:person) WHERE q.id = lo
+RETURN p.name AS nm, q.name AS found ORDER BY nm;
+-- a write clause after the call stores the null
+MATCH (p:person {id: 2}) OPTIONAL CALL yc_ge30(p.age) YIELD ok
+CREATE (:note {who: p.name, ok: ok})
+RETURN p.name AS nm;
+MATCH (n:note) RETURN n.who AS who, n.ok IS NULL AS ok_null;
+MATCH (n:note) DETACH DELETE n;
+-- chaining: a second OPTIONAL CALL after one that has already nulled a row
+MATCH (p:person)
+OPTIONAL CALL yc_ge30(p.age) YIELD ok
+OPTIONAL CALL yc_ge30(p.age) YIELD ok AS ok2
+RETURN p.name AS nm, ok, ok2 ORDER BY nm;
+-- a plain CALL after an OPTIONAL CALL re-imposes the inner join, dropping the
+-- rows the OPTIONAL had preserved
+MATCH (p:person)
+OPTIONAL CALL yc_ge30(p.age) YIELD ok
+CALL yc_ge30(p.age) YIELD ok AS ok2
+RETURN p.name AS nm, ok, ok2 ORDER BY nm;
+-- the two call forms compose in either order
+MATCH (p:person)
+OPTIONAL CALL yc_ge30(p.age) YIELD ok
+OPTIONAL CALL (p) { MATCH (q:person) WHERE q.age = p.age AND q.id <> p.id
+                    RETURN q.name AS twin }
+RETURN p.name AS nm, ok, twin ORDER BY nm, twin;
+MATCH (p:person)
+OPTIONAL CALL (p) { MATCH (q:person) WHERE q.age = p.age AND q.id <> p.id
+                    RETURN q.name AS twin }
+OPTIONAL CALL yc_ge30(p.age) YIELD ok
+RETURN p.name AS nm, twin, ok ORDER BY nm, twin;
+-- and OPTIONAL MATCH composes with it too
+MATCH (p:person)
+OPTIONAL MATCH (q:person) WHERE q.age = p.age AND q.id <> p.id
+OPTIONAL CALL yc_ge30(p.age) YIELD ok
+RETURN p.name AS nm, q.name AS twin, ok ORDER BY nm, twin;
+
+-- 13.5 plans -----------------------------------------------------------------
+
+-- a correlated routine is a per-row Function Scan on the nullable side of a
+-- lateral left join; the plain CALL of the same routine is the same shape with
+-- an inner join
+EXPLAIN (COSTS OFF)
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok
+RETURN p.name AS nm, ok;
+EXPLAIN (COSTS OFF)
+MATCH (p:person) CALL yc_ge30(p.age) YIELD ok
+RETURN p.name AS nm, ok;
+-- an uncorrelated routine likewise left-joins, with no lateral dependency
+EXPLAIN (COSTS OFF)
+MATCH (p:person) OPTIONAL CALL yc_table() YIELD a, b
+RETURN p.name AS nm, a, b;
+
+-- 13.6 errors and placement guards -------------------------------------------
+
+-- OPTIONAL relaxes neither collision rule: a yielded name may not shadow a
+-- variable already in scope, nor be yielded twice
+MATCH (p:person) OPTIONAL CALL yc_ge30(p.age) YIELD ok AS p RETURN p;
+MATCH (p:person) WITH p.id AS pid OPTIONAL CALL yc_ids() YIELD * RETURN pid;
+MATCH (p:person) OPTIONAL CALL yc_out(2) YIELD lo, hi AS lo RETURN lo;
+MATCH (p:person {id: 1}) OPTIONAL CALL yc_table() YIELD a, a RETURN a;
+-- nor the placement guards.  Leading: a CALL that begins a query is the SQL CALL
+-- statement, so YIELD is unexpected there with or without OPTIONAL.
+OPTIONAL CALL yc_table() YIELD a, b RETURN a, b;
+-- Terminal: a query cannot end with the clause.
+MATCH (p:person {id: 1}) OPTIONAL CALL yc_table() YIELD a, b;
+-- YIELD stays mandatory.
+MATCH (p:person {id: 1}) OPTIONAL CALL yc_table() RETURN 1;
+-- OPTIONAL prefixes a call clause and nothing else.
+MATCH (p:person) OPTIONAL OPTIONAL CALL yc_zero() YIELD z RETURN z;
+-- The argument typing boundary is unchanged too: a jsonb property still cannot
+-- satisfy an int parameter.
+MATCH (p:person) OPTIONAL CALL yc_int(p.age) YIELD x RETURN x;
+-- The named-routine call is a top-level clause only.  It is unavailable inside a
+-- CALL body, inside an expression subquery and inside a cypher query embedded in
+-- a SQL FROM clause -- a pre-existing restriction of the clause itself, shared
+-- with the plain form, which OPTIONAL neither lifts nor worsens.
+MATCH (p:person) CALL (p) { MATCH (p) CALL yc_zero() YIELD z RETURN z } RETURN z;
+MATCH (p:person) CALL (p) { MATCH (p) OPTIONAL CALL yc_zero() YIELD z RETURN z } RETURN z;
+MATCH (p:person) RETURN COLLECT { MATCH (p) OPTIONAL CALL yc_zero() YIELD z RETURN z } AS zs;
+SELECT z FROM ( MATCH (p:person) OPTIONAL CALL yc_zero() YIELD z RETURN z ) t;
+
+-- 13.7 keyword folding and "optional" as an ordinary identifier --------------
+
+MATCH (p:person) optional call yc_ge30(p.age) yield ok
+RETURN p.name AS nm, ok ORDER BY nm;
+MATCH (p:person) Optional Call yc_ge30(p.age) YiElD ok
+RETURN p.name AS nm, ok ORDER BY nm;
+-- "optional" remains an ordinary identifier, including as the variable an
+-- OPTIONAL CALL then reads its argument from
+UNWIND [30] AS optional OPTIONAL CALL yc_ge30(optional) YIELD ok
+RETURN optional, ok;
+MATCH (p:person {id: 1}) RETURN p.name AS optional;
+
+--
+-- 14. Built-in PostgreSQL set-returning functions as CALL routines
 --
 -- Any set-returning / table function whose parameters accept Cypher-typed
 -- arguments (jsonb, or literals that fold to the expected type) works as a CALL

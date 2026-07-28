@@ -4720,6 +4720,9 @@ typedef struct CypherCallClause
 	List	   *importlist;		/* imported variable names (String); NIL =
 								 * none. A single A_Star element is the CALL
 								 * (*) sentinel: import every outer variable. */
+	bool		optional;		/* OPTIONAL CALL: keep an input row whose body
+								 * yields nothing, with the body's columns
+								 * null */
 	int			location;
 } CypherCallClause;
 
@@ -4736,6 +4739,9 @@ typedef struct CypherYieldCallClause
 								 * routine's output column, optionally AS-aliased);
 								 * a single ResTarget whose val is an A_Star
 								 * ColumnRef is YIELD * (all columns) */
+	bool		optional;		/* OPTIONAL CALL: keep an input row for which
+								 * the routine yields nothing, with the
+								 * yielded columns null */
 	int			location;
 } CypherYieldCallClause;
 
