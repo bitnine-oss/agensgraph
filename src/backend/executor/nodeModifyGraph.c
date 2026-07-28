@@ -168,9 +168,18 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	EvalPlanQualSetPlan(&mgstate->mt_epqstate, mgplan->subplan,
 						mgstate->mt_arowmarks[0]);
 
-	/* Fill eager action information */
+	/*
+	 * Fill eager action information.
+	 *
+	 * A SET clause needs the table whatever enable_multiple_update says: it
+	 * records every element the clause has already written, and ExecSetGraph
+	 * probes it to recognise a second write to the same element.  That probe is
+	 * what raises the "has been SET multiple times" warning when accumulating
+	 * repeated writes is disabled, so the table has to exist in exactly the case
+	 * the GUC being off describes.
+	 */
 	if (mgstate->eagerness ||
-		(mgstate->sets != NIL && enable_multiple_update) ||
+		mgstate->sets != NIL ||
 		mgstate->exprs != NIL)
 	{
 		HASHCTL		ctl;
