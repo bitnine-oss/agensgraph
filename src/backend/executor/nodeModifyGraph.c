@@ -10,6 +10,7 @@
 
 #include "postgres.h"
 
+#include "ag_const.h"
 #include "access/htup_details.h"
 #include "access/xact.h"
 #include "catalog/ag_graph_fn.h"
@@ -1122,45 +1123,47 @@ makeDatumArray(int len)
 }
 
 /*
- * markStoredGeneratedColsNull
+ * markUnassignedLabelColsNull
  *
- * The Cypher write path fills a label tuple's base columns (id/start/end and
- * the jsonb property bag) directly and blanket-marks every attribute non-null.
- * Two kinds of column are not filled by that direct assignment and would leave
- * an uninitialized tts_values[] entry wrongly flagged non-null; mark both NULL
- * here so a tuple materialization (an intervening ExecMaterializeSlot, or a
- * BEFORE-ROW trigger) never reads a garbage Datum:
+ * The Cypher write path fills a label tuple by assigning tts_values[] directly
+ * rather than through a projection, and it only ever assigns the label's
+ * structural columns: id and the jsonb property bag for a vertex, id/start/end
+ * and the bag for an edge.  Those occupy the leading `nstructural' attributes,
+ * because a label's own columns are always appended after the bag.
  *
- *   - A dropped column keeps its physical slot in the tuple descriptor but is
- *     never assigned, so its tts_values[] entry is uninitialized.  A label
- *     accumulates such dropped-column gaps from ADD/DROP-COLUMN churn; leaving
- *     a dropped varlena slot non-null makes heap_form_*_tuple dereference the
- *     garbage value and crash.  This must run even for a label with no
- *     generated columns, so it is not gated on has_generated_stored.
+ * Every attribute past that prefix is therefore unassigned, and its
+ * tts_values[] entry holds whatever the slot's freshly-allocated array happens
+ * to contain.  Mark all of them null and the structural prefix non-null, so a
+ * tuple materialization -- an intervening ExecMaterializeSlot, a BEFORE-ROW
+ * trigger, or heap_form_tuple itself -- never reads an unassigned Datum.
  *
- *   - A promoted typed property is a STORED generated column that is not filled
- *     until ExecComputeStoredGenerated runs later.
- *
- * A no-op for a plain label (no dropped columns, no promoted columns).
+ * Marking null by default is what makes this safe rather than merely correct
+ * for the columns we know about today.  A label can carry a dropped-column gap
+ * from ADD/DROP-COLUMN churn, a STORED generated column that is not filled
+ * until ExecComputeStoredGenerated runs later, or an ordinary column added
+ * directly with ALTER TABLE; none of them are distinguishable here, and a
+ * write path that gains a new kind of column later needs no change.  The
+ * failure mode of a missed column becomes a null value instead of a dereference
+ * of uninitialized memory.
  */
 void
-markStoredGeneratedColsNull(TupleTableSlot *slot)
+markUnassignedLabelColsNull(TupleTableSlot *slot, int nstructural)
 {
 	TupleDesc	tupdesc = slot->tts_tupleDescriptor;
-	bool		has_generated_stored = tupdesc->constr != NULL &&
-									   tupdesc->constr->has_generated_stored;
-	int			i;
 
-	for (i = 0; i < tupdesc->natts; i++)
-	{
-		Form_pg_attribute att = TupleDescAttr(tupdesc, i);
+	Assert(nstructural > 0 && nstructural <= tupdesc->natts);
 
-		if (att->attisdropped)
-			slot->tts_isnull[i] = true;
-		else if (has_generated_stored &&
-				 att->attgenerated == ATTRIBUTE_GENERATED_STORED)
-			slot->tts_isnull[i] = true;
-	}
+	/*
+	 * The caller's prefix must end exactly at the property bag.  A miscount
+	 * would either mark a filled column null or leave an unfilled one flagged
+	 * non-null, which is the very hazard this function exists to remove.
+	 */
+	Assert(namestrcmp(&TupleDescAttr(tupdesc, nstructural - 1)->attname,
+					  AG_ELEM_PROP_MAP) == 0);
+
+	memset(slot->tts_isnull, false, nstructural * sizeof(bool));
+	memset(slot->tts_isnull + nstructural, true,
+		   (tupdesc->natts - nstructural) * sizeof(bool));
 }
 
 /*
@@ -1190,7 +1193,7 @@ promotedGeneratedErrorCallback(void *arg)
  * label element tuple that the Cypher write path filled directly, rather than
  * through nodeModifyTable.  A no-op for a label without promoted columns.
  *
- * This pairs with markStoredGeneratedColsNull(): a write path marks the
+ * This pairs with markUnassignedLabelColsNull(): a write path marks the
  * generated columns null before storing the slot (so any intervening
  * materialization is safe), then calls this just before the physical
  * insert/update to compute them from the property bag.  Routing every write

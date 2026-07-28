@@ -1257,6 +1257,77 @@ MATCH (a:doc)-[:knows*1..2]->(b:doc) WHERE b.age > 30 RETURN a.name AS an, b.nam
 SET enable_property_promotion = off;
 MATCH (a:doc)-[:knows*1..2]->(b:doc) WHERE b.age > 30 RETURN a.name AS an, b.name AS bn ORDER BY an, bn;
 
+-- ============================================================================
+-- SECTION 19 -- Columns a Cypher write does not assign
+-- ============================================================================
+--
+-- A label is a table, so a column can be added to one directly with ALTER
+-- TABLE.  Such a column is neither a dropped attribute nor a STORED generated
+-- one, and the write path assigns only the label's structural columns (id and
+-- the property bag for a vertex; id/start/end and the bag for an edge).  Every
+-- attribute past that prefix is therefore unassigned and must be marked null
+-- before the tuple is formed, or forming it reads an unassigned Datum.  These
+-- cases cover each write operation, for a vertex and an edge, and mix the three
+-- kinds -- ordinary, dropped and promoted -- on one label.
+
+SET enable_property_promotion = on;
+
+-- 19a. CREATE, SET, MERGE and REMOVE on a vertex label carrying an ordinary
+--      column.  The column reads as null rather than as uninitialized memory.
+CREATE VLABEL pcv;
+ALTER TABLE tc.pcv ADD COLUMN extra text;
+CREATE (:pcv {k: 1, name: 'a'});
+MATCH (n:pcv) RETURN n.k, n.name;
+SELECT count(*) AS unassigned_is_null FROM tc.pcv WHERE extra IS NULL;
+MATCH (n:pcv) SET n.k = 2;
+MATCH (n:pcv) RETURN n.k;
+SELECT count(*) AS still_null_after_set FROM tc.pcv WHERE extra IS NULL;
+MERGE (n:pcv {k: 2}) ON MATCH SET n.name = 'b';
+MATCH (n:pcv) RETURN n.k, n.name;
+MERGE (n:pcv {k: 99}) ON CREATE SET n.name = 'c';
+MATCH (n:pcv) WHERE n.k = 99 RETURN n.k, n.name;
+MATCH (n:pcv) WHERE n.k = 99 REMOVE n.name;
+MATCH (n:pcv) WHERE n.k = 99 RETURN n.name;
+
+-- 19b. The same on an edge label, whose structural prefix is four columns.
+CREATE VLABEL pcev;
+CREATE ELABEL pce;
+ALTER TABLE tc.pce ADD COLUMN extra text;
+CREATE (:pcev {a: 1})-[:pce {w: 10}]->(:pcev {a: 2});
+MATCH ()-[r:pce]->() RETURN r.w;
+SELECT count(*) AS edge_unassigned_is_null FROM tc.pce WHERE extra IS NULL;
+MATCH ()-[r:pce]->() SET r.w = 20;
+MATCH ()-[r:pce]->() RETURN r.w;
+
+-- 19c. An ordinary column beside a dropped-column gap and a promoted column.
+--      All three are unassigned for the same reason, so one rule covers them,
+--      and the promoted column is still derived from the bag and recomputed on
+--      update.
+CREATE VLABEL pcmix (age int GENERATED);
+ALTER TABLE tc.pcmix ADD COLUMN gap text;
+ALTER TABLE tc.pcmix DROP COLUMN gap;
+ALTER TABLE tc.pcmix ADD COLUMN extra text;
+CREATE (:pcmix {age: 30, tag: 'x'});
+MATCH (n:pcmix) RETURN n.age, n.tag;
+SELECT age FROM tc.pcmix;
+SELECT count(*) AS mix_unassigned_is_null FROM tc.pcmix WHERE extra IS NULL;
+MATCH (n:pcmix) SET n.age = 31;
+SELECT age FROM tc.pcmix;
+MATCH (n:pcmix) WHERE n.age = 31 RETURN n.age;
+-- the write-domain contract still holds for the promoted column
+MATCH (n:pcmix) SET n.age = 'not-a-number';
+
+-- 19d. A Cypher write resets an ordinary column to null.  Cypher cannot name a
+--      column that is not a promoted property, so a write has no value to carry
+--      forward; the previous value would have to come from the old tuple, which
+--      this path does not fetch.  A deliberate contract, recorded here.
+SET enable_graph_dml = on;
+UPDATE tc.pcv SET extra = 'set-by-sql' WHERE properties ->> 'k' = '2';
+SET enable_graph_dml = off;
+SELECT extra FROM tc.pcv WHERE properties ->> 'k' = '2';
+MATCH (n:pcv) WHERE n.k = 2 SET n.name = 'd';
+SELECT extra FROM tc.pcv WHERE properties ->> 'k' = '2';
+
 -- ----------------------------------------------------------------------------
 -- CLEANUP
 -- ----------------------------------------------------------------------------

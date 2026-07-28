@@ -379,9 +379,10 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 		tts_values[Anum_ag_edge_end - 1] = getEdgeEndDatum(tts_value);
 		tts_values[Anum_ag_edge_properties - 1] = getEdgePropDatum(tts_value);
 	}
-	MemSet(elemTupleSlot->tts_isnull, false,
-		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
-	markStoredGeneratedColsNull(elemTupleSlot);
+	markUnassignedLabelColsNull(elemTupleSlot,
+								tts_value_type == VERTEXOID ?
+								Anum_table_vertex_prop_map :
+								Anum_table_edge_prop_map);
 	ExecStoreVirtualTuple(elemTupleSlot);
 
 	/* BEFORE ROW UPDATE Triggers */
@@ -618,9 +619,10 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 
 		ctid = (ItemPointer) DatumGetPointer(getEdgeTidDatum(elem_datum));
 	}
-	MemSet(elemTupleSlot->tts_isnull, false,
-		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
-	markStoredGeneratedColsNull(elemTupleSlot);
+	markUnassignedLabelColsNull(elemTupleSlot,
+								elemtype == VERTEXOID ?
+								Anum_table_vertex_prop_map :
+								Anum_table_edge_prop_map);
 	ExecStoreVirtualTuple(elemTupleSlot);
 
 	/* BEFORE ROW UPDATE Triggers */

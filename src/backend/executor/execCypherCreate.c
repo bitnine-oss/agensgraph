@@ -178,9 +178,7 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 						  RelationGetDescr(resultRelInfo->ri_RelationDesc));
 	elemTupleSlot->tts_values[0] = GraphidGetDatum(*vid);
 	elemTupleSlot->tts_values[1] = vertexProp;
-	MemSet(elemTupleSlot->tts_isnull, false,
-		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
-	markStoredGeneratedColsNull(elemTupleSlot);
+	markUnassignedLabelColsNull(elemTupleSlot, Anum_table_vertex_prop_map);
 	ExecStoreVirtualTuple(elemTupleSlot);
 
 	ExecMaterializeSlot(elemTupleSlot);
@@ -285,9 +283,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	elemTupleSlot->tts_values[1] = GraphidGetDatum(start);
 	elemTupleSlot->tts_values[2] = GraphidGetDatum(end);
 	elemTupleSlot->tts_values[3] = edgeProp;
-	MemSet(elemTupleSlot->tts_isnull, false,
-		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
-	markStoredGeneratedColsNull(elemTupleSlot);
+	markUnassignedLabelColsNull(elemTupleSlot, Anum_table_edge_prop_map);
 	ExecStoreVirtualTuple(elemTupleSlot);
 
 	ExecMaterializeSlot(elemTupleSlot);
