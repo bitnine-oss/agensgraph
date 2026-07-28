@@ -354,6 +354,13 @@ static List *extractEdgesExpr(ParseState *pstate, List *exprlist,
 							  ParseExprKind exprKind);
 static char *getDeleteTargetName(ParseState *pstate, Node *expr);
 
+/* CALL */
+static bool nsItemHasColumnNamed(ParseNamespaceItem *nsitem,
+								 const char *colname);
+static List *joinCallBody(ParseState *pstate,
+						  ParseNamespaceItem *prev_nsitem,
+						  ParseNamespaceItem *body_nsitem, bool optional);
+
 /* graph write */
 static List *addRangeTableAllModifiedLabels(ParseState *pstate, Query *qry,
 											List *targets, AclMode requiredPerms);
@@ -364,6 +371,7 @@ static bool find_target_label_walker(Node *node,
 									 find_target_label_context *ctx);
 
 /* common */
+static ParseNamespaceItem *addUnitRowNSItem(ParseState *pstate);
 static bool labelExist(ParseState *pstate, char *labname, int labloc,
 					   char labkind, bool throw);
 #define vertexLabelExist(pstate, labname, labloc) \
@@ -1879,6 +1887,9 @@ transformCypherForClause(ParseState *pstate, CypherClause *clause)
  *		exists, so the arguments may reference the outer variables; the YIELD
  *		list projects (and optionally renames) the routine's output columns,
  *		which then surface to the clauses that follow.
+ *
+ *		OPTIONAL CALL keeps an input row for which the routine yields no rows,
+ *		binding the yielded columns to null for it; see joinCallBody().
  */
 Query *
 transformCypherYieldCallClause(ParseState *pstate, CypherClause *clause)
@@ -1890,19 +1901,21 @@ transformCypherYieldCallClause(ParseState *pstate, CypherClause *clause)
 	RangeFunction *rf;
 	SelectStmt *subquery;
 	List	   *args = NIL;
-	List	   *body_tlist;
 	ParseNamespaceItem *nsitem;
+	ParseNamespaceItem *prev_nsitem;
 	ListCell   *lc;
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
-	/* Pass through the previous clause's variables. */
-	if (clause->prev != NULL)
-	{
-		nsitem = transformClause(pstate, clause->prev);
-		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
-	}
+	/*
+	 * Take in the previous clause's variables.  CALL ... YIELD is admitted
+	 * only as a non-leading clause, so there is always one.  joinCallBody()
+	 * builds this clause's target list once the routine is joined in: the
+	 * OPTIONAL form projects it out of an outer join that does not exist yet.
+	 */
+	Assert(clause->prev != NULL);
+	prev_nsitem = transformClause(pstate, clause->prev);
 
 	/* Wrap each argument so it is analyzed with Cypher expression semantics. */
 	foreach(lc, detail->args)
@@ -1952,7 +1965,6 @@ transformCypherYieldCallClause(ParseState *pstate, CypherClause *clause)
 	nsitem = addRangeTableEntryForSubquery(pstate, subqry,
 										   makeAliasNoDup(CYPHER_YIELD_ALIAS, NIL),
 										   (clause->prev != NULL), true);
-	addNSItemToJoinlist(pstate, nsitem, true);
 
 	/*
 	 * A yielded column may not reuse a variable name already bound in the outer
@@ -1960,36 +1972,35 @@ transformCypherYieldCallClause(ParseState *pstate, CypherClause *clause)
 	 * two yielded columns share a name.  Rename with YIELD ... AS to resolve a
 	 * collision.
 	 */
-	body_tlist = makeTargetListFromNSItem(pstate, nsitem);
-	foreach(lc, body_tlist)
+	foreach(lc, nsitem->p_rte->eref->colnames)
 	{
-		TargetEntry *yte = (TargetEntry *) lfirst(lc);
+		char	   *colname = strVal(lfirst(lc));
 		ListCell   *lc2;
 
-		if (yte->resjunk || yte->resname == NULL)
+		if (colname[0] == '\0')
 			continue;
-		if (findTarget(qry->targetList, yte->resname) != NULL)
+
+		if (nsItemHasColumnNamed(prev_nsitem, colname))
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_ALIAS),
 					 errmsg("variable \"%s\" yielded by CALL is already bound in the outer query",
-							yte->resname),
+							colname),
 					 parser_errposition(pstate, detail->location)));
 
-		for_each_cell(lc2, body_tlist, lnext(body_tlist, lc))
+		for_each_cell(lc2, nsitem->p_rte->eref->colnames,
+					  lnext(nsitem->p_rte->eref->colnames, lc))
 		{
-			TargetEntry *yte2 = (TargetEntry *) lfirst(lc2);
-
-			if (!yte2->resjunk && yte2->resname != NULL &&
-				strcmp(yte->resname, yte2->resname) == 0)
+			if (strcmp(colname, strVal(lfirst(lc2))) == 0)
 				ereport(ERROR,
 						(errcode(ERRCODE_DUPLICATE_ALIAS),
 						 errmsg("variable \"%s\" is yielded more than once by CALL",
-								yte->resname),
+								colname),
 						 parser_errposition(pstate, detail->location)));
 		}
 	}
 
-	qry->targetList = list_concat(qry->targetList, body_tlist);
+	qry->targetList = joinCallBody(pstate, prev_nsitem, nsitem,
+								   detail->optional);
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
@@ -2001,6 +2012,130 @@ transformCypherYieldCallClause(ParseState *pstate, CypherClause *clause)
 	assign_query_collations(pstate, qry);
 
 	return qry;
+}
+
+/*
+ * addUnitRowNSItem
+ *		Add the one-row, no-column driving table a query pipeline starts from,
+ *		as a subquery RTE in the joinlist.
+ *
+ *		A leading OPTIONAL clause has no previous clause to preserve the rows
+ *		of, so it needs that starting row materialized to serve as the outer
+ *		join's non-nullable side.  That is what makes a leading
+ *		"OPTIONAL MATCH (n) RETURN n", and its CALL equivalent, yield a single
+ *		null row rather than nothing at all.
+ *
+ *		transformNullSelect() builds a similar driving subquery for a leading
+ *		MERGE, but projects a NULL column and joins it in invisibly.
+ */
+static ParseNamespaceItem *
+addUnitRowNSItem(ParseState *pstate)
+{
+	Query	   *qry;
+	Alias	   *alias;
+	ParseNamespaceItem *nsitem;
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+	qry->rtable = NIL;
+	qry->jointree = makeFromExpr(NIL, NULL);
+
+	alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
+	nsitem = addRangeTableEntryForSubquery(pstate, qry, alias,
+										   pstate->p_lateral_active, true);
+	addNSItemToJoinlist(pstate, nsitem, true);
+
+	return nsitem;
+}
+
+/*
+ * nsItemHasColumnNamed
+ *		Does this namespace item expose a column of this name?
+ *
+ *		Used to enforce the rule that a CALL may not bind a variable the working
+ *		table already carries.  The names come from the RTE so the check can run
+ *		before any target list exists: under OPTIONAL the working table's target
+ *		list is only available once the outer join is built, by which point a
+ *		collision has already produced two same-named columns.
+ */
+static bool
+nsItemHasColumnNamed(ParseNamespaceItem *nsitem, const char *colname)
+{
+	ListCell   *lc;
+
+	if (nsitem == NULL)
+		return false;
+
+	foreach(lc, nsitem->p_rte->eref->colnames)
+	{
+		const char *name = strVal(lfirst(lc));
+
+		if (name[0] != '\0' && strcmp(name, colname) == 0)
+			return true;
+	}
+
+	return false;
+}
+
+/*
+ * joinCallBody
+ *		Join an analyzed CALL body with the working table and return the
+ *		resulting clause target list (the working table's columns followed by
+ *		the body's).
+ *
+ *		A plain CALL cross-joins the body in, so an input row for which the body
+ *		yields nothing simply drops out of the pipeline.  OPTIONAL CALL instead
+ *		left-joins it ON TRUE, which keeps that row with every body column bound
+ *		to null -- the standard's rule for a call whose result is an empty
+ *		binding table.  It is the same construction OPTIONAL MATCH is built
+ *		from; the standard in fact defines OPTIONAL MATCH by rewriting it to an
+ *		OPTIONAL CALL, making this the primitive of the two.
+ *
+ *		ON TRUE rather than a real join condition is what makes the nulling
+ *		per input row: the correlation lives inside the LATERAL body, so a
+ *		correlated body that matches nothing for one row nulls only that row and
+ *		leaves the others alone.  It also keeps the body a single self-contained
+ *		subquery, which is what lets the planner pull a simple pattern body up
+ *		into an ordinary left join instead of re-running it per row.
+ *
+ *		Being a self-contained subquery is also why a plain MATCH may follow an
+ *		OPTIONAL CALL, where it may not follow an OPTIONAL MATCH.  A pattern
+ *		leaves behind deferred state -- future vertices and element quals -- and
+ *		transformClauseImpl() lifts that state out of the clause it came from,
+ *		so OPTIONAL MATCH strands it pointing at the join's nullable arm, where
+ *		a following MATCH would resolve it against rows that no longer exist.
+ *		The body here is analyzed by parse_sub_analyze(), which lifts nothing
+ *		out, so the only deferred state crossing this join belongs to the
+ *		previous clause and rides the non-nullable arm, where it stays valid.
+ */
+static List *
+joinCallBody(ParseState *pstate, ParseNamespaceItem *prev_nsitem,
+			 ParseNamespaceItem *body_nsitem, bool optional)
+{
+	List	   *targetList = NIL;
+
+	if (optional)
+	{
+		Alias	   *alias;
+		ParseNamespaceItem *join_nsitem;
+
+		Assert(prev_nsitem != NULL);
+
+		alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
+		join_nsitem = incrementalJoinRTEs(pstate, JOIN_LEFT,
+										  prev_nsitem, body_nsitem,
+										  makeBoolConst(true, false), alias);
+
+		return makeTargetListFromJoin(pstate, join_nsitem);
+	}
+
+	if (prev_nsitem != NULL)
+		targetList = makeTargetListFromNSItem(pstate, prev_nsitem);
+
+	addNSItemToJoinlist(pstate, body_nsitem, true);
+
+	return list_concat(targetList,
+					   makeTargetListFromNSItem(pstate, body_nsitem));
 }
 
 /*
@@ -2129,6 +2264,9 @@ makeCallImportNSItem(ParseState *pstate, ParseNamespaceItem *prev_nsitem,
  *		inner; an inner aggregation yields exactly one row per outer row.  The
  *		subquery's RETURN columns surface to the clauses that follow.
  *
+ *		OPTIONAL CALL keeps an input row whose body yields no rows, binding the
+ *		body's variables to null for it; see joinCallBody().
+ *
  *		Phase 1 is read-only: cypher_read_stmt already excludes write clauses,
  *		and a graph-write body is rejected defensively below.
  */
@@ -2148,17 +2286,20 @@ transformCypherCallClause(ParseState *pstate, CypherClause *clause)
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
-	/* Pass through the previous clause's variables. */
+	/*
+	 * Take in the previous clause's variables.  joinCallBody() builds this
+	 * clause's target list once the body is joined in: the OPTIONAL form
+	 * projects it out of an outer join that does not exist yet.
+	 */
 	if (clause->prev != NULL)
-	{
 		prev_nsitem = transformClause(pstate, clause->prev);
-		qry->targetList = makeTargetListFromNSItem(pstate, prev_nsitem);
-	}
 	else if (detail->importlist != NIL)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_COLUMN),
 				 errmsg("CALL has no preceding clause to import variables from"),
 				 parser_errposition(pstate, detail->location)));
+	else if (detail->optional)
+		prev_nsitem = addUnitRowNSItem(pstate);
 
 	/*
 	 * Analyze the subquery and join it in.  It is LATERAL exactly when it
@@ -2222,7 +2363,6 @@ transformCypherCallClause(ParseState *pstate, CypherClause *clause)
 	nsitem = addRangeTableEntryForSubquery(pstate, subqry,
 										   makeAliasNoDup(CYPHER_CALL_ALIAS, NIL),
 										   lateral, true);
-	addNSItemToJoinlist(pstate, nsitem, true);
 
 	/*
 	 * A CALL subquery may not return a variable already bound in the outer
@@ -2232,26 +2372,21 @@ transformCypherCallClause(ParseState *pstate, CypherClause *clause)
 	 * with a confusing type error.  To return an imported variable the body
 	 * must alias it to a fresh name.
 	 */
+	foreach(lc, nsitem->p_rte->eref->colnames)
 	{
-		List	   *body_tlist = makeTargetListFromNSItem(pstate, nsitem);
-		ListCell   *bl;
+		char	   *colname = strVal(lfirst(lc));
 
-		foreach(bl, body_tlist)
-		{
-			TargetEntry *bte = (TargetEntry *) lfirst(bl);
-
-			if (bte->resjunk || bte->resname == NULL || bte->resname[0] == '\0')
-				continue;
-			if (findTarget(qry->targetList, bte->resname) != NULL)
-				ereport(ERROR,
-						(errcode(ERRCODE_DUPLICATE_ALIAS),
-						 errmsg("variable \"%s\" returned by the CALL subquery is already bound in the outer query",
-								bte->resname),
-						 parser_errposition(pstate, detail->location)));
-		}
-
-		qry->targetList = list_concat(qry->targetList, body_tlist);
+		if (colname[0] != '\0' &&
+			nsItemHasColumnNamed(prev_nsitem, colname))
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_ALIAS),
+					 errmsg("variable \"%s\" returned by the CALL subquery is already bound in the outer query",
+							colname),
+					 parser_errposition(pstate, detail->location)));
 	}
+
+	qry->targetList = joinCallBody(pstate, prev_nsitem, nsitem,
+								   detail->optional);
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
@@ -2607,30 +2742,9 @@ transformMatchOptional(ParseState *pstate, CypherClause *clause)
 	Node	   *qual;
 
 	if (clause->prev == NULL)
-	{
-		Query	   *qry;
-		Alias	   *l_alias;
-
-		/*
-		 * To return NULL if OPTIONAL MATCH is the first clause and there is
-		 * no result that matches the pattern.
-		 */
-
-		qry = makeNode(Query);
-		qry->commandType = CMD_SELECT;
-		qry->rtable = NIL;
-		qry->jointree = makeFromExpr(NIL, NULL);
-
-		l_alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
-		l_nsitem = addRangeTableEntryForSubquery(pstate, qry, l_alias,
-												 pstate->p_lateral_active, true);
-
-		addNSItemToJoinlist(pstate, l_nsitem, true);
-	}
+		l_nsitem = addUnitRowNSItem(pstate);
 	else
-	{
 		l_nsitem = transformClause(pstate, clause->prev);
-	}
 
 	/*
 	 * Transform RIGHT. Prevent `clause` from being transformed infinitely.
@@ -8171,7 +8285,14 @@ incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
 	 * Since this is left join, we need to mark j->rarg as it may potentially
 	 * emit NULL. The jindex argument holds rtindex of the join's RTE, which
 	 * is created right after j->arg's RTE in this case.
+	 *
+	 * That "right after" is a requirement on every caller: the right-hand RTE
+	 * must be the most recently added one, so that the join RTE built just
+	 * below lands at its index plus one.  Slipping another RTE in between
+	 * would nullify the wrong relation, which yields silently wrong rows
+	 * rather than an error.
 	 */
+	Assert(list_length(pstate->p_rtable) == r_nsitem->p_rtindex);
 	markRelsAsNulledBy(pstate, j->rarg, r_nsitem->p_rtindex + 1);
 
 	makeJoinResCols(pstate, l_nsitem, r_nsitem, &l_colnos, &r_colnos, &res_colnames,
