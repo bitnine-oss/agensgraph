@@ -34,12 +34,18 @@ CREATE VLABEL v;
 
 ALTER TABLE t.v ADD COLUMN tmp int;
 
--- one the reshape gate does not cover, so it is the superuser restriction that
--- refuses it even though this role owns the label
+-- Adding a constraint does not reshape a label, so the label's owner may add one
+-- without being a superuser.  That is not a concession: it is how a dump restores
+-- a label's primary key, and how CREATE CONSTRAINT ... ASSERT is carried out, so
+-- refusing it made a graph restorable only by a superuser.
 ALTER TABLE t.v ADD CONSTRAINT tmp_chk CHECK (true);
 
--- and one that neither refuses: the label's owner may still tune it
+-- and tuning a label is likewise the owner's to do
 ALTER TABLE t.v ALTER COLUMN properties SET STATISTICS 100;
+
+-- What the owner may not do is reshape it, which is what the gate is for.
+ALTER TABLE t.v ADD COLUMN reshaped int;
+ALTER TABLE t.v DROP COLUMN properties;
 
 RESET ROLE;
 

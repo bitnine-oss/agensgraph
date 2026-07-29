@@ -31,12 +31,20 @@ CREATE VLABEL v;
 ALTER TABLE t.v ADD COLUMN tmp int;
 ERROR:  cannot add a column to graph label "v" with ALTER TABLE
 HINT:  Use ALTER VLABEL or ALTER ELABEL instead, which keeps the graph catalog in step.
--- one the reshape gate does not cover, so it is the superuser restriction that
--- refuses it even though this role owns the label
+-- Adding a constraint does not reshape a label, so the label's owner may add one
+-- without being a superuser.  That is not a concession: it is how a dump restores
+-- a label's primary key, and how CREATE CONSTRAINT ... ASSERT is carried out, so
+-- refusing it made a graph restorable only by a superuser.
 ALTER TABLE t.v ADD CONSTRAINT tmp_chk CHECK (true);
-ERROR:  only superuser can ALTER TABLE on graph label
--- and one that neither refuses: the label's owner may still tune it
+-- and tuning a label is likewise the owner's to do
 ALTER TABLE t.v ALTER COLUMN properties SET STATISTICS 100;
+-- What the owner may not do is reshape it, which is what the gate is for.
+ALTER TABLE t.v ADD COLUMN reshaped int;
+ERROR:  cannot add a column to graph label "v" with ALTER TABLE
+HINT:  Use ALTER VLABEL or ALTER ELABEL instead, which keeps the graph catalog in step.
+ALTER TABLE t.v DROP COLUMN properties;
+ERROR:  cannot drop a column of graph label "v" with ALTER TABLE
+HINT:  Use ALTER VLABEL or ALTER ELABEL instead, which keeps the graph catalog in step.
 RESET ROLE;
 SET graph_path = g;
 CREATE VLABEL v;
