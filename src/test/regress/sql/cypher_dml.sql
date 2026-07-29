@@ -256,6 +256,43 @@ MATCH (a) RETURN a.id AS x ORDER BY x DESC;
 MATCH (a) RETURN a.name AS name ORDER BY a.id DESC;
 MATCH (a) RETURN a.name AS name ORDER BY a.id DESC SKIP 1 LIMIT 2;
 
+-- a RETURN/WITH item is named inside a sort key too, not only as the whole key
+MATCH (a) RETURN a.id AS x ORDER BY x * -1;
+MATCH (a) RETURN a.name AS name ORDER BY toUpper(name) DESC;
+MATCH (a) RETURN a.id AS x, a.name AS name ORDER BY x % 2, name DESC;
+MATCH (a) WITH a.id AS x ORDER BY x * -1 RETURN x;
+MATCH (a) WITH a.id AS x, a.grp AS grp ORDER BY grp DESC, x * -1 RETURN x, grp;
+
+-- an item is named without an AS alias as well
+MATCH (a) RETURN a.id ORDER BY id * -1;
+
+-- an item that is a whole vertex, read through a property
+MATCH (a) RETURN a AS v ORDER BY v.id DESC LIMIT 2;
+
+-- an aggregated item, and a key over one, are both allowed
+MATCH (a) RETURN a.grp AS grp, count(*) AS cnt ORDER BY cnt DESC, grp;
+MATCH (a) RETURN a.grp AS grp, count(*) AS cnt ORDER BY cnt * -1;
+MATCH (a) RETURN a.grp AS grp, collect(a.id) AS ids
+    ORDER BY jsonb_array_length(ids) DESC, grp;
+
+-- an item is read inside a list comprehension in the key, while the iteration
+-- variable still hides an item of its own name (the first key is then the same
+-- list for every row, so the order comes from the second key)
+MATCH (a) RETURN a.id AS i ORDER BY [k IN [1, 2, 3] | i * -1];
+MATCH (a) RETURN a.id AS i ORDER BY [i IN [1, 2, 3] | i * -1], i;
+
+-- the pattern's own variables keep precedence over an item of the same name:
+-- "a" in the sort key is the vertex, so the names come out ordered by id
+MATCH (a) WITH a.name AS a ORDER BY a.id DESC RETURN a;
+
+-- a name that is neither a variable nor an item is still an error
+MATCH (a) RETURN a.id AS x ORDER BY nosuch * -1;
+
+-- with DISTINCT the key must be an item itself, as in SQL, not an expression
+-- over one
+MATCH (a) RETURN DISTINCT a.grp AS grp ORDER BY grp;
+MATCH (a) RETURN DISTINCT a.grp AS grp ORDER BY grp * -1;
+
 -- UNWIND followed by standalone ORDER BY / LIMIT
 UNWIND [3, 1, 2, 5, 4] AS x ORDER BY x LIMIT 3 RETURN x ORDER BY x;
 

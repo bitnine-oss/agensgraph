@@ -604,6 +604,152 @@ MATCH (a) RETURN a.name AS name ORDER BY a.id DESC SKIP 1 LIMIT 2;
  "C"
 (2 rows)
 
+-- a RETURN/WITH item is named inside a sort key too, not only as the whole key
+MATCH (a) RETURN a.id AS x ORDER BY x * -1;
+ x 
+---
+ 5
+ 4
+ 3
+ 2
+ 1
+(5 rows)
+
+MATCH (a) RETURN a.name AS name ORDER BY toUpper(name) DESC;
+ name 
+------
+ "E"
+ "D"
+ "C"
+ "B"
+ "A"
+(5 rows)
+
+MATCH (a) RETURN a.id AS x, a.name AS name ORDER BY x % 2, name DESC;
+ x | name 
+---+------
+ 4 | "D"
+ 2 | "B"
+ 5 | "E"
+ 3 | "C"
+ 1 | "A"
+(5 rows)
+
+MATCH (a) WITH a.id AS x ORDER BY x * -1 RETURN x;
+ x 
+---
+ 5
+ 4
+ 3
+ 2
+ 1
+(5 rows)
+
+MATCH (a) WITH a.id AS x, a.grp AS grp ORDER BY grp DESC, x * -1 RETURN x, grp;
+ x | grp 
+---+-----
+ 4 | 2
+ 2 | 2
+ 5 | 1
+ 3 | 1
+ 1 | 1
+(5 rows)
+
+-- an item is named without an AS alias as well
+MATCH (a) RETURN a.id ORDER BY id * -1;
+ id 
+----
+ 5
+ 4
+ 3
+ 2
+ 1
+(5 rows)
+
+-- an item that is a whole vertex, read through a property
+MATCH (a) RETURN a AS v ORDER BY v.id DESC LIMIT 2;
+                       v                        
+------------------------------------------------
+ ag_vertex[1.5]{"id": 5, "grp": 1, "name": "E"}
+ ag_vertex[1.4]{"id": 4, "grp": 2, "name": "D"}
+(2 rows)
+
+-- an aggregated item, and a key over one, are both allowed
+MATCH (a) RETURN a.grp AS grp, count(*) AS cnt ORDER BY cnt DESC, grp;
+ grp | cnt 
+-----+-----
+ 1   | 3
+ 2   | 2
+(2 rows)
+
+MATCH (a) RETURN a.grp AS grp, count(*) AS cnt ORDER BY cnt * -1;
+ grp | cnt 
+-----+-----
+ 1   | 3
+ 2   | 2
+(2 rows)
+
+MATCH (a) RETURN a.grp AS grp, collect(a.id) AS ids
+    ORDER BY jsonb_array_length(ids) DESC, grp;
+ grp |    ids    
+-----+-----------
+ 1   | [1, 3, 5]
+ 2   | [2, 4]
+(2 rows)
+
+-- an item is read inside a list comprehension in the key, while the iteration
+-- variable still hides an item of its own name (the first key is then the same
+-- list for every row, so the order comes from the second key)
+MATCH (a) RETURN a.id AS i ORDER BY [k IN [1, 2, 3] | i * -1];
+ i 
+---
+ 5
+ 4
+ 3
+ 2
+ 1
+(5 rows)
+
+MATCH (a) RETURN a.id AS i ORDER BY [i IN [1, 2, 3] | i * -1], i;
+ i 
+---
+ 1
+ 2
+ 3
+ 4
+ 5
+(5 rows)
+
+-- the pattern's own variables keep precedence over an item of the same name:
+-- "a" in the sort key is the vertex, so the names come out ordered by id
+MATCH (a) WITH a.name AS a ORDER BY a.id DESC RETURN a;
+  a  
+-----
+ "E"
+ "D"
+ "C"
+ "B"
+ "A"
+(5 rows)
+
+-- a name that is neither a variable nor an item is still an error
+MATCH (a) RETURN a.id AS x ORDER BY nosuch * -1;
+ERROR:  variable does not exist
+LINE 1: MATCH (a) RETURN a.id AS x ORDER BY nosuch * -1;
+                                            ^
+-- with DISTINCT the key must be an item itself, as in SQL, not an expression
+-- over one
+MATCH (a) RETURN DISTINCT a.grp AS grp ORDER BY grp;
+ grp 
+-----
+ 1
+ 2
+(2 rows)
+
+MATCH (a) RETURN DISTINCT a.grp AS grp ORDER BY grp * -1;
+ERROR:  for SELECT DISTINCT, ORDER BY expressions must appear in select list
+LINE 1: MATCH (a) RETURN DISTINCT a.grp AS grp ORDER BY grp * -1;
+                                  ^
 -- UNWIND followed by standalone ORDER BY / LIMIT
 UNWIND [3, 1, 2, 5, 4] AS x ORDER BY x LIMIT 3 RETURN x ORDER BY x;
  x 
