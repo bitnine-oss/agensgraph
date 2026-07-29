@@ -17,6 +17,7 @@
 #include "nodes/miscnodes.h"
 #include "catalog/pg_type_d.h"
 #include "access/transam.h"
+#include "parser/parse_coerce.h"
 
 /*
  * cypher_to_jsonb
@@ -29,18 +30,20 @@
  * same property read from the jsonb bag is the array [1,2,3], so the two ways of
  * reading one property disagree, and list operations on it stop working.
  *
- * Parse the text form of such a type as jsonb and keep it when it parses.  This is
- * confined to types an extension defines, because those are the ones to_jsonb
- * cannot know about.  Every built-in type is left alone -- including the ones
- * to_jsonb also has no structural representation for, such as an unknown-typed
- * expression, where the text happening to look like JSON says nothing about the
- * value's shape.  A text form that is not JSON still becomes a jsonb string,
- * exactly as before.
+ * Parse the text form of such a type as jsonb and keep it when it parses.  Which
+ * types those are is decided from the type a value really is, not the name it
+ * goes by: a domain is resolved to the type underneath it, and what is left has
+ * to be a type that is neither built-in nor a kind of string nor a label from a
+ * fixed set.  Everything else is left alone, because for those the text
+ * happening to look like JSON says nothing about the value's shape -- a text
+ * column holding "[9,9]" holds those six characters, not a list.  A text form
+ * that is not JSON still becomes a jsonb string, exactly as before.
  */
 Datum
 cypher_to_jsonb(PG_FUNCTION_ARGS)
 {
 	Oid			argtype;
+	Oid			basetype;
 	JsonTypeCategory tcategory;
 	Oid			outfuncoid;
 
@@ -51,10 +54,29 @@ cypher_to_jsonb(PG_FUNCTION_ARGS)
 	if (!OidIsValid(argtype))
 		return to_jsonb(fcinfo);
 
-	if (argtype < FirstNormalObjectId)
+	/*
+	 * Judge the type this value really is.  A domain is a base type under
+	 * another name and holds exactly what the base type holds, so a domain over
+	 * a built-in type has to read as that built-in type does.
+	 */
+	basetype = getBaseType(argtype);
+
+	/* a built-in type's representation is already settled */
+	if (basetype < FirstNormalObjectId)
 		return to_jsonb(fcinfo);
 
-	json_categorize_type(argtype, true, &tcategory, &outfuncoid);
+	/*
+	 * A type that is a kind of string holds text, whatever its text happens to
+	 * look like: reading it as JSON would turn a string that reads like a number
+	 * or a list into one.  The same goes for a label drawn from a fixed set.
+	 * What is left is a type whose value has a shape of its own that to_jsonb
+	 * has no way to know -- which is the case this exists for.
+	 */
+	if (TypeCategory(basetype) == TYPCATEGORY_STRING ||
+		TypeCategory(basetype) == TYPCATEGORY_ENUM)
+		return to_jsonb(fcinfo);
+
+	json_categorize_type(basetype, true, &tcategory, &outfuncoid);
 	if (tcategory == JSONTYPE_OTHER && OidIsValid(outfuncoid))
 	{
 		char	   *str = OidOutputFunctionCall(outfuncoid, PG_GETARG_DATUM(0));
