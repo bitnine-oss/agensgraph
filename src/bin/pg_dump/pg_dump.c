@@ -20444,6 +20444,7 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 	TableInfo **parents;
 	const char *reltypename;
 	char	   *storage;
+	bool		askedforddl = false;
 	int			j,
 				k;
 
@@ -20649,6 +20650,11 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 	 * needs no default to be accepted here.  A DEFAULT is left to the
 	 * per-column loop further down, which already emits one for a column that
 	 * is not generated.
+	 *
+	 * Reshaping a label this way is refused unless it is asked for, so ask for
+	 * it -- but only around the statements that need it, and only in a dump that
+	 * has such a column to restore.  A dump of anything else says nothing about
+	 * it, so restoring one is not conditional on being allowed to set it.
 	 */
 	for (j = 0; j < tblinfo->numatts; j++)
 	{
@@ -20672,6 +20678,12 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 		if (dopt->binary_upgrade)
 			pg_fatal("label \"%s\" has ordinary column \"%s\", which cannot be dumped for a binary upgrade",
 					 tblinfo->dobj.name, tblinfo->attnames[j]);
+
+		if (!askedforddl)
+		{
+			appendPQExpBufferStr(q, "SET enable_graph_ddl = on;\n");
+			askedforddl = true;
+		}
 
 		appendPQExpBuffer(q, "ALTER TABLE %s ADD COLUMN %s %s",
 						  qualrelname,
@@ -20748,6 +20760,17 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 	if (dopt->binary_upgrade &&
 		(tblinfo->relkind == RELKIND_RELATION))
 	{
+		/*
+		 * A binary upgrade rebuilds a label's shape directly -- dropping the
+		 * columns that were dropped and re-establishing what it inherits -- so
+		 * it reaches the label the same way, and has to ask the same thing.
+		 */
+		if (OidIsValid(tblinfo->ag_laboid) && !askedforddl)
+		{
+			appendPQExpBufferStr(q, "SET enable_graph_ddl = on;\n");
+			askedforddl = true;
+		}
+
 		for (j = 0; j < tblinfo->numatts; j++)
 		{
 			if (tblinfo->attisdropped[j])
@@ -21000,6 +21023,10 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 	if (tblinfo->forcerowsec)
 		appendPQExpBuffer(q, "\nALTER TABLE ONLY %s FORCE ROW LEVEL SECURITY;\n",
 						  qualrelname);
+
+	/* stop asking once this label is built, so the rest of the restore does not */
+	if (askedforddl)
+		appendPQExpBufferStr(q, "RESET enable_graph_ddl;\n");
 
 	if (dopt->binary_upgrade)
 		binary_upgrade_extension_member(q, &tblinfo->dobj,
