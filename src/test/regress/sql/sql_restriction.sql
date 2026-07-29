@@ -88,6 +88,41 @@ CREATE TABLE mergesrc (k int);
 MERGE INTO g.v AS t USING mergesrc AS s ON (t.properties ->> 'k')::int = s.k
 	WHEN MATCHED THEN UPDATE SET properties = '{"merge":"impossible"}'
 	WHEN NOT MATCHED THEN INSERT (properties) VALUES ('{"merge":"impossible"}');
+
+-- The refusal does not depend on which actions the MERGE carries, because any of
+-- them can write: an insert-only one, an update-only one, a delete-only one, and
+-- one whose only action is to do nothing are all refused, so nothing has to be
+-- known about what the statement would have done.
+INSERT INTO mergesrc VALUES (1);
+MERGE INTO g.v AS t USING mergesrc AS s ON (t.properties ->> 'k')::int = s.k
+	WHEN NOT MATCHED THEN INSERT (properties) VALUES ('{"merge":"impossible"}');
+MERGE INTO g.v AS t USING mergesrc AS s ON (t.properties ->> 'k')::int = s.k
+	WHEN MATCHED THEN UPDATE SET properties = '{"merge":"impossible"}';
+MERGE INTO g.v AS t USING mergesrc AS s ON (t.properties ->> 'k')::int = s.k
+	WHEN MATCHED THEN DELETE;
+MERGE INTO g.v AS t USING mergesrc AS s ON (t.properties ->> 'k')::int = s.k
+	WHEN NOT MATCHED THEN DO NOTHING;
+-- nothing was written by any of them
+SELECT count(*) AS label_rows FROM g.v;
+
+-- A label as the SOURCE of a MERGE is only read, so it is not refused: the target
+-- is what decides, exactly as it does for INSERT ... SELECT.
+CREATE TABLE mergetgt (k int);
+MERGE INTO mergetgt AS t USING g.v AS s ON t.k = 1
+	WHEN NOT MATCHED THEN INSERT (k) VALUES (1);
+SELECT count(*) AS target_rows FROM mergetgt;
+DROP TABLE mergetgt;
+
+-- And it is the same permission the other three ask for: with it granted the
+-- MERGE goes through, and the label really is written.
+SET enable_graph_dml = on;
+MERGE INTO g.v AS t USING mergesrc AS s ON (t.properties ->> 'k')::int = s.k
+	WHEN NOT MATCHED THEN INSERT (properties) VALUES ('{"merge":"allowed"}');
+RESET enable_graph_dml;
+SELECT count(*) AS written FROM g.v WHERE properties ? 'merge';
+MERGE INTO g.v AS t USING mergesrc AS s ON (t.properties ->> 'k')::int = s.k
+	WHEN MATCHED THEN UPDATE SET properties = '{"merge":"impossible"}';
+SELECT properties FROM g.v WHERE properties ? 'merge';
 DROP TABLE mergesrc;
 
 -- cleanup
