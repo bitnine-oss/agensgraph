@@ -864,17 +864,41 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	else if (detail->where != NULL)
 	{
 		Node	   *where = detail->where;
+		Node	   *skip = detail->skip;
+		Node	   *limit = detail->limit;
 
 		Assert(detail->kind == CP_WITH);
 
+		/*
+		 * WHERE filters the rows the projection produced, so SKIP and LIMIT --
+		 * which page what the clause passes on -- belong above the filter, not
+		 * inside the projection: "WITH x WHERE x > 1 ORDER BY x LIMIT 2" pages
+		 * the two smallest rows that pass, not the two smallest overall.
+		 *
+		 * ORDER BY stays with the projection.  A filter keeps the order it is
+		 * given, so the rows come out sorted either way, and sorting there lets
+		 * a sort key name a variable the projection does not output.
+		 */
 		detail->where = NULL;
+		detail->skip = NULL;
+		detail->limit = NULL;
 		nsitem = transformClause(pstate, (Node *) clause);
 		detail->where = where;
+		detail->skip = skip;
+		detail->limit = limit;
 
 		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 
 		qual = transformCypherWhere(pstate, where, EXPR_KIND_WHERE);
 		qual = resolve_future_vertex(pstate, qual, 0);
+
+		qry->limitOffset = transformCypherLimit(pstate, skip, EXPR_KIND_OFFSET,
+												"SKIP/OFFSET");
+		qry->limitOffset = resolve_future_vertex(pstate, qry->limitOffset, 0);
+
+		qry->limitCount = transformCypherLimit(pstate, limit, EXPR_KIND_LIMIT,
+											   "LIMIT");
+		qry->limitCount = resolve_future_vertex(pstate, qry->limitCount, 0);
 	}
 	else
 	{
@@ -2726,6 +2750,35 @@ checkNameInItems(ParseState *pstate, List *items, List *targetList)
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("expression in WITH must be aliased (use AS)"),
 					 parser_errposition(pstate, exprLocation(res->val))));
+	}
+
+	/*
+	 * Every value a WITH passes on is named, and a later clause reads it by
+	 * that name, so two of them may not share one: which value a reference
+	 * meant would be a guess.  Walk the target list itself rather than the
+	 * items, so that a name "*" expanded also counts.
+	 */
+	foreach(lt, targetList)
+	{
+		TargetEntry *te = lfirst(lt);
+		ListCell   *lp;
+
+		if (te->resname == NULL)
+			continue;
+
+		for_each_cell(lp, targetList, lnext(targetList, lt))
+		{
+			TargetEntry *later = lfirst(lp);
+
+			if (later->resname != NULL &&
+				strcmp(later->resname, te->resname) == 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_DUPLICATE_ALIAS),
+						 errmsg("WITH passes on \"%s\" more than once",
+								te->resname),
+						 parser_errposition(pstate,
+											exprLocation((Node *) later->expr))));
+		}
 	}
 }
 

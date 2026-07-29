@@ -2185,11 +2185,18 @@ MATCH (p:person) WITH p.name AS name WHERE name IS NOT NULL
     ORDER BY toUpper(name) DESC RETURN name;
 MATCH (p:person) WITH p.name AS name WHERE name IS NOT NULL ORDER BY p.id DESC
     RETURN name;
--- NOTE: paging beside a WITH ... WHERE is applied inside that wrap, i.e. BEFORE
--- the WHERE filters, so this keeps only id 2.  Cypher's clause order (WHERE,
--- then ORDER BY, then paging) would return ids 2 and 3.  Pinned as it behaves
--- so the divergence stays visible; it is not what this ORDER BY change is about.
+-- Paging beside a WITH ... WHERE pages what the filter passed on, in the clause
+-- order WHERE, then ORDER BY, then SKIP/LIMIT: the two smallest ids above 1,
+-- not the two smallest of all.  A sort key that reads a variable the projection
+-- does not pass on keeps working there.
 MATCH (p:person) WITH p.id AS x WHERE x > 1 ORDER BY x LIMIT 2 RETURN x;
+MATCH (p:person) WITH p.id AS x WHERE x > 1 ORDER BY x SKIP 1 RETURN x;
+MATCH (p:person) WITH p.id AS x WHERE x > 1 ORDER BY x SKIP 1 LIMIT 1 RETURN x;
+MATCH (p:person) WITH p.id AS x WHERE x > 1 ORDER BY x * -1 LIMIT 2 RETURN x;
+MATCH (p:person) WITH p.id AS x WHERE x > 1 ORDER BY p.name DESC LIMIT 2
+    RETURN x;
+MATCH (p:person) WITH DISTINCT p.age AS age WHERE age > 20 ORDER BY age LIMIT 1
+    RETURN age;
 
 -- 5. an item that is a whole vertex, edge or path
 
@@ -2376,15 +2383,15 @@ MATCH (p:person) RETURN p.id AS x ORDER BY nosuch * -1;
 MATCH (p:person) RETURN p.name AS name ORDER BY p.id, id;
 -- a field on an item that holds a scalar fails the same way it does elsewhere
 MATCH (p:person) RETURN p.id AS x ORDER BY x.foo, x;
--- Two items may carry one name (nothing rejects that).  A key resolves it to
--- the first of them, for either spelling of the key, so the rows below come out
--- ordered by id and not by age.
+-- A RETURN may carry one name twice, which is fine until a key reads it: which
+-- of the two to sort by would be a guess, so both spellings of the key say so.
+MATCH (p:person) RETURN p.id AS x, p.age AS x;
 MATCH (p:person) RETURN p.id AS x, p.age AS x ORDER BY x;
 MATCH (p:person) RETURN p.id AS x, p.age AS x ORDER BY x * -1;
--- NOTE: past a WITH the same name resolves the other way -- a later column of a
--- namespace item wins -- so this orders by id (the key's "x") while returning
--- age (the following clause's "x").  Pinned to keep the disagreement visible.
+-- A WITH names everything it passes on and a later clause reads it by name, so
+-- there the collision itself is refused -- including one made by expanding "*".
 MATCH (p:person) WITH p.id AS x, p.age AS x ORDER BY x * -1 RETURN x;
+MATCH (p:person) WITH *, p.id AS p RETURN p;
 
 DROP GRAPH sortkeys CASCADE;
 SET graph_path = ag324;
