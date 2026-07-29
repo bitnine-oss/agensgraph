@@ -3440,12 +3440,115 @@ SELECT count(*) AS kid_rows, min(length(kid_only)) AS kid_len FROM tc.vle_kid;
 (1 row)
 
 -- ----------------------------------------------------------------------------
+-- 21. The promotion catalog follows the label's columns however they change.
+--
+--     A label is an ordinary table underneath, so plain ALTER TABLE reaches the
+--     same columns that ALTER VLABEL does.  Whatever it does to them, the
+--     catalog has to keep describing what is actually there: it names a promoted
+--     property's column by attnum, and a reader that trusts a stale one asks for
+--     a column that is gone or that no longer derives from the property.
+-- ----------------------------------------------------------------------------
+CREATE VLABEL sync1 (age int GENERATED, nm text GENERATED);
+CREATE (:sync1 {age: 5, nm: 'a'});
+SELECT p.propname, p.attnum
+FROM ag_label_property p JOIN ag_label l ON l.oid = p.laboid
+WHERE l.labname = 'sync1' ORDER BY p.attnum;
+ propname | attnum 
+----------+--------
+ age      |      3
+ nm       |      4
+(2 rows)
+
+-- 21a. Dropping the column with plain ALTER TABLE forgets the property, so the
+--      read goes back to the bag instead of a dropped attnum.
+ALTER TABLE tc.sync1 DROP COLUMN age;
+SELECT p.propname, p.attnum
+FROM ag_label_property p JOIN ag_label l ON l.oid = p.laboid
+WHERE l.labname = 'sync1' ORDER BY p.attnum;
+ propname | attnum 
+----------+--------
+ nm       |      4
+(1 row)
+
+MATCH (n:sync1) RETURN n.age AS age, n.nm AS nm;
+ age | nm  
+-----+-----
+ 5   | "a"
+(1 row)
+
+-- 21b. DROP EXPRESSION keeps the column but stops it deriving from the
+--      property, so the mapping has to go as well.
+ALTER TABLE tc.sync1 ALTER COLUMN nm DROP EXPRESSION;
+SELECT p.propname, p.attnum
+FROM ag_label_property p JOIN ag_label l ON l.oid = p.laboid
+WHERE l.labname = 'sync1' ORDER BY p.attnum;
+ propname | attnum 
+----------+--------
+(0 rows)
+
+SELECT attname, attgenerated FROM pg_attribute
+WHERE attrelid = 'tc.sync1'::regclass AND attnum >= 3 AND NOT attisdropped
+ORDER BY attnum;
+ attname | attgenerated 
+---------+--------------
+ nm      | 
+(1 row)
+
+MATCH (n:sync1) RETURN n.age AS age, n.nm AS nm;
+ age | nm  
+-----+-----
+ 5   | "a"
+(1 row)
+
+MATCH (n:sync1) WHERE n.nm = 'a' RETURN count(*) AS matched;
+ matched 
+---------
+ 1
+(1 row)
+
+MATCH (n:sync1) SET n.nm = 'b';
+MATCH (n:sync1) RETURN n.nm AS nm;
+ nm  
+-----
+ "b"
+(1 row)
+
+-- 21c. A generated column added by plain ALTER TABLE is recorded, and an
+--      ordinary one is not.
+CREATE VLABEL sync2 (age int GENERATED);
+ALTER TABLE tc.sync2
+  ADD COLUMN sc int GENERATED ALWAYS AS ((properties ->> 'sc')::int) STORED;
+ALTER TABLE tc.sync2 ADD COLUMN plainc text;
+SELECT p.propname, p.attnum
+FROM ag_label_property p JOIN ag_label l ON l.oid = p.laboid
+WHERE l.labname = 'sync2' ORDER BY p.attnum;
+ propname | attnum 
+----------+--------
+ age      |      3
+ sc       |      4
+(2 rows)
+
+CREATE (:sync2 {age: 1, sc: 9});
+MATCH (n:sync2) RETURN n.age AS age, n.sc AS sc;
+ age | sc 
+-----+----
+ 1   | 9
+(1 row)
+
+-- 21d. A structural column cannot be dropped through plain ALTER TABLE either.
+ALTER TABLE tc.sync2 DROP COLUMN id;
+ERROR:  cannot drop column "id" of graph label "sync2"
+HINT:  It is a structural column of the graph label.
+ALTER TABLE tc.sync2 DROP COLUMN properties;
+ERROR:  cannot drop column "properties" of graph label "sync2"
+HINT:  It is a structural column of the graph label.
+-- ----------------------------------------------------------------------------
 -- CLEANUP
 -- ----------------------------------------------------------------------------
 RESET enable_property_promotion;
 RESET enable_seqscan;
 DROP GRAPH tc CASCADE;
-NOTICE:  drop cascades to 39 other objects
+NOTICE:  drop cascades to 41 other objects
 DETAIL:  drop cascades to sequence tc.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -3485,4 +3588,6 @@ drop cascades to vlabel pcmix
 drop cascades to vlabel pv
 drop cascades to elabel vle_par
 drop cascades to elabel vle_kid
+drop cascades to vlabel sync1
+drop cascades to vlabel sync2
 RESET graph_path;
