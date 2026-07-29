@@ -2975,6 +2975,21 @@ typedef struct ModifyGraphState
 								 TupleTableSlot *slot);
 	EPQState	mt_epqstate;	/* for evaluating EvalPlanQual rechecks */
 	List	  **mt_arowmarks;
+
+	/*
+	 * Re-examining a written element substitutes the re-fetched row at the scan
+	 * that read it and stands in -- with nothing -- at the other members of its
+	 * inheritance set.  Both are set up afresh for every element, so the slots
+	 * are owned here and only lent to mt_epqstate for the element being
+	 * re-examined: an entry left in place in mt_epqstate is not neutral, it
+	 * makes the scan read that slot and nothing else.
+	 *
+	 * mt_epq_slot is indexed by range table index - 1, and allocated the first
+	 * time an element is re-examined.  mt_epq_lent names the entries currently
+	 * lent out.
+	 */
+	TupleTableSlot **mt_epq_slot;
+	Bitmapset  *mt_epq_lent;
 } ModifyGraphState;
 
 typedef struct Hash2SideState

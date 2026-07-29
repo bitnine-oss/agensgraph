@@ -36,6 +36,11 @@ static Datum GraphTableTupleUpdate(ModifyGraphState *mgstate,
 								   int attidx);
 static void fillLabelTupleSlot(TupleTableSlot *elemTupleSlot, Relation rel,
 							   Oid tts_value_type, Datum tts_value);
+static void takeBackRecheckSlots(ModifyGraphState *mgstate);
+static TupleTableSlot *lendRecheckSlot(ModifyGraphState *mgstate,
+									   Relation rel, Index rti);
+static TupleTableSlot *recheckElement(ModifyGraphState *mgstate,
+									  Index scanrelid, bool *readwhatwelent);
 
 /*
  * LegacyExecSetGraph
@@ -343,6 +348,135 @@ fillLabelTupleSlot(TupleTableSlot *elemTupleSlot, Relation rel,
 }
 
 /*
+ * takeBackRecheckSlots
+ *		Undo every substitution a previous re-examination set up.
+ *
+ * A re-examination names the scans it is asking about: the one whose row it is
+ * re-fetching, and the other members of that row's inheritance set, which it
+ * stands in for with nothing.  Neither mark means anything to the element
+ * re-examined next -- one silences a scan the next element needs to read, the
+ * other answers for a scan the next element is asking about -- so the whole set
+ * is taken back here and built again from nothing for each element.
+ *
+ * A slot cannot be left in place and merely emptied.  A scan whose entry is set
+ * reads what the entry holds and nothing else, so an emptied entry turns the
+ * scan into one that finds no rows.  Only the pointer is taken out; the slot
+ * itself is kept for the next element that re-examines through the same scan,
+ * so a statement's slots are as many as its scans rather than as many as its
+ * conflicts.
+ */
+static void
+takeBackRecheckSlots(ModifyGraphState *mgstate)
+{
+	EPQState   *epqstate = &mgstate->mt_epqstate;
+	int			rti = -1;
+
+	while ((rti = bms_next_member(mgstate->mt_epq_lent, rti)) >= 0)
+	{
+		ExecClearTuple(mgstate->mt_epq_slot[rti - 1]);
+		epqstate->relsubs_slot[rti - 1] = NULL;
+
+		/*
+		 * These only exist once a recheck plan has been built, which is not yet
+		 * the case the first time round -- and then nothing is lent either.
+		 */
+		if (epqstate->relsubs_blocked != NULL)
+		{
+			epqstate->relsubs_blocked[rti - 1] = false;
+			epqstate->relsubs_done[rti - 1] = false;
+		}
+	}
+
+	bms_free(mgstate->mt_epq_lent);
+	mgstate->mt_epq_lent = NULL;
+}
+
+/*
+ * lendRecheckSlot
+ *		The slot the coming re-examination reads for range table index `rti',
+ *		emptied and lent to the recheck state.
+ *
+ * Left empty this stands in for a scan with nothing; filled with a row it
+ * supplies that row in place of what the scan would have read.
+ */
+static TupleTableSlot *
+lendRecheckSlot(ModifyGraphState *mgstate, Relation rel, Index rti)
+{
+	EPQState   *epqstate = &mgstate->mt_epqstate;
+	Index		rtsize = mgstate->ps.state->es_range_table_size;
+
+	Assert(rti > 0 && rti <= rtsize);
+
+	if (mgstate->mt_epq_slot == NULL)
+		mgstate->mt_epq_slot = (TupleTableSlot **)
+			palloc0(rtsize * sizeof(TupleTableSlot *));
+
+	if (mgstate->mt_epq_slot[rti - 1] == NULL)
+	{
+		/*
+		 * No slot for this scan yet.  EvalPlanQualSlot builds one and keeps it
+		 * in the recheck state's own entry, which is where it is taken from.
+		 */
+		Assert(epqstate->relsubs_slot[rti - 1] == NULL);
+		mgstate->mt_epq_slot[rti - 1] = EvalPlanQualSlot(epqstate, rel, rti);
+	}
+
+	ExecClearTuple(mgstate->mt_epq_slot[rti - 1]);
+	epqstate->relsubs_slot[rti - 1] = mgstate->mt_epq_slot[rti - 1];
+	mgstate->mt_epq_lent = bms_add_member(mgstate->mt_epq_lent, rti);
+
+	return mgstate->mt_epq_slot[rti - 1];
+}
+
+/*
+ * recheckElement
+ *		Re-run the subplan and return the row it now yields, with the scan named
+ *		by `scanrelid' reading what has been lent to it.
+ *
+ * *readwhatwelent reports whether the scan actually read the row lent to it, so
+ * the caller can tell an answer about this row from an answer about some other.
+ *
+ * This is EvalPlanQual() without the mark it leaves behind on completion.  That
+ * mark records that the substituted range table index has nothing further to
+ * supply, and the next run honours it; upstream the index is always the
+ * statement's target relation, which had that mark to begin with, but here it is
+ * a scan, and silencing it would answer the next element's re-examination with
+ * an empty side of the join.  The whole substitution set is built afresh for
+ * every element instead, and given back as soon as the run is over, so nothing
+ * about one element's re-examination is in place for the next one's.
+ */
+static TupleTableSlot *
+recheckElement(ModifyGraphState *mgstate, Index scanrelid,
+			   bool *readwhatwelent)
+{
+	EPQState   *epqstate = &mgstate->mt_epqstate;
+	TupleTableSlot *slot;
+
+	/* build or reset the recheck plan */
+	EvalPlanQualBegin(epqstate);
+
+	/* the row lent for this scan is there to be read */
+	epqstate->relsubs_done[scanrelid - 1] = false;
+	epqstate->relsubs_blocked[scanrelid - 1] = false;
+
+	slot = EvalPlanQualNext(epqstate);
+
+	/*
+	 * Hold the row independently of the recheck plan's own state, which the
+	 * next re-examination reuses -- and of the lent slots, which are given back
+	 * below.
+	 */
+	if (!TupIsNull(slot))
+		ExecMaterializeSlot(slot);
+
+	*readwhatwelent = epqstate->relsubs_done[scanrelid - 1];
+
+	takeBackRecheckSlots(mgstate);
+
+	return slot;
+}
+
+/*
  * GraphTableTupleUpdate
  * 		Update the tuple in the graph table.
  *
@@ -375,6 +509,7 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	List	   *scans;
 	ListCell   *ls;
 	Index		scanrelid;
+	bool		readwhatwelent;
 
 	if (tts_value_type == VERTEXOID)
 	{
@@ -495,6 +630,15 @@ lconcurrent:
 			{
 				scanrelid = 0;
 
+				/*
+				 * Whatever the last re-examination -- of this element on an
+				 * earlier row, or of an earlier element of this row -- asked
+				 * about, it is not what this one is asking about.  Take it all
+				 * back before naming anything, so an entry that a path out of
+				 * here left behind cannot outlive it either.
+				 */
+				takeBackRecheckSlots(mgstate);
+
 				if (plan->nr_modify > 0)
 				{
 					ereport(ERROR,
@@ -540,8 +684,8 @@ lconcurrent:
 				 * Already know that we're going to need to do EPQ, so fetch
 				 * tuple directly into the right slot.
 				 */
-				inputslot = EvalPlanQualSlot(epqstate, resultRelationDesc,
-											 scanrelid);
+				inputslot = lendRecheckSlot(mgstate, resultRelationDesc,
+											scanrelid);
 
 				result = table_tuple_lock(resultRelationDesc, ctid,
 										  estate->es_snapshot,
@@ -576,21 +720,19 @@ lconcurrent:
 
 							if (rti == scanrelid)
 								continue;
-							(void) EvalPlanQualSlot(epqstate,
-													ExecGetRangeTableRelation(estate, rti, false),
-													rti);
+							(void) lendRecheckSlot(mgstate,
+												   ExecGetRangeTableRelation(estate, rti, false),
+												   rti);
 						}
 
-						epqslot = EvalPlanQual(epqstate,
-											   resultRelationDesc,
-											   scanrelid,
-											   inputslot);
+						epqslot = recheckElement(mgstate, scanrelid,
+												 &readwhatwelent);
 
 						/*
 						 * The recheck is only an answer about this row if the
 						 * scan we stood in for actually read what we supplied.
 						 */
-						if (!epqstate->relsubs_done[scanrelid - 1])
+						if (!readwhatwelent)
 							ereport(ERROR,
 									(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
 									 errmsg("could not serialize access due to concurrent update")));

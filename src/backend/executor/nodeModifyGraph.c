@@ -171,6 +171,14 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 						mgstate->mt_arowmarks[0]);
 
 	/*
+	 * The slots a re-examination reads are built the first time an element is
+	 * re-examined, so a clause that meets no concurrent update never allocates
+	 * them at all.
+	 */
+	mgstate->mt_epq_slot = NULL;
+	mgstate->mt_epq_lent = NULL;
+
+	/*
 	 * Fill eager action information.
 	 *
 	 * A SET clause needs the table whatever enable_multiple_update says: it
@@ -666,6 +674,11 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 	 * Terminate EPQ execution if active
 	 */
 	EvalPlanQualEnd(&mgstate->mt_epqstate);
+
+	/* the slots it owned went with it */
+	mgstate->mt_epq_slot = NULL;
+	bms_free(mgstate->mt_epq_lent);
+	mgstate->mt_epq_lent = NULL;
 
 	ExecEndNode(mgstate->subplan);
 
