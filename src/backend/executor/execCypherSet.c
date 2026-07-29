@@ -416,6 +416,8 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 					   tts_value);
 	tts_values = elemTupleSlot->tts_values;
 
+lbeforerow:
+
 	/* BEFORE ROW UPDATE Triggers */
 	if (resultRelInfo->ri_TrigDesc &&
 		resultRelInfo->ri_TrigDesc->trig_update_before_row)
@@ -445,13 +447,12 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 		}
 	}
 
-lreplace:
-
 	/*
 	 * Recompute the promoted typed columns from the property bag before the
-	 * update.  Placed at the lreplace join point so it also runs on the EPQ
-	 * re-entry path; the generated columns are always derived from the same bag
-	 * that is about to be persisted, so they never diverge from it.
+	 * update.  Reached on the re-examination path too, since that goes back to
+	 * the before-row triggers above; the generated columns are always derived
+	 * from the same bag that is about to be persisted, so they never diverge
+	 * from it.
 	 *
 	 * This relies on graph-write range table entries carrying no updated-column
 	 * bitmap (ExecGetUpdatedCols returns empty), so ExecComputeStoredGenerated
@@ -614,7 +615,17 @@ lconcurrent:
 										   tts_value_type, tts_value);
 						tts_values = elemTupleSlot->tts_values;
 
-						goto lreplace;
+						/*
+						 * Go back to the before-row triggers rather than
+						 * straight to the write.  A trigger sees the row a write
+						 * is about to store, and the row has just changed; a
+						 * trigger that inspects it -- or refuses it -- has to be
+						 * asked about the row being stored, not the one that was
+						 * abandoned.  Locking the row for a trigger is also what
+						 * reports the conflict in the first place, so on that
+						 * entry path the trigger has not run at all yet.
+						 */
+						goto lbeforerow;
 					case TM_Deleted:
 						/* tuple already deleted; nothing to do */
 						return (Datum) 0;
