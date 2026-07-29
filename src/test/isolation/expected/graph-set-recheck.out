@@ -67,3 +67,16 @@ step s2_read_pp: MATCH (n:pp) RETURN n.a AS a ORDER BY a;
 1000
 (2 rows)
 
+
+starting permutation: s1_begin s1_bump_trg s2_incr_trg s1_commit s2_read_trg
+step s1_begin: BEGIN;
+step s1_bump_trg: MATCH (n:trg) SET n.a = 999;
+step s2_incr_trg: MATCH (n:trg) SET n.a = n.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_trg: <... completed>
+step s2_read_trg: MATCH (n:trg) RETURN n.a AS a;
+   a
+----
+1000
+(1 row)
+

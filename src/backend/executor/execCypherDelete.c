@@ -170,6 +170,18 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 										tupleid, NULL, NULL, &result, &tmfd);
 		if (!dodelete)
 		{
+			/*
+			 * A concurrent update is reported back here rather than rechecked by
+			 * the trigger machinery, because it cannot re-derive a graph write's
+			 * row.  Report it as what it is: this path has no re-examination of
+			 * its own, so blaming the trigger would name the wrong cause and
+			 * hide a retryable conflict behind an internal error.
+			 */
+			if (result == TM_Updated)
+				ereport(ERROR,
+						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+						 errmsg("could not serialize access due to concurrent update")));
+
 			if (required)
 			{
 				elog(ERROR, "cannot delete required graph element, because of trigger action.");

@@ -3360,8 +3360,15 @@ GetTupleForTrigger(EState *estate,
 					 * Recheck the tuple using EPQ. For MERGE, we leave this
 					 * to the caller (it must do additional rechecking, and
 					 * might end up executing a different action entirely).
+					 *
+					 * A graph write likewise rechecks for itself.  Forming the
+					 * new tuple here needs the update projection that carries an
+					 * UPDATE's changed columns onto the target row, and a graph
+					 * write has none: it fills the tuple directly rather than
+					 * projecting it, so it must re-derive the row its own way.
 					 */
-					if (estate->es_plannedstmt->commandType == CMD_MERGE)
+					if (estate->es_plannedstmt->commandType == CMD_MERGE ||
+						estate->es_plannedstmt->commandType == CMD_GRAPHWRITE)
 					{
 						if (tmresultp)
 							*tmresultp = TM_Updated;

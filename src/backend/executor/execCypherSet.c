@@ -369,6 +369,12 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	ModifiedElemEntry *entry;
 	Datum		inserted_datum;
 	List	   *recheckIndexes = NIL;
+	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
+	TupleTableSlot *epqslot;
+	TupleTableSlot *inputslot;
+	List	   *scans;
+	ListCell   *ls;
+	Index		scanrelid;
 
 	if (tts_value_type == VERTEXOID)
 	{
@@ -416,7 +422,27 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	{
 		if (!ExecBRUpdateTriggers(estate, epqstate, resultRelInfo, ctid,
 								  NULL, elemTupleSlot, &result, &tmfd))
-			return (Datum) 0;
+		{
+			/*
+			 * A trigger that returned NULL suppressed the row, so there is
+			 * nothing to write.  A concurrent update is reported back here
+			 * instead, because the trigger machinery cannot re-derive a graph
+			 * write's row for it; carry on and let the update below see the same
+			 * conflict and re-examine the row, rather than dropping the write.
+			 */
+			if (result != TM_Updated)
+				return (Datum) 0;
+
+			/*
+			 * Locking the row for the trigger already followed the update chain,
+			 * so the write below would now succeed against the new version and
+			 * store values derived from the old one.  Re-examine the row here
+			 * instead.  The lock mode an update would have reported is not
+			 * available on this path, and an update takes the exclusive one.
+			 */
+			lockmode = LockTupleExclusive;
+			goto lconcurrent;
+		}
 	}
 
 lreplace:
@@ -464,13 +490,9 @@ lreplace:
 		case TM_Ok:
 			break;
 		case TM_Updated:
+lconcurrent:
 			{
-				TupleTableSlot *epqslot;
-				TupleTableSlot *inputslot;
-				ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
-				List	   *scans;
-				ListCell   *ls;
-				Index		scanrelid = 0;
+				scanrelid = 0;
 
 				if (plan->nr_modify > 0)
 				{
@@ -530,7 +552,15 @@ lreplace:
 				switch (result)
 				{
 					case TM_Ok:
-						Assert(tmfd.traversed);
+
+						/*
+						 * The chain was followed either just now or, when a
+						 * before-row trigger reported the conflict, while it
+						 * locked the row for that trigger -- so tmfd.traversed
+						 * distinguishes the two entry paths rather than reporting
+						 * success, and either way inputslot now holds the row to
+						 * re-examine.
+						 */
 
 						/*
 						 * An inheritance set supplies one column from one scan
