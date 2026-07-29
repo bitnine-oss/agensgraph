@@ -55,6 +55,7 @@
 #include "catalog/storage.h"
 #include "catalog/storage_xlog.h"
 #include "catalog/toasting.h"
+#include "catalog/ag_label_fn.h"
 #include "commands/cluster.h"
 #include "commands/comment.h"
 #include "commands/defrem.h"
@@ -1875,8 +1876,13 @@ isPropertyIndex(Oid indexoid)
 	index = (Form_pg_index) GETSTRUCT(indexTuple);
 
 	/*
-	 * If this index is a table for graph label and is an expressional index,
-	 * decide this is property index.
+	 * An index on a graph label is a property index when every one of its key
+	 * elements addresses a property rather than something else on the table.
+	 * Two spellings do that: an expression over the jsonb bag, which has no
+	 * column number, and a promoted property's typed column, which has one.
+	 * CREATE PROPERTY INDEX produces whichever the key resolves to, so both have
+	 * to be recognised here or an index it created cannot be dropped by the
+	 * matching DDL.
 	 */
 	if (!OidIsValid(get_relid_laboid(index->indrelid)))
 	{
@@ -1884,14 +1890,37 @@ isPropertyIndex(Oid indexoid)
 	}
 	else
 	{
+		List	   *promoted = get_label_promoted_properties(index->indrelid);
+
 		for (i = 0; i < index->indnatts; i++)
 		{
-			if (index->indkey.values[i] != 0)
+			AttrNumber	attno = index->indkey.values[i];
+			ListCell   *lc;
+			bool		is_promoted = false;
+
+			/* an expression element carries no column number */
+			if (attno == 0)
+				continue;
+
+			foreach(lc, promoted)
+			{
+				PromotedPropInfo *info = (PromotedPropInfo *) lfirst(lc);
+
+				if (info->attnum == attno)
+				{
+					is_promoted = true;
+					break;
+				}
+			}
+
+			if (!is_promoted)
 			{
 				retval = false;
 				break;
 			}
 		}
+
+		list_free_deep(promoted);
 	}
 
 	ReleaseSysCache(indexTuple);
