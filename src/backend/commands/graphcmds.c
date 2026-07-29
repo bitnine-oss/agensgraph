@@ -824,14 +824,42 @@ RenameLabel(RenameStmt *stmt)
  * happens to own it.
  */
 void
-CheckLabelSqlReshape(Oid relid, List *cmds)
+CheckLabelSqlReshape(Oid relid, bool recurse, List *cmds)
 {
 	ListCell   *lc;
+	Oid			labelrelid = InvalidOid;
 
 	if (enable_graph_ddl)
 		return;
 
-	if (!OidIsValid(get_relid_laboid(relid)))
+	/*
+	 * ALTER TABLE reshapes more than the relation it names: unless ONLY was
+	 * asked for it descends the inheritance tree, so a label that inherits from
+	 * an ordinary table is reshaped by altering that table.  Judge the whole set
+	 * the statement reaches, and name the label that would be reshaped rather
+	 * than the relation that was addressed.
+	 */
+	if (OidIsValid(get_relid_laboid(relid)))
+		labelrelid = relid;
+	else if (recurse)
+	{
+		List	   *children = find_all_inheritors(relid, NoLock, NULL);
+		ListCell   *cl;
+
+		foreach(cl, children)
+		{
+			Oid			child = lfirst_oid(cl);
+
+			if (OidIsValid(get_relid_laboid(child)))
+			{
+				labelrelid = child;
+				break;
+			}
+		}
+		list_free(children);
+	}
+
+	if (!OidIsValid(labelrelid))
 		return;
 
 	foreach(lc, cmds)
@@ -887,7 +915,7 @@ CheckLabelSqlReshape(Oid relid, List *cmds)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot %s graph label \"%s\" with ALTER TABLE",
-						what, get_rel_name(relid)),
+						what, get_rel_name(labelrelid)),
 				 errhint("%s", hint)));
 	}
 }
