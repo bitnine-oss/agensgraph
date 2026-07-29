@@ -242,12 +242,11 @@ permutation s1_begin s1_bump_pp s2_incr_pp s1_commit s2_read_pp
 permutation s1_begin s1_bump_head s2_incr_ends s1_commit s2_read_lk
 permutation s1_begin s1_bump_tail s2_incr_ends s1_commit s2_read_lk
 
-# KNOWN LIMITATION, recorded rather than endorsed.  With BOTH ends contended, the
-# statement reports a serialization failure and writes nothing, where re-examining
-# each row in turn would have carried both to 1000 -- each row on its own is
-# re-derivable, as the two permutations above show.  The outcome is safe: the whole
-# statement aborts and both values stay at the committed 999, so nothing partial
-# and nothing stale is stored.  It is the retry that is unnecessary.
+# BOTH ends contended, so one statement re-examines two rows.  Each is
+# re-examined on its own terms and both reach 1000.  What makes that possible is
+# that a re-examination names the scans it is asking about and gives them back
+# afterwards: the marks one element leaves behind say nothing about the next,
+# and left in place they would silence the scan the next element reads.
 permutation s1_begin s1_bump_lkall s2_incr_ends s1_commit s2_read_lk
 
 # The head is written from a value read off the TAIL.  Only the head is

@@ -190,12 +190,11 @@ step s1_bump_lkall: MATCH (n:lk) SET n.a = 999;
 step s2_incr_ends: MATCH (a:lk)-[:lke]->(b:lk) SET a.a = a.a + 1, b.a = b.a + 1; <waiting ...>
 step s1_commit: COMMIT;
 step s2_incr_ends: <... completed>
-ERROR:  could not serialize access due to concurrent update
 step s2_read_lk: MATCH (n:lk) RETURN n.role AS role, n.a AS a ORDER BY role;
-role  |  a
-------+---
-"head"|999
-"tail"|999
+role  |   a
+------+----
+"head"|1000
+"tail"|1000
 (2 rows)
 
 
