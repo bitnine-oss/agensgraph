@@ -1478,6 +1478,60 @@ MATCH p = (a:pv)-[:vle_kid*1..2]->(z) WHERE a.k = 101
 SELECT count(*) AS kid_rows, min(length(kid_only)) AS kid_len FROM tc.vle_kid;
 
 -- ----------------------------------------------------------------------------
+-- 21. The promotion catalog follows the label's columns however they change.
+--
+--     A label is an ordinary table underneath, so plain ALTER TABLE reaches the
+--     same columns that ALTER VLABEL does.  Whatever it does to them, the
+--     catalog has to keep describing what is actually there: it names a promoted
+--     property's column by attnum, and a reader that trusts a stale one asks for
+--     a column that is gone or that no longer derives from the property.
+-- ----------------------------------------------------------------------------
+CREATE VLABEL sync1 (age int GENERATED, nm text GENERATED);
+CREATE (:sync1 {age: 5, nm: 'a'});
+
+SELECT p.propname, p.attnum
+FROM ag_label_property p JOIN ag_label l ON l.oid = p.laboid
+WHERE l.labname = 'sync1' ORDER BY p.attnum;
+
+-- 21a. Dropping the column with plain ALTER TABLE forgets the property, so the
+--      read goes back to the bag instead of a dropped attnum.
+ALTER TABLE tc.sync1 DROP COLUMN age;
+SELECT p.propname, p.attnum
+FROM ag_label_property p JOIN ag_label l ON l.oid = p.laboid
+WHERE l.labname = 'sync1' ORDER BY p.attnum;
+MATCH (n:sync1) RETURN n.age AS age, n.nm AS nm;
+
+-- 21b. DROP EXPRESSION keeps the column but stops it deriving from the
+--      property, so the mapping has to go as well.
+ALTER TABLE tc.sync1 ALTER COLUMN nm DROP EXPRESSION;
+SELECT p.propname, p.attnum
+FROM ag_label_property p JOIN ag_label l ON l.oid = p.laboid
+WHERE l.labname = 'sync1' ORDER BY p.attnum;
+SELECT attname, attgenerated FROM pg_attribute
+WHERE attrelid = 'tc.sync1'::regclass AND attnum >= 3 AND NOT attisdropped
+ORDER BY attnum;
+MATCH (n:sync1) RETURN n.age AS age, n.nm AS nm;
+MATCH (n:sync1) WHERE n.nm = 'a' RETURN count(*) AS matched;
+MATCH (n:sync1) SET n.nm = 'b';
+MATCH (n:sync1) RETURN n.nm AS nm;
+
+-- 21c. A generated column added by plain ALTER TABLE is recorded, and an
+--      ordinary one is not.
+CREATE VLABEL sync2 (age int GENERATED);
+ALTER TABLE tc.sync2
+  ADD COLUMN sc int GENERATED ALWAYS AS ((properties ->> 'sc')::int) STORED;
+ALTER TABLE tc.sync2 ADD COLUMN plainc text;
+SELECT p.propname, p.attnum
+FROM ag_label_property p JOIN ag_label l ON l.oid = p.laboid
+WHERE l.labname = 'sync2' ORDER BY p.attnum;
+CREATE (:sync2 {age: 1, sc: 9});
+MATCH (n:sync2) RETURN n.age AS age, n.sc AS sc;
+
+-- 21d. A structural column cannot be dropped through plain ALTER TABLE either.
+ALTER TABLE tc.sync2 DROP COLUMN id;
+ALTER TABLE tc.sync2 DROP COLUMN properties;
+
+-- ----------------------------------------------------------------------------
 -- CLEANUP
 -- ----------------------------------------------------------------------------
 RESET enable_property_promotion;

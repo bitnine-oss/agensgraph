@@ -488,6 +488,25 @@ BeginAlterLabelProperties(Oid relid, List *cmds)
 			if (propname != NULL)
 				dropKeys = lappend(dropKeys, propname);
 		}
+		else if (cmd->subtype == AT_DropExpression && cmd->name != NULL)
+		{
+			AttrNumber	attnum;
+			char	   *propname;
+
+			/*
+			 * The column survives but stops being generated, so it no longer
+			 * derives from the property it was promoted from and must not go on
+			 * answering reads of it.  Forget the mapping; the property is then
+			 * read from the bag again, which still holds it.
+			 */
+			attnum = get_attnum(relid, cmd->name);
+			if (attnum == InvalidAttrNumber)
+				continue;
+
+			propname = get_label_property_name_by_attnum(laboid, attnum);
+			if (propname != NULL)
+				dropKeys = lappend(dropKeys, propname);
+		}
 	}
 
 	/*

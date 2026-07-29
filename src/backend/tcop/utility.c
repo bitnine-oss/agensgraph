@@ -1343,11 +1343,18 @@ ProcessUtilitySlow(ParseState *pstate,
 						atcontext.params = params;
 						atcontext.queryEnv = queryEnv;
 
-						/* keep ag_label_property in sync for ADD/DROP PROPERTY */
-						if (atstmt->objtype == OBJECT_VLABEL ||
-							atstmt->objtype == OBJECT_ELABEL)
-							lpstate = BeginAlterLabelProperties(relid,
-																atstmt->cmds);
+						/*
+						 * Keep ag_label_property in sync with the label's
+						 * columns.  This is not confined to ALTER VLABEL /
+						 * ELABEL: a label is an ordinary table underneath, so
+						 * plain ALTER TABLE reaches the same columns, and a
+						 * promoted property dropped that way would leave the
+						 * catalog naming a column that no longer exists.
+						 * BeginAlterLabelProperties returns NULL for a relation
+						 * that is not a label, so this is a no-op elsewhere.
+						 */
+						lpstate = BeginAlterLabelProperties(relid,
+															atstmt->cmds);
 
 						/* ... ensure we have an event trigger context ... */
 						EventTriggerAlterTableStart(parsetree);
