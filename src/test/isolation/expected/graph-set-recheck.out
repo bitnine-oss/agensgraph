@@ -1,0 +1,69 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1_begin s1_bump s2_incr s1_commit s2_read
+step s1_begin: BEGIN;
+step s1_bump: MATCH (n:acc) SET n.a = 999;
+step s2_incr: MATCH (n:acc) SET n.a = n.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr: <... completed>
+step s2_read: MATCH (n:acc) RETURN n.a AS a, n.k AS k;
+   a|k     
+----+------
+1000|"keep"
+(1 row)
+
+
+starting permutation: s1_begin s1_move s2_filtered s1_commit s2_read
+step s1_begin: BEGIN;
+step s1_move: MATCH (n:acc) SET n.k = 'moved';
+step s2_filtered: MATCH (n:acc) WHERE n.k = 'keep' SET n.a = 77; <waiting ...>
+step s1_commit: COMMIT;
+step s2_filtered: <... completed>
+step s2_read: MATCH (n:acc) RETURN n.a AS a, n.k AS k;
+a|k      
+-+-------
+1|"moved"
+(1 row)
+
+
+starting permutation: s1_begin s1_bump_kid s2_incr_par s1_commit s2_read_inh
+step s1_begin: BEGIN;
+step s1_bump_kid: MATCH (n:kid) SET n.a = 999;
+step s2_incr_par: MATCH (n:par) SET n.a = n.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_par: <... completed>
+step s2_read_inh: MATCH (n:par) RETURN n.who AS who, n.a AS a ORDER BY who;
+who     |   a
+--------+----
+"child" |1000
+"parent"|  11
+(2 rows)
+
+
+starting permutation: s1_begin s1_bump_par s2_incr_par s1_commit s2_read_inh
+step s1_begin: BEGIN;
+step s1_bump_par: MATCH (n:par) WHERE label(n) = 'par' SET n.a = 999;
+step s2_incr_par: MATCH (n:par) SET n.a = n.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_par: <... completed>
+step s2_read_inh: MATCH (n:par) RETURN n.who AS who, n.a AS a ORDER BY who;
+who     |   a
+--------+----
+"child" |  21
+"parent"|1000
+(2 rows)
+
+
+starting permutation: s1_begin s1_bump_pp s2_incr_pp s1_commit s2_read_pp
+step s1_begin: BEGIN;
+step s1_bump_pp: MATCH (n:pp) SET n.a = 999;
+step s2_incr_pp: MATCH (a:pp)-[:rr]->(b:pp) SET a.a = a.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_pp: <... completed>
+step s2_read_pp: MATCH (n:pp) RETURN n.a AS a ORDER BY a;
+   a
+----
+ 999
+1000
+(2 rows)
+
