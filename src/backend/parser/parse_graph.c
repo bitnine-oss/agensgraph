@@ -115,6 +115,7 @@ typedef struct prop_constr_context
 										 * applied inside the pattern query */
 	List	   *pathelems;
 	bool		on_bag;			/* did any key have to be read from the bag? */
+	bool		unexpressed;	/* did any key get no qual of its own at all? */
 } prop_constr_context;
 
 typedef struct
@@ -261,7 +262,8 @@ static Node *transformElemQuals(ParseState *pstate, Node *qual);
 static Node *transform_prop_constr(ParseState *pstate, Node *qual,
 								   Node *prop_map, Node *elem,
 								   ParseNamespaceItem *elem_nsitem,
-								   Node *prop_constr, bool *on_bag);
+								   Node *prop_constr, bool *on_bag,
+								   bool *unexpressed);
 static Node *resolvePromotedPropertyOnNSItem(ParseState *pstate,
 											 ParseNamespaceItem *nsitem,
 											 char *key);
@@ -3587,6 +3589,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			Node	   *prop_map;
 			bool		is_cyphermap;
 			bool		on_bag = true;
+			bool		unexpressed = false;
 
 			prop_map = getExprField((Expr *) te->expr, AG_ELEM_PROP_MAP);
 			is_cyphermap = IsA(eqo->prop_map, CypherMapExpr);
@@ -3594,7 +3597,8 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			if (is_cyphermap)
 				qual = transform_prop_constr(pstate, qual, prop_map,
 											 (Node *) te->expr, eqo->nsitem,
-											 eqo->prop_map, &on_bag);
+											 eqo->prop_map, &on_bag,
+											 &unexpressed);
 
 			/*
 			 * Every key of a literal map already has a qual of its own from the
@@ -3606,7 +3610,8 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			 * read from the bag.  Otherwise it is a per-row re-test of what the
 			 * native quals have already decided.
 			 */
-			if ((is_cyphermap && on_bag && ginAvail(pstate, eqo->varno, 1)) ||
+			if ((is_cyphermap &&
+				 (unexpressed || (on_bag && ginAvail(pstate, eqo->varno, 1)))) ||
 				!is_cyphermap)
 			{
 				Node	   *prop_constr;
@@ -5072,6 +5077,7 @@ transformElemQuals(ParseState *pstate, Node *qual)
 		Node	   *prop_map;
 		bool		is_cyphermap;
 		bool		on_bag = true;
+		bool		unexpressed = false;
 
 		rte = GetRTEByRangeTablePosn(pstate, eq->varno, 0);
 		/* don't use make_var() because `te` can be resjunk */
@@ -5089,7 +5095,8 @@ transformElemQuals(ParseState *pstate, Node *qual)
 
 		if (is_cyphermap)
 			qual = transform_prop_constr(pstate, qual, prop_map, (Node *) var,
-										 NULL, eq->prop_constr, &on_bag);
+										 NULL, eq->prop_constr, &on_bag,
+										 &unexpressed);
 
 		/*
 		 * Every key of a literal map already has a qual of its own from the
@@ -5101,7 +5108,9 @@ transformElemQuals(ParseState *pstate, Node *qual)
 		 * read from the bag.  Otherwise it is a per-row re-test of what the
 		 * native quals have already decided.
 		 */
-		if ((is_cyphermap && on_bag && ginAvail(pstate, eq->varno, eq->varattno)) ||
+		if ((is_cyphermap &&
+			 (unexpressed ||
+			  (on_bag && ginAvail(pstate, eq->varno, eq->varattno)))) ||
 			!is_cyphermap)
 		{
 			Node	   *prop_constr;
@@ -5123,7 +5132,7 @@ transformElemQuals(ParseState *pstate, Node *qual)
 static Node *
 transform_prop_constr(ParseState *pstate, Node *qual, Node *prop_map,
 					  Node *elem, ParseNamespaceItem *elem_nsitem,
-					  Node *prop_constr, bool *on_bag)
+					  Node *prop_constr, bool *on_bag, bool *unexpressed)
 {
 	prop_constr_context ctx;
 
@@ -5134,11 +5143,14 @@ transform_prop_constr(ParseState *pstate, Node *qual, Node *prop_map,
 	ctx.elem_nsitem = elem_nsitem;
 	ctx.pathelems = NIL;
 	ctx.on_bag = false;
+	ctx.unexpressed = false;
 
 	transform_prop_constr_worker(prop_constr, &ctx);
 
 	if (on_bag != NULL)
 		*on_bag = ctx.on_bag;
+	if (unexpressed != NULL)
+		*unexpressed = ctx.unexpressed;
 
 	return ctx.qual;
 }
@@ -5169,6 +5181,16 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 
 		if (IsA(v, CypherMapExpr))
 		{
+			/*
+			 * A map under a key is a containment test on that key: the row's
+			 * value has to be a map that contains it.  Descending it yields one
+			 * comparison per scalar it ends at, so a map ending at no scalar at
+			 * all yields nothing -- and then the containment test is the only
+			 * thing left carrying the constraint, so it has to be kept.
+			 */
+			if (((CypherMapExpr *) v)->keyvals == NIL)
+				ctx->unexpressed = true;
+
 			transform_prop_constr_worker(v, ctx);
 		}
 		else
