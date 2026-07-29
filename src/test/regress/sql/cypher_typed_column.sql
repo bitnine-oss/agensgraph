@@ -685,6 +685,40 @@ MATCH (a:doc), (b:doc) WHERE a.name='n1' AND b.name='n3'
   RETURN length(shortestpath((a)-[:knows*..5]->(b))) AS len;
 MATCH p=(a:doc)-[:knows]->(b:doc) RETURN a.name AS an, b.name AS bn ORDER BY an, bn;
 
+-- 11e1. A literal property constraint gives every key a qual of its own, so the
+--       whole-map containment test is only there to let a GIN index on the bag
+--       carry the whole test.  A key answered from a promoted column is outside
+--       that index's reach, so the containment test must be dropped where every
+--       key is promoted -- otherwise it re-tests per row what the native quals
+--       already decided -- and kept where some key really does come from the bag.
+--       Note ginAvail walks the label's inheritors, so an index on an unrelated
+--       label of the same graph must not bring it back either.
+SET enable_property_promotion = on;
+CREATE VLABEL gintc (age int GENERATED);
+CREATE VLABEL ginother;
+CREATE (:gintc {age: 5, city: 'x'}), (:gintc {age: 6, city: 'y'});
+-- no GIN anywhere: native only
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:gintc {age: 5}) RETURN id(n);
+CREATE INDEX gintc_gin ON tc.gintc USING gin (properties);
+-- promoted key with a GIN index present: still native only
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:gintc {age: 5}) RETURN id(n);
+MATCH (n:gintc {age: 5}) RETURN count(*) AS c;
+-- a key that is not promoted keeps the containment test
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:gintc {city: 'x'}) RETURN id(n);
+MATCH (n:gintc {city: 'x'}) RETURN count(*) AS c;
+-- mixed: one key needs the bag, so the containment test stays
+MATCH (n:gintc {age: 5, city: 'x'}) RETURN count(*) AS c;
+-- a GIN index on an unrelated label of the same graph must not reinstate it
+DROP INDEX tc.gintc_gin;
+CREATE INDEX ginother_gin ON tc.ginother USING gin (properties);
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:gintc {age: 5}) RETURN id(n);
+-- identical rows with promotion off
+SET enable_property_promotion = off;
+MATCH (n:gintc {age: 5}) RETURN count(*) AS c;
+MATCH (n:gintc {city: 'x'}) RETURN count(*) AS c;
+MATCH (n:gintc {age: 5, city: 'x'}) RETURN count(*) AS c;
+DROP INDEX tc.ginother_gin;
+
 -- 11e2. A promoted value is carried into jsonb with the shape the bag holds.
 --       to_jsonb falls back to the text form of a type it cannot represent, which
 --       would land as a jsonb string and disagree with the same property read from

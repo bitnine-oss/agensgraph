@@ -114,6 +114,7 @@ typedef struct prop_constr_context
 										 * anonymous element whose constraint is
 										 * applied inside the pattern query */
 	List	   *pathelems;
+	bool		on_bag;			/* did any key have to be read from the bag? */
 } prop_constr_context;
 
 typedef struct
@@ -260,7 +261,7 @@ static Node *transformElemQuals(ParseState *pstate, Node *qual);
 static Node *transform_prop_constr(ParseState *pstate, Node *qual,
 								   Node *prop_map, Node *elem,
 								   ParseNamespaceItem *elem_nsitem,
-								   Node *prop_constr);
+								   Node *prop_constr, bool *on_bag);
 static Node *resolvePromotedPropertyOnNSItem(ParseState *pstate,
 											 ParseNamespaceItem *nsitem,
 											 char *key);
@@ -3564,6 +3565,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 		{
 			Node	   *prop_map;
 			bool		is_cyphermap;
+			bool		on_bag = true;
 
 			prop_map = getExprField((Expr *) te->expr, AG_ELEM_PROP_MAP);
 			is_cyphermap = IsA(eqo->prop_map, CypherMapExpr);
@@ -3571,9 +3573,19 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			if (is_cyphermap)
 				qual = transform_prop_constr(pstate, qual, prop_map,
 											 (Node *) te->expr, eqo->nsitem,
-											 eqo->prop_map);
+											 eqo->prop_map, &on_bag);
 
-			if ((is_cyphermap && ginAvail(pstate, eqo->varno, 1)) ||
+			/*
+			 * Every key of a literal map already has a qual of its own from the
+			 * transform above, so the whole-map containment test adds nothing to
+			 * the result -- it is there so a GIN index on the property bag can
+			 * carry the whole test.  A key answered from a promoted column is not
+			 * in that index's reach, and its own column is the better access
+			 * path, so add the containment test only where some key was actually
+			 * read from the bag.  Otherwise it is a per-row re-test of what the
+			 * native quals have already decided.
+			 */
+			if ((is_cyphermap && on_bag && ginAvail(pstate, eqo->varno, 1)) ||
 				!is_cyphermap)
 			{
 				Node	   *prop_constr;
@@ -5038,6 +5050,7 @@ transformElemQuals(ParseState *pstate, Node *qual)
 		Var		   *var;
 		Node	   *prop_map;
 		bool		is_cyphermap;
+		bool		on_bag = true;
 
 		rte = GetRTEByRangeTablePosn(pstate, eq->varno, 0);
 		/* don't use make_var() because `te` can be resjunk */
@@ -5055,9 +5068,19 @@ transformElemQuals(ParseState *pstate, Node *qual)
 
 		if (is_cyphermap)
 			qual = transform_prop_constr(pstate, qual, prop_map, (Node *) var,
-										 NULL, eq->prop_constr);
+										 NULL, eq->prop_constr, &on_bag);
 
-		if ((is_cyphermap && ginAvail(pstate, eq->varno, eq->varattno)) ||
+		/*
+		 * Every key of a literal map already has a qual of its own from the
+		 * transform above, so the whole-map containment test adds nothing to
+		 * the result -- it is there so a GIN index on the property bag can
+		 * carry the whole test.  A key answered from a promoted column is not
+		 * in that index's reach, and its own column is the better access
+		 * path, so add the containment test only where some key was actually
+		 * read from the bag.  Otherwise it is a per-row re-test of what the
+		 * native quals have already decided.
+		 */
+		if ((is_cyphermap && on_bag && ginAvail(pstate, eq->varno, eq->varattno)) ||
 			!is_cyphermap)
 		{
 			Node	   *prop_constr;
@@ -5079,7 +5102,7 @@ transformElemQuals(ParseState *pstate, Node *qual)
 static Node *
 transform_prop_constr(ParseState *pstate, Node *qual, Node *prop_map,
 					  Node *elem, ParseNamespaceItem *elem_nsitem,
-					  Node *prop_constr)
+					  Node *prop_constr, bool *on_bag)
 {
 	prop_constr_context ctx;
 
@@ -5089,8 +5112,12 @@ transform_prop_constr(ParseState *pstate, Node *qual, Node *prop_map,
 	ctx.elem = elem;
 	ctx.elem_nsitem = elem_nsitem;
 	ctx.pathelems = NIL;
+	ctx.on_bag = false;
 
 	transform_prop_constr_worker(prop_constr, &ctx);
+
+	if (on_bag != NULL)
+		*on_bag = ctx.on_bag;
 
 	return ctx.qual;
 }
@@ -5176,6 +5203,8 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 			}
 			else
 			{
+				ctx->on_bag = true;
+
 				lval = (Node *) makeJsonbFuncAccessor(ctx->pstate, ctx->prop_map, copyObject(ctx->pathelems));
 
 				rval = transformCypherExpr(ctx->pstate, v, EXPR_KIND_WHERE);
