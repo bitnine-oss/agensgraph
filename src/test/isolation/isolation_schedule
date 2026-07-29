@@ -125,3 +125,6 @@ test: graphmeta_prune_regather_ser
 
 # concurrent graph SET re-examination
 test: graph-set-recheck
+
+# row triggers on a graph label, and the write paths under the same contention
+test: graph-write-trigger

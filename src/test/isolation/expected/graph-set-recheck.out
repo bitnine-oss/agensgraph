@@ -54,6 +54,94 @@ who     |   a
 (2 rows)
 
 
+starting permutation: s1_begin s1_bump_g1 s2_incr_g1 s1_commit s2_read_g
+step s1_begin: BEGIN;
+step s1_bump_g1: MATCH (n:g1) WHERE label(n) = 'g1' SET n.a = 999;
+step s2_incr_g1: MATCH (n:g1) SET n.a = n.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_g1: <... completed>
+step s2_read_g: MATCH (n:g1) RETURN n.who AS who, n.a AS a ORDER BY who;
+who |   a
+----+----
+"g1"|1000
+"g2"|  21
+"g3"|  31
+(3 rows)
+
+
+starting permutation: s1_begin s1_bump_g2 s2_incr_g1 s1_commit s2_read_g
+step s1_begin: BEGIN;
+step s1_bump_g2: MATCH (n:g2) WHERE label(n) = 'g2' SET n.a = 999;
+step s2_incr_g1: MATCH (n:g1) SET n.a = n.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_g1: <... completed>
+step s2_read_g: MATCH (n:g1) RETURN n.who AS who, n.a AS a ORDER BY who;
+who |   a
+----+----
+"g1"|  11
+"g2"|1000
+"g3"|  31
+(3 rows)
+
+
+starting permutation: s1_begin s1_bump_g3 s2_incr_g1 s1_commit s2_read_g
+step s1_begin: BEGIN;
+step s1_bump_g3: MATCH (n:g3) SET n.a = 999;
+step s2_incr_g1: MATCH (n:g1) SET n.a = n.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_g1: <... completed>
+step s2_read_g: MATCH (n:g1) RETURN n.who AS who, n.a AS a ORDER BY who;
+who |   a
+----+----
+"g1"|  11
+"g2"|  21
+"g3"|1000
+(3 rows)
+
+
+starting permutation: s1_begin s1_bump_gall s2_incr_g1 s1_commit s2_read_g
+step s1_begin: BEGIN;
+step s1_bump_gall: MATCH (n:g1) SET n.a = 999;
+step s2_incr_g1: MATCH (n:g1) SET n.a = n.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_g1: <... completed>
+step s2_read_g: MATCH (n:g1) RETURN n.who AS who, n.a AS a ORDER BY who;
+who |   a
+----+----
+"g1"|1000
+"g2"|1000
+"g3"|1000
+(3 rows)
+
+
+starting permutation: s1_begin s1_bump_mel1 s2_incr_mel s1_commit s2_read_mel
+step s1_begin: BEGIN;
+step s1_bump_mel1: MATCH (n:mel) WHERE n.k = 1 SET n.a = 999;
+step s2_incr_mel: MATCH (a:mel), (b:mel) WHERE a.k = 1 AND b.k = 2 SET a.a = a.a + 1, b.a = b.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_mel: <... completed>
+step s2_read_mel: MATCH (n:mel) RETURN n.k AS k, n.a AS a ORDER BY k;
+k|   a
+-+----
+1|1000
+2| 201
+(2 rows)
+
+
+starting permutation: s1_begin s1_bump_mel2 s2_incr_mel s1_commit s2_read_mel
+step s1_begin: BEGIN;
+step s1_bump_mel2: MATCH (n:mel) WHERE n.k = 2 SET n.a = 999;
+step s2_incr_mel: MATCH (a:mel), (b:mel) WHERE a.k = 1 AND b.k = 2 SET a.a = a.a + 1, b.a = b.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_mel: <... completed>
+step s2_read_mel: MATCH (n:mel) RETURN n.k AS k, n.a AS a ORDER BY k;
+k|   a
+-+----
+1| 101
+2|1000
+(2 rows)
+
+
 starting permutation: s1_begin s1_bump_pp s2_incr_pp s1_commit s2_read_pp
 step s1_begin: BEGIN;
 step s1_bump_pp: MATCH (n:pp) SET n.a = 999;
@@ -66,6 +154,187 @@ step s2_read_pp: MATCH (n:pp) RETURN n.a AS a ORDER BY a;
  999
 1000
 (2 rows)
+
+
+starting permutation: s1_begin s1_bump_head s2_incr_ends s1_commit s2_read_lk
+step s1_begin: BEGIN;
+step s1_bump_head: MATCH (n:lk) WHERE n.role = 'head' SET n.a = 999;
+step s2_incr_ends: MATCH (a:lk)-[:lke]->(b:lk) SET a.a = a.a + 1, b.a = b.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_ends: <... completed>
+step s2_read_lk: MATCH (n:lk) RETURN n.role AS role, n.a AS a ORDER BY role;
+role  |   a
+------+----
+"head"|1000
+"tail"|   6
+(2 rows)
+
+
+starting permutation: s1_begin s1_bump_tail s2_incr_ends s1_commit s2_read_lk
+step s1_begin: BEGIN;
+step s1_bump_tail: MATCH (n:lk) WHERE n.role = 'tail' SET n.a = 999;
+step s2_incr_ends: MATCH (a:lk)-[:lke]->(b:lk) SET a.a = a.a + 1, b.a = b.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_ends: <... completed>
+step s2_read_lk: MATCH (n:lk) RETURN n.role AS role, n.a AS a ORDER BY role;
+role  |   a
+------+----
+"head"|   2
+"tail"|1000
+(2 rows)
+
+
+starting permutation: s1_begin s1_bump_lkall s2_incr_ends s1_commit s2_read_lk
+step s1_begin: BEGIN;
+step s1_bump_lkall: MATCH (n:lk) SET n.a = 999;
+step s2_incr_ends: MATCH (a:lk)-[:lke]->(b:lk) SET a.a = a.a + 1, b.a = b.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_ends: <... completed>
+ERROR:  could not serialize access due to concurrent update
+step s2_read_lk: MATCH (n:lk) RETURN n.role AS role, n.a AS a ORDER BY role;
+role  |  a
+------+---
+"head"|999
+"tail"|999
+(2 rows)
+
+
+starting permutation: s1_begin s1_bump_head s2_head_from_tail s1_commit s2_read_lk
+step s1_begin: BEGIN;
+step s1_bump_head: MATCH (n:lk) WHERE n.role = 'head' SET n.a = 999;
+step s2_head_from_tail: MATCH (a:lk)-[:lke]->(b:lk) SET a.a = b.a + 100; <waiting ...>
+step s1_commit: COMMIT;
+step s2_head_from_tail: <... completed>
+step s2_read_lk: MATCH (n:lk) RETURN n.role AS role, n.a AS a ORDER BY role;
+role  |  a
+------+---
+"head"|105
+"tail"|  5
+(2 rows)
+
+
+starting permutation: s1_begin s1_bump_lkall s2_head_from_tail s1_commit s2_read_lk
+step s1_begin: BEGIN;
+step s1_bump_lkall: MATCH (n:lk) SET n.a = 999;
+step s2_head_from_tail: MATCH (a:lk)-[:lke]->(b:lk) SET a.a = b.a + 100; <waiting ...>
+step s1_commit: COMMIT;
+step s2_head_from_tail: <... completed>
+step s2_read_lk: MATCH (n:lk) RETURN n.role AS role, n.a AS a ORDER BY role;
+role  |  a
+------+---
+"head"|105
+"tail"|999
+(2 rows)
+
+
+starting permutation: s1_begin s1_bump_head s2_incr_unwind s1_commit s2_read_lk
+step s1_begin: BEGIN;
+step s1_bump_head: MATCH (n:lk) WHERE n.role = 'head' SET n.a = 999;
+step s2_incr_unwind: MATCH p = (a:lk)-[:lke]->(b:lk) WITH nodes(p) AS ns UNWIND ns AS n SET n.a = n.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_unwind: <... completed>
+ERROR:  could not serialize access due to concurrent update
+step s2_read_lk: MATCH (n:lk) RETURN n.role AS role, n.a AS a ORDER BY role;
+role  |  a
+------+---
+"head"|999
+"tail"|  5
+(2 rows)
+
+
+starting permutation: s1_begin s1_bump_prom s2_incr_prom s1_commit s2_read_prom
+step s1_begin: BEGIN;
+step s1_bump_prom: MATCH (n:prom) SET n.age = 999;
+step s2_incr_prom: MATCH (n:prom) WHERE n.age > 0 SET n.age = n.age + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_prom: <... completed>
+step s2_read_prom: SELECT (properties ->> 'age') AS bag, age AS col, (properties ->> 'who') AS who FROM gsr.prom;
+ bag| col|who
+----+----+---
+1000|1000|p  
+(1 row)
+
+
+starting permutation: s2_noseq s1_begin s1_bump_prom s2_incr_prom s1_commit s2_read_prom s2_anyscan
+step s2_noseq: SET enable_seqscan = off;
+step s1_begin: BEGIN;
+step s1_bump_prom: MATCH (n:prom) SET n.age = 999;
+step s2_incr_prom: MATCH (n:prom) WHERE n.age > 0 SET n.age = n.age + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_prom: <... completed>
+step s2_read_prom: SELECT (properties ->> 'age') AS bag, age AS col, (properties ->> 'who') AS who FROM gsr.prom;
+ bag| col|who
+----+----+---
+1000|1000|p  
+(1 row)
+
+step s2_anyscan: RESET enable_seqscan; RESET enable_indexscan; RESET enable_indexonlyscan;
+
+starting permutation: s2_noseq s2_nobitmap s1_begin s1_bump_prom s2_incr_prom s1_commit s2_read_prom s2_anyscan
+step s2_noseq: SET enable_seqscan = off;
+step s2_nobitmap: SET enable_indexscan = off; SET enable_indexonlyscan = off;
+step s1_begin: BEGIN;
+step s1_bump_prom: MATCH (n:prom) SET n.age = 999;
+step s2_incr_prom: MATCH (n:prom) WHERE n.age > 0 SET n.age = n.age + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_prom: <... completed>
+step s2_read_prom: SELECT (properties ->> 'age') AS bag, age AS col, (properties ->> 'who') AS who FROM gsr.prom;
+ bag| col|who
+----+----+---
+1000|1000|p  
+(1 row)
+
+step s2_anyscan: RESET enable_seqscan; RESET enable_indexscan; RESET enable_indexonlyscan;
+
+starting permutation: s2_nomulti s1_begin s1_bump s2_incr_twice s1_commit s2_read s2_multi
+step s2_nomulti: SET enable_multiple_update = off;
+step s1_begin: BEGIN;
+step s1_bump: MATCH (n:acc) SET n.a = 999;
+step s2_incr_twice: MATCH (a:acc), (b:acc) SET a.a = a.a + 1, b.a = b.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+s2: WARNING:  graph element(3,1) has been SET multiple times
+step s2_incr_twice: <... completed>
+step s2_read: MATCH (n:acc) RETURN n.a AS a, n.k AS k;
+   a|k     
+----+------
+1000|"keep"
+(1 row)
+
+step s2_multi: RESET enable_multiple_update;
+
+starting permutation: s1_begin s1_bump s2_incr_twice s1_commit s2_read
+step s1_begin: BEGIN;
+step s1_bump: MATCH (n:acc) SET n.a = 999;
+step s2_incr_twice: MATCH (a:acc), (b:acc) SET a.a = a.a + 1, b.a = b.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_twice: <... completed>
+step s2_read: MATCH (n:acc) RETURN n.a AS a, n.k AS k;
+   a|k     
+----+------
+1000|"keep"
+(1 row)
+
+
+starting permutation: s2_rr_begin s2_rr_read s1_begin s1_bump s2_incr s1_commit s2_end s2_read
+step s2_rr_begin: BEGIN ISOLATION LEVEL REPEATABLE READ;
+step s2_rr_read: MATCH (n:acc) RETURN n.a AS a;
+a
+-
+1
+(1 row)
+
+step s1_begin: BEGIN;
+step s1_bump: MATCH (n:acc) SET n.a = 999;
+step s2_incr: MATCH (n:acc) SET n.a = n.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr: <... completed>
+ERROR:  could not serialize access due to concurrent update
+step s2_end: COMMIT;
+step s2_read: MATCH (n:acc) RETURN n.a AS a, n.k AS k;
+  a|k     
+---+------
+999|"keep"
+(1 row)
 
 
 starting permutation: s1_begin s1_bump_trg s2_incr_trg s1_commit s2_read_trg
