@@ -508,6 +508,30 @@ MATCH (n:idp) RETURN n.id AS id, count(*) AS c ORDER BY c DESC, id;
 SET enable_property_promotion = off;
 MATCH (n:idp) RETURN n.id AS id, count(*) AS c ORDER BY c DESC, id;
 
+-- 6f. A property index is droppable by the DDL that created it, whichever form
+--     the key resolved to.  CREATE PROPERTY INDEX builds a typed-column index for
+--     a promoted key and a jsonb expression index otherwise, and both are
+--     property indexes; only an index over something that is not a property --
+--     an ordinary column added to the label directly -- is not.
+CREATE PROPERTY INDEX idx_prom ON doc (age);
+CREATE PROPERTY INDEX idx_srckey ON idp (id);
+CREATE PROPERTY INDEX idx_expr ON doc (city);
+SELECT labelname, indexname FROM ag_property_indexes
+ WHERE indexname IN ('idx_prom', 'idx_srckey', 'idx_expr') ORDER BY indexname;
+DROP PROPERTY INDEX idx_prom;
+DROP PROPERTY INDEX idx_srckey;
+DROP PROPERTY INDEX idx_expr;
+SELECT count(*) AS remaining FROM ag_property_indexes
+ WHERE indexname IN ('idx_prom', 'idx_srckey', 'idx_expr');
+
+-- an ordinary column is not a property: neither listed nor droppable as one
+ALTER TABLE tc.doc ADD COLUMN notaprop text;
+CREATE INDEX idx_plain ON tc.doc (notaprop);
+SELECT count(*) AS listed FROM ag_property_indexes WHERE indexname = 'idx_plain';
+DROP PROPERTY INDEX idx_plain;
+DROP INDEX tc.idx_plain;
+ALTER TABLE tc.doc DROP COLUMN notaprop;
+
 -- ============================================================================
 -- SECTION 7 -- Aggregates over a promoted property (on == off)
 -- ============================================================================
