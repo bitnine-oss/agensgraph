@@ -1462,5 +1462,36 @@ MATCH (call {name: 'Andy'}) RETURN call.name;
 MATCH (call:Person {name: 'Andy'}) RETURN call.name AS n;
 SELECT "call" FROM (SELECT 1 AS "call") s;
 
+--
+-- 8. An ORDER BY key naming a projected item, either side of the CALL boundary
+--
+-- A CALL body is its own query level, so a sort key in the body resolves the
+-- body's own items, and a key outside resolves the outer projection's items --
+-- the columns the CALL adds being ordinary pipeline variables.  These go last in
+-- the file because each anonymous edge pattern consumes a generated alias
+-- number, which every EXPLAIN plan above prints.
+--
+
+-- the body's key names the item the body returns, whole and inside a larger
+-- expression; both pick Ozzy, as spelling the property out does
+MATCH (p:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog ORDER BY dog DESC LIMIT 1 }
+RETURN dog;
+MATCH (p:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog
+           ORDER BY toUpper(dog) DESC LIMIT 1 }
+RETURN dog;
+
+-- the outer key names what the CALL added to the pipeline
+MATCH (p:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN dog ORDER BY toUpper(dog) DESC;
+
+-- an item of the outer projection is not in scope inside a CALL body: the body
+-- resolves its own names only, so this is an error and not a silent correlation
+MATCH (p:Person {name: 'Peter'})
+CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
+RETURN dog AS nm ORDER BY COUNT { MATCH (q:Person) WHERE q.name = nm };
+
 -- cleanup
 DROP GRAPH cypher_call CASCADE;

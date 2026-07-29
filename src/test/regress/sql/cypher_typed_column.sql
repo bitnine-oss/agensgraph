@@ -322,6 +322,28 @@ MATCH (n:mixed) WHERE n.mixedkey > 6 RETURN n.name;
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (n:derived) WHERE n.net > 5 RETURN n.name;
 
+-- 2o. An ORDER BY key that names a RETURN item costs no more than spelling the
+--     property out: the key becomes the item's own expression, so a promoted
+--     property still arrives as its typed column and still binds its index.
+--     Each pair below is the aliased spelling followed by the qualified one and
+--     the two plans must match.  The bare-name key is served from the index in
+--     order (no Sort); the expression key sorts, as the qualified spelling does.
+EXPLAIN (COSTS OFF)
+MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY age LIMIT 2;
+EXPLAIN (COSTS OFF)
+MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY n.age LIMIT 2;
+EXPLAIN (COSTS OFF)
+MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY age * -1 LIMIT 2;
+EXPLAIN (COSTS OFF)
+MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY n.age * -1 LIMIT 2;
+
+-- 2p. The same through a whole-vertex item: a field on the item's name reads
+--     the promoted column, so the key binds the column's index here too.
+EXPLAIN (COSTS OFF)
+MATCH (n:doc) WITH n AS v ORDER BY v.age LIMIT 2 RETURN v.name;
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (n:doc) RETURN n.title AS title ORDER BY toUpper(title) LIMIT 2;
+
 SET enable_seqscan = on;
 
 -- ============================================================================
@@ -459,6 +481,64 @@ MATCH (n:doc) WHERE n.title IS NOT NULL RETURN n.title AS title ORDER BY toUpper
 SET enable_property_promotion = off;
 MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY age * -1, name;
 MATCH (n:doc) WHERE n.title IS NOT NULL RETURN n.title AS title ORDER BY toUpper(title) DESC;
+
+-- 5f. Every promoted type reached through an item name inside a larger key.
+--     The item's value is the typed column, so the key computes over that type
+--     rather than over the jsonb bag -- and the rows come out in the same order
+--     either way (on == off).  n6 has none of these keys, so it sorts as NULL.
+SET enable_property_promotion = on;
+MATCH (n:doc) RETURN n.name AS name, n.big AS big ORDER BY big * -1, name;
+MATCH (n:doc) RETURN n.name AS name, n.ratio AS ratio ORDER BY ratio * 2 DESC, name;
+MATCH (n:doc) RETURN n.name AS name, n.score AS score ORDER BY score + 0, name;
+MATCH (n:doc) RETURN n.name AS name, n.active AS act
+    ORDER BY CASE WHEN act THEN 0 ELSE 1 END, name;
+MATCH (n:doc) RETURN n.name AS name, n.title AS title
+    ORDER BY toUpper(title) NULLS FIRST, name;
+SET enable_property_promotion = off;
+MATCH (n:doc) RETURN n.name AS name, n.big AS big ORDER BY big * -1, name;
+MATCH (n:doc) RETURN n.name AS name, n.ratio AS ratio ORDER BY ratio * 2 DESC, name;
+MATCH (n:doc) RETURN n.name AS name, n.score AS score ORDER BY score + 0, name;
+MATCH (n:doc) RETURN n.name AS name, n.active AS act
+    ORDER BY CASE WHEN act THEN 0 ELSE 1 END, name;
+MATCH (n:doc) RETURN n.name AS name, n.title AS title
+    ORDER BY toUpper(title) NULLS FIRST, name;
+
+-- 5g. An item that is the whole vertex: a field on the item's name reads the
+--     promoted column, so ordering through it matches ordering by the property
+--     spelled out (on == off).
+SET enable_property_promotion = on;
+MATCH (n:doc) WITH n AS v ORDER BY v.age, v.name RETURN v.name AS name, v.age AS age;
+MATCH (n:doc) WITH n AS v ORDER BY v.age * -1, v.name RETURN v.name AS name, v.age AS age;
+MATCH (n:doc) WITH n AS v ORDER BY v.title NULLS LAST, v.name RETURN v.name AS name;
+SET enable_property_promotion = off;
+MATCH (n:doc) WITH n AS v ORDER BY v.age, v.name RETURN v.name AS name, v.age AS age;
+MATCH (n:doc) WITH n AS v ORDER BY v.age * -1, v.name RETURN v.name AS name, v.age AS age;
+MATCH (n:doc) WITH n AS v ORDER BY v.title NULLS LAST, v.name RETURN v.name AS name;
+
+-- 5h. An aggregate over a promoted property, named in a key inside a larger
+--     expression: the grouping stays on the typed column and the key aggregates
+--     the same value the projection returns (on == off).
+SET enable_property_promotion = on;
+MATCH (n:doc) RETURN n.active AS act, max(n.age) AS mx ORDER BY mx * -1, act;
+MATCH (n:doc) RETURN n.active AS act, count(n.title) AS c ORDER BY c * -1, act;
+MATCH (n:doc) RETURN n.title AS title, count(*) AS c
+    ORDER BY c DESC, toUpper(title) NULLS FIRST;
+SET enable_property_promotion = off;
+MATCH (n:doc) RETURN n.active AS act, max(n.age) AS mx ORDER BY mx * -1, act;
+MATCH (n:doc) RETURN n.active AS act, count(n.title) AS c ORDER BY c * -1, act;
+MATCH (n:doc) RETURN n.title AS title, count(*) AS c
+    ORDER BY c DESC, toUpper(title) NULLS FIRST;
+
+-- 5i. A promoted property carried through a transparent WITH keeps resolving to
+--     its typed column when a later key names the carried item (on == off).
+SET enable_property_promotion = on;
+MATCH (n:doc) WITH n, n.name AS nm RETURN nm, n.age AS age ORDER BY age * -1, nm;
+MATCH (n:doc) WITH n AS v, n.age AS age ORDER BY age * -1, v.name
+    RETURN v.name AS name, age;
+SET enable_property_promotion = off;
+MATCH (n:doc) WITH n, n.name AS nm RETURN nm, n.age AS age ORDER BY age * -1, nm;
+MATCH (n:doc) WITH n AS v, n.age AS age ORDER BY age * -1, v.name
+    RETURN v.name AS name, age;
 
 -- ============================================================================
 -- SECTION 6 -- GROUP BY / DISTINCT (the by-value grouping path)

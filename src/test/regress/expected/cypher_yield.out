@@ -333,6 +333,28 @@ RETURN nm, a ORDER BY nm, a;
  "dave"  | 3
 (12 rows)
 
+-- A yielded column is a variable of the pipeline, so a sort key may read it
+-- whole or inside a larger expression -- both as a standalone ORDER BY over the
+-- yielded rows and as a trailing key on the RETURN that projects them.
+MATCH (p:person {id: 1}) CALL yc_table() YIELD a, b
+ORDER BY a * -1
+RETURN a, b;
+ a |    b    
+---+---------
+ 3 | "three"
+ 2 | "two"
+ 1 | "one"
+(3 rows)
+
+MATCH (p:person {id: 1}) CALL yc_table() YIELD a AS num, b
+RETURN num, b ORDER BY num * -1;
+ num |    b    
+-----+---------
+ 3   | "three"
+ 2   | "two"
+ 1   | "one"
+(3 rows)
+
 -- A yielded column used by a following MATCH: yc_ids yields person ids, which the
 -- next MATCH uses to look those persons up.
 MATCH (p:person {id: 1}) CALL yc_ids() YIELD pid
