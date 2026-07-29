@@ -20690,45 +20690,86 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 	{
 		bool		firstprop = true;
 
-		for (j = 0; j < tblinfo->numatts; j++)
+		/*
+		 * CREATE VLABEL / ELABEL builds the columns every graph element has --
+		 * id and properties for a vertex, id, start, "end" and properties for an
+		 * edge -- so those are never named here.  They occupy the leading
+		 * attnums and are never dropped.  Everything past them belongs to the
+		 * label itself and has to be emitted, or it is lost on restore.
+		 */
+		int			nstructural = (tblinfo->ag_labkind == LABEL_KIND_VERTEX ? 2 : 4);
+
+		for (j = nstructural; j < tblinfo->numatts; j++)
 		{
-			/*
-			 * A live promoted (STORED generated) column.  In a plain dump we
-			 * emit only LOCAL ones; inherited promoted columns arrive via the
-			 * INHERITS clause below.  In binary upgrade, though, the label is
-			 * created with ONLY (no inheritance) and inheritance is re-established
-			 * afterwards -- so, exactly as dumpTableSchema does, we must emit
-			 * EVERY column (inherited included) at its original attnum here, and
-			 * the "recreate inherited column" block below resets attislocal.
-			 * Otherwise the child lacks its inherited promoted columns and the
-			 * later ALTER TABLE ... INHERIT fails ("child is missing column").
-			 */
-			bool		live_prop = (tblinfo->attgenerated[j] == ATTRIBUTE_GENERATED_STORED &&
-									 !tblinfo->attisdropped[j] &&
-									 (tblinfo->attislocal[j] || dopt->binary_upgrade) &&
-									 tblinfo->attrdefs[j] != NULL);
-			bool		drop_ph = (dopt->binary_upgrade && tblinfo->attisdropped[j]);
+			if (tblinfo->attisdropped[j])
+			{
+				/*
+				 * A binary upgrade must reproduce the physical column layout,
+				 * because the restored relation is pointed at the original heap
+				 * files: a dropped column has to occupy its original attnum, so
+				 * emit a placeholder that the "recreate dropped column" block
+				 * below reshapes and drops.  Without it the surviving columns
+				 * pack up with no gap and that block would drop a column that
+				 * was never created.  Elsewhere a dropped column is simply gone.
+				 */
+				if (!dopt->binary_upgrade)
+					continue;
+
+				appendPQExpBufferStr(q, firstprop ? " (" : ", ");
+				firstprop = false;
+
+				/* atttypid is 0 for a dropped column; use a stopgap type like
+				 * dumpTableSchema -- the recreate block resets attlen/attalign. */
+				appendPQExpBuffer(q, "%s INTEGER /* dummy */",
+								  fmtId(tblinfo->attnames[j]));
+				continue;
+			}
 
 			/*
-			 * Fixed columns (id/properties/start/end) are never dropped, so a
-			 * dropped attnum here is always a former promoted/local column.
+			 * In a plain dump only a LOCAL column is named; an inherited one
+			 * arrives through the INHERITS clause below.  A binary upgrade
+			 * instead creates the label with ONLY and re-establishes
+			 * inheritance afterwards, so there every column has to be emitted
+			 * at its original attnum -- exactly as dumpTableSchema does -- and
+			 * the "recreate inherited column" block below resets attislocal.
+			 * Otherwise the child lacks its inherited columns and the later
+			 * ALTER TABLE ... INHERIT fails ("child is missing column").
 			 */
-			if (!live_prop && !drop_ph)
+			if (!tblinfo->attislocal[j] && !dopt->binary_upgrade)
+				continue;
+
+			/*
+			 * Only a promoted property can be spelled in this column list --
+			 * label DDL rejects a column that is not generated, and does not
+			 * accept a column constraint either.  An ordinary column is added
+			 * separately, below.
+			 */
+			if (tblinfo->attgenerated[j] != ATTRIBUTE_GENERATED_STORED ||
+				tblinfo->attrdefs[j] == NULL)
 				continue;
 
 			appendPQExpBufferStr(q, firstprop ? " (" : ", ");
 			firstprop = false;
 
-			if (drop_ph)
-				/* atttypid is 0 for a dropped column; use a stopgap type like
-				 * dumpTableSchema -- the recreate block resets attlen/attalign. */
-				appendPQExpBuffer(q, "%s INTEGER /* dummy */",
-								  fmtId(tblinfo->attnames[j]));
-			else
-				appendPQExpBuffer(q, "%s %s GENERATED ALWAYS AS (%s) STORED",
-								  fmtId(tblinfo->attnames[j]),
-								  tblinfo->atttypnames[j],
-								  tblinfo->attrdefs[j]->adef_expr);
+			appendPQExpBuffer(q, "%s %s GENERATED ALWAYS AS (%s) STORED",
+							  fmtId(tblinfo->attnames[j]),
+							  tblinfo->atttypnames[j],
+							  tblinfo->attrdefs[j]->adef_expr);
+
+			/*
+			 * A non-default collation decides how the column compares and
+			 * orders, and nothing else in this path carries it, so losing it
+			 * would silently change query results rather than fail the restore.
+			 */
+			if (OidIsValid(tblinfo->attcollation[j]))
+			{
+				CollInfo   *coll;
+
+				coll = findCollationByOid(tblinfo->attcollation[j]);
+				if (coll)
+					appendPQExpBuffer(q, " COLLATE %s",
+									  fmtQualifiedDumpable(coll));
+			}
 		}
 		if (!firstprop)
 			appendPQExpBufferChar(q, ')');
@@ -20779,6 +20820,75 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 	 * point, we always mark the view as not populated.
 	 */
 	appendPQExpBufferStr(q, ";\n");
+
+	/*
+	 * A label can also carry an ordinary column -- one that is neither part of
+	 * every graph element nor a promoted property.  Label DDL cannot express
+	 * one, so add it afterwards, which is also how it came to be there.
+	 *
+	 * It has to be added, not skipped: the COPY that carries the label's data
+	 * names every column that is not dropped and not generated, so a column
+	 * missing from the schema makes that COPY fail.  A plain-text dump then
+	 * reads the rest of the COPY payload as SQL and, once it desynchronizes,
+	 * loses the data of every label that follows -- while pg_dump and psql both
+	 * still exit successfully.
+	 *
+	 * The label is empty at this point (data is restored later), so NOT NULL
+	 * needs no default to be accepted here.  A DEFAULT is left to the
+	 * per-column loop further down, which already emits one for a column that
+	 * is not generated.
+	 */
+	for (j = 0; j < tblinfo->numatts; j++)
+	{
+		if (tblinfo->attisdropped[j] ||
+			tblinfo->attgenerated[j] ||
+			!tblinfo->attislocal[j])
+			continue;
+
+		/* the columns every graph element has come with the label itself */
+		if (j < (tblinfo->ag_labkind == LABEL_KIND_VERTEX ? 2 : 4))
+			continue;
+
+		/*
+		 * A binary upgrade points the restored label at the original heap
+		 * files, so its columns must keep their exact physical layout -- and an
+		 * ordinary column cannot be placed at its original attnum, because
+		 * label DDL will not name it in the CREATE.  Adding it here would put
+		 * it after the promoted columns instead, mis-aligning every row.  Stop
+		 * rather than write a dump that restores into a corrupt heap.
+		 */
+		if (dopt->binary_upgrade)
+			pg_fatal("label \"%s\" has ordinary column \"%s\", which cannot be dumped for a binary upgrade",
+					 tblinfo->dobj.name, tblinfo->attnames[j]);
+
+		appendPQExpBuffer(q, "ALTER TABLE %s ADD COLUMN %s %s",
+						  qualrelname,
+						  fmtId(tblinfo->attnames[j]),
+						  tblinfo->atttypnames[j]);
+
+		if (OidIsValid(tblinfo->attcollation[j]))
+		{
+			CollInfo   *coll;
+
+			coll = findCollationByOid(tblinfo->attcollation[j]);
+			if (coll)
+				appendPQExpBuffer(q, " COLLATE %s", fmtQualifiedDumpable(coll));
+		}
+
+		if (tblinfo->notnull_constrs[j] != NULL && tblinfo->notnull_islocal[j])
+		{
+			if (tblinfo->notnull_constrs[j][0] == '\0')
+				appendPQExpBufferStr(q, " NOT NULL");
+			else
+				appendPQExpBuffer(q, " CONSTRAINT %s NOT NULL",
+								  fmtId(tblinfo->notnull_constrs[j]));
+
+			if (tblinfo->notnull_noinh[j])
+				appendPQExpBufferStr(q, " NO INHERIT");
+		}
+
+		appendPQExpBufferStr(q, ";\n");
+	}
 
 	/*
 	 * in binary upgrade mode, update the catalog with any missing values that
