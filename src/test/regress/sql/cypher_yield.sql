@@ -222,6 +222,15 @@ RETURN p.name AS nm, count(*) AS c ORDER BY nm;
 MATCH (p:person) WITH p.name AS nm CALL yc_table() YIELD a
 RETURN nm, a ORDER BY nm, a;
 
+-- A yielded column is a variable of the pipeline, so a sort key may read it
+-- whole or inside a larger expression -- both as a standalone ORDER BY over the
+-- yielded rows and as a trailing key on the RETURN that projects them.
+MATCH (p:person {id: 1}) CALL yc_table() YIELD a, b
+ORDER BY a * -1
+RETURN a, b;
+MATCH (p:person {id: 1}) CALL yc_table() YIELD a AS num, b
+RETURN num, b ORDER BY num * -1;
+
 -- A yielded column used by a following MATCH: yc_ids yields person ids, which the
 -- next MATCH uses to look those persons up.
 MATCH (p:person {id: 1}) CALL yc_ids() YIELD pid

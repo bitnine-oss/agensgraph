@@ -494,6 +494,74 @@ MATCH (n:derived) WHERE n.net > 5 RETURN n.name;
    Filter: (n.properties.'net'::text > '5'::jsonb)
 (4 rows)
 
+-- 2o. An ORDER BY key that names a RETURN item costs no more than spelling the
+--     property out: the key becomes the item's own expression, so a promoted
+--     property still arrives as its typed column and still binds its index.
+--     Each pair below is the aliased spelling followed by the qualified one and
+--     the two plans must match.  The bare-name key is served from the index in
+--     order (no Sort); the expression key sorts, as the qualified spelling does.
+EXPLAIN (COSTS OFF)
+MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY age LIMIT 2;
+                 QUERY PLAN                  
+---------------------------------------------
+ Limit
+   ->  Index Scan using doc_age_idx on doc n
+(2 rows)
+
+EXPLAIN (COSTS OFF)
+MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY n.age LIMIT 2;
+                 QUERY PLAN                  
+---------------------------------------------
+ Limit
+   ->  Index Scan using doc_age_idx on doc n
+(2 rows)
+
+EXPLAIN (COSTS OFF)
+MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY age * -1 LIMIT 2;
+                          QUERY PLAN                          
+--------------------------------------------------------------
+ Limit
+   ->  Sort
+         Sort Key: ((cypher_to_jsonb(n.age) `*` '-1'::jsonb))
+         ->  Seq Scan on doc n
+               Disabled: true
+(5 rows)
+
+EXPLAIN (COSTS OFF)
+MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY n.age * -1 LIMIT 2;
+                          QUERY PLAN                          
+--------------------------------------------------------------
+ Limit
+   ->  Sort
+         Sort Key: ((cypher_to_jsonb(n.age) `*` '-1'::jsonb))
+         ->  Seq Scan on doc n
+               Disabled: true
+(5 rows)
+
+-- 2p. The same through a whole-vertex item: a field on the item's name reads
+--     the promoted column, so the key binds the column's index here too.
+EXPLAIN (COSTS OFF)
+MATCH (n:doc) WITH n AS v ORDER BY v.age LIMIT 2 RETURN v.name;
+                    QUERY PLAN                     
+---------------------------------------------------
+ Subquery Scan on _agens_default_s
+   ->  Limit
+         ->  Index Scan using doc_age_idx on doc n
+(3 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (n:doc) RETURN n.title AS title ORDER BY toUpper(title) LIMIT 2;
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Limit
+   Output: (cypher_to_jsonb(n.title)), (toupper(cypher_to_jsonb(n.title)))
+   ->  Sort
+         Output: (cypher_to_jsonb(n.title)), (toupper(cypher_to_jsonb(n.title)))
+         Sort Key: (toupper(cypher_to_jsonb(n.title)))
+         ->  Index Only Scan using doc_title_idx on tc.doc n
+               Output: cypher_to_jsonb(n.title), toupper(cypher_to_jsonb(n.title))
+(7 rows)
+
 SET enable_seqscan = on;
 -- ============================================================================
 -- SECTION 3 -- WHERE filters: results identical with promotion on and off
@@ -1026,6 +1094,306 @@ MATCH (n:doc) WHERE n.title IS NOT NULL RETURN n.title AS title ORDER BY toUpper
  "alpha"
  "alpha"
 (5 rows)
+
+-- 5f. Every promoted type reached through an item name inside a larger key.
+--     The item's value is the typed column, so the key computes over that type
+--     rather than over the jsonb bag -- and the rows come out in the same order
+--     either way (on == off).  n6 has none of these keys, so it sorts as NULL.
+SET enable_property_promotion = on;
+MATCH (n:doc) RETURN n.name AS name, n.big AS big ORDER BY big * -1, name;
+ name | big 
+------+-----
+ "n5" | 400
+ "n3" | 300
+ "n2" | 200
+ "n4" | 200
+ "n1" | 100
+ "n6" | 
+(6 rows)
+
+MATCH (n:doc) RETURN n.name AS name, n.ratio AS ratio ORDER BY ratio * 2 DESC, name;
+ name | ratio 
+------+-------
+ "n6" | 
+ "n5" | 9.5
+ "n3" | 3.5
+ "n2" | 2.5
+ "n4" | 2.5
+ "n1" | 1.5
+(6 rows)
+
+MATCH (n:doc) RETURN n.name AS name, n.score AS score ORDER BY score + 0, name;
+ name | score 
+------+-------
+ "n5" | 1.00
+ "n1" | 2.50
+ "n2" | 2.50
+ "n4" | 2.50
+ "n3" | 3.50
+ "n6" | 
+(6 rows)
+
+MATCH (n:doc) RETURN n.name AS name, n.active AS act
+    ORDER BY CASE WHEN act THEN 0 ELSE 1 END, name;
+ name |  act  
+------+-------
+ "n1" | true
+ "n3" | true
+ "n5" | true
+ "n2" | false
+ "n4" | false
+ "n6" | 
+(6 rows)
+
+MATCH (n:doc) RETURN n.name AS name, n.title AS title
+    ORDER BY toUpper(title) NULLS FIRST, name;
+ name |   title   
+------+-----------
+ "n6" | 
+ "n1" | "alpha"
+ "n3" | "alpha"
+ "n2" | "bravo"
+ "n4" | "charlie"
+ "n5" | "delta"
+(6 rows)
+
+SET enable_property_promotion = off;
+MATCH (n:doc) RETURN n.name AS name, n.big AS big ORDER BY big * -1, name;
+ name | big 
+------+-----
+ "n5" | 400
+ "n3" | 300
+ "n2" | 200
+ "n4" | 200
+ "n1" | 100
+ "n6" | 
+(6 rows)
+
+MATCH (n:doc) RETURN n.name AS name, n.ratio AS ratio ORDER BY ratio * 2 DESC, name;
+ name | ratio 
+------+-------
+ "n6" | 
+ "n5" | 9.5
+ "n3" | 3.5
+ "n2" | 2.5
+ "n4" | 2.5
+ "n1" | 1.5
+(6 rows)
+
+MATCH (n:doc) RETURN n.name AS name, n.score AS score ORDER BY score + 0, name;
+ name | score 
+------+-------
+ "n5" | 1.00
+ "n1" | 2.50
+ "n2" | 2.50
+ "n4" | 2.50
+ "n3" | 3.50
+ "n6" | 
+(6 rows)
+
+MATCH (n:doc) RETURN n.name AS name, n.active AS act
+    ORDER BY CASE WHEN act THEN 0 ELSE 1 END, name;
+ name |  act  
+------+-------
+ "n1" | true
+ "n3" | true
+ "n5" | true
+ "n2" | false
+ "n4" | false
+ "n6" | 
+(6 rows)
+
+MATCH (n:doc) RETURN n.name AS name, n.title AS title
+    ORDER BY toUpper(title) NULLS FIRST, name;
+ name |   title   
+------+-----------
+ "n6" | 
+ "n1" | "alpha"
+ "n3" | "alpha"
+ "n2" | "bravo"
+ "n4" | "charlie"
+ "n5" | "delta"
+(6 rows)
+
+-- 5g. An item that is the whole vertex: a field on the item's name reads the
+--     promoted column, so ordering through it matches ordering by the property
+--     spelled out (on == off).
+SET enable_property_promotion = on;
+MATCH (n:doc) WITH n AS v ORDER BY v.age, v.name RETURN v.name AS name, v.age AS age;
+ name | age 
+------+-----
+ "n1" | 20
+ "n4" | 30
+ "n2" | 40
+ "n5" | 40
+ "n6" | 50
+ "n3" | 60
+(6 rows)
+
+MATCH (n:doc) WITH n AS v ORDER BY v.age * -1, v.name RETURN v.name AS name, v.age AS age;
+ name | age 
+------+-----
+ "n3" | 60
+ "n6" | 50
+ "n2" | 40
+ "n5" | 40
+ "n4" | 30
+ "n1" | 20
+(6 rows)
+
+MATCH (n:doc) WITH n AS v ORDER BY v.title NULLS LAST, v.name RETURN v.name AS name;
+ name 
+------
+ "n1"
+ "n3"
+ "n2"
+ "n4"
+ "n5"
+ "n6"
+(6 rows)
+
+SET enable_property_promotion = off;
+MATCH (n:doc) WITH n AS v ORDER BY v.age, v.name RETURN v.name AS name, v.age AS age;
+ name | age 
+------+-----
+ "n1" | 20
+ "n4" | 30
+ "n2" | 40
+ "n5" | 40
+ "n6" | 50
+ "n3" | 60
+(6 rows)
+
+MATCH (n:doc) WITH n AS v ORDER BY v.age * -1, v.name RETURN v.name AS name, v.age AS age;
+ name | age 
+------+-----
+ "n3" | 60
+ "n6" | 50
+ "n2" | 40
+ "n5" | 40
+ "n4" | 30
+ "n1" | 20
+(6 rows)
+
+MATCH (n:doc) WITH n AS v ORDER BY v.title NULLS LAST, v.name RETURN v.name AS name;
+ name 
+------
+ "n1"
+ "n3"
+ "n2"
+ "n4"
+ "n5"
+ "n6"
+(6 rows)
+
+-- 5h. An aggregate over a promoted property, named in a key inside a larger
+--     expression: the grouping stays on the typed column and the key aggregates
+--     the same value the projection returns (on == off).
+SET enable_property_promotion = on;
+MATCH (n:doc) RETURN n.active AS act, max(n.age) AS mx ORDER BY mx * -1, act;
+  act  | mx 
+-------+----
+ true  | 60
+       | 50
+ false | 40
+(3 rows)
+
+MATCH (n:doc) RETURN n.active AS act, count(n.title) AS c ORDER BY c * -1, act;
+  act  | c 
+-------+---
+ true  | 3
+ false | 2
+       | 0
+(3 rows)
+
+MATCH (n:doc) RETURN n.title AS title, count(*) AS c
+    ORDER BY c DESC, toUpper(title) NULLS FIRST;
+   title   | c 
+-----------+---
+ "alpha"   | 2
+           | 1
+ "bravo"   | 1
+ "charlie" | 1
+ "delta"   | 1
+(5 rows)
+
+SET enable_property_promotion = off;
+MATCH (n:doc) RETURN n.active AS act, max(n.age) AS mx ORDER BY mx * -1, act;
+  act  | mx 
+-------+----
+ true  | 60
+       | 50
+ false | 40
+(3 rows)
+
+MATCH (n:doc) RETURN n.active AS act, count(n.title) AS c ORDER BY c * -1, act;
+  act  | c 
+-------+---
+ true  | 3
+ false | 2
+       | 0
+(3 rows)
+
+MATCH (n:doc) RETURN n.title AS title, count(*) AS c
+    ORDER BY c DESC, toUpper(title) NULLS FIRST;
+   title   | c 
+-----------+---
+ "alpha"   | 2
+           | 1
+ "bravo"   | 1
+ "charlie" | 1
+ "delta"   | 1
+(5 rows)
+
+-- 5i. A promoted property carried through a transparent WITH keeps resolving to
+--     its typed column when a later key names the carried item (on == off).
+SET enable_property_promotion = on;
+MATCH (n:doc) WITH n, n.name AS nm RETURN nm, n.age AS age ORDER BY age * -1, nm;
+  nm  | age 
+------+-----
+ "n3" | 60
+ "n6" | 50
+ "n2" | 40
+ "n5" | 40
+ "n4" | 30
+ "n1" | 20
+(6 rows)
+
+MATCH (n:doc) WITH n AS v, n.age AS age ORDER BY age * -1, v.name
+    RETURN v.name AS name, age;
+ name | age 
+------+-----
+ "n3" | 60
+ "n6" | 50
+ "n2" | 40
+ "n5" | 40
+ "n4" | 30
+ "n1" | 20
+(6 rows)
+
+SET enable_property_promotion = off;
+MATCH (n:doc) WITH n, n.name AS nm RETURN nm, n.age AS age ORDER BY age * -1, nm;
+  nm  | age 
+------+-----
+ "n3" | 60
+ "n6" | 50
+ "n2" | 40
+ "n5" | 40
+ "n4" | 30
+ "n1" | 20
+(6 rows)
+
+MATCH (n:doc) WITH n AS v, n.age AS age ORDER BY age * -1, v.name
+    RETURN v.name AS name, age;
+ name | age 
+------+-----
+ "n3" | 60
+ "n6" | 50
+ "n2" | 40
+ "n5" | 40
+ "n4" | 30
+ "n1" | 20
+(6 rows)
 
 -- ============================================================================
 -- SECTION 6 -- GROUP BY / DISTINCT (the by-value grouping path)

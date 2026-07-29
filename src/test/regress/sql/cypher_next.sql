@@ -242,6 +242,23 @@ MATCH (n:person) RETURN DISTINCT n.age AS age ORDER BY age LIMIT 2
 NEXT
 RETURN age ORDER BY age;
 
+-- A trailing key may name the projection's item inside a larger expression, on
+-- either side of the boundary: before it the name is an item of Q1's RETURN,
+-- after it a column the boundary carries and an item of Q2's RETURN.
+MATCH (n:person) RETURN n.name AS name, n.age AS age ORDER BY age * -1, name LIMIT 2
+NEXT
+RETURN name, age ORDER BY name;
+
+MATCH (n:person) RETURN n.name AS name, n.age AS age
+NEXT
+RETURN name, age ORDER BY age * -1, name;
+
+-- The query after NEXT may open with a standalone ORDER BY over the carried
+-- table, whose key may likewise be an expression over a carried column.
+MATCH (n:person) RETURN n.name AS name, n.age AS age
+NEXT
+ORDER BY age * -1, name LIMIT 2 RETURN name, age;
+
 --
 -- 8. Plan shape -- a NEXT query plans identically to its WITH equivalent
 --

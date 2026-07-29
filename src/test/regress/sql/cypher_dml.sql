@@ -256,45 +256,15 @@ MATCH (a) RETURN a.id AS x ORDER BY x DESC;
 MATCH (a) RETURN a.name AS name ORDER BY a.id DESC;
 MATCH (a) RETURN a.name AS name ORDER BY a.id DESC SKIP 1 LIMIT 2;
 
--- a RETURN/WITH item is named inside a sort key too, not only as the whole key
+-- an item of the projection may also be named inside a larger sort key, not
+-- only as the whole key; how a key resolves a name is covered in full by the
+-- "ORDER BY name resolution" section below
 MATCH (a) RETURN a.id AS x ORDER BY x * -1;
-MATCH (a) RETURN a.name AS name ORDER BY toUpper(name) DESC;
-MATCH (a) RETURN a.id AS x, a.name AS name ORDER BY x % 2, name DESC;
 MATCH (a) WITH a.id AS x ORDER BY x * -1 RETURN x;
-MATCH (a) WITH a.id AS x, a.grp AS grp ORDER BY grp DESC, x * -1 RETURN x, grp;
-
--- an item is named without an AS alias as well
-MATCH (a) RETURN a.id ORDER BY id * -1;
-
--- an item that is a whole vertex, read through a property
-MATCH (a) RETURN a AS v ORDER BY v.id DESC LIMIT 2;
-
--- an aggregated item, and a key over one, are both allowed
-MATCH (a) RETURN a.grp AS grp, count(*) AS cnt ORDER BY cnt DESC, grp;
-MATCH (a) RETURN a.grp AS grp, count(*) AS cnt ORDER BY cnt * -1;
-MATCH (a) RETURN a.grp AS grp, collect(a.id) AS ids
-    ORDER BY jsonb_array_length(ids) DESC, grp;
-
--- an item is read inside a list comprehension in the key, while the iteration
--- variable still hides an item of its own name (the first key is then the same
--- list for every row, so the order comes from the second key)
-MATCH (a) RETURN a.id AS i ORDER BY [k IN [1, 2, 3] | i * -1];
-MATCH (a) RETURN a.id AS i ORDER BY [i IN [1, 2, 3] | i * -1], i;
-
--- the pattern's own variables keep precedence over an item of the same name:
--- "a" in the sort key is the vertex, so the names come out ordered by id
-MATCH (a) WITH a.name AS a ORDER BY a.id DESC RETURN a;
-
--- a name that is neither a variable nor an item is still an error
-MATCH (a) RETURN a.id AS x ORDER BY nosuch * -1;
-
--- with DISTINCT the key must be an item itself, as in SQL, not an expression
--- over one
-MATCH (a) RETURN DISTINCT a.grp AS grp ORDER BY grp;
-MATCH (a) RETURN DISTINCT a.grp AS grp ORDER BY grp * -1;
 
 -- UNWIND followed by standalone ORDER BY / LIMIT
 UNWIND [3, 1, 2, 5, 4] AS x ORDER BY x LIMIT 3 RETURN x ORDER BY x;
+UNWIND [3, 1, 2, 5, 4] AS x ORDER BY x * -1 LIMIT 3 RETURN x ORDER BY x;
 
 -- as trailing RETURN clauses, canonical order ORDER BY -> OFFSET/SKIP -> LIMIT
 MATCH (a) RETURN a.name AS name ORDER BY a.name OFFSET 1 LIMIT 1;
@@ -2117,6 +2087,297 @@ MATCH (p:person) RETURN DISTINCT p.age AS age ORDER BY age DESC;
 -- ORDER BY an aggregate: count() is bigint and is coerced to jsonb in the
 -- target list, so the sort operator must follow the final (jsonb) type
 MATCH (p:person) RETURN p.age AS age, count(*) AS cnt ORDER BY cnt, age;
+
+--
+-- ORDER BY name resolution
+--
+-- A sort key resolves a name against two scopes: the variables of the clause the
+-- projection reads (a pattern variable, whether or not the projection outputs
+-- it) and the projection's own output items (a RETURN/WITH alias).  Both must
+-- work wherever the name appears -- as the whole key and inside a larger
+-- expression -- and both must work in the same key.  The two have been traded
+-- for each other before, so every combination is pinned here.
+--
+-- The namespace is searched first, so a pattern variable outranks an item of
+-- the same name; a list comprehension's iteration variable outranks both.  An
+-- item is named at its own query level only, so a subquery inside a key
+-- resolves its own names, not the items.
+--
+CREATE GRAPH sortkeys;
+SET graph_path = sortkeys;
+
+CREATE VLABEL person;
+CREATE ELABEL knows;
+
+-- Two persons share an age, so a single key never fully orders the rows and
+-- every query below needs a tiebreaker; one person has no name, which makes
+-- NULL placement observable.  Names are lowercase ASCII with distinct first
+-- letters, so any collation orders them identically.
+CREATE (:person {id: 1, name: 'a', age: 30, grp: 1}),
+       (:person {id: 2, name: 'b', age: 20, grp: 2}),
+       (:person {id: 3, name: 'c', age: 30, grp: 1}),
+       (:person {id: 4, name: 'd', age: 10, grp: 2}),
+       (:person {id: 5, age: 40, grp: 1});
+
+-- A chain 1 -> 2 -> 3 -> 4 for paths, VLE, shortestpath and future vertices.
+MATCH (p:person {id: 1}), (q:person {id: 2}) CREATE (p)-[:knows {w: 1}]->(q);
+MATCH (p:person {id: 2}), (q:person {id: 3}) CREATE (p)-[:knows {w: 2}]->(q);
+MATCH (p:person {id: 3}), (q:person {id: 4}) CREATE (p)-[:knows {w: 3}]->(q);
+
+-- 1. the two scopes, alone and together
+
+-- an item as the whole key
+MATCH (p:person) RETURN p.name AS name ORDER BY name;
+-- a variable the projection does not output, as the whole key
+MATCH (p:person) RETURN p.name AS name ORDER BY p.id DESC;
+-- an item inside a larger key
+MATCH (p:person) RETURN p.id AS x ORDER BY x * -1;
+-- a variable the projection does not output, inside a larger key
+MATCH (p:person) RETURN p.name AS name ORDER BY p.age * -1, p.id;
+-- both scopes in one key
+MATCH (p:person) RETURN p.id AS x ORDER BY x + p.age, x;
+-- both scopes across two keys
+MATCH (p:person) RETURN p.id AS x ORDER BY p.grp, x * -1;
+
+-- 2. how an item is named
+
+-- by its AS alias, or by the name figured for it when it has none
+MATCH (p:person) RETURN p.id AS x ORDER BY x % 2, x DESC;
+MATCH (p:person) RETURN p.id ORDER BY id * -1;
+-- the same item twice in one key, and in two keys
+MATCH (p:person) RETURN p.id AS x ORDER BY x * x DESC, x;
+MATCH (p:person) RETURN p.id AS x ORDER BY x % 2, x * -1;
+-- two different items in one key
+MATCH (p:person) RETURN p.id AS x, p.age AS y ORDER BY x + y DESC, x;
+-- an item of one projection and an item of the next
+MATCH (p:person) WITH p.id AS x, p.age AS y ORDER BY y DESC, x
+    RETURN x + y AS sum ORDER BY sum DESC;
+
+-- 3. the expression shapes a key may be
+
+MATCH (p:person) RETURN p.age AS age, p.id AS id ORDER BY abs(age - 25), id;
+MATCH (p:person) RETURN p.name AS name ORDER BY toUpper(name) DESC;
+MATCH (p:person) RETURN p.name AS name ORDER BY name + 'z' DESC;
+MATCH (p:person) RETURN p.id AS x ORDER BY toString(x) DESC;
+MATCH (p:person) RETURN p.id AS x ORDER BY CASE WHEN x > 2 THEN 0 ELSE 1 END, x;
+MATCH (p:person) RETURN p.id AS x ORDER BY x + 1 = 2, x;
+MATCH (p:person) RETURN p.id AS x ORDER BY x IN [2, 4], x;
+MATCH (p:person) RETURN p.name AS name, p.id AS id
+    ORDER BY coalesce(name, 'z'), id;
+
+-- a parameter beside an item name
+PREPARE sortkeys_dir(jsonb) AS
+MATCH (p:person) RETURN p.id AS x ORDER BY x * $1, x;
+EXECUTE sortkeys_dir('1');
+EXECUTE sortkeys_dir('-1');
+DEALLOCATE sortkeys_dir;
+
+-- 4. WITH projections, including the WITH ... WHERE form
+
+MATCH (p:person) WITH p.id AS x ORDER BY x * -1 RETURN x;
+MATCH (p:person) WITH p.id AS x, p.grp AS grp ORDER BY grp DESC, x * -1
+    RETURN x, grp;
+MATCH (p:person) WITH p.name AS name ORDER BY p.id DESC RETURN name;
+-- a WITH that has a WHERE is wrapped, so its ORDER BY is transformed inside
+-- the wrap; a key there resolves the same two scopes
+MATCH (p:person) WITH p.id AS x WHERE x > 1 ORDER BY x * -1 RETURN x;
+MATCH (p:person) WITH p.name AS name WHERE name IS NOT NULL
+    ORDER BY toUpper(name) DESC RETURN name;
+MATCH (p:person) WITH p.name AS name WHERE name IS NOT NULL ORDER BY p.id DESC
+    RETURN name;
+-- NOTE: paging beside a WITH ... WHERE is applied inside that wrap, i.e. BEFORE
+-- the WHERE filters, so this keeps only id 2.  Cypher's clause order (WHERE,
+-- then ORDER BY, then paging) would return ids 2 and 3.  Pinned as it behaves
+-- so the divergence stays visible; it is not what this ORDER BY change is about.
+MATCH (p:person) WITH p.id AS x WHERE x > 1 ORDER BY x LIMIT 2 RETURN x;
+
+-- 5. an item that is a whole vertex, edge or path
+
+-- a field after the item's name reads a property of that value
+MATCH (p:person) WITH p AS v ORDER BY v.id DESC LIMIT 2 RETURN v.id AS id;
+MATCH (p:person) WITH p AS v ORDER BY v.age, v.id RETURN v.id AS id;
+MATCH (p:person) WITH p AS v ORDER BY v.name NULLS FIRST, v.id
+    RETURN v.name AS name;
+MATCH (p:person) WITH p AS v ORDER BY properties(v).id DESC RETURN v.id AS id;
+MATCH (p:person) RETURN p AS v ORDER BY v.id DESC LIMIT 2;
+MATCH (a:person)-[e:knows]->(b:person) WITH e AS ee ORDER BY ee.w DESC
+    RETURN ee.w AS w;
+MATCH (a:person)-[e:knows]->(b:person) WITH e AS ee, a.id AS aid
+    ORDER BY ee.w * -1, aid RETURN aid, ee.w AS w;
+MATCH pth = (a:person)-[:knows]->(b:person) WITH pth AS pp, a.id AS aid
+    ORDER BY length(pp), aid DESC RETURN aid, length(pp) AS len;
+
+-- the right endpoint of a pattern is a future vertex when the key is
+-- transformed, so the copy in the key has to be resolved along with the item
+MATCH (n:person)-[e:knows]->(m:person) WITH m AS mm ORDER BY mm.id
+    RETURN mm.id AS id;
+MATCH (n:person)-[e:knows]->(m:person) WITH m AS mm ORDER BY mm.id * -1
+    RETURN mm.id AS id;
+MATCH (n:person)-[e:knows]->(m:person) WITH n AS a1, m AS a2
+    ORDER BY a1.id DESC, a2.id RETURN a1.id AS nid, a2.id AS mid;
+MATCH (n:person)-[e:knows]->(m:person) RETURN m.id AS mid ORDER BY mid * -1;
+
+-- 6. aggregates and the implicit GROUP BY
+
+MATCH (p:person) RETURN p.grp AS grp, count(*) AS cnt ORDER BY cnt DESC, grp;
+MATCH (p:person) RETURN p.grp AS grp, count(*) AS cnt ORDER BY cnt * -1, grp;
+MATCH (p:person) RETURN p.grp AS grp, count(*) AS cnt ORDER BY count(*) DESC, grp;
+MATCH (p:person) RETURN p.grp AS grp, max(p.age) AS mx ORDER BY mx + 0, grp;
+MATCH (p:person) RETURN p.grp AS grp, avg(p.age) AS av ORDER BY av DESC, grp;
+MATCH (p:person) RETURN p.grp AS grp, collect(p.id) AS ids
+    ORDER BY jsonb_array_length(ids) DESC, grp;
+-- naming a grouping item in a key does not turn the key into a second group key
+MATCH (p:person) RETURN p.grp AS grp, count(*) AS cnt ORDER BY grp * -1;
+
+-- 7. DISTINCT
+
+MATCH (p:person) RETURN DISTINCT p.grp AS grp ORDER BY grp;
+MATCH (p:person) RETURN DISTINCT p.grp AS grp ORDER BY p.grp;
+MATCH (p:person) WITH DISTINCT p.grp AS grp ORDER BY grp DESC RETURN grp;
+-- with DISTINCT a key must be an output item itself, as in SQL: an expression
+-- over one, and a variable that is not output, are both rejected
+MATCH (p:person) RETURN DISTINCT p.grp AS grp ORDER BY grp * -1;
+MATCH (p:person) RETURN DISTINCT p.grp AS grp ORDER BY p.id;
+
+-- 8. paging, sort direction and NULL placement
+
+MATCH (p:person) RETURN p.id AS x ORDER BY x * -1 SKIP 1 LIMIT 2;
+MATCH (p:person) RETURN p.id AS x ORDER BY x * -1 OFFSET 1;
+MATCH (p:person) RETURN p.id AS x ORDER BY x * -1 LIMIT 0;
+MATCH (p:person) RETURN p.id AS x ORDER BY x * -1 ASC;
+MATCH (p:person) RETURN p.id AS x ORDER BY x * -1 DESC;
+MATCH (p:person) RETURN p.name AS name ORDER BY name NULLS FIRST;
+MATCH (p:person) RETURN p.name AS name ORDER BY name DESC NULLS LAST;
+MATCH (p:person) RETURN p.name AS name, p.id AS id
+    ORDER BY toUpper(name) NULLS FIRST, id;
+MATCH (p:person) RETURN p.name AS name, p.id AS id
+    ORDER BY toUpper(name) DESC NULLS LAST, id;
+
+-- 9. OPTIONAL MATCH, VLE and shortestpath
+
+-- an item bound by an OPTIONAL MATCH is null for the rows that did not match
+MATCH (p:person) OPTIONAL MATCH (p)-[:knows]->(q:person)
+    WITH p.id AS id, q AS qq ORDER BY qq.id NULLS FIRST, id
+    RETURN id, qq.id AS qid;
+MATCH (p:person) OPTIONAL MATCH (p)-[:knows]->(q:person)
+    RETURN p.id AS id, q.id AS qid ORDER BY qid * -1 NULLS LAST, id;
+MATCH pth = (a:person {id: 1})-[:knows*1..3]->(b:person)
+    WITH pth AS pp, b.id AS bid ORDER BY length(pp) DESC, bid
+    RETURN bid, length(pp) AS len;
+MATCH pth = (a:person {id: 1})-[:knows*1..3]->(b:person)
+    RETURN b.id AS bid, length(pth) AS len ORDER BY len * -1, bid;
+MATCH pth = shortestpath((a:person {id: 1})-[:knows*]->(b:person {id: 4}))
+    RETURN length(pth) AS len ORDER BY len * -1;
+
+-- 10. standalone modifier clauses
+
+-- A standalone ORDER BY passes the previous clause's variables through, so the
+-- names it can use come from the namespace whichever shape the key has.
+MATCH (p:person) ORDER BY p.id DESC LIMIT 3 WITH p RETURN p.id AS id
+    ORDER BY id * -1;
+MATCH (p:person) ORDER BY p.id * -1 LIMIT 2 WITH p RETURN p.id AS id ORDER BY id;
+UNWIND [3, 1, 2] AS x ORDER BY x * -1 RETURN x;
+UNWIND [3, 1, 2] AS x RETURN x AS y ORDER BY y * -1;
+MATCH (p:person) UNWIND [1, 2] AS k ORDER BY k * -1, p.id
+    RETURN p.id AS id, k;
+MATCH (p:person) FILTER p.id > 1 ORDER BY p.id * -1 RETURN p.id AS id;
+
+-- 11. precedence
+
+-- A pattern variable outranks an item of the same name, whether the key is the
+-- name alone or an expression over it: "p" in these keys is the vertex, so the
+-- names come out ordered by id and not by themselves.
+MATCH (p:person) WITH p.name AS p ORDER BY p.id DESC RETURN p;
+MATCH (p:person) WITH p.name AS p ORDER BY p.id * -1 RETURN p;
+-- A list comprehension's iteration variable outranks an item of its own name.
+-- With "k" the item is reached, so the list differs per row and orders by i
+-- descending; with "i" the iteration variable hides the item, so the list is
+-- the same for every row and the order comes from the second key.
+MATCH (p:person) RETURN p.id AS i ORDER BY [k IN [1, 2, 3] | i * -1], i;
+MATCH (p:person) RETURN p.id AS i ORDER BY [i IN [1, 2, 3] | i * -1], i;
+-- the item and the iteration variable in one comprehension body
+MATCH (p:person) RETURN p.id AS i ORDER BY [k IN [1, 2] | k + i], i;
+MATCH (p:person) RETURN p.id AS i ORDER BY ANY(k IN [1, 2] WHERE k = i), i;
+
+-- 12. a subquery inside a key is its own query level
+
+-- A Cypher subquery in a key resolves its own names against the enclosing
+-- namespace, so a pattern variable reaches it -- but an item does not, because
+-- an item exists only as a target entry of this projection.
+MATCH (p:person) RETURN p.id AS x
+    ORDER BY EXISTS { MATCH (b:person) WHERE b.id > p.id }, x;
+MATCH (p:person) RETURN p.id AS x
+    ORDER BY EXISTS { MATCH (b:person) WHERE b.id = x }, x;
+-- A CALL subquery's output is a variable of the pipeline, not an item, so it
+-- resolves through the namespace like any other variable.
+MATCH (p:person) CALL { MATCH (q:person) RETURN count(*) AS c }
+    RETURN p.id AS x, c AS cc ORDER BY cc, x * -1;
+-- KNOWN GAP: a SQL sublink in a key cannot see an item either.  It used to
+-- (2.16 and earlier), when the projection was a subquery and the item was one of
+-- its columns; moving ORDER BY down to the pattern's query level ended that and
+-- this change does not bring it back.  Pinned so the gap stays visible.
+MATCH (p:person) RETURN p.id AS x ORDER BY (SELECT 1 WHERE x IS NOT NULL), x;
+-- (a SQL sublink cannot see a pattern variable in any context, ORDER BY or not)
+MATCH (p:person) RETURN p.name AS name ORDER BY (SELECT p.id), p.id;
+
+-- 13. an item's expression is evaluated a second time for the key
+
+-- A key that names an item compiles to a COPY of the item's expression, so a
+-- volatile item runs twice per row: once for the value returned and once for
+-- the key it is sorted by, and the two do not agree.  A key that is the name
+-- alone reuses the item's own target entry and runs it once.  Pinned to keep
+-- the difference visible; a stable item is unaffected.
+CREATE SEQUENCE sortkeys_seq;
+SELECT setval('sortkeys_seq', 1, false);
+MATCH (p:person) WITH p.id AS x, nextval('sortkeys_seq') AS n ORDER BY n * -1
+    RETURN x ORDER BY x;
+SELECT currval('sortkeys_seq') AS evaluations;
+SELECT setval('sortkeys_seq', 1, false);
+MATCH (p:person) WITH p.id AS x, nextval('sortkeys_seq') AS n ORDER BY n DESC
+    RETURN x ORDER BY x;
+SELECT currval('sortkeys_seq') AS evaluations;
+DROP SEQUENCE sortkeys_seq;
+
+-- 14. plan shape
+
+-- Naming an item costs nothing: the key becomes the item's own expression, so
+-- the plan is the one the qualified spelling gives.
+EXPLAIN (COSTS OFF)
+MATCH (p:person) RETURN p.id AS x, p.name AS name ORDER BY x * -1, name;
+EXPLAIN (COSTS OFF)
+MATCH (p:person) RETURN p.id AS x, p.name AS name ORDER BY p.id * -1, p.name;
+-- A key that is the name alone reuses the item's entry, adding no column; a
+-- key that is an expression over it adds one resjunk column and no more.
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (p:person) RETURN p.id AS x ORDER BY x DESC;
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (p:person) RETURN p.id AS x ORDER BY x * -1;
+-- A promoted property reached through an item name keeps its typed column and
+-- its index; that is pinned in cypher_typed_column.sql (sections 2 and 5).  A
+-- vector distance key (ORDER BY embedding <=> $1) needs pgvector, which a plain
+-- `make check` temporary install does not have, so it is not covered here.
+
+-- 15. errors
+
+-- a name that is neither a variable nor an item
+MATCH (p:person) RETURN p.id AS x ORDER BY nosuch;
+MATCH (p:person) RETURN p.id AS x ORDER BY nosuch * -1;
+-- a key never resolves to another key: the entry a key appends is unnamed
+MATCH (p:person) RETURN p.name AS name ORDER BY p.id, id;
+-- a field on an item that holds a scalar fails the same way it does elsewhere
+MATCH (p:person) RETURN p.id AS x ORDER BY x.foo, x;
+-- Two items may carry one name (nothing rejects that).  A key resolves it to
+-- the first of them, for either spelling of the key, so the rows below come out
+-- ordered by id and not by age.
+MATCH (p:person) RETURN p.id AS x, p.age AS x ORDER BY x;
+MATCH (p:person) RETURN p.id AS x, p.age AS x ORDER BY x * -1;
+-- NOTE: past a WITH the same name resolves the other way -- a later column of a
+-- namespace item wins -- so this orders by id (the key's "x") while returning
+-- age (the following clause's "x").  Pinned to keep the disagreement visible.
+MATCH (p:person) WITH p.id AS x, p.age AS x ORDER BY x * -1 RETURN x;
+
+DROP GRAPH sortkeys CASCADE;
+SET graph_path = ag324;
 
 --
 -- AGV2-394: FOR clause -- unnest an array expression and join it with the

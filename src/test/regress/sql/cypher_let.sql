@@ -201,6 +201,20 @@ LET k = n.age * 2
 ORDER BY k DESC SKIP 1 LIMIT 1
 RETURN n.name AS name, k;
 
+-- The folded key may also name the LET variable inside a larger expression, not
+-- only as the whole key.  "k * -1" ascending is "k" descending, so this picks
+-- the same row as the case above.
+MATCH (n:person)
+LET k = n.age * 2
+ORDER BY k * -1 SKIP 1 LIMIT 1
+RETURN n.name AS name, k;
+
+-- A key may mix the LET variable with a variable LET carried through.
+MATCH (n:person)
+LET k = n.age * 2
+ORDER BY k * -1, n.name
+RETURN n.name AS name, k;
+
 -- LET feeding a following FILTER.
 MATCH (n:person)
 LET adult = (n.age >= 30)
