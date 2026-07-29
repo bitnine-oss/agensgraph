@@ -685,6 +685,25 @@ MATCH (a:doc), (b:doc) WHERE a.name='n1' AND b.name='n3'
   RETURN length(shortestpath((a)-[:knows*..5]->(b))) AS len;
 MATCH p=(a:doc)-[:knows]->(b:doc) RETURN a.name AS an, b.name AS bn ORDER BY an, bn;
 
+-- 11e2. A promoted value is carried into jsonb with the shape the bag holds.
+--       to_jsonb falls back to the text form of a type it cannot represent, which
+--       would land as a jsonb string and disagree with the same property read from
+--       the bag; a type whose text form is JSON keeps its shape instead.  What must
+--       NOT happen is the converse: a genuine string that merely looks like JSON is
+--       a type to_jsonb does represent, so it stays a string.  (The type this
+--       matters for in practice is vector, which needs the external extension and
+--       is covered outside this suite.)
+SET enable_property_promotion = on;
+MATCH (n:doc) WHERE n.title = 'alpha' RETURN n.title AS t;
+SET enable_property_promotion = off;
+MATCH (n:doc) WHERE n.title = 'alpha' RETURN n.title AS t;
+SET enable_property_promotion = on;
+CREATE VLABEL jlike (s text GENERATED);
+CREATE (:jlike {s: '[9,9]'}), (:jlike {s: '{"a":1}'}), (:jlike {s: 'plain'});
+MATCH (n:jlike) RETURN n.s AS s ORDER BY s;
+SET enable_property_promotion = off;
+MATCH (n:jlike) RETURN n.s AS s ORDER BY s;
+
 -- 11f. A CALL body reading a promoted property of an IMPORTED element.  The
 --      sentinel that carries the typed column is not a Cypher variable and so is
 --      never named by an import list, but it belongs to the element it describes
