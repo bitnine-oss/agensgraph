@@ -95,7 +95,8 @@ static Node *transformAExprIn(ParseState *pstate, A_Expr *a);
 static Node *transformPromotedInList(ParseState *pstate, Node *lexpr, A_Expr *a);
 static Node *transformCypherNullIf(ParseState *pstate, A_Expr *a);
 static Node *unboxCypherToJsonb(Node *n);
-static TargetEntry *findProjectedItem(List *items, const char *name);
+static TargetEntry *findProjectedItem(ParseState *pstate, List *items,
+									  const char *name, int location);
 static Node *transformBoolExpr(ParseState *pstate, BoolExpr *b);
 static Node *coerce_unknown_const(ParseState *pstate, Node *expr, Oid ityp,
 								  Oid otyp);
@@ -412,8 +413,8 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 	 */
 	if (node == NULL && pstate->p_order_items != NIL)
 	{
-		TargetEntry *item = findProjectedItem(pstate->p_order_items,
-											  strVal(field1));
+		TargetEntry *item = findProjectedItem(pstate, pstate->p_order_items,
+											  strVal(field1), location);
 
 		if (item != NULL)
 		{
@@ -3301,22 +3302,38 @@ transformCypherLimit(ParseState *pstate, Node *clause,
  * An item is named by its AS alias, or by the name figured for it when it has
  * none.  A sort key is appended to the same target list as a junk entry and is
  * unnamed, so a key never resolves to another key.
+ *
+ * A RETURN may output one name twice ("RETURN n.id, m.id"), which is fine until
+ * something reads it: sorting by such a name would pick one of the two at
+ * random, so report it as the ambiguity it is.
  */
 static TargetEntry *
-findProjectedItem(List *items, const char *name)
+findProjectedItem(ParseState *pstate, List *items, const char *name,
+				  int location)
 {
+	TargetEntry *found = NULL;
 	ListCell   *li;
 
 	foreach(li, items)
 	{
 		TargetEntry *item = lfirst(li);
 
-		if (!item->resjunk && item->resname != NULL &&
-			strcmp(item->resname, name) == 0)
-			return item;
+		if (item->resjunk || item->resname == NULL ||
+			strcmp(item->resname, name) != 0)
+			continue;
+
+		if (found != NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_AMBIGUOUS_COLUMN),
+					 errmsg("ORDER BY \"%s\" is ambiguous", name),
+					 errdetail("The clause returns \"%s\" more than once.",
+							   name),
+					 parser_errposition(pstate, location)));
+
+		found = item;
 	}
 
-	return NULL;
+	return found;
 }
 
 List *
@@ -3347,8 +3364,9 @@ transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
 
 			if (list_length(cref->fields) == 1 &&
 				IsA(linitial(cref->fields), String))
-				te = findProjectedItem(*targetlist,
-									   strVal(linitial(cref->fields)));
+				te = findProjectedItem(pstate, *targetlist,
+									   strVal(linitial(cref->fields)),
+									   cref->location);
 		}
 
 		/*
