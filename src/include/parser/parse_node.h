@@ -247,6 +247,8 @@ struct ParseState
 	 */
 	char	   *p_lc_varname;
 	Oid			p_lc_elem_type; /* element type of lc iteration variable */
+	List	   *p_order_items;	/* items of the projection being sorted, which
+								 * its ORDER BY keys may name */
 	bool		p_is_match_quals;
 	bool		p_valid_labels;
 	bool		p_is_fp_processed;

@@ -450,6 +450,16 @@ MATCH (n:doc) WHERE n.title IS NOT NULL RETURN n.name AS name, n.title AS title 
 SET enable_property_promotion = off;
 MATCH (n:doc) WHERE n.title IS NOT NULL RETURN n.name AS name, n.title AS title ORDER BY title, name;
 
+-- 5e. A key may name a RETURN item inside an expression, not only as the whole
+--     key; the name resolves to the item's own value, which for a promoted
+--     property is the typed column (on == off).
+SET enable_property_promotion = on;
+MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY age * -1, name;
+MATCH (n:doc) WHERE n.title IS NOT NULL RETURN n.title AS title ORDER BY toUpper(title) DESC;
+SET enable_property_promotion = off;
+MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY age * -1, name;
+MATCH (n:doc) WHERE n.title IS NOT NULL RETURN n.title AS title ORDER BY toUpper(title) DESC;
+
 -- ============================================================================
 -- SECTION 6 -- GROUP BY / DISTINCT (the by-value grouping path)
 --

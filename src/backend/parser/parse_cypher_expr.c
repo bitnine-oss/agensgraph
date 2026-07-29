@@ -95,6 +95,7 @@ static Node *transformAExprIn(ParseState *pstate, A_Expr *a);
 static Node *transformPromotedInList(ParseState *pstate, Node *lexpr, A_Expr *a);
 static Node *transformCypherNullIf(ParseState *pstate, A_Expr *a);
 static Node *unboxCypherToJsonb(Node *n);
+static TargetEntry *findProjectedItem(List *items, const char *name);
 static Node *transformBoolExpr(ParseState *pstate, BoolExpr *b);
 static Node *coerce_unknown_const(ParseState *pstate, Node *expr, Oid ityp,
 								  Oid otyp);
@@ -390,6 +391,35 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 			break;
 
 		pstate_up = pstate_up->parentParseState;
+	}
+
+	/*
+	 * A projection sorts what it outputs, so a sort key may name an item of the
+	 * RETURN/WITH list it belongs to ("RETURN m.title AS title ORDER BY
+	 * toUpper(title)").  Such a name is not in the namespace -- the projection
+	 * is built at the same query level as the pattern it reads, so an item lives
+	 * only as a target entry -- so resolve it to the item's own expression.  A
+	 * remaining field then reads a property of that value, which is how "RETURN
+	 * m AS mm ORDER BY mm.title" resolves.  The expression is copied because the
+	 * sort key becomes a second, separately processed occurrence of it.
+	 *
+	 * The namespace is searched first, so a key that reads a variable the
+	 * projection does not output -- the reason ORDER BY is transformed at this
+	 * level in the first place -- keeps its meaning.  The items are named at
+	 * their own query level only: a subquery inside a sort key has its own
+	 * ParseState, where an item's expression, written in terms of this level's
+	 * range table, would mean nothing.
+	 */
+	if (node == NULL && pstate->p_order_items != NIL)
+	{
+		TargetEntry *item = findProjectedItem(pstate->p_order_items,
+											  strVal(field1));
+
+		if (item != NULL)
+		{
+			node = copyObject((Node *) item->expr);
+			nmatched = 1;
+		}
 	}
 
 	if (pstate->p_post_columnref_hook != NULL)
@@ -3245,10 +3275,36 @@ transformCypherLimit(ParseState *pstate, Node *clause,
 	return qual;
 }
 
+/*
+ * findProjectedItem
+ *		Find the item a projection outputs under the given name, if any.
+ *
+ * An item is named by its AS alias, or by the name figured for it when it has
+ * none.  A sort key is appended to the same target list as a junk entry and is
+ * unnamed, so a key never resolves to another key.
+ */
+static TargetEntry *
+findProjectedItem(List *items, const char *name)
+{
+	ListCell   *li;
+
+	foreach(li, items)
+	{
+		TargetEntry *item = lfirst(li);
+
+		if (!item->resjunk && item->resname != NULL &&
+			strcmp(item->resname, name) == 0)
+			return item;
+	}
+
+	return NULL;
+}
+
 List *
 transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
 {
 	const ParseExprKind exprKind = EXPR_KIND_ORDER_BY;
+	List	   *save_order_items = pstate->p_order_items;
 	List	   *sortgroups = NIL;
 	ListCell   *lsi;
 
@@ -3272,20 +3328,8 @@ transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
 
 			if (list_length(cref->fields) == 1 &&
 				IsA(linitial(cref->fields), String))
-			{
-				char	   *colname = strVal(linitial(cref->fields));
-
-				foreach(lt, *targetlist)
-				{
-					TargetEntry *tmp = lfirst(lt);
-
-					if (tmp->resname && strcmp(tmp->resname, colname) == 0)
-					{
-						te = tmp;
-						break;
-					}
-				}
-			}
+				te = findProjectedItem(*targetlist,
+									   strVal(linitial(cref->fields)));
 		}
 
 		/*
@@ -3293,10 +3337,18 @@ transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
 		 * already in the target list, reuse that entry; if not, add it as a
 		 * resjunk entry so that ORDER BY can reference expressions that are
 		 * not in the RETURN list (e.g. "RETURN p.name ORDER BY p.age").
+		 *
+		 * A name within the expression may be an item of this projection too
+		 * ("ORDER BY toUpper(name)"), so publish the items for
+		 * transformColumnRef() to resolve against.  They are published afresh
+		 * for each key because a key transformed before it may have been
+		 * appended to the list.
 		 */
 		if (te == NULL)
 		{
+			pstate->p_order_items = *targetlist;
 			expr = transformCypherExpr(pstate, sortby->node, exprKind);
+			pstate->p_order_items = save_order_items;
 
 			foreach(lt, *targetlist)
 			{

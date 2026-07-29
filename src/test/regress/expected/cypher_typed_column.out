@@ -980,6 +980,53 @@ MATCH (n:doc) WHERE n.title IS NOT NULL RETURN n.name AS name, n.title AS title 
  "n5" | "delta"
 (5 rows)
 
+-- 5e. A key may name a RETURN item inside an expression, not only as the whole
+--     key; the name resolves to the item's own value, which for a promoted
+--     property is the typed column (on == off).
+SET enable_property_promotion = on;
+MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY age * -1, name;
+ name | age 
+------+-----
+ "n3" | 60
+ "n6" | 50
+ "n2" | 40
+ "n5" | 40
+ "n4" | 30
+ "n1" | 20
+(6 rows)
+
+MATCH (n:doc) WHERE n.title IS NOT NULL RETURN n.title AS title ORDER BY toUpper(title) DESC;
+   title   
+-----------
+ "delta"
+ "charlie"
+ "bravo"
+ "alpha"
+ "alpha"
+(5 rows)
+
+SET enable_property_promotion = off;
+MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY age * -1, name;
+ name | age 
+------+-----
+ "n3" | 60
+ "n6" | 50
+ "n2" | 40
+ "n5" | 40
+ "n4" | 30
+ "n1" | 20
+(6 rows)
+
+MATCH (n:doc) WHERE n.title IS NOT NULL RETURN n.title AS title ORDER BY toUpper(title) DESC;
+   title   
+-----------
+ "delta"
+ "charlie"
+ "bravo"
+ "alpha"
+ "alpha"
+(5 rows)
+
 -- ============================================================================
 -- SECTION 6 -- GROUP BY / DISTINCT (the by-value grouping path)
 --
