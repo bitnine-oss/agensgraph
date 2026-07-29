@@ -3121,6 +3121,38 @@ UNION
 MATCH (b)
 RETURN b.name;
 ERROR:  UNION types vertex and jsonb cannot be matched
+-- An ORDER BY / SKIP / LIMIT written after a UNION belongs to the RETURN it
+-- follows, so it sorts and pages that branch alone: the rows of the first branch
+-- come out untouched, all of them, ahead of the ordered and limited rows of the
+-- second.  This is what the ordering clause is attached to in GQL, where a
+-- branch is a linear query statement and a union of them has no place for one.
+-- To order a union, nest it -- "CALL { ... UNION ... } RETURN ... ORDER BY ..."
+-- -- which sorts the union's own rows.
+MATCH (a:repo) RETURN a.name AS n
+UNION ALL
+MATCH ()-[b:lib]->() RETURN b.lang AS n ORDER BY n LIMIT 2;
+         n          
+--------------------
+ "agens-graph"
+ "agens-graph-jdbc"
+ "agens-graph-docs"
+ "agens-graph-odbc"
+ "c"
+ "java"
+(6 rows)
+
+CALL {
+  MATCH (a:repo) RETURN a.name AS n
+  UNION ALL
+  MATCH ()-[b:lib]->() RETURN b.lang AS n
+}
+RETURN n ORDER BY n LIMIT 2;
+         n          
+--------------------
+ "agens-graph"
+ "agens-graph-docs"
+(2 rows)
+
 --
 -- aggregates
 --
@@ -5691,8 +5723,8 @@ MATCH (p:person) RETURN p.age AS age, count(*) AS cnt ORDER BY cnt, age;
 -- projection reads (a pattern variable, whether or not the projection outputs
 -- it) and the projection's own output items (a RETURN/WITH alias).  Both must
 -- work wherever the name appears -- as the whole key and inside a larger
--- expression -- and both must work in the same key.  The two have been traded
--- for each other before, so every combination is pinned here.
+-- expression -- and both must work in the same key, so every combination of the
+-- two is covered below.
 --
 -- The namespace is searched first, so a pattern variable outranks an item of
 -- the same name; a list comprehension's iteration variable outranks both.  An
@@ -6557,10 +6589,10 @@ MATCH (p:person) CALL { MATCH (q:person) RETURN count(*) AS c }
  1 | 5
 (5 rows)
 
--- KNOWN GAP: a SQL sublink in a key cannot see an item either.  It used to
--- (2.16 and earlier), when the projection was a subquery and the item was one of
--- its columns; moving ORDER BY down to the pattern's query level ended that and
--- this change does not bring it back.  Pinned so the gap stays visible.
+-- A SQL sublink written in a key has its own query level, and an item, which
+-- lives at the level of the projection that outputs it, is not a column there --
+-- so a sublink cannot read one.  The name to reach for inside a sublink is a
+-- pattern variable, and even that is beyond it, as the case below shows.
 MATCH (p:person) RETURN p.id AS x ORDER BY (SELECT 1 WHERE x IS NOT NULL), x;
 ERROR:  column "x" does not exist
 LINE 1: ...person) RETURN p.id AS x ORDER BY (SELECT 1 WHERE x IS NOT N...
@@ -6694,9 +6726,9 @@ MATCH (p:person) RETURN p.id AS x ORDER BY x * -1;
 (5 rows)
 
 -- A promoted property reached through an item name keeps its typed column and
--- its index; that is pinned in cypher_typed_column.sql (sections 2 and 5).  A
--- vector distance key (ORDER BY embedding <=> $1) needs pgvector, which a plain
--- `make check` temporary install does not have, so it is not covered here.
+-- its index; cypher_typed_column.sql covers that in sections 2 and 5.  A vector
+-- distance key (ORDER BY embedding <=> $1) needs pgvector, which a plain
+-- `make check` temporary install does not have.
 -- 15. errors
 -- a name that is neither a variable nor an item
 MATCH (p:person) RETURN p.id AS x ORDER BY nosuch;

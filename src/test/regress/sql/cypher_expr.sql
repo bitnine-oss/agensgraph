@@ -669,6 +669,31 @@ RETURN (1 = null) IS UNKNOWN AS a, (1 = 1) IS UNKNOWN AS b, 5 IS UNKNOWN AS c;
 RETURN null IS NOT UNKNOWN AS a, 5 IS NOT UNKNOWN AS b;
 MATCH (n:aggnum) WHERE n.v IS NOT UNKNOWN RETURN count(*) AS c;
 
+-- size() of a value: how many elements a list has, characters a string has, or
+-- entries a map has, whether the value is written out, read from a property, or
+-- computed.  A number has no size and says so.
+RETURN size([1, 2, 3]) AS list, size('abc') AS str, size([]) AS empty;
+RETURN size([1, 2]) + size('ab') AS total, size([[1, 2], [3]]) AS nested;
+RETURN size({a: 1, b: 2}) AS map, size({}) AS empty_map,
+       size({a: {b: 1, c: 2}}) AS outer_only;
+RETURN size(keys({a: 1, b: 2})) AS keys, size(split('a,b,c', ',')) AS parts;
+RETURN size(null) AS unknown;
+RETURN size(3);
+-- the same value through length(), which is the function size() answers with
+RETURN length({a: 1, b: 2}) AS map, length([1, 2, 3]) AS list;
+
+CREATE (:sz {name: 'ab', tags: ['x', 'y', 'z']})-[:szto]->(:sz {name: 'b'});
+MATCH (n:sz {name: 'ab'})
+    RETURN size(n.tags) AS tags, size(n.name) AS name, size(n.tags[0]) AS first;
+MATCH (n:sz) RETURN n.name AS name ORDER BY size(n.name), name;
+
+-- The pattern form is unchanged: a parenthesis after size() opens a pattern,
+-- whose matches are counted.  A shortestpath is a pattern and an expression
+-- both, and keeps counting paths.
+MATCH (a:sz {name: 'ab'}) RETURN size((a)-[]->()) AS matches;
+MATCH (a:sz {name: 'ab'}), (b:sz {name: 'b'})
+    RETURN size(allshortestpaths((a)-[:szto*]->(b))) AS paths;
+
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;

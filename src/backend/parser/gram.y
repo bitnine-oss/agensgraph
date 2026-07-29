@@ -730,7 +730,7 @@ static bool has_internal_default_prefix(char *str);
 %type <list>	cypher_expr_case_when_list
 
 %type <node>	cypher_expr_func cypher_expr_func_norm cypher_expr_func_subexpr
-				cypher_expr_shortestpath
+				cypher_expr_shortestpath cypher_size_value
 %type <node>	cypher_expr_subquery cypher_exists_subquery cypher_count_subquery
 %type <node>	cypher_collect_subquery cypher_value_subquery cypher_array_subquery
 
@@ -21626,6 +21626,17 @@ cypher_expr_func_subexpr:
 											   list_make1(clc),
 											   COERCE_EXPLICIT_CALL, @1);
 				}
+			| SIZE_P '(' cypher_size_value ')'
+				{
+					/*
+					 * size() of a value -- the number of elements of a list,
+					 * characters of a string, or keys of a map -- is length()
+					 * under the name Cypher gives it.
+					 */
+					$$ = (Node *) makeFuncCall(SystemFuncName("length"),
+											   list_make1($3),
+											   COERCE_EXPLICIT_CALL, @1);
+				}
 			| SIZE_P '(' cypher_anon_pattern ')'
 				{
 					CypherSubPattern *sub;
@@ -21662,6 +21673,26 @@ cypher_expr_func_subexpr:
 											   list_make1($3),
 											   COERCE_EXPLICIT_CALL, @1);
 				}
+		;
+
+/*
+ * The argument of the value form of size().  These are the expression forms
+ * that cannot begin with '(', which is what tells the value form apart from the
+ * pattern form: "size((a)-[]->())" counts the matches of a pattern, and a
+ * pattern always opens with a parenthesis.
+ *
+ * A shortestpath is deliberately not among them.  It is an expression and a
+ * pattern both, so "size(allshortestpaths((a)-[:e]-(b)))" would read two ways;
+ * it keeps its established meaning, the number of paths found.  length() takes
+ * any expression, for the arguments this leaves out.
+ */
+cypher_size_value:
+			cypher_expr_literal
+			| cypher_expr_map
+			| cypher_expr_param
+			| cypher_expr_propref
+			| cypher_expr_case
+			| cypher_expr_func_norm
 		;
 
 cypher_expr_shortestpath:
