@@ -1010,10 +1010,11 @@ SET enable_property_promotion = off;
 MATCH (n:doc) WHERE n.title = 'alpha' RETURN n.title AS t;
 SET enable_property_promotion = on;
 CREATE VLABEL jlike (s text GENERATED);
-CREATE (:jlike {s: '[9,9]'}), (:jlike {s: '{"a":1}'}), (:jlike {s: 'plain'});
-MATCH (n:jlike) RETURN n.s AS s ORDER BY s;
+CREATE (:jlike {nm: 'arr', s: '[9,9]'}), (:jlike {nm: 'obj', s: '{"a":1}'}),
+       (:jlike {nm: 'plain', s: 'plain'});
+MATCH (n:jlike) RETURN n.s AS s ORDER BY n.nm;
 SET enable_property_promotion = off;
-MATCH (n:jlike) RETURN n.s AS s ORDER BY s;
+MATCH (n:jlike) RETURN n.s AS s ORDER BY n.nm;
 
 -- 11e2b. Every shape a JSON parse would accept, in a built-in string type.  Each
 --        would be a different wrong answer if the text were reinterpreted: an
