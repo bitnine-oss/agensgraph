@@ -201,6 +201,15 @@ RETURN -false;
 RETURN -[];
 RETURN -{};
 
+-- unary plus and minus over a number, whichever way it arrives: a literal, a
+-- key read from a map, and an expression.  A key read from a map is jsonb, and
+-- an integer keeps its exact value rather than passing through a float.
+RETURN +1, -1, +1.5, -1.5, -(2 + 3), -(-4);
+RETURN -0, -0.0;
+WITH {i: 7, r: -2.5, big: 9007199254740993} AS m
+    RETURN -m.i AS i, -m.r AS r, -m.big AS big, +m.i AS plus;
+WITH {i: 7} AS m RETURN -(m.i * 2) AS twice, -m.nosuch AS missing;
+
 CREATE (:v0 {
   o: {i: 7, r: 7.0, s: '"map\nliteral\"', t: true, f: false, 'z': NULL,
       '\n': '\n'},

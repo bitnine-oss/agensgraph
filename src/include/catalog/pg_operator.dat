@@ -3602,5 +3602,11 @@
 { oid => '7186', descr => 'exponentiation',
   oprname => '`^`', oprleft => 'jsonb', oprright => 'jsonb',
   oprresult => 'jsonb', oprcode => 'jsonb_pow' },
+{ oid => '7190', descr => 'unary plus',
+  oprname => '`+`', oprkind => 'l', oprleft => '0', oprright => 'jsonb',
+  oprresult => 'jsonb', oprcode => 'jsonb_uplus' },
+{ oid => '7191', descr => 'negate',
+  oprname => '`-`', oprkind => 'l', oprleft => '0', oprright => 'jsonb',
+  oprresult => 'jsonb', oprcode => 'jsonb_uminus' },
 
 ]
