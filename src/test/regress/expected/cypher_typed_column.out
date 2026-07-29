@@ -1768,6 +1768,50 @@ MATCH p=(a:doc)-[:knows]->(b:doc) RETURN a.name AS an, b.name AS bn ORDER BY an,
  "n3" | "n3"
 (4 rows)
 
+-- 11e2. A promoted value is carried into jsonb with the shape the bag holds.
+--       to_jsonb falls back to the text form of a type it cannot represent, which
+--       would land as a jsonb string and disagree with the same property read from
+--       the bag; a type whose text form is JSON keeps its shape instead.  What must
+--       NOT happen is the converse: a genuine string that merely looks like JSON is
+--       a type to_jsonb does represent, so it stays a string.  (The type this
+--       matters for in practice is vector, which needs the external extension and
+--       is covered outside this suite.)
+SET enable_property_promotion = on;
+MATCH (n:doc) WHERE n.title = 'alpha' RETURN n.title AS t;
+    t    
+---------
+ "alpha"
+ "alpha"
+(2 rows)
+
+SET enable_property_promotion = off;
+MATCH (n:doc) WHERE n.title = 'alpha' RETURN n.title AS t;
+    t    
+---------
+ "alpha"
+ "alpha"
+(2 rows)
+
+SET enable_property_promotion = on;
+CREATE VLABEL jlike (s text GENERATED);
+CREATE (:jlike {s: '[9,9]'}), (:jlike {s: '{"a":1}'}), (:jlike {s: 'plain'});
+MATCH (n:jlike) RETURN n.s AS s ORDER BY s;
+      s      
+-------------
+ "[9,9]"
+ "{\"a\":1}"
+ "plain"
+(3 rows)
+
+SET enable_property_promotion = off;
+MATCH (n:jlike) RETURN n.s AS s ORDER BY s;
+      s      
+-------------
+ "[9,9]"
+ "{\"a\":1}"
+ "plain"
+(3 rows)
+
 -- 11f. A CALL body reading a promoted property of an IMPORTED element.  The
 --      sentinel that carries the typed column is not a Cypher variable and so is
 --      never named by an import list, but it belongs to the element it describes
@@ -3240,7 +3284,7 @@ SELECT extra FROM tc.pcv WHERE properties ->> 'k' = '2';
 RESET enable_property_promotion;
 RESET enable_seqscan;
 DROP GRAPH tc CASCADE;
-NOTICE:  drop cascades to 33 other objects
+NOTICE:  drop cascades to 34 other objects
 DETAIL:  drop cascades to sequence tc.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -3253,6 +3297,7 @@ drop cascades to vlabel mixed
 drop cascades to vlabel derived
 drop cascades to vlabel idp
 drop cascades to vlabel special
+drop cascades to vlabel jlike
 drop cascades to vlabel nullcase
 drop cascades to vlabel par
 drop cascades to vlabel chld
