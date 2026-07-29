@@ -274,7 +274,7 @@ static bool hasGinOnProp(Oid relid);
 /* promoted typed-column projection and resolution */
 #define PROMOTED_SENTINEL_PREFIX	AGENS_DEFAULT_PREFIX "prop:"
 static char *makePromotedSentinelName(const char *varname, const char *key);
-static char *promotedSentinelOwner(const char *colname);
+static char *makePromotedSentinelPrefix(const char *varname);
 static void appendPromotedSentinels(ParseState *pstate,
 									ParseNamespaceItem *nsitem, Oid relid,
 									const char *varname, List **targetList);
@@ -2238,20 +2238,41 @@ makeCallImportNSItem(ParseState *pstate, ParseNamespaceItem *prev_nsitem,
 			 * through the namespace, which reports an invalidated column as
 			 * nonexistent rather than absent, so the read fails outright.
 			 */
-			char	   *owner = promotedSentinelOwner(cname);
-			const char *name = owner != NULL ? owner : cname;
+			bool		issentinel = isPromotedSentinelName(cname);
 
 			foreach(il, importlist)
 			{
-				if (strcmp(strVal(lfirst(il)), name) == 0)
+				char	   *iv = strVal(lfirst(il));
+
+				if (strcmp(iv, cname) == 0)
 				{
 					imported = true;
 					break;
 				}
-			}
 
-			if (owner != NULL)
-				pfree(owner);
+				/*
+				 * Ask what a sentinel of THIS element would be called and
+				 * compare that, rather than reading an element name back out of
+				 * the column's name.  A Cypher variable is written as an
+				 * identifier and a quoted one may contain ':', so a name cannot
+				 * be recovered by looking for the ':' that separates it from the
+				 * property key -- the element's own name may hold one.
+				 */
+				if (issentinel)
+				{
+					char	   *pfx = makePromotedSentinelPrefix(iv);
+					bool		match;
+
+					match = strncmp(cname, pfx, strlen(pfx)) == 0;
+					pfree(pfx);
+
+					if (match)
+					{
+						imported = true;
+						break;
+					}
+				}
+			}
 		}
 		if (!imported)
 			nscolumns[idx].p_varno = 0;
@@ -5418,38 +5439,27 @@ makePromotedSentinelName(const char *varname, const char *key)
 	return psprintf(PROMOTED_SENTINEL_PREFIX "%s:%s", varname, key);
 }
 
+/*
+ * makePromotedSentinelPrefix - what every sentinel of `varname' starts with.
+ *
+ * Naming a sentinel is the only way to tell which element one belongs to: the
+ * element's name cannot be read back out of a sentinel's name, because a Cypher
+ * variable is written as an identifier and a quoted identifier may itself
+ * contain the ':' that separates the name from the property key.  The result is
+ * palloc'd.
+ */
+static char *
+makePromotedSentinelPrefix(const char *varname)
+{
+	return psprintf(PROMOTED_SENTINEL_PREFIX "%s:", varname);
+}
+
 bool
 isPromotedSentinelName(const char *resname)
 {
 	return resname != NULL &&
 		strncmp(resname, PROMOTED_SENTINEL_PREFIX,
 				strlen(PROMOTED_SENTINEL_PREFIX)) == 0;
-}
-
-/*
- * promotedSentinelOwner - the Cypher variable a sentinel column describes, or
- * NULL if `colname' is not a sentinel.
- *
- * A sentinel is named PROMOTED_SENTINEL_PREFIX + varname + ':' + key, and a
- * Cypher variable is an identifier that never contains ':', so the text up to
- * the first ':' after the prefix is exactly the element's name.  The result is
- * palloc'd.
- */
-static char *
-promotedSentinelOwner(const char *colname)
-{
-	const char *name;
-	const char *colon;
-
-	if (!isPromotedSentinelName(colname))
-		return NULL;
-
-	name = colname + strlen(PROMOTED_SENTINEL_PREFIX);
-	colon = strchr(name, ':');
-	if (colon == NULL)
-		return NULL;
-
-	return pnstrdup(name, colon - name);
 }
 
 /*
