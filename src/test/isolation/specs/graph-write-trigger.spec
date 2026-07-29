@@ -210,6 +210,13 @@ permutation s2_set7 s2_read_declined
 # trigger's refusal, or the write being dropped.
 permutation s1_begin s1_bump_declined s2_set7 s1_commit s2_read_declined
 
+# Contended, with the value the trigger DECLINES.  Locking the row for the trigger
+# is what notices the conflict, so on that path the trigger has not been consulted
+# yet -- and re-examining the row afterwards must consult it, about the row that is
+# now going to be stored.  A refusal is not something a concurrent update can spend:
+# the value has to stay the one the other session committed, never the declined 5.
+permutation s1_begin s1_bump_declined s2_set5 s1_commit s2_read_declined
+
 # An after-row trigger records one row per write that reached the table.  Under
 # contention the write is attempted twice and must still land once: the two rows
 # recorded are the other session's 999 and this one's re-derived 1000, so a retry

@@ -75,6 +75,19 @@ a
 (1 row)
 
 
+starting permutation: s1_begin s1_bump_declined s2_set5 s1_commit s2_read_declined
+step s1_begin: BEGIN;
+step s1_bump_declined: MATCH (n:declined) SET n.a = 999;
+step s2_set5: MATCH (n:declined) SET n.a = 5; <waiting ...>
+step s1_commit: COMMIT;
+step s2_set5: <... completed>
+step s2_read_declined: MATCH (n:declined) RETURN n.a AS a;
+  a
+---
+999
+(1 row)
+
+
 starting permutation: s2_incr_audited s2_read_audited
 step s2_incr_audited: MATCH (n:audited) SET n.a = n.a + 1;
 step s2_read_audited: SELECT count(*) AS rows_written, max((bag ->> 'a')::int) AS highest FROM public.gwt_audit;
