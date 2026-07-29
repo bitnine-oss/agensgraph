@@ -2931,6 +2931,27 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 				ModifyGraph *mgplan = (ModifyGraph *) plan;
 				ListCell   *lc;
 
+				/*
+				 * Force descendant scan nodes to reference epqParam.
+				 *
+				 * A graph write re-examines a row another session updated by
+				 * re-running its subplan with the re-fetched row standing in for
+				 * what a scan reads, which is only an answer about that row if
+				 * the scans actually read again.  Marking the plan as needing a
+				 * rescan is how they are told to, and that only reaches a scan
+				 * whose own parameters name the one being marked -- so without
+				 * this a node that caches its output, a Materialize on the inner
+				 * side of a join for instance, replays what it kept from the
+				 * previous re-examination and the substitution is never read at
+				 * all.  One statement can re-examine several rows, so the second
+				 * and every later one needs this.
+				 */
+				locally_added_param = mgplan->epqParam;
+				valid_params = bms_add_member(bms_copy(valid_params),
+											 locally_added_param);
+				scan_params = bms_add_member(bms_copy(scan_params),
+											 locally_added_param);
+
 				foreach(lc, mgplan->pattern)
 				{
 					GraphPath  *gpath = lfirst(lc);
