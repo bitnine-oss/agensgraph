@@ -1428,6 +1428,56 @@ MATCH (n:pcv) WHERE n.k = 2 SET n.name = 'd';
 SELECT extra FROM tc.pcv WHERE properties ->> 'k' = '2';
 
 -- ----------------------------------------------------------------------------
+-- 20. A variable-length relationship over an inheritance set whose labels lay
+--     their columns out differently.
+--
+--     Inheritance does not line a child's columns up with its parent's: a
+--     column added to the parent is appended at the end of each child, so a
+--     child that already had one of its own carries the two in the opposite
+--     order.  Below, attnum 5 is a by-value bigint on the parent and a varlena
+--     on the child, so the two labels cannot be read through one tuple
+--     descriptor -- a tuple is deformed against the descriptor of the slot it
+--     is read into, and one hop of the expansion reads from either label.
+-- ----------------------------------------------------------------------------
+CREATE VLABEL pv;
+CREATE ELABEL vle_par;
+CREATE ELABEL vle_kid INHERITS (vle_par);
+-- the child's own column comes first, so it takes attnum 5 there
+ALTER TABLE tc.vle_kid ADD COLUMN kid_only text;
+-- the parent's column takes attnum 5 on the parent and attnum 6 on the child
+ALTER TABLE tc.vle_par ADD COLUMN par_only bigint;
+
+-- the layout the traversal has to cope with
+SELECT c.relname, a.attnum, a.attname, a.attlen
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relnamespace = 'tc'::regnamespace
+  AND c.relname IN ('vle_par', 'vle_kid')
+  AND a.attnum >= 5 AND NOT a.attisdropped
+ORDER BY c.relname, a.attnum;
+
+CREATE (:pv {k: 101});
+CREATE (:pv {k: 102});
+CREATE (:pv {k: 103});
+MATCH (a:pv), (b:pv) WHERE a.k = 101 AND b.k = 102
+  CREATE (a)-[:vle_kid]->(b);
+MATCH (a:pv), (b:pv) WHERE a.k = 102 AND b.k = 103
+  CREATE (a)-[:vle_kid]->(b);
+-- a long value in the child's attnum 5, so reading it as the parent's
+-- by-value bigint would be a genuine mis-deform rather than a null
+SET enable_graph_dml = on;
+UPDATE tc.vle_kid SET kid_only = repeat('q', 900);
+SET enable_graph_dml = off;
+
+-- expansion driven from the parent: the descriptor differs from the child's
+MATCH p = (a:pv)-[:vle_par*1..2]->(z) WHERE a.k = 101
+  RETURN length(p) AS len, z.k AS reached ORDER BY len, reached;
+-- and from the child itself
+MATCH p = (a:pv)-[:vle_kid*1..2]->(z) WHERE a.k = 101
+  RETURN length(p) AS len, z.k AS reached ORDER BY len, reached;
+-- the child's own column is untouched by the traversal
+SELECT count(*) AS kid_rows, min(length(kid_only)) AS kid_len FROM tc.vle_kid;
+
+-- ----------------------------------------------------------------------------
 -- CLEANUP
 -- ----------------------------------------------------------------------------
 RESET enable_property_promotion;

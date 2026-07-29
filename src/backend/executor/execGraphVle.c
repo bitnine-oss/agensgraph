@@ -193,6 +193,9 @@ ExecInitGraphVLE(GraphVLE *vleplan, EState *estate, int eflags)
 	vle_state->end_index_rels = (Relation *)
 		palloc0(vle_state->num_target_rel_info * sizeof(Relation));
 
+	vle_state->scan_tuples = (TupleTableSlot **)
+		palloc0(vle_state->num_target_rel_info * sizeof(TupleTableSlot *));
+
 	/* Will be filled by below logic. */
 	vle_state->current_scan_tuple = NULL;
 
@@ -205,10 +208,7 @@ ExecInitGraphVLE(GraphVLE *vleplan, EState *estate, int eflags)
 			Relation	relation = table_open(label_oid, AccessShareLock);
 			int			k;
 
-			if (vle_state->current_scan_tuple == NULL)
-			{
-				vle_state->current_scan_tuple = table_slot_create(relation, NULL);
-			}
+			vle_state->scan_tuples[rel_idx] = table_slot_create(relation, NULL);
 			InitResultRelInfo(target_rel_infos,
 							  relation,
 							  0,	/* dummy rangetable index */
@@ -433,6 +433,15 @@ ExecGraphVLEDFS(GraphVLEState *vle_state, Graphid start_id)
 					new_end_id;
 
 		vle_depth_ctx = llast(vle_state->table_scan_desc_list);
+
+		/*
+		 * Read into the slot belonging to the label this hop is scanning.  Only
+		 * create_scan_desc() moves on to the next label, and it always does so
+		 * without fetching, so rel_index names the label the scan below reads
+		 * from.
+		 */
+		Assert(vle_depth_ctx->rel_index < vle_state->num_target_rel_info);
+		vle_state->current_scan_tuple = vle_state->scan_tuples[vle_depth_ctx->rel_index];
 
 		if (!depth_getnext(vle_depth_ctx, vle_state->current_scan_tuple))
 		{
@@ -736,7 +745,8 @@ ExecEndGraphVLE(GraphVLEState *vle_state)
 	}
 	list_free(vle_state->table_scan_desc_list);
 
-	ExecDropSingleTupleTableSlot(vle_state->current_scan_tuple);
+	for (i = 0; i < vle_state->num_target_rel_info; i++)
+		ExecDropSingleTupleTableSlot(vle_state->scan_tuples[i]);
 
 	for (i = 0; i < vle_state->num_target_rel_info; i++)
 	{
@@ -745,6 +755,7 @@ ExecEndGraphVLE(GraphVLEState *vle_state)
 		result_rel_info++;
 	}
 	pfree(vle_state->target_rel_infos);
+	pfree(vle_state->scan_tuples);
 	pfree(vle_state->start_index_rels);
 	pfree(vle_state->end_index_rels);
 
