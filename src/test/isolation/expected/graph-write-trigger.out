@@ -1,0 +1,195 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s2_incr_edited s2_read_edited
+step s2_incr_edited: MATCH (n:edited) SET n.a = n.a + 1;
+step s2_read_edited: MATCH (n:edited) RETURN n.a AS a, n.t AS fired;
+a|fired
+-+-----
+2|    1
+(1 row)
+
+
+starting permutation: s1_begin s1_bump_edited s2_incr_edited s1_commit s2_read_edited_a
+step s1_begin: BEGIN;
+step s1_bump_edited: MATCH (n:edited) SET n.a = 999;
+step s2_incr_edited: MATCH (n:edited) SET n.a = n.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_edited: <... completed>
+step s2_read_edited_a: MATCH (n:edited) RETURN n.a AS a;
+   a
+----
+1000
+(1 row)
+
+
+starting permutation: s2_incr_editedp s2_read_editedp
+step s2_incr_editedp: MATCH (n:editedp) SET n.age = n.age + 1;
+step s2_read_editedp: SELECT (properties ->> 'age') AS bag, age AS col, (properties ->> 't') AS fired FROM gwt.editedp;
+bag|col|fired
+---+---+-----
+  2|  2|    1
+(1 row)
+
+
+starting permutation: s1_begin s1_bump_editedp s2_incr_editedp s1_commit s2_read_editedp_a
+step s1_begin: BEGIN;
+step s1_bump_editedp: MATCH (n:editedp) SET n.age = 999;
+step s2_incr_editedp: MATCH (n:editedp) SET n.age = n.age + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_editedp: <... completed>
+step s2_read_editedp_a: SELECT (properties ->> 'age') AS bag, age AS col FROM gwt.editedp;
+ bag| col
+----+----
+1000|1000
+(1 row)
+
+
+starting permutation: s2_set5 s2_read_declined
+step s2_set5: MATCH (n:declined) SET n.a = 5;
+step s2_read_declined: MATCH (n:declined) RETURN n.a AS a;
+a
+-
+1
+(1 row)
+
+
+starting permutation: s2_set7 s2_read_declined
+step s2_set7: MATCH (n:declined) SET n.a = 7;
+step s2_read_declined: MATCH (n:declined) RETURN n.a AS a;
+a
+-
+7
+(1 row)
+
+
+starting permutation: s1_begin s1_bump_declined s2_set7 s1_commit s2_read_declined
+step s1_begin: BEGIN;
+step s1_bump_declined: MATCH (n:declined) SET n.a = 999;
+step s2_set7: MATCH (n:declined) SET n.a = 7; <waiting ...>
+step s1_commit: COMMIT;
+step s2_set7: <... completed>
+step s2_read_declined: MATCH (n:declined) RETURN n.a AS a;
+a
+-
+7
+(1 row)
+
+
+starting permutation: s2_incr_audited s2_read_audited
+step s2_incr_audited: MATCH (n:audited) SET n.a = n.a + 1;
+step s2_read_audited: SELECT count(*) AS rows_written, max((bag ->> 'a')::int) AS highest FROM public.gwt_audit;
+rows_written|highest
+------------+-------
+           1|      2
+(1 row)
+
+
+starting permutation: s1_begin s1_bump_audited s2_incr_audited s1_commit s2_read_audited
+step s1_begin: BEGIN;
+step s1_bump_audited: MATCH (n:audited) SET n.a = 999;
+step s2_incr_audited: MATCH (n:audited) SET n.a = n.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_audited: <... completed>
+step s2_read_audited: SELECT count(*) AS rows_written, max((bag ->> 'a')::int) AS highest FROM public.gwt_audit;
+rows_written|highest
+------------+-------
+           2|   1000
+(1 row)
+
+
+starting permutation: s1_begin s1_bump_kid s2_incr_tpar s1_commit s2_read_tpar
+step s1_begin: BEGIN;
+step s1_bump_kid: MATCH (n:tkid) SET n.a = 999;
+step s2_incr_tpar: MATCH (n:tpar) SET n.a = n.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_tpar: <... completed>
+step s2_read_tpar: MATCH (n:tpar) RETURN n.who AS who, n.a AS a ORDER BY who;
+who     |   a
+--------+----
+"child" |1000
+"parent"|  11
+(2 rows)
+
+
+starting permutation: s1_begin s1_bump_par s2_incr_tpar s1_commit s2_read_tpar
+step s1_begin: BEGIN;
+step s1_bump_par: MATCH (n:tpar) WHERE label(n) = 'tpar' SET n.a = 999;
+step s2_incr_tpar: MATCH (n:tpar) SET n.a = n.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_incr_tpar: <... completed>
+step s2_read_tpar: MATCH (n:tpar) RETURN n.who AS who, n.a AS a ORDER BY who;
+who     |   a
+--------+----
+"child" |  21
+"parent"|1000
+(2 rows)
+
+
+starting permutation: s2_del_nodel s2_read_nodel
+step s2_del_nodel: MATCH (n:nodel) DETACH DELETE n;
+ERROR:  cannot delete required graph element, because of trigger action.
+step s2_read_nodel: MATCH (n:nodel) RETURN n.a AS a;
+a
+-
+1
+(1 row)
+
+
+starting permutation: s1_begin s1_bump_nodel s2_del_nodel s1_commit s2_read_nodel
+step s1_begin: BEGIN;
+step s1_bump_nodel: MATCH (n:nodel) SET n.a = 999;
+step s2_del_nodel: MATCH (n:nodel) DETACH DELETE n; <waiting ...>
+step s1_commit: COMMIT;
+step s2_del_nodel: <... completed>
+ERROR:  could not serialize access due to concurrent update
+step s2_read_nodel: MATCH (n:nodel) RETURN n.a AS a;
+  a
+---
+999
+(1 row)
+
+
+starting permutation: s2_del_plaindel s2_read_plaindel
+step s2_del_plaindel: MATCH (n:plaindel) DETACH DELETE n;
+step s2_read_plaindel: MATCH (n:plaindel) RETURN n.a AS a;
+a
+-
+(0 rows)
+
+
+starting permutation: s1_begin s1_bump_plaindel s2_del_plaindel s1_commit s2_read_plaindel
+step s1_begin: BEGIN;
+step s1_bump_plaindel: MATCH (n:plaindel) SET n.a = 999;
+step s2_del_plaindel: MATCH (n:plaindel) DETACH DELETE n; <waiting ...>
+step s1_commit: COMMIT;
+step s2_del_plaindel: <... completed>
+ERROR:  could not serialize access due to concurrent update
+step s2_read_plaindel: MATCH (n:plaindel) RETURN n.a AS a;
+  a
+---
+999
+(1 row)
+
+
+starting permutation: s2_merge_mrg s2_read_mrg
+step s2_merge_mrg: MERGE (n:mrg) ON MATCH SET n.a = n.a + 1;
+step s2_read_mrg: MATCH (n:mrg) RETURN n.a AS a;
+a
+-
+2
+(1 row)
+
+
+starting permutation: s1_begin s1_bump_mrg s2_merge_mrg s1_commit s2_read_mrg
+step s1_begin: BEGIN;
+step s1_bump_mrg: MATCH (n:mrg) SET n.a = 999;
+step s2_merge_mrg: MERGE (n:mrg) ON MATCH SET n.a = n.a + 1; <waiting ...>
+step s1_commit: COMMIT;
+step s2_merge_mrg: <... completed>
+ERROR:  could not serialize access due to concurrent update
+step s2_read_mrg: MATCH (n:mrg) RETURN n.a AS a;
+  a
+---
+999
+(1 row)
+
