@@ -1586,7 +1586,20 @@ ALTER TABLE tc_plain_table ADD COLUMN b text;
 ALTER TABLE tc_plain_table DROP COLUMN b;
 DROP TABLE tc_plain_table;
 
--- 22d. The label still works after all of that was refused.
+-- 22d. Renaming a label's column, or moving the label out of its graph, is
+--      refused for the same reason: the graph names both.
+ALTER TABLE tc.gate RENAME COLUMN age TO age2;
+ALTER TABLE tc.gate RENAME COLUMN properties TO props;
+CREATE SCHEMA tc_elsewhere;
+ALTER TABLE tc.gate SET SCHEMA tc_elsewhere;
+-- an ordinary table in the same database is unaffected by either
+CREATE TABLE tc_movable (a int);
+ALTER TABLE tc_movable RENAME COLUMN a TO b;
+ALTER TABLE tc_movable SET SCHEMA tc_elsewhere;
+DROP TABLE tc_elsewhere.tc_movable;
+DROP SCHEMA tc_elsewhere;
+
+-- 22e. The label still works after all of that was refused.
 CREATE (:gate {age: 3});
 MATCH (n:gate) RETURN n.age AS age;
 

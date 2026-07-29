@@ -47,6 +47,7 @@
 #include "commands/defrem.h"
 #include "commands/event_trigger.h"
 #include "commands/extension.h"
+#include "catalog/ag_graph_fn.h"
 #include "commands/graphcmds.h"
 #include "commands/policy.h"
 #include "commands/publicationcmds.h"
@@ -417,6 +418,21 @@ ExecRenameStmt(RenameStmt *stmt)
 			return RenameRelation(stmt);
 
 		case OBJECT_COLUMN:
+
+			/*
+			 * A label's columns are looked up by name -- the ones every vertex
+			 * or edge is made of, and the one a promoted property is read
+			 * through.  Renaming one leaves the graph looking for a name that is
+			 * no longer there.
+			 */
+			if (stmt->relation != NULL && !enable_graph_ddl &&
+				RangeVarIsLabel(stmt->relation))
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+						 errmsg("cannot rename column \"%s\" of graph label \"%s\"",
+								stmt->subname, stmt->relation->relname),
+						 errhint("A label's columns are named by the graph that describes it.")));
+			/* fall through */
 		case OBJECT_ATTRIBUTE:
 			return renameatt(stmt);
 
@@ -568,9 +584,22 @@ ExecAlterObjectSchemaStmt(AlterObjectSchemaStmt *stmt,
 											  oldSchemaAddr ? &oldNspOid : NULL);
 			break;
 
+		case OBJECT_TABLE:
+
+			/*
+			 * A label belongs to the graph whose schema holds it, and the graph
+			 * catalog records it there.  Moving the table out would leave the
+			 * graph naming a label that is no longer one of its own.
+			 */
+			if (!enable_graph_ddl && RangeVarIsLabel(stmt->relation))
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+						 errmsg("cannot move graph label \"%s\" to another schema",
+								stmt->relation->relname),
+						 errhint("A label belongs to the graph it was created in.")));
+			/* fall through */
 		case OBJECT_FOREIGN_TABLE:
 		case OBJECT_SEQUENCE:
-		case OBJECT_TABLE:
 		case OBJECT_VIEW:
 		case OBJECT_MATVIEW:
 			address = AlterTableNamespace(stmt,
