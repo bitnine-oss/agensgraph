@@ -417,6 +417,25 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 
 		if (item != NULL)
 		{
+			/*
+			 * The copy is a second occurrence, so the item is evaluated once
+			 * for the value returned and once for the key.  A volatile item
+			 * gives a different value each time, which would order the rows by
+			 * values other than the ones they show; refuse that rather than
+			 * answer it wrongly.  Naming the item as the whole key is still
+			 * fine -- that sorts on the item's own target entry, evaluated
+			 * once -- so say so.
+			 */
+			if (contain_volatile_functions((Node *) item->expr))
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
+						 errmsg("ORDER BY cannot compute with \"%s\"",
+								item->resname),
+						 errdetail("\"%s\" is volatile, so a key built from it would be a different value than the one returned.",
+								   item->resname),
+						 errhint("Sort by \"%s\" itself.", item->resname),
+						 parser_errposition(pstate, location)));
+
 			node = copyObject((Node *) item->expr);
 			nmatched = 1;
 		}

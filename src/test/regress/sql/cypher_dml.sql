@@ -2322,21 +2322,31 @@ MATCH (p:person) RETURN p.name AS name ORDER BY (SELECT p.id), p.id;
 
 -- 13. an item's expression is evaluated a second time for the key
 
--- A key that names an item compiles to a COPY of the item's expression, so a
--- volatile item runs twice per row: once for the value returned and once for
--- the key it is sorted by, and the two do not agree.  A key that is the name
--- alone reuses the item's own target entry and runs it once.  Pinned to keep
--- the difference visible; a stable item is unaffected.
+-- A key that computes with an item compiles to a COPY of the item's
+-- expression, so the item is evaluated once for the value returned and once
+-- for the key.  A volatile item would then be sorted by values other than the
+-- ones it returns, so such a key is refused; the name alone stays available,
+-- as that sorts on the item's own target entry, evaluated once.
 CREATE SEQUENCE sortkeys_seq;
-SELECT setval('sortkeys_seq', 1, false);
 MATCH (p:person) WITH p.id AS x, nextval('sortkeys_seq') AS n ORDER BY n * -1
     RETURN x ORDER BY x;
-SELECT currval('sortkeys_seq') AS evaluations;
+MATCH (p:person) RETURN nextval('sortkeys_seq') AS n ORDER BY abs(n);
 SELECT setval('sortkeys_seq', 1, false);
 MATCH (p:person) WITH p.id AS x, nextval('sortkeys_seq') AS n ORDER BY n DESC
     RETURN x ORDER BY x;
 SELECT currval('sortkeys_seq') AS evaluations;
 DROP SEQUENCE sortkeys_seq;
+
+-- A stable item is evaluated twice as well, but both evaluations agree, so the
+-- key is exact: the statement timestamp is one value for every row, which
+-- leaves the second key to decide the order (the timestamp itself is not
+-- returned, as it differs from run to run).
+MATCH (p:person) WITH p.id AS x, now() AS t ORDER BY t, x RETURN x;
+
+-- A set-returning item expands in step with the key built from it, so each row
+-- is ordered by its own value -- the same result the key written out gives.
+RETURN generate_series(1, 4) AS s ORDER BY s * -1;
+RETURN generate_series(1, 4) AS s ORDER BY generate_series(1, 4) * -1;
 
 -- 14. plan shape
 

@@ -6534,35 +6534,25 @@ ERROR:  missing FROM-clause entry for table "p"
 LINE 1: ...(p:person) RETURN p.name AS name ORDER BY (SELECT p.id), p.i...
                                                              ^
 -- 13. an item's expression is evaluated a second time for the key
--- A key that names an item compiles to a COPY of the item's expression, so a
--- volatile item runs twice per row: once for the value returned and once for
--- the key it is sorted by, and the two do not agree.  A key that is the name
--- alone reuses the item's own target entry and runs it once.  Pinned to keep
--- the difference visible; a stable item is unaffected.
+-- A key that computes with an item compiles to a COPY of the item's
+-- expression, so the item is evaluated once for the value returned and once
+-- for the key.  A volatile item would then be sorted by values other than the
+-- ones it returns, so such a key is refused; the name alone stays available,
+-- as that sorts on the item's own target entry, evaluated once.
 CREATE SEQUENCE sortkeys_seq;
-SELECT setval('sortkeys_seq', 1, false);
- setval 
---------
-      1
-(1 row)
-
 MATCH (p:person) WITH p.id AS x, nextval('sortkeys_seq') AS n ORDER BY n * -1
     RETURN x ORDER BY x;
- x 
----
- 1
- 2
- 3
- 4
- 5
-(5 rows)
-
-SELECT currval('sortkeys_seq') AS evaluations;
- evaluations 
--------------
-          10
-(1 row)
-
+ERROR:  ORDER BY cannot compute with "n"
+LINE 1: ...WITH p.id AS x, nextval('sortkeys_seq') AS n ORDER BY n * -1
+                                                                 ^
+DETAIL:  "n" is volatile, so a key built from it would be a different value than the one returned.
+HINT:  Sort by "n" itself.
+MATCH (p:person) RETURN nextval('sortkeys_seq') AS n ORDER BY abs(n);
+ERROR:  ORDER BY cannot compute with "n"
+LINE 1: ...person) RETURN nextval('sortkeys_seq') AS n ORDER BY abs(n);
+                                                                    ^
+DETAIL:  "n" is volatile, so a key built from it would be a different value than the one returned.
+HINT:  Sort by "n" itself.
 SELECT setval('sortkeys_seq', 1, false);
  setval 
 --------
@@ -6587,6 +6577,40 @@ SELECT currval('sortkeys_seq') AS evaluations;
 (1 row)
 
 DROP SEQUENCE sortkeys_seq;
+-- A stable item is evaluated twice as well, but both evaluations agree, so the
+-- key is exact: the statement timestamp is one value for every row, which
+-- leaves the second key to decide the order (the timestamp itself is not
+-- returned, as it differs from run to run).
+MATCH (p:person) WITH p.id AS x, now() AS t ORDER BY t, x RETURN x;
+ x 
+---
+ 1
+ 2
+ 3
+ 4
+ 5
+(5 rows)
+
+-- A set-returning item expands in step with the key built from it, so each row
+-- is ordered by its own value -- the same result the key written out gives.
+RETURN generate_series(1, 4) AS s ORDER BY s * -1;
+ s 
+---
+ 4
+ 3
+ 2
+ 1
+(4 rows)
+
+RETURN generate_series(1, 4) AS s ORDER BY generate_series(1, 4) * -1;
+ s 
+---
+ 4
+ 3
+ 2
+ 1
+(4 rows)
+
 -- 14. plan shape
 -- Naming an item costs nothing: the key becomes the item's own expression, so
 -- the plan is the one the qualified spelling gives.
