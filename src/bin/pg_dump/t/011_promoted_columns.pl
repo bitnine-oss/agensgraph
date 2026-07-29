@@ -325,6 +325,36 @@ $node->safe_psql(
 	ALTER TABLE gg.erel ADD COLUMN ecol int;
 	MATCH (a:untouched), (b:untouched) WHERE a.a = 1 AND b.a = 2
 	  CREATE (a)-[:erel]->(b);
+	-- TWO ordinary columns, each with a DEFAULT.  The ADD COLUMN that puts the
+	-- column back deliberately does not carry the default; the per-column pass
+	-- later in the dump emits it, which only works because that pass runs after
+	-- the column exists.
+	CREATE VLABEL defv;
+	ALTER TABLE gg.defv ADD COLUMN d1 int DEFAULT 42;
+	ALTER TABLE gg.defv ADD COLUMN d2 text DEFAULT 'dd';
+	CREATE (:defv {k:1});
+	-- an ordinary column of a CHILD label, beside one it inherits from its
+	-- parent.  Only its own is added back, and the inherited one has to keep the
+	-- attnum ahead of it -- which it only does if it arrives with the label,
+	-- through INHERITS, rather than being added afterwards.
+	CREATE VLABEL cpar;
+	ALTER TABLE gg.cpar ADD COLUMN pcol text;
+	CREATE VLABEL ckid INHERITS (cpar);
+	ALTER TABLE gg.ckid ADD COLUMN kcol text;
+	CREATE (:cpar {z:1}), (:ckid {z:2});
+	-- a label whose ordinary column was DROPPED again.  A plain dump has nothing
+	-- to add back for it, and must not try: naming a column that no longer
+	-- exists would fail the restore exactly the way omitting a live one does.
+	CREATE VLABEL dropord (age int GENERATED);
+	ALTER TABLE gg.dropord ADD COLUMN gone text;
+	ALTER TABLE gg.dropord DROP COLUMN gone;
+	CREATE (:dropord {age:3});
+	-- nothing unusual, created last so that it is also emitted last.  The symptom
+	-- of a label's ordinary column going missing is the COPY for it failing and
+	-- the rest of the dump's payload being read as SQL, which loses the data of
+	-- every label AFTER it -- so a bystander is needed at each end.
+	CREATE VLABEL zlast;
+	CREATE (:zlast {a:1}), (:zlast {a:2});
 });
 $node->safe_psql(
 	'agplain', q{
@@ -334,6 +364,8 @@ $node->safe_psql(
 	UPDATE gg.mixed SET plain_first = 'pf';
 	UPDATE gg.par3 SET pcol = 'p';
 	UPDATE gg.erel SET ecol = 42;
+	UPDATE ONLY gg.cpar SET pcol = 'cp';
+	UPDATE gg.ckid SET pcol = 'ck-inherited', kcol = 'ck-own';
 	-- now that it is populated, make it NOT NULL as well, so the dump has to
 	-- carry that too.  (It could not be NOT NULL while the rows were being
 	-- created: a Cypher write cannot name an ordinary column, so it leaves it
@@ -357,6 +389,32 @@ like($plaindump, qr/ALTER TABLE gg\.erel ADD COLUMN ecol integer;/,
 unlike($plaindump, qr/ALTER TABLE gg\.kid3 ADD COLUMN pcol/,
 	'an inherited ordinary column is not re-added on the child');
 
+# A child's OWN ordinary column is added back on the child, while the one it
+# inherits still is not -- the child holds both, and only one of them is its own.
+like($plaindump, qr/ALTER TABLE gg\.ckid ADD COLUMN kcol text;/,
+	"a child label's own ordinary column is added back on the child");
+unlike($plaindump, qr/ALTER TABLE gg\.ckid ADD COLUMN pcol/,
+	'the column the same child inherits is still left to the parent');
+
+# The ADD COLUMN does not carry the default; the per-column pass emits it
+# afterwards, which is the only order that works.
+like($plaindump, qr/ALTER TABLE gg\.defv ADD COLUMN d1 integer;/,
+	'an ordinary column with a default is added back without it');
+like($plaindump, qr/ALTER TABLE gg\.defv ALTER COLUMN d1 SET DEFAULT 42;/,
+	'and the default is set afterwards, once the column exists');
+like($plaindump, qr/ALTER TABLE gg\.defv ALTER COLUMN d2 SET DEFAULT 'dd'::text;/,
+	'a second ordinary column on the same label keeps its default too');
+
+# A dropped ordinary column has nothing to add back.  Naming it would fail the
+# restore the same way omitting a live one does.
+unlike($plaindump, qr/ALTER TABLE gg\.dropord ADD COLUMN/,
+	'a dropped ordinary column is not added back');
+
+# Restoring has to be able to reshape a label, which is otherwise refused, so the
+# dump asks for it -- the ADD COLUMNs above are exactly what needs it.
+like($plaindump, qr/^SET enable_graph_ddl = on;$/m,
+	'the dump enables label reshaping, without which its ADD COLUMNs are refused');
+
 $node->safe_psql('postgres', 'CREATE DATABASE agplaindst');
 $node->command_ok(
 	[ 'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-f', $plainfile,
@@ -374,6 +432,60 @@ is( $node->safe_psql(
 		      || (SELECT count(*) FROM gg.erel)}),
 	'3 2 2 2 1 1',
 	'every label restores its rows, including one with no ordinary column');
+
+# The same for the shapes added later, ending with the label emitted last -- the
+# one furthest downstream of a COPY that could have failed.
+is( $node->safe_psql(
+		'agplaindst',
+		q{SELECT (SELECT count(*) FROM gg.defv)    || ' '
+		      || (SELECT count(*) FROM gg.cpar)    || ' '
+		      || (SELECT count(*) FROM gg.ckid)    || ' '
+		      || (SELECT count(*) FROM gg.dropord) || ' '
+		      || (SELECT count(*) FROM gg.zlast)}),
+	'1 2 1 1 2',
+	'the later shapes restore their rows too, the last-emitted label included');
+
+# The defaults are back on the columns, not merely mentioned in the dump.
+is( $node->safe_psql(
+		'agplaindst',
+		"SELECT string_agg(a.attname || '=' || pg_get_expr(d.adbin, d.adrelid), ' ' ORDER BY a.attnum)
+		   FROM pg_attribute a
+		   JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+		  WHERE a.attrelid = 'gg.defv'::regclass AND a.attnum > 2"),
+	q{d1=42 d2='dd'::text},
+	"an ordinary column's default round-trips");
+
+# The child's two ordinary columns come back in their original order: the
+# inherited one first, its own after.  Adding the inherited one on the child
+# instead of letting INHERITS bring it would reverse them.
+is( $node->safe_psql(
+		'agplaindst',
+		q{SELECT string_agg(attname || '@' || attnum, ' ' ORDER BY attnum)
+		    FROM pg_attribute
+		   WHERE attrelid = 'gg.ckid'::regclass AND attnum > 2 AND NOT attisdropped}),
+	'pcol@3 kcol@4',
+	"a child label's inherited and own ordinary columns keep their attnums");
+
+is( $node->safe_psql(
+		'agplaindst',
+		q{SELECT pcol || ' ' || kcol FROM gg.ckid}),
+	'ck-inherited ck-own',
+	"the data of a child label's inherited and own ordinary columns round-trips");
+
+# A dropped ordinary column stays dropped, and the promoted column that came
+# after it still resolves.
+is( $node->safe_psql(
+		'agplaindst',
+		"SELECT count(*) FROM pg_attribute
+		  WHERE attrelid = 'gg.dropord'::regclass AND attname = 'gone'"),
+	'0',
+	'a dropped ordinary column does not come back');
+
+is( $node->safe_psql(
+		'agplaindst',
+		"SET graph_path=gg; MATCH (n:dropord) WHERE n.age = 3 RETURN n.age AS age"),
+	'3',
+	'a promoted read resolves on a label that once had an ordinary column');
 
 is( $node->safe_psql(
 		'agplaindst',
@@ -428,6 +540,69 @@ $node->command_fails_like(
 	],
 	qr/ordinary column .* cannot be dumped for a binary upgrade/,
 	'--binary-upgrade refuses a label with an ordinary column instead of corrupting it');
+
+# The same graph through the custom archive format and pg_restore, which writes
+# its own preamble: the ADD COLUMNs a label's ordinary columns need are refused
+# unless that preamble asks for label reshaping too.
+my $custfile = "${PostgreSQL::Test::Utils::tmp_check}/plain_cols.dump";
+$node->command_ok(
+	[ 'pg_dump', '-Fc', '-f', $custfile, '-d', $node->connstr('agplain') ],
+	'a custom-format dump of a graph with ordinary label columns succeeds');
+$node->safe_psql('postgres', 'CREATE DATABASE agplaincust');
+$node->command_ok(
+	[ 'pg_restore', '--exit-on-error', '-d', $node->connstr('agplaincust'),
+		$custfile ],
+	'pg_restore of a custom-format dump succeeds');
+is( $node->safe_psql(
+		'agplaincust',
+		q{SELECT (SELECT count(*) FROM gg.untouched) || ' '
+		      || (SELECT count(*) FROM gg.plainv)    || ' '
+		      || (SELECT count(*) FROM gg.zlast)     || ' '
+		      || (SELECT max(extra) FROM gg.plainv)}),
+	'3 2 2 e1',
+	'a custom-format restore brings back the rows and the ordinary column data');
+
+# --binary-upgrade only has to refuse a LIVE ordinary column.  One that was
+# dropped again leaves no column to place, so the dump must still succeed -- and
+# it has to keep the dropped attnum, which here sits after a promoted column.
+$node->safe_psql('postgres', 'CREATE DATABASE agdroponly');
+$node->safe_psql(
+	'agdroponly', q{
+	CREATE GRAPH gg;
+	SET graph_path = gg;
+	SET enable_graph_ddl = on;
+	-- a dropped ordinary column AFTER a promoted one
+	CREATE VLABEL after_prom (age int GENERATED);
+	ALTER TABLE gg.after_prom ADD COLUMN gone text;
+	ALTER TABLE gg.after_prom DROP COLUMN gone;
+	CREATE (:after_prom {age:3});
+	-- and one BEFORE a promoted one, so the placeholder has to be emitted ahead
+	-- of the promoted column rather than appended after it
+	CREATE VLABEL before_prom;
+	ALTER TABLE gg.before_prom ADD COLUMN gone text;
+	ALTER TABLE gg.before_prom DROP COLUMN gone;
+	ALTER VLABEL before_prom ADD COLUMN age int GENERATED;
+	CREATE (:before_prom {age:4});
+});
+my $droponlyfile = "${PostgreSQL::Test::Utils::tmp_check}/droponly_bu.sql";
+$node->command_ok(
+	[
+		'pg_dump', '--binary-upgrade', '-f', $droponlyfile,
+		'-d', $node->connstr('agdroponly')
+	],
+	'--binary-upgrade still dumps a label whose ordinary column was dropped again');
+
+my $droponly = slurp_file($droponlyfile);
+my ($after_create) =
+  ($droponly =~ /^(CREATE VLABEL ONLY after_prom\([^\n]*)$/m);
+like($after_create,
+	qr/age integer GENERATED ALWAYS AS .*"\Q........pg.dropped.\E\d+\Q........\E" INTEGER/,
+	'the placeholder for the dropped column follows the promoted column it followed');
+my ($before_create) =
+  ($droponly =~ /^(CREATE VLABEL ONLY before_prom\([^\n]*)$/m);
+like($before_create,
+	qr/"\Q........pg.dropped.\E\d+\Q........\E" INTEGER.*age integer GENERATED ALWAYS AS/,
+	'and precedes the promoted column it preceded');
 
 $node->stop;
 done_testing();
