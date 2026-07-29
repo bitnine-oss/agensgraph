@@ -83,6 +83,13 @@ INSERT INTO g.v VALUES ('1234.56', NULL);
 UPDATE g.v SET properties='{"update":"impossible"}' WHERE id = '1234.56';
 DELETE FROM g.v;
 
+-- MERGE writes a label the same way the three above do
+CREATE TABLE mergesrc (k int);
+MERGE INTO g.v AS t USING mergesrc AS s ON (t.properties ->> 'k')::int = s.k
+	WHEN MATCHED THEN UPDATE SET properties = '{"merge":"impossible"}'
+	WHEN NOT MATCHED THEN INSERT (properties) VALUES ('{"merge":"impossible"}');
+DROP TABLE mergesrc;
+
 -- cleanup
 REVOKE ALL ON DATABASE regression FROM tmp;
 DROP GRAPH t CASCADE;

@@ -28,6 +28,10 @@
 #include "parser/parsetree.h"
 #include "utils/rel.h"
 
+#include "catalog/ag_graph_fn.h"
+#include "catalog/objectaddress.h"
+#include "commands/graphcmds.h"
+
 static void setNamespaceForMergeWhen(ParseState *pstate,
 									 MergeWhenClause *mergeWhenClause,
 									 Index targetRTI,
@@ -119,6 +123,9 @@ transformMergeStmt(ParseState *pstate, MergeStmt *stmt)
 
 	qry->commandType = CMD_MERGE;
 	qry->hasRecursive = false;
+
+	if (RangeVarIsLabel(stmt->relation) && !enable_graph_dml)
+		elog(ERROR, "DML query to graph objects is not allowed");
 
 	/* process the WITH clause independently of all else */
 	if (stmt->withClause)
