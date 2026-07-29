@@ -819,9 +819,9 @@ RenameLabel(RenameStmt *stmt)
  *
  * ALTER VLABEL / ALTER ELABEL do these things and keep the catalog in step, so
  * point at them.  Restoring a dump has to be able to reshape a label, and so
- * does repairing one, which is what enable_graph_ddl is for; it is
- * superuser-only so that a label cannot be reshaped around this by whoever
- * happens to own it.
+ * does repairing one, which is what enable_graph_ddl is for.  Asking for it says
+ * the reshaping is meant, not that the asker is entitled to it: whoever may alter
+ * the label is who decides what happens to it, as for any other relation.
  */
 void
 CheckLabelSqlReshape(Oid relid, bool recurse, List *cmds)

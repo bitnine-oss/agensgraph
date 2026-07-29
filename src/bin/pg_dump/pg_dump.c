@@ -21112,7 +21112,7 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 			!tblinfo->attgenerated[j])
 		{
 			appendPQExpBuffer(q, "ALTER TABLE %s.%s "
-							  "ALTER COLUMN %s SET DEFAULT %s;",
+							  "ALTER COLUMN %s SET DEFAULT %s;\n",
 							  tblinfo->dobj.namespace->dobj.name,
 							  qrelname,
 							  fmtId(tblinfo->attnames[j]),
