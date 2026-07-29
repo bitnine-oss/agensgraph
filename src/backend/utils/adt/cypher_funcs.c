@@ -134,11 +134,20 @@ jsonb_length(PG_FUNCTION_ARGS)
 	{
 		cnt = (int) JB_ROOT_COUNT(j);
 	}
+	else if (JB_ROOT_IS_OBJECT(j))
+	{
+		/*
+		 * A map's size is how many entries it holds, the count the container
+		 * already carries -- the same notion as a list's element count, which
+		 * is why one function answers for both.
+		 */
+		cnt = (int) JB_ROOT_COUNT(j);
+	}
 
 	if (cnt < 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("length(): list or string is expected but %s",
+				 errmsg("length(): list, string or map is expected but %s",
 						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
 
 	n = DirectFunctionCall1(int4_numeric, Int32GetDatum(cnt));

@@ -1805,10 +1805,84 @@ MATCH (n:aggnum) WHERE n.v IS NOT UNKNOWN RETURN count(*) AS c;
  5
 (1 row)
 
+-- size() of a value: how many elements a list has, characters a string has, or
+-- entries a map has, whether the value is written out, read from a property, or
+-- computed.  A number has no size and says so.
+RETURN size([1, 2, 3]) AS list, size('abc') AS str, size([]) AS empty;
+ list | str | empty 
+------+-----+-------
+ 3    | 3   | 0
+(1 row)
+
+RETURN size([1, 2]) + size('ab') AS total, size([[1, 2], [3]]) AS nested;
+ total | nested 
+-------+--------
+ 4     | 2
+(1 row)
+
+RETURN size({a: 1, b: 2}) AS map, size({}) AS empty_map,
+       size({a: {b: 1, c: 2}}) AS outer_only;
+ map | empty_map | outer_only 
+-----+-----------+------------
+ 2   | 0         | 1
+(1 row)
+
+RETURN size(keys({a: 1, b: 2})) AS keys, size(split('a,b,c', ',')) AS parts;
+ keys | parts 
+------+-------
+ 2    | 3
+(1 row)
+
+RETURN size(null) AS unknown;
+ unknown 
+---------
+ 
+(1 row)
+
+RETURN size(3);
+ERROR:  length(): list, string or map is expected but 3
+-- the same value through length(), which is the function size() answers with
+RETURN length({a: 1, b: 2}) AS map, length([1, 2, 3]) AS list;
+ map | list 
+-----+------
+ 2   | 3
+(1 row)
+
+CREATE (:sz {name: 'ab', tags: ['x', 'y', 'z']})-[:szto]->(:sz {name: 'b'});
+MATCH (n:sz {name: 'ab'})
+    RETURN size(n.tags) AS tags, size(n.name) AS name, size(n.tags[0]) AS first;
+ tags | name | first 
+------+------+-------
+ 3    | 2    | 1
+(1 row)
+
+MATCH (n:sz) RETURN n.name AS name ORDER BY size(n.name), name;
+ name 
+------
+ "b"
+ "ab"
+(2 rows)
+
+-- The pattern form is unchanged: a parenthesis after size() opens a pattern,
+-- whose matches are counted.  A shortestpath is a pattern and an expression
+-- both, and keeps counting paths.
+MATCH (a:sz {name: 'ab'}) RETURN size((a)-[]->()) AS matches;
+ matches 
+---------
+ 1
+(1 row)
+
+MATCH (a:sz {name: 'ab'}), (b:sz {name: 'b'})
+    RETURN size(allshortestpaths((a)-[:szto*]->(b))) AS paths;
+ paths 
+-------
+ 1
+(1 row)
+
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;
-NOTICE:  drop cascades to 12 other objects
+NOTICE:  drop cascades to 14 other objects
 DETAIL:  drop cascades to sequence test_cypher_expr.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -1821,3 +1895,5 @@ drop cascades to vlabel ts
 drop cascades to vlabel tc
 drop cascades to elabel nedge
 drop cascades to vlabel aggnum
+drop cascades to vlabel sz
+drop cascades to elabel szto
