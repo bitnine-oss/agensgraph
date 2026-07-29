@@ -65,6 +65,8 @@ static void predrainEagerWriters(PlanState *node);
 static bool isEdgeArrayOfPath(List *exprs, char *variable);
 
 static void openResultRelInfosIndices(ModifyGraphState *mgstate);
+static bool planIsScanOfRel(Plan *plan, Index rti);
+static bool elementScanRelIndexes(Plan *plan, AttrNumber resno, List **scans);
 
 ModifyGraphState *
 ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
@@ -1129,6 +1131,185 @@ makeDatumArray(int len)
 		return NULL;
 
 	return palloc(len * sizeof(Datum));
+}
+
+/*
+ * planIsScanOfRel
+ *		Whether `plan' is a scan of range table entry `rti' that can produce a
+ *		label row.
+ */
+static bool
+planIsScanOfRel(Plan *plan, Index rti)
+{
+	switch (nodeTag(plan))
+	{
+		case T_SeqScan:
+		case T_SampleScan:
+		case T_IndexScan:
+		case T_IndexOnlyScan:
+		case T_BitmapHeapScan:
+		case T_TidScan:
+		case T_TidRangeScan:
+			return ((Scan *) plan)->scanrelid == rti;
+		default:
+			return false;
+	}
+}
+
+/*
+ * elementScanRelIndexes
+ *		Collect into *scans the range table indexes of the scans that can supply
+ *		output column `resno' of `plan'.
+ *
+ * A recheck stands in for the row a scan read, so it has to name that scan's
+ * range table index.  The element being written is one column of the subplan's
+ * output, so follow that column down the plan tree to the Var that reads it: at
+ * each level the column is either the RowExpr that builds the element out of the
+ * label's columns, or a Var naming a column of a child.  An inheritance set
+ * appears as an Append, whose column is supplied by one scan per member, so a
+ * column can resolve to several scans -- the caller picks the one for the
+ * relation the row it is writing lives in, and has to stand in for the rest so
+ * they cannot supply a row of their own in its place.
+ *
+ * Returns false if the column does not resolve to scans, which is to say the
+ * element is computed rather than read (so no substitution can reproduce it) or
+ * it comes through a node this does not know how to follow.  The caller then
+ * refuses the recheck rather than substituting somewhere the recheck may not
+ * look.
+ */
+static bool
+elementScanRelIndexes(Plan *plan, AttrNumber resno, List **scans)
+{
+	for (;;)
+	{
+		TargetEntry *te = NULL;
+		ListCell   *l;
+		List	   *children = NIL;
+		Node	   *expr;
+		Var		   *var;
+
+		check_stack_depth();
+
+		if (plan == NULL)
+			return false;
+
+		foreach(l, plan->targetlist)
+		{
+			TargetEntry *cur = lfirst_node(TargetEntry, l);
+
+			if (cur->resno == resno)
+			{
+				te = cur;
+				break;
+			}
+		}
+		if (te == NULL)
+			return false;
+
+		/*
+		 * Strip the column down to the Var that reads the row.  A projection
+		 * that assembles the element spells it as a row of the label's columns,
+		 * whose first field is the id; above such a projection the element is
+		 * carried as one composite column, which the next projection up reads
+		 * the fields back out of.  Either way the id leads to the scan.
+		 */
+		expr = (Node *) te->expr;
+		for (;;)
+		{
+			if (IsA(expr, RowExpr))
+			{
+				RowExpr    *row = (RowExpr *) expr;
+
+				if (row->args == NIL)
+					return false;
+				expr = (Node *) linitial(row->args);
+			}
+			else if (IsA(expr, FieldSelect))
+				expr = (Node *) ((FieldSelect *) expr)->arg;
+			else
+				break;
+		}
+
+		if (!IsA(expr, Var))
+			return false;
+		var = (Var *) expr;
+
+		if (IsA(plan, Append))
+			children = ((Append *) plan)->appendplans;
+		else if (IsA(plan, MergeAppend))
+			children = ((MergeAppend *) plan)->mergeplans;
+
+		if (children != NIL)
+		{
+			/* an Append names its own columns; each child supplies one */
+			if (var->varno != OUTER_VAR)
+				return false;
+
+			foreach(l, children)
+			{
+				if (!elementScanRelIndexes((Plan *) lfirst(l),
+										   var->varattno, scans))
+					return false;
+			}
+			return true;
+		}
+
+		if (var->varno == OUTER_VAR)
+		{
+			plan = outerPlan(plan);
+			resno = var->varattno;
+			continue;
+		}
+		if (var->varno == INNER_VAR)
+		{
+			plan = innerPlan(plan);
+			resno = var->varattno;
+			continue;
+		}
+		if (var->varno == INDEX_VAR)
+		{
+			/*
+			 * An index-only scan's output names index columns, but the row is
+			 * still read by this scan.
+			 */
+			if (!IsA(plan, IndexOnlyScan))
+				return false;
+			*scans = lappend_int(*scans, (int) ((Scan *) plan)->scanrelid);
+			return true;
+		}
+
+		/* a subquery kept as a plan level of its own carries its own columns */
+		if (IsA(plan, SubqueryScan) &&
+			((Scan *) plan)->scanrelid == var->varno)
+		{
+			plan = ((SubqueryScan *) plan)->subplan;
+			resno = var->varattno;
+			continue;
+		}
+
+		if (!planIsScanOfRel(plan, var->varno))
+			return false;
+
+		*scans = lappend_int(*scans, (int) var->varno);
+		return true;
+	}
+}
+
+/*
+ * getElementScanRelIndexes
+ *		The range table indexes of the scans that supply the written element in
+ *		output column `resno' of the subplan, or NIL if they cannot be named.
+ */
+List *
+getElementScanRelIndexes(ModifyGraphState *mgstate, AttrNumber resno)
+{
+	ModifyGraph *mgplan = (ModifyGraph *) mgstate->ps.plan;
+	List	   *scans = NIL;
+
+	if (!elementScanRelIndexes(mgplan->subplan, resno, &scans))
+		return NIL;
+
+	return scans;
 }
 
 /*

@@ -123,3 +123,6 @@ test: graphmeta_prune_replan
 test: graphmeta_prune_drop
 test: graphmeta_prune_regather
 test: graphmeta_prune_regather_ser
+
+# concurrent graph SET re-examination
+test: graph-set-recheck

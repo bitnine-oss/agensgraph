@@ -34,6 +34,8 @@ static void updateElementTable(ModifyGraphState *mgstate, Datum gid,
 static Datum GraphTableTupleUpdate(ModifyGraphState *mgstate,
 								   Oid tts_value_type, Datum tts_value,
 								   int attidx);
+static void fillLabelTupleSlot(TupleTableSlot *elemTupleSlot, Relation rel,
+							   Oid tts_value_type, Datum tts_value);
 
 /*
  * LegacyExecSetGraph
@@ -296,6 +298,51 @@ findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot)
 }
 
 /*
+ * fillLabelTupleSlot
+ *		Build, in `elemTupleSlot', the row of `rel' that the vertex or edge
+ *		`tts_value' describes.
+ *
+ * A label's columns are not those of a vertex or an edge, so the row is filled
+ * in by hand rather than by a projection.  Anything already in the slot is
+ * dropped first, so this can be used to rebuild the row from a re-examined
+ * element: materializing a slot that already holds a tuple keeps that tuple
+ * rather than rebuilding it from the values, so a second pass that only wrote
+ * the values would persist the first pass's row.
+ */
+static void
+fillLabelTupleSlot(TupleTableSlot *elemTupleSlot, Relation rel,
+				   Oid tts_value_type, Datum tts_value)
+{
+	Datum	   *tts_values;
+
+	ExecClearTuple(elemTupleSlot);
+	ExecSetSlotDescriptor(elemTupleSlot, RelationGetDescr(rel));
+
+	tts_values = elemTupleSlot->tts_values;
+
+	if (tts_value_type == VERTEXOID)
+	{
+		tts_values[Anum_ag_vertex_id - 1] = getVertexIdDatum(tts_value);
+		tts_values[Anum_ag_vertex_properties - 1] = getVertexPropDatum(tts_value);
+	}
+	else
+	{
+		Assert(tts_value_type == EDGEOID);
+
+		tts_values[Anum_ag_edge_id - 1] = getEdgeIdDatum(tts_value);
+		tts_values[Anum_ag_edge_start - 1] = getEdgeStartDatum(tts_value);
+		tts_values[Anum_ag_edge_end - 1] = getEdgeEndDatum(tts_value);
+		tts_values[Anum_ag_edge_properties - 1] = getEdgePropDatum(tts_value);
+	}
+
+	markUnassignedLabelColsNull(elemTupleSlot,
+								tts_value_type == VERTEXOID ?
+								Anum_table_vertex_prop_map :
+								Anum_table_edge_prop_map);
+	ExecStoreVirtualTuple(elemTupleSlot);
+}
+
+/*
  * GraphTableTupleUpdate
  * 		Update the tuple in the graph table.
  *
@@ -359,31 +406,9 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	 * Create a tuple to store. Attributes of vertex/edge label are not the
 	 * same with those of vertex/edge.
 	 */
-	ExecClearTuple(elemTupleSlot);
-	ExecSetSlotDescriptor(elemTupleSlot,
-						  RelationGetDescr(resultRelInfo->ri_RelationDesc));
-
+	fillLabelTupleSlot(elemTupleSlot, resultRelationDesc, tts_value_type,
+					   tts_value);
 	tts_values = elemTupleSlot->tts_values;
-
-	if (tts_value_type == VERTEXOID)
-	{
-		tts_values[Anum_ag_vertex_id - 1] = gid;
-		tts_values[Anum_ag_vertex_properties - 1] = getVertexPropDatum(tts_value);
-	}
-	else
-	{
-		Assert(tts_value_type == EDGEOID);
-
-		tts_values[Anum_ag_edge_id - 1] = gid;
-		tts_values[Anum_ag_edge_start - 1] = getEdgeStartDatum(tts_value);
-		tts_values[Anum_ag_edge_end - 1] = getEdgeEndDatum(tts_value);
-		tts_values[Anum_ag_edge_properties - 1] = getEdgePropDatum(tts_value);
-	}
-	markUnassignedLabelColsNull(elemTupleSlot,
-								tts_value_type == VERTEXOID ?
-								Anum_table_vertex_prop_map :
-								Anum_table_edge_prop_map);
-	ExecStoreVirtualTuple(elemTupleSlot);
 
 	/* BEFORE ROW UPDATE Triggers */
 	if (resultRelInfo->ri_TrigDesc &&
@@ -443,6 +468,9 @@ lreplace:
 				TupleTableSlot *epqslot;
 				TupleTableSlot *inputslot;
 				ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
+				List	   *scans;
+				ListCell   *ls;
+				Index		scanrelid = 0;
 
 				if (plan->nr_modify > 0)
 				{
@@ -457,11 +485,40 @@ lreplace:
 							 errmsg("could not serialize access due to concurrent update")));
 
 				/*
+				 * A recheck re-runs the subplan with the re-fetched row standing
+				 * in for what a scan reads, so it has to name that scan's range
+				 * table index -- not the target label's own entry, which carries
+				 * the write permission and is never scanned.  Follow the element
+				 * back to the scans that supply it and take the one reading the
+				 * relation this row lives in.
+				 */
+				scans = getElementScanRelIndexes(mgstate, attidx + 1);
+				foreach(ls, scans)
+				{
+					Index		rti = (Index) lfirst_int(ls);
+
+					if (exec_rt_fetch(rti, estate)->relid != relid)
+						continue;
+					if (scanrelid != 0)
+					{
+						/* two scans of it: the row belongs to neither */
+						scanrelid = 0;
+						break;
+					}
+					scanrelid = rti;
+				}
+
+				if (scanrelid == 0)
+					ereport(ERROR,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("could not serialize access due to concurrent update")));
+
+				/*
 				 * Already know that we're going to need to do EPQ, so fetch
 				 * tuple directly into the right slot.
 				 */
 				inputslot = EvalPlanQualSlot(epqstate, resultRelationDesc,
-											 resultRelInfo->ri_RangeTableIndex);
+											 scanrelid);
 
 				result = table_tuple_lock(resultRelationDesc, ctid,
 										  estate->es_snapshot,
@@ -475,10 +532,37 @@ lreplace:
 					case TM_Ok:
 						Assert(tmfd.traversed);
 
+						/*
+						 * An inheritance set supplies one column from one scan
+						 * per member, so stand in -- with nothing -- for the
+						 * members other than the one this row lives in, or the
+						 * recheck could answer with one of their rows instead of
+						 * the row being re-examined.
+						 */
+						foreach(ls, scans)
+						{
+							Index		rti = (Index) lfirst_int(ls);
+
+							if (rti == scanrelid)
+								continue;
+							(void) EvalPlanQualSlot(epqstate,
+													ExecGetRangeTableRelation(estate, rti, false),
+													rti);
+						}
+
 						epqslot = EvalPlanQual(epqstate,
 											   resultRelationDesc,
-											   resultRelInfo->ri_RangeTableIndex,
+											   scanrelid,
 											   inputslot);
+
+						/*
+						 * The recheck is only an answer about this row if the
+						 * scan we stood in for actually read what we supplied.
+						 */
+						if (!epqstate->relsubs_done[scanrelid - 1])
+							ereport(ERROR,
+									(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+									 errmsg("could not serialize access due to concurrent update")));
 
 						if (TupIsNull(epqslot))
 							/* Tuple not passing quals anymore, exiting... */
@@ -488,16 +572,17 @@ lreplace:
 						Assert(!epqslot->tts_isnull[attidx]);
 						tts_value = epqslot->tts_values[attidx];
 
-						if (tts_value_type == VERTEXOID)
-						{
-							tts_values[Anum_ag_vertex_properties - 1] = getVertexPropDatum(tts_value);
-						}
-						else
-						{
-							tts_values[Anum_ag_edge_start - 1] = getEdgeStartDatum(tts_value);
-							tts_values[Anum_ag_edge_end - 1] = getEdgeEndDatum(tts_value);
-							tts_values[Anum_ag_edge_properties - 1] = getEdgePropDatum(tts_value);
-						}
+						if (DatumGetGraphid(tts_value_type == VERTEXOID ?
+											getVertexIdDatum(tts_value) :
+											getEdgeIdDatum(tts_value)) !=
+							DatumGetGraphid(gid))
+							ereport(ERROR,
+									(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+									 errmsg("could not serialize access due to concurrent update")));
+
+						fillLabelTupleSlot(elemTupleSlot, resultRelationDesc,
+										   tts_value_type, tts_value);
+						tts_values = elemTupleSlot->tts_values;
 
 						goto lreplace;
 					case TM_Deleted:
