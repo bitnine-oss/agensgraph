@@ -803,6 +803,95 @@ RenameLabel(RenameStmt *stmt)
 	return address;
 }
 
+/*
+ * CheckLabelSqlReshape
+ *
+ * Refuse an ALTER TABLE that would reshape a graph label.
+ *
+ * A label is a table, so ALTER TABLE reaches it -- but a label's columns are
+ * part of what makes it a label, and the graph catalog describes them.  The
+ * columns every vertex or edge is made of are assumed to be there, and each
+ * promoted property is recorded against the column that answers for it.  Adding
+ * a column the graph has no account of, or taking one away, or detaching a
+ * column from the expression that derived it, leaves a label the graph no longer
+ * describes the same way -- and one that cannot be dumped for a binary upgrade,
+ * because a column ALTER TABLE put there cannot be put back at the same attnum.
+ *
+ * ALTER VLABEL / ALTER ELABEL do these things and keep the catalog in step, so
+ * point at them.  Restoring a dump has to be able to reshape a label, and so
+ * does repairing one, which is what enable_graph_ddl is for; it is
+ * superuser-only so that a label cannot be reshaped around this by whoever
+ * happens to own it.
+ */
+void
+CheckLabelSqlReshape(Oid relid, List *cmds)
+{
+	ListCell   *lc;
+
+	if (enable_graph_ddl)
+		return;
+
+	if (!OidIsValid(get_relid_laboid(relid)))
+		return;
+
+	foreach(lc, cmds)
+	{
+		AlterTableCmd *cmd = (AlterTableCmd *) lfirst(lc);
+		const char *what;
+		const char *hint;
+		const char *label_ddl_hint =
+			"Use ALTER VLABEL or ALTER ELABEL instead, which keeps the graph catalog in step.";
+
+		switch (cmd->subtype)
+		{
+			case AT_AddColumn:
+				what = "add a column to";
+				hint = label_ddl_hint;
+				break;
+			case AT_DropColumn:
+				what = "drop a column of";
+				hint = label_ddl_hint;
+				break;
+			case AT_AlterColumnType:
+				what = "change the type of a column of";
+				hint = label_ddl_hint;
+				break;
+			case AT_DropExpression:
+				what = "detach a column of";
+				hint = "The column would stay, but stop deriving from the property it was promoted from.";
+				break;
+			case AT_SetExpression:
+				what = "change what derives a column of";
+				hint = label_ddl_hint;
+				break;
+			case AT_DropNotNull:
+				what = "drop a not-null constraint of";
+				hint = "The columns every vertex or edge is made of are relied on to be there.";
+				break;
+			case AT_DropConstraint:
+				what = "drop a constraint of";
+				hint = "Use DROP CONSTRAINT on the label instead.";
+				break;
+			case AT_AddInherit:
+				what = "add a parent label to";
+				hint = "A label's parents are fixed when it is created.";
+				break;
+			case AT_DropInherit:
+				what = "remove a parent label from";
+				hint = "A label's parents are fixed when it is created.";
+				break;
+			default:
+				continue;
+		}
+
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot %s graph label \"%s\" with ALTER TABLE",
+						what, get_rel_name(relid)),
+				 errhint("%s", hint)));
+	}
+}
+
 /* check the given `type` and `laboid` matches */
 void
 CheckLabelType(ObjectType type, Oid laboid, const char *command)

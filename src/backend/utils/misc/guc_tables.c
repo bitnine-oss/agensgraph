@@ -2238,6 +2238,20 @@ struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 
+	{
+		{"enable_graph_ddl", PGC_SUSET, CLIENT_CONN_STATEMENT,
+			gettext_noop("Allows reshaping a graph label with SQL DDL."),
+			gettext_noop("A label's columns are what makes it a graph label, and "
+						 "the graph catalog describes them.  Changing them with "
+						 "ALTER TABLE rather than ALTER VLABEL/ELABEL can leave a "
+						 "label the graph no longer describes correctly."),
+			GUC_SUPERUSER_ONLY
+		},
+		&enable_graph_ddl,
+		false,
+		NULL, NULL, NULL
+	},
+
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, false, NULL, NULL, NULL

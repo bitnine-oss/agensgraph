@@ -21,6 +21,7 @@ extern void CreateLabelCommand(CreateLabelStmt *labelStmt,
 							   const char *queryString, int stmt_location,
 							   int stmt_len, ParamListInfo params);
 extern ObjectAddress RenameLabel(RenameStmt *stmt);
+extern void CheckLabelSqlReshape(Oid relid, List *cmds);
 extern void CheckLabelType(ObjectType type, Oid laboid, const char *command);
 extern void CheckInheritLabel(CreateStmt *stmt);
 
