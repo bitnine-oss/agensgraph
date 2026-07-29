@@ -37,6 +37,14 @@ setup
   MATCH (n:par) WHERE label(n) = 'par' SET n.a = 10, n.who = 'parent';
   MATCH (n:kid) SET n.a = 20, n.who = 'child';
 
+  -- a label whose before-row trigger makes the trigger machinery, rather than the
+  -- write itself, be what notices the concurrent update
+  CREATE VLABEL trg;
+  CREATE (:trg);
+  MATCH (n:trg) SET n.a = 1;
+  CREATE FUNCTION gsr.mark() RETURNS trigger LANGUAGE plpgsql AS $x$ BEGIN RETURN NEW; END $x$;
+  CREATE TRIGGER t_mark BEFORE UPDATE ON gsr.trg FOR EACH ROW EXECUTE FUNCTION gsr.mark();
+
   -- one label bound twice, writing one end
   CREATE VLABEL pp;
   CREATE ELABEL rr;
@@ -59,6 +67,8 @@ step s1_bump_kid   { MATCH (n:kid) SET n.a = 999; }
 step s1_bump_par   { MATCH (n:par) WHERE label(n) = 'par' SET n.a = 999; }
 # contends on one end of the self-bound pattern
 step s1_bump_pp    { MATCH (n:pp) SET n.a = 999; }
+# contends on the label carrying a before-row trigger
+step s1_bump_trg   { MATCH (n:trg) SET n.a = 999; }
 step s1_commit     { COMMIT; }
 
 session s2
@@ -73,7 +83,9 @@ step s2_incr_par   { MATCH (n:par) SET n.a = n.a + 1; }
 step s2_incr_pp    { MATCH (a:pp)-[:rr]->(b:pp) SET a.a = a.a + 1; }
 step s2_read       { MATCH (n:acc) RETURN n.a AS a, n.k AS k; }
 step s2_read_inh   { MATCH (n:par) RETURN n.who AS who, n.a AS a ORDER BY who; }
+step s2_incr_trg   { MATCH (n:trg) SET n.a = n.a + 1; }
 step s2_read_pp    { MATCH (n:pp) RETURN n.a AS a ORDER BY a; }
+step s2_read_trg   { MATCH (n:trg) RETURN n.a AS a; }
 
 # a must end at 1000: s2 has to recompute from the committed 999, not from the 1
 # it originally read.
@@ -96,3 +108,10 @@ permutation s1_begin s1_bump_par s2_incr_par s1_commit s2_read_inh
 # One label bound twice while writing a single end: the written end recomputes
 # from the committed 999, the other end is untouched.
 permutation s1_begin s1_bump_pp s2_incr_pp s1_commit s2_read_pp
+
+# A before-row trigger locks the row to build its NEW, so it is the trigger
+# machinery that first sees the concurrent update.  It cannot re-derive a graph
+# write's row, so it hands the conflict back; the write must then re-examine the
+# row itself rather than dropping it or writing what it computed from the old one.
+# a must reach 1000, not stay at 999 (write dropped) or become 2 (stale values).
+permutation s1_begin s1_bump_trg s2_incr_trg s1_commit s2_read_trg
