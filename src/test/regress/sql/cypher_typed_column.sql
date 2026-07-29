@@ -2260,6 +2260,41 @@ DROP TABLE tc_ordinary;
 CREATE (:gate {age: 3});
 MATCH (n:gate) RETURN n.age AS age;
 
+-- 22l. A label can inherit from an ordinary table, and altering that table
+--      descends into the label -- so the statement names a relation that is not a
+--      label while reshaping one that is.  What the statement reaches decides,
+--      not what it addresses, and the label it would reach is what gets named.
+--      Establishing the inheritance is itself reshaping the label, so it needs
+--      the same asking.
+CREATE VLABEL gatekid (age int GENERATED);
+CREATE TABLE tc_parent ();
+SET enable_graph_ddl = on;
+ALTER TABLE tc.gatekid INHERIT tc_parent;
+RESET enable_graph_ddl;
+
+ALTER TABLE tc_parent ADD COLUMN sneaky int;
+-- the label did not acquire it
+SELECT attname FROM pg_attribute
+WHERE attrelid = 'tc.gatekid'::regclass AND attname = 'sneaky'
+  AND NOT attisdropped;
+
+-- asked for, it goes through and reaches the label
+SET enable_graph_ddl = on;
+ALTER TABLE tc_parent ADD COLUMN deliberate int;
+RESET enable_graph_ddl;
+SELECT attname FROM pg_attribute
+WHERE attrelid = 'tc.gatekid'::regclass AND attname = 'deliberate'
+  AND NOT attisdropped;
+
+-- an inheritance tree with no label in it is not the gate's business
+CREATE TABLE tc_op ();
+CREATE TABLE tc_oc () INHERITS (tc_op);
+ALTER TABLE tc_op ADD COLUMN c1 int;
+SELECT attname FROM pg_attribute
+WHERE attrelid = 'tc_oc'::regclass AND attname = 'c1' AND NOT attisdropped;
+DROP TABLE tc_oc;
+DROP TABLE tc_op;
+
 -- ----------------------------------------------------------------------------
 -- CLEANUP
 -- ----------------------------------------------------------------------------

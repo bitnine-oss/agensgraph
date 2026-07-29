@@ -1357,7 +1357,9 @@ ProcessUtilitySlow(ParseState *pstate,
 						 */
 						if (atstmt->objtype == OBJECT_TABLE &&
 							context != PROCESS_UTILITY_SUBCOMMAND)
-							CheckLabelSqlReshape(relid, atstmt->cmds);
+							CheckLabelSqlReshape(relid,
+												 atstmt->relation->inh,
+												 atstmt->cmds);
 
 						/*
 						 * Keep ag_label_property in sync with the label's
