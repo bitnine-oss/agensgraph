@@ -278,5 +278,152 @@ is( $dst->safe_psql(
 	'an inherited promoted read resolves on the child after binary-upgrade restore (buchild.pa -> buchild.ca)');
 
 $dst->stop;
+
+# ---------------------------------------------------------------------------
+# A label can also carry an ORDINARY column -- neither one of the columns every
+# graph element has, nor a promoted property.  Label DDL cannot spell one, so
+# the dump has to add it separately; if it is left out altogether the COPY that
+# carries the label's data names a column the restored label does not have.  In
+# a plain-text dump that COPY fails and its remaining payload is then read as
+# SQL, which loses the data of every label after it -- while pg_dump and psql
+# both still report success.  So what matters here is the ROW COUNTS, including
+# for a label that has no ordinary column of its own.
+#
+# This uses its own database: --binary-upgrade cannot represent an ordinary
+# column at its original attnum and refuses the dump, which is asserted below.
+# ---------------------------------------------------------------------------
+$node->safe_psql('postgres', 'CREATE DATABASE agplain');
+$node->safe_psql(
+	'agplain', q{
+	CREATE GRAPH gg;
+	SET graph_path = gg;
+	-- carries nothing unusual: it is the label that silently lost its data
+	CREATE VLABEL untouched;
+	CREATE (:untouched {a:1}), (:untouched {a:2}), (:untouched {a:3});
+	-- an ordinary column, added the only way one can be
+	CREATE VLABEL plainv;
+	ALTER TABLE gg.plainv ADD COLUMN extra text;
+	CREATE (:plainv {k:1}), (:plainv {k:2});
+	-- an ordinary column at a LOWER attnum than a promoted one, behind a
+	-- dropped-column gap, and with a non-default collation
+	CREATE VLABEL mixed;
+	ALTER TABLE gg.mixed ADD COLUMN gap int;
+	ALTER TABLE gg.mixed DROP COLUMN gap;
+	ALTER TABLE gg.mixed ADD COLUMN plain_first text COLLATE "C";
+	ALTER VLABEL mixed ADD COLUMN age int GENERATED;
+	CREATE (:mixed {age:7}), (:mixed {age:8});
+	-- an ordinary column inherited by a child label
+	CREATE VLABEL par3;
+	ALTER TABLE gg.par3 ADD COLUMN pcol text;
+	CREATE VLABEL kid3 INHERITS (par3);
+	CREATE (:par3 {z:1}), (:kid3 {z:2});
+	-- and one on an EDGE label, whose structural columns run to attnum 4
+	CREATE ELABEL erel;
+	ALTER TABLE gg.erel ADD COLUMN ecol int;
+	MATCH (a:untouched), (b:untouched) WHERE a.a = 1 AND b.a = 2
+	  CREATE (a)-[:erel]->(b);
+});
+$node->safe_psql(
+	'agplain', q{
+	SET enable_graph_dml = on;
+	UPDATE gg.plainv SET extra = 'e1';
+	UPDATE gg.mixed SET plain_first = 'pf';
+	UPDATE gg.par3 SET pcol = 'p';
+	UPDATE gg.erel SET ecol = 42;
+	-- now that it is populated, make it NOT NULL as well, so the dump has to
+	-- carry that too.  (It could not be NOT NULL while the rows were being
+	-- created: a Cypher write cannot name an ordinary column, so it leaves it
+	-- null.)
+	ALTER TABLE gg.mixed ALTER COLUMN plain_first SET NOT NULL;
+});
+
+my $plainfile = "${PostgreSQL::Test::Utils::tmp_check}/plain_cols.sql";
+$node->command_ok(
+	[ 'pg_dump', '-f', $plainfile, '-d', $node->connstr('agplain') ],
+	'pg_dump of a graph with ordinary label columns succeeds');
+
+my $plaindump = slurp_file($plainfile);
+like($plaindump, qr/ALTER TABLE gg\.plainv ADD COLUMN extra text;/,
+	'dump adds the ordinary column back');
+like($plaindump, qr/ADD COLUMN plain_first text COLLATE pg_catalog\."C" NOT NULL;/,
+	"dump keeps the ordinary column's collation and NOT NULL");
+like($plaindump, qr/ALTER TABLE gg\.erel ADD COLUMN ecol integer;/,
+	"dump adds an edge label's ordinary column");
+# a child inherits it, so only the parent declares it
+unlike($plaindump, qr/ALTER TABLE gg\.kid3 ADD COLUMN pcol/,
+	'an inherited ordinary column is not re-added on the child');
+
+$node->safe_psql('postgres', 'CREATE DATABASE agplaindst');
+$node->command_ok(
+	[ 'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-f', $plainfile,
+		'-d', $node->connstr('agplaindst') ],
+	'restore of a graph with ordinary label columns succeeds');
+
+# The heart of it: every label's rows are back, the untouched one included.
+is( $node->safe_psql(
+		'agplaindst',
+		q{SELECT (SELECT count(*) FROM gg.untouched) || ' '
+		      || (SELECT count(*) FROM gg.plainv)    || ' '
+		      || (SELECT count(*) FROM gg.mixed)     || ' '
+		      || (SELECT count(*) FROM gg.par3)      || ' '
+		      || (SELECT count(*) FROM gg.kid3)      || ' '
+		      || (SELECT count(*) FROM gg.erel)}),
+	'3 2 2 2 1 1',
+	'every label restores its rows, including one with no ordinary column');
+
+is( $node->safe_psql(
+		'agplaindst',
+		'SELECT max(extra) FROM gg.plainv'),
+	'e1',
+	"an ordinary column's data round-trips");
+
+is( $node->safe_psql(
+		'agplaindst',
+		q{SELECT max(plain_first) || ' ' || max(age) FROM gg.mixed}),
+	'pf 8',
+	'an ordinary column and a promoted column on one label both round-trip');
+
+is( $node->safe_psql(
+		'agplaindst',
+		'SELECT max(ecol) FROM gg.erel'),
+	'42',
+	"an edge label's ordinary column round-trips");
+
+is( $node->safe_psql(
+		'agplaindst',
+		"SELECT co.collname FROM pg_attribute a
+		   JOIN pg_class c ON c.oid = a.attrelid
+		   JOIN pg_collation co ON co.oid = a.attcollation
+		  WHERE c.relnamespace = 'gg'::regnamespace
+		    AND c.relname = 'mixed' AND a.attname = 'plain_first'"),
+	'C',
+	"an ordinary column's collation survives, so it still compares the same way");
+
+is( $node->safe_psql(
+		'agplaindst',
+		"SET graph_path=gg; MATCH (n:mixed) WHERE n.age = 7 RETURN n.age AS age"),
+	'7',
+	'a promoted read still resolves on a label that also has an ordinary column');
+
+# Re-dumping the restored database must reproduce the same dump.
+my $redumpfile = "${PostgreSQL::Test::Utils::tmp_check}/plain_cols_redump.sql";
+$node->command_ok(
+	[ 'pg_dump', '-f', $redumpfile, '-d', $node->connstr('agplaindst') ],
+	'the restored database dumps again');
+is(slurp_file($redumpfile), $plaindump,
+	'the re-dump is identical to the original dump');
+
+# --binary-upgrade points the restored label at the original heap files, so an
+# ordinary column that cannot be placed at its original attnum has to stop the
+# dump rather than produce one that restores into a mis-aligned heap.
+$node->command_fails_like(
+	[
+		'pg_dump', '--binary-upgrade', '-f',
+		"${PostgreSQL::Test::Utils::tmp_check}/plain_cols_bu.sql",
+		'-d', $node->connstr('agplain')
+	],
+	qr/ordinary column .* cannot be dumped for a binary upgrade/,
+	'--binary-upgrade refuses a label with an ordinary column instead of corrupting it');
+
 $node->stop;
 done_testing();
