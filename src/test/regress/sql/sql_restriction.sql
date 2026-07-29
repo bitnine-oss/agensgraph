@@ -34,6 +34,13 @@ CREATE VLABEL v;
 
 ALTER TABLE t.v ADD COLUMN tmp int;
 
+-- one the reshape gate does not cover, so it is the superuser restriction that
+-- refuses it even though this role owns the label
+ALTER TABLE t.v ADD CONSTRAINT tmp_chk CHECK (true);
+
+-- and one that neither refuses: the label's owner may still tune it
+ALTER TABLE t.v ALTER COLUMN properties SET STATISTICS 100;
+
 RESET ROLE;
 
 SET graph_path = g;

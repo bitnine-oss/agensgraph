@@ -3412,6 +3412,13 @@ _doSetFixedOutputState(ArchiveHandle *AH)
 	/* Make sure function checking is disabled */
 	ahprintf(AH, "SET check_function_bodies = false;\n");
 
+	/*
+	 * A graph label's columns are normally only reshaped through the label's own
+	 * DDL, which cannot express every column a label may carry.  Restoring one
+	 * has to be able to put those columns back as they were.
+	 */
+	ahprintf(AH, "SET enable_graph_ddl = on;\n");
+
 	/* Ensure that all valid XML data will be accepted */
 	ahprintf(AH, "SET xmloption = content;\n");
 

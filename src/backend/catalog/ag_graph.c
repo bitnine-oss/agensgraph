@@ -38,6 +38,7 @@
 /* a global variable for the GUC variable */
 char	   *graph_path = NULL;
 bool		enable_graph_dml = false;
+bool		enable_graph_ddl = false;
 bool		cypher_allow_unsafe_ddl = false;
 
 /* Potentially set by pg_upgrade_support functions */

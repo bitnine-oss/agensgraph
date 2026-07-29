@@ -73,6 +73,12 @@ DROP GRAPH IF EXISTS tc CASCADE;
 CREATE GRAPH tc;
 SET graph_path = tc;
 
+-- Several sections below reshape a label with plain ALTER TABLE, to put it into
+-- a shape a label is not supposed to be in and check that the rest of the system
+-- copes -- an ordinary column, a dropped-column gap, a de-generated promoted
+-- column.  That is refused by default; section 22 covers the refusal itself.
+SET enable_graph_ddl = on;
+
 -- ============================================================================
 -- SECTION 1 -- DDL and catalog
 -- ============================================================================
@@ -1532,8 +1538,62 @@ ALTER TABLE tc.sync2 DROP COLUMN id;
 ALTER TABLE tc.sync2 DROP COLUMN properties;
 
 -- ----------------------------------------------------------------------------
+-- 22. Reshaping a label with plain ALTER TABLE is refused.
+--
+--     A label's columns are part of what makes it a label, and the graph catalog
+--     describes them.  ALTER TABLE reaches them without going through the
+--     label's own DDL, which is how a label ends up in a shape the graph does
+--     not describe -- and one that cannot be dumped for a binary upgrade,
+--     because a column ALTER TABLE added cannot be put back at the same attnum.
+-- ----------------------------------------------------------------------------
+RESET enable_graph_ddl;
+
+CREATE VLABEL gate (age int GENERATED);
+CREATE ELABEL gate_e;
+CREATE VLABEL gate_kid INHERITS (gate);
+
+ALTER TABLE tc.gate ADD COLUMN plainc text;
+ALTER TABLE tc.gate DROP COLUMN age;
+ALTER TABLE tc.gate ALTER COLUMN age TYPE bigint;
+ALTER TABLE tc.gate ALTER COLUMN age DROP EXPRESSION;
+ALTER TABLE tc.gate_kid NO INHERIT gate;
+ALTER TABLE tc.gate_e ADD COLUMN plainc text;
+ALTER TABLE tc.gate ALTER COLUMN age SET EXPRESSION AS ((properties ->> 'x')::int);
+-- the columns every vertex is made of are relied on to be there
+ALTER TABLE tc.gate ALTER COLUMN id DROP NOT NULL;
+ALTER TABLE tc.gate ALTER COLUMN properties DROP NOT NULL;
+
+-- 22a. The label's own DDL does these things and is unaffected.
+ALTER VLABEL gate ADD COLUMN nm text GENERATED;
+ALTER VLABEL gate DROP COLUMN nm;
+
+-- 22a2. A constraint on a label is dropped by the graph's own DDL, which is
+--       rewritten into an ALTER TABLE -- so what the graph itself issues has to
+--       keep working while the same thing typed directly is refused.
+CREATE CONSTRAINT gate_uk ON gate ASSERT age IS UNIQUE;
+ALTER TABLE tc.gate DROP CONSTRAINT gate_uk;
+DROP CONSTRAINT gate_uk ON gate;
+
+-- 22b. An ALTER TABLE that reshapes nothing is still allowed, including the ones
+--      a dump emits.
+ALTER TABLE tc.gate ALTER COLUMN properties SET DEFAULT jsonb_build_object();
+ALTER TABLE ONLY tc.gate ALTER COLUMN age SET STATISTICS 500;
+ALTER TABLE tc.gate ALTER COLUMN properties SET STORAGE EXTENDED;
+
+-- 22c. A table that is not a label is not affected at all.
+CREATE TABLE tc_plain_table (a int);
+ALTER TABLE tc_plain_table ADD COLUMN b text;
+ALTER TABLE tc_plain_table DROP COLUMN b;
+DROP TABLE tc_plain_table;
+
+-- 22d. The label still works after all of that was refused.
+CREATE (:gate {age: 3});
+MATCH (n:gate) RETURN n.age AS age;
+
+-- ----------------------------------------------------------------------------
 -- CLEANUP
 -- ----------------------------------------------------------------------------
+RESET enable_graph_ddl;
 RESET enable_property_promotion;
 RESET enable_seqscan;
 DROP GRAPH tc CASCADE;

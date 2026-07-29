@@ -310,6 +310,9 @@ $node->safe_psql(
 	'agplain', q{
 	CREATE GRAPH gg;
 	SET graph_path = gg;
+	-- an ordinary column can only be put on a label by reshaping it with plain
+	-- ALTER TABLE, which is refused unless this is on
+	SET enable_graph_ddl = on;
 	-- carries nothing unusual: it is the label that silently lost its data
 	CREATE VLABEL untouched;
 	CREATE (:untouched {a:1}), (:untouched {a:2}), (:untouched {a:3});
@@ -339,6 +342,7 @@ $node->safe_psql(
 $node->safe_psql(
 	'agplain', q{
 	SET enable_graph_dml = on;
+	SET enable_graph_ddl = on;
 	UPDATE gg.plainv SET extra = 'e1';
 	UPDATE gg.mixed SET plain_first = 'pf';
 	UPDATE gg.par3 SET pcol = 'p';

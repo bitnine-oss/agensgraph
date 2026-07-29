@@ -1344,6 +1344,22 @@ ProcessUtilitySlow(ParseState *pstate,
 						atcontext.queryEnv = queryEnv;
 
 						/*
+						 * ALTER TABLE reaches a graph label, but reshaping one
+						 * that way leaves it a label the graph no longer
+						 * describes the same way.  Refuse before AlterTable()
+						 * runs, so nothing is rewritten first.  The label's own
+						 * DDL arrives here as OBJECT_VLABEL / OBJECT_ELABEL and
+						 * is what this points at, so it is not affected.
+						 *
+						 * A subcommand is how the graph's own DDL reaches ALTER
+						 * TABLE -- DROP CONSTRAINT on a label is rewritten into
+						 * one -- so only what was asked for directly is judged.
+						 */
+						if (atstmt->objtype == OBJECT_TABLE &&
+							context != PROCESS_UTILITY_SUBCOMMAND)
+							CheckLabelSqlReshape(relid, atstmt->cmds);
+
+						/*
 						 * Keep ag_label_property in sync with the label's
 						 * columns.  This is not confined to ALTER VLABEL /
 						 * ELABEL: a label is an ordinary table underneath, so

@@ -72,6 +72,11 @@ DROP GRAPH IF EXISTS tc CASCADE;
 NOTICE:  graph "tc" does not exist, skipping
 CREATE GRAPH tc;
 SET graph_path = tc;
+-- Several sections below reshape a label with plain ALTER TABLE, to put it into
+-- a shape a label is not supposed to be in and check that the rest of the system
+-- copes -- an ordinary column, a dropped-column gap, a de-generated promoted
+-- column.  That is refused by default; section 22 covers the refusal itself.
+SET enable_graph_ddl = on;
 -- ============================================================================
 -- SECTION 1 -- DDL and catalog
 -- ============================================================================
@@ -3543,12 +3548,83 @@ ALTER TABLE tc.sync2 DROP COLUMN properties;
 ERROR:  cannot drop column "properties" of graph label "sync2"
 HINT:  It is a structural column of the graph label.
 -- ----------------------------------------------------------------------------
+-- 22. Reshaping a label with plain ALTER TABLE is refused.
+--
+--     A label's columns are part of what makes it a label, and the graph catalog
+--     describes them.  ALTER TABLE reaches them without going through the
+--     label's own DDL, which is how a label ends up in a shape the graph does
+--     not describe -- and one that cannot be dumped for a binary upgrade,
+--     because a column ALTER TABLE added cannot be put back at the same attnum.
+-- ----------------------------------------------------------------------------
+RESET enable_graph_ddl;
+CREATE VLABEL gate (age int GENERATED);
+CREATE ELABEL gate_e;
+CREATE VLABEL gate_kid INHERITS (gate);
+ALTER TABLE tc.gate ADD COLUMN plainc text;
+ERROR:  cannot add a column to graph label "gate" with ALTER TABLE
+HINT:  Use ALTER VLABEL or ALTER ELABEL instead, which keeps the graph catalog in step.
+ALTER TABLE tc.gate DROP COLUMN age;
+ERROR:  cannot drop a column of graph label "gate" with ALTER TABLE
+HINT:  Use ALTER VLABEL or ALTER ELABEL instead, which keeps the graph catalog in step.
+ALTER TABLE tc.gate ALTER COLUMN age TYPE bigint;
+ERROR:  cannot change the type of a column of graph label "gate" with ALTER TABLE
+HINT:  Use ALTER VLABEL or ALTER ELABEL instead, which keeps the graph catalog in step.
+ALTER TABLE tc.gate ALTER COLUMN age DROP EXPRESSION;
+ERROR:  cannot detach a column of graph label "gate" with ALTER TABLE
+HINT:  The column would stay, but stop deriving from the property it was promoted from.
+ALTER TABLE tc.gate_kid NO INHERIT gate;
+ERROR:  cannot remove a parent label from graph label "gate_kid" with ALTER TABLE
+HINT:  A label's parents are fixed when it is created.
+ALTER TABLE tc.gate_e ADD COLUMN plainc text;
+ERROR:  cannot add a column to graph label "gate_e" with ALTER TABLE
+HINT:  Use ALTER VLABEL or ALTER ELABEL instead, which keeps the graph catalog in step.
+ALTER TABLE tc.gate ALTER COLUMN age SET EXPRESSION AS ((properties ->> 'x')::int);
+ERROR:  cannot change what derives a column of graph label "gate" with ALTER TABLE
+HINT:  Use ALTER VLABEL or ALTER ELABEL instead, which keeps the graph catalog in step.
+-- the columns every vertex is made of are relied on to be there
+ALTER TABLE tc.gate ALTER COLUMN id DROP NOT NULL;
+ERROR:  cannot drop a not-null constraint of graph label "gate" with ALTER TABLE
+HINT:  The columns every vertex or edge is made of are relied on to be there.
+ALTER TABLE tc.gate ALTER COLUMN properties DROP NOT NULL;
+ERROR:  cannot drop a not-null constraint of graph label "gate" with ALTER TABLE
+HINT:  The columns every vertex or edge is made of are relied on to be there.
+-- 22a. The label's own DDL does these things and is unaffected.
+ALTER VLABEL gate ADD COLUMN nm text GENERATED;
+ALTER VLABEL gate DROP COLUMN nm;
+-- 22a2. A constraint on a label is dropped by the graph's own DDL, which is
+--       rewritten into an ALTER TABLE -- so what the graph itself issues has to
+--       keep working while the same thing typed directly is refused.
+CREATE CONSTRAINT gate_uk ON gate ASSERT age IS UNIQUE;
+ALTER TABLE tc.gate DROP CONSTRAINT gate_uk;
+ERROR:  cannot drop a constraint of graph label "gate" with ALTER TABLE
+HINT:  Use DROP CONSTRAINT on the label instead.
+DROP CONSTRAINT gate_uk ON gate;
+-- 22b. An ALTER TABLE that reshapes nothing is still allowed, including the ones
+--      a dump emits.
+ALTER TABLE tc.gate ALTER COLUMN properties SET DEFAULT jsonb_build_object();
+ALTER TABLE ONLY tc.gate ALTER COLUMN age SET STATISTICS 500;
+ALTER TABLE tc.gate ALTER COLUMN properties SET STORAGE EXTENDED;
+-- 22c. A table that is not a label is not affected at all.
+CREATE TABLE tc_plain_table (a int);
+ALTER TABLE tc_plain_table ADD COLUMN b text;
+ALTER TABLE tc_plain_table DROP COLUMN b;
+DROP TABLE tc_plain_table;
+-- 22d. The label still works after all of that was refused.
+CREATE (:gate {age: 3});
+MATCH (n:gate) RETURN n.age AS age;
+ age 
+-----
+ 3
+(1 row)
+
+-- ----------------------------------------------------------------------------
 -- CLEANUP
 -- ----------------------------------------------------------------------------
+RESET enable_graph_ddl;
 RESET enable_property_promotion;
 RESET enable_seqscan;
 DROP GRAPH tc CASCADE;
-NOTICE:  drop cascades to 41 other objects
+NOTICE:  drop cascades to 44 other objects
 DETAIL:  drop cascades to sequence tc.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -3590,4 +3666,7 @@ drop cascades to elabel vle_par
 drop cascades to elabel vle_kid
 drop cascades to vlabel sync1
 drop cascades to vlabel sync2
+drop cascades to vlabel gate
+drop cascades to elabel gate_e
+drop cascades to vlabel gate_kid
 RESET graph_path;
