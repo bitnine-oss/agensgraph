@@ -6018,14 +6018,51 @@ MATCH (p:person) WITH p.name AS name WHERE name IS NOT NULL ORDER BY p.id DESC
  "a"
 (4 rows)
 
--- NOTE: paging beside a WITH ... WHERE is applied inside that wrap, i.e. BEFORE
--- the WHERE filters, so this keeps only id 2.  Cypher's clause order (WHERE,
--- then ORDER BY, then paging) would return ids 2 and 3.  Pinned as it behaves
--- so the divergence stays visible; it is not what this ORDER BY change is about.
+-- Paging beside a WITH ... WHERE pages what the filter passed on, in the clause
+-- order WHERE, then ORDER BY, then SKIP/LIMIT: the two smallest ids above 1,
+-- not the two smallest of all.  A sort key that reads a variable the projection
+-- does not pass on keeps working there.
 MATCH (p:person) WITH p.id AS x WHERE x > 1 ORDER BY x LIMIT 2 RETURN x;
  x 
 ---
  2
+ 3
+(2 rows)
+
+MATCH (p:person) WITH p.id AS x WHERE x > 1 ORDER BY x SKIP 1 RETURN x;
+ x 
+---
+ 3
+ 4
+ 5
+(3 rows)
+
+MATCH (p:person) WITH p.id AS x WHERE x > 1 ORDER BY x SKIP 1 LIMIT 1 RETURN x;
+ x 
+---
+ 3
+(1 row)
+
+MATCH (p:person) WITH p.id AS x WHERE x > 1 ORDER BY x * -1 LIMIT 2 RETURN x;
+ x 
+---
+ 5
+ 4
+(2 rows)
+
+MATCH (p:person) WITH p.id AS x WHERE x > 1 ORDER BY p.name DESC LIMIT 2
+    RETURN x;
+ x 
+---
+ 5
+ 4
+(2 rows)
+
+MATCH (p:person) WITH DISTINCT p.age AS age WHERE age > 20 ORDER BY age LIMIT 1
+    RETURN age;
+ age 
+-----
+ 30
 (1 row)
 
 -- 5. an item that is a whole vertex, edge or path
@@ -6678,42 +6715,38 @@ LINE 1: MATCH (p:person) RETURN p.name AS name ORDER BY p.id, id;
 -- a field on an item that holds a scalar fails the same way it does elsewhere
 MATCH (p:person) RETURN p.id AS x ORDER BY x.foo, x;
 ERROR:  map or list is expected but scalar value
--- Two items may carry one name (nothing rejects that).  A key resolves it to
--- the first of them, for either spelling of the key, so the rows below come out
--- ordered by id and not by age.
+-- A RETURN may carry one name twice, which is fine until a key reads it: which
+-- of the two to sort by would be a guess, so both spellings of the key say so.
+MATCH (p:person) RETURN p.id AS x, p.age AS x;
+ x | x  
+---+----
+ 1 | 30
+ 2 | 20
+ 3 | 30
+ 4 | 10
+ 5 | 40
+(5 rows)
+
 MATCH (p:person) RETURN p.id AS x, p.age AS x ORDER BY x;
- x | x  
----+----
- 1 | 30
- 2 | 20
- 3 | 30
- 4 | 10
- 5 | 40
-(5 rows)
-
+ERROR:  ORDER BY "x" is ambiguous
+LINE 1: MATCH (p:person) RETURN p.id AS x, p.age AS x ORDER BY x;
+                                                               ^
+DETAIL:  The clause returns "x" more than once.
 MATCH (p:person) RETURN p.id AS x, p.age AS x ORDER BY x * -1;
- x | x  
----+----
- 5 | 40
- 4 | 10
- 3 | 30
- 2 | 20
- 1 | 30
-(5 rows)
-
--- NOTE: past a WITH the same name resolves the other way -- a later column of a
--- namespace item wins -- so this orders by id (the key's "x") while returning
--- age (the following clause's "x").  Pinned to keep the disagreement visible.
+ERROR:  ORDER BY "x" is ambiguous
+LINE 1: ...TCH (p:person) RETURN p.id AS x, p.age AS x ORDER BY x * -1;
+                                                                ^
+DETAIL:  The clause returns "x" more than once.
+-- A WITH names everything it passes on and a later clause reads it by name, so
+-- there the collision itself is refused -- including one made by expanding "*".
 MATCH (p:person) WITH p.id AS x, p.age AS x ORDER BY x * -1 RETURN x;
- x  
-----
- 40
- 10
- 30
- 20
- 30
-(5 rows)
-
+ERROR:  WITH passes on "x" more than once
+LINE 1: MATCH (p:person) WITH p.id AS x, p.age AS x ORDER BY x * -1 ...
+                                         ^
+MATCH (p:person) WITH *, p.id AS p RETURN p;
+ERROR:  WITH passes on "p" more than once
+LINE 1: MATCH (p:person) WITH *, p.id AS p RETURN p;
+                                 ^
 DROP GRAPH sortkeys CASCADE;
 NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to sequence sortkeys.ag_label_seq
