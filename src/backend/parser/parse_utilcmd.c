@@ -3574,8 +3574,16 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 	AlterTableCmd *newcmd;
 	ParseNamespaceItem *nsitem;
 
+	/*
+	 * Reaching a label with plain ALTER TABLE is not how a label is meant to be
+	 * altered, so it is kept to a superuser -- unless it was asked for, which is
+	 * what enable_graph_ddl says.  Restoring a label carrying a column its own
+	 * DDL cannot express needs this, and the dump asks for it; whoever may alter
+	 * the label then decides, as they already do for every other relation.
+	 */
 	if (OidIsValid(get_relid_laboid(relid)) &&
 		!superuser_arg(GetUserId()) &&
+		!enable_graph_ddl &&
 		stmt->objtype == OBJECT_TABLE)
 		elog(ERROR, "only superuser can ALTER TABLE on graph label");
 
