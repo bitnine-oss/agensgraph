@@ -3073,6 +3073,15 @@ typedef struct GraphVLEState
 
 	/* target edges. */
 	ResultRelInfo *target_rel_infos;
+
+	/*
+	 * A slot per target label, because the labels of an inheritance set do not
+	 * share a tuple descriptor: they agree on the four columns every edge has
+	 * and diverge after them.  A tuple is deformed against the descriptor of
+	 * the slot it is read into, so each label needs its own; current_scan_tuple
+	 * is the one the hop being expanded reads into.
+	 */
+	TupleTableSlot **scan_tuples;
 	TupleTableSlot *current_scan_tuple;
 	int			num_target_rel_info;
 
