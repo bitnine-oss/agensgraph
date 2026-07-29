@@ -538,6 +538,45 @@ DROP PROPERTY INDEX idx_plain;
 DROP INDEX tc.idx_plain;
 ALTER TABLE tc.doc DROP COLUMN notaprop;
 
+-- 6g. The recognition matches a key element on ATTNUM against the label's promoted
+--     properties, which is what makes it hold where a key and its column do not
+--     line up in the obvious way.  A key INHERITED from an ancestor is the case
+--     that matters: the child carries its own copy of the column, and at its own
+--     attnum, because a column of its own was declared first.
+CREATE VLABEL pipar (age int GENERATED);
+CREATE VLABEL pikid (own int GENERATED) INHERITS (pipar);
+-- the layout: "age" is attnum 3 on the parent and attnum 3 on the child only by
+-- coincidence of declaration order -- "own" is what the child declared first
+SELECT c.relname, a.attname, a.attnum
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relnamespace = 'tc'::regnamespace
+  AND c.relname IN ('pipar', 'pikid')
+  AND a.attnum >= 3 AND NOT a.attisdropped
+ORDER BY c.relname, a.attnum;
+CREATE PROPERTY INDEX idx_inh ON pikid (age);
+SELECT labelname, indexname FROM ag_property_indexes WHERE indexname = 'idx_inh';
+DROP PROPERTY INDEX idx_inh;
+-- several keys in one index: two promoted columns, and a promoted key beside one
+-- that resolved to a jsonb expression.  Every element addresses a property, so
+-- both are property indexes.
+CREATE PROPERTY INDEX idx_two ON pikid (age, own);
+SELECT labelname, indexname FROM ag_property_indexes WHERE indexname = 'idx_two';
+DROP PROPERTY INDEX idx_two;
+CREATE PROPERTY INDEX idx_mixkeys ON pikid (age, city);
+SELECT labelname, indexname FROM ag_property_indexes WHERE indexname = 'idx_mixkeys';
+DROP PROPERTY INDEX idx_mixkeys;
+-- one key addressing a promoted column and one an ORDINARY one: not every element
+-- is a property, so the index as a whole is not a property index and the property
+-- DDL must not claim it
+ALTER TABLE tc.pikid ADD COLUMN notaprop text;
+CREATE INDEX idx_halfprop ON tc.pikid (age, notaprop);
+SELECT count(*) AS listed FROM ag_property_indexes WHERE indexname = 'idx_halfprop';
+DROP PROPERTY INDEX idx_halfprop;
+DROP INDEX tc.idx_halfprop;
+ALTER TABLE tc.pikid DROP COLUMN notaprop;
+DROP VLABEL pikid;
+DROP VLABEL pipar;
+
 -- ============================================================================
 -- SECTION 7 -- Aggregates over a promoted property (on == off)
 -- ============================================================================
@@ -725,6 +764,148 @@ MATCH (n:gintc {city: 'x'}) RETURN count(*) AS c;
 MATCH (n:gintc {age: 5, city: 'x'}) RETURN count(*) AS c;
 DROP INDEX tc.ginother_gin;
 
+-- 11e1b. The rest of the matrix, and the thing that actually matters about it:
+--        WHICH ROWS come back.  The per-key quals were always the complete test,
+--        so removing the containment test must not change the row set for any
+--        shape of map, under any index, with promotion either way -- and the
+--        containment test must still be there for a key that really is read from
+--        the bag, or a GIN index cannot carry it.
+--
+--        Enough rows that a lost or an extra one is visible, and rows chosen to
+--        exercise where the two ways of reading a key can disagree: a key STORED
+--        as a string although its column is an int (the column parses it, the bag
+--        holds a string), a key absent altogether, and a row missing the
+--        non-promoted key instead.
+CREATE VLABEL ginrow (age int GENERATED);
+CREATE (:ginrow {nm: 'r1', age: 5, city: 'x'});
+CREATE (:ginrow {nm: 'r2', age: 5, city: 'y'});
+CREATE (:ginrow {nm: 'r3', age: 6, city: 'x'});
+CREATE (:ginrow {nm: 'r4', age: '5', city: 'x'});
+CREATE (:ginrow {nm: 'r5', city: 'x'});
+CREATE (:ginrow {nm: 'r6', age: 5});
+
+-- The three shapes of map, with no GIN index anywhere.  The all-promoted map
+-- carries no containment test; the one with a bag key does; the mixed one does,
+-- because its bag key can still be served by an index.
+SET enable_property_promotion = on;
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {age: 5}) RETURN n.nm;
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {city: 'x'}) RETURN n.nm;
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm;
+MATCH (n:ginrow {age: 5}) RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:ginrow {city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
+-- the promotion-off baseline for the same three: identical row sets
+SET enable_property_promotion = off;
+MATCH (n:ginrow {age: 5}) RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:ginrow {city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
+
+-- The same three with a GIN index ON THIS LABEL.  Only the shapes that read the
+-- bag gain the containment test, and the row sets are unchanged.
+CREATE INDEX ginrow_gin ON tc.ginrow USING gin (properties);
+SET enable_property_promotion = on;
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {age: 5}) RETURN n.nm;
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {city: 'x'}) RETURN n.nm;
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm;
+MATCH (n:ginrow {age: 5}) RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:ginrow {city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
+SET enable_property_promotion = off;
+MATCH (n:ginrow {age: 5}) RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:ginrow {city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
+-- and with the index actually chosen, so the containment test is shown to be
+-- doing the job it is kept for rather than merely being present
+SET enable_seqscan = off;
+SET enable_property_promotion = on;
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {city: 'x'}) RETURN n.nm;
+MATCH (n:ginrow {city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
+SET enable_seqscan = on;
+
+-- The same three with the GIN index on an UNRELATED label of the same graph.
+-- ginAvail walks the label's inheritors, so the presence of that index is what
+-- used to bring the containment test back for a wholly promoted map.
+DROP INDEX tc.ginrow_gin;
+CREATE INDEX ginrow_other_gin ON tc.ginother USING gin (properties);
+SET enable_property_promotion = on;
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {age: 5}) RETURN n.nm;
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm;
+MATCH (n:ginrow {age: 5}) RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
+SET enable_property_promotion = off;
+MATCH (n:ginrow {age: 5}) RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
+DROP INDEX tc.ginrow_other_gin;
+
+-- 11e1c. Two promoted keys in one map, so nothing at all is read from the bag;
+--        and an EDGE property constraint, which is transformed through the other
+--        of the two call sites (a pattern element inside a path, rather than a
+--        standalone element qual).
+SET enable_property_promotion = on;
+CREATE VLABEL gintwo (age int GENERATED, big bigint GENERATED);
+CREATE (:gintwo {age: 1, big: 10}), (:gintwo {age: 1, big: 20});
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:gintwo {age: 1, big: 10}) RETURN id(n);
+MATCH (n:gintwo {age: 1, big: 10}) RETURN count(*) AS c;
+SET enable_property_promotion = off;
+MATCH (n:gintwo {age: 1, big: 10}) RETURN count(*) AS c;
+
+SET enable_property_promotion = on;
+CREATE VLABEL ginend;
+CREATE ELABEL gine (weight int GENERATED);
+CREATE (:ginend)-[:gine {weight: 3, kind: 'k'}]->(:ginend);
+CREATE (:ginend)-[:gine {weight: 4, kind: 'k'}]->(:ginend);
+-- every key promoted: no containment test on the edge either
+EXPLAIN (VERBOSE, COSTS OFF) MATCH ()-[r:gine {weight: 3}]->() RETURN id(r);
+MATCH ()-[r:gine {weight: 3}]->() RETURN count(*) AS c;
+-- a key the edge reads from the bag: kept
+EXPLAIN (VERBOSE, COSTS OFF) MATCH ()-[r:gine {kind: 'k'}]->() RETURN id(r);
+MATCH ()-[r:gine {kind: 'k'}]->() RETURN count(*) AS c;
+MATCH ()-[r:gine {weight: 3, kind: 'k'}]->() RETURN count(*) AS c;
+SET enable_property_promotion = off;
+MATCH ()-[r:gine {weight: 3}]->() RETURN count(*) AS c;
+MATCH ()-[r:gine {kind: 'k'}]->() RETURN count(*) AS c;
+MATCH ()-[r:gine {weight: 3, kind: 'k'}]->() RETURN count(*) AS c;
+
+-- 11e1d. A NESTED map as a constrained value.  A nested map is matched by
+--        containment -- the row's value has to contain it -- so a key whose value
+--        is a map only matches a row whose value is a map containing it, and an
+--        EMPTY nested map matches any row whose value is a map at all.  None of
+--        that is a promoted key, so the containment test is what carries all of
+--        it; the answer must not depend on whether an index is available or on how
+--        the promoted keys of the label are read.
+--        A leaf-BEARING nested map and a leaf-LESS one are two different tests,
+--        and only the second can be answered without descending to a leaf, so the
+--        second is where the constraint can go missing entirely.  Both are checked
+--        against what jsonb containment answers for the same map.
+CREATE VLABEL ginnest;
+CREATE (:ginnest {nm: 'map', a: {b: 1}});
+CREATE (:ginnest {nm: 'deep', a: {b: 1, c: 2}});
+CREATE (:ginnest {nm: 'other', c: 9});
+-- the containment semantics the constraint has to reproduce
+SELECT count(*) AS leaf_bearing FROM tc.ginnest WHERE properties @> '{"a": {"b": 1}}';
+SELECT count(*) AS leaf_less FROM tc.ginnest WHERE properties @> '{"a": {}}';
+SET enable_property_promotion = on;
+MATCH (n:ginnest {a: {b: 1}}) RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:ginnest {a: {}}) RETURN n.nm AS nm ORDER BY nm;
+-- an empty map at the TOP level constrains nothing, so every row matches
+MATCH (n:ginnest {}) RETURN n.nm AS nm ORDER BY nm;
+SET enable_property_promotion = off;
+MATCH (n:ginnest {a: {b: 1}}) RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:ginnest {a: {}}) RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:ginnest {}) RETURN n.nm AS nm ORDER BY nm;
+-- and with a GIN index on the bag, which is the only thing that can serve it
+CREATE INDEX ginnest_gin ON tc.ginnest USING gin (properties);
+SET enable_property_promotion = on;
+MATCH (n:ginnest {a: {b: 1}}) RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:ginnest {a: {}}) RETURN n.nm AS nm ORDER BY nm;
+DROP INDEX tc.ginnest_gin;
+
+--        Not covered here: the same leaf-BEARING map against a label where some
+--        row stores a SCALAR under that key.  Containment answers that such a row
+--        simply does not match, but the per-key qual descends to the leaf on every
+--        row and raises "map or list is expected but scalar value", so there is no
+--        agreed answer to pin yet.
+
 -- 11e2. A promoted value is carried into jsonb with the shape the bag holds.
 --       to_jsonb falls back to the text form of a type it cannot represent, which
 --       would land as a jsonb string and disagree with the same property read from
@@ -743,6 +924,75 @@ CREATE (:jlike {s: '[9,9]'}), (:jlike {s: '{"a":1}'}), (:jlike {s: 'plain'});
 MATCH (n:jlike) RETURN n.s AS s ORDER BY s;
 SET enable_property_promotion = off;
 MATCH (n:jlike) RETURN n.s AS s ORDER BY s;
+
+-- 11e2b. Every shape a JSON parse would accept, in a built-in string type.  Each
+--        would be a different wrong answer if the text were reinterpreted: an
+--        array or an object would stop being a string, a number would stop
+--        comparing as one, a boolean likewise, a JSON null would become a missing
+--        value, and a quoted string would lose its quotes.  jsonb_typeof makes the
+--        distinction explicit rather than leaving it to how the value prints.
+SET enable_property_promotion = on;
+CREATE VLABEL jshape (s text GENERATED, vc varchar GENERATED);
+CREATE (:jshape {nm: 'arr',   s: '[9,9]',   vc: '[9,9]'});
+CREATE (:jshape {nm: 'obj',   s: '{"a":1}', vc: '{"a":1}'});
+CREATE (:jshape {nm: 'num',   s: '123',     vc: '123'});
+CREATE (:jshape {nm: 'frac',  s: '1.5e2',   vc: '1.5e2'});
+CREATE (:jshape {nm: 'bool',  s: 'true',    vc: 'false'});
+CREATE (:jshape {nm: 'jnull', s: 'null',    vc: 'null'});
+CREATE (:jshape {nm: 'quot',  s: '"x"',     vc: '"x"'});
+CREATE (:jshape {nm: 'empty', s: '[]',      vc: '{}'});
+CREATE (:jshape {nm: 'plain', s: 'plain',   vc: 'plain'});
+MATCH (n:jshape)
+  RETURN n.nm AS nm, n.s AS s, jsonb_typeof(n.s) AS sty,
+         n.vc AS vc, jsonb_typeof(n.vc) AS vcty
+  ORDER BY nm;
+SET enable_property_promotion = off;
+MATCH (n:jshape)
+  RETURN n.nm AS nm, n.s AS s, jsonb_typeof(n.s) AS sty,
+         n.vc AS vc, jsonb_typeof(n.vc) AS vcty
+  ORDER BY nm;
+
+-- 11e2c. The operations a changed shape would break, on a value that looks like a
+--        JSON array: string equality, string length, and taking a substring -- the
+--        last of which is what an over-reaching reinterpretation turned into a
+--        number.
+SET enable_property_promotion = on;
+MATCH (n:jshape) WHERE n.nm = 'arr'
+  RETURN n.s = '[9,9]' AS eq, length(n.s) AS len, substring(n.s, 1, 3) AS sub;
+SET enable_property_promotion = off;
+MATCH (n:jshape) WHERE n.nm = 'arr'
+  RETURN n.s = '[9,9]' AS eq, length(n.s) AS len, substring(n.s, 1, 3) AS sub;
+
+-- 11e2d. A DOMAIN is a user-defined type, but it is not a type an extension
+--        defines a representation for: it is one of the built-in types under a new
+--        name, and the value it holds is whatever the base type holds.  So a
+--        promoted domain column must read exactly as the same column of its base
+--        type does -- which for a domain over text means the two ways of reading it
+--        agree, the same as 11e2b requires of text itself.
+SET enable_property_promotion = on;
+CREATE DOMAIN tc_dtext AS text;
+CREATE VLABEL jdom (s tc_dtext GENERATED);
+CREATE (:jdom {nm: 'arr',   s: '[9,9]'});
+CREATE (:jdom {nm: 'obj',   s: '{"a":1}'});
+CREATE (:jdom {nm: 'num',   s: '123'});
+CREATE (:jdom {nm: 'bool',  s: 'true'});
+CREATE (:jdom {nm: 'jnull', s: 'null'});
+CREATE (:jdom {nm: 'quot',  s: '"x"'});
+CREATE (:jdom {nm: 'plain', s: 'plain'});
+MATCH (n:jdom) RETURN n.nm AS nm, n.s AS s, jsonb_typeof(n.s) AS ty ORDER BY nm;
+SET enable_property_promotion = off;
+MATCH (n:jdom) RETURN n.nm AS nm, n.s AS s, jsonb_typeof(n.s) AS ty ORDER BY nm;
+
+-- 11e2e. An ENUM cannot be promoted at all, whichever way the generated column is
+--        spelled: reading a text value back as an enum label is not immutable, and
+--        a promoted column has to be.  So an enum never reaches the conversion
+--        above, and this records why -- if it ever becomes promotable, 11e2d's
+--        requirement applies to it too.
+SET enable_property_promotion = on;
+CREATE TYPE tc_enum AS ENUM ('123', 'plain');
+CREATE VLABEL jenum1 (e tc_enum GENERATED);
+CREATE VLABEL jenum2 (e tc_enum GENERATED ALWAYS AS ((properties ->> 'e')::tc_enum) STORED);
+DROP TYPE tc_enum;
 
 -- 11f. A CALL body reading a promoted property of an IMPORTED element.  The
 --      sentinel that carries the typed column is not a Cypher variable and so is
@@ -765,6 +1015,66 @@ MATCH (n:doc) CALL (*) { RETURN n.name AS nm } RETURN nm ORDER BY nm;
 SET enable_property_promotion = on;
 MATCH (n:doc), (o:doc) CALL { WITH n RETURN o.name AS nm } RETURN nm;
 MATCH (n:doc) CALL () { RETURN n.name AS nm } RETURN nm;
+
+-- 11h. The sentinel is matched against the element it describes, so it has to keep
+--      travelling with that element through every way an element can arrive at an
+--      import list.  Each of these reads a promoted property inside the body and
+--      so fails outright, rather than falling back to the bag, if the sentinel is
+--      left behind.
+SET enable_property_promotion = on;
+-- an element renamed before the CALL: the import names the new name
+MATCH (n:doc) WITH n AS m CALL { WITH m RETURN m.age AS a } RETURN a ORDER BY a;
+-- two elements imported at once, each with promoted properties of its own
+MATCH (n:doc), (o:doc) WHERE n.name = 'n1'
+  CALL { WITH n, o RETURN n.age AS na, o.age AS oa }
+  RETURN na, oa ORDER BY na, oa;
+-- an EDGE element, whose promoted property lives on the edge label
+MATCH ()-[r:rel]->() CALL { WITH r RETURN r.weight AS w } RETURN w ORDER BY w;
+-- a variable whose name is a PREFIX of another's, so matching on the owner cannot
+-- be a prefix comparison
+MATCH (n:doc), (n2:doc) WHERE n.name = 'n1'
+  CALL { WITH n2 RETURN n2.age AS a }
+  RETURN DISTINCT a ORDER BY a;
+-- the body projects TWO promoted properties of one imported element, so the
+-- element carries more than one sentinel through the import
+MATCH (n:doc) WHERE n.age > 30
+  CALL { WITH n RETURN n.age AS a, n.title AS t }
+  RETURN a, t ORDER BY a;
+SET enable_property_promotion = off;
+MATCH (n:doc) WITH n AS m CALL { WITH m RETURN m.age AS a } RETURN a ORDER BY a;
+MATCH (n:doc), (o:doc) WHERE n.name = 'n1'
+  CALL { WITH n, o RETURN n.age AS na, o.age AS oa }
+  RETURN na, oa ORDER BY na, oa;
+MATCH ()-[r:rel]->() CALL { WITH r RETURN r.weight AS w } RETURN w ORDER BY w;
+MATCH (n:doc), (n2:doc) WHERE n.name = 'n1'
+  CALL { WITH n2 RETURN n2.age AS a }
+  RETURN DISTINCT a ORDER BY a;
+MATCH (n:doc) WHERE n.age > 30
+  CALL { WITH n RETURN n.age AS a, n.title AS t }
+  RETURN a, t ORDER BY a;
+
+-- 11i. An element bound to a QUOTED identifier.  A sentinel's name is built from
+--      the element's name, and the element it belongs to is recovered from that
+--      name, so a name that is not a bare identifier has to survive the round
+--      trip.  Outside a subquery it always has; inside one it is the import list
+--      the name has to be matched against.
+SET enable_property_promotion = on;
+MATCH ("a b":doc) WHERE "a b".name = 'n1' RETURN "a b".age AS a;
+MATCH ("a b":doc) CALL { WITH "a b" RETURN "a b".age AS a } RETURN a ORDER BY a;
+SET enable_property_promotion = off;
+MATCH ("a b":doc) WHERE "a b".name = 'n1' RETURN "a b".age AS a;
+MATCH ("a b":doc) CALL { WITH "a b" RETURN "a b".age AS a } RETURN a ORDER BY a;
+
+-- 11i2. The same, for a quoted name containing a COLON.  A sentinel's name joins
+--       the element's name and the key with colons, so recovering the element from
+--       it cannot assume the element's name has none.  As everywhere else in this
+--       file, how a property is read must not decide whether the query runs.
+SET enable_property_promotion = on;
+MATCH ("a:b":doc) WHERE "a:b".name = 'n1' RETURN "a:b".age AS a;
+MATCH ("a:b":doc) CALL { WITH "a:b" RETURN "a:b".age AS a } RETURN a ORDER BY a;
+SET enable_property_promotion = off;
+MATCH ("a:b":doc) WHERE "a:b".name = 'n1' RETURN "a:b".age AS a;
+MATCH ("a:b":doc) CALL { WITH "a:b" RETURN "a:b".age AS a } RETURN a ORDER BY a;
 
 -- ============================================================================
 -- SECTION 12 -- NULL / missing-key semantics (on == off)
@@ -1433,6 +1743,82 @@ SELECT extra FROM tc.pcv WHERE properties ->> 'k' = '2';
 MATCH (n:pcv) WHERE n.k = 2 SET n.name = 'd';
 SELECT extra FROM tc.pcv WHERE properties ->> 'k' = '2';
 
+-- 19e. The column's TYPE decides how the fault shows.  A varlena read from an
+--      unassigned entry dereferences a pointer that is not one; a fixed-width type
+--      copies the bytes and stores them, which is a corrupt value rather than a
+--      crash and would not be noticed at all.  So the types are covered together,
+--      on one label, through every write operation -- and the check is that every
+--      one of them reads back null, which is only true if none of them was formed
+--      from an unassigned entry.
+CREATE VLABEL pctypes;
+ALTER TABLE tc.pctypes ADD COLUMN o_int int;         -- by value, 4 bytes
+ALTER TABLE tc.pctypes ADD COLUMN o_big bigint;      -- by value, 8 bytes
+ALTER TABLE tc.pctypes ADD COLUMN o_f8 float8;       -- by value, 8 bytes
+ALTER TABLE tc.pctypes ADD COLUMN o_bool bool;       -- by value, 1 byte
+ALTER TABLE tc.pctypes ADD COLUMN o_ts timestamptz;  -- by value, 8 bytes
+ALTER TABLE tc.pctypes ADD COLUMN o_uuid uuid;       -- by reference, fixed length
+ALTER TABLE tc.pctypes ADD COLUMN o_num numeric;     -- by reference, variable
+ALTER TABLE tc.pctypes ADD COLUMN o_txt text;        -- by reference, toastable
+
+CREATE VIEW tc_pctypes_null AS
+SELECT count(*) FILTER (WHERE o_int IS NULL AND o_big IS NULL AND o_f8 IS NULL
+                          AND o_bool IS NULL AND o_ts IS NULL AND o_uuid IS NULL
+                          AND o_num IS NULL AND o_txt IS NULL) AS all_null,
+       count(*) AS rows
+FROM tc.pctypes;
+
+CREATE (:pctypes {k: 1});
+SELECT * FROM tc_pctypes_null;
+MATCH (n:pctypes) SET n.k = 2;
+SELECT * FROM tc_pctypes_null;
+MATCH (n:pctypes) SET n += {tag: 'x'};
+SELECT * FROM tc_pctypes_null;
+MATCH (n:pctypes) SET n = {k: 3};
+SELECT * FROM tc_pctypes_null;
+MATCH (n:pctypes) REMOVE n.k;
+SELECT * FROM tc_pctypes_null;
+MERGE (n:pctypes {k: 7}) ON CREATE SET n.who = 'created';
+SELECT * FROM tc_pctypes_null;
+MERGE (n:pctypes {k: 7}) ON MATCH SET n.who = 'matched';
+SELECT * FROM tc_pctypes_null;
+MATCH (n:pctypes) RETURN n.k AS k, n.who AS who ORDER BY k, who;
+MATCH (n:pctypes) DETACH DELETE n;
+SELECT * FROM tc_pctypes_null;
+DROP VIEW tc_pctypes_null;
+
+-- 19f. An edge label carrying the same mix, through MERGE as well as CREATE and
+--      SET.  A MERGE reflects what it wrote back through a different helper than a
+--      plain SET uses, so it fills the label tuple in a second place.
+CREATE VLABEL pcend;
+CREATE ELABEL pcmerge;
+ALTER TABLE tc.pcmerge ADD COLUMN e_int int;
+ALTER TABLE tc.pcmerge ADD COLUMN e_txt text;
+CREATE (:pcend {a: 1});
+CREATE (:pcend {a: 2});
+MATCH (x:pcend), (y:pcend) WHERE x.a = 1 AND y.a = 2
+  MERGE (x)-[r:pcmerge {w: 1}]->(y) ON CREATE SET r.made = true;
+SELECT count(*) AS edge_all_null FROM tc.pcmerge
+ WHERE e_int IS NULL AND e_txt IS NULL;
+MATCH (x:pcend), (y:pcend) WHERE x.a = 1 AND y.a = 2
+  MERGE (x)-[r:pcmerge {w: 1}]->(y) ON MATCH SET r.seen = true;
+SELECT count(*) AS edge_all_null FROM tc.pcmerge
+ WHERE e_int IS NULL AND e_txt IS NULL;
+MATCH ()-[r:pcmerge]->() RETURN r.w AS w, r.made AS made, r.seen AS seen;
+
+-- 19g. What a write does NOT do with such a column.  It assigns the label's
+--      structural columns and nothing else, so a DEFAULT is not applied -- the
+--      column is written as null, not as its default -- and a NOT NULL column
+--      cannot be written at all, which is reported as the constraint violation it
+--      is rather than being silently skipped.
+CREATE VLABEL pcdefault;
+ALTER TABLE tc.pcdefault ADD COLUMN d int DEFAULT 7;
+CREATE (:pcdefault {k: 1});
+SELECT (properties ->> 'k') AS k, d FROM tc.pcdefault;
+CREATE VLABEL pcnotnull;
+ALTER TABLE tc.pcnotnull ADD COLUMN nn int NOT NULL DEFAULT 0;
+CREATE (:pcnotnull {k: 1});
+SELECT count(*) AS rows FROM tc.pcnotnull;
+
 -- ----------------------------------------------------------------------------
 -- 20. A variable-length relationship over an inheritance set whose labels lay
 --     their columns out differently.
@@ -1482,6 +1868,73 @@ MATCH p = (a:pv)-[:vle_kid*1..2]->(z) WHERE a.k = 101
   RETURN length(p) AS len, z.k AS reached ORDER BY len, reached;
 -- the child's own column is untouched by the traversal
 SELECT count(*) AS kid_rows, min(length(kid_only)) AS kid_len FROM tc.vle_kid;
+
+-- ----------------------------------------------------------------------------
+-- 20b. The same, over THREE levels and in every direction.
+--
+--     With three labels in the set, no two of which agree past attnum 4, one
+--     expansion reads hops from whichever of them holds the next edge -- so the
+--     slot has to follow the label being scanned, not the label the expansion
+--     started from.  The row sets are what is asserted: the expansion must reach
+--     the same vertices whichever level it is driven from, in either direction,
+--     and over a range longer than one hop.
+-- ----------------------------------------------------------------------------
+CREATE VLABEL v3;
+CREATE ELABEL e3a;
+CREATE ELABEL e3b INHERITS (e3a);
+CREATE ELABEL e3c INHERITS (e3b);
+-- each label declares a column of its own first, so the inherited ones pile up
+-- behind it and the three descriptors disagree from attnum 5 on
+ALTER TABLE tc.e3c ADD COLUMN c_own text;
+ALTER TABLE tc.e3b ADD COLUMN b_own bigint;
+ALTER TABLE tc.e3a ADD COLUMN a_own text;
+SELECT c.relname, a.attnum, a.attname, a.attlen
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relnamespace = 'tc'::regnamespace
+  AND c.relname IN ('e3a', 'e3b', 'e3c')
+  AND a.attnum >= 5 AND NOT a.attisdropped
+ORDER BY c.relname, a.attnum;
+
+CREATE (:v3 {k: 1});
+CREATE (:v3 {k: 2});
+CREATE (:v3 {k: 3});
+CREATE (:v3 {k: 4});
+-- one hop of each label, so a single expansion crosses all three descriptors
+MATCH (a:v3), (b:v3) WHERE a.k = 1 AND b.k = 2 CREATE (a)-[:e3a]->(b);
+MATCH (a:v3), (b:v3) WHERE a.k = 2 AND b.k = 3 CREATE (a)-[:e3b]->(b);
+MATCH (a:v3), (b:v3) WHERE a.k = 3 AND b.k = 4 CREATE (a)-[:e3c]->(b);
+-- long values where the descriptors disagree, so reading a hop through the wrong
+-- one would decode a varlena as a by-value bigint rather than yielding a null
+SET enable_graph_dml = on;
+UPDATE tc.e3c SET c_own = repeat('c', 900);
+UPDATE ONLY tc.e3a SET a_own = repeat('a', 900);
+SET enable_graph_dml = off;
+
+-- driven from the root: reaches every vertex downstream, over every label
+MATCH p = (a:v3)-[:e3a*1..3]->(z) WHERE a.k = 1
+  RETURN length(p) AS len, z.k AS reached ORDER BY len, reached;
+-- from the middle level: only the labels at or below it
+MATCH p = (a:v3)-[:e3b*1..3]->(z) WHERE a.k = 2
+  RETURN length(p) AS len, z.k AS reached ORDER BY len, reached;
+-- from the leaf
+MATCH p = (a:v3)-[:e3c*1..3]->(z) WHERE a.k = 3
+  RETURN length(p) AS len, z.k AS reached ORDER BY len, reached;
+-- reversed, so the expansion walks the end column instead of the start one
+MATCH p = (z)<-[:e3a*1..3]-(a:v3) WHERE a.k = 1
+  RETURN length(p) AS len, z.k AS reached ORDER BY len, reached;
+-- and undirected, which expands both ways from each hop
+MATCH p = (a:v3)-[:e3a*1..2]-(z) WHERE a.k = 2
+  RETURN length(p) AS len, z.k AS reached ORDER BY len, reached;
+-- a property constraint on the expanded edge, which reads the property bag: still
+-- one of the four columns every edge has, so it is inside the shared prefix
+MATCH (a:v3), (b:v3) WHERE a.k = 1 AND b.k = 3 CREATE (a)-[:e3b {tag: 'skip'}]->(b);
+MATCH p = (a:v3)-[:e3a*1..2]->(z) WHERE a.k = 1
+  RETURN length(p) AS len, z.k AS reached ORDER BY len, reached;
+-- the columns past the prefix are untouched by any of it
+SELECT 'e3a' AS lab, count(*) AS rows, max(length(a_own)) AS own_len FROM ONLY tc.e3a
+UNION ALL
+SELECT 'e3c', count(*), max(length(c_own)) FROM tc.e3c
+ORDER BY lab;
 
 -- ----------------------------------------------------------------------------
 -- 21. The promotion catalog follows the label's columns however they change.
@@ -1536,6 +1989,66 @@ MATCH (n:sync2) RETURN n.age AS age, n.sc AS sc;
 -- 21d. A structural column cannot be dropped through plain ALTER TABLE either.
 ALTER TABLE tc.sync2 DROP COLUMN id;
 ALTER TABLE tc.sync2 DROP COLUMN properties;
+
+-- 21e. The sync reads the whole command list, so several changes in ONE statement
+--      all land: dropping one promoted column and adding another leaves the catalog
+--      describing exactly what the label now has.
+CREATE VLABEL sync3 (age int GENERATED, nm text GENERATED);
+CREATE (:sync3 {age: 1, nm: 'a', later: 5});
+ALTER TABLE tc.sync3
+  DROP COLUMN age,
+  ADD COLUMN later int GENERATED ALWAYS AS ((properties ->> 'later')::int) STORED;
+SELECT p.propname, p.attnum
+FROM ag_label_property p JOIN ag_label l ON l.oid = p.laboid
+WHERE l.labname = 'sync3' ORDER BY p.attnum;
+MATCH (n:sync3) RETURN n.age AS age, n.nm AS nm, n.later AS later;
+
+-- 21f. Recursion.  A promoted column added or dropped on a PARENT reaches every
+--      child, so the catalog has to follow it on each of them -- a child whose
+--      entry went stale would resolve the property to whatever column now sits at
+--      that attnum.
+CREATE VLABEL syncpar (age int GENERATED);
+CREATE VLABEL synckid (own int GENERATED) INHERITS (syncpar);
+CREATE (:syncpar {age: 1});
+CREATE (:synckid {age: 2, own: 9, extra: 3});
+SELECT l.labname, p.propname, p.attnum
+FROM ag_label_property p JOIN ag_label l ON l.oid = p.laboid
+WHERE l.labname IN ('syncpar', 'synckid') ORDER BY l.labname, p.attnum;
+ALTER TABLE tc.syncpar
+  ADD COLUMN extra int GENERATED ALWAYS AS ((properties ->> 'extra')::int) STORED;
+SELECT l.labname, p.propname, p.attnum
+FROM ag_label_property p JOIN ag_label l ON l.oid = p.laboid
+WHERE l.labname IN ('syncpar', 'synckid') ORDER BY l.labname, p.attnum;
+MATCH (n:synckid) RETURN n.age AS age, n.own AS own, n.extra AS extra;
+ALTER TABLE tc.syncpar DROP COLUMN extra;
+SELECT l.labname, p.propname, p.attnum
+FROM ag_label_property p JOIN ag_label l ON l.oid = p.laboid
+WHERE l.labname IN ('syncpar', 'synckid') ORDER BY l.labname, p.attnum;
+MATCH (n:synckid) RETURN n.age AS age, n.own AS own, n.extra AS extra;
+
+-- 21g. DROP EXPRESSION on a column a child INHERITS.  The column survives on both,
+--      so both entries have to go, and both labels then read the property from the
+--      bag again.
+ALTER TABLE tc.syncpar ALTER COLUMN age DROP EXPRESSION;
+SELECT l.labname, p.propname, p.attnum
+FROM ag_label_property p JOIN ag_label l ON l.oid = p.laboid
+WHERE l.labname IN ('syncpar', 'synckid') ORDER BY l.labname, p.attnum;
+MATCH (n:syncpar) RETURN n.age AS age ORDER BY age;
+MATCH (n:synckid) RETURN n.age AS age, n.own AS own;
+
+-- 21h. Dropping a promoted column that a property index binds.  The index goes
+--      with the column, and the catalog entry with it, so nothing is left naming
+--      either.
+CREATE VLABEL syncidx (age int GENERATED);
+CREATE (:syncidx {age: 1});
+CREATE PROPERTY INDEX syncidx_age ON syncidx (age);
+SELECT count(*) AS listed FROM ag_property_indexes WHERE indexname = 'syncidx_age';
+ALTER TABLE tc.syncidx DROP COLUMN age CASCADE;
+SELECT count(*) AS listed FROM ag_property_indexes WHERE indexname = 'syncidx_age';
+SELECT count(*) AS cataloged
+FROM ag_label_property p JOIN ag_label l ON l.oid = p.laboid
+WHERE l.labname = 'syncidx';
+MATCH (n:syncidx) RETURN n.age AS age;
 
 -- ----------------------------------------------------------------------------
 -- 22. Reshaping a label with plain ALTER TABLE is refused.
@@ -1599,7 +2112,151 @@ ALTER TABLE tc_movable SET SCHEMA tc_elsewhere;
 DROP TABLE tc_elsewhere.tc_movable;
 DROP SCHEMA tc_elsewhere;
 
--- 22e. The label still works after all of that was refused.
+-- 22e. An ELABEL is a label too, so every one of the refusals reaches it.  An edge
+--      label's structural columns run to attnum 4, and its two endpoint columns are
+--      as much relied on as its id.
+CREATE ELABEL gate_e2 (weight int GENERATED);
+ALTER TABLE tc.gate_e2 DROP COLUMN weight;
+ALTER TABLE tc.gate_e2 ALTER COLUMN weight TYPE bigint;
+ALTER TABLE tc.gate_e2 ALTER COLUMN weight DROP EXPRESSION;
+ALTER TABLE tc.gate_e2 ALTER COLUMN weight SET EXPRESSION AS ((properties ->> 'w')::int);
+ALTER TABLE tc.gate_e2 ALTER COLUMN start DROP NOT NULL;
+ALTER TABLE tc.gate_e2 ALTER COLUMN "end" DROP NOT NULL;
+ALTER TABLE tc.gate_e2 RENAME COLUMN weight TO weight2;
+ALTER TABLE tc.gate_e2 RENAME COLUMN "end" TO "finish";
+CREATE SCHEMA tc_elsewhere2;
+ALTER TABLE tc.gate_e2 SET SCHEMA tc_elsewhere2;
+DROP SCHEMA tc_elsewhere2;
+
+-- 22f. Every refusal is lifted by enable_graph_ddl, which is what a restore and a
+--      repair need.  Each one is done and then undone, so the label is left as it
+--      was and the section that follows still has it.
+SET enable_graph_ddl = on;
+ALTER TABLE tc.gate ADD COLUMN plainc text;
+ALTER TABLE tc.gate DROP COLUMN plainc;
+ALTER TABLE tc.gate ALTER COLUMN age TYPE bigint;
+ALTER TABLE tc.gate ALTER COLUMN age TYPE int;
+ALTER TABLE tc.gate RENAME COLUMN age TO age2;
+ALTER TABLE tc.gate RENAME COLUMN age2 TO age;
+ALTER TABLE tc.gate_kid NO INHERIT tc.gate;
+ALTER TABLE tc.gate_kid INHERIT tc.gate;
+CREATE SCHEMA tc_elsewhere3;
+ALTER TABLE tc.gate SET SCHEMA tc_elsewhere3;
+ALTER TABLE tc_elsewhere3.gate SET SCHEMA tc;
+DROP SCHEMA tc_elsewhere3;
+-- the drop is not undoable, so it is done on a label of its own.  Dropping the
+-- not-null of a structural column is lifted too, but PostgreSQL then refuses it
+-- on its own account: a label inherits that constraint from the graph's base
+-- label, and an inherited not-null is not droppable on a child.  Lifting the
+-- graph's refusal does not lift PostgreSQL's.
+CREATE VLABEL gate_drop (age int GENERATED);
+ALTER TABLE tc.gate_drop DROP COLUMN age;
+ALTER TABLE tc.gate_drop ALTER COLUMN properties DROP NOT NULL;
+DROP VLABEL gate_drop;
+RESET enable_graph_ddl;
+-- and the label is intact, so the refusals above really did refuse rather than
+-- refuse-after-doing
+SELECT attname, atttypid::regtype, attnotnull FROM pg_attribute
+WHERE attrelid = 'tc.gate'::regclass AND attnum > 0 AND NOT attisdropped
+ORDER BY attnum;
+
+-- 22g. Reaching ALTER TABLE from somewhere else does not get around it.  The check
+--      runs where the command is executed, not where it was typed, so a function
+--      body, an anonymous block and an event trigger all hit it -- and so does a
+--      list of subcommands whose first one is harmless, because the whole list is
+--      judged before any of it runs.
+CREATE FUNCTION tc_reshape() RETURNS void LANGUAGE plpgsql AS $fn$
+BEGIN
+	EXECUTE 'ALTER TABLE tc.gate ADD COLUMN sneaked text';
+END
+$fn$;
+SELECT tc_reshape();
+DROP FUNCTION tc_reshape();
+DO $blk$ BEGIN EXECUTE 'ALTER TABLE tc.gate ADD COLUMN sneaked text'; END $blk$;
+CREATE FUNCTION tc_reshape_ev() RETURNS event_trigger LANGUAGE plpgsql AS $fn$
+BEGIN
+	EXECUTE 'ALTER TABLE tc.gate ADD COLUMN sneaked text';
+END
+$fn$;
+CREATE EVENT TRIGGER tc_ev ON ddl_command_end WHEN TAG IN ('CREATE TABLE')
+	EXECUTE FUNCTION tc_reshape_ev();
+CREATE TABLE tc_trigger_bait (a int);
+DROP EVENT TRIGGER tc_ev;
+DROP FUNCTION tc_reshape_ev();
+DROP TABLE IF EXISTS tc_trigger_bait;
+-- a harmless subcommand first
+ALTER TABLE tc.gate ALTER COLUMN properties SET STATISTICS 100, ADD COLUMN sneaked text;
+-- ONLY, and IF NOT EXISTS, are the same subcommand
+ALTER TABLE ONLY tc.gate ADD COLUMN sneaked text;
+ALTER TABLE tc.gate ADD COLUMN IF NOT EXISTS sneaked text;
+-- the base labels every graph has are labels as well
+ALTER TABLE tc.ag_vertex ADD COLUMN sneaked text;
+ALTER TABLE tc.ag_edge ADD COLUMN sneaked text;
+-- a label cannot be given a non-label parent to be reshaped through
+CREATE TABLE tc_outsider (a int);
+ALTER TABLE tc.gate INHERIT tc_outsider;
+DROP TABLE tc_outsider;
+-- nothing above left a mark
+SELECT count(*) AS sneaked_columns FROM pg_attribute
+WHERE attrelid = 'tc.gate'::regclass AND attname = 'sneaked';
+
+-- 22h. Copying a label's shape into an ordinary table is not reshaping the label,
+--      so it is allowed -- and what it produces is an ordinary table, which the
+--      refusals do not apply to.
+CREATE TABLE tc_copy (LIKE tc.gate);
+ALTER TABLE tc_copy ADD COLUMN b text;
+ALTER TABLE tc_copy DROP COLUMN b;
+DROP TABLE tc_copy;
+
+-- 22i. Everything the gate does not cover on a label still works, so tuning one is
+--      untouched: storage, statistics, defaults, options, clustering, ownership,
+--      triggers, replica identity, a constraint added rather than dropped, and a
+--      NOT NULL added rather than removed.
+ALTER TABLE tc.gate ALTER COLUMN age SET STORAGE PLAIN;
+ALTER TABLE tc.gate ALTER COLUMN age SET (n_distinct = 100);
+ALTER TABLE tc.gate ALTER COLUMN age RESET (n_distinct);
+ALTER TABLE tc.gate ALTER COLUMN properties SET STATISTICS -1;
+ALTER TABLE tc.gate ADD CONSTRAINT gate_chk CHECK (true);
+-- adding a not-null is allowed; taking one away is not, so putting the label back
+-- as it was needs the gate lifted
+ALTER TABLE tc.gate ALTER COLUMN age SET NOT NULL;
+ALTER TABLE tc.gate ALTER COLUMN age DROP NOT NULL;
+SET enable_graph_ddl = on;
+ALTER TABLE tc.gate ALTER COLUMN age DROP NOT NULL;
+RESET enable_graph_ddl;
+ALTER TABLE tc.gate CLUSTER ON gate_pkey;
+ALTER TABLE tc.gate SET WITHOUT CLUSTER;
+ALTER TABLE tc.gate DISABLE TRIGGER ALL;
+ALTER TABLE tc.gate ENABLE TRIGGER ALL;
+ALTER TABLE tc.gate REPLICA IDENTITY FULL;
+ALTER TABLE tc.gate REPLICA IDENTITY DEFAULT;
+-- dropping that constraint, though, is refused -- and the graph's own DDL is how
+-- it is done, which reaches ALTER TABLE as a subcommand and so is not judged
+ALTER TABLE tc.gate DROP CONSTRAINT gate_chk;
+SET enable_graph_ddl = on;
+ALTER TABLE tc.gate DROP CONSTRAINT gate_chk;
+RESET enable_graph_ddl;
+
+-- 22j. A table that is not a label is not affected by any of them.
+CREATE TABLE tc_ordinary (a int GENERATED ALWAYS AS (1) STORED, b int NOT NULL);
+CREATE TABLE tc_ordinary_kid () INHERITS (tc_ordinary);
+ALTER TABLE tc_ordinary ADD COLUMN c text;
+ALTER TABLE tc_ordinary ALTER COLUMN c TYPE varchar(10);
+ALTER TABLE tc_ordinary ALTER COLUMN a DROP EXPRESSION;
+ALTER TABLE tc_ordinary ALTER COLUMN b DROP NOT NULL;
+ALTER TABLE tc_ordinary ADD CONSTRAINT tc_ord_chk CHECK (true);
+ALTER TABLE tc_ordinary DROP CONSTRAINT tc_ord_chk;
+ALTER TABLE tc_ordinary DROP COLUMN c;
+ALTER TABLE tc_ordinary_kid NO INHERIT tc_ordinary;
+ALTER TABLE tc_ordinary_kid INHERIT tc_ordinary;
+ALTER TABLE tc_ordinary RENAME COLUMN b TO b2;
+CREATE SCHEMA tc_elsewhere4;
+ALTER TABLE tc_ordinary_kid SET SCHEMA tc_elsewhere4;
+DROP TABLE tc_elsewhere4.tc_ordinary_kid;
+DROP SCHEMA tc_elsewhere4;
+DROP TABLE tc_ordinary;
+
+-- 22k. The label still works after all of that was refused.
 CREATE (:gate {age: 3});
 MATCH (n:gate) RETURN n.age AS age;
 
