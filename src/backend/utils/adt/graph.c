@@ -10,6 +10,11 @@
 
 #include "postgres.h"
 
+#include "nodes/makefuncs.h"
+#include "nodes/nodeFuncs.h"
+#include "nodes/supportnodes.h"
+#include "optimizer/optimizer.h"
+
 #include "ag_const.h"
 #include "access/hash.h"
 #include "access/htup_details.h"
@@ -1778,4 +1783,181 @@ gin_compare_partial_graphid(FunctionCallInfo fcinfo)
 	}
 
 	PG_RETURN_INT32(res);
+}
+
+/*
+ * countPathArrayElems
+ *
+ * How many elements a path's vertex or edge array will hold, when that is
+ * settled by the pattern rather than by the rows.  A pattern of a fixed shape
+ * builds its array by concatenating one element at a time, so the count is
+ * there to be read off the expression; a variable-length relationship
+ * contributes an array nobody can count until it runs, and reports -1.
+ */
+static int
+countPathArrayElems(Node *node)
+{
+	if (node == NULL)
+		return -1;
+
+	if (IsA(node, ArrayExpr))
+	{
+		ArrayExpr  *a = (ArrayExpr *) node;
+
+		/* an array of arrays is a concatenation, not a list of elements */
+		if (a->multidims)
+			return -1;
+		return list_length(a->elements);
+	}
+
+	if (IsA(node, Const))
+	{
+		Const	   *c = (Const *) node;
+		ArrayType  *arr;
+
+		if (c->constisnull)
+			return -1;
+		arr = DatumGetArrayTypeP(c->constvalue);
+		return ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+	}
+
+	if (IsA(node, OpExpr))
+	{
+		OpExpr	   *op = (OpExpr *) node;
+		Node	   *lexpr;
+		Node	   *rexpr;
+		int			lcount;
+
+		if (list_length(op->args) != 2)
+			return -1;
+
+		lexpr = linitial(op->args);
+		rexpr = lsecond(op->args);
+
+		lcount = countPathArrayElems(lexpr);
+		if (lcount < 0)
+			return -1;
+
+		/*
+		 * Appending one element adds one; concatenating another array adds
+		 * however many that one holds, which may itself be unknown.
+		 */
+		if (exprType(rexpr) == exprType(lexpr))
+		{
+			int			rcount = countPathArrayElems(rexpr);
+
+			if (rcount < 0)
+				return -1;
+			return lcount + rcount;
+		}
+
+		return lcount + 1;
+	}
+
+	return -1;
+}
+
+/*
+ * graphpath_support
+ *
+ * A path built by a pattern of a fixed shape is assembled per row -- every
+ * vertex and every relationship on it, each carrying its whole property map --
+ * and a query that only asks how long it is, or for one of its two arrays,
+ * throws all of that away again.
+ *
+ * Answer from the pattern instead, where the pattern settles the answer: the
+ * length of a fixed-shape path is a constant, and each array is one of the two
+ * expressions the path was going to be built from.  A variable-length
+ * relationship settles nothing until it runs, and is left alone.
+ */
+Datum
+graphpath_support(PG_FUNCTION_ARGS)
+{
+	Node	   *rawreq = (Node *) PG_GETARG_POINTER(0);
+
+	if (IsA(rawreq, SupportRequestSimplify))
+	{
+		SupportRequestSimplify *req = (SupportRequestSimplify *) rawreq;
+		FuncExpr   *fexpr = req->fcall;
+		Node	   *arg;
+		RowExpr    *path;
+		Node	   *vertices;
+		Node	   *edges;
+
+		if (list_length(fexpr->args) != 1)
+			PG_RETURN_POINTER(NULL);
+
+		arg = linitial(fexpr->args);
+
+		/*
+		 * How many entries one of a path's arrays holds is settled by the same
+		 * pattern that settles the path's length, so counting it need not build
+		 * it.  This is what size(vertices(p)) asks, and by the time it is asked
+		 * the accessor has already given way to the expression the array would
+		 * have been built from.
+		 *
+		 * Worth more than the count: an array of nodes is built out of whole
+		 * nodes, so building one in order to count it reads every property map
+		 * on the path off the heap.  Answering from the pattern reads none.
+		 */
+		if (fexpr->funcid == F_LENGTH__VERTEX ||
+			fexpr->funcid == F_LENGTH__EDGE)
+		{
+			int			nelems = countPathArrayElems(arg);
+
+			if (nelems < 0 || contain_volatile_functions(arg))
+				PG_RETURN_POINTER(NULL);
+
+			PG_RETURN_POINTER(makeConst(JSONBOID, -1, InvalidOid, -1,
+										JsonbPGetDatum(int_to_jsonb(nelems)),
+										false, false));
+		}
+
+		if (!IsA(arg, RowExpr))
+			PG_RETURN_POINTER(NULL);
+
+		path = (RowExpr *) arg;
+		if (path->row_typeid != GRAPHPATHOID || list_length(path->args) != 2)
+			PG_RETURN_POINTER(NULL);
+
+		vertices = linitial(path->args);
+		edges = lsecond(path->args);
+
+		/*
+		 * Whatever is dropped must be droppable: an expression that does
+		 * something as well as producing a value has to keep being evaluated.
+		 */
+		switch (fexpr->funcid)
+		{
+			case F_VERTICES:
+				if (contain_volatile_functions(edges))
+					break;
+				PG_RETURN_POINTER(vertices);
+
+			case F_EDGES:
+				if (contain_volatile_functions(vertices))
+					break;
+				PG_RETURN_POINTER(edges);
+
+			case F_LENGTH_GRAPHPATH:
+				{
+					int			nedges = countPathArrayElems(edges);
+
+					if (nedges < 0)
+						break;
+					if (contain_volatile_functions(vertices) ||
+						contain_volatile_functions(edges))
+						break;
+
+					PG_RETURN_POINTER(makeConst(JSONBOID, -1, InvalidOid, -1,
+												JsonbPGetDatum(int_to_jsonb(nedges)),
+												false, false));
+				}
+
+			default:
+				break;
+		}
+	}
+
+	PG_RETURN_POINTER(NULL);
 }
