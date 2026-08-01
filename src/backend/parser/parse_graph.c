@@ -274,7 +274,6 @@ static Oid	getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno,
 static bool hasGinOnProp(Oid relid);
 
 /* promoted typed-column projection and resolution */
-#define PROMOTED_SENTINEL_PREFIX	AGENS_DEFAULT_PREFIX "prop:"
 static char *makePromotedSentinelName(const char *varname, const char *key);
 static char *makePromotedSentinelPrefix(const char *varname);
 static void appendPromotedSentinels(ParseState *pstate,

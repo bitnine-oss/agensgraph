@@ -15,6 +15,8 @@
 
 #define AGENS_DEFAULT_PREFIX	"_agens_default_"
 #define CYPHER_SUBQUERY_ALIAS	AGENS_DEFAULT_PREFIX"s"
+/* hidden column carrying a promoted property across a projection boundary */
+#define PROMOTED_SENTINEL_PREFIX	AGENS_DEFAULT_PREFIX "prop:"
 #define CYPHER_OPTMATCH_ALIAS	AGENS_DEFAULT_PREFIX"o"
 #define CYPHER_MERGEMATCH_ALIAS	AGENS_DEFAULT_PREFIX"m"
 #define CYPHER_DELETEJOIN_ALIAS	AGENS_DEFAULT_PREFIX"d"

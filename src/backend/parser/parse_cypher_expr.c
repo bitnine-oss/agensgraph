@@ -23,6 +23,7 @@
 
 #include "ag_const.h"
 #include "catalog/ag_edge_d.h"
+#include "catalog/ag_label_fn.h"
 #include "catalog/ag_vertex_d.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
@@ -97,6 +98,7 @@ static Node *transformAExprIn(ParseState *pstate, A_Expr *a);
 static Node *transformPromotedInList(ParseState *pstate, Node *lexpr, A_Expr *a);
 static Node *transformCypherNullIf(ParseState *pstate, A_Expr *a);
 static Node *unboxCypherToJsonb(Node *n);
+static bool isPromotedPropertyRead(ParseState *pstate, Node *expr);
 static TargetEntry *findProjectedItem(ParseState *pstate, List *items,
 									  const char *name, int location);
 static Node *transformBoolExpr(ParseState *pstate, BoolExpr *b);
@@ -634,9 +636,7 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 		promoted = resolvePromotedProperty(pstate, res,
 										   strVal(linitial(fields)), location);
 		if (promoted != NULL)
-			return (Node *) makeFuncExpr(F_CYPHER_TO_JSONB, JSONBOID,
-										 list_make1(promoted), InvalidOid,
-										 InvalidOid, COERCE_EXPLICIT_CALL);
+			return promoted;
 	}
 
 	res = filterAccessArg(pstate, res, location, "map");
@@ -2125,6 +2125,52 @@ unboxCypherToJsonb(Node *n)
 }
 
 /*
+ * isPromotedPropertyRead
+ *		Did this expression come from reading a promoted property?
+ *
+ * A property read resolves to the typed column itself, so by the time a
+ * comparison sees it there is nothing about an integer to say it was once
+ * n.age.  It has to be recognised from where it points: either the column is
+ * registered as a label's promoted property, or -- once the read has crossed a
+ * projection -- it is the hidden column that carried it across.
+ *
+ * Cypher compares by type, and that rule only applies to a property.  Without
+ * this the comparison is left to ordinary resolution, which will happily coerce
+ * a string literal to the column's type and answer that 40 equals '40'.
+ */
+static bool
+isPromotedPropertyRead(ParseState *pstate, Node *expr)
+{
+	Var		   *var;
+	RangeTblEntry *rte;
+
+	if (expr == NULL || !IsA(expr, Var))
+		return false;
+
+	var = (Var *) expr;
+	if (var->varattno < 1)
+		return false;
+
+	rte = GetRTEByRangeTablePosn(pstate, var->varno, var->varlevelsup);
+
+	if (rte->rtekind == RTE_RELATION && OidIsValid(rte->relid))
+		return (get_label_property_name_by_attnum(rte->relid,
+												  var->varattno) != NULL);
+
+	if (rte->rtekind == RTE_SUBQUERY &&
+		var->varattno <= list_length(rte->eref->colnames))
+	{
+		char	   *colname = strVal(list_nth(rte->eref->colnames,
+											  var->varattno - 1));
+
+		return (strncmp(colname, PROMOTED_SENTINEL_PREFIX,
+						strlen(PROMOTED_SENTINEL_PREFIX)) == 0);
+	}
+
+	return false;
+}
+
+/*
  * transformPromotedComparison
  *
  * A promoted property access arrives at a comparison boxed as
@@ -2136,6 +2182,9 @@ unboxCypherToJsonb(Node *n)
  * yields the correct type-aware result (values of different Cypher types are
  * never equal, and order by type rank).  Returns NULL when neither side is a
  * promoted column, leaving every ordinary comparison exactly as it was.
+ *
+ * A read that resolves to the typed column directly carries no box, so such an
+ * operand is recognised by isPromotedPropertyRead() instead.
  */
 Node *
 transformPromotedComparison(ParseState *pstate, List *opname,
@@ -2147,7 +2196,9 @@ transformPromotedComparison(ParseState *pstate, List *opname,
 	Node	   *ru;
 	CypherScalarFamily lf;
 
-	if (lx == NULL && rx == NULL)
+	if (lx == NULL && rx == NULL &&
+		!isPromotedPropertyRead(pstate, l) &&
+		!isPromotedPropertyRead(pstate, r))
 		return NULL;
 
 	lu = (lx != NULL) ? lx : l;
@@ -3589,6 +3640,14 @@ resolveItemList(ParseState *pstate, List *items)
 		if (restype == BOOLOID ||
 			is_graph_type(restype) ||
 			type_is_array(restype))
+			continue;
+
+		/*
+		 * A promoted property is returned in the column's own type.  Boxing it
+		 * back to jsonb here would undo the whole point of reading it from a
+		 * typed column: the conversion costs more than the read.
+		 */
+		if (isPromotedPropertyRead(pstate, (Node *) te->expr))
 			continue;
 
 		if (!te->resjunk)
