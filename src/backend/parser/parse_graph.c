@@ -3736,7 +3736,14 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList,
 			{
 				EntityInfo *_ei = getEntityInfo(pstate, varname, T_CypherNode, false);
 
-				if (_ei->labname == NULL || strcmp(_ei->labname, _labname) != 0)
+				/*
+				 * A name carried in from an earlier clause need not belong to a
+				 * pattern element at all -- it can just as well have been bound
+				 * by WITH or UNWIND -- and then there is no earlier label for
+				 * this one to agree with.
+				 */
+				if (_ei == NULL || _ei->labname == NULL ||
+					strcmp(_ei->labname, _labname) != 0)
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),
 							 errmsg("label on variable from previous clauses is not allowed"),
@@ -3767,7 +3774,15 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList,
 			EntityInfo *_ei = getEntityInfo(pstate, varname, T_CypherNode, false);
 			char	   *_labname = getCypherName(cnode->label);
 
-			if ((_labname != NULL && (_ei->labname == NULL || strcmp(_ei->labname, _labname) != 0)) ||
+			/*
+			 * The name already resolves to a column here, and no earlier
+			 * element of the pattern claims it -- so it belongs to something
+			 * else in scope, such as a column of an element matched earlier in
+			 * this same clause, and cannot also name a labelled element.
+			 */
+			if ((_labname != NULL &&
+				 (_ei == NULL || _ei->labname == NULL ||
+				  strcmp(_ei->labname, _labname) != 0)) ||
 				exprType((Node *) col) != VERTEXOID)
 				ereport(ERROR,
 						(errcode(ERRCODE_DUPLICATE_ALIAS),
@@ -3914,7 +3929,14 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 			{
 				EntityInfo *_ei = getEntityInfo(pstate, varname, T_CypherRel, false);
 
-				if (_ei->labname == NULL || strcmp(_ei->labname, _typname) != 0)
+				/*
+				 * A name carried in from an earlier clause need not belong to a
+				 * pattern element at all -- it can just as well have been bound
+				 * by WITH or UNWIND -- and then there is no earlier type for
+				 * this one to agree with.
+				 */
+				if (_ei == NULL || _ei->labname == NULL ||
+					strcmp(_ei->labname, _typname) != 0)
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),
 							 errmsg("label on variable from previous clauses is not allowed"),
@@ -3945,7 +3967,15 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 			EntityInfo *_ei = getEntityInfo(pstate, varname, T_CypherRel, false);
 			char	   *_labname = getEntityLabname((Node *) crel);
 
-			if ((_labname != NULL && (_ei->labname == NULL || strcmp(_ei->labname, _labname) != 0)) ||
+			/*
+			 * The name already resolves to a column here, and no earlier
+			 * element of the pattern claims it -- so it belongs to something
+			 * else in scope, such as a column of an element matched earlier in
+			 * this same clause, and cannot also name a typed relationship.
+			 */
+			if ((_labname != NULL &&
+				 (_ei == NULL || _ei->labname == NULL ||
+				  strcmp(_ei->labname, _labname) != 0)) ||
 				exprType((Node *) col) != EDGEOID)
 				ereport(ERROR,
 						(errcode(ERRCODE_DUPLICATE_ALIAS),
