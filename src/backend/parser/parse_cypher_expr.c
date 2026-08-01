@@ -91,6 +91,7 @@ static List *func_get_best_args(ParseState *pstate, List *args,
 								FuncCandidateList candidate);
 static Node *transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c);
 static Node *transformIndirection(ParseState *pstate, A_Indirection *indir);
+static List *indirectionPropertyNames(List *indirection);
 static Node *makeArrayIndex(ParseState *pstate, Node *idx, Node *arr, bool exclusive);
 static Node *adjustListIndexType(ParseState *pstate, Node *idx);
 static Node *transformAExprOp(ParseState *pstate, A_Expr *a, bool keep_operands);
@@ -1838,6 +1839,59 @@ transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c)
 	return (Node *) newc;
 }
 
+/*
+ * indirectionPropertyNames
+ *		The property names an indirection spells out, or NIL if it spells
+ *		something else.
+ *
+ * Cypher writes the same property three ways -- n.k, n['k'], and inside
+ * size(n.k) or exists(n.k) -- and only the first arrives as a name.  The others
+ * arrive as an indirection, so the names have to be read back out of it before
+ * they can be resolved the way a name is.
+ *
+ * A subscript counts only when it is a literal string, which is the only form
+ * that names one property.  A slice, a computed subscript or an index into a
+ * list names no property, and gives NIL.
+ */
+static List *
+indirectionPropertyNames(List *indirection)
+{
+	List	   *names = NIL;
+	ListCell   *li;
+
+	foreach(li, indirection)
+	{
+		Node	   *i = lfirst(li);
+
+		if (IsA(i, String))
+		{
+			names = lappend(names, i);
+			continue;
+		}
+
+		if (IsA(i, A_Indices))
+		{
+			A_Indices  *ind = (A_Indices *) i;
+			A_Const    *key;
+
+			if (ind->is_slice || ind->lidx != NULL || ind->uidx == NULL ||
+				!IsA(ind->uidx, A_Const))
+				return NIL;
+
+			key = (A_Const *) ind->uidx;
+			if (key->isnull || !IsA(&key->val, String))
+				return NIL;
+
+			names = lappend(names, makeString(strVal(&key->val)));
+			continue;
+		}
+
+		return NIL;
+	}
+
+	return names;
+}
+
 static Node *
 transformIndirection(ParseState *pstate, A_Indirection *indir)
 {
@@ -1851,6 +1905,21 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 	res = transformCypherExprRecurse(pstate, indir->arg);
 	restype = exprType(res);
 	location = exprLocation(res);
+
+	/*
+	 * A property of a node or a relationship is resolved by transformFields()
+	 * whichever way it was written, so that n['k'], size(n.k) and exists(n.k)
+	 * read the property from wherever n.k reads it -- including from a promoted
+	 * column, which this path would otherwise walk straight past and read out of
+	 * the property map instead.
+	 */
+	if (restype == VERTEXOID || restype == EDGEOID)
+	{
+		List	   *names = indirectionPropertyNames(indir->indirection);
+
+		if (names != NIL)
+			return transformFields(pstate, res, names, location);
+	}
 
 	/* record/composite or array type */
 	foreach(li, indir->indirection)

@@ -2560,6 +2560,48 @@ MATCH (n:setmap) RETURN properties(n), n.age;
 MATCH (n:setmap) SET n = to_jsonb('{"age": 9}'::json);
 MATCH (n:setmap) RETURN properties(n), n.age;
 
+-- ============================================================================
+-- SECTION 20 -- A property named some other way resolves the same way
+--
+-- Cypher writes the same property three ways: n.k, n['k'], and inside a
+-- size()/exists() call.  Only the first arrives at the parser as a name; the
+-- others arrive as an indirection.  All three must reach the promoted column,
+-- because after the value stops being kept in the property map a read that
+-- went to the map would answer nothing.  A key with no column, and a subscript
+-- that is not a literal string, still read the map.
+-- ============================================================================
+SET enable_property_promotion = on;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (n:doc) RETURN n['age'];
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (n:doc) RETURN size(n.title);
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (n:doc) WHERE exists(n.age) RETURN count(*);
+
+-- a key the label does not promote still reads the property map
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (n:doc) RETURN n['name'];
+
+-- a subscript that is not a literal string names no property
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (n:doc) RETURN n[n.title];
+
+-- and the answers agree with the name form, on and off
+MATCH (n:doc) RETURN n['age'] AS a ORDER BY a;
+MATCH (n:doc) RETURN n.age AS a ORDER BY a;
+MATCH (n:doc) RETURN size(n.title) AS s ORDER BY s;
+MATCH (n:doc) WHERE exists(n.age) RETURN count(*) AS ex;
+MATCH (n:doc) WHERE exists(n.nosuchkey) RETURN count(*) AS none;
+
+SET enable_property_promotion = off;
+MATCH (n:doc) RETURN n['age'] AS a ORDER BY a;
+MATCH (n:doc) RETURN n.age AS a ORDER BY a;
+MATCH (n:doc) RETURN size(n.title) AS s ORDER BY s;
+MATCH (n:doc) WHERE exists(n.age) RETURN count(*) AS ex;
+MATCH (n:doc) WHERE exists(n.nosuchkey) RETURN count(*) AS none;
+SET enable_property_promotion = on;
+
 -- ----------------------------------------------------------------------------
 -- CLEANUP
 -- ----------------------------------------------------------------------------
