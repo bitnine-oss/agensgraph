@@ -665,6 +665,18 @@ RETURN a.sec AS a, b.sec AS b, length(p) AS len,
        (nodes(p)[length(p)]).sec = b.sec AS last_node_is_end
 ORDER BY a, b;
 
+-- A property constraint on a variable-length relationship is carried on the
+-- pattern rather than in the query, so it has no row of another element to read
+-- from.  Constants are fine; a reference to another element is refused, with
+-- the comparison that does work suggested in its place.
+MATCH (a:time)-[x:goes*1..2 {sec: 1}]->(b:time) RETURN count(*);
+MATCH (a:time)-[x:goes*1..2 {sec: 1 + 1}]->(b:time) RETURN count(*);
+MATCH (a:time) MATCH (c:time)-[x:goes*1..2 {sec: a.sec}]->(d:time) RETURN count(*);
+MATCH (a:time) WITH a MATCH (c:time)-[x:goes*1..2 {sec: a.sec}]->(d:time) RETURN count(*);
+-- the form the hint points at
+MATCH (a:time) MATCH (c:time)-[x:goes*1..2]->(d:time)
+WHERE c.sec = a.sec RETURN count(*);
+
 -- VLE with graph path
 MATCH p = (:time)-[:goes*0]->(:time)
 RETURN properties(nodes(p)[0]) AS first, properties(vertices(p)[1]) AS second, properties(relationships(p)[0]) AS rel;
