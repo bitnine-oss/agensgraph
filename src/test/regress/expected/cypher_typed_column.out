@@ -5567,13 +5567,73 @@ MATCH (a:vardoc), (b:vardoc) RETURN count(*);
 (1 row)
 
 -- ----------------------------------------------------------------------------
+-- A WRITE THAT WOULD REPLACE THE PROPERTY MAP WITH SOMETHING THAT IS NOT AN
+-- OBJECT
+--
+-- Creating an element already refuses this.  A write to one that exists has to
+-- refuse it for the same reason, and has more to lose: the map is where every
+-- property lives, so a row left holding a scalar answers nothing for the keys it
+-- used to have, and every column derived from the map goes null with them.
+--
+-- A Cypher string literal is a string, so casting one to jsonb gives a jsonb
+-- string, not the object its text spells out.  The map forms that do work are a
+-- Cypher map literal and an expression that really is a jsonb object.
+-- ----------------------------------------------------------------------------
+CREATE VLABEL setmap (age int GENERATED);
+CREATE (:setmap {age: 7, name: 'keep'});
+MATCH (n:setmap) RETURN properties(n), n.age;
+         properties         | age 
+----------------------------+-----
+ {"age": 7, "name": "keep"} | 7
+(1 row)
+
+MATCH (n:setmap) SET n = 'hello'::jsonb;
+ERROR:  jsonb object is expected for property map
+MATCH (n:setmap) SET n = to_jsonb(42);
+ERROR:  jsonb object is expected for property map
+MATCH (n:setmap) SET n = 'null'::jsonb;
+ERROR:  jsonb object is expected for property map
+MATCH (n:setmap) SET n = jsonb_build_array(1, 2);
+ERROR:  jsonb object is expected for property map
+MERGE (n:setmap {age: 7}) ON MATCH SET n = jsonb_build_array(1, 2);
+ERROR:  jsonb object is expected for property map
+-- none of them touched the row
+MATCH (n:setmap) RETURN properties(n), n.age;
+         properties         | age 
+----------------------------+-----
+ {"age": 7, "name": "keep"} | 7
+(1 row)
+
+-- the forms that do name a map still work, and keep the column in step
+MATCH (n:setmap) SET n = {age: 8, name: 'new'};
+MATCH (n:setmap) RETURN properties(n), n.age;
+        properties         | age 
+---------------------------+-----
+ {"age": 8, "name": "new"} | 8
+(1 row)
+
+MATCH (n:setmap) SET n += {extra: 1};
+MATCH (n:setmap) RETURN properties(n), n.age;
+              properties               | age 
+---------------------------------------+-----
+ {"age": 8, "name": "new", "extra": 1} | 8
+(1 row)
+
+MATCH (n:setmap) SET n = to_jsonb('{"age": 9}'::json);
+MATCH (n:setmap) RETURN properties(n), n.age;
+ properties | age 
+------------+-----
+ {"age": 9} | 9
+(1 row)
+
+-- ----------------------------------------------------------------------------
 -- CLEANUP
 -- ----------------------------------------------------------------------------
 RESET enable_graph_ddl;
 RESET enable_property_promotion;
 RESET enable_seqscan;
 DROP GRAPH tc CASCADE;
-NOTICE:  drop cascades to 68 other objects
+NOTICE:  drop cascades to 69 other objects
 DETAIL:  drop cascades to sequence tc.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -5642,4 +5702,5 @@ drop cascades to elabel gate_e2
 drop cascades to vlabel gatekid
 drop cascades to vlabel vardoc
 drop cascades to elabel varrel
+drop cascades to vlabel setmap
 RESET graph_path;

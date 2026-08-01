@@ -36,6 +36,7 @@ static Datum GraphTableTupleUpdate(ModifyGraphState *mgstate,
 								   int attidx);
 static void fillLabelTupleSlot(TupleTableSlot *elemTupleSlot, Relation rel,
 							   Oid tts_value_type, Datum tts_value);
+static void checkPropMapIsObject(Datum prop_map);
 static void takeBackRecheckSlots(ModifyGraphState *mgstate);
 static TupleTableSlot *lendRecheckSlot(ModifyGraphState *mgstate,
 									   Relation rel, Index rti);
@@ -340,11 +341,33 @@ fillLabelTupleSlot(TupleTableSlot *elemTupleSlot, Relation rel,
 		tts_values[Anum_ag_edge_properties - 1] = getEdgePropDatum(tts_value);
 	}
 
+	checkPropMapIsObject(tts_values[(tts_value_type == VERTEXOID ?
+									 Anum_ag_vertex_properties :
+									 Anum_ag_edge_properties) - 1]);
+
 	markUnassignedLabelColsNull(elemTupleSlot,
 								tts_value_type == VERTEXOID ?
 								Anum_table_vertex_prop_map :
 								Anum_table_edge_prop_map);
 	ExecStoreVirtualTuple(elemTupleSlot);
+}
+
+/*
+ * checkPropMapIsObject
+ *
+ * A property map is an object.  Anything else -- a scalar, an array -- has no
+ * properties to store, so a row built from it would answer nothing for every
+ * key it used to hold, and every column derived from the map would go null
+ * along with it.  Creating an element already refuses this; a write that
+ * replaces the map of one that exists has to refuse it for the same reason.
+ */
+static void
+checkPropMapIsObject(Datum prop_map)
+{
+	if (!JB_ROOT_IS_OBJECT(DatumGetJsonbP(prop_map)))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("jsonb object is expected for property map")));
 }
 
 /*
@@ -920,6 +943,11 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 
 		ctid = (ItemPointer) DatumGetPointer(getEdgeTidDatum(elem_datum));
 	}
+
+	checkPropMapIsObject(elemTupleSlot->tts_values[(elemtype == VERTEXOID ?
+													Anum_ag_vertex_properties :
+													Anum_ag_edge_properties) - 1]);
+
 	markUnassignedLabelColsNull(elemTupleSlot,
 								elemtype == VERTEXOID ?
 								Anum_table_vertex_prop_map :

@@ -2416,6 +2416,41 @@ MATCH (x:vardoc), (plaincol:vardoc) RETURN count(*);
 MATCH (a:vardoc), (b:vardoc) RETURN count(*);
 
 -- ----------------------------------------------------------------------------
+-- A WRITE THAT WOULD REPLACE THE PROPERTY MAP WITH SOMETHING THAT IS NOT AN
+-- OBJECT
+--
+-- Creating an element already refuses this.  A write to one that exists has to
+-- refuse it for the same reason, and has more to lose: the map is where every
+-- property lives, so a row left holding a scalar answers nothing for the keys it
+-- used to have, and every column derived from the map goes null with them.
+--
+-- A Cypher string literal is a string, so casting one to jsonb gives a jsonb
+-- string, not the object its text spells out.  The map forms that do work are a
+-- Cypher map literal and an expression that really is a jsonb object.
+-- ----------------------------------------------------------------------------
+CREATE VLABEL setmap (age int GENERATED);
+CREATE (:setmap {age: 7, name: 'keep'});
+
+MATCH (n:setmap) RETURN properties(n), n.age;
+
+MATCH (n:setmap) SET n = 'hello'::jsonb;
+MATCH (n:setmap) SET n = to_jsonb(42);
+MATCH (n:setmap) SET n = 'null'::jsonb;
+MATCH (n:setmap) SET n = jsonb_build_array(1, 2);
+MERGE (n:setmap {age: 7}) ON MATCH SET n = jsonb_build_array(1, 2);
+
+-- none of them touched the row
+MATCH (n:setmap) RETURN properties(n), n.age;
+
+-- the forms that do name a map still work, and keep the column in step
+MATCH (n:setmap) SET n = {age: 8, name: 'new'};
+MATCH (n:setmap) RETURN properties(n), n.age;
+MATCH (n:setmap) SET n += {extra: 1};
+MATCH (n:setmap) RETURN properties(n), n.age;
+MATCH (n:setmap) SET n = to_jsonb('{"age": 9}'::json);
+MATCH (n:setmap) RETURN properties(n), n.age;
+
+-- ----------------------------------------------------------------------------
 -- CLEANUP
 -- ----------------------------------------------------------------------------
 RESET enable_graph_ddl;
