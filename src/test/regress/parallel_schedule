@@ -176,6 +176,9 @@ test: cypher_graphmeta_prune
 # run unused-endpoint elision
 test: cypher_endpoint_elision
 
+# run element identity comparison
+test: cypher_element_identity
+
 # run cypher ddl test
 test: cypher_ddl
 

@@ -2346,10 +2346,10 @@ WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
  Subquery Scan on _agens_default_s
    Output: _agens_default_s.x1
    ->  Sort
-         Output: (x.edges[1]), (x.edges[2])
-         Sort Key: (x.edges[2])
+         Output: (x.edges[1]), NULL::edge, (x.edges[2].id)
+         Sort Key: (x.edges[2].id)
          ->  Nested Loop
-               Output: x.edges[1], x.edges[2]
+               Output: x.edges[1], NULL::edge, x.edges[2].id
                Inner Unique: true
                ->  Nested Loop
                      Output: x.edges, x."end"
