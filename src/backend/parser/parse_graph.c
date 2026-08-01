@@ -231,6 +231,7 @@ static Node *genVLEEdgeSubselect(ParseState *pstate, CypherRel *crel,
 static RangeSubselect *genInhEdge(RangeVar *r, Oid parentoid);
 static List *genQualifiedName(char *name1, char *name2);
 static Node *genVLEQual(char *alias, Node *propMap);
+static bool vlePropMapReadsAnotherElement(Node *node, void *context);
 static ParseNamespaceItem *transformVLEtoNSItem(ParseState *pstate, CypherRel *crel,
 												SelectStmt *vle, Alias *alias);
 static bool isZeroLengthVLE(CypherRel *crel);
@@ -4771,6 +4772,23 @@ genInhEdge(RangeVar *r, Oid parentoid)
 	return sub;
 }
 
+/*
+ * vlePropMapReadsAnotherElement
+ *
+ * Whether a variable-length relationship's property constraint refers to a row
+ * other than the relationship being examined -- an element matched earlier, or
+ * anything else the surrounding query supplies.
+ */
+static bool
+vlePropMapReadsAnotherElement(Node *node, void *context)
+{
+	if (node == NULL)
+		return false;
+	if (IsA(node, Var))
+		return true;
+	return expression_tree_walker(node, vlePropMapReadsAnotherElement, context);
+}
+
 static ParseNamespaceItem *
 transformVLEtoNSItem(ParseState *pstate, CypherRel *crel, SelectStmt *vle, Alias *alias)
 {
@@ -4796,9 +4814,26 @@ transformVLEtoNSItem(ParseState *pstate, CypherRel *crel, SelectStmt *vle, Alias
 	Assert(qry->commandType == CMD_SELECT);
 	qry->commandType = CMD_SELECT;
 	if (crel->prop_map)
+	{
 		crel->prop_map = transformCypherExpr(pstate,
 											 crel->prop_map,
 											 EXPR_KIND_WHERE);
+
+		/*
+		 * The constraint is carried to the traversal on the pattern itself,
+		 * outside the query the planner rewrites, so nothing renumbers what it
+		 * refers to and there is no row of another element to read it from
+		 * anyway -- the traversal is one relationship at a time.  A reference
+		 * to one would be read from nothing at all, so refuse it rather than
+		 * let it reach the traversal.
+		 */
+		if (vlePropMapReadsAnotherElement(crel->prop_map, NULL))
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("a property constraint on a variable-length relationship cannot read another element"),
+					 errhint("Compare it in WHERE, after the pattern."),
+					 parser_errposition(pstate, exprLocation(crel->prop_map))));
+	}
 
 	qry->g_vle_rel = (Node *) crel;
 
