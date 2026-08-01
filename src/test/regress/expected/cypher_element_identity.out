@@ -315,6 +315,151 @@ MATCH (x:p), (y:p) WHERE x.n = 'a' AND y.n = 'b'
  t
 (1 row)
 
+--
+-- Grouping a node or a relationship
+--
+-- the key is the identity, so the hash table holds a graphid rather than an
+-- element and its whole property map
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (x:p)-[:k]->() RETURN x, count(*);
+                                                   QUERY PLAN                                                   
+----------------------------------------------------------------------------------------------------------------
+ HashAggregate
+   Output: ROW(x.id, x.properties, x.ctid)::vertex, cypher_to_jsonb(count(*)), x.id
+   Group Key: x.id
+   ->  Hash Join
+         Output: x.id, x.properties, x.ctid
+         Inner Unique: true
+         Hash Cond: ("<0000000015>".start = x.id)
+         ->  Seq Scan on ei.k "<0000000015>"
+               Output: "<0000000015>".id, "<0000000015>".start, "<0000000015>"."end", "<0000000015>".properties
+         ->  Hash
+               Output: x.id, x.properties, x.ctid
+               ->  Seq Scan on ei.p x
+                     Output: x.id, x.properties, x.ctid
+(13 rows)
+
+MATCH (x:p)-[:k]->() RETURN x.n, count(*) ORDER BY x.n;
+  n  | count 
+-----+-------
+ "a" | 2
+ "b" | 1
+(2 rows)
+
+MATCH (x:p)-[:k]->() WITH id(x) AS i, count(*) AS c RETURN c ORDER BY c;
+ c 
+---
+ 1
+ 2
+(2 rows)
+
+-- an element that nothing after the grouping reads is not built at all: it is
+-- no longer a key, so the projection carrying it can be dropped outright
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (x:p)-[:k]->() WITH x, count(*) AS c RETURN max(c);
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   Output: cypher_to_jsonb(max((count(*))))
+   ->  HashAggregate
+         Output: NULL::vertex, count(*), x.id
+         Group Key: x.id
+         ->  Hash Join
+               Output: x.id
+               Inner Unique: true
+               Hash Cond: ("<0000000021>".start = x.id)
+               ->  Seq Scan on ei.k "<0000000021>"
+                     Output: "<0000000021>".id, "<0000000021>".start, "<0000000021>"."end", "<0000000021>".properties
+               ->  Hash
+                     Output: x.id
+                     ->  Seq Scan on ei.p x
+                           Output: x.id
+(15 rows)
+
+MATCH (x:p)-[:k]->() WITH x, count(*) AS c RETURN max(c);
+ max 
+-----
+ 2
+(1 row)
+
+-- an element the query does go on to read is still projected
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (x:p)-[:k]->() WITH x, count(*) AS c RETURN x.n, c;
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on _agens_default_s
+   Output: (_agens_default_s.x).properties.'n'::text, cypher_to_jsonb(_agens_default_s.c)
+   ->  HashAggregate
+         Output: ROW(x.id, x.properties, x.ctid)::vertex, count(*), x.id
+         Group Key: x.id
+         ->  Hash Join
+               Output: x.id, x.properties, x.ctid
+               Inner Unique: true
+               Hash Cond: ("<0000000025>".start = x.id)
+               ->  Seq Scan on ei.k "<0000000025>"
+                     Output: "<0000000025>".id, "<0000000025>".start, "<0000000025>"."end", "<0000000025>".properties
+               ->  Hash
+                     Output: x.id, x.properties, x.ctid
+                     ->  Seq Scan on ei.p x
+                           Output: x.id, x.properties, x.ctid
+(15 rows)
+
+MATCH (x:p)-[:k]->() WITH x, count(*) AS c RETURN x.n, c ORDER BY x.n;
+  n  | c 
+-----+---
+ "a" | 2
+ "b" | 1
+(2 rows)
+
+-- relationships group the same way
+MATCH ()-[r:k]->() RETURN r.w, count(*) ORDER BY r.w;
+ w | count 
+---+-------
+ 1 | 3
+(1 row)
+
+-- an element that is not a plain column reference keeps the wider key: reaching
+-- its identity would mean holding on to whatever it was read out of as well
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:p)-[x:k*1..2]->(b:p) WITH x[0] AS e, count(*) AS c RETURN max(c);
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
+ Aggregate
+   Output: cypher_to_jsonb(max((count(*))))
+   ->  GroupAggregate
+         Output: (x.edges[1]), count(*)
+         Group Key: (x.edges[1])
+         ->  Sort
+               Output: (x.edges[1])
+               Sort Key: (x.edges[1])
+               ->  Hash Join
+                     Output: x.edges[1]
+                     Inner Unique: true
+                     Hash Cond: (x."end" = b.id)
+                     ->  Nested Loop
+                           Output: x.edges, x."end"
+                           ->  Seq Scan on ei.p a
+                                 Output: a.id, a.properties
+                           ->  Subquery Scan on x
+                                 Output: x.start, x."end", x.ids, x.edges
+                                 ->  Graph VLE on k [1..2]
+                                       Direction: outgoing (->)
+                                       Edge Labels:
+                                         k
+                                       ->  Result
+                                             Output: a.id, a.id, '{}'::graphid[], '[]'::edge[]
+                     ->  Hash
+                           Output: b.id
+                           ->  Seq Scan on ei.p b
+                                 Output: b.id
+(28 rows)
+
+MATCH (a:p)-[x:k*1..2]->(b:p) WITH x[0] AS e, count(*) AS c RETURN max(c);
+ max 
+-----
+ 2
+(1 row)
+
 DROP GRAPH ei CASCADE;
 NOTICE:  drop cascades to 6 other objects
 DETAIL:  drop cascades to sequence ei.ag_label_seq

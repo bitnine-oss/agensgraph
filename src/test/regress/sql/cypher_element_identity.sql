@@ -137,4 +137,39 @@ MATCH (x:p), (y:p) WHERE x.n = 'a' AND y.n = 'a'
 MATCH (x:p), (y:p) WHERE x.n = 'a' AND y.n = 'b'
   RETURN nullIf(x, y) = x AS differs_yields_first;
 
+--
+-- Grouping a node or a relationship
+--
+
+-- the key is the identity, so the hash table holds a graphid rather than an
+-- element and its whole property map
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (x:p)-[:k]->() RETURN x, count(*);
+
+MATCH (x:p)-[:k]->() RETURN x.n, count(*) ORDER BY x.n;
+MATCH (x:p)-[:k]->() WITH id(x) AS i, count(*) AS c RETURN c ORDER BY c;
+
+-- an element that nothing after the grouping reads is not built at all: it is
+-- no longer a key, so the projection carrying it can be dropped outright
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (x:p)-[:k]->() WITH x, count(*) AS c RETURN max(c);
+
+MATCH (x:p)-[:k]->() WITH x, count(*) AS c RETURN max(c);
+
+-- an element the query does go on to read is still projected
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (x:p)-[:k]->() WITH x, count(*) AS c RETURN x.n, c;
+
+MATCH (x:p)-[:k]->() WITH x, count(*) AS c RETURN x.n, c ORDER BY x.n;
+
+-- relationships group the same way
+MATCH ()-[r:k]->() RETURN r.w, count(*) ORDER BY r.w;
+
+-- an element that is not a plain column reference keeps the wider key: reaching
+-- its identity would mean holding on to whatever it was read out of as well
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:p)-[x:k*1..2]->(b:p) WITH x[0] AS e, count(*) AS c RETURN max(c);
+
+MATCH (a:p)-[x:k*1..2]->(b:p) WITH x[0] AS e, count(*) AS c RETURN max(c);
+
 DROP GRAPH ei CASCADE;

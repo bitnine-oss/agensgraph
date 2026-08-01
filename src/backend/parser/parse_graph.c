@@ -168,6 +168,8 @@ static void checkCypherLetItems(ParseState *pstate, List *targetList);
 static void updateSortOperatorsForJsonb(List *sortClause, List **targetList,
 										bool allowUnbox, bool allowNativeUnbox);
 static void unboxPromotedGroupKeys(List *groupClause, List **targetList);
+static void groupElementsByIdentity(ParseState *pstate, Query *qry);
+static bool sortgrouprefIsUsed(Index ref, List *clauses);
 static void setDefaultCollationOnKeys(List *clause, List *targetList);
 static void updateGroupingOperatorsForJsonb(List *clause, List *targetList);
 
@@ -656,6 +658,147 @@ updateSortOperatorsForJsonb(List *sortClause, List **targetList,
 }
 
 /*
+ * groupElementsByIdentity
+ *		Cypher groups implicitly, on every projected item that is not an
+ *		aggregate, so "RETURN n, count(*)" groups on the whole node: hashing a
+ *		composite, comparing composites, and holding each group's property map
+ *		in the hash table for the length of the aggregation.  vertex_hash and
+ *		vertex_cmp read the graphid and nothing else, so grouping on the
+ *		identity forms exactly the same groups from a fixed-width key.
+ *
+ *		The projection is untouched.  The element stays the value the query
+ *		returns, and the executor carries it through the aggregation the way it
+ *		carries any column a grouping key determines.
+ *
+ *		The narrower key is worth little by itself -- the element is still built
+ *		once per group.  What it buys is the release below: an element that was
+ *		only ever a grouping key is left read by nothing, so a query that does
+ *		not go on to use it does not build it at all.
+ *
+ *		Two rows can only share a group while differing in what is projected if
+ *		they share an identity, and grouping on the whole element already put
+ *		them together for that same reason -- so which one is answered for is as
+ *		arbitrary as it was, and no more so.
+ *
+ *		This runs after parseCheckAggregates deliberately.  That check reads the
+ *		grouping the query wrote, where the element is a grouping key and the
+ *		projection is trivially valid.  Substituting before it would present the
+ *		element as ungrouped, and the check would reject the query outright: a
+ *		Cypher projection reaches its element through a subquery, and
+ *		functional-dependency grouping is only available on a base relation.
+ */
+static void
+groupElementsByIdentity(ParseState *pstate, Query *qry)
+{
+	List	  **targetList = &qry->targetList;
+	ListCell   *lc;
+
+	foreach(lc, qry->groupClause)
+	{
+		SortGroupClause *grpcl = (SortGroupClause *) lfirst(lc);
+		TargetEntry *tle;
+		TargetEntry *ntle;
+		Node	   *expr;
+		Node	   *id;
+		Index		oldref;
+		Oid			sortop;
+		Oid			eqop;
+		bool		hashable;
+
+		tle = get_sortgroupref_tle(grpcl->tleSortGroupRef, *targetList);
+		if (tle == NULL)
+			continue;
+
+		/*
+		 * The check above has already re-pointed a grouped item at the grouping
+		 * step, so read through that reference to the expression which actually
+		 * builds the element.
+		 */
+		expr = (Node *) tle->expr;
+		if (IsA(expr, Var))
+		{
+			Var		   *var = (Var *) expr;
+			RangeTblEntry *rte = GetRTEByRangeTablePosn(pstate, var->varno,
+														var->varlevelsup);
+
+			if (rte->rtekind == RTE_GROUP &&
+				var->varattno > 0 &&
+				var->varattno <= list_length(rte->groupexprs))
+				expr = (Node *) list_nth(rte->groupexprs, var->varattno - 1);
+		}
+
+		/*
+		 * Only where the element is a plain column reference.  Reading the
+		 * identity out of one costs nothing once the projection it came from is
+		 * flattened -- the row construct is right there and the field selection
+		 * folds away.  Reading it out of anything else, an element picked out of
+		 * an array say, means keeping whatever the element was read out of alive
+		 * beside it all the way through, which costs more than a narrower key
+		 * saves.
+		 */
+		if (!IsA(expr, Var))
+			continue;
+
+		id = elementIdentity((Node *) copyObject(expr));
+		if (id == NULL)
+			continue;
+
+		get_sort_group_operators(GRAPHIDOID,
+								 false, true, false,
+								 &sortop, &eqop, NULL,
+								 &hashable);
+
+		/* keep the element projected; group a resjunk copy of its identity */
+		ntle = makeTargetEntry((Expr *) id, list_length(*targetList) + 1,
+							   NULL, true);
+		assignSortGroupRef(ntle, *targetList);
+		*targetList = lappend(*targetList, ntle);
+
+		oldref = grpcl->tleSortGroupRef;
+		grpcl->tleSortGroupRef = ntle->ressortgroupref;
+		grpcl->eqop = eqop;
+		grpcl->sortop = sortop;
+		grpcl->reverse_sort = false;
+		grpcl->nulls_first = false;
+		grpcl->hashable = hashable;
+
+		/*
+		 * The element is not a key of anything now.  Release the mark that said
+		 * it was: while an item carries one it counts as read by a sort or
+		 * grouping clause, so a projection nothing downstream reads would still
+		 * be built and carried rather than dropped.
+		 */
+		if (!sortgrouprefIsUsed(oldref, qry->groupClause) &&
+			!sortgrouprefIsUsed(oldref, qry->sortClause) &&
+			!sortgrouprefIsUsed(oldref, qry->distinctClause))
+			tle->ressortgroupref = 0;
+	}
+}
+
+/*
+ * sortgrouprefIsUsed
+ *		Does any clause in the list still key on this target entry?
+ */
+static bool
+sortgrouprefIsUsed(Index ref, List *clauses)
+{
+	ListCell   *lc;
+
+	if (ref == 0)
+		return true;
+
+	foreach(lc, clauses)
+	{
+		SortGroupClause *sgc = lfirst(lc);
+
+		if (sgc->tleSortGroupRef == ref)
+			return true;
+	}
+
+	return false;
+}
+
+/*
  * unboxPromotedGroupKeys
  *		A promoted property is projected as cypher_to_jsonb(column), so the
  *		implicit GROUP BY built from the projection groups on that boxed jsonb
@@ -1085,6 +1228,9 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	qry->rteperminfos = pstate->p_rteperminfos;
 	if (qry->hasAggs)
 		parseCheckAggregates(pstate, qry);
+
+	/* the projection has been checked against it, so a key can narrow now */
+	groupElementsByIdentity(pstate, qry);
 
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 

@@ -94,7 +94,6 @@ static Node *makeArrayIndex(ParseState *pstate, Node *idx, Node *arr, bool exclu
 static Node *adjustListIndexType(ParseState *pstate, Node *idx);
 static Node *transformAExprOp(ParseState *pstate, A_Expr *a, bool keep_operands);
 static Node *transformAExprIn(ParseState *pstate, A_Expr *a);
-static Node *elementIdentity(Node *elem);
 static Node *transformPromotedInList(ParseState *pstate, Node *lexpr, A_Expr *a);
 static Node *transformCypherNullIf(ParseState *pstate, A_Expr *a);
 static Node *unboxCypherToJsonb(Node *n);
@@ -3380,7 +3379,7 @@ findProjectedItem(ParseState *pstate, List *items, const char *name,
  * unique.  Nothing stops the same graphid appearing under two labels, and both
  * forms answer the same either way.
  */
-static Node *
+Node *
 elementIdentity(Node *elem)
 {
 	Oid			elemtype = exprType(elem);

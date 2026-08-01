@@ -52,4 +52,11 @@ extern Node *transformPromotedComparison(ParseState *pstate, List *opname,
 										 Node *l, Node *r, Node *last_srf,
 										 int location);
 
+/*
+ * Read the identity out of a node or a relationship, or return NULL if the
+ * expression is neither.  Comparing, ordering or grouping elements is exactly
+ * comparing, ordering or grouping their identities.
+ */
+extern Node *elementIdentity(Node *elem);
+
 #endif							/* PARSE_CYPHER_EXPR_H */
