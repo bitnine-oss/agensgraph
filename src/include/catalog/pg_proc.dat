@@ -13135,4 +13135,7 @@
 { oid => '8041', descr => 'cypher SINGLE() list predicate (three-valued)',
   proname => 'cypher_single', prorettype => 'bool', proargtypes => 'jsonb',
   prosrc => 'cypher_single' },
+{ oid => '8042', descr => 'text of a property whose value is of the expected kind',
+  proname => 'ag_property_text', prorettype => 'text',
+  proargtypes => 'jsonb text char', prosrc => 'ag_property_text' },
 ]

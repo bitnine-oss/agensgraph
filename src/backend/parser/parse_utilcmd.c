@@ -4740,6 +4740,110 @@ label_prop_is_generated(ColumnDef *col)
 }
 
 /*
+ * useTypedJsonbExtraction
+ *
+ * A promoted column takes its value out of the jsonb bag with ->>, which hands
+ * back the value's *text* -- and text carries no kind.  The string "5" and the
+ * number 5 arrive as the same three characters, so a column of integers answers
+ * 5 for a property holding a string, and a column of text answers "5" for one
+ * holding a number.  Neither is what the property says, and nothing reports it.
+ *
+ * Ask for the kind as well, for the kinds a column's type corresponds to: a
+ * number, a string, or a boolean.  What comes back is still the text, so
+ * everything the column's own type already refuses -- 5.5 or too large an
+ * integer, the wrong number of dimensions for a vector -- it goes on refusing.
+ * A type with no such correspondence, an extension type carried as a list for
+ * instance, is left to its own input function as before.
+ *
+ * Only the extraction the grammar builds for a promoted property is ours to
+ * change.  A generation expression written out in full belongs to whoever wrote
+ * it, and is left exactly as given.
+ */
+static void
+useTypedJsonbExtraction(ColumnDef *col)
+{
+	ListCell   *lc;
+
+	foreach(lc, col->constraints)
+	{
+		Constraint *con = (Constraint *) lfirst(lc);
+		TypeCast   *cast;
+		A_Expr	   *aexpr;
+		ColumnRef  *bag;
+		Oid			typid;
+		int32		typmod;
+		char		expected;
+		A_Const    *kind;
+		FuncCall   *taketyped;
+
+		if (!IsA(con, Constraint) || con->contype != CONSTR_GENERATED)
+			continue;
+
+		if (con->raw_expr == NULL || !IsA(con->raw_expr, TypeCast))
+			continue;
+		cast = (TypeCast *) con->raw_expr;
+		if (cast->arg == NULL || !IsA(cast->arg, A_Expr))
+			continue;
+
+		aexpr = (A_Expr *) cast->arg;
+		if (aexpr->kind != AEXPR_OP ||
+			list_length(aexpr->name) != 1 ||
+			strcmp(strVal(linitial(aexpr->name)), "->>") != 0 ||
+			aexpr->lexpr == NULL || !IsA(aexpr->lexpr, ColumnRef) ||
+			aexpr->rexpr == NULL)
+			continue;
+
+		bag = (ColumnRef *) aexpr->lexpr;
+		if (list_length(bag->fields) != 1 ||
+			!IsA(linitial(bag->fields), String) ||
+			strcmp(strVal(linitial(bag->fields)), AG_ELEM_PROP_MAP) != 0)
+			continue;
+
+		typenameTypeIdAndMod(NULL, col->typeName, &typid, &typmod);
+
+		/*
+		 * A length-limited string type has no failure to report: it truncates
+		 * or pads whatever it is handed to make it fit, so the property and the
+		 * column can hold different values with nothing said about it.
+		 */
+		if (typmod >= 0 &&
+			(getBaseType(typid) == VARCHAROID || getBaseType(typid) == BPCHAROID))
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("a promoted property cannot have a length-limited string type"),
+					 errdetail("Type %s fits a value to its length by truncating or padding it.",
+							   format_type_be(typid)),
+					 errhint("Use text, which stores the property as it is.")));
+
+		switch (TypeCategory(getBaseType(typid)))
+		{
+			case TYPCATEGORY_NUMERIC:
+				expected = 'n';
+				break;
+			case TYPCATEGORY_STRING:
+				expected = 's';
+				break;
+			case TYPCATEGORY_BOOLEAN:
+				expected = 'b';
+				break;
+			default:
+				continue;
+		}
+
+		kind = makeNode(A_Const);
+		kind->val.sval.type = T_String;
+		kind->val.sval.sval = psprintf("%c", expected);
+		kind->isnull = false;
+		kind->location = -1;
+
+		taketyped = makeFuncCall(list_make1(makeString("ag_property_text")),
+								 list_make3(aexpr->lexpr, aexpr->rexpr, kind),
+								 COERCE_EXPLICIT_CALL, aexpr->location);
+		cast->arg = (Node *) taketyped;
+	}
+}
+
+/*
  * transformCreateLabelStmt - parse analysis for CREATE VLABEL/ELABEL
  *
  * This function is based on transformCreateStmt().
@@ -4890,6 +4994,8 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						 errmsg("a non-generated promoted column is not supported yet"),
 						 errhint("Use GENERATED to mirror the property from the jsonb bag.")));
+
+			useTypedJsonbExtraction(col);
 		}
 
 		stmt->tableElts = list_concat(stmt->tableElts,
@@ -5448,6 +5554,9 @@ transformAlterLabelStmt(AlterTableStmt *stmt)
 								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 								 errmsg("a non-generated promoted column is not supported yet"),
 								 errhint("Use GENERATED to mirror the property from the jsonb bag.")));
+
+					if (col != NULL)
+						useTypedJsonbExtraction(col);
 
 					newcmds = lappend(newcmds, cmd);
 					break;

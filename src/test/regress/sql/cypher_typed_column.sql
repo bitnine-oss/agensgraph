@@ -708,29 +708,30 @@ MATCH (n:doc) WHERE n.title CONTAINS 'r' RETURN n.name AS name ORDER BY name;
 -- SECTION 9 -- Special / edge-case numeric values
 --
 -- NaN / Infinity / -Infinity cannot be jsonb numbers, so a Cypher program can
--- only store them as strings.  The float column then parses those strings into
--- real floats, so with promotion on n.ratio is a float (NaN, Inf) while the bag
--- keeps a string.  This changes ORDER BY and comparison, not just display, so
--- promotion on and off intentionally give different results here.
+-- only write them as strings -- and a string is not a number.  A promoted
+-- column takes the property's value, not a re-reading of its text, so these are
+-- refused rather than turned into floats the property never held.  Refusing
+-- them is also what keeps promotion off the answer: reinterpreting the string
+-- would make ORDER BY and comparison differ depending on whether the column is
+-- consulted.
 -- ============================================================================
 CREATE VLABEL special (ratio float GENERATED, age int GENERATED);
-CREATE (:special {name:'sp_nan',  ratio:'NaN'}),
-       (:special {name:'sp_inf',  ratio:'Infinity'}),
-       (:special {name:'sp_ninf', ratio:'-Infinity'}),
-       (:special {name:'sp_nz',   ratio:-0.0}),
+
+CREATE (:special {name:'sp_nan',  ratio:'NaN'});
+CREATE (:special {name:'sp_inf',  ratio:'Infinity'});
+CREATE (:special {name:'sp_ninf', ratio:'-Infinity'});
+
+-- the values that are numbers are stored, including negative zero
+CREATE (:special {name:'sp_nz',   ratio:-0.0}),
        (:special {name:'sp_one',  ratio:1.0});
 
--- 9a. Ordering: with promotion on this uses native float order
---     (-Inf < 0 < 1 < +Inf < NaN); with it off it uses jsonb order over the
---     stored strings and number.  The two intentionally differ.
+-- 9a. Ordering is the same whether or not the column is consulted.
 SET enable_property_promotion = on;
 MATCH (n:special) RETURN n.name AS name, n.ratio AS ratio ORDER BY ratio, name;
 SET enable_property_promotion = off;
 MATCH (n:special) RETURN n.name AS name, n.ratio AS ratio ORDER BY ratio, name;
 
--- 9b. Comparison: with promotion on Inf/NaN are floats > 0; with it off a
---     string is compared against a number (no match under Cypher type rules).
---     The two intentionally differ.
+-- 9b. So is comparison.
 SET enable_property_promotion = on;
 MATCH (n:special) WHERE n.ratio > 0 RETURN n.name AS name ORDER BY name;
 SET enable_property_promotion = off;
@@ -2414,6 +2415,46 @@ MATCH (x:vardoc), (plaincol:vardoc) RETURN count(*);
 
 -- naming something no element in scope has a column for is still fine
 MATCH (a:vardoc), (b:vardoc) RETURN count(*);
+
+-- ----------------------------------------------------------------------------
+-- A VALUE WHOSE KIND IS NOT THE COLUMN'S KIND
+--
+-- The column holds the property's value, so it has to be a value of that kind.
+-- Where PostgreSQL has a cast from jsonb to the column's type, that cast is
+-- what says so, and the property is taken out of the bag as jsonb rather than
+-- as its text -- otherwise "5" and 5 arrive as the same thing.
+--
+-- The string types have no such cast: their only route from jsonb is through
+-- its text form, which would arrive still quoted.  They keep taking the text,
+-- so a number written into one is still read back as its digits.
+-- ----------------------------------------------------------------------------
+CREATE VLABEL kinds (n int GENERATED, f float8 GENERATED,
+                     b bool GENERATED, s text GENERATED);
+
+-- how each column takes its value
+SELECT a.attname, pg_get_expr(d.adbin, d.adrelid) AS expr
+FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+WHERE d.adrelid = 'tc.kinds'::regclass AND a.attname IN ('n','f','b','s')
+ORDER BY a.attname;
+
+-- a value of the column's kind is stored
+CREATE (:kinds {n: 5, f: 1.5, b: true, s: 'five'});
+MATCH (v:kinds) RETURN v.n, v.f, v.b, v.s;
+
+-- one of another kind is refused
+CREATE (:kinds {n: '5'});
+CREATE (:kinds {n: true});
+CREATE (:kinds {f: '1.5'});
+CREATE (:kinds {b: 1});
+CREATE (:kinds {b: 'true'});
+
+-- a length-limited string type cannot hold a property either: it fits the value
+-- to its length instead of reporting that it does not fit
+CREATE VLABEL kindsbad (s varchar(3) GENERATED);
+CREATE VLABEL kindsbad (s char(5) GENERATED);
+-- unconstrained, it stores what it is given
+CREATE VLABEL kindsok (s varchar GENERATED);
+DROP VLABEL kindsok;
 
 -- ----------------------------------------------------------------------------
 -- A WRITE THAT WOULD REPLACE THE PROPERTY MAP WITH SOMETHING THAT IS NOT AN

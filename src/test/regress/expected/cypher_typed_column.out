@@ -193,17 +193,17 @@ SELECT indexname, indexdef FROM pg_indexes
 -- 1l. The label's on-disk shape: fixed id/properties first, promoted columns
 --     appended after, each a STORED generated column.
 \d tc.doc
-                                                            Table "tc.doc"
-   Column   |       Type       | Collation | Nullable |                                    Default                                    
-------------+------------------+-----------+----------+-------------------------------------------------------------------------------
+                                                                         Table "tc.doc"
+   Column   |       Type       | Collation | Nullable |                                                 Default                                                 
+------------+------------------+-----------+----------+---------------------------------------------------------------------------------------------------------
  id         | graphid          |           | not null | graphid(graph_labid('tc.doc'::cstring), nextval('tc.doc_id_seq'::regclass))
  properties | jsonb            |           | not null | jsonb_build_object()
- age        | integer          |           |          | generated always as ((properties ->> 'age'::text)::integer) stored
- big        | bigint           |           |          | generated always as ((properties ->> 'big'::text)::bigint) stored
- ratio      | double precision |           |          | generated always as ((properties ->> 'ratio'::text)::double precision) stored
- score      | numeric          |           |          | generated always as ((properties ->> 'score'::text)::numeric) stored
- active     | boolean          |           |          | generated always as ((properties ->> 'active'::text)::boolean) stored
- title      | text             |           |          | generated always as (properties ->> 'title'::text) stored
+ age        | integer          |           |          | generated always as (ag_property_text(properties, 'age'::text, 'n'::"char")::integer) stored
+ big        | bigint           |           |          | generated always as (ag_property_text(properties, 'big'::text, 'n'::"char")::bigint) stored
+ ratio      | double precision |           |          | generated always as (ag_property_text(properties, 'ratio'::text, 'n'::"char")::double precision) stored
+ score      | numeric          |           |          | generated always as (ag_property_text(properties, 'score'::text, 'n'::"char")::numeric) stored
+ active     | boolean          |           |          | generated always as (ag_property_text(properties, 'active'::text, 'b'::"char")::boolean) stored
+ title      | text             |           |          | generated always as (ag_property_text(properties, 'title'::text, 's'::"char")) stored
 Indexes:
     "doc_pkey" PRIMARY KEY, btree (id)
     "doc_active_idx" btree (active)
@@ -1881,53 +1881,53 @@ MATCH (n:doc) WHERE n.title CONTAINS 'r' RETURN n.name AS name ORDER BY name;
 -- SECTION 9 -- Special / edge-case numeric values
 --
 -- NaN / Infinity / -Infinity cannot be jsonb numbers, so a Cypher program can
--- only store them as strings.  The float column then parses those strings into
--- real floats, so with promotion on n.ratio is a float (NaN, Inf) while the bag
--- keeps a string.  This changes ORDER BY and comparison, not just display, so
--- promotion on and off intentionally give different results here.
+-- only write them as strings -- and a string is not a number.  A promoted
+-- column takes the property's value, not a re-reading of its text, so these are
+-- refused rather than turned into floats the property never held.  Refusing
+-- them is also what keeps promotion off the answer: reinterpreting the string
+-- would make ORDER BY and comparison differ depending on whether the column is
+-- consulted.
 -- ============================================================================
 CREATE VLABEL special (ratio float GENERATED, age int GENERATED);
-CREATE (:special {name:'sp_nan',  ratio:'NaN'}),
-       (:special {name:'sp_inf',  ratio:'Infinity'}),
-       (:special {name:'sp_ninf', ratio:'-Infinity'}),
-       (:special {name:'sp_nz',   ratio:-0.0}),
+CREATE (:special {name:'sp_nan',  ratio:'NaN'});
+ERROR:  property "ratio" holds a string
+DETAIL:  A column promoting this property holds numbers.
+CONTEXT:  while computing the promoted typed columns of graph label "special"
+CREATE (:special {name:'sp_inf',  ratio:'Infinity'});
+ERROR:  property "ratio" holds a string
+DETAIL:  A column promoting this property holds numbers.
+CONTEXT:  while computing the promoted typed columns of graph label "special"
+CREATE (:special {name:'sp_ninf', ratio:'-Infinity'});
+ERROR:  property "ratio" holds a string
+DETAIL:  A column promoting this property holds numbers.
+CONTEXT:  while computing the promoted typed columns of graph label "special"
+-- the values that are numbers are stored, including negative zero
+CREATE (:special {name:'sp_nz',   ratio:-0.0}),
        (:special {name:'sp_one',  ratio:1.0});
--- 9a. Ordering: with promotion on this uses native float order
---     (-Inf < 0 < 1 < +Inf < NaN); with it off it uses jsonb order over the
---     stored strings and number.  The two intentionally differ.
+-- 9a. Ordering is the same whether or not the column is consulted.
 SET enable_property_promotion = on;
 MATCH (n:special) RETURN n.name AS name, n.ratio AS ratio ORDER BY ratio, name;
-   name    |    ratio    
------------+-------------
- "sp_ninf" | "-Infinity"
- "sp_nz"   | 0
- "sp_one"  | 1
- "sp_inf"  | "Infinity"
- "sp_nan"  | "NaN"
-(5 rows)
+   name   | ratio 
+----------+-------
+ "sp_nz"  | 0
+ "sp_one" | 1
+(2 rows)
 
 SET enable_property_promotion = off;
 MATCH (n:special) RETURN n.name AS name, n.ratio AS ratio ORDER BY ratio, name;
-   name    |    ratio    
------------+-------------
- "sp_ninf" | "-Infinity"
- "sp_inf"  | "Infinity"
- "sp_nan"  | "NaN"
- "sp_nz"   | 0.0
- "sp_one"  | 1.0
-(5 rows)
+   name   | ratio 
+----------+-------
+ "sp_nz"  | 0.0
+ "sp_one" | 1.0
+(2 rows)
 
--- 9b. Comparison: with promotion on Inf/NaN are floats > 0; with it off a
---     string is compared against a number (no match under Cypher type rules).
---     The two intentionally differ.
+-- 9b. So is comparison.
 SET enable_property_promotion = on;
 MATCH (n:special) WHERE n.ratio > 0 RETURN n.name AS name ORDER BY name;
    name   
 ----------
- "sp_inf"
- "sp_nan"
  "sp_one"
-(3 rows)
+(1 row)
 
 SET enable_property_promotion = off;
 MATCH (n:special) WHERE n.ratio > 0 RETURN n.name AS name ORDER BY name;
@@ -2362,6 +2362,9 @@ CREATE (:ginrow {nm: 'r1', age: 5, city: 'x'});
 CREATE (:ginrow {nm: 'r2', age: 5, city: 'y'});
 CREATE (:ginrow {nm: 'r3', age: 6, city: 'x'});
 CREATE (:ginrow {nm: 'r4', age: '5', city: 'x'});
+ERROR:  property "age" holds a string
+DETAIL:  A column promoting this property holds numbers.
+CONTEXT:  while computing the promoted typed columns of graph label "ginrow"
 CREATE (:ginrow {nm: 'r5', city: 'x'});
 CREATE (:ginrow {nm: 'r6', age: 5});
 -- The three shapes of map, with no GIN index anywhere.  The all-promoted map
@@ -2397,25 +2400,22 @@ MATCH (n:ginrow {age: 5}) RETURN n.nm AS nm ORDER BY nm;
 ------
  "r1"
  "r2"
- "r4"
  "r6"
-(4 rows)
+(3 rows)
 
 MATCH (n:ginrow {city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
   nm  
 ------
  "r1"
  "r3"
- "r4"
  "r5"
-(4 rows)
+(3 rows)
 
 MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
   nm  
 ------
  "r1"
- "r4"
-(2 rows)
+(1 row)
 
 -- the promotion-off baseline for the same three: identical row sets
 SET enable_property_promotion = off;
@@ -2432,9 +2432,8 @@ MATCH (n:ginrow {city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
 ------
  "r1"
  "r3"
- "r4"
  "r5"
-(4 rows)
+(3 rows)
 
 MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
   nm  
@@ -2475,18 +2474,16 @@ MATCH (n:ginrow {age: 5}) RETURN n.nm AS nm ORDER BY nm;
 ------
  "r1"
  "r2"
- "r4"
  "r6"
-(4 rows)
+(3 rows)
 
 MATCH (n:ginrow {city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
   nm  
 ------
  "r1"
  "r3"
- "r4"
  "r5"
-(4 rows)
+(3 rows)
 
 MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
   nm  
@@ -2508,9 +2505,8 @@ MATCH (n:ginrow {city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
 ------
  "r1"
  "r3"
- "r4"
  "r5"
-(4 rows)
+(3 rows)
 
 MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
   nm  
@@ -2538,9 +2534,8 @@ MATCH (n:ginrow {city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
 ------
  "r1"
  "r3"
- "r4"
  "r5"
-(4 rows)
+(3 rows)
 
 SET enable_seqscan = on;
 -- The same three with the GIN index on an UNRELATED label of the same graph.
@@ -2570,16 +2565,14 @@ MATCH (n:ginrow {age: 5}) RETURN n.nm AS nm ORDER BY nm;
 ------
  "r1"
  "r2"
- "r4"
  "r6"
-(4 rows)
+(3 rows)
 
 MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
   nm  
 ------
  "r1"
- "r4"
-(2 rows)
+(1 row)
 
 SET enable_property_promotion = off;
 MATCH (n:ginrow {age: 5}) RETURN n.nm AS nm ORDER BY nm;
@@ -3685,6 +3678,9 @@ SET enable_property_promotion = on;
 --      error.  Declaring a strict typed column constrains what the key may hold.
 CREATE (:doc {name:'wok', age:5});          -- accepted
 CREATE (:doc {name:'wstr', age:'42'});      -- integer-parseable string: accepted
+ERROR:  property "age" holds a string
+DETAIL:  A column promoting this property holds numbers.
+CONTEXT:  while computing the promoted typed columns of graph label "doc"
 MATCH (n:doc {name:'wok'}) RETURN n.age AS age;
  age 
 -----
@@ -3692,10 +3688,9 @@ MATCH (n:doc {name:'wok'}) RETURN n.age AS age;
 (1 row)
 
 MATCH (n:doc {name:'wstr'}) RETURN n.age AS typed, properties(n) ->> 'age' AS bag;
- typed | bag  
--------+------
- 42    | "42"
-(1 row)
+ typed | bag 
+-------+-----
+(0 rows)
 
 CREATE (:doc {name:'wbad0', age:5.0});      -- rejected (fractional text "5.0")
 ERROR:  invalid input syntax for type integer: "5.0"
@@ -3707,10 +3702,12 @@ CREATE (:doc {name:'wbad1', age:9999999999}); -- rejected (out of int range)
 ERROR:  value "9999999999" is out of range for type integer
 CONTEXT:  while computing the promoted typed columns of graph label "doc"
 CREATE (:doc {name:'wbad2', age:[1,2,3]});  -- rejected (composite)
-ERROR:  invalid input syntax for type integer: "[1, 2, 3]"
+ERROR:  property "age" holds a list
+DETAIL:  A column promoting this property holds numbers.
 CONTEXT:  while computing the promoted typed columns of graph label "doc"
 CREATE (:doc {name:'wbad3', age:'not-a-number'}); -- rejected (non-numeric string)
-ERROR:  invalid input syntax for type integer: "not-a-number"
+ERROR:  property "age" holds a string
+DETAIL:  A column promoting this property holds numbers.
 CONTEXT:  while computing the promoted typed columns of graph label "doc"
 MATCH (n:doc) WHERE n.name IN ['wok','wstr'] DETACH DELETE n;
 -- 14i. DETACH DELETE removes the write-path rows; restore the initial shape.
@@ -3731,17 +3728,18 @@ MATCH (n:doc) RETURN n.name AS name ORDER BY name;
 --      typed 42 from the column, while the whole-element bag keeps the raw
 --      value "42".  The value is duplicated in the bag, so the two forms differ.
 CREATE (:doc {name:'mp', age:'42'});
+ERROR:  property "age" holds a string
+DETAIL:  A column promoting this property holds numbers.
+CONTEXT:  while computing the promoted typed columns of graph label "doc"
 MATCH (n:doc {name:'mp'}) RETURN n.age AS typed_age;
  typed_age 
 -----------
- 42
-(1 row)
+(0 rows)
 
 MATCH (n:doc {name:'mp'}) RETURN properties(n) ->> 'age' AS bag_age;
  bag_age 
 ---------
- "42"
-(1 row)
+(0 rows)
 
 MATCH (n:doc {name:'mp'}) DETACH DELETE n;
 -- ============================================================================
@@ -3774,12 +3772,12 @@ CREATE (:altlbl {name:'a1', age:20}),
 --      column derived from the bag, appended after id / properties.
 ALTER VLABEL altlbl ADD COLUMN age int GENERATED;
 \d tc.altlbl
-                                                        Table "tc.altlbl"
-   Column   |  Type   | Collation | Nullable |                                      Default                                      
-------------+---------+-----------+----------+-----------------------------------------------------------------------------------
+                                                             Table "tc.altlbl"
+   Column   |  Type   | Collation | Nullable |                                           Default                                            
+------------+---------+-----------+----------+----------------------------------------------------------------------------------------------
  id         | graphid |           | not null | graphid(graph_labid('tc.altlbl'::cstring), nextval('tc.altlbl_id_seq'::regclass))
  properties | jsonb   |           | not null | jsonb_build_object()
- age        | integer |           |          | generated always as ((properties ->> 'age'::text)::integer) stored
+ age        | integer |           |          | generated always as (ag_property_text(properties, 'age'::text, 'n'::"char")::integer) stored
 Indexes:
     "altlbl_pkey" PRIMARY KEY, btree (id)
 Inherits: tc.ag_vertex
@@ -4598,7 +4596,8 @@ MATCH (n:pcmix) WHERE n.age = 31 RETURN n.age;
 
 -- the write-domain contract still holds for the promoted column
 MATCH (n:pcmix) SET n.age = 'not-a-number';
-ERROR:  invalid input syntax for type integer: "not-a-number"
+ERROR:  property "age" holds a string
+DETAIL:  A column promoting this property holds numbers.
 CONTEXT:  while computing the promoted typed columns of graph label "pcmix"
 -- 19d. A Cypher write resets an ordinary column to null.  Cypher cannot name a
 --      column that is not a promoted property, so a write has no value to carry
@@ -5567,6 +5566,75 @@ MATCH (a:vardoc), (b:vardoc) RETURN count(*);
 (1 row)
 
 -- ----------------------------------------------------------------------------
+-- A VALUE WHOSE KIND IS NOT THE COLUMN'S KIND
+--
+-- The column holds the property's value, so it has to be a value of that kind.
+-- Where PostgreSQL has a cast from jsonb to the column's type, that cast is
+-- what says so, and the property is taken out of the bag as jsonb rather than
+-- as its text -- otherwise "5" and 5 arrive as the same thing.
+--
+-- The string types have no such cast: their only route from jsonb is through
+-- its text form, which would arrive still quoted.  They keep taking the text,
+-- so a number written into one is still read back as its digits.
+-- ----------------------------------------------------------------------------
+CREATE VLABEL kinds (n int GENERATED, f float8 GENERATED,
+                     b bool GENERATED, s text GENERATED);
+-- how each column takes its value
+SELECT a.attname, pg_get_expr(d.adbin, d.adrelid) AS expr
+FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+WHERE d.adrelid = 'tc.kinds'::regclass AND a.attname IN ('n','f','b','s')
+ORDER BY a.attname;
+ attname |                                   expr                                   
+---------+--------------------------------------------------------------------------
+ b       | (ag_property_text(properties, 'b'::text, 'b'::"char"))::boolean
+ f       | (ag_property_text(properties, 'f'::text, 'n'::"char"))::double precision
+ n       | (ag_property_text(properties, 'n'::text, 'n'::"char"))::integer
+ s       | ag_property_text(properties, 's'::text, 's'::"char")
+(4 rows)
+
+-- a value of the column's kind is stored
+CREATE (:kinds {n: 5, f: 1.5, b: true, s: 'five'});
+MATCH (v:kinds) RETURN v.n, v.f, v.b, v.s;
+ n |  f  |  b   |   s    
+---+-----+------+--------
+ 5 | 1.5 | true | "five"
+(1 row)
+
+-- one of another kind is refused
+CREATE (:kinds {n: '5'});
+ERROR:  property "n" holds a string
+DETAIL:  A column promoting this property holds numbers.
+CONTEXT:  while computing the promoted typed columns of graph label "kinds"
+CREATE (:kinds {n: true});
+ERROR:  property "n" holds a boolean
+DETAIL:  A column promoting this property holds numbers.
+CONTEXT:  while computing the promoted typed columns of graph label "kinds"
+CREATE (:kinds {f: '1.5'});
+ERROR:  property "f" holds a string
+DETAIL:  A column promoting this property holds numbers.
+CONTEXT:  while computing the promoted typed columns of graph label "kinds"
+CREATE (:kinds {b: 1});
+ERROR:  property "b" holds a number
+DETAIL:  A column promoting this property holds booleans.
+CONTEXT:  while computing the promoted typed columns of graph label "kinds"
+CREATE (:kinds {b: 'true'});
+ERROR:  property "b" holds a string
+DETAIL:  A column promoting this property holds booleans.
+CONTEXT:  while computing the promoted typed columns of graph label "kinds"
+-- a length-limited string type cannot hold a property either: it fits the value
+-- to its length instead of reporting that it does not fit
+CREATE VLABEL kindsbad (s varchar(3) GENERATED);
+ERROR:  a promoted property cannot have a length-limited string type
+DETAIL:  Type character varying fits a value to its length by truncating or padding it.
+HINT:  Use text, which stores the property as it is.
+CREATE VLABEL kindsbad (s char(5) GENERATED);
+ERROR:  a promoted property cannot have a length-limited string type
+DETAIL:  Type character fits a value to its length by truncating or padding it.
+HINT:  Use text, which stores the property as it is.
+-- unconstrained, it stores what it is given
+CREATE VLABEL kindsok (s varchar GENERATED);
+DROP VLABEL kindsok;
+-- ----------------------------------------------------------------------------
 -- A WRITE THAT WOULD REPLACE THE PROPERTY MAP WITH SOMETHING THAT IS NOT AN
 -- OBJECT
 --
@@ -5633,7 +5701,7 @@ RESET enable_graph_ddl;
 RESET enable_property_promotion;
 RESET enable_seqscan;
 DROP GRAPH tc CASCADE;
-NOTICE:  drop cascades to 69 other objects
+NOTICE:  drop cascades to 70 other objects
 DETAIL:  drop cascades to sequence tc.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -5702,5 +5770,6 @@ drop cascades to elabel gate_e2
 drop cascades to vlabel gatekid
 drop cascades to vlabel vardoc
 drop cascades to elabel varrel
+drop cascades to vlabel kinds
 drop cascades to vlabel setmap
 RESET graph_path;

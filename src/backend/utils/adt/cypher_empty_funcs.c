@@ -10,6 +10,7 @@
 #include "postgres.h"
 
 #include "utils/cypher_empty_funcs.h"
+#include "utils/builtins.h"
 #include "utils/fmgrprotos.h"
 #include "utils/jsonb.h"
 #include "utils/jsonfuncs.h"
@@ -120,4 +121,84 @@ cypher_isempty_jsonb(PG_FUNCTION_ARGS)
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("isEmpty(): list or object or string is expected but %s",
 					JsonbToCString(NULL, &jb->root, VARSIZE(jb)))));
+}
+
+/*
+ * ag_property_text
+ *
+ * The text of a property, for a promoted column to take its value from -- but
+ * only when the value is of the kind the column can hold.
+ *
+ * A column derived from the bag with ->> takes the value's *text*, and text
+ * carries no kind: the string "5" and the number 5 arrive as the same three
+ * characters, so a column of integers would answer 5 for a property that holds
+ * a string, and one of text would answer "5" for a property that holds a
+ * number.  Neither is what the property says.
+ *
+ * So check the kind first and refuse a value of another one.  What is returned
+ * is still the text, because the column's own type is what decides whether the
+ * value fits: an integer column must still refuse 5.5 and a number too large,
+ * and a vector must still refuse the wrong number of dimensions.  This adds a
+ * question that was not being asked; it does not replace the ones that were.
+ *
+ * A property that is absent, or present and null, has no value to take, and
+ * both answer NULL -- the same contract ->> follows and the one Cypher expects
+ * of a property that is not there.
+ */
+Datum
+ag_property_text(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *bag = PG_GETARG_JSONB_P(0);
+	text	   *keytext = PG_GETARG_TEXT_PP(1);
+	char		expected = PG_GETARG_CHAR(2);
+	char	   *key;
+	JsonbValue *value;
+	const char *found;
+
+	if (!JB_ROOT_IS_OBJECT(bag))
+		PG_RETURN_NULL();
+
+	key = text_to_cstring(keytext);
+	value = getKeyJsonValueFromContainer(&bag->root, key, strlen(key), NULL);
+
+	if (value == NULL || value->type == jbvNull)
+		PG_RETURN_NULL();
+
+	switch (value->type)
+	{
+		case jbvNumeric:
+			found = "a number";
+			if (expected == 'n')
+				PG_RETURN_TEXT_P(cstring_to_text(DatumGetCString(
+					DirectFunctionCall1(numeric_out,
+										NumericGetDatum(value->val.numeric)))));
+			break;
+		case jbvString:
+			found = "a string";
+			if (expected == 's')
+				PG_RETURN_TEXT_P(cstring_to_text_with_len(value->val.string.val,
+														  value->val.string.len));
+			break;
+		case jbvBool:
+			found = "a boolean";
+			if (expected == 'b')
+				PG_RETURN_TEXT_P(cstring_to_text(value->val.boolean ?
+												 "true" : "false"));
+			break;
+		case jbvBinary:
+			found = JsonContainerIsArray(value->val.binary.data) ?
+				"a list" : "a map";
+			break;
+		default:
+			found = "a value of another kind";
+			break;
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_DATATYPE_MISMATCH),
+			 errmsg("property \"%s\" holds %s", key, found),
+			 errdetail("A column promoting this property holds %s.",
+					   expected == 'n' ? "numbers" :
+					   expected == 's' ? "strings" : "booleans")));
+	PG_RETURN_NULL();			/* keep the compiler quiet */
 }

@@ -14,5 +14,6 @@
 
 extern Datum cypher_to_jsonb(PG_FUNCTION_ARGS);
 extern Datum cypher_isempty_jsonb(PG_FUNCTION_ARGS);
+extern Datum ag_property_text(PG_FUNCTION_ARGS);
 
 #endif

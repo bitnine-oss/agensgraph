@@ -330,6 +330,7 @@ extractPromotedSourceKey(Node *raw_expr)
 {
 	A_Expr	   *aexpr;
 	ColumnRef  *bag;
+	Node	   *bagnode;
 	Node	   *keynode;
 	A_Const    *key;
 
@@ -337,19 +338,45 @@ extractPromotedSourceKey(Node *raw_expr)
 	while (raw_expr != NULL && IsA(raw_expr, TypeCast))
 		raw_expr = ((TypeCast *) raw_expr)->arg;
 
-	if (raw_expr == NULL || !IsA(raw_expr, A_Expr))
+	if (raw_expr == NULL)
 		return NULL;
 
-	aexpr = (A_Expr *) raw_expr;
-	if (aexpr->kind != AEXPR_OP ||
-		list_length(aexpr->name) != 1 ||
-		strcmp(strVal(linitial(aexpr->name)), "->>") != 0 ||
-		aexpr->lexpr == NULL || !IsA(aexpr->lexpr, ColumnRef) ||
-		aexpr->rexpr == NULL)
+	/*
+	 * A property whose kind the column's type corresponds to is taken by name
+	 * and kind; one with no such correspondence is taken by name alone.  Both
+	 * spellings name the property the same way.
+	 */
+	if (IsA(raw_expr, FuncCall))
+	{
+		FuncCall   *fc = (FuncCall *) raw_expr;
+
+		if (list_length(fc->funcname) != 1 ||
+			strcmp(strVal(llast(fc->funcname)), "ag_property_text") != 0 ||
+			list_length(fc->args) != 3)
+			return NULL;
+
+		bagnode = linitial(fc->args);
+		keynode = lsecond(fc->args);
+	}
+	else if (IsA(raw_expr, A_Expr))
+	{
+		aexpr = (A_Expr *) raw_expr;
+		if (aexpr->kind != AEXPR_OP ||
+			list_length(aexpr->name) != 1 ||
+			strcmp(strVal(linitial(aexpr->name)), "->>") != 0)
+			return NULL;
+
+		bagnode = aexpr->lexpr;
+		keynode = aexpr->rexpr;
+	}
+	else
+		return NULL;
+
+	if (bagnode == NULL || !IsA(bagnode, ColumnRef) || keynode == NULL)
 		return NULL;
 
 	/* the extraction must be from the label's own "properties" bag */
-	bag = (ColumnRef *) aexpr->lexpr;
+	bag = (ColumnRef *) bagnode;
 	if (list_length(bag->fields) != 1 ||
 		!IsA(linitial(bag->fields), String) ||
 		strcmp(strVal(linitial(bag->fields)), AG_ELEM_PROP_MAP) != 0)
@@ -359,7 +386,6 @@ extractPromotedSourceKey(Node *raw_expr)
 	 * The key is a string constant.  A dumped-then-reparsed generation
 	 * expression spells it as 'key'::text, so peel any cast first.
 	 */
-	keynode = aexpr->rexpr;
 	while (keynode != NULL && IsA(keynode, TypeCast))
 		keynode = ((TypeCast *) keynode)->arg;
 	if (keynode == NULL || !IsA(keynode, A_Const))
