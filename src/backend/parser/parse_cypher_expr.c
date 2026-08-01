@@ -22,6 +22,8 @@
 #include "postgres.h"
 
 #include "ag_const.h"
+#include "catalog/ag_edge_d.h"
+#include "catalog/ag_vertex_d.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "commands/dbcommands.h"
@@ -90,8 +92,9 @@ static Node *transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c);
 static Node *transformIndirection(ParseState *pstate, A_Indirection *indir);
 static Node *makeArrayIndex(ParseState *pstate, Node *idx, Node *arr, bool exclusive);
 static Node *adjustListIndexType(ParseState *pstate, Node *idx);
-static Node *transformAExprOp(ParseState *pstate, A_Expr *a);
+static Node *transformAExprOp(ParseState *pstate, A_Expr *a, bool keep_operands);
 static Node *transformAExprIn(ParseState *pstate, A_Expr *a);
+static Node *elementIdentity(Node *elem);
 static Node *transformPromotedInList(ParseState *pstate, Node *lexpr, A_Expr *a);
 static Node *transformCypherNullIf(ParseState *pstate, A_Expr *a);
 static Node *unboxCypherToJsonb(Node *n);
@@ -186,7 +189,7 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 				switch (a->kind)
 				{
 					case AEXPR_OP:
-						return transformAExprOp(pstate, a);
+						return transformAExprOp(pstate, a, false);
 					case AEXPR_IN:
 						return transformAExprIn(pstate, a);
 					case AEXPR_NULLIF:
@@ -2167,8 +2170,17 @@ transformPromotedComparison(ParseState *pstate, List *opname,
 	return (Node *) make_op(pstate, opname, l, r, last_srf, location);
 }
 
+/*
+ * transformAExprOp
+ *		Transforms a binary cypher operator.
+ *
+ *		keep_operands says the caller reads the operator's arguments back out
+ *		rather than only its result -- NULLIF does, since it yields its first
+ *		argument -- which rules out rewriting a comparison into an equivalent
+ *		comparison of different expressions.
+ */
 static Node *
-transformAExprOp(ParseState *pstate, A_Expr *a)
+transformAExprOp(ParseState *pstate, A_Expr *a, bool keep_operands)
 {
 	Node	   *last_srf = pstate->p_last_srf;
 	Node	   *l;
@@ -2244,6 +2256,17 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 			Node	   *promoted;
 
 			/*
+			 * Comparing two nodes, or two relationships, is comparing their
+			 * identities: see elementIdentity().
+			 */
+			if (!keep_operands &&
+				((ltype == VERTEXOID && rtype == VERTEXOID) ||
+				 (ltype == EDGEOID && rtype == EDGEOID)))
+				return (Node *) make_op(pstate, a->name,
+										elementIdentity(l), elementIdentity(r),
+										last_srf, a->location);
+
+			/*
 			 * If a promoted property is being compared (it arrives boxed as
 			 * cypher_to_jsonb(column)), rebind the comparison type-aware: bind
 			 * the native, index-usable operator when the other operand is the
@@ -2315,6 +2338,9 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
  *		The resulting comparison OpExpr is then retagged to a NullIfExpr (the two
  *		are the same struct) whose result type is the first operand's, reusing
  *		the core NULLIF executor and deparse.
+ *
+ *		Because the operator's first argument is also the value NULLIF yields,
+ *		it must stay the operand as written.
  */
 static Node *
 transformCypherNullIf(ParseState *pstate, A_Expr *a)
@@ -2324,7 +2350,7 @@ transformCypherNullIf(ParseState *pstate, A_Expr *a)
 	OpExpr	   *result;
 
 	cmp = makeSimpleA_Expr(AEXPR_OP, "=", a->lexpr, a->rexpr, a->location);
-	node = transformAExprOp(pstate, cmp);
+	node = transformAExprOp(pstate, cmp, true);
 
 	/* The "=" comparison must be a plain operator yielding a scalar boolean. */
 	if (!IsA(node, OpExpr))
@@ -3336,6 +3362,76 @@ findProjectedItem(ParseState *pstate, List *items, const char *name,
 	return found;
 }
 
+/*
+ * elementIdentity
+ *
+ * Reads the identity out of a node or a relationship, or returns NULL if the
+ * expression is neither.
+ *
+ * Every comparison an element has -- vertex_cmp, vertex_hash and their edge
+ * counterparts -- reads the graphid and nothing else, so wherever a query only
+ * compares elements, comparing the identities answers the same question.  It
+ * answers it better: graphid carries its own operators, so an ordering can come
+ * from the label's primary key and an equality can drive a merge or hash join,
+ * and the element itself is left unread, so a projection carrying it for the
+ * comparison alone can be dropped.
+ *
+ * Exact because of what the comparison reads -- not because an identity is
+ * unique.  Nothing stops the same graphid appearing under two labels, and both
+ * forms answer the same either way.
+ */
+static Node *
+elementIdentity(Node *elem)
+{
+	Oid			elemtype = exprType(elem);
+	FieldSelect *fs;
+
+	if (elemtype != VERTEXOID && elemtype != EDGEOID)
+		return NULL;
+
+	fs = makeNode(FieldSelect);
+	fs->arg = (Expr *) elem;
+	fs->fieldnum = (elemtype == VERTEXOID) ? Anum_ag_vertex_id
+		: Anum_ag_edge_id;
+	fs->resulttype = GRAPHIDOID;
+	fs->resulttypmod = -1;
+	fs->resultcollid = InvalidOid;
+
+	return (Node *) fs;
+}
+
+/*
+ * elementIdentitySortKey
+ *
+ * Orders a node or a relationship by its identity.  See elementIdentity() for
+ * why the two orders are the same one.
+ */
+static TargetEntry *
+elementIdentitySortKey(ParseState *pstate, TargetEntry *te, List **targetlist)
+{
+	Node	   *fs = elementIdentity((Node *) copyObject(te->expr));
+	TargetEntry *idte;
+	ListCell   *lt;
+
+	if (fs == NULL)
+		return te;
+
+	/* an identity the projection already carries is the one to order by */
+	foreach(lt, *targetlist)
+	{
+		TargetEntry *tmp = lfirst(lt);
+
+		if (equal(strip_implicit_coercions((Node *) tmp->expr), fs))
+			return tmp;
+	}
+
+	idte = makeTargetEntry((Expr *) fs, (AttrNumber) pstate->p_next_resno++,
+						   NULL, true);
+	*targetlist = lappend(*targetlist, idte);
+
+	return idte;
+}
+
 List *
 transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
 {
@@ -3383,9 +3479,20 @@ transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
 		 */
 		if (te == NULL)
 		{
+			Node	   *id;
+
 			pstate->p_order_items = *targetlist;
 			expr = transformCypherExpr(pstate, sortby->node, exprKind);
 			pstate->p_order_items = save_order_items;
+
+			/*
+			 * Sort on the element's identity instead of the element, so that a
+			 * projection which carries the element only to reach this sort key
+			 * never has to carry it.  See elementIdentity().
+			 */
+			id = elementIdentity(expr);
+			if (id != NULL)
+				expr = id;
 
 			foreach(lt, *targetlist)
 			{
@@ -3408,6 +3515,15 @@ transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
 
 				*targetlist = lappend(*targetlist, te);
 			}
+		}
+		else
+		{
+			/*
+			 * The sort item named a projected element.  That projection stays
+			 * -- it is returned -- but the sort itself still keys on the
+			 * identity.
+			 */
+			te = elementIdentitySortKey(pstate, te, targetlist);
 		}
 
 		sortgroups = addTargetToSortList(pstate, te, sortgroups, *targetlist,
