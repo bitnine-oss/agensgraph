@@ -10281,3 +10281,171 @@ DETAIL:  drop cascades to sequence collate_jsonb.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel person
+--
+-- A terminal write carries only the elements it names
+--
+-- Nothing runs after the clause, so a pattern variable the clause does not
+-- remove need not be assembled -- and once nothing reads it, the joins beneath
+-- stop carrying its property map too.  Results must not depend on any of that.
+--
+CREATE GRAPH write_projection;
+SET graph_path = write_projection;
+CREATE VLABEL wv;
+CREATE ELABEL wk;
+CREATE (:wv {n: 1})-[:wk {w: 1}]->(:wv {n: 2}),
+       (:wv {n: 3})-[:wk {w: 2}]->(:wv {n: 4}),
+       (:wv {n: 5});
+ANALYZE write_projection.wv;
+ANALYZE write_projection.wk;
+-- the endpoints are named by the pattern but not by the clause, so neither is
+-- assembled: both come through as a null of their own type
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:wv)-[r:wk]->(b:wv) DELETE r;
+                                                   QUERY PLAN                                                    
+-----------------------------------------------------------------------------------------------------------------
+ Graph Delete
+   ->  Subquery Scan on _agens_default_s_1
+         Output: NULL::vertex, _agens_default_s_1.r, NULL::vertex
+         ->  Graph Delete eager
+               ->  Hash Join
+                     Output: NULL::vertex, ROW(r.id, r.start, r."end", r.properties, r.ctid)::edge, NULL::vertex
+                     Hash Cond: (b.id = r."end")
+                     ->  Seq Scan on write_projection.wv b
+                           Output: b.id, b.properties
+                     ->  Hash
+                           Output: r.id, r.start, r."end", r.properties, r.ctid
+                           ->  Hash Join
+                                 Output: r.id, r.start, r."end", r.properties, r.ctid
+                                 Hash Cond: (a.id = r.start)
+                                 ->  Seq Scan on write_projection.wv a
+                                       Output: a.id, a.properties
+                                 ->  Hash
+                                       Output: r.id, r.start, r."end", r.properties, r.ctid
+                                       ->  Seq Scan on write_projection.wk r
+                                             Output: r.id, r.start, r."end", r.properties, r.ctid
+(20 rows)
+
+-- an endpoint the clause does remove is carried
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:wv)-[r:wk]->(b:wv) DELETE r, a;
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Graph Delete
+   ->  Nested Loop CypherDelete Join
+         Output: _agens_default_s_1.a, _agens_default_s_1.r, NULL::vertex
+         ->  Subquery Scan on _agens_default_s_1
+               Output: _agens_default_s_1.a, _agens_default_s_1.r, _agens_default_s_1.b
+               ->  Graph Delete eager
+                     ->  Hash Join
+                           Output: ROW(a.id, a.properties, a.ctid)::vertex, ROW(r.id, r.start, r."end", r.properties, r.ctid)::edge, NULL::vertex
+                           Hash Cond: (b.id = r."end")
+                           ->  Seq Scan on write_projection.wv b
+                                 Output: b.id, b.properties
+                           ->  Hash
+                                 Output: a.id, a.properties, a.ctid, r.id, r.start, r."end", r.properties, r.ctid
+                                 ->  Hash Join
+                                       Output: a.id, a.properties, a.ctid, r.id, r.start, r."end", r.properties, r.ctid
+                                       Hash Cond: (a.id = r.start)
+                                       ->  Seq Scan on write_projection.wv a
+                                             Output: a.id, a.properties, a.ctid
+                                       ->  Hash
+                                             Output: r.id, r.start, r."end", r.properties, r.ctid
+                                             ->  Seq Scan on write_projection.wk r
+                                                   Output: r.id, r.start, r."end", r.properties, r.ctid
+         ->  Nested Loop
+               Output: NULL::edge
+               Join Filter: ((e.start = v.id) OR (e."end" = v.id))
+               ->  Function Scan on pg_catalog.unnest v
+                     Output: v.id, v.properties, v.tid
+                     Function Call: unnest(ARRAY[_agens_default_s_1.a])
+               ->  Append
+                     ->  Seq Scan on write_projection.ag_edge e_1
+                           Output: e_1.start, e_1."end"
+                     ->  Seq Scan on write_projection.wk e_2
+                           Output: e_2.start, e_2."end"
+(33 rows)
+
+-- with a clause after it, the elements that clause reads are carried; the rest
+-- still are not, since a delete no longer hides its inputs from the planner
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:wv)-[r:wk]->(b:wv) DELETE r RETURN b.n;
+                                                            QUERY PLAN                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on _agens_default_s
+   Output: (_agens_default_s.b).properties.'n'::text
+   ->  Graph Delete
+         ->  Subquery Scan on _agens_default_s
+               Output: NULL::vertex, NULL::edge, b
+               ->  Graph Delete eager
+                     ->  Hash Join
+                           Output: NULL::vertex, ROW(id, start, "end", properties, ctid)::edge, ROW(id, properties, ctid)::vertex
+                           Hash Cond: (id = "end")
+                           ->  Seq Scan on write_projection.wv b
+                                 Output: id, properties, ctid
+                           ->  Hash
+                                 Output: id, start, "end", properties, ctid
+                                 ->  Hash Join
+                                       Output: id, start, "end", properties, ctid
+                                       Hash Cond: (id = start)
+                                       ->  Seq Scan on write_projection.wv a
+                                             Output: id, properties
+                                       ->  Hash
+                                             Output: id, start, "end", properties, ctid
+                                             ->  Seq Scan on write_projection.wk r
+                                                   Output: id, start, "end", properties, ctid
+(22 rows)
+
+-- and the answers are the same either way
+MATCH (a:wv)-[r:wk]->(b:wv) DELETE r RETURN b.n AS kept ORDER BY kept;
+ kept 
+------
+ 2
+ 4
+(2 rows)
+
+MATCH ()-[r:wk]->() RETURN count(*) AS edges_left;
+ edges_left 
+------------
+ 0
+(1 row)
+
+MATCH (n:wv) RETURN count(*) AS vertices_left;
+ vertices_left 
+---------------
+ 5
+(1 row)
+
+CREATE (:wv {n: 6})-[:wk {w: 6}]->(:wv {n: 7});
+MATCH (a:wv {n: 6}) DETACH DELETE a;
+MATCH (n:wv) RETURN n.n AS n ORDER BY n;
+ n 
+---
+ 1
+ 2
+ 3
+ 4
+ 5
+ 7
+(6 rows)
+
+MATCH ()-[r:wk]->() RETURN count(*) AS edges_after_detach;
+ edges_after_detach 
+--------------------
+ 0
+(1 row)
+
+CREATE (:wv {n: 8})-[:wk]->(:wv {n: 9});
+MATCH (a:wv {n: 8})-[r:wk]->(b:wv) DELETE r, a, b;
+MATCH (n:wv) WHERE n.n IN [8, 9] RETURN count(*) AS both_removed;
+ both_removed 
+--------------
+ 0
+(1 row)
+
+DROP GRAPH write_projection CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence write_projection.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel wv
+drop cascades to elabel wk

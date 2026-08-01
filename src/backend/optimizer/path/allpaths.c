@@ -25,6 +25,7 @@
 #include "catalog/pg_proc.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
+#include "nodes/graphnodes.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/supportnodes.h"
@@ -158,6 +159,9 @@ static void subquery_push_qual(Query *subquery,
 							   RangeTblEntry *rte, Index rti, Node *qual);
 static void recurse_push_qual(Node *setOp, Query *topquery,
 							  RangeTblEntry *rte, Index rti, Node *qual);
+static bool graphWriteOutputsAreKnown(Query *subquery);
+static Bitmapset *graphWriteReadOutputs(Query *subquery,
+										Bitmapset *attrs_used);
 static void remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel,
 										   Bitmapset *extra_used_attrs);
 
@@ -2652,7 +2656,13 @@ set_subquery_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	 * are unused.
 	 */
 	if (!rte->isVLE)
+	{
+		if (subquery->commandType == CMD_GRAPHWRITE &&
+			graphWriteOutputsAreKnown(subquery))
+			run_cond_attrs = graphWriteReadOutputs(subquery, run_cond_attrs);
+
 		remove_unused_subquery_outputs(subquery, rel, run_cond_attrs);
+	}
 
 	/*
 	 * We can safely pass the outer tuple_fraction down to the subquery if the
@@ -4073,6 +4083,93 @@ recurse_push_qual(Node *setOp, Query *topquery,
  *****************************************************************************/
 
 /*
+ * graphWriteOutputsAreKnown
+ *		Can we enumerate the outputs a graph write reads for itself?
+ *
+ * Only for a delete: its expression list names every element it removes.  A
+ * create or a set reaches its input through machinery this does not read, so
+ * for those the write's outputs stay untouchable.
+ */
+static bool
+graphWriteOutputsAreKnown(Query *subquery)
+{
+	return (subquery->g_writeOp == GWROP_DELETE &&
+			subquery->g_pattern == NIL &&
+			subquery->g_sets == NIL);
+}
+
+/*
+ * graphWriteReadOutputs
+ *		Mark the outputs a graph write reads for itself.
+ *
+ * The elements a delete removes are found in the tuple it passes through, so
+ * those columns are read whether or not anything above the write reads them.
+ * An output that is not a plain column reference is kept as well: it cannot be
+ * matched against the write's expressions, and keeping it costs a column where
+ * getting it wrong costs a row that was supposed to be deleted.
+ */
+static Bitmapset *
+graphWriteReadOutputs(Query *subquery, Bitmapset *attrs_used)
+{
+	List	   *read = NIL;
+	ListCell   *lc;
+
+	foreach(lc, subquery->g_exprs)
+	{
+		GraphDelElem *gde = lfirst_node(GraphDelElem, lc);
+
+		read = list_concat(read,
+						   pull_var_clause(gde->elem,
+										   PVC_RECURSE_AGGREGATES |
+										   PVC_RECURSE_WINDOWFUNCS |
+										   PVC_RECURSE_PLACEHOLDERS));
+	}
+
+	foreach(lc, subquery->targetList)
+	{
+		TargetEntry *tle = lfirst(lc);
+		bool		keep = false;
+		ListCell   *lv;
+
+		if (tle->resjunk)
+			continue;
+
+		if (!IsA(tle->expr, Var))
+			keep = true;
+		else
+		{
+			Var		   *tv = (Var *) tle->expr;
+
+			foreach(lv, read)
+			{
+				Var		   *rv = lfirst(lv);
+
+				/*
+				 * Compare where the two point rather than the whole node: the
+				 * write's copy of an element reference and the projection's
+				 * can differ in what they were resolved from.
+				 */
+				if (tv->varno == rv->varno &&
+					tv->varattno == rv->varattno &&
+					tv->varlevelsup == rv->varlevelsup)
+				{
+					keep = true;
+					break;
+				}
+			}
+		}
+
+		if (keep)
+			attrs_used = bms_add_member(attrs_used,
+										tle->resno - FirstLowInvalidHeapAttributeNumber);
+	}
+
+	list_free(read);
+
+	return attrs_used;
+}
+
+/*
  * remove_unused_subquery_outputs
  *		Remove subquery targetlist items we don't need
  *
@@ -4122,10 +4219,14 @@ remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel,
 		return;
 
 	/*
-	 * Do nothing if subquery is ModifyGraph. We need all the target entries
-	 * in it to get the result of subquery in it.
+	 * A graph write passes its input through and finds the elements it
+	 * modifies in that same input, so some of its outputs are read by the write
+	 * itself even when nothing above reads them.  Unless the caller has told us
+	 * which those are, we cannot tell a spare output from a needed one, and
+	 * have to keep them all.
 	 */
-	if (subquery->commandType == CMD_GRAPHWRITE)
+	if (subquery->commandType == CMD_GRAPHWRITE &&
+		!graphWriteOutputsAreKnown(subquery))
 		return;
 
 	if (subquery->shortestpathSource)
