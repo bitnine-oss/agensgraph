@@ -2387,6 +2387,35 @@ DROP TABLE tc_oc;
 DROP TABLE tc_op;
 
 -- ----------------------------------------------------------------------------
+-- A PATTERN VARIABLE THAT NAMES A COLUMN OF AN ELEMENT ALREADY IN SCOPE
+--
+-- Naming a promoted column puts that name in scope wherever the label is, so a
+-- later element of the same pattern -- or of a later clause -- can be written
+-- with a name that already resolves to a column.  It cannot be both, and saying
+-- so is the whole answer; the pattern element has no label to agree with,
+-- because it is not one.
+-- ----------------------------------------------------------------------------
+CREATE VLABEL vardoc (t int GENERATED);
+CREATE ELABEL varrel (t int GENERATED);
+
+-- the name resolves to a column of an element matched earlier in this clause
+MATCH (x:vardoc), (t:vardoc) RETURN count(*);
+MATCH (a:vardoc), ()-[t:varrel]->() RETURN count(*);
+MATCH (a:vardoc)-[t:varrel]->(b) RETURN count(*);
+
+-- carried in from an earlier clause, where it never named a pattern element
+MATCH (n:vardoc) WITH n AS t MATCH (t:vardoc) RETURN count(*);
+
+-- an ordinary column of a label puts a name in scope the same way
+SET enable_graph_ddl = on;
+ALTER TABLE tc.vardoc ADD COLUMN plaincol int;
+RESET enable_graph_ddl;
+MATCH (x:vardoc), (plaincol:vardoc) RETURN count(*);
+
+-- naming something no element in scope has a column for is still fine
+MATCH (a:vardoc), (b:vardoc) RETURN count(*);
+
+-- ----------------------------------------------------------------------------
 -- CLEANUP
 -- ----------------------------------------------------------------------------
 RESET enable_graph_ddl;

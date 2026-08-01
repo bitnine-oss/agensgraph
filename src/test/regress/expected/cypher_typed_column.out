@@ -5523,13 +5523,57 @@ WHERE attrelid = 'tc_oc'::regclass AND attname = 'c1' AND NOT attisdropped;
 DROP TABLE tc_oc;
 DROP TABLE tc_op;
 -- ----------------------------------------------------------------------------
+-- A PATTERN VARIABLE THAT NAMES A COLUMN OF AN ELEMENT ALREADY IN SCOPE
+--
+-- Naming a promoted column puts that name in scope wherever the label is, so a
+-- later element of the same pattern -- or of a later clause -- can be written
+-- with a name that already resolves to a column.  It cannot be both, and saying
+-- so is the whole answer; the pattern element has no label to agree with,
+-- because it is not one.
+-- ----------------------------------------------------------------------------
+CREATE VLABEL vardoc (t int GENERATED);
+CREATE ELABEL varrel (t int GENERATED);
+-- the name resolves to a column of an element matched earlier in this clause
+MATCH (x:vardoc), (t:vardoc) RETURN count(*);
+ERROR:  duplicate variable "t"
+LINE 1: MATCH (x:vardoc), (t:vardoc) RETURN count(*);
+                           ^
+MATCH (a:vardoc), ()-[t:varrel]->() RETURN count(*);
+ERROR:  duplicate variable "t"
+LINE 1: MATCH (a:vardoc), ()-[t:varrel]->() RETURN count(*);
+                              ^
+MATCH (a:vardoc)-[t:varrel]->(b) RETURN count(*);
+ERROR:  duplicate variable "t"
+LINE 1: MATCH (a:vardoc)-[t:varrel]->(b) RETURN count(*);
+                          ^
+-- carried in from an earlier clause, where it never named a pattern element
+MATCH (n:vardoc) WITH n AS t MATCH (t:vardoc) RETURN count(*);
+ERROR:  label on variable from previous clauses is not allowed
+LINE 1: MATCH (n:vardoc) WITH n AS t MATCH (t:vardoc) RETURN count(*...
+                                              ^
+-- an ordinary column of a label puts a name in scope the same way
+SET enable_graph_ddl = on;
+ALTER TABLE tc.vardoc ADD COLUMN plaincol int;
+RESET enable_graph_ddl;
+MATCH (x:vardoc), (plaincol:vardoc) RETURN count(*);
+ERROR:  duplicate variable "plaincol"
+LINE 1: MATCH (x:vardoc), (plaincol:vardoc) RETURN count(*);
+                           ^
+-- naming something no element in scope has a column for is still fine
+MATCH (a:vardoc), (b:vardoc) RETURN count(*);
+ count 
+-------
+ 0
+(1 row)
+
+-- ----------------------------------------------------------------------------
 -- CLEANUP
 -- ----------------------------------------------------------------------------
 RESET enable_graph_ddl;
 RESET enable_property_promotion;
 RESET enable_seqscan;
 DROP GRAPH tc CASCADE;
-NOTICE:  drop cascades to 66 other objects
+NOTICE:  drop cascades to 68 other objects
 DETAIL:  drop cascades to sequence tc.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -5596,4 +5640,6 @@ drop cascades to elabel gate_e
 drop cascades to vlabel gate_kid
 drop cascades to elabel gate_e2
 drop cascades to vlabel gatekid
+drop cascades to vlabel vardoc
+drop cascades to elabel varrel
 RESET graph_path;
