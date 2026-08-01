@@ -3123,6 +3123,7 @@ typedef struct GraphVLEState
 
 	/* Scanning depth infos */
 	List	   *table_scan_desc_list;	/* List for saving scan descriptions. */
+	bool		use_edge_output;
 	bool		use_vertex_output;
 	Jsonb	   *jsonb_filter;
 

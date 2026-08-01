@@ -224,7 +224,8 @@ static Node *transformMatchVLE(ParseState *pstate, CypherRel *crel,
 							   bool *is_nsitem);
 static SelectStmt *genVLESubselect(ParseState *pstate, CypherRel *crel,
 								   bool out, bool pathout);
-static Node *genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out);
+static Node *genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out,
+							 bool pathout);
 static List *genQualifiedName(char *name1, char *name2);
 static bool vlePropMapReadsAnotherElement(Node *node, void *context);
 static ParseNamespaceItem *transformVLEtoNSItem(ParseState *pstate, CypherRel *crel,
@@ -4384,8 +4385,6 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 	List	   *tlist;
 	Node	   *left;
 	SelectStmt *sel;
-	Node	   *vertices_col;
-	ResTarget  *vertices;
 
 	prev_colname = getEdgeColname(crel, true, false);
 	prev_col = makeColumnRef(genQualifiedName(VLE_LEFT_ALIAS, prev_colname));
@@ -4412,13 +4411,19 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 		tlist = lappend(tlist, edges);
 	}
 
-	/* Add Vertices Column */
-	vertices_col = makeColumnRef(genQualifiedName(VLE_LEFT_ALIAS,
-												  VLE_COLNAME_VERTICES));
-	vertices = makeResTarget(vertices_col, VLE_COLNAME_VERTICES);
-	tlist = lappend(tlist, vertices);
+	if (pathout)
+	{
+		Node	   *vertices_col;
+		ResTarget  *vertices;
 
-	left = genVLELeftChild(pstate, crel, out);
+		vertices_col = makeColumnRef(genQualifiedName(VLE_LEFT_ALIAS,
+													  VLE_COLNAME_VERTICES));
+		vertices = makeResTarget(vertices_col, VLE_COLNAME_VERTICES);
+
+		tlist = lappend(tlist, vertices);
+	}
+
+	left = genVLELeftChild(pstate, crel, out, pathout);
 
 	sel = makeNode(SelectStmt);
 	sel->targetList = tlist;
@@ -4428,6 +4433,11 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 }
 
 /*
+ * The edges and vertices columns are projected only where the query reads them,
+ * so every shape below is the widest form: a traversal that names no
+ * relationship variable stops after ids, and one that is not part of a path
+ * stops after edges.
+ *
  * CYPHER_REL_DIR_NONE
  *
  *     SELECT _start, _end, ARRAY[id] AS ids,
@@ -4473,10 +4483,9 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
  *         AS l(start, "end", ids, edges, vertices)
  */
 static Node *
-genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
+genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 {
 	Node	   *vid;
-	Node	   *vtxarr;
 	Node	   *ids;
 	List	   *values;
 	List	   *colnames = NIL;
@@ -4490,7 +4499,6 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 	vid = pstate->p_vle_initial_vid;
 	Assert(vid != NULL);
 
-	vtxarr = makeAArrayExpr(NIL, VERTEXARRAYOID);
 	ids = makeAArrayExpr(NIL, GRAPHIDARRAYOID);
 
 	values = list_make3(vid, vid, ids);
@@ -4506,8 +4514,13 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 		colnames = lappend(colnames, makeString(VLE_COLNAME_EDGES));
 	}
 
-	values = lappend(values, vtxarr);
-	colnames = lappend(colnames, makeString(VLE_COLNAME_VERTICES));
+	if (pathout)
+	{
+		Node	   *vtxarr = makeAArrayExpr(NIL, VERTEXARRAYOID);
+
+		values = lappend(values, vtxarr);
+		colnames = lappend(colnames, makeString(VLE_COLNAME_VERTICES));
+	}
 
 	sel = makeNode(SelectStmt);
 	sel->valuesLists = list_make1(values);
