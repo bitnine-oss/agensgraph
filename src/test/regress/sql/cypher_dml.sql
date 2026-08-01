@@ -863,6 +863,29 @@ SELECT * FROM (
   RETURN x[1]
 ) AS foo;
 
+-- a variable-length traversal builds the relationship array and the node array
+-- only where the query reads them.  An unread array is dropped by leaving the
+-- column out, so the columns projected are always a prefix: naming neither
+-- leaves ids alone, naming the relationships adds edges, and asking for a path
+-- adds vertices on top.  Results must not depend on which of them is built.
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:person {id: 1})-[:knows*1..2]->(b:person) RETURN count(*);
+
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person) RETURN count(x);
+
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH p = (a:person {id: 1})-[:knows*1..2]->(b:person) RETURN count(p);
+
+MATCH (a:person {id: 1})-[:knows*1..2]->(b:person) RETURN count(*);
+MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person) RETURN count(*);
+MATCH p = (a:person {id: 1})-[:knows*1..2]->(b:person) RETURN count(*);
+
+-- the arrays a path does read still agree with the traversal that built them
+MATCH p = (a:person {id: 1})-[x:knows*1..2]->(b:person)
+RETURN length(p), size(nodes(p)), size(relationships(p)), size(x)
+ORDER BY 1, 2, 3, 4;
+
 -- AG-154, CS-34 - VLE returns incoreect result with sequential scan
 
 CREATE GRAPH ag154;

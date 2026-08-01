@@ -144,6 +144,18 @@ ExecInitGraphVLE(GraphVLE *vleplan, EState *estate, int eflags)
 						  vle_state->ps.ps_ResultTupleDesc);
 	ExecAssignExprContext(estate, &vle_state->ps);
 
+	/*
+	 * The subplan projects the relationship array, and then the node array,
+	 * only where the query reads them, so the columns it does project are a
+	 * prefix and their positions never move.  A traversal that nobody asks for
+	 * the arrays of must not build them: assembling a relationship for every
+	 * hop visited costs far more than the traversal itself, and the hops
+	 * visited grow with the branching factor raised to the depth.
+	 *
+	 * An unread array is dropped by leaving the column out, never by leaving an
+	 * empty array in a column something can still name.
+	 */
+	vle_state->use_edge_output = vle_state->ps.ps_ResultTupleDesc->natts > VAR_EDGES;
 	vle_state->use_vertex_output = vle_state->ps.ps_ResultTupleDesc->natts > VAR_VERTICES;
 
 	/* P-Map Jsonb */
@@ -262,11 +274,9 @@ ExecInitGraphVLE(GraphVLE *vleplan, EState *estate, int eflags)
 	list_free(scan_label_oids);
 
 	/*
-	 * edge_ids(2) : for edge uniqueness.
-	 *
-	 * edges(3) : output edge array.
-	 *
-	 * vertices(4).
+	 * edge_ids(2) keeps a hop from reusing a relationship and is always built.
+	 * edges(3) and vertices(4) are the query's own output, built only where it
+	 * reads them.
 	 */
 	vle_state->hop_cxt = AllocSetContextCreate(CurrentMemoryContext,
 											   "GraphVLE hop",
@@ -275,9 +285,16 @@ ExecInitGraphVLE(GraphVLE *vleplan, EState *estate, int eflags)
 	vle_state->edge_ids = initArrayResult(GRAPHIDOID,
 										  CurrentMemoryContext,
 										  false);
-	vle_state->edges = initArrayResult(EDGEOID,
-									   CurrentMemoryContext,
-									   false);
+	if (vle_state->use_edge_output)
+	{
+		vle_state->edges = initArrayResult(EDGEOID,
+										   CurrentMemoryContext,
+										   false);
+	}
+	else
+	{
+		vle_state->edges = NULL;
+	}
 	if (vle_state->use_vertex_output)
 	{
 		vle_state->vertices = initArrayResult(VERTEXOID,
@@ -342,7 +359,8 @@ ExecGraphVLE(PlanState *pstate)
 			if (TupIsNull(vle_state->subplan_tuple))
 				return NULL;
 
-			array_clear(vle_state->edges);
+			if (vle_state->use_edge_output)
+				array_clear(vle_state->edges);
 			array_clear(vle_state->edge_ids);
 
 			vle_state->first_start_id = DatumGetGraphid(vle_state->subplan_tuple->tts_values[VAR_START_VID]);
@@ -384,8 +402,11 @@ ExecGraphVLE(PlanState *pstate)
 			vle_state->subplan_tuple->tts_values[VAR_END_VID] = vle_state->last_end_id;
 			vle_state->subplan_tuple->tts_values[VAR_EDGE_IDS] = makeArrayResult(vle_state->edge_ids,
 																				 tupmctx);
-			vle_state->subplan_tuple->tts_values[VAR_EDGES] = makeArrayResult(vle_state->edges,
-																			  tupmctx);
+			if (vle_state->use_edge_output)
+			{
+				vle_state->subplan_tuple->tts_values[VAR_EDGES] = makeArrayResult(vle_state->edges,
+																				  tupmctx);
+			}
 
 			if (vle_state->use_vertex_output)
 			{
@@ -511,7 +532,8 @@ ExecGraphVLEDFS(GraphVLEState *vle_state, Graphid start_id)
 
 		while (vle_state->edge_ids->nelems >= vle_scan_depth)
 		{
-			array_pop(vle_state->edges);
+			if (vle_state->use_edge_output)
+				array_pop(vle_state->edges);
 			array_pop(vle_state->edge_ids);
 			if (vle_state->use_vertex_output)
 				array_pop(vle_state->vertices);
@@ -549,11 +571,14 @@ ExecGraphVLEDFS(GraphVLEState *vle_state, Graphid start_id)
 
 		oldcxt = MemoryContextSwitchTo(vle_state->hop_cxt);
 
-		accumArrayResult(vle_state->edges,
-						 make_edge_from_tuple(vle_state->current_scan_tuple),
-						 false,
-						 EDGEOID,
-						 CurrentMemoryContext);
+		if (vle_state->use_edge_output)
+		{
+			accumArrayResult(vle_state->edges,
+							 make_edge_from_tuple(vle_state->current_scan_tuple),
+							 false,
+							 EDGEOID,
+							 CurrentMemoryContext);
+		}
 		accumArrayResult(vle_state->edge_ids,
 						 edge_id,
 						 false,

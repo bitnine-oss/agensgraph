@@ -2017,8 +2017,8 @@ EXPLAIN (costs off) MATCH (a:animal)-[:rel*1..2]->(c) RETURN c;
 (16 rows)
 
 EXPLAIN (verbose, costs off) MATCH (a:animal)-[:rel*1..2]->(c) RETURN c;
-                                                  QUERY PLAN                                                   
----------------------------------------------------------------------------------------------------------------
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
  Nested Loop
    Output: ROW(c.id, c.properties, c.ctid)::vertex
    Inner Unique: true
@@ -2030,14 +2030,14 @@ EXPLAIN (verbose, costs off) MATCH (a:animal)-[:rel*1..2]->(c) RETURN c;
                ->  Seq Scan on gmp10.dog a_2
                      Output: a_2.id
          ->  Subquery Scan on "<0000000041>"
-               Output: "<0000000041>".start, "<0000000041>"."end", "<0000000041>".ids, "<0000000041>".vertices
+               Output: "<0000000041>".start, "<0000000041>"."end", "<0000000041>".ids
                ->  Graph VLE on rel [1..2]
                      Direction: outgoing (->)
                      Edge Labels:
                        rel
                        subrel
                      ->  Result
-                           Output: a.id, a.id, '{}'::graphid[], '[]'::vertex[]
+                           Output: a.id, a.id, '{}'::graphid[]
    ->  Memoize
          Output: c.id, c.properties, c.ctid
          Cache Key: "<0000000041>"."end"
