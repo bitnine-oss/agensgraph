@@ -26,6 +26,7 @@
 #include "catalog/objectaccess.h"
 #include "catalog/objectaddress.h"
 #include "catalog/pg_class.h"
+#include "catalog/pg_collation.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
@@ -54,6 +55,8 @@ static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind,
 								 const char *queryString, bool is_fixed_id,
 								 int32 fixed_id, List *promoted_props);
 static char *extractPromotedSourceKey(Node *raw_expr);
+static void CheckPromotedColumnCollation(Oid relid, AttrNumber attnum,
+										 const char *colname);
 static void recordPromotedProperties(Oid laboid, Oid relid,
 									 List *promoted_props);
 static void GetSuperOids(List *supers, char labkind, List **supOids);
@@ -399,6 +402,40 @@ extractPromotedSourceKey(Node *raw_expr)
 }
 
 /*
+ * CheckPromotedColumnCollation
+ *
+ * A promoted column answers for a property, and reading that property has to
+ * mean the same thing whether the column answers or the property map does.
+ * The map compares its strings with the database default collation, so a column
+ * collated any other way orders and compares the same values differently -- and
+ * which of the two answers is a decision about how fast the read is, not about
+ * what it returns.
+ *
+ * A collation can arrive without anyone naming one here, through a domain that
+ * carries it, so ask the column what it ended up with rather than what was
+ * written.
+ */
+static void
+CheckPromotedColumnCollation(Oid relid, AttrNumber attnum, const char *colname)
+{
+	Oid			typid;
+	int32		typmod;
+	Oid			collid;
+
+	get_atttypetypmodcoll(relid, attnum, &typid, &typmod, &collid);
+
+	if (!OidIsValid(collid) || collid == DEFAULT_COLLATION_OID)
+		return;
+
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("a promoted property cannot have a collation of its own"),
+			 errdetail("Column \"%s\" is collated \"%s\", while a property map compares strings with the database default.",
+					   colname, get_collation_name(collid)),
+			 errhint("Leave the collation unspecified, or use a type that does not carry one.")));
+}
+
+/*
  * recordPromotedProperties
  *
  * Register each shorthand-form promoted property of a freshly created label in
@@ -430,6 +467,8 @@ recordPromotedProperties(Oid laboid, Oid relid, List *promoted_props)
 			attnum = get_attnum(relid, col->colname);
 			if (attnum == InvalidAttrNumber)
 				continue;		/* should not happen */
+
+			CheckPromotedColumnCollation(relid, attnum, col->colname);
 
 			InsertAgLabelProperty(laboid, srckey, (int16) attnum,
 								  PROMOTED_SEMANTICS_LEGACY);

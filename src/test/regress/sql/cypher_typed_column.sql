@@ -2435,6 +2435,31 @@ MATCH (x:vardoc), (plaincol:vardoc) RETURN count(*);
 MATCH (a:vardoc), (b:vardoc) RETURN count(*);
 
 -- ----------------------------------------------------------------------------
+-- A PROMOTED COLUMN CARRYING A COLLATION OF ITS OWN
+--
+-- Reading a property has to mean the same thing whether the column answers or
+-- the map does, and a map compares strings with the database default.  A column
+-- collated otherwise orders the same values differently, which would make
+-- consulting it a decision about results rather than about speed.
+--
+-- A collation can arrive without anyone naming one, through a domain, so this
+-- is checked on the column rather than on what was written.
+-- ----------------------------------------------------------------------------
+CREATE DOMAIN tc.ctext AS text COLLATE "C";
+CREATE VLABEL collated (s tc.ctext GENERATED);
+CREATE VLABEL collated2;
+ALTER VLABEL collated2 ADD COLUMN s tc.ctext GENERATED;
+-- neither label was left behind
+SELECT count(*) FROM pg_class WHERE relname IN ('collated', 'collated2');
+-- a type that carries no collation of its own is fine
+CREATE VLABEL uncollated (s text GENERATED);
+CREATE (:uncollated {s: 'a'});
+MATCH (n:uncollated) RETURN n.s AS s;
+DROP VLABEL uncollated CASCADE;
+DROP VLABEL collated2;
+DROP DOMAIN tc.ctext;
+
+-- ----------------------------------------------------------------------------
 -- A VALUE WHOSE KIND IS NOT THE COLUMN'S KIND
 --
 -- The column holds the property's value, so it has to be a value of that kind.
