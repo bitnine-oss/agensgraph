@@ -268,6 +268,10 @@ ExecInitGraphVLE(GraphVLE *vleplan, EState *estate, int eflags)
 	 *
 	 * vertices(4).
 	 */
+	vle_state->hop_cxt = AllocSetContextCreate(CurrentMemoryContext,
+											   "GraphVLE hop",
+											   ALLOCSET_SMALL_SIZES);
+
 	vle_state->edge_ids = initArrayResult(GRAPHIDOID,
 										  CurrentMemoryContext,
 										  false);
@@ -316,6 +320,16 @@ ExecGraphVLE(PlanState *pstate)
 	GraphVLEState *vle_state = castNode(GraphVLEState, pstate);
 	ExprContext *econtext = vle_state->ps.ps_ExprContext;
 
+	/*
+	 * The arrays handed back for the previous path were built in per-tuple
+	 * memory, and being asked for another one is what says the caller is done
+	 * with them.  Release them now: a traversal answers with one set of arrays
+	 * per path it finds, so holding every set until the query ends costs the
+	 * length of a path times the number of paths, which is unbounded in a way
+	 * the traversal itself is not.
+	 */
+	ResetExprContext(econtext);
+
 	for (;;)
 	{
 		/* fetch new subplan tuple. */
@@ -335,13 +349,18 @@ ExecGraphVLE(PlanState *pstate)
 
 			if (vle_state->use_vertex_output)
 			{
+				MemoryContext oldcxt;
+
 				array_clear(vle_state->vertices);
 
+				oldcxt = MemoryContextSwitchTo(vle_state->hop_cxt);
 				accumArrayResult(vle_state->vertices,
 								 get_vertex_from_graphid(vle_state->first_start_id),
 								 false,
 								 VERTEXOID,
 								 CurrentMemoryContext);
+				MemoryContextSwitchTo(oldcxt);
+				MemoryContextReset(vle_state->hop_cxt);
 			}
 
 			if (0 >= vle_state->minimum_output_depth &&
@@ -405,6 +424,7 @@ ExecGraphVLEDFS(GraphVLEState *vle_state, Graphid start_id)
 {
 	VLEDepthCtx *vle_depth_ctx = NULL;
 	Graphid		edge_id;
+	MemoryContext oldcxt;
 
 	/* is first time? */
 	if (vle_state->table_scan_desc_list == NIL)
@@ -527,6 +547,8 @@ ExecGraphVLEDFS(GraphVLEState *vle_state, Graphid start_id)
 			}
 		}
 
+		oldcxt = MemoryContextSwitchTo(vle_state->hop_cxt);
+
 		accumArrayResult(vle_state->edges,
 						 make_edge_from_tuple(vle_state->current_scan_tuple),
 						 false,
@@ -546,6 +568,9 @@ ExecGraphVLEDFS(GraphVLEState *vle_state, Graphid start_id)
 							 VERTEXOID,
 							 CurrentMemoryContext);
 		}
+
+		MemoryContextSwitchTo(oldcxt);
+		MemoryContextReset(vle_state->hop_cxt);
 
 		return_as_results = vle_state->minimum_output_depth <= vle_scan_depth &&
 			vle_state->maximum_output_depth >= vle_scan_depth;
@@ -758,6 +783,8 @@ ExecEndGraphVLE(GraphVLEState *vle_state)
 	pfree(vle_state->scan_tuples);
 	pfree(vle_state->start_index_rels);
 	pfree(vle_state->end_index_rels);
+
+	MemoryContextDelete(vle_state->hop_cxt);
 
 	/*
 	 * clean out the tuple table
