@@ -384,6 +384,11 @@ $node->safe_psql(
 	-- created: a Cypher write cannot name an ordinary column, so it leaves it
 	-- null.)
 	ALTER TABLE gg.mixed ALTER COLUMN plain_first SET NOT NULL;
+	-- and one on a PROMOTED column, which the ordinary-column loop never
+	-- reaches, so the dump has to say it separately or it is simply lost
+	UPDATE gg.mixed SET properties = jsonb_set(properties, '{age}', '7')
+	WHERE properties -> 'age' IS NULL;
+	ALTER TABLE gg.mixed ALTER COLUMN age SET NOT NULL;
 });
 
 my $plainfile = "${PostgreSQL::Test::Utils::tmp_check}/plain_cols.sql";
@@ -396,6 +401,9 @@ like($plaindump, qr/ALTER TABLE gg\.plainv ADD COLUMN extra text;/,
 	'dump adds the ordinary column back');
 like($plaindump, qr/ADD COLUMN plain_first text COLLATE pg_catalog\."C" NOT NULL;/,
 	"dump keeps the ordinary column's collation and NOT NULL");
+like($plaindump,
+	qr/ALTER TABLE ONLY gg\.mixed ALTER COLUMN age SET NOT NULL;/,
+	"dump keeps NOT NULL on a promoted column");
 like($plaindump, qr/ALTER TABLE gg\.erel ADD COLUMN ecol integer;/,
 	"dump adds an edge label's ordinary column");
 # a child inherits it, so only the parent declares it

@@ -20903,6 +20903,31 @@ dumpLabelSchema(Archive *fout, const TableInfo *tblinfo)
 	}
 
 	/*
+	 * NOT NULL on a promoted column.  The loop above adds only the ordinary
+	 * columns and carries their NOT NULL with them; a promoted column arrives
+	 * with the label itself, so anything declared about it afterwards has to be
+	 * said here, or it is dumped by nobody and is gone after a restore that
+	 * reports no error at all.
+	 */
+	for (j = 0; j < tblinfo->numatts; j++)
+	{
+		if (tblinfo->attisdropped[j] ||
+			!tblinfo->attgenerated[j] ||
+			tblinfo->notnull_constrs[j] == NULL ||
+			!tblinfo->notnull_islocal[j])
+			continue;
+
+		if (tblinfo->notnull_constrs[j][0] == '\0')
+			appendPQExpBuffer(q, "ALTER TABLE ONLY %s ALTER COLUMN %s SET NOT NULL;\n",
+							  qualrelname, fmtId(tblinfo->attnames[j]));
+		else
+			appendPQExpBuffer(q, "ALTER TABLE ONLY %s ADD CONSTRAINT %s NOT NULL %s;\n",
+							  qualrelname,
+							  fmtId(tblinfo->notnull_constrs[j]),
+							  fmtId(tblinfo->attnames[j]));
+	}
+
+	/*
 	 * in binary upgrade mode, update the catalog with any missing values that
 	 * might be present.
 	 */
