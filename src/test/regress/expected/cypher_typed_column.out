@@ -5597,6 +5597,43 @@ MATCH (a:vardoc), (b:vardoc) RETURN count(*);
 (1 row)
 
 -- ----------------------------------------------------------------------------
+-- ONE PROPERTY, ONE COLUMN, ALL THE WAY DOWN A LABEL'S ANCESTRY
+--
+-- A property is read by name, so the name has to lead to one column whichever
+-- label the read goes through.  Adding a property to an existing label already
+-- refuses a key an ancestor promotes; declaring a label that inherits did not,
+-- and neither refused a different key promoted to a column name the ancestor
+-- already uses -- which inheritance merges into one column, so both keys then
+-- read the same value.
+-- ----------------------------------------------------------------------------
+CREATE VLABEL cohp (k int GENERATED);
+-- the same key, answering from a column of another name
+CREATE VLABEL cohc (kt text GENERATED (k)) INHERITS (cohp);
+ERROR:  property "k" is already promoted on graph label "cohp"
+DETAIL:  It answers from column "k" there and would answer from column "kt" here.
+HINT:  Promote it to the same column name, or leave it to the label that has it.
+-- a different key, answering from a column the ancestor already uses
+CREATE VLABEL cohp2 (c int GENERATED (a));
+CREATE VLABEL cohc2 (c int GENERATED (b)) INHERITS (cohp2);
+ERROR:  column "c" already promotes property "a" on graph label "cohp2"
+DETAIL:  An inherited column is one column, so both properties would read the same value.
+HINT:  Promote this property to a column of another name.
+-- a child promoting a key of its own is fine
+CREATE VLABEL cohgood (other int GENERATED) INHERITS (cohp);
+CREATE (:cohgood {k: 1, other: 2});
+MATCH (n:cohgood) RETURN n.k AS k, n.other AS other;
+ k | other 
+---+-------
+ 1 | 2
+(1 row)
+
+-- so is re-promoting the same key to the same column
+CREATE VLABEL cohgood2 (k int GENERATED) INHERITS (cohp);
+DROP VLABEL cohgood2;
+DROP VLABEL cohgood CASCADE;
+DROP VLABEL cohp2;
+DROP VLABEL cohp;
+-- ----------------------------------------------------------------------------
 -- A PROMOTED COLUMN CARRYING A COLLATION OF ITS OWN
 --
 -- Reading a property has to mean the same thing whether the column answers or
