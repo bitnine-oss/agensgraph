@@ -3125,6 +3125,15 @@ typedef struct GraphVLEState
 	List	   *table_scan_desc_list;	/* List for saving scan descriptions. */
 	bool		use_vertex_output;
 	Jsonb	   *jsonb_filter;
+
+	/*
+	 * Scratch for building the node and relationship a hop appends to the
+	 * result arrays.  accumArrayResult keeps its own copy of every value, so
+	 * what the constructors allocate is dead the moment it returns; reset per
+	 * hop, or a traversal accumulates one discarded tuple for every edge it
+	 * walks over, whether or not that edge reaches an answer.
+	 */
+	MemoryContext hop_cxt;
 } GraphVLEState;
 
 #endif							/* EXECNODES_H */

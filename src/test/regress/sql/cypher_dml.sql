@@ -645,6 +645,26 @@ RETURN d.sec AS d, length(z) AS z,
 MATCH (a:time)-[x*0..2]-(b)
 RETURN a.sec AS a, length(x) AS x, b.sec AS b ORDER BY a, b, x;
 
+-- The arrays a traversal answers with are built in per-tuple memory, which is
+-- released when the next path is asked for.  Read every one of them back on a
+-- query that produces many paths: a release that came too early shows up as the
+-- earlier paths' edges and nodes no longer being there to read.
+MATCH (a:time)-[x:goes*1..8]->(b:time)
+WITH a, b, x
+RETURN a.sec AS a, b.sec AS b, size(x) AS hops,
+       id(startnode(x[0])) = id(a) AS first_edge_starts_at_a,
+       id(endnode(x[size(x) - 1])) = id(b) AS last_edge_ends_at_b,
+       b.sec - a.sec = size(x) AS contiguous
+ORDER BY a, b;
+
+-- and with the node array materialised as well
+MATCH p = (a:time)-[:goes*1..8]->(b:time)
+RETURN a.sec AS a, b.sec AS b, length(p) AS len,
+       size(nodes(p)) = length(p) + 1 AS nodes_match_length,
+       (nodes(p)[0]).sec = a.sec AS first_node_is_start,
+       (nodes(p)[length(p)]).sec = b.sec AS last_node_is_end
+ORDER BY a, b;
+
 -- VLE with graph path
 MATCH p = (:time)-[:goes*0]->(:time)
 RETURN properties(nodes(p)[0]) AS first, properties(vertices(p)[1]) AS second, properties(relationships(p)[0]) AS rel;

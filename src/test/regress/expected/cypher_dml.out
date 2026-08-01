@@ -1872,6 +1872,104 @@ RETURN a.sec AS a, length(x) AS x, b.sec AS b ORDER BY a, b, x;
  9 | 0 | 9
 (39 rows)
 
+-- The arrays a traversal answers with are built in per-tuple memory, which is
+-- released when the next path is asked for.  Read every one of them back on a
+-- query that produces many paths: a release that came too early shows up as the
+-- earlier paths' edges and nodes no longer being there to read.
+MATCH (a:time)-[x:goes*1..8]->(b:time)
+WITH a, b, x
+RETURN a.sec AS a, b.sec AS b, size(x) AS hops,
+       id(startnode(x[0])) = id(a) AS first_edge_starts_at_a,
+       id(endnode(x[size(x) - 1])) = id(b) AS last_edge_ends_at_b,
+       b.sec - a.sec = size(x) AS contiguous
+ORDER BY a, b;
+ a | b | hops | first_edge_starts_at_a | last_edge_ends_at_b | contiguous 
+---+---+------+------------------------+---------------------+------------
+ 1 | 2 | 1    | t                      | t                   | t
+ 1 | 3 | 2    | t                      | t                   | t
+ 1 | 4 | 3    | t                      | t                   | t
+ 1 | 5 | 4    | t                      | t                   | t
+ 1 | 6 | 5    | t                      | t                   | t
+ 1 | 7 | 6    | t                      | t                   | t
+ 1 | 8 | 7    | t                      | t                   | t
+ 1 | 9 | 8    | t                      | t                   | t
+ 2 | 3 | 1    | t                      | t                   | t
+ 2 | 4 | 2    | t                      | t                   | t
+ 2 | 5 | 3    | t                      | t                   | t
+ 2 | 6 | 4    | t                      | t                   | t
+ 2 | 7 | 5    | t                      | t                   | t
+ 2 | 8 | 6    | t                      | t                   | t
+ 2 | 9 | 7    | t                      | t                   | t
+ 3 | 4 | 1    | t                      | t                   | t
+ 3 | 5 | 2    | t                      | t                   | t
+ 3 | 6 | 3    | t                      | t                   | t
+ 3 | 7 | 4    | t                      | t                   | t
+ 3 | 8 | 5    | t                      | t                   | t
+ 3 | 9 | 6    | t                      | t                   | t
+ 4 | 5 | 1    | t                      | t                   | t
+ 4 | 6 | 2    | t                      | t                   | t
+ 4 | 7 | 3    | t                      | t                   | t
+ 4 | 8 | 4    | t                      | t                   | t
+ 4 | 9 | 5    | t                      | t                   | t
+ 5 | 6 | 1    | t                      | t                   | t
+ 5 | 7 | 2    | t                      | t                   | t
+ 5 | 8 | 3    | t                      | t                   | t
+ 5 | 9 | 4    | t                      | t                   | t
+ 6 | 7 | 1    | t                      | t                   | t
+ 6 | 8 | 2    | t                      | t                   | t
+ 6 | 9 | 3    | t                      | t                   | t
+ 7 | 8 | 1    | t                      | t                   | t
+ 7 | 9 | 2    | t                      | t                   | t
+ 8 | 9 | 1    | t                      | t                   | t
+(36 rows)
+
+-- and with the node array materialised as well
+MATCH p = (a:time)-[:goes*1..8]->(b:time)
+RETURN a.sec AS a, b.sec AS b, length(p) AS len,
+       size(nodes(p)) = length(p) + 1 AS nodes_match_length,
+       (nodes(p)[0]).sec = a.sec AS first_node_is_start,
+       (nodes(p)[length(p)]).sec = b.sec AS last_node_is_end
+ORDER BY a, b;
+ a | b | len | nodes_match_length | first_node_is_start | last_node_is_end 
+---+---+-----+--------------------+---------------------+------------------
+ 1 | 2 | 1   | t                  | t                   | t
+ 1 | 3 | 2   | t                  | t                   | t
+ 1 | 4 | 3   | t                  | t                   | t
+ 1 | 5 | 4   | t                  | t                   | t
+ 1 | 6 | 5   | t                  | t                   | t
+ 1 | 7 | 6   | t                  | t                   | t
+ 1 | 8 | 7   | t                  | t                   | t
+ 1 | 9 | 8   | t                  | t                   | t
+ 2 | 3 | 1   | t                  | t                   | t
+ 2 | 4 | 2   | t                  | t                   | t
+ 2 | 5 | 3   | t                  | t                   | t
+ 2 | 6 | 4   | t                  | t                   | t
+ 2 | 7 | 5   | t                  | t                   | t
+ 2 | 8 | 6   | t                  | t                   | t
+ 2 | 9 | 7   | t                  | t                   | t
+ 3 | 4 | 1   | t                  | t                   | t
+ 3 | 5 | 2   | t                  | t                   | t
+ 3 | 6 | 3   | t                  | t                   | t
+ 3 | 7 | 4   | t                  | t                   | t
+ 3 | 8 | 5   | t                  | t                   | t
+ 3 | 9 | 6   | t                  | t                   | t
+ 4 | 5 | 1   | t                  | t                   | t
+ 4 | 6 | 2   | t                  | t                   | t
+ 4 | 7 | 3   | t                  | t                   | t
+ 4 | 8 | 4   | t                  | t                   | t
+ 4 | 9 | 5   | t                  | t                   | t
+ 5 | 6 | 1   | t                  | t                   | t
+ 5 | 7 | 2   | t                  | t                   | t
+ 5 | 8 | 3   | t                  | t                   | t
+ 5 | 9 | 4   | t                  | t                   | t
+ 6 | 7 | 1   | t                  | t                   | t
+ 6 | 8 | 2   | t                  | t                   | t
+ 6 | 9 | 3   | t                  | t                   | t
+ 7 | 8 | 1   | t                  | t                   | t
+ 7 | 9 | 2   | t                  | t                   | t
+ 8 | 9 | 1   | t                  | t                   | t
+(36 rows)
+
 -- VLE with graph path
 MATCH p = (:time)-[:goes*0]->(:time)
 RETURN properties(nodes(p)[0]) AS first, properties(vertices(p)[1]) AS second, properties(relationships(p)[0]) AS rel;
