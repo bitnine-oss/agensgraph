@@ -31,10 +31,9 @@
 # Triggers on a label, and the DELETE / MERGE paths under the same contention,
 # are in graph-write-trigger.spec.
 #
-# Not covered here: the other session DELETING the row a SET is about to write.
-# That reaches the graph write with a status it does not recognise and reports an
-# internal error rather than skipping the row, so there is no correct outcome to
-# pin yet.
+# The other session DELETING the row a SET is about to write is a different
+# outcome -- there is nothing left to re-examine -- and is in
+# graph-write-deleted.spec.
 #
 # Cypher property maps are spelled with braces, which delimit a step here, so the
 # patterns below use WHERE and SET instead.

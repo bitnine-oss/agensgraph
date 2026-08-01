@@ -128,3 +128,6 @@ test: graph-set-recheck
 
 # row triggers on a graph label, and the write paths under the same contention
 test: graph-write-trigger
+
+# a graph write whose row another session deleted
+test: graph-write-deleted

@@ -171,7 +171,7 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 		if (!dodelete)
 		{
 			/*
-			 * A concurrent update is reported back here rather than rechecked by
+			 * A concurrent write is reported back here rather than rechecked by
 			 * the trigger machinery, because it cannot re-derive a graph write's
 			 * row.  Report it as what it is: this path has no re-examination of
 			 * its own, so blaming the trigger would name the wrong cause and
@@ -181,6 +181,20 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 				ereport(ERROR,
 						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
 						 errmsg("could not serialize access due to concurrent update")));
+
+			/*
+			 * A row another transaction removed is not a trigger refusing the
+			 * delete, and it is not required to still be here for a delete to
+			 * have got what it asked for.
+			 */
+			if (result == TM_Deleted)
+			{
+				if (IsolationUsesXactSnapshot())
+					ereport(ERROR,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("could not serialize access due to concurrent delete")));
+				return false;
+			}
 
 			if (required)
 			{
@@ -217,6 +231,23 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
 					 errmsg("could not serialize access due to concurrent update")));
 			break;
+
+		case TM_Deleted:
+
+			/*
+			 * Another transaction removed the row first.  An isolation level
+			 * holding one snapshot for the transaction has to hear about the
+			 * conflict; below that the element is already gone, which is what
+			 * this statement was asking for, so report that nothing was
+			 * deleted and leave the counters and the modified-element table
+			 * alone.
+			 */
+			if (IsolationUsesXactSnapshot())
+				ereport(ERROR,
+						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+						 errmsg("could not serialize access due to concurrent delete")));
+			return false;
+
 		default:
 			elog(ERROR, "unrecognized heap_update status: %u", result);
 			break;
