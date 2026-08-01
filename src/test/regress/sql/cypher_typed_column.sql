@@ -275,10 +275,10 @@ MATCH (n:doc) RETURN n.name ORDER BY n.age LIMIT 2;
 EXPLAIN (COSTS OFF)
 MATCH (n:doc) WHERE n.title = 'alpha' RETURN n.name;
 
--- 2f. GROUP BY a promoted property groups on the native typed column (the
---     returned value stays as cypher_to_jsonb(column), a function of
---     the group key), so the group reads the column index-only and compares
---     native values instead of jsonb.
+-- 2f. GROUP BY a promoted property groups on the native typed column, which is
+--     also what the query returns, so the group reads the column index-only,
+--     compares native values instead of jsonb, and the grouping already
+--     delivers the order the sort would have produced.
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (n:doc) RETURN n.age AS age, count(*) ORDER BY age;
 
@@ -544,11 +544,10 @@ MATCH (n:doc) WITH n AS v, n.age AS age ORDER BY age * -1, v.name
 -- SECTION 6 -- GROUP BY / DISTINCT (the by-value grouping path)
 --
 -- A promoted property groups and de-duplicates by value, not by the jsonb
--- Datum's pointer bits.  GROUP BY compiles the key to the native typed column
--- (the projected cypher_to_jsonb(column) stays as the returned value, a function
--- of the group key), so grouping compares native values and can read the column
--- index-only; DISTINCT keeps the cypher_to_jsonb(column) key.  Either way
--- the result rows are identical, and all on == off.
+-- Datum's pointer bits.  The key and the returned value are both the native
+-- typed column, so grouping compares native values and can read the column
+-- index-only.  The result rows are the same values either way; with promotion
+-- on they are rendered in the column's own type rather than as jsonb.
 -- ============================================================================
 
 -- 6a. GROUP BY each promoted numeric with a duplicate value.

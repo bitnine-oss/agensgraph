@@ -137,12 +137,13 @@ is( $node->safe_psql(
 	'the property index on the inherited key is a typed btree after restore');
 
 # The whole point: a Cypher read still resolves to the typed column and returns
-# the typed value from the restored rows.
+# the typed value from the restored rows -- a promoted text property comes back
+# as text, not as a jsonb string.
 is( $node->safe_psql(
 		'agdst',
 		"SET graph_path=gg;
 		 MATCH (n:doc) WHERE n.age > 15 RETURN n.title AS t ORDER BY t"),
-	'"y"',
+	'y',
 	'promoted read resolves after restore (doc.age filter -> typed column)');
 
 is( $node->safe_psql(
@@ -159,7 +160,7 @@ is( $node->safe_psql(
 		'agdst',
 		"SET graph_path=gg;
 		 MATCH (n:doc) WHERE n.rank = 2 RETURN n.title AS t"),
-	'"y"',
+	'y',
 	'ALTER-added promoted column resolves after restore (doc.rank filter -> typed column)');
 
 is( $node->safe_psql(

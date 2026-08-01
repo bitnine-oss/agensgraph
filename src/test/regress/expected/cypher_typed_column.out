@@ -362,23 +362,20 @@ MATCH (n:doc) WHERE n.title = 'alpha' RETURN n.name;
    Index Cond: (title = 'alpha'::text)
 (2 rows)
 
--- 2f. GROUP BY a promoted property groups on the native typed column (the
---     returned value stays as cypher_to_jsonb(column), a function of
---     the group key), so the group reads the column index-only and compares
---     native values instead of jsonb.
+-- 2f. GROUP BY a promoted property groups on the native typed column, which is
+--     also what the query returns, so the group reads the column index-only,
+--     compares native values instead of jsonb, and the grouping already
+--     delivers the order the sort would have produced.
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (n:doc) RETURN n.age AS age, count(*) ORDER BY age;
-                                QUERY PLAN                                
---------------------------------------------------------------------------
- Sort
-   Output: (cypher_to_jsonb(n.age)), (cypher_to_jsonb(count(*))), n.age
-   Sort Key: (cypher_to_jsonb(n.age))
-   ->  GroupAggregate
-         Output: cypher_to_jsonb(n.age), cypher_to_jsonb(count(*)), n.age
-         Group Key: n.age
-         ->  Index Only Scan using doc_age_idx on tc.doc n
-               Output: n.age
-(8 rows)
+                     QUERY PLAN                      
+-----------------------------------------------------
+ GroupAggregate
+   Output: n.age, cypher_to_jsonb(count(*))
+   Group Key: n.age
+   ->  Index Only Scan using doc_age_idx on tc.doc n
+         Output: n.age
+(5 rows)
 
 -- 2g. A promoted edge property resolves to its column on a directed pattern.
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -386,7 +383,7 @@ MATCH (a:doc)-[e:rel]->(b:doc) RETURN e.weight;
                               QUERY PLAN                              
 ----------------------------------------------------------------------
  Nested Loop
-   Output: cypher_to_jsonb(e.weight)
+   Output: e.weight
    Inner Unique: true
    ->  Nested Loop
          Output: e.weight, e."end"
@@ -420,7 +417,7 @@ MATCH (n:doc) WHERE n.id = 5 RETURN n.age;
 --------------------------------------------------
  Seq Scan on tc.doc n
    Disabled: true
-   Output: cypher_to_jsonb(n.age)
+   Output: n.age
    Filter: (n.properties.'id'::text = '5'::jsonb)
 (4 rows)
 
@@ -518,22 +515,22 @@ MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY n.age LIMIT 2;
 
 EXPLAIN (COSTS OFF)
 MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY age * -1 LIMIT 2;
-                          QUERY PLAN                          
---------------------------------------------------------------
+                 QUERY PLAN                  
+---------------------------------------------
  Limit
    ->  Sort
-         Sort Key: ((cypher_to_jsonb(n.age) `*` '-1'::jsonb))
+         Sort Key: ((n.age * '-1'::integer))
          ->  Seq Scan on doc n
                Disabled: true
 (5 rows)
 
 EXPLAIN (COSTS OFF)
 MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY n.age * -1 LIMIT 2;
-                          QUERY PLAN                          
---------------------------------------------------------------
+                 QUERY PLAN                  
+---------------------------------------------
  Limit
    ->  Sort
-         Sort Key: ((cypher_to_jsonb(n.age) `*` '-1'::jsonb))
+         Sort Key: ((n.age * '-1'::integer))
          ->  Seq Scan on doc n
                Disabled: true
 (5 rows)
@@ -551,15 +548,15 @@ MATCH (n:doc) WITH n AS v ORDER BY v.age LIMIT 2 RETURN v.name;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (n:doc) RETURN n.title AS title ORDER BY toUpper(title) LIMIT 2;
-                                    QUERY PLAN                                     
------------------------------------------------------------------------------------
+                            QUERY PLAN                            
+------------------------------------------------------------------
  Limit
-   Output: (cypher_to_jsonb(n.title)), (toupper(cypher_to_jsonb(n.title)))
+   Output: n.title, (toupper(cypher_to_jsonb(n.title)))
    ->  Sort
-         Output: (cypher_to_jsonb(n.title)), (toupper(cypher_to_jsonb(n.title)))
+         Output: n.title, (toupper(cypher_to_jsonb(n.title)))
          Sort Key: (toupper(cypher_to_jsonb(n.title)))
          ->  Index Only Scan using doc_title_idx on tc.doc n
-               Output: cypher_to_jsonb(n.title), toupper(cypher_to_jsonb(n.title))
+               Output: n.title, toupper(cypher_to_jsonb(n.title))
 (7 rows)
 
 SET enable_seqscan = on;
@@ -571,10 +568,10 @@ SET enable_property_promotion = on;
 MATCH (n:doc) WHERE n.age > 30 RETURN n.name AS name, n.age AS age ORDER BY age, name;
  name | age 
 ------+-----
- "n2" | 40
- "n5" | 40
- "n6" | 50
- "n3" | 60
+ "n2" |  40
+ "n5" |  40
+ "n6" |  50
+ "n3" |  60
 (4 rows)
 
 MATCH (n:doc) WHERE n.age >= 30 AND n.age <= 50 RETURN n.name AS name ORDER BY name;
@@ -920,20 +917,20 @@ SET enable_property_promotion = on;
 MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY age ASC, name LIMIT 3;
  name | age 
 ------+-----
- "n1" | 20
- "n4" | 30
- "n2" | 40
+ "n1" |  20
+ "n4" |  30
+ "n2" |  40
 (3 rows)
 
 MATCH (n:doc) RETURN n.name AS name, n.ratio AS ratio ORDER BY ratio DESC, name;
  name | ratio 
 ------+-------
- "n6" | 
- "n5" | 9.5
- "n3" | 3.5
- "n2" | 2.5
- "n4" | 2.5
- "n1" | 1.5
+ "n6" |      
+ "n5" |   9.5
+ "n3" |   3.5
+ "n2" |   2.5
+ "n4" |   2.5
+ "n1" |   1.5
 (6 rows)
 
 SET enable_property_promotion = off;
@@ -961,23 +958,23 @@ SET enable_property_promotion = on;
 MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY age ASC NULLS FIRST, name;
  name | age 
 ------+-----
- "n1" | 20
- "n4" | 30
- "n2" | 40
- "n5" | 40
- "n6" | 50
- "n3" | 60
+ "n1" |  20
+ "n4" |  30
+ "n2" |  40
+ "n5" |  40
+ "n6" |  50
+ "n3" |  60
 (6 rows)
 
 MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY age DESC NULLS LAST, name;
  name | age 
 ------+-----
- "n3" | 60
- "n6" | 50
- "n2" | 40
- "n5" | 40
- "n4" | 30
- "n1" | 20
+ "n3" |  60
+ "n6" |  50
+ "n2" |  40
+ "n5" |  40
+ "n4" |  30
+ "n1" |  20
 (6 rows)
 
 SET enable_property_promotion = off;
@@ -1006,11 +1003,11 @@ MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY age DESC NULLS LAST, 
 -- 5c. ORDER BY mixing a promoted key, an aggregate and an expression (on == off).
 SET enable_property_promotion = on;
 MATCH (n:doc) RETURN n.active AS act, count(*) AS c, max(n.age) AS mx ORDER BY c DESC, act;
-  act  | c | mx 
--------+---+----
- true  | 3 | 60
- false | 2 | 40
-       | 1 | 50
+ act | c | mx 
+-----+---+----
+ t   | 3 | 60
+ f   | 2 | 40
+     | 1 | 50
 (3 rows)
 
 SET enable_property_promotion = off;
@@ -1028,13 +1025,13 @@ MATCH (n:doc) RETURN n.active AS act, count(*) AS c, max(n.age) AS mx ORDER BY c
 --     first letters, so the order is the same under any collation.
 SET enable_property_promotion = on;
 MATCH (n:doc) WHERE n.title IS NOT NULL RETURN n.name AS name, n.title AS title ORDER BY title, name;
- name |   title   
-------+-----------
- "n1" | "alpha"
- "n3" | "alpha"
- "n2" | "bravo"
- "n4" | "charlie"
- "n5" | "delta"
+ name |  title  
+------+---------
+ "n1" | alpha
+ "n3" | alpha
+ "n2" | bravo
+ "n4" | charlie
+ "n5" | delta
 (5 rows)
 
 SET enable_property_promotion = off;
@@ -1055,22 +1052,22 @@ SET enable_property_promotion = on;
 MATCH (n:doc) RETURN n.name AS name, n.age AS age ORDER BY age * -1, name;
  name | age 
 ------+-----
- "n3" | 60
- "n6" | 50
- "n2" | 40
- "n5" | 40
- "n4" | 30
- "n1" | 20
+ "n3" |  60
+ "n6" |  50
+ "n2" |  40
+ "n5" |  40
+ "n4" |  30
+ "n1" |  20
 (6 rows)
 
 MATCH (n:doc) WHERE n.title IS NOT NULL RETURN n.title AS title ORDER BY toUpper(title) DESC;
-   title   
------------
- "delta"
- "charlie"
- "bravo"
- "alpha"
- "alpha"
+  title  
+---------
+ delta
+ charlie
+ bravo
+ alpha
+ alpha
 (5 rows)
 
 SET enable_property_promotion = off;
@@ -1108,53 +1105,53 @@ MATCH (n:doc) RETURN n.name AS name, n.big AS big ORDER BY big * -1, name;
  "n2" | 200
  "n4" | 200
  "n1" | 100
- "n6" | 
+ "n6" |    
 (6 rows)
 
 MATCH (n:doc) RETURN n.name AS name, n.ratio AS ratio ORDER BY ratio * 2 DESC, name;
  name | ratio 
 ------+-------
- "n6" | 
- "n5" | 9.5
- "n3" | 3.5
- "n2" | 2.5
- "n4" | 2.5
- "n1" | 1.5
+ "n6" |      
+ "n5" |   9.5
+ "n3" |   3.5
+ "n2" |   2.5
+ "n4" |   2.5
+ "n1" |   1.5
 (6 rows)
 
 MATCH (n:doc) RETURN n.name AS name, n.score AS score ORDER BY score + 0, name;
  name | score 
 ------+-------
- "n5" | 1.00
- "n1" | 2.50
- "n2" | 2.50
- "n4" | 2.50
- "n3" | 3.50
- "n6" | 
+ "n5" |  1.00
+ "n1" |  2.50
+ "n2" |  2.50
+ "n4" |  2.50
+ "n3" |  3.50
+ "n6" |      
 (6 rows)
 
 MATCH (n:doc) RETURN n.name AS name, n.active AS act
     ORDER BY CASE WHEN act THEN 0 ELSE 1 END, name;
- name |  act  
-------+-------
- "n1" | true
- "n3" | true
- "n5" | true
- "n2" | false
- "n4" | false
+ name | act 
+------+-----
+ "n1" | t
+ "n3" | t
+ "n5" | t
+ "n2" | f
+ "n4" | f
  "n6" | 
 (6 rows)
 
 MATCH (n:doc) RETURN n.name AS name, n.title AS title
     ORDER BY toUpper(title) NULLS FIRST, name;
- name |   title   
-------+-----------
+ name |  title  
+------+---------
  "n6" | 
- "n1" | "alpha"
- "n3" | "alpha"
- "n2" | "bravo"
- "n4" | "charlie"
- "n5" | "delta"
+ "n1" | alpha
+ "n3" | alpha
+ "n2" | bravo
+ "n4" | charlie
+ "n5" | delta
 (6 rows)
 
 SET enable_property_promotion = off;
@@ -1222,23 +1219,23 @@ SET enable_property_promotion = on;
 MATCH (n:doc) WITH n AS v ORDER BY v.age, v.name RETURN v.name AS name, v.age AS age;
  name | age 
 ------+-----
- "n1" | 20
- "n4" | 30
- "n2" | 40
- "n5" | 40
- "n6" | 50
- "n3" | 60
+ "n1" |  20
+ "n4" |  30
+ "n2" |  40
+ "n5" |  40
+ "n6" |  50
+ "n3" |  60
 (6 rows)
 
 MATCH (n:doc) WITH n AS v ORDER BY v.age * -1, v.name RETURN v.name AS name, v.age AS age;
  name | age 
 ------+-----
- "n3" | 60
- "n6" | 50
- "n2" | 40
- "n5" | 40
- "n4" | 30
- "n1" | 20
+ "n3" |  60
+ "n6" |  50
+ "n2" |  40
+ "n5" |  40
+ "n4" |  30
+ "n1" |  20
 (6 rows)
 
 MATCH (n:doc) WITH n AS v ORDER BY v.title NULLS LAST, v.name RETURN v.name AS name;
@@ -1291,30 +1288,30 @@ MATCH (n:doc) WITH n AS v ORDER BY v.title NULLS LAST, v.name RETURN v.name AS n
 --     the same value the projection returns (on == off).
 SET enable_property_promotion = on;
 MATCH (n:doc) RETURN n.active AS act, max(n.age) AS mx ORDER BY mx * -1, act;
-  act  | mx 
--------+----
- true  | 60
-       | 50
- false | 40
+ act | mx 
+-----+----
+ t   | 60
+     | 50
+ f   | 40
 (3 rows)
 
 MATCH (n:doc) RETURN n.active AS act, count(n.title) AS c ORDER BY c * -1, act;
-  act  | c 
--------+---
- true  | 3
- false | 2
-       | 0
+ act | c 
+-----+---
+ t   | 3
+ f   | 2
+     | 0
 (3 rows)
 
 MATCH (n:doc) RETURN n.title AS title, count(*) AS c
     ORDER BY c DESC, toUpper(title) NULLS FIRST;
-   title   | c 
------------+---
- "alpha"   | 2
-           | 1
- "bravo"   | 1
- "charlie" | 1
- "delta"   | 1
+  title  | c 
+---------+---
+ alpha   | 2
+         | 1
+ bravo   | 1
+ charlie | 1
+ delta   | 1
 (5 rows)
 
 SET enable_property_promotion = off;
@@ -1351,12 +1348,12 @@ SET enable_property_promotion = on;
 MATCH (n:doc) WITH n, n.name AS nm RETURN nm, n.age AS age ORDER BY age * -1, nm;
   nm  | age 
 ------+-----
- "n3" | 60
- "n6" | 50
- "n2" | 40
- "n5" | 40
- "n4" | 30
- "n1" | 20
+ "n3" |  60
+ "n6" |  50
+ "n2" |  40
+ "n5" |  40
+ "n4" |  30
+ "n1" |  20
 (6 rows)
 
 MATCH (n:doc) WITH n AS v, n.age AS age ORDER BY age * -1, v.name
@@ -1399,31 +1396,30 @@ MATCH (n:doc) WITH n AS v, n.age AS age ORDER BY age * -1, v.name
 -- SECTION 6 -- GROUP BY / DISTINCT (the by-value grouping path)
 --
 -- A promoted property groups and de-duplicates by value, not by the jsonb
--- Datum's pointer bits.  GROUP BY compiles the key to the native typed column
--- (the projected cypher_to_jsonb(column) stays as the returned value, a function
--- of the group key), so grouping compares native values and can read the column
--- index-only; DISTINCT keeps the cypher_to_jsonb(column) key.  Either way
--- the result rows are identical, and all on == off.
+-- Datum's pointer bits.  The key and the returned value are both the native
+-- typed column, so grouping compares native values and can read the column
+-- index-only.  The result rows are the same values either way; with promotion
+-- on they are rendered in the column's own type rather than as jsonb.
 -- ============================================================================
 -- 6a. GROUP BY each promoted numeric with a duplicate value.
 SET enable_property_promotion = on;
 MATCH (n:doc) RETURN n.age AS age, count(*) AS c ORDER BY age;
  age | c 
 -----+---
- 20  | 1
- 30  | 1
- 40  | 2
- 50  | 1
- 60  | 1
+  20 | 1
+  30 | 1
+  40 | 2
+  50 | 1
+  60 | 1
 (5 rows)
 
 MATCH (n:doc) RETURN n.ratio AS ratio, count(*) AS c ORDER BY ratio;
  ratio | c 
 -------+---
- 1.5   | 1
- 2.5   | 2
- 3.5   | 1
- 9.5   | 1
+   1.5 | 1
+   2.5 | 2
+   3.5 | 1
+   9.5 | 1
        | 1
 (5 rows)
 
@@ -1440,9 +1436,9 @@ MATCH (n:doc) RETURN n.big AS big, count(*) AS c ORDER BY big;
 MATCH (n:doc) RETURN n.score AS score, count(*) AS c ORDER BY score;
  score | c 
 -------+---
- 1.00  | 1
- 2.50  | 3
- 3.50  | 1
+  1.00 | 1
+  2.50 | 3
+  3.50 | 1
        | 1
 (4 rows)
 
@@ -1489,11 +1485,11 @@ MATCH (n:doc) RETURN n.score AS score, count(*) AS c ORDER BY score;
 -- 6b. GROUP BY a promoted boolean.
 SET enable_property_promotion = on;
 MATCH (n:doc) RETURN n.active AS act, count(*) AS c ORDER BY act;
-  act  | c 
--------+---
- false | 2
- true  | 3
-       | 1
+ act | c 
+-----+---
+ f   | 2
+ t   | 3
+     | 1
 (3 rows)
 
 SET enable_property_promotion = off;
@@ -1510,21 +1506,21 @@ SET enable_property_promotion = on;
 MATCH (n:doc) RETURN DISTINCT n.age AS age ORDER BY age;
  age 
 -----
- 20
- 30
- 40
- 50
- 60
+  20
+  30
+  40
+  50
+  60
 (5 rows)
 
 MATCH (n:doc) RETURN DISTINCT n.ratio AS ratio ORDER BY ratio;
  ratio 
 -------
- 1.5
- 2.5
- 3.5
- 9.5
- 
+   1.5
+   2.5
+   3.5
+   9.5
+      
 (5 rows)
 
 SET enable_property_promotion = off;
@@ -1551,14 +1547,14 @@ MATCH (n:doc) RETURN DISTINCT n.ratio AS ratio ORDER BY ratio;
 -- 6d. DISTINCT with a compound / DESC / multi-key ORDER BY on a promoted key.
 SET enable_property_promotion = on;
 MATCH (n:doc) RETURN DISTINCT n.age AS age, n.active AS act ORDER BY age DESC, act;
- age |  act  
------+-------
- 60  | true
- 50  | 
- 40  | false
- 40  | true
- 30  | false
- 20  | true
+ age | act 
+-----+-----
+  60 | t
+  50 | 
+  40 | f
+  40 | t
+  30 | f
+  20 | t
 (6 rows)
 
 MATCH (n:doc) RETURN DISTINCT n.age AS a ORDER BY a DESC;
@@ -1621,13 +1617,13 @@ MATCH (n:idp) WHERE n.id = 5 RETURN n.name AS name;
 -- GROUP BY n.id groups on the native column; identical rows on == off
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (n:idp) RETURN n.id AS id, count(*) AS c ORDER BY c DESC, id;
-                                     QUERY PLAN                                     
-------------------------------------------------------------------------------------
+                         QUERY PLAN                         
+------------------------------------------------------------
  Sort
-   Output: (cypher_to_jsonb(n.uid)), (cypher_to_jsonb(count(*))), n.uid, (count(*))
-   Sort Key: (count(*)) DESC, (cypher_to_jsonb(n.uid))
+   Output: n.uid, (cypher_to_jsonb(count(*))), (count(*))
+   Sort Key: (count(*)) DESC, n.uid
    ->  HashAggregate
-         Output: cypher_to_jsonb(n.uid), cypher_to_jsonb(count(*)), n.uid, count(*)
+         Output: n.uid, cypher_to_jsonb(count(*)), count(*)
          Group Key: n.uid
          ->  Seq Scan on tc.idp n
                Output: n.id, n.properties, n.uid
@@ -1636,8 +1632,8 @@ MATCH (n:idp) RETURN n.id AS id, count(*) AS c ORDER BY c DESC, id;
 MATCH (n:idp) RETURN n.id AS id, count(*) AS c ORDER BY c DESC, id;
  id | c 
 ----+---
- 5  | 2
- 9  | 1
+  5 | 2
+  9 | 1
 (2 rows)
 
 SET enable_property_promotion = off;
@@ -1909,8 +1905,8 @@ SET enable_property_promotion = on;
 MATCH (n:special) RETURN n.name AS name, n.ratio AS ratio ORDER BY ratio, name;
    name   | ratio 
 ----------+-------
- "sp_nz"  | 0
- "sp_one" | 1
+ "sp_nz"  |     0
+ "sp_one" |     1
 (2 rows)
 
 SET enable_property_promotion = off;
@@ -1944,7 +1940,7 @@ SET enable_property_promotion = on;
 MATCH (a:doc), (b:doc) WHERE a.name='n1' AND b.age > 50 RETURN a.name AS an, b.name AS bn, b.age AS bage ORDER BY bn;
   an  |  bn  | bage 
 ------+------+------
- "n1" | "n3" | 60
+ "n1" | "n3" |   60
 (1 row)
 
 SET enable_property_promotion = off;
@@ -1982,21 +1978,21 @@ SET enable_property_promotion = on;
 MATCH (n:doc) WITH n WHERE n.age > 25 RETURN n.name AS name, n.age AS age ORDER BY age, name;
  name | age 
 ------+-----
- "n4" | 30
- "n2" | 40
- "n5" | 40
- "n6" | 50
- "n3" | 60
+ "n4" |  30
+ "n2" |  40
+ "n5" |  40
+ "n6" |  50
+ "n3" |  60
 (5 rows)
 
 MATCH (n:doc) WITH n AS m WHERE m.age > 25 RETURN m.name AS name, m.age AS age ORDER BY age DESC, name;
  name | age 
 ------+-----
- "n3" | 60
- "n6" | 50
- "n2" | 40
- "n5" | 40
- "n4" | 30
+ "n3" |  60
+ "n6" |  50
+ "n2" |  40
+ "n5" |  40
+ "n4" |  30
 (5 rows)
 
 SET enable_property_promotion = off;
@@ -2026,10 +2022,10 @@ MATCH (n:doc) WITH n WHERE n.age > 20 WITH n AS m WHERE m.age < 60 WITH m AS k
   RETURN k.name AS name, k.age AS age ORDER BY age, name;
  name | age 
 ------+-----
- "n4" | 30
- "n2" | 40
- "n5" | 40
- "n6" | 50
+ "n4" |  30
+ "n2" |  40
+ "n5" |  40
+ "n6" |  50
 (4 rows)
 
 SET enable_property_promotion = off;
@@ -2048,21 +2044,21 @@ SET enable_property_promotion = on;
 MATCH (n:doc) WITH n AS m RETURN m.age AS age, count(*) AS c ORDER BY age;
  age | c 
 -----+---
- 20  | 1
- 30  | 1
- 40  | 2
- 50  | 1
- 60  | 1
+  20 | 1
+  30 | 1
+  40 | 2
+  50 | 1
+  60 | 1
 (5 rows)
 
 MATCH (n:doc) WITH n AS m RETURN DISTINCT m.age AS age ORDER BY age;
  age 
 -----
- 20
- 30
- 40
- 50
- 60
+  20
+  30
+  40
+  50
+  60
 (5 rows)
 
 SET enable_property_promotion = off;
@@ -2141,9 +2137,9 @@ SET enable_property_promotion = on;
 MATCH (n:doc) WHERE n.age > 15 AND EXISTS { MATCH (n)-[:knows]->(:doc) } RETURN n.name AS name, n.age AS age ORDER BY age, name;
  name | age 
 ------+-----
- "n1" | 20
- "n2" | 40
- "n3" | 60
+ "n1" |  20
+ "n2" |  40
+ "n3" |  60
 (3 rows)
 
 SET enable_property_promotion = off;
@@ -2160,8 +2156,8 @@ SET enable_property_promotion = on;
 MATCH (n:doc) WHERE n.age < 30 RETURN n.age AS age UNION MATCH (n:doc) WHERE n.age > 50 RETURN n.age AS age;
  age 
 -----
- 20
- 60
+  20
+  60
 (2 rows)
 
 SET enable_property_promotion = off;
@@ -2786,10 +2782,10 @@ DROP INDEX tc.ginnest_gin;
 --       is covered outside this suite.)
 SET enable_property_promotion = on;
 MATCH (n:doc) WHERE n.title = 'alpha' RETURN n.title AS t;
-    t    
----------
- "alpha"
- "alpha"
+   t   
+-------
+ alpha
+ alpha
 (2 rows)
 
 SET enable_property_promotion = off;
@@ -2805,11 +2801,11 @@ CREATE VLABEL jlike (s text GENERATED);
 CREATE (:jlike {nm: 'arr', s: '[9,9]'}), (:jlike {nm: 'obj', s: '{"a":1}'}),
        (:jlike {nm: 'plain', s: 'plain'});
 MATCH (n:jlike) RETURN n.s AS s ORDER BY n.nm;
-      s      
--------------
- "[9,9]"
- "{\"a\":1}"
- "plain"
+    s    
+---------
+ [9,9]
+ {"a":1}
+ plain
 (3 rows)
 
 SET enable_property_promotion = off;
@@ -2842,17 +2838,17 @@ MATCH (n:jshape)
   RETURN n.nm AS nm, n.s AS s, jsonb_typeof(n.s) AS sty,
          n.vc AS vc, jsonb_typeof(n.vc) AS vcty
   ORDER BY nm;
-   nm    |      s      |   sty    |     vc      |   vcty   
----------+-------------+----------+-------------+----------
- "arr"   | "[9,9]"     | "string" | "[9,9]"     | "string"
- "bool"  | "true"      | "string" | "false"     | "string"
- "empty" | "[]"        | "string" | "{}"        | "string"
- "frac"  | "1.5e2"     | "string" | "1.5e2"     | "string"
- "jnull" | "null"      | "string" | "null"      | "string"
- "num"   | "123"       | "string" | "123"       | "string"
- "obj"   | "{\"a\":1}" | "string" | "{\"a\":1}" | "string"
- "plain" | "plain"     | "string" | "plain"     | "string"
- "quot"  | "\"x\""     | "string" | "\"x\""     | "string"
+   nm    |    s    |   sty    |   vc    |   vcty   
+---------+---------+----------+---------+----------
+ "arr"   | [9,9]   | "string" | [9,9]   | "string"
+ "bool"  | true    | "string" | false   | "string"
+ "empty" | []      | "string" | {}      | "string"
+ "frac"  | 1.5e2   | "string" | 1.5e2   | "string"
+ "jnull" | null    | "string" | null    | "string"
+ "num"   | 123     | "string" | 123     | "string"
+ "obj"   | {"a":1} | "string" | {"a":1} | "string"
+ "plain" | plain   | "string" | plain   | "string"
+ "quot"  | "x"     | "string" | "x"     | "string"
 (9 rows)
 
 SET enable_property_promotion = off;
@@ -2910,15 +2906,15 @@ CREATE (:jdom {nm: 'jnull', s: 'null'});
 CREATE (:jdom {nm: 'quot',  s: '"x"'});
 CREATE (:jdom {nm: 'plain', s: 'plain'});
 MATCH (n:jdom) RETURN n.nm AS nm, n.s AS s, jsonb_typeof(n.s) AS ty ORDER BY nm;
-   nm    |      s      |    ty    
----------+-------------+----------
- "arr"   | "[9,9]"     | "string"
- "bool"  | "true"      | "string"
- "jnull" | "null"      | "string"
- "num"   | "123"       | "string"
- "obj"   | "{\"a\":1}" | "string"
- "plain" | "plain"     | "string"
- "quot"  | "\"x\""     | "string"
+   nm    |    s    |    ty    
+---------+---------+----------
+ "arr"   | [9,9]   | "string"
+ "bool"  | true    | "string"
+ "jnull" | null    | "string"
+ "num"   | 123     | "string"
+ "obj"   | {"a":1} | "string"
+ "plain" | plain   | "string"
+ "quot"  | "x"     | "string"
 (7 rows)
 
 SET enable_property_promotion = off;
@@ -3254,7 +3250,7 @@ MATCH (n:nullcase) WHERE n.age IS NULL RETURN n.name AS name ORDER BY name;
 MATCH (n:nullcase) WHERE n.age IS NOT NULL RETURN n.name AS name, n.age AS age ORDER BY name;
    name   | age 
 ----------+-----
- "nc_has" | 5
+ "nc_has" |   5
 (1 row)
 
 MATCH (n:doc) WHERE n.ratio IS NULL RETURN n.name AS name ORDER BY name;
@@ -3339,14 +3335,14 @@ MATCH (n:doc) RETURN n.name AS name, CASE WHEN n.age >= 40 THEN 'senior' ELSE 'j
 (6 rows)
 
 MATCH (n:doc) RETURN n.name AS name, coalesce(n.ratio, -1.0) AS r ORDER BY name;
- name |  r   
-------+------
+ name |  r  
+------+-----
  "n1" | 1.5
  "n2" | 2.5
  "n3" | 3.5
  "n4" | 2.5
  "n5" | 9.5
- "n6" | -1.0
+ "n6" | -1
 (6 rows)
 
 SET enable_property_promotion = off;
@@ -3483,22 +3479,22 @@ SET enable_property_promotion = on;
 MATCH (n:par) WHERE n.age >= 10 RETURN n.name AS name, n.age AS age ORDER BY age, name;
   name   | age 
 ---------+-----
- "par1"  | 10
- "chld1" | 20
- "gch1"  | 30
+ "par1"  |  10
+ "chld1" |  20
+ "gch1"  |  30
 (3 rows)
 
 MATCH (n:chld) RETURN n.name AS name, n.age AS age, n.score AS score ORDER BY age, name;
   name   | age | score 
 ---------+-----+-------
- "chld1" | 20  | 5.5
- "gch1"  | 30  | 7.7
+ "chld1" |  20 |   5.5
+ "gch1"  |  30 |   7.7
 (2 rows)
 
 MATCH (n:gchld) RETURN n.name AS name, n.age AS age, n.score AS score, n.extra AS extra ORDER BY name;
   name  | age | score | extra 
 --------+-----+-------+-------
- "gch1" | 30  | 7.7   | 1
+ "gch1" |  30 |   7.7 |     1
 (1 row)
 
 SET enable_property_promotion = off;
@@ -3530,7 +3526,7 @@ SET enable_property_promotion = on;
 MATCH (n:mixed) WHERE n.mixedkey > 6 RETURN n.name AS name, n.mixedkey AS mk ORDER BY name;
  name | mk 
 ------+----
- "m2" | 9
+ "m2" |  9
 (1 row)
 
 SET enable_property_promotion = off;
@@ -3578,7 +3574,7 @@ CREATE (:doc {name:'w1', age:11, ratio:1.1, active:true, title:'wr'});
 MATCH (n:doc {name:'w1'}) RETURN n.age AS age, n.ratio AS ratio;
  age | ratio 
 -----+-------
- 11  | 1.1
+  11 |   1.1
 (1 row)
 
 -- 14b. SET recomputes the columns.
@@ -3586,7 +3582,7 @@ MATCH (n:doc {name:'w1'}) SET n.age = 12, n.ratio = 2.2;
 MATCH (n:doc {name:'w1'}) RETURN n.age AS age, n.ratio AS ratio;
  age | ratio 
 -----+-------
- 12  | 2.2
+  12 |   2.2
 (1 row)
 
 -- 14c. SET += merges; SET = {map} replaces (dropped keys -> column NULL).
@@ -3594,14 +3590,14 @@ MATCH (n:doc {name:'w1'}) SET n += {age:13, extra:99};
 MATCH (n:doc {name:'w1'}) RETURN n.age AS age;
  age 
 -----
- 13
+  13
 (1 row)
 
 MATCH (n:doc {name:'w1'}) SET n = {name:'w1', age:14, title:'wr2'};
 MATCH (n:doc {name:'w1'}) RETURN n.age AS age, n.ratio AS ratio, n.title AS title;
  age | ratio | title 
 -----+-------+-------
- 14  |       | "wr2"
+  14 |       | wr2
 (1 row)
 
 -- 14d. REMOVE a promoted key -> its column goes NULL, others untouched.
@@ -3609,7 +3605,7 @@ MATCH (n:doc {name:'w1'}) REMOVE n.age;
 MATCH (n:doc {name:'w1'}) RETURN n.age AS age, n.title AS title;
  age | title 
 -----+-------
-     | "wr2"
+     | wr2
 (1 row)
 
 -- 14e. MERGE on both branches keeps columns in sync.
@@ -3618,8 +3614,8 @@ MERGE (n:doc {name:'w2'}) ON CREATE SET n.age = 99, n.ratio = 9.9;
 MATCH (n:doc) WHERE n.name IN ['w1','w2'] RETURN n.name AS name, n.age AS age ORDER BY name;
  name | age 
 ------+-----
- "w1" | 15
- "w2" | 99
+ "w1" |  15
+ "w2" |  99
 (2 rows)
 
 -- 14f. CREATE-then-read of the created element reads the bag (correct value, no
@@ -3641,16 +3637,16 @@ SET enable_property_promotion = on;
 MATCH (n:doc) WHERE n.age >= 14 RETURN n.name AS name, n.age AS age ORDER BY age, name;
  name | age 
 ------+-----
- "w1" | 15
- "n1" | 20
- "n4" | 30
- "n2" | 40
- "n5" | 40
- "n6" | 50
- "n3" | 60
- "w3" | 77
- "w4" | 88
- "w2" | 99
+ "w1" |  15
+ "n1" |  20
+ "n4" |  30
+ "n2" |  40
+ "n5" |  40
+ "n6" |  50
+ "n3" |  60
+ "w3" |  77
+ "w4" |  88
+ "w2" |  99
 (10 rows)
 
 SET enable_property_promotion = off;
@@ -3684,7 +3680,7 @@ CONTEXT:  while computing the promoted typed columns of graph label "doc"
 MATCH (n:doc {name:'wok'}) RETURN n.age AS age;
  age 
 -----
- 5
+   5
 (1 row)
 
 MATCH (n:doc {name:'wstr'}) RETURN n.age AS typed, properties(n) ->> 'age' AS bag;
@@ -3798,9 +3794,9 @@ SELECT p.propname, p.attnum, p.semantics
 MATCH (n:altlbl) RETURN n.name AS name, n.age AS age ORDER BY name;
  name | age 
 ------+-----
- "a1" | 20
- "a2" | 40
- "a3" | 
+ "a1" |  20
+ "a2" |  40
+ "a3" |    
 (3 rows)
 
 -- 15e. A read now resolves to the typed column.  Even before any index exists the
@@ -4028,9 +4024,9 @@ SELECT l.labname, p.propname
 MATCH (n:altpar) RETURN n.name AS name, n.age AS age ORDER BY age, name;
  name  | age 
 -------+-----
- "ap"  | 10
- "ac"  | 20
- "agc" | 30
+ "ap"  |  10
+ "ac"  |  20
+ "agc" |  30
 (3 rows)
 
 -- A property index on the inherited key on each child builds a typed btree, and a
@@ -4066,8 +4062,8 @@ SET enable_seqscan = on;
 MATCH (n:altchild) WHERE n.age > 5 RETURN n.name AS name, n.age AS age ORDER BY age, name;
  name  | age 
 -------+-----
- "ac"  | 20
- "agc" | 30
+ "ac"  |  20
+ "agc" |  30
 (2 rows)
 
 -- DROP on the parent removes the column from the whole hierarchy and clears the
@@ -4120,7 +4116,7 @@ MATCH (a:doc {name:'n1'}), (b:doc {name:'n2'}) CREATE (a)-[:altedge {weight:7}]-
 MATCH (a:doc)-[e:altedge]->(b:doc) RETURN e.weight AS weight;
  weight 
 --------
- 7
+      7
 (1 row)
 
 ALTER ELABEL altedge DROP weight;
@@ -4159,13 +4155,13 @@ SELECT p.propname, p.attnum, p.semantics
 MATCH (n:altforms) WHERE n.score > 5 RETURN n.name AS name, n.score AS score ORDER BY name;
  name | score 
 ------+-------
- "f2" | 9.75
+ "f2" |  9.75
 (1 row)
 
 MATCH (n:altforms) WHERE n.yrs >= 9 RETURN n.name AS name, n.yrs AS yrs ORDER BY name;
  name | yrs 
 ------+-----
- "f2" | 9
+ "f2" |   9
 (1 row)
 
 -- 15o. ADD is refused when the column name already exists on the label: the
@@ -4225,9 +4221,9 @@ SELECT attnum, attname, attisdropped FROM pg_catalog.pg_attribute
 MATCH (n:altreadd) RETURN n.name AS name, n.age AS age ORDER BY name;
  name | age 
 ------+-----
- "r1" | 20
- "r2" | 40
- "r3" | 
+ "r1" |  20
+ "r2" |  40
+ "r3" |    
 (3 rows)
 
 -- 15r. RESTRICT vs CASCADE.  A single-column property index does NOT make
@@ -4310,8 +4306,8 @@ SELECT p.propname, p.attnum FROM pg_catalog.ag_label_property p
 MATCH (n:altderiv) WHERE n.age >= 20 RETURN n.name AS name, n.age AS age ORDER BY name;
  name | age 
 ------+-----
- "q1" | 20
- "q2" | 40
+ "q1" |  20
+ "q2" |  40
 (2 rows)
 
 -- 15u. DROP and re-ADD the SAME promoted key in ONE statement.  The catalog sync
@@ -4336,8 +4332,8 @@ SELECT count(*) AS age_rows, max(p.attnum) AS attnum
 MATCH (n:altcombo) RETURN n.name AS name, n.age AS age ORDER BY name;
  name | age 
 ------+-----
- "x1" | 5
- "x2" | 7
+ "x1" |   5
+ "x2" |   7
 (2 rows)
 
 -- 15v. ADD is refused when its promotion SOURCE KEY is already promoted on the
@@ -4566,7 +4562,7 @@ CREATE (:pcmix {age: 30, tag: 'x'});
 MATCH (n:pcmix) RETURN n.age, n.tag;
  age | tag 
 -----+-----
- 30  | "x"
+  30 | "x"
 (1 row)
 
 SELECT age FROM tc.pcmix;
@@ -4591,7 +4587,7 @@ SELECT age FROM tc.pcmix;
 MATCH (n:pcmix) WHERE n.age = 31 RETURN n.age;
  age 
 -----
- 31
+  31
 (1 row)
 
 -- the write-domain contract still holds for the promoted column
@@ -4985,9 +4981,9 @@ WHERE l.labname = 'sync1' ORDER BY p.attnum;
 (1 row)
 
 MATCH (n:sync1) RETURN n.age AS age, n.nm AS nm;
- age | nm  
------+-----
- 5   | "a"
+ age | nm 
+-----+----
+ 5   | a
 (1 row)
 
 -- 21b. DROP EXPRESSION keeps the column but stops it deriving from the
@@ -5046,7 +5042,7 @@ CREATE (:sync2 {age: 1, sc: 9});
 MATCH (n:sync2) RETURN n.age AS age, n.sc AS sc;
  age | sc 
 -----+----
- 1   | 9
+   1 |  9
 (1 row)
 
 -- 21d. A structural column cannot be dropped through plain ALTER TABLE either.
@@ -5074,9 +5070,9 @@ WHERE l.labname = 'sync3' ORDER BY p.attnum;
 (2 rows)
 
 MATCH (n:sync3) RETURN n.age AS age, n.nm AS nm, n.later AS later;
- age | nm  | later 
------+-----+-------
- 1   | "a" | 5
+ age | nm | later 
+-----+----+-------
+ 1   | a  |     5
 (1 row)
 
 -- 21f. Recursion.  A promoted column added or dropped on a PARENT reaches every
@@ -5111,7 +5107,7 @@ WHERE l.labname IN ('syncpar', 'synckid') ORDER BY l.labname, p.attnum;
 MATCH (n:synckid) RETURN n.age AS age, n.own AS own, n.extra AS extra;
  age | own | extra 
 -----+-----+-------
- 2   | 9   | 3
+   2 |   9 |     3
 (1 row)
 
 ALTER TABLE tc.syncpar DROP COLUMN extra;
@@ -5127,7 +5123,7 @@ WHERE l.labname IN ('syncpar', 'synckid') ORDER BY l.labname, p.attnum;
 MATCH (n:synckid) RETURN n.age AS age, n.own AS own, n.extra AS extra;
  age | own | extra 
 -----+-----+-------
- 2   | 9   | 3
+   2 |   9 | 3
 (1 row)
 
 -- 21g. DROP EXPRESSION on a column a child INHERITS.  The column survives on both,
@@ -5152,7 +5148,7 @@ MATCH (n:syncpar) RETURN n.age AS age ORDER BY age;
 MATCH (n:synckid) RETURN n.age AS age, n.own AS own;
  age | own 
 -----+-----
- 2   | 9
+ 2   |   9
 (1 row)
 
 -- 21h. Dropping a promoted column that a property index binds.  The index goes
@@ -5471,7 +5467,7 @@ CREATE (:gate {age: 3});
 MATCH (n:gate) RETURN n.age AS age;
  age 
 -----
- 3
+   3
 (1 row)
 
 -- 22k2. The columns every vertex and edge is made of are refused whether or not
@@ -5502,7 +5498,7 @@ DETAIL:  Every vertex and edge is made of that column.
 MATCH (n:gate) WHERE n.keep = 'v' RETURN n.age AS age, n.keep AS keep;
  age | keep 
 -----+------
- 4   | "v"
+   4 | "v"
 (1 row)
 
 -- 22l. A label can inherit from an ordinary table, and altering that table
@@ -5624,7 +5620,7 @@ CREATE (:cohgood {k: 1, other: 2});
 MATCH (n:cohgood) RETURN n.k AS k, n.other AS other;
  k | other 
 ---+-------
- 1 | 2
+ 1 |     2
 (1 row)
 
 -- so is re-promoting the same key to the same column
@@ -5665,9 +5661,9 @@ SELECT count(*) FROM pg_class WHERE relname IN ('collated', 'collated2');
 CREATE VLABEL uncollated (s text GENERATED);
 CREATE (:uncollated {s: 'a'});
 MATCH (n:uncollated) RETURN n.s AS s;
-  s  
------
- "a"
+ s 
+---
+ a
 (1 row)
 
 DROP VLABEL uncollated CASCADE;
@@ -5703,9 +5699,9 @@ ORDER BY a.attname;
 -- a value of the column's kind is stored
 CREATE (:kinds {n: 5, f: 1.5, b: true, s: 'five'});
 MATCH (v:kinds) RETURN v.n, v.f, v.b, v.s;
- n |  f  |  b   |   s    
----+-----+------+--------
- 5 | 1.5 | true | "five"
+ n |  f  | b |  s   
+---+-----+---+------
+ 5 | 1.5 | t | five
 (1 row)
 
 -- one of another kind is refused
@@ -5760,7 +5756,7 @@ CREATE (:setmap {age: 7, name: 'keep'});
 MATCH (n:setmap) RETURN properties(n), n.age;
          properties         | age 
 ----------------------------+-----
- {"age": 7, "name": "keep"} | 7
+ {"age": 7, "name": "keep"} |   7
 (1 row)
 
 MATCH (n:setmap) SET n = 'hello'::jsonb;
@@ -5777,7 +5773,7 @@ ERROR:  jsonb object is expected for property map
 MATCH (n:setmap) RETURN properties(n), n.age;
          properties         | age 
 ----------------------------+-----
- {"age": 7, "name": "keep"} | 7
+ {"age": 7, "name": "keep"} |   7
 (1 row)
 
 -- the forms that do name a map still work, and keep the column in step
@@ -5785,21 +5781,21 @@ MATCH (n:setmap) SET n = {age: 8, name: 'new'};
 MATCH (n:setmap) RETURN properties(n), n.age;
         properties         | age 
 ---------------------------+-----
- {"age": 8, "name": "new"} | 8
+ {"age": 8, "name": "new"} |   8
 (1 row)
 
 MATCH (n:setmap) SET n += {extra: 1};
 MATCH (n:setmap) RETURN properties(n), n.age;
               properties               | age 
 ---------------------------------------+-----
- {"age": 8, "name": "new", "extra": 1} | 8
+ {"age": 8, "name": "new", "extra": 1} |   8
 (1 row)
 
 MATCH (n:setmap) SET n = to_jsonb('{"age": 9}'::json);
 MATCH (n:setmap) RETURN properties(n), n.age;
  properties | age 
 ------------+-----
- {"age": 9} | 9
+ {"age": 9} |   9
 (1 row)
 
 -- ----------------------------------------------------------------------------
