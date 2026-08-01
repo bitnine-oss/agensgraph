@@ -57,6 +57,8 @@ static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind,
 static char *extractPromotedSourceKey(Node *raw_expr);
 static void CheckPromotedColumnCollation(Oid relid, AttrNumber attnum,
 										 const char *colname);
+static void CheckPromotedPropertyCoherence(Oid relid, const char *propname,
+										   const char *colname);
 static void recordPromotedProperties(Oid laboid, Oid relid,
 									 List *promoted_props);
 static void GetSuperOids(List *supers, char labkind, List **supOids);
@@ -436,6 +438,72 @@ CheckPromotedColumnCollation(Oid relid, AttrNumber attnum, const char *colname)
 }
 
 /*
+ * CheckPromotedPropertyCoherence
+ *
+ * A property is read by name, and the name has to lead to one column all the
+ * way down a label's ancestry -- otherwise the same read means different things
+ * depending on which label it goes through.
+ *
+ * Two ways that can be broken, and both are silent.  A label can promote a key
+ * an ancestor already promotes, to a column of its own: the key then answers
+ * from one column through the child and another through the parent, with
+ * nothing saying the two disagree.  Or it can promote a different key to a
+ * column name the ancestor already uses: inheritance merges those into one
+ * column, so both keys read the same value and one of them is simply wrong.
+ *
+ * Adding a property to an existing label already refuses the first of these.
+ * Declaring a label that inherits did not refuse either.
+ */
+static void
+CheckPromotedPropertyCoherence(Oid relid, const char *propname,
+							   const char *colname)
+{
+	List	   *ancestors = find_all_ancestors(relid, AccessShareLock);
+	ListCell   *la;
+
+	foreach(la, ancestors)
+	{
+		Oid			ancestor = lfirst_oid(la);
+		List	   *props;
+		ListCell   *lp;
+
+		if (ancestor == relid)
+			continue;
+
+		props = get_label_promoted_properties(ancestor);
+		foreach(lp, props)
+		{
+			PromotedPropInfo *ap = (PromotedPropInfo *) lfirst(lp);
+			char	   *anccol = get_attname(ancestor, ap->attnum, true);
+
+			if (anccol == NULL)
+				continue;
+
+			if (strcmp(ap->propname, propname) == 0 &&
+				strcmp(anccol, colname) != 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_DUPLICATE_COLUMN),
+						 errmsg("property \"%s\" is already promoted on graph label \"%s\"",
+								propname, get_rel_name(ancestor)),
+						 errdetail("It answers from column \"%s\" there and would answer from column \"%s\" here.",
+								   anccol, colname),
+						 errhint("Promote it to the same column name, or leave it to the label that has it.")));
+
+			if (strcmp(ap->propname, propname) != 0 &&
+				strcmp(anccol, colname) == 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_DUPLICATE_COLUMN),
+						 errmsg("column \"%s\" already promotes property \"%s\" on graph label \"%s\"",
+								colname, ap->propname, get_rel_name(ancestor)),
+						 errdetail("An inherited column is one column, so both properties would read the same value."),
+						 errhint("Promote this property to a column of another name.")));
+		}
+	}
+
+	list_free(ancestors);
+}
+
+/*
  * recordPromotedProperties
  *
  * Register each shorthand-form promoted property of a freshly created label in
@@ -469,6 +537,7 @@ recordPromotedProperties(Oid laboid, Oid relid, List *promoted_props)
 				continue;		/* should not happen */
 
 			CheckPromotedColumnCollation(relid, attnum, col->colname);
+			CheckPromotedPropertyCoherence(relid, srckey, col->colname);
 
 			InsertAgLabelProperty(laboid, srckey, (int16) attnum,
 								  PROMOTED_SEMANTICS_LEGACY);
