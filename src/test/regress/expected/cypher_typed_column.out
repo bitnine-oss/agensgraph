@@ -5597,6 +5597,46 @@ MATCH (a:vardoc), (b:vardoc) RETURN count(*);
 (1 row)
 
 -- ----------------------------------------------------------------------------
+-- A PROMOTED COLUMN CARRYING A COLLATION OF ITS OWN
+--
+-- Reading a property has to mean the same thing whether the column answers or
+-- the map does, and a map compares strings with the database default.  A column
+-- collated otherwise orders the same values differently, which would make
+-- consulting it a decision about results rather than about speed.
+--
+-- A collation can arrive without anyone naming one, through a domain, so this
+-- is checked on the column rather than on what was written.
+-- ----------------------------------------------------------------------------
+CREATE DOMAIN tc.ctext AS text COLLATE "C";
+CREATE VLABEL collated (s tc.ctext GENERATED);
+ERROR:  a promoted property cannot have a collation of its own
+DETAIL:  Column "s" is collated "C", while a property map compares strings with the database default.
+HINT:  Leave the collation unspecified, or use a type that does not carry one.
+CREATE VLABEL collated2;
+ALTER VLABEL collated2 ADD COLUMN s tc.ctext GENERATED;
+ERROR:  a promoted property cannot have a collation of its own
+DETAIL:  Column "s" is collated "C", while a property map compares strings with the database default.
+HINT:  Leave the collation unspecified, or use a type that does not carry one.
+-- neither label was left behind
+SELECT count(*) FROM pg_class WHERE relname IN ('collated', 'collated2');
+ count 
+-------
+     1
+(1 row)
+
+-- a type that carries no collation of its own is fine
+CREATE VLABEL uncollated (s text GENERATED);
+CREATE (:uncollated {s: 'a'});
+MATCH (n:uncollated) RETURN n.s AS s;
+  s  
+-----
+ "a"
+(1 row)
+
+DROP VLABEL uncollated CASCADE;
+DROP VLABEL collated2;
+DROP DOMAIN tc.ctext;
+-- ----------------------------------------------------------------------------
 -- A VALUE WHOSE KIND IS NOT THE COLUMN'S KIND
 --
 -- The column holds the property's value, so it has to be a value of that kind.
