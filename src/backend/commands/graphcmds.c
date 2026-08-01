@@ -855,9 +855,6 @@ CheckLabelSqlReshape(Oid relid, bool recurse, List *cmds)
 	ListCell   *lc;
 	Oid			labelrelid = InvalidOid;
 
-	if (enable_graph_ddl)
-		return;
-
 	/*
 	 * ALTER TABLE reshapes more than the relation it names: unless ONLY was
 	 * asked for it descends the inheritance tree, so a label that inherits from
@@ -886,6 +883,38 @@ CheckLabelSqlReshape(Oid relid, bool recurse, List *cmds)
 	}
 
 	if (!OidIsValid(labelrelid))
+		return;
+
+	/*
+	 * The columns every vertex and edge is made of are what a graph is read
+	 * and written through, and no reshaping of a label is worth giving them
+	 * up.  Reaching them is not a repair, so asking to reshape the label does
+	 * not extend to them: one statement on the root of a graph would otherwise
+	 * rewrite the value of a property out of every label at once, and say
+	 * nothing about it.
+	 */
+	foreach(lc, cmds)
+	{
+		AlterTableCmd *cmd = (AlterTableCmd *) lfirst(lc);
+
+		if (cmd->subtype != AT_AlterColumnType)
+			continue;
+
+		if (cmd->name == NULL ||
+			(strcmp(cmd->name, AG_ELEM_LOCAL_ID) != 0 &&
+			 strcmp(cmd->name, AG_ELEM_PROP_MAP) != 0 &&
+			 strcmp(cmd->name, AG_START_ID) != 0 &&
+			 strcmp(cmd->name, AG_END_ID) != 0))
+			continue;
+
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot change the type of column \"%s\" of graph label \"%s\"",
+						cmd->name, get_rel_name(labelrelid)),
+				 errdetail("Every vertex and edge is made of that column.")));
+	}
+
+	if (enable_graph_ddl)
 		return;
 
 	foreach(lc, cmds)

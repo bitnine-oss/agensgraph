@@ -2352,6 +2352,24 @@ DROP TABLE tc_ordinary;
 CREATE (:gate {age: 3});
 MATCH (n:gate) RETURN n.age AS age;
 
+-- 22k2. The columns every vertex and edge is made of are refused whether or not
+--       the reshaping was asked for.  Reaching them is not a repair: one
+--       statement on the root of a graph would otherwise rewrite a property out
+--       of every label at once.
+CREATE (:gate {age: 4, keep: 'v'});
+SET enable_graph_ddl = on;
+ALTER TABLE tc.ag_vertex ALTER COLUMN properties TYPE jsonb USING (properties - 'age');
+ALTER TABLE tc.gate ALTER COLUMN properties TYPE jsonb USING (properties - 'age');
+ALTER TABLE tc.gate DROP COLUMN properties;
+ALTER TABLE tc.gate ALTER COLUMN id DROP NOT NULL;
+-- an ordinary column is still reshapeable, which is what restoring a dump needs
+ALTER TABLE tc.gate ADD COLUMN gate_extra text;
+ALTER TABLE tc.gate DROP COLUMN gate_extra;
+RESET enable_graph_ddl;
+ALTER TABLE tc.ag_vertex ALTER COLUMN properties TYPE jsonb USING (properties - 'age');
+-- nothing was lost
+MATCH (n:gate) WHERE n.keep = 'v' RETURN n.age AS age, n.keep AS keep;
+
 -- 22l. A label can inherit from an ordinary table, and altering that table
 --      descends into the label -- so the statement names a relation that is not a
 --      label while reshaping one that is.  What the statement reaches decides,
