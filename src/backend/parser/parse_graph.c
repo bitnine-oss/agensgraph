@@ -169,6 +169,7 @@ static void updateSortOperatorsForJsonb(List *sortClause, List **targetList,
 										bool allowUnbox, bool allowNativeUnbox);
 static void unboxPromotedGroupKeys(List *groupClause, List **targetList);
 static void groupElementsByIdentity(ParseState *pstate, Query *qry);
+static void dropElementsNotNamed(List *targetList, List *named);
 static bool sortgrouprefIsUsed(Index ref, List *clauses);
 static void setDefaultCollationOnKeys(List *clause, List *targetList);
 static void updateGroupingOperatorsForJsonb(List *clause, List *targetList);
@@ -654,6 +655,58 @@ updateSortOperatorsForJsonb(List *sortClause, List **targetList,
 
 		sortcl->eqop = eqop;
 		sortcl->sortop = sortop;
+	}
+}
+
+/*
+ * dropElementsNotNamed
+ *		A write clause with nothing after it discards the rows it produced, so
+ *		its projection only has to carry the elements the clause names.
+ *		"MATCH (a)-[r]->(b) DELETE r" otherwise assembles a composite for a and
+ *		for b on every row, and hashes both property maps into the endpoint
+ *		joins, in order to throw all of it away.
+ *
+ *		Only this one projection is touched.  Everything below it follows on its
+ *		own once nothing reads those columns any more -- which is the whole
+ *		reason the planner is allowed to see through a delete.
+ *
+ *		An entry is emptied rather than removed, so every column keeps its
+ *		position and its name: what a write deletes it finds by name, in the
+ *		tuple underneath, which this does not touch.
+ */
+static void
+dropElementsNotNamed(List *targetList, List *named)
+{
+	ListCell   *lc;
+
+	foreach(lc, targetList)
+	{
+		TargetEntry *te = lfirst(lc);
+		Oid			restype = exprType((Node *) te->expr);
+		bool		keep = false;
+		ListCell   *ln;
+
+		if (te->resjunk || te->resname == NULL)
+			continue;
+
+		if (restype != VERTEXOID && restype != EDGEOID &&
+			restype != GRAPHPATHOID && restype != VERTEXARRAYOID &&
+			restype != EDGEARRAYOID)
+			continue;
+
+		foreach(ln, named)
+		{
+			if (strcmp(te->resname, strVal(lfirst(ln))) == 0)
+			{
+				keep = true;
+				break;
+			}
+		}
+
+		if (!keep)
+			te->expr = (Expr *) makeNullConst(restype,
+											  exprTypmod((Node *) te->expr),
+											  exprCollation((Node *) te->expr));
 	}
 }
 
@@ -1556,6 +1609,7 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 {
 	CypherDeleteClause *detail = (CypherDeleteClause *) clause->detail;
 	ParseNamespaceItem *nsitem;
+	char	   *edges_resname;
 	ListCell   *le;
 	Query	   *qry;
 	AclMode		targetPerms;
@@ -1582,6 +1636,7 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	qry->g_detach = detail->detach;
 
 	nsitem = transformClauseBy(pstate, (Node *) clause, transformDeleteJoin);
+	edges_resname = pstate->p_delete_edges_resname;
 
 	qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 	qry->g_exprs = extractVerticesExpr(pstate, detail->exprs,
@@ -1623,6 +1678,26 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
 													 FVR_DONT_RESOLVE);
+
+	/*
+	 * Nothing runs after the clause, so the only elements it has to hand on are
+	 * the ones it removes.
+	 */
+	if (qry->g_last)
+	{
+		List	   *named = NIL;
+		ListCell   *lp;
+
+		foreach(lp, detail->exprs)
+			named = lappend(named,
+							makeString(getDeleteTargetName(pstate,
+														   lfirst(lp))));
+		if (edges_resname != NULL)
+			named = lappend(named, makeString(edges_resname));
+
+		dropElementsNotNamed(qry->targetList, named);
+		list_free_deep(named);
+	}
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);

@@ -3938,3 +3938,51 @@ RETURN collect(DISTINCT (n.name #>> '{}')) AS names, count(DISTINCT (n.city #>> 
 MATCH (n:person)
 RETURN DISTINCT (n.name #>> '{}') AS nm, (n.city #>> '{}') AS ct ORDER BY ct, nm NULLS LAST;
 DROP GRAPH collate_jsonb CASCADE;
+--
+-- A terminal write carries only the elements it names
+--
+-- Nothing runs after the clause, so a pattern variable the clause does not
+-- remove need not be assembled -- and once nothing reads it, the joins beneath
+-- stop carrying its property map too.  Results must not depend on any of that.
+--
+CREATE GRAPH write_projection;
+SET graph_path = write_projection;
+
+CREATE VLABEL wv;
+CREATE ELABEL wk;
+
+CREATE (:wv {n: 1})-[:wk {w: 1}]->(:wv {n: 2}),
+       (:wv {n: 3})-[:wk {w: 2}]->(:wv {n: 4}),
+       (:wv {n: 5});
+ANALYZE write_projection.wv;
+ANALYZE write_projection.wk;
+
+-- the endpoints are named by the pattern but not by the clause, so neither is
+-- assembled: both come through as a null of their own type
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:wv)-[r:wk]->(b:wv) DELETE r;
+
+-- an endpoint the clause does remove is carried
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:wv)-[r:wk]->(b:wv) DELETE r, a;
+
+-- with a clause after it, the elements that clause reads are carried; the rest
+-- still are not, since a delete no longer hides its inputs from the planner
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:wv)-[r:wk]->(b:wv) DELETE r RETURN b.n;
+
+-- and the answers are the same either way
+MATCH (a:wv)-[r:wk]->(b:wv) DELETE r RETURN b.n AS kept ORDER BY kept;
+MATCH ()-[r:wk]->() RETURN count(*) AS edges_left;
+MATCH (n:wv) RETURN count(*) AS vertices_left;
+
+CREATE (:wv {n: 6})-[:wk {w: 6}]->(:wv {n: 7});
+MATCH (a:wv {n: 6}) DETACH DELETE a;
+MATCH (n:wv) RETURN n.n AS n ORDER BY n;
+MATCH ()-[r:wk]->() RETURN count(*) AS edges_after_detach;
+
+CREATE (:wv {n: 8})-[:wk]->(:wv {n: 9});
+MATCH (a:wv {n: 8})-[r:wk]->(b:wv) DELETE r, a, b;
+MATCH (n:wv) WHERE n.n IN [8, 9] RETURN count(*) AS both_removed;
+
+DROP GRAPH write_projection CASCADE;
