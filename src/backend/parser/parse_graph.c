@@ -225,16 +225,11 @@ static Node *transformMatchVLE(ParseState *pstate, CypherRel *crel,
 static SelectStmt *genVLESubselect(ParseState *pstate, CypherRel *crel,
 								   bool out, bool pathout);
 static Node *genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out);
-static Node *genEdgeSimple(char *aliasname);
-static Node *genVLEEdgeSubselect(ParseState *pstate, CypherRel *crel,
-								 char *aliasname);
-static RangeSubselect *genInhEdge(RangeVar *r, Oid parentoid);
 static List *genQualifiedName(char *name1, char *name2);
-static Node *genVLEQual(char *alias, Node *propMap);
 static bool vlePropMapReadsAnotherElement(Node *node, void *context);
 static ParseNamespaceItem *transformVLEtoNSItem(ParseState *pstate, CypherRel *crel,
 												SelectStmt *vle, Alias *alias);
-static bool isZeroLengthVLE(CypherRel *crel);
+static bool isVLE(CypherRel *crel);
 static void getCypherRelType(CypherRel *crel, char **typname, int *typloc);
 static Node *addQualRelPath(ParseState *pstate, Node *qual,
 							CypherRel *prev_crel, Node *prev_edge,
@@ -3554,10 +3549,11 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					Assert(vertex != NULL);
 
 					/*
-					 * Starting vertex of ZeroLengthVLE is excluded from the
-					 * graph path.
+					 * A variable-length relationship carries the vertex it
+					 * starts from in its own array, so adding it here would
+					 * put it in the path twice.
 					 */
-					if (!isZeroLengthVLE(crel))
+					if (!isVLE(crel))
 					{
 						pvs = vtxArrConcat(pstate, pvs,
 										   makePathVertexExpr(pstate, vertex,
@@ -4456,7 +4452,7 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
  *     FROM <edge label (and its children)> AS l
  *     WHERE <outer vid> = start AND l.properties @> ...)
  *
- * If `isZeroLengthVLE(crel)`, then
+ * The left child is always the starting vertex on its own:
  *
  *     CYPHER_REL_DIR_NONE
  *
@@ -4480,109 +4476,41 @@ static Node *
 genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 {
 	Node	   *vid;
+	Node	   *vtxarr;
+	Node	   *ids;
+	List	   *values;
 	List	   *colnames = NIL;
 	SelectStmt *sel;
 	RangeSubselect *sub;
 
 	/*
-	 * `vid` is NULL only if (there is no previous edge of the vertex in the
-	 * path and the vertex is transformed first time in the pattern) and
-	 * `crel` is not zero-length
+	 * The pattern this is built for always has a length, so the vertex it
+	 * starts from has already been transformed and its id is known.
 	 */
 	vid = pstate->p_vle_initial_vid;
+	Assert(vid != NULL);
 
-	if (isZeroLengthVLE(crel))
+	vtxarr = makeAArrayExpr(NIL, VERTEXARRAYOID);
+	ids = makeAArrayExpr(NIL, GRAPHIDARRAYOID);
+
+	values = list_make3(vid, vid, ids);
+	colnames = list_make3(makeString(getEdgeColname(crel, true, false)),
+						  makeString(getEdgeColname(crel, true, true)),
+						  makeString(VLE_COLNAME_IDS));
+
+	if (out)
 	{
-		Node	   *vtxarr = makeAArrayExpr(NIL, VERTEXARRAYOID);
-		Node	   *ids;
-		List	   *values;
+		Node	   *edge_arr = makeAArrayExpr(NIL, EDGEARRAYOID);
 
-		Assert(vid != NULL);
-
-		ids = makeAArrayExpr(NIL, GRAPHIDARRAYOID);
-
-		values = list_make3(vid, vid, ids);
-		colnames = list_make3(makeString(getEdgeColname(crel, true, false)),
-							  makeString(getEdgeColname(crel, true, true)),
-							  makeString(VLE_COLNAME_IDS));
-
-		if (out)
-		{
-			Node	   *edge_arr = makeAArrayExpr(NIL, EDGEARRAYOID);
-
-			values = lappend(values, edge_arr);
-			colnames = lappend(colnames, makeString(VLE_COLNAME_EDGES));
-		}
-
-		values = lappend(values, vtxarr);
-		colnames = lappend(colnames, makeString(VLE_COLNAME_VERTICES));
-
-		sel = makeNode(SelectStmt);
-		sel->valuesLists = list_make1(values);
+		values = lappend(values, edge_arr);
+		colnames = lappend(colnames, makeString(VLE_COLNAME_EDGES));
 	}
-	else
-	{
-		List	   *prev_colname;
-		Node	   *prev_col;
-		ResTarget  *prev;
-		ResTarget  *curr;
-		Node	   *id;
-		Node	   *id_array;
-		ResTarget  *ids;
-		List	   *tlist = NIL;
-		Node	   *from;
-		List	   *where_args = NIL;
-		ResTarget  *vertices;
-		TypeCast   *cast = makeNode(TypeCast);
 
-		prev_colname = genQualifiedName(NULL, getEdgeColname(crel, true, false));
-		prev_col = makeColumnRef(prev_colname);
-		prev = makeResTarget(prev_col, NULL);
-		curr = makeSimpleResTarget(getEdgeColname(crel, true, true), NULL);
+	values = lappend(values, vtxarr);
+	colnames = lappend(colnames, makeString(VLE_COLNAME_VERTICES));
 
-		id = makeColumnRef(genQualifiedName(NULL, AG_ELEM_LOCAL_ID));
-
-		id_array = makeAArrayExpr(list_make1(id), GRAPHIDARRAYOID);
-		ids = makeResTarget((Node *) id_array, VLE_COLNAME_IDS);
-
-		tlist = list_make3(prev, curr, ids);
-
-		from = genVLEEdgeSubselect(pstate, crel, VLE_LEFT_ALIAS);
-
-		if (out)
-		{
-			Node	   *edge_arr = makeAArrayExpr(
-												  list_make1(genEdgeSimple(VLE_LEFT_ALIAS)), EDGEARRAYOID);
-			ResTarget  *edges = makeResTarget(edge_arr, VLE_COLNAME_EDGES);
-
-			tlist = lappend(tlist, edges);
-		}
-
-		cast->arg = (Node *) makeNullAConst();
-		cast->typeName = makeTypeNameFromOid(VERTEXARRAYOID, -1);
-		cast->location = -1;
-		vertices = makeResTarget((Node *) cast, VLE_COLNAME_VERTICES);
-
-		tlist = lappend(tlist, vertices);
-
-		if (vid != NULL)
-		{
-			A_Expr	   *vidcond;
-
-			vidcond = makeSimpleA_Expr(AEXPR_OP, "=", vid, prev_col, -1);
-			where_args = lappend(where_args, vidcond);
-		}
-
-		/* TODO: cannot see properties of future vertices */
-		if (crel->prop_map != NULL)
-			where_args = lappend(where_args, genVLEQual(VLE_LEFT_ALIAS,
-														crel->prop_map));
-
-		sel = makeNode(SelectStmt);
-		sel->targetList = tlist;
-		sel->fromClause = list_make1(from);
-		sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
-	}
+	sel = makeNode(SelectStmt);
+	sel->valuesLists = list_make1(values);
 
 	sub = makeNode(RangeSubselect);
 	sub->subquery = (Node *) sel;
@@ -4591,87 +4519,7 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 	return (Node *) sub;
 }
 
-static Node *
-genEdgeSimple(char *aliasname)
-{
-	Node	   *id;
-	Node	   *start;
-	Node	   *end;
-	Node	   *prop_map;
-	Node	   *tid;
 
-	id = makeColumnRef(genQualifiedName(aliasname, AG_ELEM_LOCAL_ID));
-	start = makeColumnRef(genQualifiedName(aliasname, AG_START_ID));
-	end = makeColumnRef(genQualifiedName(aliasname, AG_END_ID));
-	prop_map = makeColumnRef(genQualifiedName(aliasname, AG_ELEM_PROP_MAP));
-	tid = makeColumnRef(genQualifiedName(aliasname, "ctid"));
-
-	return (Node *) makeRowExprWithTypeCast(
-											list_make5(id, start, end, prop_map, tid), EDGEOID, -1);
-}
-
-static Node *
-genVLEEdgeSubselect(ParseState *pstate, CypherRel *crel, char *aliasname)
-{
-	char	   *typname;
-	int			typloc = -1;
-	Alias	   *alias;
-	Node	   *edge;
-
-	if (!pstate->p_valid_labels)
-		typname = AG_EDGE;
-	else
-		getCypherRelType(crel, &typname, &typloc);
-
-	alias = makeAliasNoDup(aliasname, NIL);
-
-	if (crel->direction == CYPHER_REL_DIR_NONE)
-	{
-		RangeSubselect *sub;
-
-		/* id, start, "end", properties, ctid, _start, _end */
-		sub = makeNode(RangeSubselect);
-		sub->subquery = genEdgeUnion(typname, crel->only, typloc, false);
-		sub->alias = alias;
-		edge = (Node *) sub;
-	}
-	else
-	{
-		RangeVar   *r;
-		LOCKMODE	lockmode;
-		Relation	rel;
-
-		r = makeRangeVar(get_graph_path(true), typname, typloc);
-		r->inh = !crel->only;
-
-		if (isLockedRefname(pstate, aliasname))
-			lockmode = RowShareLock;
-		else
-			lockmode = AccessShareLock;
-
-		rel = parserOpenTable(pstate, r, lockmode);
-
-		/* id, start, "end", properties, ctid */
-		if (!crel->only && has_subclass(rel->rd_id))
-		{
-			RangeSubselect *sub;
-
-			r->inh = false;
-			sub = genInhEdge(r, rel->rd_id);
-			sub->alias = alias;
-			edge = (Node *) sub;
-		}
-		else
-		{
-			r->alias = alias;
-			edge = (Node *) r;
-		}
-
-		table_close(rel, NoLock);
-	}
-
-	return edge;
-}
 
 static List *
 genQualifiedName(char *name1, char *name2)
@@ -4682,25 +4530,6 @@ genQualifiedName(char *name1, char *name2)
 		return list_make2(makeString(name1), makeString(name2));
 }
 
-static Node *
-genVLEQual(char *alias, Node *propMap)
-{
-	ColumnRef  *prop;
-	CypherGenericExpr *cexpr;
-	A_Expr	   *propcond;
-
-	prop = makeNode(ColumnRef);
-	prop->fields = genQualifiedName(alias, AG_ELEM_PROP_MAP);
-	prop->location = -1;
-
-	cexpr = makeNode(CypherGenericExpr);
-	cexpr->expr = propMap;
-
-	propcond = makeSimpleA_Expr(AEXPR_OP, "@>", (Node *) prop, (Node *) cexpr,
-								-1);
-
-	return (Node *) propcond;
-}
 
 /*
  * UNION ALL the relation whose OID is `parentoid` and its child relations.
@@ -4710,67 +4539,6 @@ genVLEQual(char *alias, Node *propMap)
  * SELECT id, start, "end", properties, ctid FROM edge
  * ...
  */
-static RangeSubselect *
-genInhEdge(RangeVar *r, Oid parentoid)
-{
-	ResTarget  *id;
-	ResTarget  *start;
-	ResTarget  *end;
-	ResTarget  *prop_map;
-	ResTarget  *tid;
-	SelectStmt *sel;
-	SelectStmt *lsel;
-	List	   *children;
-	ListCell   *lc;
-	RangeSubselect *sub;
-
-	id = makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL);
-	start = makeSimpleResTarget(AG_START_ID, NULL);
-	end = makeSimpleResTarget(AG_END_ID, NULL);
-	prop_map = makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL);
-	tid = makeSimpleResTarget("ctid", NULL);
-
-	sel = makeNode(SelectStmt);
-	sel->targetList = list_make5(id, start, end, prop_map, tid);
-	sel->fromClause = list_make1(r);
-	lsel = sel;
-
-	children = find_inheritance_children(parentoid, AccessShareLock);
-	foreach(lc, children)
-	{
-		Oid			childoid = lfirst_oid(lc);
-		Relation	childrel;
-		RangeVar   *childrv;
-		SelectStmt *rsel;
-		SelectStmt *u;
-
-		childrel = table_open(childoid, AccessShareLock);
-
-		childrv = makeRangeVar(get_graph_path(true),
-							   RelationGetRelationName(childrel),
-							   -1);
-		childrv->inh = true;
-
-		table_close(childrel, AccessShareLock);
-
-		rsel = copyObject(sel);
-		rsel->fromClause = list_delete_first(rsel->fromClause);
-		rsel->fromClause = list_make1(childrv);
-
-		u = makeNode(SelectStmt);
-		u->op = SETOP_UNION;
-		u->all = true;
-		u->larg = lsel;
-		u->rarg = rsel;
-
-		lsel = u;
-	}
-
-	sub = makeNode(RangeSubselect);
-	sub->subquery = (Node *) lsel;
-
-	return sub;
-}
 
 /*
  * vlePropMapReadsAnotherElement
@@ -4850,17 +4618,14 @@ transformVLEtoNSItem(ParseState *pstate, CypherRel *crel, SelectStmt *vle, Alias
 	return nsitem;
 }
 
+/* whether this relationship is written with a length, as in [r:t*1..3] */
 static bool
-isZeroLengthVLE(CypherRel *crel)
+isVLE(CypherRel *crel)
 {
 	if (crel == NULL)
 		return false;
 
-	if (crel->varlen == NULL)
-		return false;
-
-	/* todo: corrects function name */
-	return true;
+	return crel->varlen != NULL;
 }
 
 static void
