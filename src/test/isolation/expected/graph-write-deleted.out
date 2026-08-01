@@ -1,0 +1,64 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1_begin s1_del_acc s2_begin s2_set_acc s1_commit s2_commit
+step s1_begin: BEGIN;
+step s1_del_acc: MATCH (n:acc) DELETE n;
+step s2_begin: BEGIN;
+step s2_set_acc: MATCH (n:acc) SET n.a = 2 RETURN n.a; <waiting ...>
+step s1_commit: COMMIT;
+step s2_set_acc: <... completed>
+ERROR:  could not serialize access due to concurrent delete
+step s2_commit: COMMIT;
+
+starting permutation: s1_begin s1_del_dd s2_begin s2_del_dd s1_commit s2_commit
+step s1_begin: BEGIN;
+step s1_del_dd: MATCH (n:dd) DELETE n;
+step s2_begin: BEGIN;
+step s2_del_dd: MATCH (n:dd) DELETE n; <waiting ...>
+step s1_commit: COMMIT;
+step s2_del_dd: <... completed>
+step s2_commit: COMMIT;
+
+starting permutation: s1_begin s1_del_prom s2_begin s2_set_prom s1_commit s2_commit
+step s1_begin: BEGIN;
+step s1_del_prom: MATCH (n:prom) DELETE n;
+step s2_begin: BEGIN;
+step s2_set_prom: MATCH (n:prom) SET n.age = 2 RETURN n.age; <waiting ...>
+step s1_commit: COMMIT;
+step s2_set_prom: <... completed>
+ERROR:  could not serialize access due to concurrent delete
+step s2_commit: COMMIT;
+
+starting permutation: s1_begin s1_del_trg s2_begin s2_del_trg s1_commit s2_commit
+step s1_begin: BEGIN;
+step s1_del_trg: MATCH (n:trg) DELETE n;
+step s2_begin: BEGIN;
+step s2_del_trg: MATCH (n:trg) DELETE n; <waiting ...>
+step s1_commit: COMMIT;
+step s2_del_trg: <... completed>
+step s2_commit: COMMIT;
+
+starting permutation: s1_begin s1_del_mrg s2_begin s2_merge_mrg s1_commit s2_commit
+step s1_begin: BEGIN;
+step s1_del_mrg: MATCH (n:mrg) DELETE n;
+step s2_begin: BEGIN;
+step s2_merge_mrg: MERGE (n:mrg) ON MATCH SET n.a = 2 RETURN n.a; <waiting ...>
+step s1_commit: COMMIT;
+step s2_merge_mrg: <... completed>
+ERROR:  could not serialize access due to concurrent delete
+step s2_commit: COMMIT;
+
+starting permutation: s2_begin_rr s2_snapshot s1_begin s1_del_acc s1_commit s2_set_acc s2_commit
+step s2_begin_rr: BEGIN ISOLATION LEVEL REPEATABLE READ;
+step s2_snapshot: MATCH (n:acc) RETURN n.a;
+a
+-
+1
+(1 row)
+
+step s1_begin: BEGIN;
+step s1_del_acc: MATCH (n:acc) DELETE n;
+step s1_commit: COMMIT;
+step s2_set_acc: MATCH (n:acc) SET n.a = 2 RETURN n.a;
+ERROR:  could not serialize access due to concurrent delete
+step s2_commit: COMMIT;

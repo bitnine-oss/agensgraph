@@ -805,6 +805,39 @@ lconcurrent:
 				}
 				break;
 			}
+		case TM_Deleted:
+
+			/*
+			 * The row this write was going to change is gone.  A plain UPDATE
+			 * would drop it from its result and carry on, but a graph write
+			 * hands the element it was given to whatever clause comes next, and
+			 * the element already carries the new value the projection built --
+			 * so skipping the write here would report a change that was never
+			 * stored, against a row that no longer exists.  There is no way to
+			 * withdraw the row from the output, so the conflict has to be
+			 * refused outright, in the terms a client retries on.
+			 */
+			ereport(ERROR,
+					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+					 errmsg("could not serialize access due to concurrent delete")));
+			break;
+
+		case TM_SelfModified:
+
+			/*
+			 * The row was already written by this same command.  A join that
+			 * reaches one row twice is the harmless case and keeps the first
+			 * write.  The other case is a row changed underneath this command
+			 * by a before-row trigger or a volatile function, which cannot be
+			 * merged with the write already made and so has to be refused.
+			 */
+			if (tmfd.cmax != estate->es_output_cid)
+				ereport(ERROR,
+						(errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
+						 errmsg("tuple to be updated was already modified by an operation triggered by the current command"),
+						 errhint("Consider using an AFTER trigger instead of a BEFORE trigger to propagate changes to other rows.")));
+			return (Datum) 0;
+
 		default:
 			elog(ERROR, "unrecognized heap_update status: %u", result);
 	}
@@ -958,6 +991,19 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 			ereport(ERROR,
 					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
 					 errmsg("could not serialize access due to concurrent update")));
+			break;
+		case TM_Deleted:
+
+			/*
+			 * This path writes each element as it is reached and has no
+			 * re-examination of its own, so a row that another transaction
+			 * removed leaves it nothing to write.  Report the conflict in the
+			 * terms a client retries on, exactly as the concurrent update
+			 * above does.
+			 */
+			ereport(ERROR,
+					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+					 errmsg("could not serialize access due to concurrent delete")));
 			break;
 		default:
 			elog(ERROR, "unrecognized heap_update status: %u", result);
