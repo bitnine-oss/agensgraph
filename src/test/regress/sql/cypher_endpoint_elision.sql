@@ -277,7 +277,19 @@ SET enable_graph_endpoint_elision = true;
 
 -- ============================================================
 -- NOT ELIDE: named path captures the endpoint
+--
+-- Reading the path itself reaches the endpoint, so the join that produces it
+-- has to stay.  Asking only how long the path is does not: a pattern of a fixed
+-- shape settles that without building the path at all, which leaves the
+-- endpoint unread and lets it be elided like any other.
 -- ============================================================
+EXPLAIN (costs off) MATCH p = (a:person)-[:knows]->() RETURN nodes(p) AS ns;
+MATCH p = (a:person)-[:knows]->() RETURN size(nodes(p)) AS n ORDER BY n;
+SET enable_graph_endpoint_elision = false;
+MATCH p = (a:person)-[:knows]->() RETURN size(nodes(p)) AS n ORDER BY n;
+SET enable_graph_endpoint_elision = true;
+
+-- ELIDE: the length of a fixed-shape path reads nothing
 EXPLAIN (costs off) MATCH p = (a:person)-[:knows]->() RETURN length(p) AS len;
 MATCH p = (a:person)-[:knows]->() RETURN length(p) AS len ORDER BY len;
 SET enable_graph_endpoint_elision = false;
@@ -504,3 +516,38 @@ ROLLBACK;
 SET enable_graph_endpoint_elision = true;
 
 DROP GRAPH we CASCADE;
+
+--
+-- Counting what a fixed-shape path holds
+--
+-- Counting a path's nodes or relationships is the same question its length
+-- answers, so it is answered the same way and neither array is built.  An array
+-- of nodes is built out of whole nodes, so counting one by building it reads
+-- every property map on the path; the plans below read none.
+--
+CREATE GRAPH cnt_g;
+SET graph_path = cnt_g;
+CREATE VLABEL cn;
+CREATE ELABEL cr;
+CREATE (:cn {nm: 'a'})-[:cr]->(:cn {nm: 'b'});
+
+EXPLAIN (COSTS OFF, VERBOSE)
+MATCH p=(a:cn)-[:cr]->(b:cn) RETURN size(vertices(p));
+EXPLAIN (COSTS OFF, VERBOSE)
+MATCH p=(a:cn)-[:cr]->(b:cn) RETURN size(edges(p));
+
+-- size() answers with length(), so the two spellings are one question and have
+-- to be answered alike
+EXPLAIN (COSTS OFF, VERBOSE)
+MATCH p=(a:cn)-[:cr]->(b:cn) RETURN length(vertices(p));
+
+MATCH p=(a:cn)-[:cr]->(b:cn)
+RETURN size(vertices(p)), length(vertices(p)),
+       size(edges(p)), length(edges(p)), length(p);
+
+-- a variable-length relationship settles no count until it runs, so its array
+-- is still counted at run time
+EXPLAIN (COSTS OFF)
+MATCH p=(a:cn)-[:cr*1..2]->(b) RETURN size(vertices(p));
+
+DROP GRAPH cnt_g CASCADE;
