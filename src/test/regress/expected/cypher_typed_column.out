@@ -6060,7 +6060,7 @@ EXPLAIN (COSTS OFF) MATCH (n:pr_top) WHERE n.age = 30 RETURN 1;
          ->  Seq Scan on pr_top n_1
                Filter: (properties.'age'::text = '30'::jsonb)
          ->  Seq Scan on pr_has n_2
-               Filter: (cypher_to_jsonb(age) = '30'::jsonb)
+               Filter: (age = 30)
          ->  Seq Scan on pr_hasnt n_3
                Filter: (properties.'age'::text = '30'::jsonb)
 (8 rows)
@@ -6110,3 +6110,186 @@ drop cascades to elabel ag_edge
 drop cascades to vlabel pr_top
 drop cascades to vlabel pr_has
 drop cascades to vlabel pr_hasnt
+--
+-- Comparing a promoted property in its column's own terms
+--
+-- Reading the column is not enough for an index on it to be used: the
+-- comparison is still between property maps.  Where the value compared against
+-- is exactly a value of the column's type, the whole comparison is rewritten to
+-- that type and the index binds.  Where it is not, the comparison stays as it
+-- was, which answers the same and is merely unindexed.
+--
+CREATE GRAPH cmp_g;
+SET graph_path = cmp_g;
+CREATE VLABEL c_top;
+CREATE VLABEL c_has (nm text GENERATED, age int GENERATED) INHERITS (c_top);
+CREATE VLABEL c_hasnt INHERITS (c_top);
+CREATE INDEX c_has_age ON cmp_g.c_has (age);
+CREATE (:c_has {nm: 'bob', age: 30});
+CREATE (:c_has {nm: 'amy', age: 41});
+CREATE (:c_hasnt {other: 1});
+CREATE (:c_top {age: 30});
+ANALYZE cmp_g.c_has;
+SET enable_seqscan = off;
+-- equality reaches the column's index
+EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.age = 30 RETURN 1;
+                          QUERY PLAN                          
+--------------------------------------------------------------
+ Result
+   ->  Append
+         ->  Seq Scan on c_top n_1
+               Disabled: true
+               Filter: (properties.'age'::text = '30'::jsonb)
+         ->  Index Only Scan using c_has_age on c_has n_2
+               Index Cond: (age = 30)
+         ->  Seq Scan on c_hasnt n_3
+               Disabled: true
+               Filter: (properties.'age'::text = '30'::jsonb)
+(10 rows)
+
+RESET enable_seqscan;
+-- an ordering comparison on a column with no collation is taken over too
+EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.age > 25 RETURN 1;
+                          QUERY PLAN                          
+--------------------------------------------------------------
+ Result
+   ->  Append
+         ->  Seq Scan on c_top n_1
+               Filter: (properties.'age'::text > '25'::jsonb)
+         ->  Seq Scan on c_has n_2
+               Filter: (age > 25)
+         ->  Seq Scan on c_hasnt n_3
+               Filter: (properties.'age'::text > '25'::jsonb)
+(8 rows)
+
+-- as is "not equal", through the operator equality negates to
+EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.age <> 30 RETURN 1;
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Result
+   ->  Append
+         ->  Seq Scan on c_top n_1
+               Filter: (properties.'age'::text <> '30'::jsonb)
+         ->  Seq Scan on c_has n_2
+               Filter: (age <> 30)
+         ->  Seq Scan on c_hasnt n_3
+               Filter: (properties.'age'::text <> '30'::jsonb)
+(8 rows)
+
+-- text compares equal in the column's terms
+EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.nm = 'bob' RETURN 1;
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Result
+   ->  Append
+         ->  Seq Scan on c_top n_1
+               Filter: (properties.'nm'::text = '"bob"'::jsonb)
+         ->  Seq Scan on c_has n_2
+               Filter: (nm = 'bob'::text)
+         ->  Seq Scan on c_hasnt n_3
+               Filter: (properties.'nm'::text = '"bob"'::jsonb)
+(8 rows)
+
+-- ordering text is taken over as well.  A promoted property compares as the
+-- column holds it, which is what reading it directly off the label already
+-- does, so an ancestor has to answer the same way a descendant does.
+EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.nm > 'amy' RETURN 1;
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Result
+   ->  Append
+         ->  Seq Scan on c_top n_1
+               Filter: (properties.'nm'::text > '"amy"'::jsonb)
+         ->  Seq Scan on c_has n_2
+               Filter: (nm > 'amy'::text)
+         ->  Seq Scan on c_hasnt n_3
+               Filter: (properties.'nm'::text > '"amy"'::jsonb)
+(8 rows)
+
+EXPLAIN (COSTS OFF) MATCH (n:c_has) WHERE n.nm > 'amy' RETURN 1;
+          QUERY PLAN          
+------------------------------
+ Seq Scan on c_has n
+   Filter: (nm > 'amy'::text)
+(2 rows)
+
+-- a value the column cannot hold exactly is left alone
+EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.age = 30.5 RETURN 1;
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Result
+   ->  Append
+         ->  Seq Scan on c_top n_1
+               Filter: (properties.'age'::text = '30.5'::jsonb)
+         ->  Seq Scan on c_has n_2
+               Filter: (cypher_to_jsonb(age) = '30.5'::jsonb)
+         ->  Seq Scan on c_hasnt n_3
+               Filter: (properties.'age'::text = '30.5'::jsonb)
+(8 rows)
+
+-- as is one of another kind entirely
+EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.age = 'x' RETURN 1;
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Result
+   ->  Append
+         ->  Seq Scan on c_top n_1
+               Filter: (properties.'age'::text = '"x"'::jsonb)
+         ->  Seq Scan on c_has n_2
+               Filter: (cypher_to_jsonb(age) = '"x"'::jsonb)
+         ->  Seq Scan on c_hasnt n_3
+               Filter: (properties.'age'::text = '"x"'::jsonb)
+(8 rows)
+
+-- every one of them answers what reading the property map answers
+MATCH (n:c_top) WHERE n.age = 30 RETURN n.age ORDER BY n.age;
+ age 
+-----
+ 30
+ 30
+(2 rows)
+
+MATCH (n:c_top) WHERE n.age > 25 RETURN n.age ORDER BY n.age;
+ age 
+-----
+ 30
+ 30
+ 41
+(3 rows)
+
+MATCH (n:c_top) WHERE n.age <> 30 RETURN n.age;
+ age 
+-----
+ 41
+(1 row)
+
+MATCH (n:c_top) WHERE n.nm = 'bob' RETURN n.age;
+ age 
+-----
+ 30
+(1 row)
+
+MATCH (n:c_top) WHERE n.nm > 'amy' RETURN n.nm;
+  nm   
+-------
+ "bob"
+(1 row)
+
+MATCH (n:c_top) WHERE n.age = 30.5 RETURN n.age;
+ age 
+-----
+(0 rows)
+
+MATCH (n:c_top) WHERE n.age = 'x' RETURN n.age;
+ age 
+-----
+(0 rows)
+
+DROP GRAPH cmp_g CASCADE;
+NOTICE:  drop cascades to 6 other objects
+DETAIL:  drop cascades to sequence cmp_g.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel c_top
+drop cascades to vlabel c_has
+drop cascades to vlabel c_hasnt
