@@ -32,4 +32,7 @@ extern bool apply_child_basequals(PlannerInfo *root, RelOptInfo *parentrel,
 								  RelOptInfo *childrel, RangeTblEntry *childRTE,
 								  AppendRelInfo *appinfo);
 
+extern Node *expand_perrelation_property(PlannerInfo *root, Node *node,
+										 Index childvarno);
+
 #endif							/* INHERIT_H */

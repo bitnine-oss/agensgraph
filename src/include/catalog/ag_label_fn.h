@@ -42,6 +42,12 @@ extern bool label_relid_has_promoted_property(Oid relid);
 extern List *get_label_promoted_properties(Oid relid);
 
 /*
+ * Whether a label under `relid' holds `propname' in a column.  A read of such a
+ * property is worth settling per relation.
+ */
+extern bool subtree_has_promoted_property(Oid relid, const char *propname);
+
+/*
  * The `semantics' out-param is forward-looking (for a future typed-semantics
  * opt-in) and is not consulted by the current read resolution; callers pass
  * NULL for it.

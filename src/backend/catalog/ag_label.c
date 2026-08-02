@@ -27,6 +27,7 @@
 #include "commands/sequence.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
+#include "utils/inval.h"
 #include "utils/graph.h"
 #include "utils/rel.h"
 #include "utils/lsyscache.h"
@@ -390,6 +391,138 @@ get_label_promoted_properties(Oid relid)
 	}
 
 	return result;
+}
+
+/*
+ * The property keys some label in this database holds in a column.
+ *
+ * Asking a relation about its subtree means locking every label under it, and a
+ * read has to ask once per property it names.  Nearly every question is about a
+ * key no label promotes at all, and that answer is the same for every relation,
+ * so the set of promoted keys is settled once and kept until the catalog that
+ * could change it is invalidated.  A read of an unpromoted key then costs a walk
+ * of that set rather than a walk of the inheritance tree.
+ */
+static List *promoted_names = NIL;
+static bool promoted_names_known = false;
+static bool promoted_callback_set = false;
+
+static void
+InvalidatePromotedNames(Datum arg, int cacheid, uint32 hashvalue)
+{
+	promoted_names_known = false;
+}
+
+static void
+LoadPromotedNames(void)
+{
+	Relation	desc;
+	SysScanDesc scan;
+	HeapTuple	tup;
+	MemoryContext old;
+
+	if (!promoted_callback_set)
+	{
+		CacheRegisterSyscacheCallback(LABELPROPNAME, InvalidatePromotedNames,
+									  (Datum) 0);
+		promoted_callback_set = true;
+	}
+	else if (promoted_names_known)
+		return;
+
+	old = MemoryContextSwitchTo(CacheMemoryContext);
+	list_free_deep(promoted_names);
+	promoted_names = NIL;
+	MemoryContextSwitchTo(old);
+
+	desc = table_open(LabelPropertyRelationId, AccessShareLock);
+	scan = systable_beginscan(desc, InvalidOid, false, NULL, 0, NULL);
+
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		Form_ag_label_property prop = (Form_ag_label_property) GETSTRUCT(tup);
+		char	   *name = NameStr(prop->propname);
+		ListCell   *lc;
+		bool		seen = false;
+
+		foreach(lc, promoted_names)
+		{
+			if (strcmp((char *) lfirst(lc), name) == 0)
+			{
+				seen = true;
+				break;
+			}
+		}
+		if (seen)
+			continue;
+
+		old = MemoryContextSwitchTo(CacheMemoryContext);
+		promoted_names = lappend(promoted_names, pstrdup(name));
+		MemoryContextSwitchTo(old);
+	}
+
+	systable_endscan(scan);
+	table_close(desc, AccessShareLock);
+
+	promoted_names_known = true;
+}
+
+/*
+ * Whether any label in this database holds `propname' in a column.  A key no
+ * label promotes never needs a relation asked about it.
+ */
+static bool
+AnyLabelPromotes(const char *propname)
+{
+	ListCell   *lc;
+
+	Assert(propname != NULL);
+
+	LoadPromotedNames();
+
+	foreach(lc, promoted_names)
+	{
+		if (strcmp((char *) lfirst(lc), propname) == 0)
+			return true;
+	}
+	return false;
+}
+
+/*
+ * subtree_has_promoted_property - whether a label under `relid' holds `propname'
+ * in a column.
+ *
+ * A scan of a label reads its descendants, and a descendant may hold in a column
+ * what the label being read keeps only in its property map.  Reading the column
+ * where there is one is the same answer and a cheaper one, so a read has to know
+ * that the question is worth asking per relation.
+ */
+bool
+subtree_has_promoted_property(Oid relid, const char *propname)
+{
+	List	   *inheritors;
+	ListCell   *li;
+	bool		found = false;
+
+	if (!OidIsValid(relid) || !AnyLabelPromotes(propname))
+		return false;
+
+	inheritors = find_all_inheritors(relid, AccessShareLock, NULL);
+	foreach(li, inheritors)
+	{
+		Oid			child = lfirst_oid(li);
+
+		if (child == relid)
+			continue;
+		if (get_label_property_column(child, propname, NULL, NULL))
+		{
+			found = true;
+			break;
+		}
+	}
+
+	list_free(inheritors);
+	return found;
 }
 
 /*

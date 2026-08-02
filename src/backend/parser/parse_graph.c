@@ -5888,6 +5888,47 @@ resolvePromotedProperty(ParseState *pstate, Node *basenode, char *key,
 	return colNameToVar(pstate, sentinel, false, location);
 }
 
+/*
+ * propertyNeedsPerRelation - whether reading `key' off this element is worth
+ * settling per relation.
+ *
+ * True when a label below the one being read holds the key in a column.  The
+ * read cannot be bound to that column here, because one scan reads every label
+ * beneath and they need not agree, so it is marked for the planner to settle
+ * once it knows which relation it is reading.
+ */
+bool
+propertyNeedsPerRelation(ParseState *pstate, Node *basenode, char *key)
+{
+	Var		   *var;
+	ParseState *relpstate;
+	int			i;
+	Oid			relid;
+
+	if (!enable_property_promotion)
+		return false;
+	if (basenode == NULL || !IsA(basenode, Var))
+		return false;
+
+	var = (Var *) basenode;
+	if (var->vartype != VERTEXOID && var->vartype != EDGEOID)
+		return false;
+
+	relpstate = pstate;
+	for (i = 0; i < var->varlevelsup; i++)
+	{
+		if (relpstate == NULL)
+			return false;
+		relpstate = relpstate->parentParseState;
+	}
+	if (relpstate == NULL)
+		return false;
+
+	relid = getSourceRelid(relpstate, var->varno, var->varattno, NULL);
+
+	return subtree_has_promoted_property(relid, key);
+}
+
 /* See get_relation_info() */
 static bool
 hasGinOnProp(Oid relid)

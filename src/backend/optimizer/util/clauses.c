@@ -3863,9 +3863,14 @@ eval_const_expressions_mutator(Node *node,
 					newpath = lappend(newpath, newelem);
 				}
 
+				/*
+				 * Built rather than copied, so anything the access carries
+				 * besides what is folded here has to be carried over by hand.
+				 */
 				newa = makeNode(CypherAccessExpr);
 				newa->arg = (Expr *) newarg;
 				newa->path = newpath;
+				newa->perrelation = a->perrelation;
 
 				if (all_const)
 					return (Node *) evaluate_expr((Expr *) newa, JSONBOID, -1,

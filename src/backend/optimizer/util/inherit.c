@@ -46,9 +46,13 @@
 #include "catalog/ag_label.h"
 #include "catalog/ag_label_fn.h"
 #include "nodes/bitmapset.h"
+#include "nodes/nodeFuncs.h"
+#include "parser/parse_graph.h"
 #include "pgstat.h"
 #include "utils/array.h"
+#include "utils/builtins.h"
 #include "utils/catcache.h"
+#include "utils/fmgroids.h"
 #include "utils/graph.h"
 #include "utils/lsyscache.h"
 
@@ -2115,6 +2119,90 @@ expand_appendrel_subquery(PlannerInfo *root, RelOptInfo *rel,
 }
 
 
+
+/*
+ * expand_perrelation_property
+ *		Read a property from the column this relation holds it in.
+ *
+ * A property read that a label below the one being queried holds in a column is
+ * left for here, because one scan reads every label beneath and they need not
+ * agree on which column holds it, or hold it at all.  This relation is known,
+ * so the read can be bound to its column now; where there is no column the
+ * access stays on the property map, which is the same answer.
+ *
+ * The rewrite keeps the access's own type, so the clause around it is untouched
+ * and everything derived from that clause stays true of it.
+ */
+typedef struct
+{
+	Oid			relid;
+	Index		varno;
+} perrelation_context;
+
+static Node *
+perrelation_mutator(Node *node, perrelation_context *ctx)
+{
+	if (node == NULL)
+		return NULL;
+
+	if (IsA(node, CypherAccessExpr))
+	{
+		CypherAccessExpr *a = (CypherAccessExpr *) node;
+
+		if (a->perrelation && list_length(a->path) == 1)
+		{
+			Node	   *key = (Node *) linitial(a->path);
+
+			if (IsA(key, Const) && !((Const *) key)->constisnull &&
+				((Const *) key)->consttype == TEXTOID)
+			{
+				char	   *name = TextDatumGetCString(((Const *) key)->constvalue);
+				AttrNumber	attnum;
+
+				if (get_label_property_column(ctx->relid, name, &attnum, NULL))
+				{
+					Oid			coltype;
+					int32		coltypmod;
+					Oid			colcoll;
+					Var		   *col;
+
+					get_atttypetypmodcoll(ctx->relid, attnum,
+										  &coltype, &coltypmod, &colcoll);
+
+					col = makeVar(ctx->varno, attnum, coltype, coltypmod,
+								  colcoll, 0);
+
+					return (Node *) makeFuncExpr(F_CYPHER_TO_JSONB, JSONBOID,
+												 list_make1(col), InvalidOid,
+												 InvalidOid,
+												 COERCE_EXPLICIT_CALL);
+				}
+			}
+		}
+	}
+
+	return expression_tree_mutator(node, perrelation_mutator, ctx);
+}
+
+Node *
+expand_perrelation_property(PlannerInfo *root, Node *node, Index childvarno)
+{
+	perrelation_context ctx;
+	RangeTblEntry *rte;
+
+	if (node == NULL || !enable_property_promotion)
+		return node;
+
+	rte = root->simple_rte_array[childvarno];
+	if (rte == NULL || rte->rtekind != RTE_RELATION || !OidIsValid(rte->relid))
+		return node;
+
+	ctx.relid = rte->relid;
+	ctx.varno = childvarno;
+
+	return perrelation_mutator(node, &ctx);
+}
+
 /*
  * apply_child_basequals
  *		Populate childrel's base restriction quals from parent rel's quals,
@@ -2155,6 +2243,8 @@ apply_child_basequals(PlannerInfo *root, RelOptInfo *parentrel,
 		childqual = adjust_appendrel_attrs(root,
 										   (Node *) rinfo->clause,
 										   1, &appinfo);
+		childqual = expand_perrelation_property(root, childqual,
+												appinfo->child_relid);
 		childqual = eval_const_expressions(root, childqual);
 		/* check for flat-out constant */
 		if (childqual && IsA(childqual, Const))
