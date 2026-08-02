@@ -43,11 +43,17 @@
 #include "ag_const.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/ag_graphmeta.h"
+#include "access/stratnum.h"
 #include "catalog/ag_label.h"
 #include "catalog/ag_label_fn.h"
+#include "catalog/pg_am_d.h"
+#include "catalog/pg_proc.h"
+#include "commands/defrem.h"
 #include "nodes/bitmapset.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_graph.h"
+#include "utils/jsonb.h"
+#include "utils/jsonfuncs.h"
 #include "pgstat.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
@@ -2139,11 +2145,230 @@ typedef struct
 	Index		varno;
 } perrelation_context;
 
+/*
+ * perrelation_access_key
+ *		The property a marked access reads, or NULL if this is not one.
+ */
+static char *
+perrelation_access_key(Node *node)
+{
+	CypherAccessExpr *a;
+	Node	   *key;
+
+	if (node == NULL || !IsA(node, CypherAccessExpr))
+		return NULL;
+
+	a = (CypherAccessExpr *) node;
+	if (!a->perrelation || list_length(a->path) != 1)
+		return NULL;
+
+	key = (Node *) linitial(a->path);
+	if (!IsA(key, Const) || ((Const *) key)->constisnull ||
+		((Const *) key)->consttype != TEXTOID)
+		return NULL;
+
+	return TextDatumGetCString(((Const *) key)->constvalue);
+}
+
+/*
+ * perrelation_native_const
+ *		The constant as a value of the column's own type, or false if it is not
+ *		exactly one.
+ *
+ * Decided by converting it and converting it back: only a value that returns to
+ * the identical property map is used.  That refuses a number the column cannot
+ * hold, a string where the column takes numbers, and anything whose written form
+ * differs from what was asked for, without having to reason about each type.
+ */
+static bool
+perrelation_native_const(Const *c, Oid coltype, int32 coltypmod, Datum *result)
+{
+	Jsonb	   *jb;
+	JsonbValue *jbv;
+	char	   *str;
+	Oid			typinput;
+	Oid			typioparam;
+	Oid			typoutput;
+	bool		typisvarlena;
+	FmgrInfo	inputfn;
+	ErrorSaveContext escontext = {T_ErrorSaveContext};
+	JsonTypeCategory tcategory;
+	Oid			outfuncoid;
+	Jsonb	   *back;
+
+	jb = DatumGetJsonbP(c->constvalue);
+	if (!JB_ROOT_IS_SCALAR(jb))
+		return false;
+
+	jbv = getIthJsonbValueFromContainer(&jb->root, 0);
+	switch (jbv->type)
+	{
+		case jbvNumeric:
+			str = DatumGetCString(DirectFunctionCall1(numeric_out,
+													  NumericGetDatum(jbv->val.numeric)));
+			break;
+		case jbvString:
+			str = pnstrdup(jbv->val.string.val, jbv->val.string.len);
+			break;
+		case jbvBool:
+			str = jbv->val.boolean ? "true" : "false";
+			break;
+		default:
+			return false;
+	}
+
+	/*
+	 * The value is converted here, while the query is planned, and the result
+	 * kept as a constant.  That is only sound where converting does not depend
+	 * on anything about the session: a type whose reading or writing is merely
+	 * stable would fix one session's answer into a plan another session reuses.
+	 * No property may be promoted to such a type today, and this is what says so
+	 * where it matters rather than somewhere else.
+	 */
+	getTypeInputInfo(coltype, &typinput, &typioparam);
+	getTypeOutputInfo(coltype, &typoutput, &typisvarlena);
+	if (func_volatile(typinput) != PROVOLATILE_IMMUTABLE ||
+		func_volatile(typoutput) != PROVOLATILE_IMMUTABLE)
+		return false;
+
+	fmgr_info(typinput, &inputfn);
+	if (!InputFunctionCallSafe(&inputfn, str, typioparam, coltypmod,
+							   (Node *) &escontext, result))
+		return false;
+
+	/* it counts only if it comes back as the very same value */
+	json_categorize_type(coltype, true, &tcategory, &outfuncoid);
+	back = DatumGetJsonbP(datum_to_jsonb(*result, tcategory, outfuncoid));
+
+	return (VARSIZE(back) == VARSIZE(jb) &&
+			memcmp(back, jb, VARSIZE(jb)) == 0);
+}
+
+/*
+ * perrelation_native_clause
+ *		Compare a promoted property in its column's own terms.
+ *
+ * Reading the column is not on its own enough to use an index on it: the
+ * comparison is still between property maps, and an index on the column does not
+ * answer that.  Where the value compared against is exactly a value of the
+ * column's type, the comparison is rewritten to that type and the index binds.
+ *
+ * Returns NULL to leave the comparison alone, which reads the property map and
+ * is the answer either way.
+ */
+static Node *
+perrelation_native_clause(OpExpr *op, perrelation_context *ctx)
+{
+	Node	   *args[2];
+	char	   *key;
+	int			accessat;
+	Const	   *cval;
+	AttrNumber	attnum;
+	Oid			coltype;
+	int32		coltypmod;
+	Oid			colcoll;
+	Oid			jsonbfam;
+	Oid			colfam;
+	int			strategy;
+	bool		negate = false;
+	Oid			nativeop;
+	Datum		nativeval;
+	Var		   *col;
+	Const	   *lit;
+	OpExpr	   *rebuilt;
+
+	if (list_length(op->args) != 2)
+		return NULL;
+
+	args[0] = (Node *) linitial(op->args);
+	args[1] = (Node *) lsecond(op->args);
+
+	if ((key = perrelation_access_key(args[0])) != NULL)
+		accessat = 0;
+	else if ((key = perrelation_access_key(args[1])) != NULL)
+		accessat = 1;
+	else
+		return NULL;
+
+	cval = (Const *) args[1 - accessat];
+	if (!IsA(cval, Const) || cval->constisnull ||
+		cval->consttype != JSONBOID)
+		return NULL;
+
+	if (!get_label_property_column(ctx->relid, key, &attnum, NULL))
+		return NULL;
+	get_atttypetypmodcoll(ctx->relid, attnum, &coltype, &coltypmod, &colcoll);
+
+	jsonbfam = get_opclass_family(GetDefaultOpClass(JSONBOID, BTREE_AM_OID));
+	colfam = get_opclass_family(GetDefaultOpClass(coltype, BTREE_AM_OID));
+	if (!OidIsValid(jsonbfam) || !OidIsValid(colfam))
+		return NULL;
+
+	strategy = get_op_opfamily_strategy(op->opno, jsonbfam);
+	if (strategy == 0)
+	{
+		/* "not equal" is no member of a btree family; its negator is */
+		Oid			neg = get_negator(op->opno);
+
+		if (!OidIsValid(neg) ||
+			get_op_opfamily_strategy(neg, jsonbfam) != BTEqualStrategyNumber)
+			return NULL;
+		strategy = BTEqualStrategyNumber;
+		negate = true;
+	}
+
+	if (!perrelation_native_const(cval, coltype, coltypmod, &nativeval))
+		return NULL;
+
+	nativeop = get_opfamily_member(colfam, coltype, coltype, strategy);
+	if (!OidIsValid(nativeop))
+		return NULL;
+	if (negate)
+	{
+		nativeop = get_negator(nativeop);
+		if (!OidIsValid(nativeop))
+			return NULL;
+	}
+
+	col = makeVar(ctx->varno, attnum, coltype, coltypmod, colcoll, 0);
+	lit = makeConst(coltype, coltypmod, colcoll, get_typlen(coltype),
+					nativeval, false, get_typbyval(coltype));
+
+	rebuilt = makeNode(OpExpr);
+	rebuilt->opno = nativeop;
+	rebuilt->opfuncid = get_opcode(nativeop);
+	rebuilt->opresulttype = BOOLOID;
+	rebuilt->opretset = false;
+	rebuilt->opcollid = InvalidOid;
+	rebuilt->inputcollid = colcoll;
+	rebuilt->location = op->location;
+
+	/* the operands keep the side they were written on */
+	if (accessat == 0)
+		rebuilt->args = list_make2(col, lit);
+	else
+		rebuilt->args = list_make2(lit, col);
+
+	return (Node *) rebuilt;
+}
+
 static Node *
 perrelation_mutator(Node *node, perrelation_context *ctx)
 {
 	if (node == NULL)
 		return NULL;
+
+	/*
+	 * A comparison is taken as a whole, so that what replaces it is a
+	 * comparison of the same kind and nothing around it has to change.
+	 */
+	if (IsA(node, OpExpr))
+	{
+		Node	   *native = perrelation_native_clause((OpExpr *) node, ctx);
+
+		if (native != NULL)
+			return native;
+	}
 
 	if (IsA(node, CypherAccessExpr))
 	{

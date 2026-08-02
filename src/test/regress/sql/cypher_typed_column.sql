@@ -2645,3 +2645,58 @@ MATCH (n:pr_top) WHERE n.age > 30 RETURN n.age;
 EXPLAIN (COSTS OFF) MATCH (n:pr_top) WHERE n.other = 1 RETURN 1;
 
 DROP GRAPH perrel_g CASCADE;
+
+--
+-- Comparing a promoted property in its column's own terms
+--
+-- Reading the column is not enough for an index on it to be used: the
+-- comparison is still between property maps.  Where the value compared against
+-- is exactly a value of the column's type, the whole comparison is rewritten to
+-- that type and the index binds.  Where it is not, the comparison stays as it
+-- was, which answers the same and is merely unindexed.
+--
+CREATE GRAPH cmp_g;
+SET graph_path = cmp_g;
+CREATE VLABEL c_top;
+CREATE VLABEL c_has (nm text GENERATED, age int GENERATED) INHERITS (c_top);
+CREATE VLABEL c_hasnt INHERITS (c_top);
+CREATE INDEX c_has_age ON cmp_g.c_has (age);
+CREATE (:c_has {nm: 'bob', age: 30});
+CREATE (:c_has {nm: 'amy', age: 41});
+CREATE (:c_hasnt {other: 1});
+CREATE (:c_top {age: 30});
+ANALYZE cmp_g.c_has;
+
+SET enable_seqscan = off;
+-- equality reaches the column's index
+EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.age = 30 RETURN 1;
+RESET enable_seqscan;
+
+-- an ordering comparison on a column with no collation is taken over too
+EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.age > 25 RETURN 1;
+-- as is "not equal", through the operator equality negates to
+EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.age <> 30 RETURN 1;
+-- text compares equal in the column's terms
+EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.nm = 'bob' RETURN 1;
+
+-- ordering text is taken over as well.  A promoted property compares as the
+-- column holds it, which is what reading it directly off the label already
+-- does, so an ancestor has to answer the same way a descendant does.
+EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.nm > 'amy' RETURN 1;
+EXPLAIN (COSTS OFF) MATCH (n:c_has) WHERE n.nm > 'amy' RETURN 1;
+
+-- a value the column cannot hold exactly is left alone
+EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.age = 30.5 RETURN 1;
+-- as is one of another kind entirely
+EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.age = 'x' RETURN 1;
+
+-- every one of them answers what reading the property map answers
+MATCH (n:c_top) WHERE n.age = 30 RETURN n.age ORDER BY n.age;
+MATCH (n:c_top) WHERE n.age > 25 RETURN n.age ORDER BY n.age;
+MATCH (n:c_top) WHERE n.age <> 30 RETURN n.age;
+MATCH (n:c_top) WHERE n.nm = 'bob' RETURN n.age;
+MATCH (n:c_top) WHERE n.nm > 'amy' RETURN n.nm;
+MATCH (n:c_top) WHERE n.age = 30.5 RETURN n.age;
+MATCH (n:c_top) WHERE n.age = 'x' RETURN n.age;
+
+DROP GRAPH cmp_g CASCADE;
