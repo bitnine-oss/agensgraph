@@ -34,6 +34,8 @@ extern bool enable_property_promotion;
  * Returns the resolved (native) Var, or NULL to fall back to the jsonb property
  * path.  Defined in parse_graph.c so it can reuse getSourceRelid.
  */
+extern bool propertyNeedsPerRelation(ParseState *pstate, Node *basenode,
+									 char *key);
 extern Node *resolvePromotedProperty(ParseState *pstate, Node *basenode,
 									 char *key, int location);
 

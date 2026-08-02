@@ -2428,6 +2428,18 @@ typedef struct CypherAccessExpr
 	Expr		xpr;
 	Expr	   *arg;
 	List	   *path;
+
+	/*
+	 * Set when a label below the one being read holds this property in a
+	 * column of its own.  Which column that is depends on the relation, and one
+	 * scan reads every label beneath it, so the planner settles it per relation
+	 * and rewrites the access to that column where there is one.  Reading the
+	 * property map is what happens otherwise, and is the same answer.
+	 *
+	 * Ignored when comparing: an index defined on this access is stored without
+	 * it, and the two still have to match.
+	 */
+	bool		perrelation pg_node_attr(equal_ignore);
 } CypherAccessExpr;
 
 typedef struct CypherIndices

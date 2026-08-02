@@ -564,6 +564,7 @@ scanNSItemForVar(ParseState *pstate, ParseNamespaceItem *nsitem, char *colname,
 static Node *
 transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 {
+	bool		perrelation = false;
 	Node	   *res;
 	Oid			restype;
 	ListCell   *lf;
@@ -634,10 +635,20 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 	{
 		Node	   *promoted;
 
+
 		promoted = resolvePromotedProperty(pstate, res,
 										   strVal(linitial(fields)), location);
 		if (promoted != NULL)
 			return promoted;
+
+		/*
+		 * The label being read does not bind this key to a column, but one
+		 * below it may.  Reading the property map answers correctly either way,
+		 * so the access is left as it is and marked for the planner to rewrite
+		 * against whichever label it turns out to be reading.
+		 */
+		perrelation = propertyNeedsPerRelation(pstate, res,
+											   strVal(linitial(fields)));
 	}
 
 	res = filterAccessArg(pstate, res, location, "map");
@@ -655,7 +666,11 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 		path = lappend(path, elem);
 	}
 
-	return makeJsonbFuncAccessor(pstate, res, path);
+	res = makeJsonbFuncAccessor(pstate, res, path);
+	if (perrelation)
+		((CypherAccessExpr *) res)->perrelation = true;
+
+	return res;
 }
 
 static Node *

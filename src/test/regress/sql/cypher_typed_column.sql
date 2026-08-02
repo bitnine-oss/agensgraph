@@ -2610,3 +2610,38 @@ RESET enable_property_promotion;
 RESET enable_seqscan;
 DROP GRAPH tc CASCADE;
 RESET graph_path;
+
+--
+-- Reading a property a label below the one being read holds in a column
+--
+-- One scan of a label reads every label beneath it, and they need not agree on
+-- which column holds a property, or hold it at all.  So the read is settled per
+-- relation: bound to the column where the relation has one, left on the
+-- property map where it does not.  Both answer the same, which is what lets the
+-- rewrite be an optimization rather than a change of meaning.
+--
+CREATE GRAPH perrel_g;
+SET graph_path = perrel_g;
+CREATE VLABEL pr_top;
+CREATE VLABEL pr_has (age int GENERATED) INHERITS (pr_top);
+CREATE VLABEL pr_hasnt INHERITS (pr_top);
+CREATE (:pr_has {age: 30});
+CREATE (:pr_has {age: 41});
+CREATE (:pr_hasnt {other: 1});
+CREATE (:pr_top {age: 30});
+
+-- the label holding the column reads it directly, as it always has
+EXPLAIN (COSTS OFF) MATCH (n:pr_has) WHERE n.age = 30 RETURN n.age;
+
+-- reading from above it, only the label with the column is rewritten
+EXPLAIN (COSTS OFF) MATCH (n:pr_top) WHERE n.age = 30 RETURN 1;
+
+-- and the answers are what reading the property map gives
+MATCH (n:pr_top) WHERE n.age = 30 RETURN n.age;
+MATCH (n:pr_top) RETURN n.age ORDER BY n.age;
+MATCH (n:pr_top) WHERE n.age > 30 RETURN n.age;
+
+-- a key no label holds in a column is left alone everywhere
+EXPLAIN (COSTS OFF) MATCH (n:pr_top) WHERE n.other = 1 RETURN 1;
+
+DROP GRAPH perrel_g CASCADE;

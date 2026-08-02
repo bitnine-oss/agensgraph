@@ -58,8 +58,8 @@ setup
   CREATE (:mrg);
   MATCH (n:mrg) SET n.a = 1;
 
-  -- a promoted property, whose typed column is the only place a lost write would
-  -- show up once the bag no longer carries the value
+  -- a promoted property, which the write has to recompute a column for as well
+  -- as store, so it reaches the conflict by a longer road than the others
   CREATE VLABEL prom (age int GENERATED);
   CREATE (:prom);
   MATCH (n:prom) SET n.age = 1;

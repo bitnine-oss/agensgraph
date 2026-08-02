@@ -13135,10 +13135,10 @@
 { oid => '8041', descr => 'cypher SINGLE() list predicate (three-valued)',
   proname => 'cypher_single', prorettype => 'bool', proargtypes => 'jsonb',
   prosrc => 'cypher_single' },
-{ oid => '8043', descr => 'planner support for graphpath accessors',
-  proname => 'graphpath_support', prorettype => 'internal',
-  proargtypes => 'internal', prosrc => 'graphpath_support' },
 { oid => '8042', descr => 'text of a property whose value is of the expected kind',
   proname => 'ag_property_text', prorettype => 'text',
   proargtypes => 'jsonb text char', prosrc => 'ag_property_text' },
+{ oid => '8043', descr => 'planner support for graphpath accessors',
+  proname => 'graphpath_support', prorettype => 'internal',
+  proargtypes => 'internal', prosrc => 'graphpath_support' },
 ]
