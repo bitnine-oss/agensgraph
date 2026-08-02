@@ -1360,7 +1360,7 @@ expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 		 */
 		List	   *inhOIDs;
 		ListCell   *l;
-		bool		gm_omit_parent = false;
+		bool		gm_omit_parent PG_USED_FOR_ASSERTS_ONLY = false;
 		bool		gm_pruned = false;
 		List	   *gm_child_rtis = NIL;
 
