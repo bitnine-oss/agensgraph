@@ -4846,9 +4846,15 @@ transformVLEtoNSItem(ParseState *pstate, CypherRel *crel, SelectStmt *vle, Alias
 	qry->commandType = CMD_SELECT;
 	if (crel->prop_map)
 	{
-		crel->prop_map = transformCypherExpr(pstate,
-											 crel->prop_map,
-											 EXPR_KIND_WHERE);
+		/*
+		 * A property map is jsonb, whatever it was written as, and the
+		 * traversal reads this one as jsonb without asking.  So coerce it the
+		 * way every other property map is coerced: a constraint written as
+		 * something else -- `= 5' -- otherwise reaches the traversal as an
+		 * integer and is read as though it were a pointer to one.
+		 */
+		crel->prop_map = transformPropMap(pstate, crel->prop_map,
+										  EXPR_KIND_WHERE);
 
 		/*
 		 * The constraint is carried to the traversal on the pattern itself,
