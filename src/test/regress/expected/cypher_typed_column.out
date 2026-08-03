@@ -27,16 +27,15 @@
 --
 -- Semantics these tests pin down (all intended behavior):
 --   * Write domain: a promoted key's declared type constrains what may be
---     written.  A value that the plain bag would accept but the typed column
---     cannot parse (a fractional / out-of-range / non-numeric-string / composite
---     value for an int column) aborts the Cypher write with the column's cast
---     error.  Integer-parseable strings ('42') are accepted and read back typed.
---   * Special floats: NaN / Infinity / -Infinity cannot be jsonb numbers,
---     so a program can only store them as strings; the float column parses those
---     strings into real floats.  With promotion on n.ratio is therefore a float
---     and orders / compares by float semantics; off it is the stored string.
---     This is the same "a value's stored type differs from the column's"
---     behavior as the string-in-int case, made visible for floats.
+--     written.  A value the property map would accept but the column cannot
+--     hold aborts the write.  That is a value of the wrong kind -- a string
+--     where the column holds numbers, which is refused by the extraction the
+--     column is derived through -- and a value of the right kind the type still
+--     cannot take, such as a fractional or out-of-range literal for an int
+--     column, which is refused by the cast.
+--   * Special floats: NaN / Infinity / -Infinity cannot be jsonb numbers, so a
+--     program can only store them as strings -- and a column of numbers refuses
+--     a string, so a key holding one of them cannot be promoted at all.
 --   * Text / collation: both the jsonb path and the promoted column order
 --     and compare text with the database's default collation, so they coincide
 --     (on == off) for all text, including mixed case -- there is no divergence.
@@ -3666,14 +3665,15 @@ MATCH (n:doc) WHERE n.age >= 14 RETURN n.name AS name, n.age AS age ORDER BY age
 (10 rows)
 
 SET enable_property_promotion = on;
--- 14h. A promoted int column constrains its write domain.  It accepts an
---      integer value and an integer-parseable string, but rejects any value the
---      bag would have accepted yet the column cannot parse -- a fractional
---      literal (5.0 or 5.5), an out-of-int-range literal, a non-numeric string,
---      or a composite -- aborting the whole Cypher write with the column's cast
---      error.  Declaring a strict typed column constrains what the key may hold.
+-- 14h. A promoted int column constrains its write domain.  It accepts a number
+--      the type can hold and rejects everything else the property map would
+--      have taken: a string, even one that reads as a number, because a column
+--      of numbers holds numbers; and a number the type cannot hold -- a
+--      fractional literal (5.0 or 5.5), one out of int range -- or a composite.
+--      Either way the whole Cypher write is aborted.  Declaring a typed column
+--      constrains what the key may hold.
 CREATE (:doc {name:'wok', age:5});          -- accepted
-CREATE (:doc {name:'wstr', age:'42'});      -- integer-parseable string: accepted
+CREATE (:doc {name:'wstr', age:'42'});      -- rejected: a string, not a number
 ERROR:  property "age" holds a string
 DETAIL:  A column promoting this property holds numbers.
 CONTEXT:  while computing the promoted typed columns of graph label "doc"
@@ -3719,10 +3719,11 @@ MATCH (n:doc) RETURN n.name AS name ORDER BY name;
  "n6"
 (6 rows)
 
--- 14j. When a value is stored under a key with a type different from the
---      column's -- e.g. the string "42" in an int column -- n.age reads the
---      typed 42 from the column, while the whole-element bag keeps the raw
---      value "42".  The value is duplicated in the bag, so the two forms differ.
+-- 14j. A resolved read and a whole-element read cannot disagree about what a
+--      property is, because a value of another kind never reaches the column:
+--      the write is refused instead.  So the case that would have shown them
+--      differing -- the string "42" under an int-declared key -- has no rows to
+--      read afterwards.
 CREATE (:doc {name:'mp', age:'42'});
 ERROR:  property "age" holds a string
 DETAIL:  A column promoting this property holds numbers.

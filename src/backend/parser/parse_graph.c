@@ -5898,13 +5898,14 @@ resolvePromotedProperty(ParseState *pstate, Node *basenode, char *key,
 		return NULL;
 
 	/*
-	 * NOTE: the promoted column's DECLARED type governs a resolved read.  If a
-	 * value stored under the key has a different type than declared (e.g. the
-	 * string "42" written to an int-declared key), n.prop reads the typed
-	 * column (42) while the jsonb bag -- and a whole-element RETURN n -- keep
-	 * the raw value ("42").  That is garbage-in under the typed contract, and
-	 * it converges once the bag copy is dropped under true promotion; no
-	 * behavior change is made here.
+	 * The column's declared type governs a resolved read, and the column can
+	 * only hold a value of the kind that type implies: a value of another kind
+	 * is refused when it is written, by the extraction the column is derived
+	 * through.  So a resolved read and a whole-element read agree about what the
+	 * property is -- for the kinds that extraction checks, which are numbers,
+	 * strings and booleans.  A column of any other type is derived without that
+	 * check and takes the value's text whatever the value is, so for one of
+	 * those the two can still disagree.
 	 */
 
 	/* recover the element's variable name from the composite column alias */

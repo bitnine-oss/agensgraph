@@ -617,17 +617,17 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 
 	/*
 	 * Resolve a single-key property access on a graph element (e.g. n.age) to
-	 * its promoted typed column when the label has one.  The typed column is the
-	 * source of truth, but every use is emitted as cypher_to_jsonb(column): a
-	 * projection then returns the typed value (and a column-only query becomes
-	 * index-only), and every other use -- WHERE, ORDER BY, function args -- is
-	 * byte-identical to the projection, which is what lets DISTINCT / GROUP BY
-	 * accept an ORDER BY key over the same property.  The index is not lost:
-	 * a comparison is re-bound to the native operator in transformAExprOp when
-	 * the other operand is type-compatible, and a free (non-DISTINCT, non-
-	 * grouped) ORDER BY is re-pointed to the native column in
-	 * updateSortOperatorsForJsonb.  A whole-element reference (RETURN n,
-	 * properties(n), ...) is not a field access and is unaffected.
+	 * its promoted typed column when the label has one.  The column holds the
+	 * property, so the read is the column: one Var of the column's own type,
+	 * the same in a projection, a comparison, a sort key or an argument.  A
+	 * projection therefore returns the property as the type the column declares
+	 * rather than as a piece of a JSON document, a comparison binds the
+	 * operator that type carries, and a query that reads nothing else can be
+	 * answered from an index on it alone.
+	 *
+	 * A whole-element reference (RETURN n, properties(n), ...) is not a field
+	 * access and is unaffected: it reads the property map, which holds every
+	 * property whether or not a column also holds it.
 	 */
 	if ((restype == VERTEXOID || restype == EDGEOID) &&
 		list_length(fields) == 1 &&
