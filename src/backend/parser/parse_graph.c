@@ -4308,6 +4308,49 @@ addEdgeUnion(ParseState *pstate, char *edge_label, bool only, int location,
 }
 
 /*
+ * appendPromotedColumnTargets - project a label's promoted typed columns onto a
+ * raw SELECT's target list.
+ *
+ * A promoted read is bound by finding the typed column among the outputs of the
+ * subquery the element is read from, so a lowering that assembles its own column
+ * set has to carry those columns or every read of one falls back to the property
+ * map.
+ *
+ * `varname' is the element the columns belong to.  Given one, each column is
+ * projected under that element's sentinel name, which is what a promoted read
+ * resolves against; given NULL, each is projected under its own name, which is
+ * what an arm of a set operation needs, since a column absent from the arms
+ * cannot be named at the level above.
+ */
+List *
+appendPromotedColumnTargets(List *targetList, Oid relid, const char *varname)
+{
+	List	   *props;
+	ListCell   *lc;
+
+	if (!OidIsValid(relid))
+		return targetList;
+
+	props = get_label_promoted_properties(relid);
+	foreach(lc, props)
+	{
+		PromotedPropInfo *info = lfirst(lc);
+		char	   *colname = get_attname(relid, info->attnum, true);
+		const char *resname = NULL;
+
+		if (colname == NULL)
+			continue;
+		if (varname != NULL)
+			resname = makePromotedSentinelName(varname, info->propname);
+
+		targetList = lappend(targetList,
+							 makeSimpleResTarget(colname, resname));
+	}
+
+	return targetList;
+}
+
+/*
  * SELECT id, start, "end", properties, ctid, start AS _start, "end" AS _end
  * FROM `get_graph_path()`.`edge_label`
  * UNION ALL
@@ -4350,23 +4393,10 @@ genEdgeUnion(char *edge_label, bool only, int location, bool include_promoted)
 	 * existing shape.
 	 */
 	if (include_promoted)
-	{
-		Oid			relid = RangeVarGetRelid(r, AccessShareLock, true);
-		List	   *props = OidIsValid(relid) ?
-			get_label_promoted_properties(relid) : NIL;
-		ListCell   *lc;
-
-		foreach(lc, props)
-		{
-			PromotedPropInfo *info = lfirst(lc);
-			char	   *colname = get_attname(relid, info->attnum, true);
-
-			if (colname != NULL)
-				lsel->targetList =
-					lappend(lsel->targetList,
-							makeSimpleResTarget(colname, NULL));
-		}
-	}
+		lsel->targetList =
+			appendPromotedColumnTargets(lsel->targetList,
+										RangeVarGetRelid(r, AccessShareLock,
+														 true), NULL);
 
 	rsel = copyObject(lsel);
 
