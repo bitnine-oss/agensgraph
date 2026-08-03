@@ -2700,3 +2700,202 @@ MATCH (n:c_top) WHERE n.age = 30.5 RETURN n.age;
 MATCH (n:c_top) WHERE n.age = 'x' RETURN n.age;
 
 DROP GRAPH cmp_g CASCADE;
+
+--
+-- Reading a promoted property as the weight of a weighted shortest path
+--
+-- A weighted shortest path assembles its own subquery over the relationship
+-- label instead of scanning the label the way a pattern does, so a read of the
+-- weight has nothing to bind to unless that subquery carries the label's
+-- promoted columns.  It carries them in both forms: the direction-less one
+-- through both arms of the union it lowers to, whose column sets have to stay
+-- aligned with one another, and the level above names them for a read to reach.
+--
+-- The weight, and the qual that may stand beside it, are read positions like any
+-- other, so what they answer is what the property map answers.  That is why the
+-- cases here are run with promotion on and then off: the two blocks have to
+-- agree, whatever the plans underneath them look like.
+--
+CREATE GRAPH dij_g;
+SET graph_path = dij_g;
+CREATE VLABEL town (nm text GENERATED);
+CREATE INDEX town_nm_idx ON dij_g.town (nm);
+CREATE ELABEL road (dist float GENERATED, lanes int GENERATED);
+CREATE ELABEL tollway INHERITS (road);
+
+-- The cheapest route from a to e and the route across the fewest relationships
+-- are deliberately different routes, so a weight taken from the wrong place
+-- gives a visibly wrong answer instead of the right one by luck.  One
+-- relationship points back out of e and costs almost nothing to cross the other
+-- way, which is what separates the direction-less form from the directed one.
+-- And one relationship belongs to a label below the one every pattern here
+-- names, so that label's own copy of the column has to answer for the key.
+CREATE (:town {nm: 'a'}), (:town {nm: 'b'}), (:town {nm: 'c'}),
+       (:town {nm: 'd'}), (:town {nm: 'e'});
+MATCH (x:town {nm: 'a'}), (y:town {nm: 'b'})
+CREATE (x)-[:road {dist: 1, lanes: 2, toll: 7}]->(y);
+MATCH (x:town {nm: 'b'}), (y:town {nm: 'c'})
+CREATE (x)-[:road {dist: 1, lanes: 2, toll: 1}]->(y);
+MATCH (x:town {nm: 'c'}), (y:town {nm: 'e'})
+CREATE (x)-[:road {dist: 1, lanes: 1, toll: 1}]->(y);
+MATCH (x:town {nm: 'a'}), (y:town {nm: 'd'})
+CREATE (x)-[:road {dist: 2, lanes: 4, toll: 1}]->(y);
+MATCH (x:town {nm: 'd'}), (y:town {nm: 'e'})
+CREATE (x)-[:tollway {dist: 0.5, lanes: 4, toll: 9}]->(y);
+MATCH (x:town {nm: 'a'}), (y:town {nm: 'e'})
+CREATE (x)-[:road {dist: 4, lanes: 1, toll: 1}]->(y);
+MATCH (x:town {nm: 'e'}), (y:town {nm: 'b'})
+CREATE (x)-[:road {dist: 0.1, lanes: 1, toll: 1}]->(y);
+
+-- the weights every case below is read against
+MATCH (x:town)-[e:road]->(y:town)
+RETURN x.nm, y.nm, label(e) AS lbl, e.dist, e.lanes, e.toll
+ORDER BY x.nm, y.nm;
+
+-- Both scan choices are pinned so that the relationship scan is the same node
+-- in every plan below and only its Output list is left to read.
+SET enable_seqscan = off;
+SET enable_bitmapscan = off;
+
+-- The weight is the column.  Neither the property map nor the row's ctid is
+-- read at all, and the relationship label below the one named, which the scan
+-- reaches by expanding it, answers for the key out of its own copy.
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      p = dijkstra((s)-[e:road]->(t), e.dist)
+RETURN 1;
+
+-- The direction-less form lowers to a union of one arm per direction, and the
+-- arms of a union have to offer the same columns in the same order, so this is
+-- where a column carried through only some of them would show.  All four read
+-- the column.
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      p = dijkstra((s)-[e:road]-(t), e.dist)
+RETURN 1;
+
+-- The third argument is a qual over the relationship, so it filters in the
+-- column's own terms rather than by unpacking the map to compare.
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      p = dijkstra((s)-[e:road]->(t), e.dist, e.dist < 2)
+RETURN 1;
+
+-- A key the label does not promote has no column to be read from, so it comes
+-- off the property map, which is where a weight with nothing behind it has to
+-- come from.
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      p = dijkstra((s)-[e:road]->(t), e.toll)
+RETURN 1;
+
+-- A weight is a float, so a column of some other numeric type is read and then
+-- coerced once in native terms, where the map path reaches the same float by
+-- parsing text.
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      p = dijkstra((s)-[e:road]->(t), e.lanes)
+RETURN 1;
+
+RESET enable_bitmapscan;
+RESET enable_seqscan;
+
+-- A relationship the pattern does not name cannot have a property read off it,
+-- so there is nothing to carry and nothing to bind; a constant weight still
+-- plans and runs, in either form.
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[:road]->(t), 1)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[:road]-(t), 1)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+
+-- Unweighted shortest paths are lowered by builders of their own and read no
+-- property at all.  On this graph the fewest-relationship route is not the
+-- cheapest one, so they answer differently from every weighted case here, which
+-- is what makes them worth stating.
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      p = shortestpath((s)-[:road*]->(t))
+RETURN [x IN nodes(p) | x.nm] AS route, length(p) AS hops;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      p = allshortestpaths((s)-[:road*]->(t))
+RETURN [x IN nodes(p) | x.nm] AS route, length(p) AS hops ORDER BY route;
+
+-- The two blocks below are the same eight queries with promotion on and then
+-- off.  A weight read from the column has to send the search down the route the
+-- property map sends it down, and a qual has to keep out the same
+-- relationships.  The qual on the int column is there because it admits no route
+-- to the target at all.  Arithmetic over a weight is there twice because what
+-- resolving an operand does to the addition depends on the column it resolves
+-- to: over a float column the value is boxed back into a jsonb number and added
+-- as one, where over an int column the addition itself becomes the native one.
+SET enable_property_promotion = on;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.dist)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]-(t), e.dist)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.dist, e.dist < 2)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.dist, e.lanes = 2)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.toll)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.lanes)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.dist + 1)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.lanes + 1)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+SET enable_property_promotion = off;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.dist)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]-(t), e.dist)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.dist, e.dist < 2)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.dist, e.lanes = 2)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.toll)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.lanes)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.dist + 1)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.lanes + 1)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+SET enable_property_promotion = on;
+
+-- A relationship whose weight key is absent reads NULL from the column just as
+-- it reads NULL from the property map.  The one added here leads away from the
+-- target and not towards it, because what a NULL weight itself contributes to a
+-- distance is settled somewhere else; all this pins is that resolving one is
+-- evaluated without complaint and leaves the search and its answer alone.
+CREATE (:town {nm: 'f'});
+MATCH (x:town {nm: 'a'}), (y:town {nm: 'f'})
+CREATE (x)-[:road {lanes: 1, toll: 1}]->(y);
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.dist)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+SET enable_property_promotion = off;
+MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
+      (p, w) = dijkstra((s)-[e:road]->(t), e.dist)
+RETURN [x IN nodes(p) | x.nm] AS route, w;
+
+RESET enable_property_promotion;
+DROP GRAPH dij_g CASCADE;

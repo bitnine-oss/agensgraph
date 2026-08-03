@@ -42,6 +42,15 @@ extern Node *resolvePromotedProperty(ParseState *pstate, Node *basenode,
 /* True for a reserved hidden promoted-column sentinel output name. */
 extern bool isPromotedSentinelName(const char *resname);
 
+/*
+ * Carry a label's promoted typed columns through a lowering that builds its own
+ * column set, so that a read of one resolves to the column instead of the
+ * property map.  `varname' names them for resolution; NULL names them plainly,
+ * for an arm of a set operation.
+ */
+extern List *appendPromotedColumnTargets(List *targetList, Oid relid,
+										 const char *varname);
+
 extern Query *transformCypherSubPattern(ParseState *pstate,
 										CypherSubPattern *subpat);
 extern Query *transformCypherProjection(ParseState *pstate,

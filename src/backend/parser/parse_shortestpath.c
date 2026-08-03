@@ -21,6 +21,7 @@
 #include "parser/parse_cypher_expr.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_func.h"
+#include "parser/parse_graph.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_shortestpath.h"
 #include "parser/parse_target.h"
@@ -1403,6 +1404,7 @@ static Node *
 makeDijkstraEdgeUnion(char *elabel_name, char *row_name)
 {
 	RangeVar   *r;
+	Oid			relid;
 	SelectStmt *lsel;
 	Node	   *row;
 	SelectStmt *rsel;
@@ -1412,6 +1414,7 @@ makeDijkstraEdgeUnion(char *elabel_name, char *row_name)
 
 	r = makeRangeVar(get_graph_path(true), elabel_name, -1);
 	r->inh = true;
+	relid = RangeVarGetRelid(r, AccessShareLock, true);
 
 	lsel = makeNode(SelectStmt);
 	lsel->targetList = lappend(lsel->targetList,
@@ -1421,6 +1424,16 @@ makeDijkstraEdgeUnion(char *elabel_name, char *row_name)
 	lsel->targetList = lappend(lsel->targetList,
 							   makeSimpleResTarget("ctid", NULL));
 	lsel->fromClause = list_make1(r);
+
+	/*
+	 * Expose the relationship label's promoted typed columns through both arms,
+	 * added before the copy below so that the arms stay type-aligned as the set
+	 * operation requires.  The level above then names them for a read of the
+	 * weight to bind to.
+	 */
+	if (row_name != NULL)
+		lsel->targetList = appendPromotedColumnTargets(lsel->targetList, relid,
+													   NULL);
 
 	rsel = copyObject(lsel);
 
@@ -1472,6 +1485,8 @@ makeDijkstraEdgeUnion(char *elabel_name, char *row_name)
 									  EDGEOID, -1);
 		sel->targetList = lappend(sel->targetList,
 								  makeResTarget(row, row_name));
+		sel->targetList = appendPromotedColumnTargets(sel->targetList, relid,
+													  row_name);
 	}
 
 	return (Node *) sel;
@@ -1510,6 +1525,18 @@ makeDijkstraEdge(char *elabel_name, char *row_name)
 									  EDGEOID, -1);
 		sel->targetList = lappend(sel->targetList,
 								  makeResTarget(row, row_name));
+
+		/*
+		 * The weight, and a qual given alongside it, are read from this
+		 * relationship, so carry its promoted typed columns as outputs of this
+		 * subquery for such a read to bind to.  Named only where the pattern
+		 * names the relationship, since that name is how a read reaches one.
+		 * An output nothing reads is pruned, so this costs a plan nothing.
+		 */
+		sel->targetList =
+			appendPromotedColumnTargets(sel->targetList,
+										RangeVarGetRelid(r, AccessShareLock,
+														 true), row_name);
 	}
 
 	return (Node *) sel;
