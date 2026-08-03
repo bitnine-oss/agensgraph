@@ -3075,6 +3075,27 @@ typedef struct DijkstraState
 	TupleDesc	tupleDesc;		/* pointer to vertex row's tuple descr */
 } DijkstraState;
 
+/*
+ * A property constraint on a variable-length relationship, resolved against one
+ * label's promoted typed columns.
+ *
+ * A constraint asks whether a relationship's property map holds each of a set of
+ * keys with a given value.  Where the label holds a key in a column, the same
+ * question is a comparison of that column, which reads a fixed-width value
+ * rather than taking a jsonb document apart -- and only if EVERY key of the
+ * constraint resolves is the map left unread altogether, which is where the cost
+ * actually is.  So `nkeys' is either the whole constraint or zero, and zero
+ * means the label answers from the map exactly as it always did.
+ */
+typedef struct VLEPropFilter
+{
+	int			nkeys;
+	AttrNumber *attnum;			/* the column holding each key */
+	Datum	   *value;			/* what the constraint asks it to equal */
+	FmgrInfo   *eqproc;			/* that column type's equality */
+	Oid		   *collation;
+} VLEPropFilter;
+
 typedef struct GraphVLEState
 {
 	PlanState	ps;
@@ -3134,6 +3155,14 @@ typedef struct GraphVLEState
 	 */
 	bool		has_prop_filter;
 	Jsonb	   *jsonb_filter;
+
+	/*
+	 * The same constraint against the columns a label holds those properties
+	 * in, one entry per scanned label since they need not agree on which
+	 * columns they have.  Where a label answers the whole constraint from
+	 * columns, the relationship's property map is never read.
+	 */
+	VLEPropFilter *prop_filters;
 
 	/*
 	 * Scratch for building the node and relationship a hop appends to the
