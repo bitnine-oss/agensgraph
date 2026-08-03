@@ -2899,3 +2899,232 @@ RETURN [x IN nodes(p) | x.nm] AS route, w;
 
 RESET enable_property_promotion;
 DROP GRAPH dij_g CASCADE;
+
+--
+-- A property constraint on a variable-length relationship
+--
+-- A constraint on a variable-length relationship is not lowered to SQL.  It is
+-- asked of every candidate relationship inside the traversal, which is where it
+-- can be asked at all, and it was asked by taking the relationship's property
+-- map apart.  Where the label holds the constraint's keys in columns, the same
+-- question is a comparison of those columns and the map is never read.
+--
+-- The question is settled per label, because one traversal reads every label
+-- beneath the one it names and they need not hold the same properties in
+-- columns, or any.  It is settled all at once or not at all: a constraint
+-- answered partly from columns still has to read the map, which is the cost, so
+-- a constraint that does not resolve whole is left alone.  And only a scalar
+-- goes to a column: containment and per-key equality agree on a number, a
+-- string or a boolean, and part company on a map or a list, where containment
+-- admits a superset.
+--
+-- Which of the two answers is invisible by design, so every case below is run
+-- with promotion on and then off, and the two blocks have to agree.  EXPLAIN is
+-- no help here -- the traversal node prints neither the constraint nor a row
+-- count for it -- so the agreement is the whole proof.
+--
+CREATE GRAPH vp_g;
+SET graph_path = vp_g;
+CREATE VLABEL tn;
+
+-- The label the patterns below name promotes nothing, so the traversal set has
+-- labels that answer from columns and labels that answer from the map.
+CREATE ELABEL rd_top;
+CREATE ELABEL rd_has (lanes int GENERATED) INHERITS (rd_top);
+CREATE ELABEL rd_deep (extra int GENERATED) INHERITS (rd_has);
+CREATE ELABEL rd_none INHERITS (rd_top);
+
+-- Adding the columns to rd_has after rd_deep exists is what puts them at a
+-- different position on the child than on the parent: rd_deep's own column was
+-- already there.  This is the case that makes resolving per label necessary,
+-- and it is arranged so that reading the parent's position on the child would
+-- read the wrong column rather than merely fail -- rd_has.dist lands on
+-- rd_deep.extra, and rd_has.paved on rd_deep.dist.
+ALTER ELABEL rd_has ADD COLUMN dist int GENERATED;
+ALTER ELABEL rd_has ADD COLUMN paved bool GENERATED;
+ALTER ELABEL rd_has ADD COLUMN code text GENERATED;
+SELECT c.relname, a.attnum, a.attname, a.atttypid::regtype AS type
+FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid
+WHERE c.relnamespace = 'vp_g'::regnamespace AND a.attnum > 4 AND NOT a.attisdropped
+ORDER BY c.relname, a.attnum;
+
+CREATE (:tn {nm:'a'}),(:tn {nm:'b'}),(:tn {nm:'c'}),(:tn {nm:'d'}),
+       (:tn {nm:'e'}),(:tn {nm:'f'}),(:tn {nm:'g'}),(:tn {nm:'h'});
+
+-- One chain, whose links belong to different labels, so a route of more than
+-- one hop has to be admitted by columns for some of its links and by the map
+-- for others.  rd_deep's extra is 1 where the constraint asks for 10, and 10
+-- where it asks for 20, so reading it in place of dist would both lose a route
+-- and invent one.  f->g carries no dist at all, in the label that promotes it.
+MATCH (x:tn {nm:'a'}),(y:tn {nm:'b'})
+CREATE (x)-[:rd_top {dist:10, toll:1}]->(y);
+MATCH (x:tn {nm:'b'}),(y:tn {nm:'c'})
+CREATE (x)-[:rd_has {dist:10, lanes:2, paved:true, code:'10', toll:1,
+                     tags:['x','y'], meta:{a:1, b:2}}]->(y);
+MATCH (x:tn {nm:'c'}),(y:tn {nm:'d'})
+CREATE (x)-[:rd_deep {dist:10, lanes:2, extra:1}]->(y);
+MATCH (x:tn {nm:'d'}),(y:tn {nm:'e'})
+CREATE (x)-[:rd_none {dist:10, toll:9}]->(y);
+MATCH (x:tn {nm:'e'}),(y:tn {nm:'f'})
+CREATE (x)-[:rd_has {dist:20, lanes:1, paved:false, code:'x'}]->(y);
+MATCH (x:tn {nm:'f'}),(y:tn {nm:'g'})
+CREATE (x)-[:rd_has {lanes:3, code:'nodist'}]->(y);
+MATCH (x:tn {nm:'g'}),(y:tn {nm:'h'})
+CREATE (x)-[:rd_deep {dist:20, extra:10}]->(y);
+
+-- the relationships every case below is asked about
+MATCH (x:tn)-[e:rd_top]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, label(e) AS lbl, properties(e) AS props ORDER BY f;
+
+SET enable_property_promotion = on;
+-- One key, promoted on two of the four labels in the traversal set.  Every
+-- route of more than one hop is admitted partly by columns and partly by the
+-- map, and a->d and b->e need rd_has and rd_deep to answer from their own
+-- positions.
+MATCH (x:tn)-[r:rd_top*1..3 {dist: 10}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+-- the same constraint with no bound on the hops
+MATCH (x:tn)-[r:rd_top* {dist: 10}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+-- a path of no relationships is unconstrained by a relationship constraint
+MATCH (x:tn)-[r:rd_top*0..2 {dist: 10}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+-- a value no relationship carries
+MATCH (x:tn)-[r:rd_top*1..3 {dist: 999}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+-- e->f has the key and f->g does not, in the same label: a column with nothing
+-- in it is a property the relationship does not have, so f->g is refused and
+-- there is no route past it.
+MATCH (x:tn)-[r:rd_top*1..2 {dist: 20}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+-- the same constraint asked of a traversal that may cross a relationship either
+-- way round
+MATCH (x:tn)-[r:rd_top*1..3 {dist: 10}]-(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+
+-- A column is trusted about its own kind and no other, so each of the three
+-- kinds a column can be trusted about is asked for.
+MATCH (x:tn)-[r:rd_top*1..3 {lanes: 2}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {paved: true}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+-- rd_deep's relationships leave paved empty, so they are refused here too
+MATCH (x:tn)-[r:rd_top*1..3 {paved: false}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {code: '10'}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+
+-- A number asked of a column of text, and a string asked of a column of
+-- numbers.  Text carries no kind, so a column holding "10" would answer for the
+-- number 10 if the kind the constraint asks for were not the column's own kind;
+-- both of these answer what the map answers, which is nothing.
+MATCH (x:tn)-[r:rd_top*1..3 {code: 10}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {dist: '10'}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+
+-- A number of the column's kind that the column's type will not take is not an
+-- error: the map answers, and it compares numbers by value rather than by how
+-- they were written, so 10.0 finds what 10 finds and 10.5 finds nothing.
+MATCH (x:tn)-[r:rd_top*1..3 {dist: 10.0}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {dist: 10.5}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+
+-- Both keys resolve on the labels that promote either, and neither resolves on
+-- the labels that promote nothing.
+MATCH (x:tn)-[r:rd_top*1..3 {dist: 10, lanes: 2}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+-- toll is promoted by no label, so the constraint does not resolve whole and
+-- the map answers all of it -- which is the same answer, and it keeps out c->d,
+-- whose label has dist in a column but carries no toll at all.
+MATCH (x:tn)-[r:rd_top*1..3 {dist: 10, toll: 1}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+-- the same mixed constraint asked only of labels that do promote dist, where
+-- nothing but the unpromoted key forces the map to be read
+MATCH (x:tn)-[r:rd_has*1..2 {dist: 10, toll: 1}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+
+-- A constraint with no keys asks nothing of a relationship, so every
+-- relationship answers it.
+MATCH (x:tn)-[r:rd_top*1..2 {}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+-- A key with nothing under it is dropped from the map the constraint is built
+-- from, so it never reaches the traversal and this asks nothing either.  That is
+-- also why no case here asks for an explicit null: a map cannot be made to hold
+-- one while allow_null_properties is off.
+MATCH (x:tn)-[r:rd_top*1..2 {dist: NULL}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+-- A value that is not a scalar keeps the containment walk even for a promoted
+-- key, because a column can only be compared for equality and containment is
+-- not equality.
+MATCH (x:tn)-[r:rd_top*1..3 {dist: {a: 1}}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {dist: [10]}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+-- and containment is what these two get: a list matches a relationship whose
+-- list holds more than was asked for, and a map one whose map does.
+MATCH (x:tn)-[r:rd_top*1..3 {tags: ['x']}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {meta: {a: 1}}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+
+-- the child label on its own, answering out of its own position for the key
+MATCH (x:tn)-[r:rd_deep*1..2 {dist: 20}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+
+-- The same twenty-four constraints again, in the same order, with the
+-- property map answering all of them.  Every row above has to appear below.
+SET enable_property_promotion = off;
+MATCH (x:tn)-[r:rd_top*1..3 {dist: 10}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top* {dist: 10}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*0..2 {dist: 10}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {dist: 999}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..2 {dist: 20}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {dist: 10}]-(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {lanes: 2}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {paved: true}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {paved: false}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {code: '10'}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {code: 10}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {dist: '10'}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {dist: 10.0}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {dist: 10.5}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {dist: 10, lanes: 2}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {dist: 10, toll: 1}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_has*1..2 {dist: 10, toll: 1}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..2 {}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..2 {dist: NULL}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {dist: {a: 1}}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {dist: [10]}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {tags: ['x']}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_top*1..3 {meta: {a: 1}}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+MATCH (x:tn)-[r:rd_deep*1..2 {dist: 20}]->(y:tn)
+RETURN x.nm AS f, y.nm AS t, [e IN r | label(e)] AS via ORDER BY f, t, via;
+
+RESET enable_property_promotion;
+DROP GRAPH vp_g CASCADE;
+RESET graph_path;

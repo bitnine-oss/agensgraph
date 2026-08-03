@@ -23,9 +23,17 @@
 #include "access/skey.h"
 #include "catalog/pg_am_d.h"
 #include "catalog/pg_index.h"
+#include "catalog/pg_type_d.h"
 #include "utils/fmgroids.h"
 #include "utils/rel.h"
 #include "utils/relcache.h"
+#include "catalog/ag_label_fn.h"
+#include "nodes/miscnodes.h"
+#include "parser/parse_coerce.h"
+#include "parser/parse_graph.h"
+#include "utils/builtins.h"
+#include "utils/fmgrprotos.h"
+#include "utils/typcache.h"
 
 #define VAR_START_VID	0
 #define VAR_END_VID		1
@@ -86,6 +94,166 @@ depth_getnext(VLEDepthCtx *ctx, TupleTableSlot *slot)
 	if (ctx->iss != NULL)
 		return index_getnext_slot(ctx->iss, ForwardScanDirection, slot);
 	return table_scan_getnextslot(ctx->desc, ForwardScanDirection, slot);
+}
+
+/*
+ * buildNativePropFilter - ask a property constraint of one label's columns.
+ *
+ * Fills `filter' with a comparison per key of `tmpl' against the column that
+ * `relation' holds that key in, and returns true only if every key resolved:
+ * a constraint answered partly from columns and partly from the property map
+ * still has to read the map, which is the cost worth avoiding, so there is
+ * nothing to gain from resolving some of it.
+ *
+ * A key is only taken natively where the column's kind is the kind the
+ * constraint asks for.  The column's value is guaranteed to be of the kind its
+ * type implies -- the generation expression refuses any other -- but text
+ * carries no kind, so a column of text holding "5" would answer a constraint
+ * asking for the number 5 if the kinds were not compared first.  Anything else
+ * -- a value that is not a scalar, a key the label does not hold in a column, a
+ * type whose kind is not one the column can be trusted about, a value the
+ * column's type will not accept -- leaves the whole constraint to the map,
+ * which answers it as it always has.
+ */
+static bool
+buildNativePropFilter(Jsonb *tmpl, Relation relation, VLEPropFilter *filter)
+{
+	TupleDesc	tupdesc = RelationGetDescr(relation);
+	Oid			relid = RelationGetRelid(relation);
+	JsonbIterator *it;
+	JsonbValue	jv;
+	JsonbIteratorToken tok;
+	int			nkeys;
+	int			i = 0;
+	char	   *key = NULL;
+
+	if (!JB_ROOT_IS_OBJECT(tmpl) || JB_ROOT_IS_SCALAR(tmpl))
+		return false;
+
+	nkeys = JB_ROOT_COUNT(tmpl);
+	if (nkeys <= 0)
+		return false;
+
+	filter->attnum = (AttrNumber *) palloc(nkeys * sizeof(AttrNumber));
+	filter->value = (Datum *) palloc(nkeys * sizeof(Datum));
+	filter->eqproc = (FmgrInfo *) palloc0(nkeys * sizeof(FmgrInfo));
+	filter->collation = (Oid *) palloc(nkeys * sizeof(Oid));
+
+	it = JsonbIteratorInit(&tmpl->root);
+	while ((tok = JsonbIteratorNext(&it, &jv, true)) != WJB_DONE)
+	{
+		Form_pg_attribute att;
+		AttrNumber	attnum;
+		TypeCacheEntry *typentry;
+		Oid			basetype;
+		ErrorSaveContext escontext = {T_ErrorSaveContext};
+		Oid			typinput;
+		Oid			typioparam;
+		FmgrInfo	inputfn;
+		char		expected;
+		char	   *valstr;
+		Datum		value;
+
+		if (tok == WJB_KEY)
+		{
+			key = pnstrdup(jv.val.string.val, jv.val.string.len);
+			continue;
+		}
+		if (tok != WJB_VALUE)
+			continue;
+
+		Assert(key != NULL);
+		if (i >= nkeys)
+			return false;		/* nested keys: not a flat constraint */
+
+		if (!get_label_property_column(relid, key, &attnum, NULL))
+			return false;
+		if (attnum < 1 || attnum > tupdesc->natts)
+			return false;
+
+		att = TupleDescAttr(tupdesc, attnum - 1);
+		if (att->attisdropped)
+			return false;
+
+		/*
+		 * A column that cannot hold the property exactly does not answer for
+		 * it.  A binary float keeps the nearest value it can represent and a
+		 * numeric of a fixed scale rounds to that scale, so two properties the
+		 * map tells apart can arrive in the column as one value, and a
+		 * constraint that matches neither of them would match both.  Leave such
+		 * a key to the map, which holds what was written.
+		 */
+		basetype = getBaseType(att->atttypid);
+		if (basetype == FLOAT4OID || basetype == FLOAT8OID ||
+			(basetype == NUMERICOID && att->atttypmod >= 0))
+			return false;
+
+		switch (TypeCategory(basetype))
+		{
+			case TYPCATEGORY_NUMERIC:
+				expected = 'n';
+				break;
+			case TYPCATEGORY_STRING:
+				expected = 's';
+				break;
+			case TYPCATEGORY_BOOLEAN:
+				expected = 'b';
+				break;
+			default:
+				return false;
+		}
+
+		/* the kind the constraint asks for has to be the column's kind */
+		switch (jv.type)
+		{
+			case jbvNumeric:
+				if (expected != 'n')
+					return false;
+				valstr = DatumGetCString(DirectFunctionCall1(numeric_out,
+															NumericGetDatum(jv.val.numeric)));
+				break;
+			case jbvString:
+				if (expected != 's')
+					return false;
+				valstr = pnstrdup(jv.val.string.val, jv.val.string.len);
+				break;
+			case jbvBool:
+				if (expected != 'b')
+					return false;
+				valstr = jv.val.boolean ? "true" : "false";
+				break;
+			default:
+				return false;	/* a map, a list, or null */
+		}
+
+		/*
+		 * Read the constraint's value as the column reads its own, so that what
+		 * is compared is what the column would hold.  A value the type will not
+		 * accept is not an error here: the map answers instead.
+		 */
+		getTypeInputInfo(att->atttypid, &typinput, &typioparam);
+		fmgr_info(typinput, &inputfn);
+		if (!InputFunctionCallSafe(&inputfn, valstr, typioparam, att->atttypmod,
+								   (Node *) &escontext, &value))
+			return false;
+
+		typentry = lookup_type_cache(att->atttypid, TYPECACHE_EQ_OPR_FINFO);
+		if (!OidIsValid(typentry->eq_opr_finfo.fn_oid))
+			return false;
+
+		filter->attnum[i] = attnum;
+		filter->value[i] = value;
+		filter->collation[i] = att->attcollation;
+		fmgr_info_copy(&filter->eqproc[i], &typentry->eq_opr_finfo,
+					   CurrentMemoryContext);
+		i++;
+	}
+
+	if (i != nkeys)
+		return false;
+
+	filter->nkeys = nkeys;
+	return true;
 }
 
 GraphVLEState *
@@ -214,6 +382,8 @@ ExecInitGraphVLE(GraphVLE *vleplan, EState *estate, int eflags)
 
 	vle_state->scan_tuples = (TupleTableSlot **)
 		palloc0(vle_state->num_target_rel_info * sizeof(TupleTableSlot *));
+	vle_state->prop_filters = (VLEPropFilter *)
+		palloc0(vle_state->num_target_rel_info * sizeof(VLEPropFilter));
 
 	/* Will be filled by below logic. */
 	vle_state->current_scan_tuple = NULL;
@@ -271,6 +441,18 @@ ExecInitGraphVLE(GraphVLE *vleplan, EState *estate, int eflags)
 				else if (leadattr == Anum_table_edge_end &&
 						 vle_state->end_index_rels[rel_idx] == NULL)
 					vle_state->end_index_rels[rel_idx] = idx;
+			}
+
+			/*
+			 * Ask the constraint of this label's own columns where it can be
+			 * asked of them.  Each label of the set answers for itself, since
+			 * they need not hold the same properties in columns, or any.
+			 */
+			if (vle_state->jsonb_filter != NULL && enable_property_promotion)
+			{
+				if (!buildNativePropFilter(vle_state->jsonb_filter, relation,
+										   &vle_state->prop_filters[rel_idx]))
+					vle_state->prop_filters[rel_idx].nkeys = 0;
 			}
 
 			target_rel_infos++;
@@ -521,6 +703,8 @@ ExecGraphVLEDFS(GraphVLEState *vle_state, Graphid start_id)
 			bool		isnull;
 			Jsonb	   *val;
 			Jsonb	   *tmpl = vle_state->jsonb_filter;
+			VLEPropFilter *filter =
+				&vle_state->prop_filters[vle_depth_ctx->rel_index];
 			JsonbIterator *it1,
 					   *it2;
 
@@ -528,24 +712,63 @@ ExecGraphVLEDFS(GraphVLEState *vle_state, Graphid start_id)
 			if (tmpl == NULL)
 				continue;
 
-			val = DatumGetJsonbP(slot_getattr(vle_state->current_scan_tuple,
-											  Anum_table_edge_prop_map,
-											  &isnull));
-
 			/*
-			 * A property map is an object, so a constraint that is not one
-			 * describes no relationship.  Containment is only asked of two
-			 * values of the same shape, the way the containment operator asks
-			 * it.
+			 * Where this label holds every key of the constraint in a column,
+			 * compare the columns and leave the property map unread.
 			 */
-			if (JB_ROOT_IS_OBJECT(val) != JB_ROOT_IS_OBJECT(tmpl))
-				continue;
+			if (filter->nkeys > 0)
+			{
+				int			k;
+				bool		matched = true;
 
-			it1 = JsonbIteratorInit(&val->root);
-			it2 = JsonbIteratorInit(&tmpl->root);
+				for (k = 0; k < filter->nkeys; k++)
+				{
+					Datum		colval;
+					bool		colnull;
 
-			if (!JsonbDeepContains(&it1, &it2))
-				continue;
+					colval = slot_getattr(vle_state->current_scan_tuple,
+										  filter->attnum[k], &colnull);
+
+					/*
+					 * A column with nothing in it is a property the
+					 * relationship does not have, which the constraint asks it
+					 * to have.
+					 */
+					if (colnull ||
+						!DatumGetBool(FunctionCall2Coll(&filter->eqproc[k],
+														filter->collation[k],
+														colval,
+														filter->value[k])))
+					{
+						matched = false;
+						break;
+					}
+				}
+
+				if (!matched)
+					continue;
+			}
+			else
+			{
+				val = DatumGetJsonbP(slot_getattr(vle_state->current_scan_tuple,
+												  Anum_table_edge_prop_map,
+												  &isnull));
+
+				/*
+				 * A property map is an object, so a constraint that is not one
+				 * describes no relationship.  Containment is only asked of two
+				 * values of the same shape, the way the containment operator
+				 * asks it.
+				 */
+				if (JB_ROOT_IS_OBJECT(val) != JB_ROOT_IS_OBJECT(tmpl))
+					continue;
+
+				it1 = JsonbIteratorInit(&val->root);
+				it2 = JsonbIteratorInit(&tmpl->root);
+
+				if (!JsonbDeepContains(&it1, &it2))
+					continue;
+			}
 		}
 
 		edge_id = vle_state->current_scan_tuple->tts_values[Anum_table_edge_id - 1];
