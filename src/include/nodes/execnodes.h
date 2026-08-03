@@ -3125,6 +3125,15 @@ typedef struct GraphVLEState
 	List	   *table_scan_desc_list;	/* List for saving scan descriptions. */
 	bool		use_edge_output;
 	bool		use_vertex_output;
+
+	/*
+	 * The property constraint the pattern carries, evaluated once because it is
+	 * the same for every relationship the traversal reaches.  `has_prop_filter'
+	 * says one was written, which a null `jsonb_filter' cannot: a constraint
+	 * that evaluates to null is a constraint no relationship satisfies, where
+	 * no constraint at all admits every relationship.
+	 */
+	bool		has_prop_filter;
 	Jsonb	   *jsonb_filter;
 
 	/*

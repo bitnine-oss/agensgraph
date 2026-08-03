@@ -677,6 +677,28 @@ MATCH (a:time) WITH a MATCH (c:time)-[x:goes*1..2 {sec: a.sec}]->(d:time) RETURN
 MATCH (a:time) MATCH (c:time)-[x:goes*1..2]->(d:time)
 WHERE c.sec = a.sec RETURN count(*);
 
+-- A property map may also be written as an expression, and the traversal reads
+-- whatever it is given as a property map.  One that is not a map describes no
+-- relationship, and answers so -- which is what the same constraint on a
+-- fixed-length relationship answers.
+MATCH ()-[x:goes*1..2 = 5]->() RETURN count(*);
+MATCH ()-[x:goes*1..2 = true]->() RETURN count(*);
+MATCH ()-[x:goes*1..2 = NULL]->() RETURN count(*);
+MATCH ()-[x:goes*1..2 = 1.5]->() RETURN count(*);
+MATCH ()-[x:goes*1..2 = 'abc']->() RETURN count(*);
+-- the fixed-length forms, which have always answered this way
+MATCH ()-[x:goes = 5]->() RETURN count(*);
+MATCH ()-[x:goes = true]->() RETURN count(*);
+MATCH ()-[x:goes = NULL]->() RETURN count(*);
+-- an expression that really is a map is still read as one: an empty map asks
+-- nothing of a relationship and so admits every one of them, where a map naming
+-- a key these relationships do not carry admits none
+MATCH ()-[x:goes*1..2]->() RETURN count(*);
+MATCH ()-[x:goes*1..2 = jsonb_build_object()]->() RETURN count(*);
+MATCH ()-[x:goes*1..2 = jsonb_build_object('sec', 1)]->() RETURN count(*);
+-- and a relationship constraint says nothing about a path of no relationships
+MATCH ()-[x:goes*0..1 = 5]->() RETURN count(*);
+
 -- VLE with graph path
 MATCH p = (:time)-[:goes*0]->(:time)
 RETURN properties(nodes(p)[0]) AS first, properties(vertices(p)[1]) AS second, properties(relationships(p)[0]) AS rel;

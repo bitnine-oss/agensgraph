@@ -159,16 +159,23 @@ ExecInitGraphVLE(GraphVLE *vleplan, EState *estate, int eflags)
 	vle_state->use_vertex_output = vle_state->ps.ps_ResultTupleDesc->natts > VAR_VERTICES;
 
 	/* P-Map Jsonb */
-	if (VLERel(vleplan)->prop_map)
+	vle_state->has_prop_filter = (VLERel(vleplan)->prop_map != NULL);
+	if (vle_state->has_prop_filter)
 	{
 		ExprContext *econtext = vle_state->ps.ps_ExprContext;
 		bool		is_null = false;
+		Datum		value;
 		ExprState  *prop_map_expr = ExecInitExpr((Expr *) VLERel(vleplan)->prop_map,
 												 &vle_state->ps);
 
-		vle_state->jsonb_filter = DatumGetJsonbP(ExecEvalExpr(prop_map_expr,
-															  econtext,
-															  &is_null));
+		value = ExecEvalExpr(prop_map_expr, econtext, &is_null);
+
+		/*
+		 * A null constraint has no keys to ask a relationship about, so no
+		 * relationship answers it.  Keep it as a null map rather than reading
+		 * one out of a datum that holds nothing.
+		 */
+		vle_state->jsonb_filter = is_null ? NULL : DatumGetJsonbP(value);
 		ResetExprContext(econtext);
 	}
 	else
@@ -509,15 +516,30 @@ ExecGraphVLEDFS(GraphVLEState *vle_state, Graphid start_id)
 		slot_getallattrs(vle_state->current_scan_tuple);
 
 		/* Property filtering. */
-		if (vle_state->jsonb_filter)
+		if (vle_state->has_prop_filter)
 		{
 			bool		isnull;
-			Jsonb	   *val = DatumGetJsonbP(slot_getattr(vle_state->current_scan_tuple,
-														  Anum_table_edge_prop_map,
-														  &isnull));
+			Jsonb	   *val;
 			Jsonb	   *tmpl = vle_state->jsonb_filter;
 			JsonbIterator *it1,
 					   *it2;
+
+			/* nothing satisfies a constraint that is null */
+			if (tmpl == NULL)
+				continue;
+
+			val = DatumGetJsonbP(slot_getattr(vle_state->current_scan_tuple,
+											  Anum_table_edge_prop_map,
+											  &isnull));
+
+			/*
+			 * A property map is an object, so a constraint that is not one
+			 * describes no relationship.  Containment is only asked of two
+			 * values of the same shape, the way the containment operator asks
+			 * it.
+			 */
+			if (JB_ROOT_IS_OBJECT(val) != JB_ROOT_IS_OBJECT(tmpl))
+				continue;
 
 			it1 = JsonbIteratorInit(&val->root);
 			it2 = JsonbIteratorInit(&tmpl->root);

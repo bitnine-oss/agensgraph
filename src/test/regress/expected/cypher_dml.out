@@ -2004,6 +2004,87 @@ WHERE c.sec = a.sec RETURN count(*);
  15
 (1 row)
 
+-- A property map may also be written as an expression, and the traversal reads
+-- whatever it is given as a property map.  One that is not a map describes no
+-- relationship, and answers so -- which is what the same constraint on a
+-- fixed-length relationship answers.
+MATCH ()-[x:goes*1..2 = 5]->() RETURN count(*);
+ count 
+-------
+ 0
+(1 row)
+
+MATCH ()-[x:goes*1..2 = true]->() RETURN count(*);
+ count 
+-------
+ 0
+(1 row)
+
+MATCH ()-[x:goes*1..2 = NULL]->() RETURN count(*);
+ count 
+-------
+ 0
+(1 row)
+
+MATCH ()-[x:goes*1..2 = 1.5]->() RETURN count(*);
+ count 
+-------
+ 0
+(1 row)
+
+MATCH ()-[x:goes*1..2 = 'abc']->() RETURN count(*);
+ count 
+-------
+ 0
+(1 row)
+
+-- the fixed-length forms, which have always answered this way
+MATCH ()-[x:goes = 5]->() RETURN count(*);
+ count 
+-------
+ 0
+(1 row)
+
+MATCH ()-[x:goes = true]->() RETURN count(*);
+ count 
+-------
+ 0
+(1 row)
+
+MATCH ()-[x:goes = NULL]->() RETURN count(*);
+ count 
+-------
+ 0
+(1 row)
+
+-- an expression that really is a map is still read as one: an empty map asks
+-- nothing of a relationship and so admits every one of them, where a map naming
+-- a key these relationships do not carry admits none
+MATCH ()-[x:goes*1..2]->() RETURN count(*);
+ count 
+-------
+ 15
+(1 row)
+
+MATCH ()-[x:goes*1..2 = jsonb_build_object()]->() RETURN count(*);
+ count 
+-------
+ 15
+(1 row)
+
+MATCH ()-[x:goes*1..2 = jsonb_build_object('sec', 1)]->() RETURN count(*);
+ count 
+-------
+ 0
+(1 row)
+
+-- and a relationship constraint says nothing about a path of no relationships
+MATCH ()-[x:goes*0..1 = 5]->() RETURN count(*);
+ count 
+-------
+ 9
+(1 row)
+
 -- VLE with graph path
 MATCH p = (:time)-[:goes*0]->(:time)
 RETURN properties(nodes(p)[0]) AS first, properties(vertices(p)[1]) AS second, properties(relationships(p)[0]) AS rel;
@@ -2789,12 +2870,12 @@ MATCH (a:person {id: 1})-[:knows*1..2]->(b:person) RETURN count(*);
    ->  Nested Loop
          Inner Unique: true
          ->  Nested Loop
-               Output: "<0000000074>"."end"
+               Output: "<0000000098>"."end"
                ->  Seq Scan on t.person a
                      Output: a.id, a.properties
                      Filter: (a.properties.'id'::text = '1'::jsonb)
-               ->  Subquery Scan on "<0000000074>"
-                     Output: "<0000000074>".start, "<0000000074>"."end", "<0000000074>".ids
+               ->  Subquery Scan on "<0000000098>"
+                     Output: "<0000000098>".start, "<0000000098>"."end", "<0000000098>".ids
                      ->  Graph VLE on knows [1..2]
                            Direction: outgoing (->)
                            Edge Labels:
@@ -2805,11 +2886,11 @@ MATCH (a:person {id: 1})-[:knows*1..2]->(b:person) RETURN count(*);
                                  Output: a.id, a.id, '{}'::graphid[]
          ->  Memoize
                Output: b.id
-               Cache Key: "<0000000074>"."end"
+               Cache Key: "<0000000098>"."end"
                Cache Mode: logical
                ->  Index Only Scan using person_pkey on t.person b
                      Output: b.id
-                     Index Cond: (b.id = "<0000000074>"."end")
+                     Index Cond: (b.id = "<0000000098>"."end")
 (26 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -2850,17 +2931,17 @@ MATCH p = (a:person {id: 1})-[:knows*1..2]->(b:person) RETURN count(p);
                                                                                      QUERY PLAN                                                                                     
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
-   Output: cypher_to_jsonb(count(ROW((('[]'::vertex[] || "<0000000075>".vertices) || ROW(b.id, b.properties, b.ctid)::vertex), ('[]'::edge[] || "<0000000075>".edges))::graphpath))
+   Output: cypher_to_jsonb(count(ROW((('[]'::vertex[] || "<0000000099>".vertices) || ROW(b.id, b.properties, b.ctid)::vertex), ('[]'::edge[] || "<0000000099>".edges))::graphpath))
    ->  Nested Loop
-         Output: "<0000000075>".vertices, b.id, b.properties, b.ctid, "<0000000075>".edges
+         Output: "<0000000099>".vertices, b.id, b.properties, b.ctid, "<0000000099>".edges
          Inner Unique: true
          ->  Nested Loop
-               Output: "<0000000075>".vertices, "<0000000075>".edges, "<0000000075>"."end"
+               Output: "<0000000099>".vertices, "<0000000099>".edges, "<0000000099>"."end"
                ->  Seq Scan on t.person a
                      Output: a.id, a.properties
                      Filter: (a.properties.'id'::text = '1'::jsonb)
-               ->  Subquery Scan on "<0000000075>"
-                     Output: "<0000000075>".start, "<0000000075>"."end", "<0000000075>".ids, "<0000000075>".edges, "<0000000075>".vertices
+               ->  Subquery Scan on "<0000000099>"
+                     Output: "<0000000099>".start, "<0000000099>"."end", "<0000000099>".ids, "<0000000099>".edges, "<0000000099>".vertices
                      ->  Graph VLE on knows [1..2]
                            Direction: outgoing (->)
                            Edge Labels:
@@ -2871,11 +2952,11 @@ MATCH p = (a:person {id: 1})-[:knows*1..2]->(b:person) RETURN count(p);
                                  Output: a.id, a.id, '{}'::graphid[], '[]'::edge[], '[]'::vertex[]
          ->  Memoize
                Output: b.id, b.properties, b.ctid
-               Cache Key: "<0000000075>"."end"
+               Cache Key: "<0000000099>"."end"
                Cache Mode: logical
                ->  Index Scan using person_pkey on t.person b
                      Output: b.id, b.properties, b.ctid
-                     Index Cond: (b.id = "<0000000075>"."end")
+                     Index Cond: (b.id = "<0000000099>"."end")
 (27 rows)
 
 MATCH (a:person {id: 1})-[:knows*1..2]->(b:person) RETURN count(*);
