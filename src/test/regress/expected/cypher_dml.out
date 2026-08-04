@@ -3999,6 +3999,399 @@ RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
 (4 rows)
 
 --
+-- Uniqueness: which pairs are asked about
+--
+-- A pattern may not walk the same relationship twice, which is settled by asking
+-- of every pair of its relationships whether they are the same one.
+-- Relationships of different labels cannot be: a label id is part of a graph id,
+-- so no id belongs to two labels, and the answer is settled before the question
+-- is asked.  Those questions are not asked, which shows in a plan as the absence
+-- of the `<>' between the two relationships' ids.
+--
+-- Two things are asserted of every case: whether that `<>' is in the plan, and
+-- the rows.  Where the `<>' must be present the rows are the ones it leaves --
+-- dropping it would return more.  Where it must be absent the rows are reached
+-- without it.  Its own graph, created and dropped here.
+--
+CREATE GRAPH ru;
+SET graph_path = ru;
+CREATE VLABEL nd;
+CREATE ELABEL twin;
+CREATE ELABEL other;
+CREATE ELABEL kin;
+CREATE ELABEL kid INHERITS (kin);
+CREATE (:nd {id: 1}), (:nd {id: 2});
+MATCH (a:nd {id: 1}), (b:nd {id: 2}) CREATE (a)-[:twin  {p: 't1'}]->(b);
+MATCH (a:nd {id: 2}), (b:nd {id: 1}) CREATE (a)-[:twin  {p: 't2'}]->(b);
+MATCH (a:nd {id: 1}), (b:nd {id: 2}) CREATE (a)-[:other {p: 'o1'}]->(b);
+MATCH (a:nd {id: 1}), (b:nd {id: 2}) CREATE (a)-[:kin   {p: 'k1'}]->(b);
+MATCH (a:nd {id: 2}), (b:nd {id: 1}) CREATE (a)-[:kid   {p: 'd1'}]->(b);
+-- One label named twice: the pair can be the same relationship, so the question
+-- is asked.  Four rows, not the eight the pattern reaches without it -- the same
+-- guard as the two `:rel' relationships above, with the label named.
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2:twin]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x;
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Hash Join
+   Hash Cond: (twin."end" = m.id)
+   Join Filter: (twin.id <> twin_2.id)
+   ->  Hash Join
+         Hash Cond: (twin.start = s.id)
+         ->  Append
+               ->  Seq Scan on twin
+               ->  Seq Scan on twin twin_1
+         ->  Hash
+               ->  Seq Scan on nd s
+   ->  Hash
+         ->  Hash Join
+               Hash Cond: (twin_2."end" = x.id)
+               ->  Hash Join
+                     Hash Cond: (twin_2.start = m.id)
+                     ->  Append
+                           ->  Seq Scan on twin twin_2
+                           ->  Seq Scan on twin twin_3
+                     ->  Hash
+                           ->  Seq Scan on nd m
+               ->  Hash
+                     ->  Seq Scan on nd x
+(22 rows)
+
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2:twin]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
+       ORDER BY s, r1, m, r2, x;
+ s |  r1  | m |  r2  | x 
+---+------+---+------+---
+ 1 | "t1" | 2 | "t2" | 1
+ 1 | "t2" | 2 | "t1" | 1
+ 2 | "t1" | 1 | "t2" | 2
+ 2 | "t2" | 1 | "t1" | 2
+(4 rows)
+
+-- Two labels: the same pattern with one relationship retyped, where the question
+-- has no answer to give and is gone.  Every row it reaches is a row it keeps.
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2:other]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x;
+                       QUERY PLAN                        
+---------------------------------------------------------
+ Hash Join
+   Hash Cond: (twin."end" = m.id)
+   ->  Hash Join
+         Hash Cond: (twin.start = s.id)
+         ->  Append
+               ->  Seq Scan on twin
+               ->  Seq Scan on twin twin_1
+         ->  Hash
+               ->  Seq Scan on nd s
+   ->  Hash
+         ->  Hash Join
+               Hash Cond: (other."end" = x.id)
+               ->  Hash Join
+                     Hash Cond: (other.start = m.id)
+                     ->  Append
+                           ->  Seq Scan on other
+                           ->  Seq Scan on other other_1
+                     ->  Hash
+                           ->  Seq Scan on nd m
+               ->  Hash
+                     ->  Seq Scan on nd x
+(21 rows)
+
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2:other]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
+       ORDER BY s, r1, m, r2, x;
+ s |  r1  | m |  r2  | x 
+---+------+---+------+---
+ 1 | "t1" | 2 | "o1" | 1
+ 1 | "t2" | 2 | "o1" | 1
+ 2 | "t1" | 1 | "o1" | 2
+ 2 | "t2" | 1 | "o1" | 2
+(4 rows)
+
+-- One side naming no label is every label, which meets everything: asked.
+-- Sixteen rows of the twenty the pattern reaches.
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2]-(x:nd) RETURN count(*);
+                                                                                       QUERY PLAN                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Nested Loop
+         Join Filter: ((twin.id <> ag_edge.id) AND (twin."end" = ag_edge.start))
+         ->  Append
+               ->  Seq Scan on ag_edge
+                     Filter: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+               ->  Index Scan using twin_start_idx on twin ag_edge_1
+                     Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+               ->  Index Scan using other_start_idx on other ag_edge_2
+                     Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+               ->  Seq Scan on kin ag_edge_3
+                     Filter: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+               ->  Index Scan using kid_start_idx on kid ag_edge_4
+                     Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+               ->  Seq Scan on ag_edge ag_edge_5
+                     Filter: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+               ->  Index Scan using twin_end_idx on twin ag_edge_6
+                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+               ->  Index Scan using other_end_idx on other ag_edge_7
+                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+               ->  Seq Scan on kin ag_edge_8
+                     Filter: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+               ->  Index Scan using kid_end_idx on kid ag_edge_9
+                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Materialize
+               ->  Append
+                     ->  Index Scan using twin_end_idx on twin
+                           Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                     ->  Index Scan using twin_start_idx on twin twin_1
+                           Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+(30 rows)
+
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2]-(x:nd) RETURN count(*);
+ count 
+-------
+ 16
+(1 row)
+
+-- A label and a label inheriting from it: the parent's set holds the child, so
+-- the two meet and the question is asked.  Two rows, not four: `:kin' reaches
+-- the child's relationship too, and the pair where both reach it is the pair the
+-- question refuses.
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:kin]-(m:nd)-[r2:kid]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x;
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Hash Join
+   Hash Cond: (kin."end" = m.id)
+   Join Filter: (kin.id <> kid.id)
+   ->  Hash Join
+         Hash Cond: (kin.start = s.id)
+         ->  Append
+               ->  Seq Scan on kin
+               ->  Seq Scan on kid kin_1
+               ->  Seq Scan on kin kin_2
+               ->  Seq Scan on kid kin_3
+         ->  Hash
+               ->  Seq Scan on nd s
+   ->  Hash
+         ->  Hash Join
+               Hash Cond: (kid."end" = x.id)
+               ->  Hash Join
+                     Hash Cond: (kid.start = m.id)
+                     ->  Append
+                           ->  Seq Scan on kid
+                           ->  Seq Scan on kid kid_1
+                     ->  Hash
+                           ->  Seq Scan on nd m
+               ->  Hash
+                     ->  Seq Scan on nd x
+(24 rows)
+
+MATCH (s:nd)-[r1:kin]-(m:nd)-[r2:kid]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
+       ORDER BY s, r1, m, r2, x;
+ s |  r1  | m |  r2  | x 
+---+------+---+------+---
+ 1 | "k1" | 2 | "d1" | 1
+ 2 | "k1" | 1 | "d1" | 2
+(2 rows)
+
+-- ONLY on the parent narrows its set to the one label, which the child's set no
+-- longer meets: the same pattern, and the question is gone.
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:kin ONLY]-(m:nd)-[r2:kid]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x;
+                              QUERY PLAN                               
+-----------------------------------------------------------------------
+ Hash Join
+   Hash Cond: (kid."end" = x.id)
+   ->  Hash Join
+         Hash Cond: (kid.start = m.id)
+         ->  Append
+               ->  Seq Scan on kid
+               ->  Seq Scan on kid kid_1
+         ->  Hash
+               ->  Hash Join
+                     Hash Cond: (m.id = kin."end")
+                     ->  Seq Scan on nd m
+                     ->  Hash
+                           ->  Hash Join
+                                 Hash Cond: (s.id = kin.start)
+                                 ->  Seq Scan on nd s
+                                 ->  Hash
+                                       ->  Append
+                                             ->  Seq Scan on kin
+                                             ->  Seq Scan on kin kin_1
+   ->  Hash
+         ->  Seq Scan on nd x
+(21 rows)
+
+MATCH (s:nd)-[r1:kin ONLY]-(m:nd)-[r2:kid]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
+       ORDER BY s, r1, m, r2, x;
+ s |  r1  | m |  r2  | x 
+---+------+---+------+---
+ 1 | "k1" | 2 | "d1" | 1
+ 2 | "k1" | 1 | "d1" | 2
+(2 rows)
+
+-- A relationship carried in from an earlier clause arrives as an id and nothing
+-- else, so its label is every label and the question is asked -- even against a
+-- relationship whose label it cannot share.  Written as one clause, where the
+-- pattern still knows both labels, the same question is gone and the plan is
+-- otherwise the same plan.
+EXPLAIN (costs off)
+MATCH (a:nd)-[r:twin]->(b:nd) WITH a, r, b
+MATCH (a)-[r]->(b)-[r2:other]->(c:nd) RETURN r.p AS r, r2.p AS r2;
+                                                                              QUERY PLAN                                                                               
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   Join Filter: ((r.id <> r2.id) AND (r2.start = r."end"))
+   ->  Index Scan using twin_end_idx on twin r
+         Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Index Scan using other_start_idx on other r2
+         Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+(6 rows)
+
+MATCH (a:nd)-[r:twin]->(b:nd) WITH a, r, b
+MATCH (a)-[r]->(b)-[r2:other]->(c:nd) RETURN r.p AS r, r2.p AS r2
+       ORDER BY r, r2;
+  r   |  r2  
+------+------
+ "t2" | "o1"
+(1 row)
+
+EXPLAIN (costs off)
+MATCH (a:nd)-[r:twin]->(b:nd)-[r2:other]->(c:nd) RETURN r.p AS r, r2.p AS r2;
+                                                                              QUERY PLAN                                                                               
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   Join Filter: (r."end" = r2.start)
+   ->  Index Scan using twin_end_idx on twin r
+         Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Index Scan using other_start_idx on other r2
+         Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+(6 rows)
+
+MATCH (a:nd)-[r:twin]->(b:nd)-[r2:other]->(c:nd) RETURN r.p AS r, r2.p AS r2
+       ORDER BY r, r2;
+  r   |  r2  
+------+------
+ "t2" | "o1"
+(1 row)
+
+-- Three relationships whose labels meet nowhere: all three questions gone.
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2:other]-(x:nd)-[r3:kin ONLY]-(y:nd)
+RETURN count(*);
+                                                                                          QUERY PLAN                                                                                           
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate
+   ->  Nested Loop
+         Join Filter: (other."end" = kin.start)
+         ->  Nested Loop
+               Join Filter: (twin."end" = other.start)
+               ->  Append
+                     ->  Index Only Scan using twin_end_idx on twin
+                           Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                     ->  Index Only Scan using twin_start_idx on twin twin_1
+                           Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+               ->  Materialize
+                     ->  Append
+                           ->  Index Only Scan using other_end_idx on other
+                                 Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                           ->  Index Only Scan using other_end_idx on other other_1
+                                 Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Append
+               ->  Seq Scan on kin
+                     Filter: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+               ->  Seq Scan on kin kin_1
+                     Filter: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+(21 rows)
+
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2:other]-(x:nd)-[r3:kin ONLY]-(y:nd)
+RETURN count(*);
+ count 
+-------
+ 4
+(1 row)
+
+-- Where a relationship label is named once in a pattern, the question that has
+-- gone was the only reader of that relationship's id, and the scan that fetched
+-- it stops reading the table: an index-only scan where it was an index scan and a
+-- heap fetch.  The two plans below differ in the label of one relationship, and
+-- so in that and in nothing else.  Sequential and bitmap scans are turned off so
+-- that both plans reach the relationships the same way and the difference left is
+-- whether the index answers alone.
+SET enable_seqscan = off;
+SET enable_bitmapscan = off;
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:twin]->(m:nd)-[r2:other]->(x:nd) RETURN s.id AS s, x.id AS x;
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Merge Join
+               Merge Cond: (r1."end" = r2.start)
+               ->  Index Only Scan using twin_end_idx on twin r1
+                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+               ->  Index Only Scan using other_start_idx on other r2
+                     Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Index Scan using nd_pkey on nd s
+               Index Cond: (id = r1.start)
+   ->  Index Scan using nd_pkey on nd x
+         Index Cond: (id = r2."end")
+(12 rows)
+
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:twin]->(m:nd)-[r2:twin]->(x:nd) RETURN s.id AS s, x.id AS x;
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Merge Join
+               Merge Cond: (r1."end" = r2.start)
+               Join Filter: (r1.id <> r2.id)
+               ->  Index Scan using twin_end_idx on twin r1
+                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+               ->  Index Scan using twin_start_idx on twin r2
+                     Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Index Scan using nd_pkey on nd s
+               Index Cond: (id = r1.start)
+   ->  Index Scan using nd_pkey on nd x
+         Index Cond: (id = r2."end")
+(13 rows)
+
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+MATCH (s:nd)-[r1:twin]->(m:nd)-[r2:other]->(x:nd)
+RETURN s.id AS s, r1.p AS r1, r2.p AS r2, x.id AS x ORDER BY s, r1, r2, x;
+ s |  r1  |  r2  | x 
+---+------+------+---
+ 2 | "t2" | "o1" | 2
+(1 row)
+
+MATCH (s:nd)-[r1:twin]->(m:nd)-[r2:twin]->(x:nd)
+RETURN s.id AS s, r1.p AS r1, r2.p AS r2, x.id AS x ORDER BY s, r1, r2, x;
+ s |  r1  |  r2  | x 
+---+------+------+---
+ 1 | "t1" | "t2" | 1
+ 2 | "t2" | "t1" | 2
+(2 rows)
+
+DROP GRAPH ru CASCADE;
+NOTICE:  drop cascades to 8 other objects
+DETAIL:  drop cascades to sequence ru.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel nd
+drop cascades to elabel twin
+drop cascades to elabel other
+drop cascades to elabel kin
+drop cascades to elabel kid
+--
 -- SET/REMOVE
 --
 CREATE GRAPH p;
