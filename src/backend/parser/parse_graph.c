@@ -88,6 +88,22 @@ typedef struct
 	bool		local;			/* declared in current clause? */
 }			EntityInfo;
 
+/*
+ * One relationship of a pattern, for the tests that keep a pattern from using
+ * the same relationship twice.
+ *
+ * `labids' is the set of labels the relationship can belong to, or NULL where
+ * that cannot be established and it must be taken to be any of them.  Two
+ * relationships whose sets do not meet cannot be the same relationship: a label
+ * id is part of a graph id, so relationships of different labels do not share
+ * ids, and the test between them can never fail and need not be asked.
+ */
+typedef struct
+{
+	Node	   *eid;			/* the relationship's id */
+	Bitmapset  *labids;			/* labels it may belong to, NULL for any */
+}			EdgeUniqueInfo;
+
 typedef struct
 {
 	Index		varno;			/* of the RTE */
@@ -247,8 +263,10 @@ static bool isFutureVertexExpr(Node *vertex);
 static void setFutureVertexExprId(ParseState *pstate, Node *vertex,
 								  CypherRel *crel, Node *edge,
 								  bool edge_is_nsitem, bool prev);
-static Node *addQualUniqueEdges(ParseState *pstate, Node *qual, List *ueids,
+static Node *addQualUniqueEdges(ParseState *pstate, Node *qual, List *uedges,
 								List *ueidarrs);
+static Bitmapset *edgeUniqueLabids(ParseState *pstate, CypherRel *crel);
+static List *appendUniqueEdge(List *uedges, Node *eid, Bitmapset *labids);
 
 /* MATCH - VLE */
 static Node *vtxArrConcat(ParseState *pstate, Node *array, Node *elem);
@@ -3608,7 +3626,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 	{
 		List	   *c = lfirst(lc);
 		ListCell   *lp;
-		List	   *ueids = NIL;
+		List	   *uedges = NIL;
 		List	   *ueidarrs = NIL;
 
 		foreach(lp, c)
@@ -3754,7 +3772,8 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					Node	   *eid;
 
 					eid = resolveVarOrExpr(pstate, edge, AG_ELEM_LOCAL_ID, edge_is_nsitem);
-					ueids = list_append_unique(ueids, eid);
+					uedges = appendUniqueEdge(uedges, eid,
+											  edgeUniqueLabids(pstate, crel));
 				}
 				else
 				{
@@ -3827,7 +3846,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			}
 		}
 
-		qual = addQualUniqueEdges(pstate, qual, ueids, ueidarrs);
+		qual = addQualUniqueEdges(pstate, qual, uedges, ueidarrs);
 	}
 
 	/*
@@ -5105,22 +5124,122 @@ edgeArrConcat(ParseState *pstate, Node *array, Node *elem)
 							elem, pstate->p_last_srf, -1);
 }
 
+/*
+ * The labels a pattern's relationship may belong to, or NULL where that cannot
+ * be established here and it has to be treated as any of them.
+ */
+static Bitmapset *
+edgeUniqueLabids(ParseState *pstate, CypherRel *crel)
+{
+	char	   *typname;
+	Oid			graphoid;
+	Oid			relid;
+	uint16		labid;
+	List	   *inheritors;
+	ListCell   *lc;
+	Bitmapset  *labids = NULL;
+
+	/* A label an earlier clause of this statement creates is not resolvable. */
+	if (!pstate->p_valid_labels)
+		return NULL;
+
+	getCypherRelType(crel, &typname, NULL);
+
+	/* Naming no type, or the root, is naming every relationship label. */
+	if (strcmp(typname, AG_EDGE) == 0)
+		return NULL;
+
+	graphoid = get_graph_path_oid();
+	labid = get_labname_labid(typname, graphoid);
+	if (labid == InvalidLabid)
+		return NULL;
+
+	/* ONLY reads the one label; otherwise the label and all that inherit it. */
+	if (crel->only)
+		return bms_make_singleton((int) labid);
+
+	relid = get_labid_relid(graphoid, labid);
+	if (!OidIsValid(relid))
+		return NULL;
+
+	inheritors = find_all_inheritors(relid, NoLock, NULL);
+	foreach(lc, inheritors)
+	{
+		uint16		inhlabid = get_relid_labid(lfirst_oid(lc));
+
+		if (inhlabid == InvalidLabid)
+		{
+			bms_free(labids);
+			list_free(inheritors);
+			return NULL;
+		}
+		labids = bms_add_member(labids, (int) inhlabid);
+	}
+	list_free(inheritors);
+
+	return labids;
+}
+
+/*
+ * Remember a relationship of the pattern, once.
+ *
+ * A relationship named twice is one relationship, and what is known of its
+ * label from either mention is not merged here: taking it to be any label costs
+ * only a test that cannot fail, where merging wrongly would drop one that can.
+ */
+static List *
+appendUniqueEdge(List *uedges, Node *eid, Bitmapset *labids)
+{
+	ListCell   *lc;
+	EdgeUniqueInfo *uedge;
+
+	foreach(lc, uedges)
+	{
+		EdgeUniqueInfo *cur = lfirst(lc);
+
+		if (equal(cur->eid, eid))
+		{
+			bms_free(cur->labids);
+			cur->labids = NULL;
+			bms_free(labids);
+			return uedges;
+		}
+	}
+
+	uedge = palloc(sizeof(EdgeUniqueInfo));
+	uedge->eid = eid;
+	uedge->labids = labids;
+
+	return lappend(uedges, uedge);
+}
+
 static Node *
-addQualUniqueEdges(ParseState *pstate, Node *qual, List *ueids, List *ueidarrs)
+addQualUniqueEdges(ParseState *pstate, Node *qual, List *uedges, List *ueidarrs)
 {
 	ListCell   *le1;
 	ListCell   *lea1;
 
-	foreach(le1, ueids)
+	foreach(le1, uedges)
 	{
-		Node	   *eid1 = lfirst(le1);
+		EdgeUniqueInfo *uedge1 = lfirst(le1);
+		Node	   *eid1 = uedge1->eid;
 		ListCell   *le2;
 
-		for_each_cell(le2, ueids, lnext(ueids, le1))
+		for_each_cell(le2, uedges, lnext(uedges, le1))
 		{
-			Node	   *eid2 = lfirst(le2);
-			OpExpr	   *ne = makeNode(OpExpr);
+			EdgeUniqueInfo *uedge2 = lfirst(le2);
+			Node	   *eid2 = uedge2->eid;
+			OpExpr	   *ne;
 
+			/*
+			 * Relationships of different labels cannot be the same
+			 * relationship, so asking whether they are cannot answer no.
+			 */
+			if (uedge1->labids != NULL && uedge2->labids != NULL &&
+				!bms_overlap(uedge1->labids, uedge2->labids))
+				continue;
+
+			ne = makeNode(OpExpr);
 			ne->opno = OID_GRAPHID_NE_OP;
 			ne->opfuncid = F_GRAPHID_NE;
 			ne->opresulttype = BOOLOID;

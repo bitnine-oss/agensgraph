@@ -710,16 +710,14 @@ MATCH (a)-[b]->(c)-[d]->(e)-[f:e4]->(g) RETURN label(a) AS a, label(g) AS g ORDE
 
 -- Case 12: all edges labelled
 EXPLAIN (costs off) MATCH (a)-[b:e1]->(c)-[d:e2]->(e)-[f:e3]->(g) RETURN g;
-                     QUERY PLAN                     
-----------------------------------------------------
+                      QUERY PLAN                      
+------------------------------------------------------
  Merge Join
    Merge Cond: (d."end" = f.start)
-   Join Filter: ((b.id <> f.id) AND (d.id <> f.id))
    ->  Nested Loop
-         ->  Index Scan using e2_end_idx on e2 d
-         ->  Index Scan using e1_end_idx on e1 b
+         ->  Index Only Scan using e2_end_idx on e2 d
+         ->  Index Only Scan using e1_end_idx on e1 b
                Index Cond: ("end" = d.start)
-               Filter: (id <> d.id)
    ->  Sort
          Sort Key: f.start
          ->  Hash Join
@@ -727,7 +725,7 @@ EXPLAIN (costs off) MATCH (a)-[b:e1]->(c)-[d:e2]->(e)-[f:e3]->(g) RETURN g;
                ->  Seq Scan on e3 f
                ->  Hash
                      ->  Seq Scan on n4 g
-(15 rows)
+(13 rows)
 
 MATCH (a)-[b:e1]->(c)-[d:e2]->(e)-[f:e3]->(g) RETURN label(a) AS a, label(g) AS g ORDER BY a, g;
   a   |  g   
