@@ -154,18 +154,16 @@ SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
 
 -- headline: (a:n1)-[b]->(c) must scan only e1 for b and only n2 for c
 EXPLAIN (COSTS off) MATCH (a:n1)-[b]->(c) RETURN c;
-             QUERY PLAN              
--------------------------------------
- Hash Join
-   Hash Cond: (b."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Seq Scan on e1 b
-         ->  Hash
-               ->  Seq Scan on n1 a
-   ->  Hash
-         ->  Seq Scan on n2 c
-(9 rows)
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on e1 b
+         Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Index Scan on e1_start_idx
+               Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Index Scan using n2_pkey on n2 c
+         Index Cond: (id = b."end")
+(7 rows)
 
 MATCH (a:n1)-[b]->(c) RETURN label(b) AS edge, label(c) AS node;
  edge | node 
@@ -244,20 +242,19 @@ SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
 
 -- multi-child, parent dropped: b scans {human, robot} with NO ag_vertex parent
 EXPLAIN (COSTS off) MATCH (a:human)-[:knows]->(b) RETURN b;
-                    QUERY PLAN                    
---------------------------------------------------
- Hash Join
-   Hash Cond: ("<0000000012>"."end" = b.id)
-   ->  Hash Join
-         Hash Cond: ("<0000000012>".start = a.id)
-         ->  Seq Scan on knows "<0000000012>"
-         ->  Hash
-               ->  Seq Scan on human a
-   ->  Hash
-         ->  Append
-               ->  Seq Scan on human b_1
-               ->  Seq Scan on robot b_2
-(11 rows)
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on knows "<0000000012>"
+         Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Index Scan on knows_start_idx
+               Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Append
+         ->  Index Scan using human_pkey on human b_1
+               Index Cond: (id = "<0000000012>"."end")
+         ->  Index Scan using robot_pkey on robot b_2
+               Index Cond: (id = "<0000000012>"."end")
+(10 rows)
 
 MATCH (a:human)-[:knows]->(b) RETURN label(b) AS l ORDER BY l;
     l    
@@ -290,20 +287,20 @@ SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
 -- parent-self RETAINED: b's scan must now include ag_vertex, and the unlabelled
 -- vertex must be returned (proves the keep-condition fires).
 EXPLAIN (COSTS off) MATCH (a:human)-[:knows]->(b) RETURN b;
-                    QUERY PLAN                    
---------------------------------------------------
- Hash Join
-   Hash Cond: ("<0000000015>"."end" = b.id)
-   ->  Hash Join
-         Hash Cond: ("<0000000015>".start = a.id)
-         ->  Seq Scan on knows "<0000000015>"
-         ->  Hash
-               ->  Seq Scan on human a
-   ->  Hash
-         ->  Append
-               ->  Seq Scan on ag_vertex b_1
-               ->  Seq Scan on human b_2
-               ->  Seq Scan on robot b_3
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on knows "<0000000015>"
+         Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Index Scan on knows_start_idx
+               Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Append
+         ->  Seq Scan on ag_vertex b_1
+               Filter: (id = "<0000000015>"."end")
+         ->  Index Scan using human_pkey on human b_2
+               Index Cond: (id = "<0000000015>"."end")
+         ->  Index Scan using robot_pkey on robot b_3
+               Index Cond: (id = "<0000000015>"."end")
 (12 rows)
 
 MATCH (a:human)-[:knows]->(b) RETURN label(b) AS l ORDER BY l;
@@ -464,18 +461,16 @@ SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
 -- ---------- single hop ----------
 -- Case 1: first node labelled -> b={e1}, c={n2}
 EXPLAIN (costs off) MATCH (a:n1)-[b]->(c) RETURN c;
-             QUERY PLAN              
--------------------------------------
- Hash Join
-   Hash Cond: (b."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Seq Scan on e1 b
-         ->  Hash
-               ->  Seq Scan on n1 a
-   ->  Hash
-         ->  Seq Scan on n2 c
-(9 rows)
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on e1 b
+         Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Index Scan on e1_start_idx
+               Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Index Scan using n2_pkey on n2 c
+         Index Cond: (id = b."end")
+(7 rows)
 
 MATCH (a:n1)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
   b   |  c   
@@ -502,18 +497,16 @@ MATCH (a)-[b]->(c:n2) RETURN label(a) AS a, label(b) AS b ORDER BY a, b;
 
 -- Case 3: both nodes labelled -> b={e1}
 EXPLAIN (costs off) MATCH (a:n1)-[b]->(c:n2) RETURN c;
-             QUERY PLAN              
--------------------------------------
- Hash Join
-   Hash Cond: (b."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Seq Scan on e1 b
-         ->  Hash
-               ->  Seq Scan on n1 a
-   ->  Hash
-         ->  Seq Scan on n2 c
-(9 rows)
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on e1 b
+         Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Index Scan on e1_start_idx
+               Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Index Scan using n2_pkey on n2 c
+         Index Cond: (id = b."end")
+(7 rows)
 
 MATCH (a:n1)-[b]->(c:n2) RETURN label(b) AS b ORDER BY b;
   b   
@@ -541,24 +534,21 @@ MATCH (a)-[b:e1]->(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
 -- ---------- multi hop ----------
 -- Case 5: first node labelled drives the whole chain
 EXPLAIN (costs off) MATCH (a:n1)-[b]->(c)-[d]->(e) RETURN e;
-                    QUERY PLAN                     
----------------------------------------------------
- Hash Join
-   Hash Cond: (d."end" = e.id)
-   ->  Merge Join
-         Merge Cond: (d.start = b."end")
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Hash Join
+         Hash Cond: (d.start = b."end")
          Join Filter: (b.id <> d.id)
-         ->  Index Scan using e2_start_idx on e2 d
-         ->  Sort
-               Sort Key: b."end"
-               ->  Hash Join
-                     Hash Cond: (b.start = a.id)
-                     ->  Seq Scan on e1 b
-                     ->  Hash
-                           ->  Seq Scan on n1 a
-   ->  Hash
-         ->  Seq Scan on n3 e
-(15 rows)
+         ->  Seq Scan on e2 d
+         ->  Hash
+               ->  Bitmap Heap Scan on e1 b
+                     Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                     ->  Bitmap Index Scan on e1_start_idx
+                           Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Index Scan using n3_pkey on n3 e
+         Index Cond: (id = d."end")
+(12 rows)
 
 MATCH (a:n1)-[b]->(c)-[d]->(e) RETURN label(c) AS c, label(d) AS d, label(e) AS e ORDER BY c, d, e;
   c   |  d   |  e   
@@ -568,23 +558,24 @@ MATCH (a:n1)-[b]->(c)-[d]->(e) RETURN label(c) AS c, label(d) AS d, label(e) AS 
 
 -- Case 6: middle node labelled
 EXPLAIN (costs off) MATCH (a)-[b]->(c:n2)-[d]->(e) RETURN e;
-                   QUERY PLAN                    
--------------------------------------------------
- Hash Join
-   Hash Cond: (d."end" = e.id)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Nested Loop
    ->  Hash Join
-         Hash Cond: (d.start = c.id)
+         Hash Cond: (b."end" = d.start)
          Join Filter: (b.id <> d.id)
-         ->  Seq Scan on e2 d
+         ->  Bitmap Heap Scan on e1 b
+               Recheck Cond: (("end" >= '4.0'::graphid) AND ("end" <= '4.281474976710655'::graphid))
+               ->  Bitmap Index Scan on e1_end_idx
+                     Index Cond: (("end" >= '4.0'::graphid) AND ("end" <= '4.281474976710655'::graphid))
          ->  Hash
-               ->  Hash Join
-                     Hash Cond: (b."end" = c.id)
-                     ->  Seq Scan on e1 b
-                     ->  Hash
-                           ->  Seq Scan on n2 c
-   ->  Hash
-         ->  Seq Scan on n3 e
-(14 rows)
+               ->  Bitmap Heap Scan on e2 d
+                     Recheck Cond: ((start >= '4.0'::graphid) AND (start <= '4.281474976710655'::graphid))
+                     ->  Bitmap Index Scan on e2_start_idx
+                           Index Cond: ((start >= '4.0'::graphid) AND (start <= '4.281474976710655'::graphid))
+   ->  Index Scan using n3_pkey on n3 e
+         Index Cond: (id = d."end")
+(15 rows)
 
 MATCH (a)-[b]->(c:n2)-[d]->(e) RETURN label(a) AS a, label(b) AS b, label(e) AS e ORDER BY a, b, e;
   a   |  b   |  e   
@@ -617,27 +608,18 @@ MATCH (a)-[b]->(c)-[d]->(e:n3) RETURN label(a) AS a, label(c) AS c ORDER BY a, c
 
 -- Case 8: all nodes labelled
 EXPLAIN (costs off) MATCH (a:n1)-[b]->(c:n2)-[d]->(e:n3) RETURN e;
-                      QUERY PLAN                       
--------------------------------------------------------
- Hash Join
-   Hash Cond: (d."end" = e.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Hash Join
-               Hash Cond: (d.start = c.id)
-               Join Filter: (b.id <> d.id)
-               ->  Seq Scan on e2 d
-               ->  Hash
-                     ->  Hash Join
-                           Hash Cond: (b."end" = c.id)
-                           ->  Seq Scan on e1 b
-                           ->  Hash
-                                 ->  Seq Scan on n2 c
-         ->  Hash
-               ->  Seq Scan on n1 a
-   ->  Hash
-         ->  Seq Scan on n3 e
-(18 rows)
+                                                                                 QUERY PLAN                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Index Scan using e1_end_idx on e1 b
+               Index Cond: (("end" >= '4.0'::graphid) AND ("end" <= '4.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Index Scan using e2_start_idx on e2 d
+               Index Cond: ((start = b."end") AND (start >= '4.0'::graphid) AND (start <= '4.281474976710655'::graphid))
+               Filter: (b.id <> id)
+   ->  Index Scan using n3_pkey on n3 e
+         Index Cond: (id = d."end")
+(9 rows)
 
 MATCH (a:n1)-[b]->(c:n2)-[d]->(e:n3) RETURN label(b) AS b, label(d) AS d ORDER BY b, d;
   b   |  d   
@@ -756,18 +738,16 @@ MATCH (a)-[b:e1]->(c)-[d:e2]->(e)-[f:e3]->(g) RETURN label(a) AS a, label(g) AS 
 -- ---------- LEFT direction (edge maps to graphmeta end/start reversed) ----------
 -- (a)<-[b]-(c:n1): c=n1 is the start side, so a prunes to {n2}
 EXPLAIN (costs off) MATCH (a)<-[b]-(c:n1) RETURN a;
-             QUERY PLAN              
--------------------------------------
- Hash Join
-   Hash Cond: (b.start = c.id)
-   ->  Hash Join
-         Hash Cond: (b."end" = a.id)
-         ->  Seq Scan on e1 b
-         ->  Hash
-               ->  Seq Scan on n2 a
-   ->  Hash
-         ->  Seq Scan on n1 c
-(9 rows)
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on e1 b
+         Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Index Scan on e1_start_idx
+               Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Index Scan using n2_pkey on n2 a
+         Index Cond: (id = b."end")
+(7 rows)
 
 MATCH (a)<-[b]-(c:n1) RETURN label(a) AS a, label(b) AS b ORDER BY a, b;
   a   |  b   
@@ -777,18 +757,16 @@ MATCH (a)<-[b]-(c:n1) RETURN label(a) AS a, label(b) AS b ORDER BY a, b;
 
 -- (a:n2)<-[b]-(c): a=n2 is the end side, so c prunes to {n1}
 EXPLAIN (costs off) MATCH (a:n2)<-[b]-(c) RETURN c;
-             QUERY PLAN              
--------------------------------------
- Hash Join
-   Hash Cond: (b.start = c.id)
-   ->  Hash Join
-         Hash Cond: (b."end" = a.id)
-         ->  Seq Scan on e1 b
-         ->  Hash
-               ->  Seq Scan on n2 a
-   ->  Hash
-         ->  Seq Scan on n1 c
-(9 rows)
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on e1 b
+         Recheck Cond: (("end" >= '4.0'::graphid) AND ("end" <= '4.281474976710655'::graphid))
+         ->  Bitmap Index Scan on e1_end_idx
+               Index Cond: (("end" >= '4.0'::graphid) AND ("end" <= '4.281474976710655'::graphid))
+   ->  Index Scan using n1_pkey on n1 c
+         Index Cond: (id = b.start)
+(7 rows)
 
 MATCH (a:n2)<-[b]-(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
   b   |  c   
@@ -821,32 +799,66 @@ MATCH (a)-[b:e1]-(c) RETURN label(a) AS a, label(c) AS c ORDER BY a, c;
 
 -- node labelled: far endpoint prunes to n1's undirected neighbours = {n2}
 EXPLAIN (costs off) MATCH (a:n1)-[b]-(c) RETURN c;
-                   QUERY PLAN                    
--------------------------------------------------
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
  Hash Join
    Hash Cond: (ag_edge."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (ag_edge.start = a.id)
-         ->  Append
-               ->  Seq Scan on ag_edge
-               ->  Seq Scan on e1 ag_edge_1
-               ->  Seq Scan on e2 ag_edge_2
-               ->  Seq Scan on e3 ag_edge_3
-               ->  Seq Scan on e4 ag_edge_4
-               ->  Seq Scan on ex ag_edge_5
-               ->  Seq Scan on ey ag_edge_6
-               ->  Seq Scan on ag_edge ag_edge_7
-               ->  Seq Scan on e1 ag_edge_8
-               ->  Seq Scan on e2 ag_edge_9
-               ->  Seq Scan on e3 ag_edge_10
-               ->  Seq Scan on e4 ag_edge_11
-               ->  Seq Scan on ex ag_edge_12
-               ->  Seq Scan on ey ag_edge_13
-         ->  Hash
-               ->  Seq Scan on n1 a
+   ->  Append
+         ->  Seq Scan on ag_edge
+               Filter: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Heap Scan on e1 ag_edge_1
+               Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+               ->  Bitmap Index Scan on e1_start_idx
+                     Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Heap Scan on e2 ag_edge_2
+               Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+               ->  Bitmap Index Scan on e2_start_idx
+                     Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Heap Scan on e3 ag_edge_3
+               Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+               ->  Bitmap Index Scan on e3_start_idx
+                     Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Heap Scan on e4 ag_edge_4
+               Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+               ->  Bitmap Index Scan on e4_start_idx
+                     Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Heap Scan on ex ag_edge_5
+               Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+               ->  Bitmap Index Scan on ex_start_idx
+                     Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Heap Scan on ey ag_edge_6
+               Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+               ->  Bitmap Index Scan on ey_start_idx
+                     Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Seq Scan on ag_edge ag_edge_7
+               Filter: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+         ->  Bitmap Heap Scan on e1 ag_edge_8
+               Recheck Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+               ->  Bitmap Index Scan on e1_end_idx
+                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+         ->  Bitmap Heap Scan on e2 ag_edge_9
+               Recheck Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+               ->  Bitmap Index Scan on e2_end_idx
+                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+         ->  Bitmap Heap Scan on e3 ag_edge_10
+               Recheck Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+               ->  Bitmap Index Scan on e3_end_idx
+                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+         ->  Bitmap Heap Scan on e4 ag_edge_11
+               Recheck Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+               ->  Bitmap Index Scan on e4_end_idx
+                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+         ->  Bitmap Heap Scan on ex ag_edge_12
+               Recheck Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+               ->  Bitmap Index Scan on ex_end_idx
+                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+         ->  Bitmap Heap Scan on ey ag_edge_13
+               Recheck Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+               ->  Bitmap Index Scan on ey_end_idx
+                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
    ->  Hash
          ->  Seq Scan on n2 c
-(23 rows)
+(57 rows)
 
 MATCH (a:n1)-[b]-(c) RETURN label(c) AS c ORDER BY c;
   c   
@@ -864,18 +876,16 @@ MATCH (a)-[b]-(c:n2) RETURN label(a) AS a ORDER BY a;
 
 -- ---------- ONLY anchor still drives adjacent elements ----------
 EXPLAIN (costs off) MATCH (a:n1 ONLY)-[b]->(c) RETURN c;
-             QUERY PLAN              
--------------------------------------
- Hash Join
-   Hash Cond: (b."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Seq Scan on e1 b
-         ->  Hash
-               ->  Seq Scan on n1 a
-   ->  Hash
-         ->  Seq Scan on n2 c
-(9 rows)
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on e1 b
+         Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Index Scan on e1_start_idx
+               Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Index Scan using n2_pkey on n2 c
+         Index Cond: (id = b."end")
+(7 rows)
 
 MATCH (a:n1 ONLY)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
   b   |  c   
@@ -885,25 +895,23 @@ MATCH (a:n1 ONLY)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
 
 -- ---------- multiple comma-separated components: no false cross-component arc ----------
 EXPLAIN (costs off) MATCH (a:n1)-[b]->(c), (x)-[y:eX]->(z) RETURN c, z;
-                      QUERY PLAN                       
--------------------------------------------------------
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
  Hash Join
    Hash Cond: (y."end" = z.id)
    ->  Nested Loop
-         ->  Index Only Scan using ex_end_idx on ex y
+         ->  Seq Scan on ex y
          ->  Materialize
-               ->  Hash Join
-                     Hash Cond: (b."end" = c.id)
-                     ->  Hash Join
-                           Hash Cond: (b.start = a.id)
-                           ->  Seq Scan on e1 b
-                           ->  Hash
-                                 ->  Seq Scan on n1 a
-                     ->  Hash
-                           ->  Seq Scan on n2 c
+               ->  Nested Loop
+                     ->  Bitmap Heap Scan on e1 b
+                           Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                           ->  Bitmap Index Scan on e1_start_idx
+                                 Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                     ->  Index Scan using n2_pkey on n2 c
+                           Index Cond: (id = b."end")
    ->  Hash
          ->  Seq Scan on q2 z
-(16 rows)
+(14 rows)
 
 MATCH (a:n1)-[b]->(c), (x)-[y:eX]->(z)
   RETURN label(c) AS c, label(x) AS x, label(z) AS z ORDER BY c, x, z;
@@ -914,27 +922,18 @@ MATCH (a:n1)-[b]->(c), (x)-[y:eX]->(z)
 
 -- ---------- multi-anchor: middle node constrained from both sides ----------
 EXPLAIN (costs off) MATCH (a:n1)-[b]->(c:n2)-[d]->(e) RETURN e;
-                      QUERY PLAN                       
--------------------------------------------------------
- Hash Join
-   Hash Cond: (d."end" = e.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Hash Join
-               Hash Cond: (d.start = c.id)
-               Join Filter: (b.id <> d.id)
-               ->  Seq Scan on e2 d
-               ->  Hash
-                     ->  Hash Join
-                           Hash Cond: (b."end" = c.id)
-                           ->  Seq Scan on e1 b
-                           ->  Hash
-                                 ->  Seq Scan on n2 c
-         ->  Hash
-               ->  Seq Scan on n1 a
-   ->  Hash
-         ->  Seq Scan on n3 e
-(18 rows)
+                                                                                 QUERY PLAN                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Index Scan using e1_end_idx on e1 b
+               Index Cond: (("end" >= '4.0'::graphid) AND ("end" <= '4.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Index Scan using e2_start_idx on e2 d
+               Index Cond: ((start = b."end") AND (start >= '4.0'::graphid) AND (start <= '4.281474976710655'::graphid))
+               Filter: (b.id <> id)
+   ->  Index Scan using n3_pkey on n3 e
+         Index Cond: (id = d."end")
+(9 rows)
 
 MATCH (a:n1)-[b]->(c:n2)-[d]->(e) RETURN label(e) AS e ORDER BY e;
   e   
@@ -945,16 +944,14 @@ MATCH (a:n1)-[b]->(c:n2)-[d]->(e) RETURN label(e) AS e ORDER BY e;
 -- ---------- impossible patterns prune to an empty scan (0 rows) ----------
 -- n1 has no direct edge to n3
 EXPLAIN (costs off) MATCH (a:n1)-[b]->(c:n3) RETURN c;
-                    QUERY PLAN                     
----------------------------------------------------
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
  Nested Loop
-   ->  Nested Loop
-         ->  Seq Scan on ag_edge b
-         ->  Index Only Scan using n1_pkey on n1 a
-               Index Cond: (id = b.start)
+   ->  Seq Scan on ag_edge b
+         Filter: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
    ->  Index Scan using n3_pkey on n3 c
          Index Cond: (id = b."end")
-(7 rows)
+(5 rows)
 
 MATCH (a:n1)-[b]->(c:n3) RETURN c;
  c 
@@ -963,16 +960,14 @@ MATCH (a:n1)-[b]->(c:n3) RETURN c;
 
 -- n5 starts no edge
 EXPLAIN (costs off) MATCH (a:n5)-[b]->(c) RETURN c;
-                    QUERY PLAN                     
----------------------------------------------------
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
  Nested Loop
    Join Filter: (b."end" = c.id)
-   ->  Nested Loop
-         ->  Seq Scan on ag_edge b
-         ->  Index Only Scan using n5_pkey on n5 a
-               Index Cond: (id = b.start)
+   ->  Seq Scan on ag_edge b
+         Filter: ((start >= '7.0'::graphid) AND (start <= '7.281474976710655'::graphid))
    ->  Seq Scan on ag_vertex c
-(7 rows)
+(5 rows)
 
 MATCH (a:n5)-[b]->(c) RETURN c;
  c 
@@ -1223,20 +1218,22 @@ SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
 
 -- n1 now starts BOTH e1 and eA into n2: b scans {e1,eA}, c still {n2}
 EXPLAIN (costs off) MATCH (a:n1)-[b]->(c) RETURN c;
-              QUERY PLAN              
---------------------------------------
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
  Hash Join
-   Hash Cond: (b."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Append
-               ->  Seq Scan on e1 b_1
-               ->  Seq Scan on ea b_2
-         ->  Hash
-               ->  Seq Scan on n1 a
+   Hash Cond: (c.id = b."end")
+   ->  Seq Scan on n2 c
    ->  Hash
-         ->  Seq Scan on n2 c
-(11 rows)
+         ->  Append
+               ->  Bitmap Heap Scan on e1 b_1
+                     Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                     ->  Bitmap Index Scan on e1_start_idx
+                           Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+               ->  Bitmap Heap Scan on ea b_2
+                     Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                     ->  Bitmap Index Scan on ea_start_idx
+                           Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+(13 rows)
 
 MATCH (a:n1)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
   b   |  c   
@@ -1443,18 +1440,16 @@ SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
 
 -- self-loop: far node is the same label
 EXPLAIN (costs off) MATCH (a:sl)-[b]->(c) RETURN c;
-             QUERY PLAN              
--------------------------------------
- Hash Join
-   Hash Cond: (b."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Seq Scan on loop b
-         ->  Hash
-               ->  Seq Scan on sl a
-   ->  Hash
-         ->  Seq Scan on sl c
-(9 rows)
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on loop b
+         Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Index Scan on loop_start_idx
+               Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Index Scan using sl_pkey on sl c
+         Index Cond: (id = b."end")
+(7 rows)
 
 MATCH (a:sl)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
    b    |  c   
@@ -1464,28 +1459,26 @@ MATCH (a:sl)-[b]->(c) RETURN label(b) AS b, label(c) AS c ORDER BY b, c;
 
 -- cycle: three hops around the triangle land back on t1
 EXPLAIN (costs off) MATCH (a:t1)-[b]->(c)-[d]->(e)-[f]->(g) RETURN g;
-                        QUERY PLAN                        
-----------------------------------------------------------
- Hash Join
-   Hash Cond: (f."end" = g.id)
-   ->  Merge Join
-         Merge Cond: (d.start = b."end")
-         Join Filter: ((b.id <> d.id) AND (b.id <> f.id))
-         ->  Nested Loop
-               ->  Index Scan using te_start_idx on te d
-               ->  Index Scan using te_start_idx on te f
-                     Index Cond: (start = d."end")
-                     Filter: (d.id <> id)
-         ->  Sort
-               Sort Key: b."end"
-               ->  Hash Join
-                     Hash Cond: (b.start = a.id)
-                     ->  Seq Scan on te b
-                     ->  Hash
-                           ->  Seq Scan on t1 a
-   ->  Hash
-         ->  Seq Scan on t1 g
-(19 rows)
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         Join Filter: (b.id <> f.id)
+         ->  Hash Join
+               Hash Cond: (d.start = b."end")
+               Join Filter: (b.id <> d.id)
+               ->  Seq Scan on te d
+               ->  Hash
+                     ->  Bitmap Heap Scan on te b
+                           Recheck Cond: ((start >= '4.0'::graphid) AND (start <= '4.281474976710655'::graphid))
+                           ->  Bitmap Index Scan on te_start_idx
+                                 Index Cond: ((start >= '4.0'::graphid) AND (start <= '4.281474976710655'::graphid))
+         ->  Index Scan using te_start_idx on te f
+               Index Cond: (start = d."end")
+               Filter: (d.id <> id)
+   ->  Index Scan using t1_pkey on t1 g
+         Index Cond: (id = f."end")
+(17 rows)
 
 MATCH (a:t1)-[b]->(c)-[d]->(e)-[f]->(g)
   RETURN label(c) AS c, label(e) AS e, label(g) AS g ORDER BY c, e, g;
@@ -1548,16 +1541,14 @@ EXPLAIN (costs off) EXECUTE pp;
 --------------------------------------------------------------------------------------------------------------------------------
  Sort
    Sort Key: (label(ROW(b.id, b.start, b."end", b.properties, b.ctid)::edge)), (label(ROW(c.id, c.properties, c.ctid)::vertex))
-   ->  Hash Join
-         Hash Cond: (b."end" = c.id)
-         ->  Hash Join
-               Hash Cond: (b.start = a.id)
-               ->  Seq Scan on e1 b
-               ->  Hash
-                     ->  Seq Scan on n1 a
-         ->  Hash
-               ->  Seq Scan on n2 c
-(11 rows)
+   ->  Nested Loop
+         ->  Bitmap Heap Scan on e1 b
+               Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+               ->  Bitmap Index Scan on e1_start_idx
+                     Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Index Scan using n2_pkey on n2 c
+               Index Cond: (id = b."end")
+(9 rows)
 
 EXECUTE pp;
   b   |  c   
@@ -1583,19 +1574,21 @@ EXPLAIN (costs off) EXECUTE pp;
  Sort
    Sort Key: (label(ROW(b.id, b.start, b."end", b.properties, b.ctid)::edge)), (label(ROW(c.id, c.properties, c.ctid)::vertex))
    ->  Hash Join
-         Hash Cond: (b."end" = c.id)
-         ->  Hash Join
-               Hash Cond: (b.start = a.id)
-               ->  Append
-                     ->  Seq Scan on e1 b_1
-                     ->  Seq Scan on e2 b_2
-               ->  Hash
-                     ->  Seq Scan on n1 a
+         Hash Cond: (c.id = b."end")
+         ->  Append
+               ->  Seq Scan on n2 c_1
+               ->  Seq Scan on n3 c_2
          ->  Hash
                ->  Append
-                     ->  Seq Scan on n2 c_1
-                     ->  Seq Scan on n3 c_2
-(15 rows)
+                     ->  Bitmap Heap Scan on e1 b_1
+                           Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                           ->  Bitmap Index Scan on e1_start_idx
+                                 Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                     ->  Bitmap Heap Scan on e2 b_2
+                           Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                           ->  Bitmap Index Scan on e2_start_idx
+                                 Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+(17 rows)
 
 EXECUTE pp;
   b   |  c   
@@ -1621,20 +1614,22 @@ EXPLAIN (costs off) EXECUTE pp;
  Sort
    Sort Key: (label(ROW(b.id, b.start, b."end", b.properties, b.ctid)::edge)), (label(ROW(c.id, c.properties, c.ctid)::vertex))
    ->  Hash Join
-         Hash Cond: (b."end" = c.id)
-         ->  Hash Join
-               Hash Cond: (b.start = a.id)
-               ->  Append
-                     ->  Seq Scan on e1 b_1
-                     ->  Seq Scan on e2 b_2
-               ->  Hash
-                     ->  Seq Scan on n1 a
+         Hash Cond: (c.id = b."end")
+         ->  Append
+               ->  Seq Scan on n2 c_1
+               ->  Seq Scan on n3 c_2
+               ->  Seq Scan on n4 c_3
          ->  Hash
                ->  Append
-                     ->  Seq Scan on n2 c_1
-                     ->  Seq Scan on n3 c_2
-                     ->  Seq Scan on n4 c_3
-(16 rows)
+                     ->  Bitmap Heap Scan on e1 b_1
+                           Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                           ->  Bitmap Index Scan on e1_start_idx
+                                 Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                     ->  Bitmap Heap Scan on e2 b_2
+                           Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                           ->  Bitmap Index Scan on e2_start_idx
+                                 Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+(18 rows)
 
 EXECUTE pp;
   b   |  c   
@@ -1653,20 +1648,22 @@ EXPLAIN (costs off) EXECUTE pp;
  Sort
    Sort Key: (label(ROW(b.id, b.start, b."end", b.properties, b.ctid)::edge)), (label(ROW(c.id, c.properties, c.ctid)::vertex))
    ->  Hash Join
-         Hash Cond: (b."end" = c.id)
-         ->  Hash Join
-               Hash Cond: (b.start = a.id)
-               ->  Append
-                     ->  Seq Scan on e1 b_1
-                     ->  Seq Scan on e2 b_2
-               ->  Hash
-                     ->  Seq Scan on n1 a
+         Hash Cond: (c.id = b."end")
+         ->  Append
+               ->  Seq Scan on n2 c_1
+               ->  Seq Scan on n3 c_2
+               ->  Seq Scan on n4 c_3
          ->  Hash
                ->  Append
-                     ->  Seq Scan on n2 c_1
-                     ->  Seq Scan on n3 c_2
-                     ->  Seq Scan on n4 c_3
-(16 rows)
+                     ->  Bitmap Heap Scan on e1 b_1
+                           Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                           ->  Bitmap Index Scan on e1_start_idx
+                                 Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                     ->  Bitmap Heap Scan on e2 b_2
+                           Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                           ->  Bitmap Index Scan on e2_start_idx
+                                 Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+(18 rows)
 
 EXECUTE pp;
   b   |  c   
@@ -1733,24 +1730,21 @@ SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
 
 -- pruning uses the COPY-loaded connectivity: chain from src reaches dst
 EXPLAIN (costs off) MATCH (a:src)-[b]->(c)-[d]->(e) RETURN e;
-                     QUERY PLAN                      
------------------------------------------------------
- Hash Join
-   Hash Cond: (d."end" = e.id)
-   ->  Merge Join
-         Merge Cond: (d.start = b."end")
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Hash Join
+         Hash Cond: (d.start = b."end")
          Join Filter: (b.id <> d.id)
-         ->  Index Scan using rel_start_idx on rel d
-         ->  Sort
-               Sort Key: b."end"
-               ->  Hash Join
-                     Hash Cond: (b.start = a.id)
-                     ->  Seq Scan on rel b
-                     ->  Hash
-                           ->  Seq Scan on src a
-   ->  Hash
-         ->  Seq Scan on dst e
-(15 rows)
+         ->  Seq Scan on rel d
+         ->  Hash
+               ->  Bitmap Heap Scan on rel b
+                     Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                     ->  Bitmap Index Scan on rel_start_idx
+                           Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Index Scan using dst_pkey on dst e
+         Index Cond: (id = d."end")
+(12 rows)
 
 MATCH (a:src)-[b]->(c)-[d]->(e) RETURN label(c) AS c, label(e) AS e ORDER BY c, e;
    c   |   e   
@@ -1818,20 +1812,19 @@ SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
 
 -- pruning now includes c2 (the new endpoint); the actual row resolves to c2
 EXPLAIN (costs off) MATCH (a:p)-[b:rel]->(c) RETURN c;
-              QUERY PLAN              
---------------------------------------
- Hash Join
-   Hash Cond: (b."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Seq Scan on rel b
-         ->  Hash
-               ->  Seq Scan on p a
-   ->  Hash
-         ->  Append
-               ->  Seq Scan on c1 c_1
-               ->  Seq Scan on c2 c_2
-(11 rows)
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on rel b
+         Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Index Scan on rel_start_idx
+               Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Append
+         ->  Index Scan using c1_pkey on c1 c_1
+               Index Cond: (id = b."end")
+         ->  Index Scan using c2_pkey on c2 c_2
+               Index Cond: (id = b."end")
+(10 rows)
 
 MATCH (a:p)-[b:rel]->(c) RETURN label(c) AS c ORDER BY c;
   c   
@@ -1885,24 +1878,27 @@ SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
 -- parent vertex-label anchor: a scans {animal,dog} (cat starts nothing), c scans
 -- {dog,cat} (nothing ends at an animal-direct vertex), b covers {rel,subrel}
 EXPLAIN (costs off) MATCH (a:animal)-[b]->(c) RETURN c;
-                   QUERY PLAN                   
-------------------------------------------------
+                                                                                                                            QUERY PLAN                                                                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Hash Join
-   Hash Cond: (b."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Append
-               ->  Seq Scan on rel b_1
-               ->  Seq Scan on subrel b_2
-         ->  Hash
-               ->  Append
-                     ->  Seq Scan on animal a_1
-                     ->  Seq Scan on dog a_2
+   Hash Cond: (c.id = b."end")
+   ->  Append
+         ->  Seq Scan on dog c_1
+         ->  Seq Scan on cat c_2
    ->  Hash
          ->  Append
-               ->  Seq Scan on dog c_1
-               ->  Seq Scan on cat c_2
-(15 rows)
+               ->  Seq Scan on rel b_1
+                     Filter: (((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid)) OR ((start >= '4.0'::graphid) AND (start <= '4.281474976710655'::graphid)) OR ((start >= '5.0'::graphid) AND (start <= '5.281474976710655'::graphid)))
+               ->  Bitmap Heap Scan on subrel b_2
+                     Recheck Cond: (((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid)) OR ((start >= '4.0'::graphid) AND (start <= '4.281474976710655'::graphid)) OR ((start >= '5.0'::graphid) AND (start <= '5.281474976710655'::graphid)))
+                     ->  BitmapOr
+                           ->  Bitmap Index Scan on subrel_start_idx
+                                 Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                           ->  Bitmap Index Scan on subrel_start_idx
+                                 Index Cond: ((start >= '4.0'::graphid) AND (start <= '4.281474976710655'::graphid))
+                           ->  Bitmap Index Scan on subrel_start_idx
+                                 Index Cond: ((start >= '5.0'::graphid) AND (start <= '5.281474976710655'::graphid))
+(18 rows)
 
 MATCH (a:animal)-[b]->(c) RETURN label(a) AS la, label(b) AS lb, label(c) AS lc ORDER BY la, lb, lc;
     la    |    lb    |  lc   
@@ -1913,18 +1909,16 @@ MATCH (a:animal)-[b]->(c) RETURN label(a) AS la, label(b) AS lb, label(c) AS lc 
 
 -- child vertex-label anchor: (a:dog) scans only dog; dog starts subrel -> cat
 EXPLAIN (costs off) MATCH (a:dog)-[b]->(c) RETURN c;
-             QUERY PLAN              
--------------------------------------
- Hash Join
-   Hash Cond: (b."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Seq Scan on subrel b
-         ->  Hash
-               ->  Seq Scan on dog a
-   ->  Hash
-         ->  Seq Scan on cat c
-(9 rows)
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on subrel b
+         Recheck Cond: ((start >= '4.0'::graphid) AND (start <= '4.281474976710655'::graphid))
+         ->  Bitmap Index Scan on subrel_start_idx
+               Index Cond: ((start >= '4.0'::graphid) AND (start <= '4.281474976710655'::graphid))
+   ->  Index Scan using cat_pkey on cat c
+         Index Cond: (id = b."end")
+(7 rows)
 
 MATCH (a:dog)-[b]->(c) RETURN label(b) AS lb, label(c) AS lc ORDER BY lb, lc;
     lb    |  lc   
@@ -2100,18 +2094,16 @@ SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
 
 -- pruning must keep the hub label; the stored edge connects hub -> hub
 EXPLAIN (costs off) MATCH (a:hub)-[b:rel]->(c:hub) RETURN c;
-             QUERY PLAN              
--------------------------------------
- Hash Join
-   Hash Cond: (b."end" = c.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
-         ->  Seq Scan on rel b
-         ->  Hash
-               ->  Seq Scan on hub a
-   ->  Hash
-         ->  Seq Scan on hub c
-(9 rows)
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on rel b
+         Recheck Cond: ((start >= '4.0'::graphid) AND (start <= '4.281474976710655'::graphid))
+         ->  Bitmap Index Scan on rel_start_idx
+               Index Cond: ((start >= '4.0'::graphid) AND (start <= '4.281474976710655'::graphid))
+   ->  Index Scan using hub_pkey on hub c
+         Index Cond: (id = b."end")
+(7 rows)
 
 MATCH (a:hub)-[b:rel]->(c:hub) RETURN count(*) AS n;
  n 
@@ -3535,20 +3527,19 @@ EXPLAIN (costs off) SELECT id FROM gmp20.ag_vertex WHERE id = ANY (ARRAY['3.1','
 
 -- combined with connectivity pruning: b pruned to {city} by knows, pinned to city by id
 EXPLAIN (costs off) MATCH (a:person)-[:knows]->(b) WHERE id(b) = '4.1'::graphid RETURN b;
-                           QUERY PLAN                           
-----------------------------------------------------------------
+                                                                                                              QUERY PLAN                                                                                                              
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Nested Loop
+   ->  Bitmap Heap Scan on knows "<0000000107>"
+         Recheck Cond: ((("end" = '4.1'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid)) OR (("end" = '4.1'::graphid) AND (start >= '5.0'::graphid) AND (start <= '5.281474976710655'::graphid)))
+         ->  BitmapOr
+               ->  Bitmap Index Scan on knows_end_idx
+                     Index Cond: (("end" = '4.1'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+               ->  Bitmap Index Scan on knows_end_idx
+                     Index Cond: (("end" = '4.1'::graphid) AND (start >= '5.0'::graphid) AND (start <= '5.281474976710655'::graphid))
    ->  Index Scan using city_pkey on city b
          Index Cond: (id = '4.1'::graphid)
-   ->  Hash Join
-         Hash Cond: (a.id = "<0000000107>".start)
-         ->  Seq Scan on person a
-         ->  Hash
-               ->  Bitmap Heap Scan on knows "<0000000107>"
-                     Recheck Cond: ("end" = '4.1'::graphid)
-                     ->  Bitmap Index Scan on knows_end_idx
-                           Index Cond: ("end" = '4.1'::graphid)
-(11 rows)
+(10 rows)
 
 MATCH (a:person)-[:knows]->(b) WHERE id(b) = '4.1'::graphid RETURN label(b) AS l;
    l    

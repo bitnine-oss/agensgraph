@@ -9,6 +9,12 @@
 -- solver -- must not cost a surviving neighbour its scan pruning.  It is
 -- structural and works with or without ag_graphmeta gathering.
 --
+-- An endpoint that names a label joins for a second reason: its scan is what
+-- tests the label.  That test does not need the scan either, because a vertex's
+-- label is the top sixteen bits of its graph id -- so it is written instead as a
+-- range on the id the adjacent edge already holds, and the endpoint goes the
+-- same way as any other.
+--
 -- Oracle for every result-returning query: the rows returned with
 -- enable_graph_endpoint_elision on must equal the rows returned with it off
 -- (ORDER BY makes the comparison deterministic).  EXPLAIN (costs off) asserts
@@ -196,8 +202,13 @@ EXPLAIN (costs off) MATCH (a:person)-[]->()-[]->(c) RETURN a.name AS a, label(c)
 SET auto_gather_graphmeta = true;
 
 -- ============================================================
--- NOT ELIDE: labelled endpoint (the join is a label filter)
+-- ELIDE: labelled endpoint, its label becoming a range on the edge
 -- ============================================================
+-- A label is the top sixteen bits of a vertex's graph id, so the ids of one
+-- label are one stretch of the graph id order and the label an endpoint names
+-- can be tested against the id the adjacent edge already holds.  The endpoint's
+-- scan goes; the label survives as a range on the edge's own endpoint column,
+-- which the edge's index on that column can seek to.
 -- terminal labelled endpoint
 EXPLAIN (costs off) MATCH (a:person)-[:works_at]->(:company) RETURN a.name AS a;
 MATCH (a:person)-[:works_at]->(:company) RETURN a.name AS a ORDER BY a;
@@ -208,12 +219,35 @@ SET enable_graph_endpoint_elision = true;
 -- reverse (start-side) labelled endpoint, otherwise unused
 EXPLAIN (costs off) MATCH (:company)<-[:works_at]-(a) RETURN a.name AS a;
 
--- intermediate labelled endpoint: the middle (:city) label filter must be kept
+-- intermediate labelled endpoint: the middle (:city) label is tested on both
+-- edges that meet there, since an equivalence carries an equality to every
+-- member but not a range
 EXPLAIN (costs off) MATCH (a:person)-[b:lives_in]->(:city)-[d]->(e) RETURN a.name AS a, label(e) AS e;
 MATCH (a:person)-[b:lives_in]->(:city)-[d]->(e) RETURN a.name AS a, label(e) AS e ORDER BY a, e;
 SET enable_graph_endpoint_elision = false;
 MATCH (a:person)-[b:lives_in]->(:city)-[d]->(e) RETURN a.name AS a, label(e) AS e ORDER BY a, e;
 SET enable_graph_endpoint_elision = true;
+
+-- The label still filters.  A relationship whose far end is a city answers
+-- nothing when the pattern asks for a company, and everything when it asks for
+-- a city -- which is the whole point of the range that replaced the join.
+EXPLAIN (costs off) MATCH (a:person)-[:lives_in]->(:company) RETURN a.name AS a;
+MATCH (a:person)-[:lives_in]->(:company) RETURN a.name AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:person)-[:lives_in]->(:company) RETURN a.name AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+MATCH (a:person)-[:lives_in]->(:city) RETURN a.name AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:person)-[:lives_in]->(:city) RETURN a.name AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- ONLY reads the one table, so the label stands alone and the range is exact
+EXPLAIN (costs off) MATCH (a:person)-[:works_at]->(:company ONLY) RETURN a.name AS a;
+MATCH (a:person)-[:works_at]->(:company ONLY) RETURN a.name AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:person)-[:works_at]->(:company ONLY) RETURN a.name AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
 
 -- ============================================================
 -- NOT ELIDE: endpoint referenced (RETURN / WHERE / WITH / ORDER BY)
@@ -551,3 +585,59 @@ EXPLAIN (COSTS OFF)
 MATCH p=(a:cn)-[:cr*1..2]->(b) RETURN size(vertices(p));
 
 DROP GRAPH cnt_g CASCADE;
+
+-- ============================================================
+-- ELIDE: a labelled endpoint whose label is inherited by others
+-- ============================================================
+-- Label ids are handed out in creation order, so a label and the labels
+-- inheriting from it are not next to each other and one stretch of the graph id
+-- order will not describe them: the test becomes one stretch per label of the
+-- subtree.  Creating an unrelated label in between makes the ids genuinely
+-- non-adjacent, so a single stretch would be wrong here rather than merely
+-- imprecise.  Its own graph, so the vertex counts of the tests above stand.
+CREATE GRAPH eeh;
+SET graph_path = eeh;
+
+CREATE VLABEL giver;
+CREATE VLABEL org;
+CREATE VLABEL unrelated_gap;
+CREATE VLABEL charity INHERITS (org);
+CREATE ELABEL donates_to;
+
+CREATE (:giver {name:'alice'}), (:giver {name:'bob'}),
+       (:org {name:'plain_org'}), (:charity {name:'oxfam'}),
+       (:unrelated_gap {name:'gap'});
+MATCH (a:giver {name:'alice'}), (o:org {name:'plain_org'})
+  CREATE (a)-[:donates_to]->(o);
+MATCH (a:giver {name:'bob'}), (c:charity {name:'oxfam'})
+  CREATE (a)-[:donates_to]->(c);
+MATCH (a:giver {name:'alice'}), (g:unrelated_gap {name:'gap'})
+  CREATE (a)-[:donates_to]->(g);
+
+-- the label ids the subtree occupies, and the unrelated one sitting between them
+SELECT labname, labid FROM pg_catalog.ag_label
+WHERE graphid = (SELECT oid FROM pg_catalog.ag_graph WHERE graphname = 'eeh')
+  AND labname IN ('org', 'unrelated_gap', 'charity')
+ORDER BY labid;
+
+-- the parent label matches itself and the child, and not the unrelated label
+EXPLAIN (costs off) MATCH (a:giver)-[:donates_to]->(:org) RETURN a.name AS a;
+MATCH (a:giver)-[:donates_to]->(:org) RETURN a.name AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:giver)-[:donates_to]->(:org) RETURN a.name AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- ONLY the parent excludes the child
+EXPLAIN (costs off) MATCH (a:giver)-[:donates_to]->(:org ONLY) RETURN a.name AS a;
+MATCH (a:giver)-[:donates_to]->(:org ONLY) RETURN a.name AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:giver)-[:donates_to]->(:org ONLY) RETURN a.name AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- and the child alone matches only itself
+MATCH (a:giver)-[:donates_to]->(:charity) RETURN a.name AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:giver)-[:donates_to]->(:charity) RETURN a.name AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+DROP GRAPH eeh CASCADE;

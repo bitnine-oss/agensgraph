@@ -9,6 +9,12 @@
 -- solver -- must not cost a surviving neighbour its scan pruning.  It is
 -- structural and works with or without ag_graphmeta gathering.
 --
+-- An endpoint that names a label joins for a second reason: its scan is what
+-- tests the label.  That test does not need the scan either, because a vertex's
+-- label is the top sixteen bits of its graph id -- so it is written instead as a
+-- range on the id the adjacent edge already holds, and the endpoint goes the
+-- same way as any other.
+--
 -- Oracle for every result-returning query: the rows returned with
 -- enable_graph_endpoint_elision on must equal the rows returned with it off
 -- (ORDER BY makes the comparison deterministic).  EXPLAIN (costs off) asserts
@@ -450,15 +456,14 @@ SET enable_graph_endpoint_elision = true;
 -- ============================================================
 -- count(*) over a pattern whose endpoint is elided
 EXPLAIN (costs off) MATCH (a:person)-[e:knows]->() RETURN count(*);
-               QUERY PLAN               
-----------------------------------------
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
  Aggregate
-   ->  Hash Join
-         Hash Cond: (e.start = a.id)
-         ->  Seq Scan on knows e
-         ->  Hash
-               ->  Seq Scan on person a
-(6 rows)
+   ->  Bitmap Heap Scan on knows e
+         Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Index Scan on knows_start_idx
+               Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+(5 rows)
 
 MATCH (a:person)-[e:knows]->() RETURN count(*);
  count 
@@ -640,22 +645,25 @@ EXPLAIN (costs off) MATCH (a:person)-[]->()-[]->(c) RETURN a.name AS a, label(c)
 SET auto_gather_graphmeta = true;
 NOTICE:  regathering graphmeta...
 -- ============================================================
--- NOT ELIDE: labelled endpoint (the join is a label filter)
+-- ELIDE: labelled endpoint, its label becoming a range on the edge
 -- ============================================================
+-- A label is the top sixteen bits of a vertex's graph id, so the ids of one
+-- label are one stretch of the graph id order and the label an endpoint names
+-- can be tested against the id the adjacent edge already holds.  The endpoint's
+-- scan goes; the label survives as a range on the edge's own endpoint column,
+-- which the edge's index on that column can seek to.
 -- terminal labelled endpoint
 EXPLAIN (costs off) MATCH (a:person)-[:works_at]->(:company) RETURN a.name AS a;
-                       QUERY PLAN                        
----------------------------------------------------------
- Hash Join
-   Hash Cond: ("<0000000080>"."end" = "<0000000081>".id)
-   ->  Hash Join
-         Hash Cond: ("<0000000080>".start = a.id)
-         ->  Seq Scan on works_at "<0000000080>"
-         ->  Hash
-               ->  Seq Scan on person a
-   ->  Hash
-         ->  Seq Scan on company "<0000000081>"
-(9 rows)
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on works_at "<0000000080>"
+         Recheck Cond: (("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
+         ->  Bitmap Index Scan on works_at_end_idx
+               Index Cond: (("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
+   ->  Index Scan using person_pkey on person a
+         Index Cond: (id = "<0000000080>".start)
+(7 rows)
 
 MATCH (a:person)-[:works_at]->(:company) RETURN a.name AS a ORDER BY a;
    a   
@@ -673,41 +681,41 @@ MATCH (a:person)-[:works_at]->(:company) RETURN a.name AS a ORDER BY a;
 SET enable_graph_endpoint_elision = true;
 -- reverse (start-side) labelled endpoint, otherwise unused
 EXPLAIN (costs off) MATCH (:company)<-[:works_at]-(a) RETURN a.name AS a;
-                          QUERY PLAN                           
----------------------------------------------------------------
- Hash Join
-   Hash Cond: ("<0000000087>".start = a.id)
-   ->  Hash Join
-         Hash Cond: ("<0000000087>"."end" = "<0000000086>".id)
-         ->  Seq Scan on works_at "<0000000087>"
-         ->  Hash
-               ->  Seq Scan on company "<0000000086>"
-   ->  Hash
-         ->  Seq Scan on person a
-(9 rows)
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on works_at "<0000000087>"
+         Recheck Cond: (("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
+         ->  Bitmap Index Scan on works_at_end_idx
+               Index Cond: (("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
+   ->  Index Scan using person_pkey on person a
+         Index Cond: (id = "<0000000087>".start)
+(7 rows)
 
--- intermediate labelled endpoint: the middle (:city) label filter must be kept
+-- intermediate labelled endpoint: the middle (:city) label is tested on both
+-- edges that meet there, since an equivalence carries an equality to every
+-- member but not a range
 EXPLAIN (costs off) MATCH (a:person)-[b:lives_in]->(:city)-[d]->(e) RETURN a.name AS a, label(e) AS e;
-                             QUERY PLAN                              
----------------------------------------------------------------------
- Hash Join
-   Hash Cond: (d."end" = e.id)
-   ->  Hash Join
-         Hash Cond: (b.start = a.id)
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
          ->  Hash Join
-               Hash Cond: (d.start = "<0000000088>".id)
+               Hash Cond: (b."end" = d.start)
                Join Filter: (b.id <> d.id)
-               ->  Seq Scan on located_in d
+               ->  Bitmap Heap Scan on lives_in b
+                     Recheck Cond: (("end" >= '4.0'::graphid) AND ("end" <= '4.281474976710655'::graphid))
+                     ->  Bitmap Index Scan on lives_in_end_idx
+                           Index Cond: (("end" >= '4.0'::graphid) AND ("end" <= '4.281474976710655'::graphid))
                ->  Hash
-                     ->  Hash Join
-                           Hash Cond: (b."end" = "<0000000088>".id)
-                           ->  Seq Scan on lives_in b
-                           ->  Hash
-                                 ->  Seq Scan on city "<0000000088>"
-         ->  Hash
-               ->  Seq Scan on person a
-   ->  Hash
-         ->  Seq Scan on country e
+                     ->  Bitmap Heap Scan on located_in d
+                           Recheck Cond: ((start >= '4.0'::graphid) AND (start <= '4.281474976710655'::graphid))
+                           ->  Bitmap Index Scan on located_in_start_idx
+                                 Index Cond: ((start >= '4.0'::graphid) AND (start <= '4.281474976710655'::graphid))
+         ->  Index Scan using person_pkey on person a
+               Index Cond: (id = b.start)
+   ->  Index Scan using country_pkey on country e
+         Index Cond: (id = d."end")
 (18 rows)
 
 MATCH (a:person)-[b:lives_in]->(:city)-[d]->(e) RETURN a.name AS a, label(e) AS e ORDER BY a, e;
@@ -724,23 +732,89 @@ MATCH (a:person)-[b:lives_in]->(:city)-[d]->(e) RETURN a.name AS a, label(e) AS 
 (1 row)
 
 SET enable_graph_endpoint_elision = true;
+-- The label still filters.  A relationship whose far end is a city answers
+-- nothing when the pattern asks for a company, and everything when it asks for
+-- a city -- which is the whole point of the range that replaced the join.
+EXPLAIN (costs off) MATCH (a:person)-[:lives_in]->(:company) RETURN a.name AS a;
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on lives_in "<0000000091>"
+         Recheck Cond: (("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
+         ->  Bitmap Index Scan on lives_in_end_idx
+               Index Cond: (("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
+   ->  Index Scan using person_pkey on person a
+         Index Cond: (id = "<0000000091>".start)
+(7 rows)
+
+MATCH (a:person)-[:lives_in]->(:company) RETURN a.name AS a ORDER BY a;
+ a 
+---
+(0 rows)
+
+SET enable_graph_endpoint_elision = false;
+MATCH (a:person)-[:lives_in]->(:company) RETURN a.name AS a ORDER BY a;
+ a 
+---
+(0 rows)
+
+SET enable_graph_endpoint_elision = true;
+MATCH (a:person)-[:lives_in]->(:city) RETURN a.name AS a ORDER BY a;
+    a    
+---------
+ "alice"
+(1 row)
+
+SET enable_graph_endpoint_elision = false;
+MATCH (a:person)-[:lives_in]->(:city) RETURN a.name AS a ORDER BY a;
+    a    
+---------
+ "alice"
+(1 row)
+
+SET enable_graph_endpoint_elision = true;
+-- ONLY reads the one table, so the label stands alone and the range is exact
+EXPLAIN (costs off) MATCH (a:person)-[:works_at]->(:company ONLY) RETURN a.name AS a;
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on works_at "<0000000101>"
+         Recheck Cond: (("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
+         ->  Bitmap Index Scan on works_at_end_idx
+               Index Cond: (("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
+   ->  Index Scan using person_pkey on person a
+         Index Cond: (id = "<0000000101>".start)
+(7 rows)
+
+MATCH (a:person)-[:works_at]->(:company ONLY) RETURN a.name AS a ORDER BY a;
+   a   
+-------
+ "bob"
+(1 row)
+
+SET enable_graph_endpoint_elision = false;
+MATCH (a:person)-[:works_at]->(:company ONLY) RETURN a.name AS a ORDER BY a;
+   a   
+-------
+ "bob"
+(1 row)
+
+SET enable_graph_endpoint_elision = true;
 -- ============================================================
 -- NOT ELIDE: endpoint referenced (RETURN / WHERE / WITH / ORDER BY)
 -- ============================================================
 -- referenced in RETURN
 EXPLAIN (costs off) MATCH (a:person)-[:knows]->(c) RETURN label(c) AS c;
-                    QUERY PLAN                    
---------------------------------------------------
- Hash Join
-   Hash Cond: ("<0000000091>"."end" = c.id)
-   ->  Hash Join
-         Hash Cond: ("<0000000091>".start = a.id)
-         ->  Seq Scan on knows "<0000000091>"
-         ->  Hash
-               ->  Seq Scan on person a
-   ->  Hash
-         ->  Seq Scan on person c
-(9 rows)
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on knows "<0000000107>"
+         Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Bitmap Index Scan on knows_start_idx
+               Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Index Scan using person_pkey on person c
+         Index Cond: (id = "<0000000107>"."end")
+(7 rows)
 
 -- referenced in WHERE (single-relation baserestrictinfo)
 EXPLAIN (costs off) MATCH (a:person)-[:knows]->(x) WHERE x.name = 'bob' RETURN a.name AS a;
@@ -748,13 +822,13 @@ EXPLAIN (costs off) MATCH (a:person)-[:knows]->(x) WHERE x.name = 'bob' RETURN a
 ------------------------------------------------------------------------
  Nested Loop
    ->  Hash Join
-         Hash Cond: ("<0000000092>"."end" = x.id)
-         ->  Seq Scan on knows "<0000000092>"
+         Hash Cond: ("<0000000108>"."end" = x.id)
+         ->  Seq Scan on knows "<0000000108>"
          ->  Hash
                ->  Seq Scan on person x
                      Filter: (properties.'name'::text = '"bob"'::jsonb)
    ->  Index Scan using person_pkey on person a
-         Index Cond: (id = "<0000000092>".start)
+         Index Cond: (id = "<0000000108>".start)
 (9 rows)
 
 MATCH (a:person)-[:knows]->(x) WHERE x.name = 'bob' RETURN a.name AS a ORDER BY a;
@@ -773,30 +847,29 @@ MATCH (a:person)-[:knows]->(x) WHERE x.name = 'bob' RETURN a.name AS a ORDER BY 
 SET enable_graph_endpoint_elision = true;
 -- referenced downstream in a WITH pipeline
 EXPLAIN (costs off) MATCH (a:person)-[:knows]->(x) WITH x MATCH (x)-[:lives_in]->(c) RETURN label(c) AS c;
-                                      QUERY PLAN                                       
----------------------------------------------------------------------------------------
- Merge Join
-   Merge Cond: (c.id = "<0000000096>"."end")
-   ->  Merge Append
-         Sort Key: c.id
-         ->  Index Scan using ag_vertex_pkey on ag_vertex c_1
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Hash Join
+         Hash Cond: ("<0000000112>".start = "<0000000111>"."end")
+         ->  Seq Scan on lives_in "<0000000112>"
+         ->  Hash
+               ->  Bitmap Heap Scan on knows "<0000000111>"
+                     Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                     ->  Bitmap Index Scan on knows_start_idx
+                           Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Append
+         ->  Seq Scan on ag_vertex c_1
+               Filter: (id = "<0000000112>"."end")
          ->  Index Scan using person_pkey on person c_2
+               Index Cond: (id = "<0000000112>"."end")
          ->  Index Scan using city_pkey on city c_3
+               Index Cond: (id = "<0000000112>"."end")
          ->  Index Scan using company_pkey on company c_4
+               Index Cond: (id = "<0000000112>"."end")
          ->  Index Scan using country_pkey on country c_5
-   ->  Sort
-         Sort Key: "<0000000096>"."end"
-         ->  Merge Join
-               Merge Cond: ("<0000000096>".start = "<0000000095>"."end")
-               ->  Index Only Scan using lives_in_start_idx on lives_in "<0000000096>"
-               ->  Sort
-                     Sort Key: "<0000000095>"."end"
-                     ->  Hash Join
-                           Hash Cond: ("<0000000095>".start = a.id)
-                           ->  Seq Scan on knows "<0000000095>"
-                           ->  Hash
-                                 ->  Seq Scan on person a
-(21 rows)
+               Index Cond: (id = "<0000000112>"."end")
+(20 rows)
 
 -- referenced in ORDER BY
 EXPLAIN (costs off) MATCH (a:person)-[:knows]->(x) RETURN a.name AS a ORDER BY id(x);
@@ -805,10 +878,10 @@ EXPLAIN (costs off) MATCH (a:person)-[:knows]->(x) RETURN a.name AS a ORDER BY i
  Sort
    Sort Key: x.id
    ->  Hash Join
-         Hash Cond: ("<0000000097>"."end" = x.id)
+         Hash Cond: ("<0000000113>"."end" = x.id)
          ->  Hash Join
-               Hash Cond: ("<0000000097>".start = a.id)
-               ->  Seq Scan on knows "<0000000097>"
+               Hash Cond: ("<0000000113>".start = a.id)
+               ->  Seq Scan on knows "<0000000113>"
                ->  Hash
                      ->  Seq Scan on person a
          ->  Hash
@@ -824,13 +897,13 @@ EXPLAIN (costs off) MATCH (a:person)-[:knows]->({name:'bob'}) RETURN a.name AS a
 ------------------------------------------------------------------------
  Nested Loop
    ->  Hash Join
-         Hash Cond: ("<0000000098>"."end" = "<0000000099>".id)
-         ->  Seq Scan on knows "<0000000098>"
+         Hash Cond: ("<0000000114>"."end" = "<0000000115>".id)
+         ->  Seq Scan on knows "<0000000114>"
          ->  Hash
-               ->  Seq Scan on person "<0000000099>"
+               ->  Seq Scan on person "<0000000115>"
                      Filter: (properties.'name'::text = '"bob"'::jsonb)
    ->  Index Scan using person_pkey on person a
-         Index Cond: (id = "<0000000098>".start)
+         Index Cond: (id = "<0000000114>".start)
 (9 rows)
 
 MATCH (a:person)-[:knows]->({name:'bob'}) RETURN a.name AS a ORDER BY a;
@@ -856,11 +929,11 @@ EXPLAIN (costs off) MATCH (a:person)-[:knows]->(x) WHERE x.name <> a.name RETURN
                                QUERY PLAN                                
 -------------------------------------------------------------------------
  Hash Join
-   Hash Cond: ("<0000000104>"."end" = x.id)
+   Hash Cond: ("<0000000120>"."end" = x.id)
    Join Filter: (x.properties.'name'::text <> a.properties.'name'::text)
    ->  Hash Join
-         Hash Cond: ("<0000000104>".start = a.id)
-         ->  Seq Scan on knows "<0000000104>"
+         Hash Cond: ("<0000000120>".start = a.id)
+         ->  Seq Scan on knows "<0000000120>"
          ->  Hash
                ->  Seq Scan on person a
    ->  Hash
@@ -891,14 +964,14 @@ EXPLAIN (costs off) MATCH (a:person)-[:knows*1..2]->() RETURN a.name AS a;
                        QUERY PLAN                        
 ---------------------------------------------------------
  Hash Join
-   Hash Cond: ("<0000000107>"."end" = "<0000000108>".id)
+   Hash Cond: ("<0000000123>"."end" = "<0000000124>".id)
    ->  Nested Loop
          ->  Seq Scan on person a
-         ->  Subquery Scan on "<0000000107>"
+         ->  Subquery Scan on "<0000000123>"
                ->  Graph VLE on knows [1..2]
                      ->  Result
    ->  Hash
-         ->  Seq Scan on person "<0000000108>"
+         ->  Seq Scan on person "<0000000124>"
 (9 rows)
 
 MATCH (a:person)-[:knows*1..2]->() RETURN a.name AS a ORDER BY a;
@@ -927,22 +1000,22 @@ EXPLAIN (costs off) MATCH (a:person)-[:knows*1..2]->()-[d]->(e) RETURN a.name AS
 ---------------------------------------------------------------------------
  Nested Loop
    ->  Hash Join
-         Hash Cond: (d.start = "<0000000114>".id)
-         Join Filter: (array_position("<0000000113>".ids, d.id) IS NULL)
+         Hash Cond: (d.start = "<0000000130>".id)
+         Join Filter: (array_position("<0000000129>".ids, d.id) IS NULL)
          ->  Append
                ->  Seq Scan on knows d_1
                ->  Seq Scan on lives_in d_2
                ->  Seq Scan on works_at d_3
          ->  Hash
                ->  Hash Join
-                     Hash Cond: ("<0000000113>"."end" = "<0000000114>".id)
+                     Hash Cond: ("<0000000129>"."end" = "<0000000130>".id)
                      ->  Nested Loop
                            ->  Seq Scan on person a
-                           ->  Subquery Scan on "<0000000113>"
+                           ->  Subquery Scan on "<0000000129>"
                                  ->  Graph VLE on knows [1..2]
                                        ->  Result
                      ->  Hash
-                           ->  Seq Scan on person "<0000000114>"
+                           ->  Seq Scan on person "<0000000130>"
    ->  Append
          ->  Index Scan using person_pkey on person e_1
                Index Cond: (id = d."end")
@@ -959,19 +1032,19 @@ EXPLAIN (costs off) MATCH (a:person)-[b]->()-[:knows*1..2]->(c) RETURN a.name AS
  Nested Loop
    ->  Nested Loop
          ->  Nested Loop
-               Join Filter: (array_position("<0000000116>".ids, b.id) IS NULL)
+               Join Filter: (array_position("<0000000132>".ids, b.id) IS NULL)
                ->  Nested Loop
-                     ->  Seq Scan on person "<0000000115>"
-                     ->  Subquery Scan on "<0000000116>"
-                           Filter: ("<0000000115>".id = "<0000000116>".start)
+                     ->  Seq Scan on person "<0000000131>"
+                     ->  Subquery Scan on "<0000000132>"
+                           Filter: ("<0000000131>".id = "<0000000132>".start)
                            ->  Graph VLE on knows [1..2]
                                  ->  Result
                ->  Index Scan using knows_end_idx on knows b
-                     Index Cond: ("end" = "<0000000115>".id)
+                     Index Cond: ("end" = "<0000000131>".id)
          ->  Index Scan using person_pkey on person a
                Index Cond: (id = b.start)
    ->  Index Only Scan using person_pkey on person c
-         Index Cond: (id = "<0000000116>"."end")
+         Index Cond: (id = "<0000000132>"."end")
 (16 rows)
 
 -- ============================================================
@@ -981,18 +1054,18 @@ EXPLAIN (costs off) MATCH (a:person) OPTIONAL MATCH (a)-[:knows]->() RETURN a.na
                                          QUERY PLAN                                         
 --------------------------------------------------------------------------------------------
  Hash Right Join
-   Hash Cond: ("<0000000117>".start = a.id)
+   Hash Cond: ("<0000000133>".start = a.id)
    ->  Merge Join
-         Merge Cond: ("<0000000117>"."end" = "<0000000118>".id)
-         ->  Index Only Scan using knows_end_idx on knows "<0000000117>"
+         Merge Cond: ("<0000000133>"."end" = "<0000000134>".id)
+         ->  Index Only Scan using knows_end_idx on knows "<0000000133>"
          ->  Materialize
                ->  Merge Append
-                     Sort Key: "<0000000118>".id
-                     ->  Index Only Scan using ag_vertex_pkey on ag_vertex "<0000000118>_1"
-                     ->  Index Only Scan using person_pkey on person "<0000000118>_2"
-                     ->  Index Only Scan using city_pkey on city "<0000000118>_3"
-                     ->  Index Only Scan using company_pkey on company "<0000000118>_4"
-                     ->  Index Only Scan using country_pkey on country "<0000000118>_5"
+                     Sort Key: "<0000000134>".id
+                     ->  Index Only Scan using ag_vertex_pkey on ag_vertex "<0000000134>_1"
+                     ->  Index Only Scan using person_pkey on person "<0000000134>_2"
+                     ->  Index Only Scan using city_pkey on city "<0000000134>_3"
+                     ->  Index Only Scan using company_pkey on company "<0000000134>_4"
+                     ->  Index Only Scan using country_pkey on country "<0000000134>_5"
    ->  Hash
          ->  Seq Scan on person a
 (15 rows)
@@ -1025,14 +1098,14 @@ EXPLAIN (costs off) MATCH p = (a:person)-[:knows]->() RETURN nodes(p) AS ns;
                        QUERY PLAN                        
 ---------------------------------------------------------
  Hash Join
-   Hash Cond: ("<0000000123>"."end" = "<0000000124>".id)
+   Hash Cond: ("<0000000139>"."end" = "<0000000140>".id)
    ->  Hash Join
-         Hash Cond: ("<0000000123>".start = a.id)
-         ->  Seq Scan on knows "<0000000123>"
+         Hash Cond: ("<0000000139>".start = a.id)
+         ->  Seq Scan on knows "<0000000139>"
          ->  Hash
                ->  Seq Scan on person a
    ->  Hash
-         ->  Seq Scan on person "<0000000124>"
+         ->  Seq Scan on person "<0000000140>"
 (9 rows)
 
 MATCH p = (a:person)-[:knows]->() RETURN size(nodes(p)) AS n ORDER BY n;
@@ -1053,14 +1126,13 @@ MATCH p = (a:person)-[:knows]->() RETURN size(nodes(p)) AS n ORDER BY n;
 SET enable_graph_endpoint_elision = true;
 -- ELIDE: the length of a fixed-shape path reads nothing
 EXPLAIN (costs off) MATCH p = (a:person)-[:knows]->() RETURN length(p) AS len;
-                 QUERY PLAN                 
---------------------------------------------
- Hash Join
-   Hash Cond: ("<0000000129>".start = a.id)
-   ->  Seq Scan on knows "<0000000129>"
-   ->  Hash
-         ->  Seq Scan on person a
-(5 rows)
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on knows "<0000000145>"
+   Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Bitmap Index Scan on knows_start_idx
+         Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+(4 rows)
 
 MATCH p = (a:person)-[:knows]->() RETURN length(p) AS len ORDER BY len;
  len 
@@ -1085,10 +1157,10 @@ EXPLAIN (costs off) MATCH (a:person)-[:knows]->(a) RETURN a.name AS a;
                    QUERY PLAN                    
 -------------------------------------------------
  Nested Loop
-   ->  Seq Scan on knows "<0000000135>"
+   ->  Seq Scan on knows "<0000000151>"
          Filter: (start = "end")
    ->  Index Scan using person_pkey on person a
-         Index Cond: (id = "<0000000135>".start)
+         Index Cond: (id = "<0000000151>".start)
 (5 rows)
 
 MATCH (a:person)-[:knows]->(a) RETURN a.name AS a ORDER BY a;
@@ -1113,11 +1185,11 @@ EXPLAIN (costs off) MATCH (a:person), () RETURN a.name AS a;
 ----------------------------------------------------
  Nested Loop
    ->  Append
-         ->  Seq Scan on ag_vertex "<0000000138>_1"
-         ->  Seq Scan on person "<0000000138>_2"
-         ->  Seq Scan on city "<0000000138>_3"
-         ->  Seq Scan on company "<0000000138>_4"
-         ->  Seq Scan on country "<0000000138>_5"
+         ->  Seq Scan on ag_vertex "<0000000154>_1"
+         ->  Seq Scan on person "<0000000154>_2"
+         ->  Seq Scan on city "<0000000154>_3"
+         ->  Seq Scan on company "<0000000154>_4"
+         ->  Seq Scan on country "<0000000154>_5"
    ->  Materialize
          ->  Seq Scan on person a
 (9 rows)
@@ -1181,30 +1253,26 @@ SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
 -- (The join method may differ once a relation is removed; what must not change is
 -- the surviving neighbours' pruned label sets.)
 EXPLAIN (costs off) MATCH (a:n1)-[b:e1]->()-[d]->(f) RETURN label(f) AS f;
-                    QUERY PLAN                     
----------------------------------------------------
- Merge Join
-   Merge Cond: (b."end" = d.start)
-   Join Filter: (b.id <> d.id)
-   ->  Sort
-         Sort Key: b."end"
-         ->  Hash Join
-               Hash Cond: (b.start = a.id)
-               ->  Seq Scan on e1 b
-               ->  Hash
-                     ->  Seq Scan on n1 a
-   ->  Sort
-         Sort Key: d.start
-         ->  Hash Join
-               Hash Cond: (d."end" = f.id)
-               ->  Append
-                     ->  Seq Scan on e2 d_1
-                     ->  Seq Scan on e2b d_2
-               ->  Hash
-                     ->  Append
-                           ->  Seq Scan on n3 f_1
-                           ->  Seq Scan on n3b f_2
-(21 rows)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Hash Join
+         Hash Cond: (d.start = b."end")
+         Join Filter: (b.id <> d.id)
+         ->  Append
+               ->  Seq Scan on e2 d_1
+               ->  Seq Scan on e2b d_2
+         ->  Hash
+               ->  Bitmap Heap Scan on e1 b
+                     Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                     ->  Bitmap Index Scan on e1_start_idx
+                           Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+   ->  Append
+         ->  Index Scan using n3_pkey on n3 f_1
+               Index Cond: (id = d."end")
+         ->  Index Scan using n3b_pkey on n3b f_2
+               Index Cond: (id = d."end")
+(17 rows)
 
 SET enable_graph_endpoint_elision = false;
 EXPLAIN (costs off) MATCH (a:n1)-[b:e1]->()-[d]->(f) RETURN label(f) AS f;
@@ -1215,17 +1283,17 @@ EXPLAIN (costs off) MATCH (a:n1)-[b:e1]->()-[d]->(f) RETURN label(f) AS f;
    ->  Hash Join
          Hash Cond: (b.start = a.id)
          ->  Hash Join
-               Hash Cond: (d.start = "<0000000142>".id)
+               Hash Cond: (d.start = "<0000000158>".id)
                Join Filter: (b.id <> d.id)
                ->  Append
                      ->  Seq Scan on e2 d_1
                      ->  Seq Scan on e2b d_2
                ->  Hash
                      ->  Hash Join
-                           Hash Cond: (b."end" = "<0000000142>".id)
+                           Hash Cond: (b."end" = "<0000000158>".id)
                            ->  Seq Scan on e1 b
                            ->  Hash
-                                 ->  Seq Scan on n2 "<0000000142>"
+                                 ->  Seq Scan on n2 "<0000000158>"
          ->  Hash
                ->  Seq Scan on n1 a
    ->  Hash
@@ -1254,28 +1322,26 @@ SET enable_graph_endpoint_elision = true;
 -- longer chain: two anonymous middles (n2, n3) elided, yet the far neighbours g
 -- and h keep their pruned single-label scans ({e3}, {n4}).
 EXPLAIN (costs off) MATCH (a:n1)-[b:e1]->()-[d:e2]->()-[g]->(h) RETURN label(h) AS h;
-                        QUERY PLAN                        
-----------------------------------------------------------
- Hash Join
-   Hash Cond: (g."end" = h.id)
-   ->  Merge Join
-         Merge Cond: (d.start = b."end")
-         Join Filter: ((b.id <> d.id) AND (b.id <> g.id))
-         ->  Nested Loop
-               ->  Index Scan using e2_start_idx on e2 d
-               ->  Index Scan using e3_start_idx on e3 g
-                     Index Cond: (start = d."end")
-                     Filter: (d.id <> id)
-         ->  Sort
-               Sort Key: b."end"
-               ->  Hash Join
-                     Hash Cond: (b.start = a.id)
-                     ->  Seq Scan on e1 b
-                     ->  Hash
-                           ->  Seq Scan on n1 a
-   ->  Hash
-         ->  Seq Scan on n4 h
-(19 rows)
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         Join Filter: (b.id <> g.id)
+         ->  Hash Join
+               Hash Cond: (d.start = b."end")
+               Join Filter: (b.id <> d.id)
+               ->  Seq Scan on e2 d
+               ->  Hash
+                     ->  Bitmap Heap Scan on e1 b
+                           Recheck Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                           ->  Bitmap Index Scan on e1_start_idx
+                                 Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+         ->  Index Scan using e3_start_idx on e3 g
+               Index Cond: (start = d."end")
+               Filter: (d.id <> id)
+   ->  Index Scan using n4_pkey on n4 h
+         Index Cond: (id = g."end")
+(17 rows)
 
 SET enable_graph_endpoint_elision = false;
 EXPLAIN (costs off) MATCH (a:n1)-[b:e1]->()-[d:e2]->()-[g]->(h) RETURN label(h) AS h;
@@ -1286,24 +1352,24 @@ EXPLAIN (costs off) MATCH (a:n1)-[b:e1]->()-[d:e2]->()-[g]->(h) RETURN label(h) 
    ->  Hash Join
          Hash Cond: (b.start = a.id)
          ->  Hash Join
-               Hash Cond: (g.start = "<0000000148>".id)
+               Hash Cond: (g.start = "<0000000164>".id)
                Join Filter: ((b.id <> g.id) AND (d.id <> g.id))
                ->  Seq Scan on e3 g
                ->  Hash
                      ->  Hash Join
-                           Hash Cond: (d."end" = "<0000000148>".id)
+                           Hash Cond: (d."end" = "<0000000164>".id)
                            ->  Hash Join
-                                 Hash Cond: (d.start = "<0000000147>".id)
+                                 Hash Cond: (d.start = "<0000000163>".id)
                                  Join Filter: (b.id <> d.id)
                                  ->  Seq Scan on e2 d
                                  ->  Hash
                                        ->  Hash Join
-                                             Hash Cond: (b."end" = "<0000000147>".id)
+                                             Hash Cond: (b."end" = "<0000000163>".id)
                                              ->  Seq Scan on e1 b
                                              ->  Hash
-                                                   ->  Seq Scan on n2 "<0000000147>"
+                                                   ->  Seq Scan on n2 "<0000000163>"
                            ->  Hash
-                                 ->  Seq Scan on n3 "<0000000148>"
+                                 ->  Seq Scan on n3 "<0000000164>"
          ->  Hash
                ->  Seq Scan on n1 a
    ->  Hash
@@ -1703,77 +1769,32 @@ CREATE ELABEL cr;
 CREATE (:cn {nm: 'a'})-[:cr]->(:cn {nm: 'b'});
 EXPLAIN (COSTS OFF, VERBOSE)
 MATCH p=(a:cn)-[:cr]->(b:cn) RETURN size(vertices(p));
-                                                   QUERY PLAN                                                   
-----------------------------------------------------------------------------------------------------------------
- Hash Join
+                                                                                                         QUERY PLAN                                                                                                          
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using cr_end_idx on cnt_g.cr "<0000000204>"
    Output: '2'::jsonb
-   Inner Unique: true
-   Hash Cond: ("<0000000188>"."end" = b.id)
-   ->  Hash Join
-         Output: "<0000000188>"."end"
-         Inner Unique: true
-         Hash Cond: ("<0000000188>".start = a.id)
-         ->  Seq Scan on cnt_g.cr "<0000000188>"
-               Output: "<0000000188>".id, "<0000000188>".start, "<0000000188>"."end", "<0000000188>".properties
-         ->  Hash
-               Output: a.id
-               ->  Seq Scan on cnt_g.cn a
-                     Output: a.id
-   ->  Hash
-         Output: b.id
-         ->  Seq Scan on cnt_g.cn b
-               Output: b.id
-(18 rows)
+   Index Cond: (("<0000000204>"."end" >= '3.0'::graphid) AND ("<0000000204>"."end" <= '3.281474976710655'::graphid) AND ("<0000000204>".start >= '3.0'::graphid) AND ("<0000000204>".start <= '3.281474976710655'::graphid))
+(3 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE)
 MATCH p=(a:cn)-[:cr]->(b:cn) RETURN size(edges(p));
-                                                   QUERY PLAN                                                   
-----------------------------------------------------------------------------------------------------------------
- Hash Join
+                                                                                                         QUERY PLAN                                                                                                          
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using cr_end_idx on cnt_g.cr "<0000000205>"
    Output: '1'::jsonb
-   Inner Unique: true
-   Hash Cond: ("<0000000189>"."end" = b.id)
-   ->  Hash Join
-         Output: "<0000000189>"."end"
-         Inner Unique: true
-         Hash Cond: ("<0000000189>".start = a.id)
-         ->  Seq Scan on cnt_g.cr "<0000000189>"
-               Output: "<0000000189>".id, "<0000000189>".start, "<0000000189>"."end", "<0000000189>".properties
-         ->  Hash
-               Output: a.id
-               ->  Seq Scan on cnt_g.cn a
-                     Output: a.id
-   ->  Hash
-         Output: b.id
-         ->  Seq Scan on cnt_g.cn b
-               Output: b.id
-(18 rows)
+   Index Cond: (("<0000000205>"."end" >= '3.0'::graphid) AND ("<0000000205>"."end" <= '3.281474976710655'::graphid) AND ("<0000000205>".start >= '3.0'::graphid) AND ("<0000000205>".start <= '3.281474976710655'::graphid))
+(3 rows)
 
 -- size() answers with length(), so the two spellings are one question and have
 -- to be answered alike
 EXPLAIN (COSTS OFF, VERBOSE)
 MATCH p=(a:cn)-[:cr]->(b:cn) RETURN length(vertices(p));
-                                                   QUERY PLAN                                                   
-----------------------------------------------------------------------------------------------------------------
- Hash Join
+                                                                                                         QUERY PLAN                                                                                                          
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using cr_end_idx on cnt_g.cr "<0000000206>"
    Output: '2'::jsonb
-   Inner Unique: true
-   Hash Cond: ("<0000000190>"."end" = b.id)
-   ->  Hash Join
-         Output: "<0000000190>"."end"
-         Inner Unique: true
-         Hash Cond: ("<0000000190>".start = a.id)
-         ->  Seq Scan on cnt_g.cr "<0000000190>"
-               Output: "<0000000190>".id, "<0000000190>".start, "<0000000190>"."end", "<0000000190>".properties
-         ->  Hash
-               Output: a.id
-               ->  Seq Scan on cnt_g.cn a
-                     Output: a.id
-   ->  Hash
-         Output: b.id
-         ->  Seq Scan on cnt_g.cn b
-               Output: b.id
-(18 rows)
+   Index Cond: (("<0000000206>"."end" >= '3.0'::graphid) AND ("<0000000206>"."end" <= '3.281474976710655'::graphid) AND ("<0000000206>".start >= '3.0'::graphid) AND ("<0000000206>".start <= '3.281474976710655'::graphid))
+(3 rows)
 
 MATCH p=(a:cn)-[:cr]->(b:cn)
 RETURN size(vertices(p)), length(vertices(p)),
@@ -1790,10 +1811,10 @@ MATCH p=(a:cn)-[:cr*1..2]->(b) RETURN size(vertices(p));
                  QUERY PLAN                  
 ---------------------------------------------
  Hash Join
-   Hash Cond: ("<0000000192>"."end" = b.id)
+   Hash Cond: ("<0000000208>"."end" = b.id)
    ->  Nested Loop
          ->  Seq Scan on cn a
-         ->  Subquery Scan on "<0000000192>"
+         ->  Subquery Scan on "<0000000208>"
                ->  Graph VLE on cr [1..2]
                      ->  Result
    ->  Hash
@@ -1807,3 +1828,125 @@ drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel cn
 drop cascades to elabel cr
+-- ============================================================
+-- ELIDE: a labelled endpoint whose label is inherited by others
+-- ============================================================
+-- Label ids are handed out in creation order, so a label and the labels
+-- inheriting from it are not next to each other and one stretch of the graph id
+-- order will not describe them: the test becomes one stretch per label of the
+-- subtree.  Creating an unrelated label in between makes the ids genuinely
+-- non-adjacent, so a single stretch would be wrong here rather than merely
+-- imprecise.  Its own graph, so the vertex counts of the tests above stand.
+CREATE GRAPH eeh;
+SET graph_path = eeh;
+CREATE VLABEL giver;
+CREATE VLABEL org;
+CREATE VLABEL unrelated_gap;
+CREATE VLABEL charity INHERITS (org);
+CREATE ELABEL donates_to;
+CREATE (:giver {name:'alice'}), (:giver {name:'bob'}),
+       (:org {name:'plain_org'}), (:charity {name:'oxfam'}),
+       (:unrelated_gap {name:'gap'});
+MATCH (a:giver {name:'alice'}), (o:org {name:'plain_org'})
+  CREATE (a)-[:donates_to]->(o);
+MATCH (a:giver {name:'bob'}), (c:charity {name:'oxfam'})
+  CREATE (a)-[:donates_to]->(c);
+MATCH (a:giver {name:'alice'}), (g:unrelated_gap {name:'gap'})
+  CREATE (a)-[:donates_to]->(g);
+-- the label ids the subtree occupies, and the unrelated one sitting between them
+SELECT labname, labid FROM pg_catalog.ag_label
+WHERE graphid = (SELECT oid FROM pg_catalog.ag_graph WHERE graphname = 'eeh')
+  AND labname IN ('org', 'unrelated_gap', 'charity')
+ORDER BY labid;
+    labname    | labid 
+---------------+-------
+ org           |     4
+ unrelated_gap |     5
+ charity       |     6
+(3 rows)
+
+-- the parent label matches itself and the child, and not the unrelated label
+EXPLAIN (costs off) MATCH (a:giver)-[:donates_to]->(:org) RETURN a.name AS a;
+                                                                                    QUERY PLAN                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Hash Join
+   Hash Cond: (a.id = "<0000000210>".start)
+   ->  Seq Scan on giver a
+   ->  Hash
+         ->  Bitmap Heap Scan on donates_to "<0000000210>"
+               Recheck Cond: ((("end" >= '4.0'::graphid) AND ("end" <= '4.281474976710655'::graphid)) OR (("end" >= '6.0'::graphid) AND ("end" <= '6.281474976710655'::graphid)))
+               ->  BitmapOr
+                     ->  Bitmap Index Scan on donates_to_end_idx
+                           Index Cond: (("end" >= '4.0'::graphid) AND ("end" <= '4.281474976710655'::graphid))
+                     ->  Bitmap Index Scan on donates_to_end_idx
+                           Index Cond: (("end" >= '6.0'::graphid) AND ("end" <= '6.281474976710655'::graphid))
+(11 rows)
+
+MATCH (a:giver)-[:donates_to]->(:org) RETURN a.name AS a ORDER BY a;
+    a    
+---------
+ "alice"
+ "bob"
+(2 rows)
+
+SET enable_graph_endpoint_elision = false;
+MATCH (a:giver)-[:donates_to]->(:org) RETURN a.name AS a ORDER BY a;
+    a    
+---------
+ "alice"
+ "bob"
+(2 rows)
+
+SET enable_graph_endpoint_elision = true;
+-- ONLY the parent excludes the child
+EXPLAIN (costs off) MATCH (a:giver)-[:donates_to]->(:org ONLY) RETURN a.name AS a;
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Bitmap Heap Scan on donates_to "<0000000216>"
+         Recheck Cond: (("end" >= '4.0'::graphid) AND ("end" <= '4.281474976710655'::graphid))
+         ->  Bitmap Index Scan on donates_to_end_idx
+               Index Cond: (("end" >= '4.0'::graphid) AND ("end" <= '4.281474976710655'::graphid))
+   ->  Index Scan using giver_pkey on giver a
+         Index Cond: (id = "<0000000216>".start)
+(7 rows)
+
+MATCH (a:giver)-[:donates_to]->(:org ONLY) RETURN a.name AS a ORDER BY a;
+    a    
+---------
+ "alice"
+(1 row)
+
+SET enable_graph_endpoint_elision = false;
+MATCH (a:giver)-[:donates_to]->(:org ONLY) RETURN a.name AS a ORDER BY a;
+    a    
+---------
+ "alice"
+(1 row)
+
+SET enable_graph_endpoint_elision = true;
+-- and the child alone matches only itself
+MATCH (a:giver)-[:donates_to]->(:charity) RETURN a.name AS a ORDER BY a;
+   a   
+-------
+ "bob"
+(1 row)
+
+SET enable_graph_endpoint_elision = false;
+MATCH (a:giver)-[:donates_to]->(:charity) RETURN a.name AS a ORDER BY a;
+   a   
+-------
+ "bob"
+(1 row)
+
+SET enable_graph_endpoint_elision = true;
+DROP GRAPH eeh CASCADE;
+NOTICE:  drop cascades to 8 other objects
+DETAIL:  drop cascades to sequence eeh.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel giver
+drop cascades to vlabel org
+drop cascades to vlabel unrelated_gap
+drop cascades to vlabel charity
+drop cascades to elabel donates_to

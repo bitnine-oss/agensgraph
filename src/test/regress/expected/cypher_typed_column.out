@@ -379,23 +379,12 @@ MATCH (n:doc) RETURN n.age AS age, count(*) ORDER BY age;
 -- 2g. A promoted edge property resolves to its column on a directed pattern.
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:doc)-[e:rel]->(b:doc) RETURN e.weight;
-                              QUERY PLAN                              
-----------------------------------------------------------------------
- Nested Loop
+                                                                               QUERY PLAN                                                                                
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using rel_end_idx on tc.rel e
    Output: e.weight
-   Inner Unique: true
-   ->  Nested Loop
-         Output: e.weight, e."end"
-         Inner Unique: true
-         ->  Index Scan using rel_end_idx on tc.rel e
-               Output: e.id, e.start, e."end", e.properties, e.weight
-         ->  Index Only Scan using doc_pkey on tc.doc a
-               Output: a.id
-               Index Cond: (a.id = e.start)
-   ->  Index Only Scan using doc_pkey on tc.doc b
-         Output: b.id
-         Index Cond: (b.id = e."end")
-(14 rows)
+   Index Cond: ((e."end" >= '3.0'::graphid) AND (e."end" <= '3.281474976710655'::graphid) AND (e.start >= '3.0'::graphid) AND (e.start <= '3.281474976710655'::graphid))
+(3 rows)
 
 -- 2h. A label with no promoted column keeps its Seq-Scan-on-properties plan.
 SET enable_seqscan = on;
@@ -435,38 +424,34 @@ SET enable_property_promotion = on;
 -- 2k. A promoted EDGE property binds its btree on a directed pattern.
 EXPLAIN (COSTS OFF)
 MATCH (a:doc)-[e:rel]->(b:doc) WHERE e.weight > 5 RETURN a.name;
-                    QUERY PLAN                     
----------------------------------------------------
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
  Nested Loop
-   ->  Nested Loop
-         ->  Index Scan using rel_end_idx on rel e
-               Filter: (weight > 5)
-         ->  Index Scan using doc_pkey on doc a
-               Index Cond: (id = e.start)
-   ->  Index Only Scan using doc_pkey on doc b
-         Index Cond: (id = e."end")
-(8 rows)
+   ->  Index Scan using rel_start_idx on rel e
+         Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+         Filter: (weight > 5)
+   ->  Index Scan using doc_pkey on doc a
+         Index Cond: (id = e.start)
+(6 rows)
 
 -- 2l. On an UNDIRECTED pattern the edge scan is an Append over the two direction
 --     arms, each binding the same typed edge index.
 EXPLAIN (COSTS OFF)
 MATCH (a:doc)-[e:rel]-(b:doc) WHERE e.weight > 5 RETURN a.name;
-                               QUERY PLAN                                
--------------------------------------------------------------------------
+                                               QUERY PLAN                                                
+---------------------------------------------------------------------------------------------------------
  Nested Loop
-   Join Filter: (rel."end" = b.id)
-   ->  Index Only Scan using doc_pkey on doc b
+   Join Filter: (a.id = rel.start)
+   ->  Index Scan using doc_pkey on doc a
    ->  Materialize
-         ->  Nested Loop
-               Join Filter: (a.id = rel.start)
-               ->  Index Scan using doc_pkey on doc a
-               ->  Materialize
-                     ->  Append
-                           ->  Index Scan using rel_end_idx on rel
-                                 Filter: (weight > 5)
-                           ->  Index Scan using rel_end_idx on rel rel_1
-                                 Filter: (weight > 5)
-(13 rows)
+         ->  Append
+               ->  Index Scan using rel_start_idx on rel
+                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+                     Filter: (weight > 5)
+               ->  Index Scan using rel_end_idx on rel rel_1
+                     Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                     Filter: (weight > 5)
+(11 rows)
 
 -- 2m. A down-cased source key resolves to its typed column and binds that
 --     column's index (Index Cond over the column "v", not a jsonb expression).
