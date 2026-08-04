@@ -247,14 +247,13 @@ MATCH (a:person)-[]->()-[]->(c) RETURN a.name AS a, label(c) AS c ORDER BY a, c;
 SET enable_graph_endpoint_elision = true;
 -- labelled edges either side make the direct edge-to-edge join explicit in EXPLAIN.
 EXPLAIN (costs off) MATCH (a:person)-[b:lives_in]->()-[d:located_in]->(e) RETURN a.name AS a, label(e) AS e;
-                            QUERY PLAN                             
--------------------------------------------------------------------
+                               QUERY PLAN                               
+------------------------------------------------------------------------
  Hash Join
    Hash Cond: (d."end" = e.id)
    ->  Merge Join
          Merge Cond: (d.start = b."end")
-         Join Filter: (b.id <> d.id)
-         ->  Index Scan using located_in_start_idx on located_in d
+         ->  Index Only Scan using located_in_start_idx on located_in d
          ->  Sort
                Sort Key: b."end"
                ->  Hash Join
@@ -264,7 +263,7 @@ EXPLAIN (costs off) MATCH (a:person)-[b:lives_in]->()-[d:located_in]->(e) RETURN
                            ->  Seq Scan on person a
    ->  Hash
          ->  Seq Scan on country e
-(15 rows)
+(14 rows)
 
 MATCH (a:person)-[b:lives_in]->()-[d:located_in]->(e) RETURN a.name AS a, label(e) AS e ORDER BY a, e;
     a    |     e     
@@ -1329,7 +1328,6 @@ EXPLAIN (costs off) MATCH (a:n1)-[b:e1]->()-[d:e2]->()-[g]->(h) RETURN label(h) 
          Join Filter: (b.id <> g.id)
          ->  Hash Join
                Hash Cond: (d.start = b."end")
-               Join Filter: (b.id <> d.id)
                ->  Seq Scan on e2 d
                ->  Hash
                      ->  Bitmap Heap Scan on e1 b
@@ -1341,7 +1339,7 @@ EXPLAIN (costs off) MATCH (a:n1)-[b:e1]->()-[d:e2]->()-[g]->(h) RETURN label(h) 
                Filter: (d.id <> id)
    ->  Index Scan using n4_pkey on n4 h
          Index Cond: (id = g."end")
-(17 rows)
+(16 rows)
 
 SET enable_graph_endpoint_elision = false;
 EXPLAIN (costs off) MATCH (a:n1)-[b:e1]->()-[d:e2]->()-[g]->(h) RETURN label(h) AS h;
@@ -1360,7 +1358,6 @@ EXPLAIN (costs off) MATCH (a:n1)-[b:e1]->()-[d:e2]->()-[g]->(h) RETURN label(h) 
                            Hash Cond: (d."end" = "<0000000164>".id)
                            ->  Hash Join
                                  Hash Cond: (d.start = "<0000000163>".id)
-                                 Join Filter: (b.id <> d.id)
                                  ->  Seq Scan on e2 d
                                  ->  Hash
                                        ->  Hash Join
@@ -1374,7 +1371,7 @@ EXPLAIN (costs off) MATCH (a:n1)-[b:e1]->()-[d:e2]->()-[g]->(h) RETURN label(h) 
                ->  Seq Scan on n1 a
    ->  Hash
          ->  Seq Scan on n4 h
-(27 rows)
+(26 rows)
 
 SET enable_graph_endpoint_elision = true;
 MATCH (a:n1)-[b:e1]->()-[d:e2]->()-[g]->(h) RETURN label(h) AS h ORDER BY h;
@@ -1512,14 +1509,13 @@ SET enable_graph_endpoint_elision = true;
 -- fully-reverse chain: (y)<-[d]-()<-[b]-(x) -- a forward chain written right to
 -- left; the middle elides and reconnects on b.end = d.start.
 EXPLAIN (costs off) MATCH (y:dst)<-[d:r2]-()<-[b:r1]-(x:src) RETURN x.n AS x, y.n AS y;
-                   QUERY PLAN                    
--------------------------------------------------
+                      QUERY PLAN                      
+------------------------------------------------------
  Hash Join
    Hash Cond: (b.start = x.id)
    ->  Merge Join
          Merge Cond: (b."end" = d.start)
-         Join Filter: (d.id <> b.id)
-         ->  Index Scan using r1_end_idx on r1 b
+         ->  Index Only Scan using r1_end_idx on r1 b
          ->  Sort
                Sort Key: d.start
                ->  Hash Join
@@ -1529,7 +1525,7 @@ EXPLAIN (costs off) MATCH (y:dst)<-[d:r2]-()<-[b:r1]-(x:src) RETURN x.n AS x, y.
                            ->  Seq Scan on dst y
    ->  Hash
          ->  Seq Scan on src x
-(15 rows)
+(14 rows)
 
 MATCH (y:dst)<-[d:r2]-()<-[b:r1]-(x:src) RETURN x.n AS x, y.n AS y ORDER BY x, y;
   x   |  y   
