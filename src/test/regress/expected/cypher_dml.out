@@ -10382,29 +10382,16 @@ ANALYZE write_projection.wk;
 -- assembled: both come through as a null of their own type
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:wv)-[r:wk]->(b:wv) DELETE r;
-                                                   QUERY PLAN                                                    
------------------------------------------------------------------------------------------------------------------
+                                                                                      QUERY PLAN                                                                                       
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Graph Delete
    ->  Subquery Scan on _agens_default_s_1
          Output: NULL::vertex, _agens_default_s_1.r, NULL::vertex
          ->  Graph Delete eager
-               ->  Hash Join
+               ->  Seq Scan on write_projection.wk r
                      Output: NULL::vertex, ROW(r.id, r.start, r."end", r.properties, r.ctid)::edge, NULL::vertex
-                     Hash Cond: (b.id = r."end")
-                     ->  Seq Scan on write_projection.wv b
-                           Output: b.id, b.properties
-                     ->  Hash
-                           Output: r.id, r.start, r."end", r.properties, r.ctid
-                           ->  Hash Join
-                                 Output: r.id, r.start, r."end", r.properties, r.ctid
-                                 Hash Cond: (a.id = r.start)
-                                 ->  Seq Scan on write_projection.wv a
-                                       Output: a.id, a.properties
-                                 ->  Hash
-                                       Output: r.id, r.start, r."end", r.properties, r.ctid
-                                       ->  Seq Scan on write_projection.wk r
-                                             Output: r.id, r.start, r."end", r.properties, r.ctid
-(20 rows)
+                     Filter: ((r.start >= '3.0'::graphid) AND (r.start <= '3.281474976710655'::graphid) AND (r."end" >= '3.0'::graphid) AND (r."end" <= '3.281474976710655'::graphid))
+(7 rows)
 
 -- an endpoint the clause does remove is carried
 EXPLAIN (VERBOSE, COSTS OFF)
@@ -10419,20 +10406,14 @@ MATCH (a:wv)-[r:wk]->(b:wv) DELETE r, a;
                ->  Graph Delete eager
                      ->  Hash Join
                            Output: ROW(a.id, a.properties, a.ctid)::vertex, ROW(r.id, r.start, r."end", r.properties, r.ctid)::edge, NULL::vertex
-                           Hash Cond: (b.id = r."end")
-                           ->  Seq Scan on write_projection.wv b
-                                 Output: b.id, b.properties
+                           Hash Cond: (a.id = r.start)
+                           ->  Seq Scan on write_projection.wv a
+                                 Output: a.id, a.properties, a.ctid
                            ->  Hash
-                                 Output: a.id, a.properties, a.ctid, r.id, r.start, r."end", r.properties, r.ctid
-                                 ->  Hash Join
-                                       Output: a.id, a.properties, a.ctid, r.id, r.start, r."end", r.properties, r.ctid
-                                       Hash Cond: (a.id = r.start)
-                                       ->  Seq Scan on write_projection.wv a
-                                             Output: a.id, a.properties, a.ctid
-                                       ->  Hash
-                                             Output: r.id, r.start, r."end", r.properties, r.ctid
-                                             ->  Seq Scan on write_projection.wk r
-                                                   Output: r.id, r.start, r."end", r.properties, r.ctid
+                                 Output: r.id, r.start, r."end", r.properties, r.ctid
+                                 ->  Seq Scan on write_projection.wk r
+                                       Output: r.id, r.start, r."end", r.properties, r.ctid
+                                       Filter: ((r."end" >= '3.0'::graphid) AND (r."end" <= '3.281474976710655'::graphid))
          ->  Nested Loop
                Output: NULL::edge
                Join Filter: ((e.start = v.id) OR (e."end" = v.id))
@@ -10444,7 +10425,7 @@ MATCH (a:wv)-[r:wk]->(b:wv) DELETE r, a;
                            Output: e_1.start, e_1."end"
                      ->  Seq Scan on write_projection.wk e_2
                            Output: e_2.start, e_2."end"
-(33 rows)
+(27 rows)
 
 -- with a clause after it, the elements that clause reads are carried; the rest
 -- still are not, since a delete no longer hides its inputs from the planner
@@ -10465,16 +10446,10 @@ MATCH (a:wv)-[r:wk]->(b:wv) DELETE r RETURN b.n;
                                  Output: id, properties, ctid
                            ->  Hash
                                  Output: id, start, "end", properties, ctid
-                                 ->  Hash Join
+                                 ->  Seq Scan on write_projection.wk r
                                        Output: id, start, "end", properties, ctid
-                                       Hash Cond: (id = start)
-                                       ->  Seq Scan on write_projection.wv a
-                                             Output: id, properties
-                                       ->  Hash
-                                             Output: id, start, "end", properties, ctid
-                                             ->  Seq Scan on write_projection.wk r
-                                                   Output: id, start, "end", properties, ctid
-(22 rows)
+                                       Filter: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+(16 rows)
 
 -- and the answers are the same either way
 MATCH (a:wv)-[r:wk]->(b:wv) DELETE r RETURN b.n AS kept ORDER BY kept;

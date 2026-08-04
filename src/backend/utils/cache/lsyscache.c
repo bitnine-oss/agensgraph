@@ -3934,6 +3934,34 @@ get_labid_relid(Oid graphid, uint16 labid)
 	}
 }
 
+/*
+ * get_relid_labid
+ *		The label id of the label stored in the given relation.
+ *
+ * Returns InvalidLabid if the relation is not a graph label's storage.
+ */
+uint16
+get_relid_labid(Oid relid)
+{
+	HeapTuple	tp;
+
+	tp = SearchSysCache1(LABELRELID, ObjectIdGetDatum(relid));
+
+	if (HeapTupleIsValid(tp))
+	{
+		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
+		uint16		labid;
+
+		labid = labtup->labid;
+		ReleaseSysCache(tp);
+		return labid;
+	}
+	else
+	{
+		return InvalidLabid;
+	}
+}
+
 bool
 labid_exists(Oid graphid, uint16 labid)
 {

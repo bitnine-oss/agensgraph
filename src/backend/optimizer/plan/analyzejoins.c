@@ -23,7 +23,10 @@
 #include "postgres.h"
 
 #include "catalog/pg_class.h"
+#include "catalog/pg_inherits.h"
+#include "catalog/pg_operator_d.h"
 #include "catalog/pg_type.h"
+#include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/joininfo.h"
 #include "optimizer/optimizer.h"
@@ -79,7 +82,8 @@ static bool is_innerrel_unique_for(PlannerInfo *root,
 static int	self_join_candidates_cmp(const void *a, const void *b);
 static bool replace_relid_callback(Node *node,
 								   ChangeVarNodes_context *context);
-static bool graph_endpoint_is_elidable(PlannerInfo *root, Index rti);
+static bool graph_endpoint_is_elidable(PlannerInfo *root, Index rti,
+									   List **cols_out);
 static void remove_graph_endpoint_from_eclass(EquivalenceClass *ec, int relid);
 static void remove_graph_endpoint_from_query(PlannerInfo *root, int relid);
 
@@ -2543,11 +2547,32 @@ remove_useless_self_joins(PlannerInfo *root, List *joinlist)
  * edges stay connected without the middle scan; for a terminal endpoint the EC
  * collapses to a single member and the edge endpoint is simply unconstrained.
  *
+ * An endpoint naming a label -- the "(:bid)" in MATCH (a)-[b]->(:bid) -- joins
+ * for a second reason: the scan of that label's table is what tests the label.
+ * That test does not need the table either.  A vertex's label is the top
+ * sixteen bits of its graph id, so the ids of one label are a contiguous
+ * stretch of the graph id order, and asking whether an endpoint carries a label
+ * is asking whether the id an adjacent edge already holds falls in that
+ * stretch.  So such an endpoint is elided like any other, and the label it
+ * tested becomes a range on the adjacent edge's own endpoint column.  The
+ * ranges go on every adjacent column rather than one of them: an
+ * EquivalenceClass carries an equality to all its members, but not a range, so
+ * each edge has to be told separately, and each then restricts its own scan.
+ *
  * This runs after the graphmeta constraint solver has frozen every surviving
  * endpoint's pruned label set, so eliding an endpoint here cannot cost a
  * neighbor its scan pruning.  It is purely structural and needs no ag_graphmeta
  * statistics.
  */
+
+/*
+ * How many labels a range test will be written for.  A label with no children
+ * needs one range, which is the ordinary case; a label inherited by others
+ * needs one per label in the subtree, because label ids are handed out in
+ * creation order and a parent's children are not next to it.  Past this many an
+ * endpoint keeps its join, which is what it would have had anyway.
+ */
+#define GRAPH_ENDPOINT_MAX_LABIDS	8
 
 /*
  * Is this EquivalenceMember exactly the id column Var of relation rti?
@@ -2579,38 +2604,190 @@ em_is_endpoint_id(EquivalenceMember *em, Index rti)
 }
 
 /*
- * Decide whether the base relation rti is an anonymous endpoint vertex that
- * the rest of the query never uses, and can therefore be elided.
+ * The label ids a labelled endpoint can hold: the label it names, and -- where
+ * the endpoint reads the label's subtree rather than its one table -- every
+ * label inheriting from it.
+ *
+ * Returns NULL when the set cannot be established, or is wider than a range
+ * test should be written for; the endpoint then keeps its join.
+ */
+static Bitmapset *
+graph_endpoint_labid_set(RangeTblEntry *rte)
+{
+	List	   *inheritors;
+	ListCell   *lc;
+	Bitmapset  *labids = NULL;
+
+	if (!rte->inh)
+	{
+		/*
+		 * One table: either the pattern said ONLY, or nothing inherits from this
+		 * label.  Its own label is the whole answer.
+		 */
+		uint16		labid = get_relid_labid(rte->relid);
+
+		if (labid == InvalidLabid)
+			return NULL;
+		return bms_make_singleton((int) labid);
+	}
+
+	/* No lock is taken: the endpoint's own scan already holds one. */
+	inheritors = find_all_inheritors(rte->relid, NoLock, NULL);
+
+	foreach(lc, inheritors)
+	{
+		uint16		labid = get_relid_labid(lfirst_oid(lc));
+
+		if (labid == InvalidLabid)
+		{
+			/* Not a label's storage, so its rows carry no label in their ids. */
+			bms_free(labids);
+			list_free(inheritors);
+			return NULL;
+		}
+		labids = bms_add_member(labids, (int) labid);
+	}
+	list_free(inheritors);
+
+	if (bms_num_members(labids) > GRAPH_ENDPOINT_MAX_LABIDS)
+	{
+		bms_free(labids);
+		return NULL;
+	}
+
+	return labids;
+}
+
+/*
+ * The tests that the graph id in `col' belongs to one of `labids'.
+ *
+ * One label is one stretch of the graph id order, so one label is two tests
+ * against its ends.  They are returned separately rather than conjoined, so
+ * that each is a restriction in its own right and an index on the column can
+ * seek to it.  Several labels cannot be written that way -- their stretches are
+ * not adjacent -- so they become one test of alternatives.
+ *
+ * The upper end is included rather than excluding the next label's first id:
+ * the last label there can be has no next label to name.
+ */
+static List *
+make_graph_labid_clauses(Expr *col, Bitmapset *labids)
+{
+	List	   *alternatives = NIL;
+	int			labid = -1;
+
+	while ((labid = bms_next_member(labids, labid)) >= 0)
+	{
+		Graphid		lo;
+		Graphid		hi;
+		Expr	   *from;
+		Expr	   *to;
+
+		GraphidSet(&lo, labid, 0);
+		GraphidSet(&hi, labid, GRAPHID_LOCID_MAX);
+
+		from = make_opclause(OID_GRAPHID_GE_OP, BOOLOID, false,
+							 (Expr *) copyObject(col),
+							 (Expr *) makeConst(GRAPHIDOID, -1, InvalidOid,
+												sizeof(Graphid),
+												GraphidGetDatum(lo),
+												false, FLOAT8PASSBYVAL),
+							 InvalidOid, InvalidOid);
+		to = make_opclause(OID_GRAPHID_LE_OP, BOOLOID, false,
+						   (Expr *) copyObject(col),
+						   (Expr *) makeConst(GRAPHIDOID, -1, InvalidOid,
+											  sizeof(Graphid),
+											  GraphidGetDatum(hi),
+											  false, FLOAT8PASSBYVAL),
+						   InvalidOid, InvalidOid);
+
+		if (bms_num_members(labids) == 1)
+			return list_make2(from, to);
+
+		alternatives = lappend(alternatives,
+							   make_andclause(list_make2(from, to)));
+	}
+
+	return list_make1(make_orclause(alternatives));
+}
+
+/*
+ * Restrict every column that held the elided endpoint's id to the endpoint's
+ * label, so that the label the endpoint's scan used to test is still tested.
+ */
+static void
+add_graph_endpoint_label_quals(PlannerInfo *root, List *cols, Bitmapset *labids)
+{
+	ListCell   *lc;
+
+	foreach(lc, cols)
+	{
+		ListCell   *lc2;
+
+		foreach(lc2, make_graph_labid_clauses((Expr *) lfirst(lc), labids))
+		{
+			RestrictInfo *rinfo;
+
+			rinfo = make_restrictinfo(root, (Expr *) lfirst(lc2),
+									  true,		/* is_pushed_down */
+									  false,	/* has_clone */
+									  false,	/* is_clone */
+									  false,	/* pseudoconstant */
+									  0,		/* security_level */
+									  NULL, NULL, NULL);
+			distribute_restrictinfo_to_rels(root, rinfo);
+		}
+	}
+}
+
+/*
+ * Decide whether the base relation rti is an endpoint vertex that the rest of
+ * the query never uses, and can therefore be elided.
+ *
+ * On success *cols_out holds the columns that carried the endpoint's id, which
+ * are where a labelled endpoint's label has to be tested once its scan is gone.
+ * The caller owns both outputs.
  */
 static bool
-graph_endpoint_is_elidable(PlannerInfo *root, Index rti)
+graph_endpoint_is_elidable(PlannerInfo *root, Index rti, List **cols_out)
 {
 	RelOptInfo *rel = root->simple_rel_array[rti];
 	RangeTblEntry *rte = root->simple_rte_array[rti];
 	Relids		adjacent = NULL;
 	Relids		inputrelids;
+	List	   *cols = NIL;
 	bool		found_ec = false;
 	int			attroff;
 	int			r;
 	ListCell   *lc;
 	ListCell   *lc2;
 
-	/* Must be a plain base-relation scan of an unlabelled MATCH node. */
+	*cols_out = NIL;
+
+	/* Must be a plain base-relation scan of a MATCH node. */
 	if (rel == NULL || rte == NULL)
 		return false;
 	if (rel->reloptkind != RELOPT_BASEREL)
 		return false;
-	if (rte->rtekind != RTE_RELATION || !rte->inh || !OidIsValid(rte->relid))
+	if (rte->rtekind != RTE_RELATION || !OidIsValid(rte->relid))
 		return false;
 	if (!OidIsValid(rte->graphPruneGraph) ||
-		rte->graphPruneRole != GRAPHPRUNE_ROLE_NODE ||
-		rte->graphPruneLabid != 0)
+		rte->graphPruneRole != GRAPHPRUNE_ROLE_NODE)
+		return false;
+
+	/*
+	 * An endpoint matching any label at all reads the whole vertex hierarchy,
+	 * and has to: the root of that hierarchy holds no vertex of its own, so
+	 * reading only the root matches nothing and that join is the opposite of
+	 * redundant.  An endpoint naming a label may read a subtree or one table --
+	 * the label test written for it below says which -- and either is fine.
+	 */
+	if (rte->graphPruneLabid == InvalidLabid && !rte->inh)
 		return false;
 
 	/*
 	 * Bail on anything whose references we cannot safely delete without a
-	 * substitution target.  A labelled endpoint (excluded above) is a label
-	 * filter and must be kept; these keep everything else honest.
+	 * substitution target.
 	 */
 	if ((int) rti == root->parse->resultRelation)
 		return false;
@@ -2693,10 +2870,23 @@ graph_endpoint_is_elidable(PlannerInfo *root, Index rti)
 		{
 			EquivalenceMember *em = (EquivalenceMember *) lfirst(lc2);
 
-			if (bms_is_member(rti, em->em_relids) && !em_is_endpoint_id(em, rti))
+			if (bms_is_member(rti, em->em_relids))
 			{
-				bms_free(adjacent);
-				return false;
+				if (!em_is_endpoint_id(em, rti))
+				{
+					bms_free(adjacent);
+					list_free(cols);
+					return false;
+				}
+			}
+			else if (bms_membership(em->em_relids) == BMS_SINGLETON)
+			{
+				/*
+				 * A single relation's stand-in for the endpoint's id -- the
+				 * adjacent edge's own endpoint column.  Equal to the id by this
+				 * class, so a test of the endpoint's label reads here instead.
+				 */
+				cols = lappend(cols, em->em_expr);
 			}
 		}
 
@@ -2707,12 +2897,14 @@ graph_endpoint_is_elidable(PlannerInfo *root, Index rti)
 	if (!found_ec)
 	{
 		bms_free(adjacent);
+		list_free(cols);
 		return false;
 	}
 	adjacent = bms_del_member(adjacent, rti);
 	if (bms_is_empty(adjacent))
 	{
 		bms_free(adjacent);
+		list_free(cols);
 		return false;
 	}
 
@@ -2733,6 +2925,7 @@ graph_endpoint_is_elidable(PlannerInfo *root, Index rti)
 			 ert->graphPruneRole != GRAPHPRUNE_ROLE_UNDIR_EDGE))
 		{
 			bms_free(adjacent);
+			list_free(cols);
 			return false;
 		}
 	}
@@ -2751,12 +2944,15 @@ graph_endpoint_is_elidable(PlannerInfo *root, Index rti)
 		{
 			bms_free(inputrelids);
 			bms_free(adjacent);
+			list_free(cols);
 			return false;
 		}
 	}
 
 	bms_free(inputrelids);
 	bms_free(adjacent);
+
+	*cols_out = cols;
 	return true;
 }
 
@@ -2898,10 +3094,32 @@ remove_useless_graph_endpoints(PlannerInfo *root, List *joinlist)
 	 */
 	for (rti = 1; rti < root->simple_rel_array_size; rti++)
 	{
+		RangeTblEntry *rte;
+		List	   *cols;
+		Bitmapset  *labids = NULL;
 		int			nremoved = 0;
 
-		if (!graph_endpoint_is_elidable(root, rti))
+		if (!graph_endpoint_is_elidable(root, rti, &cols))
 			continue;
+
+		/*
+		 * An endpoint naming a label needs that label tested somewhere else
+		 * before its scan goes.  Settle whether it can be, while the endpoint is
+		 * still whole: past the removal below there is nothing to put back.
+		 */
+		rte = root->simple_rte_array[rti];
+		if (rte->graphPruneLabid != InvalidLabid)
+		{
+			labids = graph_endpoint_labid_set(rte);
+			if (labids == NULL)
+			{
+				list_free(cols);
+				continue;
+			}
+			add_graph_endpoint_label_quals(root, cols, labids);
+			bms_free(labids);
+		}
+		list_free(cols);
 
 		remove_graph_endpoint_from_query(root, rti);
 		joinlist = remove_rel_from_joinlist(joinlist, rti, &nremoved);
