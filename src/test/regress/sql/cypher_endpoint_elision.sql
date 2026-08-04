@@ -604,14 +604,18 @@ CREATE VLABEL unrelated_gap;
 CREATE VLABEL charity INHERITS (org);
 CREATE ELABEL donates_to;
 
-CREATE (:giver {name:'alice'}), (:giver {name:'bob'}),
+-- Every target label is given a giver of its own, so that a range wider than
+-- the label it was written for shows up as a giver that should not be there.  A
+-- giver reaching two of the targets would let an over-broad range hide behind
+-- the row it is already entitled to return.
+CREATE (:giver {name:'alice'}), (:giver {name:'bob'}), (:giver {name:'carol'}),
        (:org {name:'plain_org'}), (:charity {name:'oxfam'}),
        (:unrelated_gap {name:'gap'});
 MATCH (a:giver {name:'alice'}), (o:org {name:'plain_org'})
   CREATE (a)-[:donates_to]->(o);
 MATCH (a:giver {name:'bob'}), (c:charity {name:'oxfam'})
   CREATE (a)-[:donates_to]->(c);
-MATCH (a:giver {name:'alice'}), (g:unrelated_gap {name:'gap'})
+MATCH (a:giver {name:'carol'}), (g:unrelated_gap {name:'gap'})
   CREATE (a)-[:donates_to]->(g);
 
 -- the label ids the subtree occupies, and the unrelated one sitting between them
@@ -634,10 +638,363 @@ SET enable_graph_endpoint_elision = false;
 MATCH (a:giver)-[:donates_to]->(:org ONLY) RETURN a.name AS a ORDER BY a;
 SET enable_graph_endpoint_elision = true;
 
--- and the child alone matches only itself
+-- and the child alone matches only itself -- a label nothing inherits is one
+-- stretch, so one range and no alternatives
+EXPLAIN (costs off) MATCH (a:giver)-[:donates_to]->(:charity) RETURN a.name AS a;
 MATCH (a:giver)-[:donates_to]->(:charity) RETURN a.name AS a ORDER BY a;
 SET enable_graph_endpoint_elision = false;
 MATCH (a:giver)-[:donates_to]->(:charity) RETURN a.name AS a ORDER BY a;
 SET enable_graph_endpoint_elision = true;
 
+-- the label whose id sits between the parent's and the child's answers only its
+-- own giver: neither range reaches it, and the pair of them does not close over
+-- the gap between them
+EXPLAIN (costs off) MATCH (a:giver)-[:donates_to]->(:unrelated_gap) RETURN a.name AS a;
+MATCH (a:giver)-[:donates_to]->(:unrelated_gap) RETURN a.name AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:giver)-[:donates_to]->(:unrelated_gap) RETURN a.name AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
 DROP GRAPH eeh CASCADE;
+
+-- ============================================================
+-- ELIDE: a label whose id sets the top bit of a graph id
+-- ============================================================
+-- A label id occupies the top sixteen bits of a graph id, so a label id of
+-- 32768 or more sets the id's sign bit.  Graph ids are compared as unsigned, so
+-- such ids still sort above every id of a lower label and the stretch a range
+-- names is still the stretch the index holds; read as signed they would sort
+-- below, and a range written for one label would answer for another.
+--
+-- Label ids come from a per-graph sequence, so pushing that sequence past 32767
+-- is enough to get one.  Every target label is given a source of its own, so
+-- that a range reaching a label it was not written for shows up as a source that
+-- should not be there rather than hiding behind a row already expected.
+CREATE GRAPH eeb;
+SET graph_path = eeb;
+
+CREATE VLABEL src;
+CREATE VLABEL low_t;
+-- past the sign bit from here on
+SELECT setval('eeb.ag_label_seq', 40000);
+CREATE VLABEL high_t;
+CREATE VLABEL high_u;
+-- created after high_u, so high_t's subtree is two stretches with high_u's
+-- between them
+CREATE VLABEL high_kid INHERITS (high_t);
+CREATE ELABEL links;
+
+CREATE (:src {n:'to_low'})-[:links]->(:low_t),
+       (:src {n:'to_high_t'})-[:links]->(:high_t),
+       (:src {n:'to_high_u'})-[:links]->(:high_u),
+       (:src {n:'to_high_kid'})-[:links]->(:high_kid);
+
+-- the label ids in play: one below the sign bit, three above it
+SELECT labname, labid FROM pg_catalog.ag_label
+WHERE graphid = (SELECT oid FROM pg_catalog.ag_graph WHERE graphname = 'eeb')
+  AND labname IN ('low_t', 'high_t', 'high_u', 'high_kid')
+ORDER BY labid;
+
+-- the ordering the ranges rest on: the first id of a label past the sign bit is
+-- above the last id of a label below it
+SELECT '40001.0'::graphid > '4.281474976710655'::graphid AS high_above_low;
+
+-- a label below the sign bit answers only for itself, though every other vertex
+-- in the graph has an id whose top bit is set
+EXPLAIN (costs off) MATCH (a:src)-[:links]->(:low_t) RETURN a.n AS a;
+MATCH (a:src)-[:links]->(:low_t) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:src)-[:links]->(:low_t) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- one label past the sign bit, read alone
+EXPLAIN (costs off) MATCH (a:src)-[:links]->(:high_t ONLY) RETURN a.n AS a;
+MATCH (a:src)-[:links]->(:high_t ONLY) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:src)-[:links]->(:high_t ONLY) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- the label sitting between the two the subtree below occupies: its own source,
+-- and neither neighbour's range reaches it
+EXPLAIN (costs off) MATCH (a:src)-[:links]->(:high_u) RETURN a.n AS a;
+MATCH (a:src)-[:links]->(:high_u) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:src)-[:links]->(:high_u) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- a subtree of two labels past the sign bit: two stretches, and the label
+-- between them stays out
+EXPLAIN (costs off) MATCH (a:src)-[:links]->(:high_t) RETURN a.n AS a;
+MATCH (a:src)-[:links]->(:high_t) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:src)-[:links]->(:high_t) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- the child of that subtree, alone
+EXPLAIN (costs off) MATCH (a:src)-[:links]->(:high_kid) RETURN a.n AS a;
+MATCH (a:src)-[:links]->(:high_kid) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:src)-[:links]->(:high_kid) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+DROP GRAPH eeb CASCADE;
+
+-- ============================================================
+-- ELIDE / NOT ELIDE: how many stretches a range test is written for
+-- ============================================================
+-- A label inherited by others needs one stretch per label of its subtree, and
+-- past eight of them the endpoint keeps the join it would have had anyway.  Both
+-- sides of that boundary out of one hierarchy: eight reads eight labels and
+-- elides, and the label eight itself inherits from reads nine and does not.  An
+-- unrelated label created among the children keeps the ids from running
+-- together, so eight stretches really are eight.
+CREATE GRAPH eew;
+SET graph_path = eew;
+
+CREATE VLABEL src;
+CREATE VLABEL nine;
+CREATE VLABEL eight INHERITS (nine);
+CREATE VLABEL w1 INHERITS (eight);
+CREATE VLABEL w2 INHERITS (eight);
+CREATE VLABEL gap;
+CREATE VLABEL w3 INHERITS (eight);
+CREATE VLABEL w4 INHERITS (eight);
+CREATE VLABEL w5 INHERITS (eight);
+CREATE VLABEL w6 INHERITS (eight);
+CREATE VLABEL w7 INHERITS (eight);
+CREATE ELABEL to_t;
+
+-- one source per target label, named after it, so the answer says which labels
+-- the ranges admitted
+CREATE (:src {n:'nine'})-[:to_t]->(:nine),
+       (:src {n:'eight'})-[:to_t]->(:eight),
+       (:src {n:'w1'})-[:to_t]->(:w1),
+       (:src {n:'w2'})-[:to_t]->(:w2),
+       (:src {n:'w3'})-[:to_t]->(:w3),
+       (:src {n:'w4'})-[:to_t]->(:w4),
+       (:src {n:'w5'})-[:to_t]->(:w5),
+       (:src {n:'w6'})-[:to_t]->(:w6),
+       (:src {n:'w7'})-[:to_t]->(:w7),
+       (:src {n:'gap'})-[:to_t]->(:gap);
+
+SELECT labname, labid FROM pg_catalog.ag_label
+WHERE graphid = (SELECT oid FROM pg_catalog.ag_graph WHERE graphname = 'eew')
+  AND labname <> 'ag_vertex' AND labname <> 'ag_edge'
+ORDER BY labid;
+
+-- eight labels: elided, one stretch each, and neither `nine' nor `gap'
+EXPLAIN (costs off) MATCH (a:src)-[:to_t]->(:eight) RETURN a.n AS a;
+MATCH (a:src)-[:to_t]->(:eight) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:src)-[:to_t]->(:eight) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- nine labels: the endpoint keeps its scan and its join, and answers the same
+EXPLAIN (costs off) MATCH (a:src)-[:to_t]->(:nine) RETURN a.n AS a;
+MATCH (a:src)-[:to_t]->(:nine) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:src)-[:to_t]->(:nine) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- ONLY brings either of them back to one table and one stretch
+EXPLAIN (costs off) MATCH (a:src)-[:to_t]->(:nine ONLY) RETURN a.n AS a;
+MATCH (a:src)-[:to_t]->(:nine ONLY) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:src)-[:to_t]->(:nine ONLY) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+DROP GRAPH eew CASCADE;
+
+-- ============================================================
+-- ELIDE: one relationship label reaching several vertex labels
+-- ============================================================
+-- Where a relationship label's rows begin at more than one vertex label, or end
+-- at more than one, scan pruning cannot narrow that relationship by the label
+-- the pattern asks for -- the relationship's own table holds rows for every one
+-- of them.  The range on its endpoint column is then the only thing separating
+-- them, so this is the shape where an over-broad range would return rows the
+-- pattern did not ask for.
+CREATE GRAPH eem;
+SET graph_path = eem;
+
+CREATE VLABEL author;
+CREATE VLABEL editor;
+CREATE VLABEL book;
+CREATE VLABEL journal;
+CREATE ELABEL wrote;
+
+CREATE (:author {n:'ann'})-[:wrote]->(:book {n:'b1'});
+CREATE (:editor {n:'ed'})-[:wrote]->(:book {n:'b2'});
+MATCH (a:author {n:'ann'}) CREATE (a)-[:wrote]->(:journal {n:'j1'});
+
+-- the start side elided: `wrote' begins at both author and editor, so the range
+-- on wrote.start is what tells them apart
+EXPLAIN (costs off) MATCH (:author)-[:wrote]->(x) RETURN x.n AS x;
+MATCH (:author)-[:wrote]->(x) RETURN x.n AS x ORDER BY x;
+MATCH (:editor)-[:wrote]->(x) RETURN x.n AS x ORDER BY x;
+SET enable_graph_endpoint_elision = false;
+MATCH (:author)-[:wrote]->(x) RETURN x.n AS x ORDER BY x;
+MATCH (:editor)-[:wrote]->(x) RETURN x.n AS x ORDER BY x;
+SET enable_graph_endpoint_elision = true;
+
+-- the end side elided: `wrote' ends at both book and journal
+EXPLAIN (costs off) MATCH (a)-[:wrote]->(:journal) RETURN a.n AS a;
+MATCH (a)-[:wrote]->(:book) RETURN a.n AS a ORDER BY a;
+MATCH (a)-[:wrote]->(:journal) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a)-[:wrote]->(:book) RETURN a.n AS a ORDER BY a;
+MATCH (a)-[:wrote]->(:journal) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- both endpoints labelled and both elided: the pattern becomes one scan of the
+-- relationship carrying a range on each of its endpoint columns, and the pair
+-- that no relationship joins answers nothing
+EXPLAIN (costs off) MATCH (:author)-[:wrote]->(:journal) RETURN count(*);
+MATCH (:author)-[:wrote]->(:book) RETURN count(*);
+MATCH (:author)-[:wrote]->(:journal) RETURN count(*);
+MATCH (:editor)-[:wrote]->(:journal) RETURN count(*);
+SET enable_graph_endpoint_elision = false;
+MATCH (:author)-[:wrote]->(:book) RETURN count(*);
+MATCH (:author)-[:wrote]->(:journal) RETURN count(*);
+MATCH (:editor)-[:wrote]->(:journal) RETURN count(*);
+SET enable_graph_endpoint_elision = true;
+
+DROP GRAPH eem CASCADE;
+
+-- ============================================================
+-- NOT ELIDE: a labelled endpoint the query has another use for
+-- ============================================================
+-- Everything that keeps an unlabelled endpoint keeps a labelled one too: naming
+-- a label gives the planner a way to test the label without the scan, not a
+-- reason to drop a scan something else reads.
+CREATE GRAPH eek;
+SET graph_path = eek;
+
+CREATE VLABEL emp;
+CREATE VLABEL dept;
+CREATE VLABEL site;
+CREATE ELABEL in_dept;
+CREATE ELABEL at_site;
+CREATE ELABEL reports_to;
+
+CREATE (:emp {n:'e1'})-[:reports_to]->(:emp {n:'e2'})-[:reports_to]->(:emp {n:'e3'});
+MATCH (a:emp {n:'e1'}) CREATE (a)-[:in_dept]->(:dept {n:'d1'});
+MATCH (a:emp {n:'e2'}) CREATE (a)-[:in_dept]->(:dept {n:'d2'});
+MATCH (d:dept {n:'d1'}) CREATE (d)-[:at_site]->(:site {n:'s1'});
+
+-- read in RETURN
+EXPLAIN (costs off) MATCH (a:emp)-[:in_dept]->(d:dept) RETURN d.n AS d;
+-- read in WHERE
+EXPLAIN (costs off) MATCH (a:emp)-[:in_dept]->(d:dept) WHERE d.n = 'd1' RETURN a.n AS a;
+MATCH (a:emp)-[:in_dept]->(d:dept) WHERE d.n = 'd1' RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:emp)-[:in_dept]->(d:dept) WHERE d.n = 'd1' RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+-- read in ORDER BY
+EXPLAIN (costs off) MATCH (a:emp)-[:in_dept]->(d:dept) RETURN a.n AS a ORDER BY id(d);
+MATCH (a:emp)-[:in_dept]->(d:dept) RETURN a.n AS a ORDER BY id(d);
+SET enable_graph_endpoint_elision = false;
+MATCH (a:emp)-[:in_dept]->(d:dept) RETURN a.n AS a ORDER BY id(d);
+SET enable_graph_endpoint_elision = true;
+
+-- an inline property constraint on the labelled endpoint has to run
+EXPLAIN (costs off) MATCH (a:emp)-[:in_dept]->(:dept {n:'d1'}) RETURN a.n AS a;
+MATCH (a:emp)-[:in_dept]->(:dept {n:'d1'}) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:emp)-[:in_dept]->(:dept {n:'d1'}) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- a two-relation qual that no equivalence absorbs lives in joininfo, and goes
+-- with the endpoint if the endpoint goes
+EXPLAIN (costs off) MATCH (a:emp)-[:in_dept]->(d:dept) WHERE d.n <> a.n RETURN a.n AS a;
+MATCH (a:emp)-[:in_dept]->(d:dept) WHERE d.n <> a.n RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:emp)-[:in_dept]->(d:dept) WHERE d.n <> a.n RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- a named path reaches the endpoint, so the join that builds it stays; asking
+-- only how long the path is reaches nothing and both endpoints go, leaving the
+-- relationship carrying a range on each of its endpoint columns
+EXPLAIN (costs off) MATCH p = (a:emp)-[:in_dept]->(:dept) RETURN nodes(p) AS ns;
+EXPLAIN (costs off) MATCH p = (a:emp)-[:in_dept]->(:dept) RETURN length(p) AS len;
+MATCH p = (a:emp)-[:in_dept]->(:dept) RETURN length(p) AS len ORDER BY len;
+SET enable_graph_endpoint_elision = false;
+MATCH p = (a:emp)-[:in_dept]->(:dept) RETURN length(p) AS len ORDER BY len;
+SET enable_graph_endpoint_elision = true;
+
+-- a variable-length relationship anchors on its far endpoint, labelled or not
+EXPLAIN (costs off) MATCH (a:emp)-[:reports_to*1..2]->(:emp) RETURN a.n AS a;
+MATCH (a:emp)-[:reports_to*1..2]->(:emp) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:emp)-[:reports_to*1..2]->(:emp) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- an OPTIONAL MATCH endpoint is an outer join's inner side
+EXPLAIN (costs off) MATCH (a:emp) OPTIONAL MATCH (a)-[:in_dept]->(:dept) RETURN a.n AS a;
+MATCH (a:emp) OPTIONAL MATCH (a)-[:in_dept]->(:dept) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:emp) OPTIONAL MATCH (a)-[:in_dept]->(:dept) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- a labelled endpoint that is what the statement writes to
+EXPLAIN (costs off) MATCH (a:emp)-[:in_dept]->(d:dept) SET d.seen = true;
+
+-- and coexistence with pruning at a labelled middle: the middle (:dept) goes,
+-- yet the neighbours beyond it keep the single-label scans the solver pruned
+-- them to ({at_site}, {site}) -- exactly what they have with elision off
+EXPLAIN (costs off) MATCH (a:emp)-[:in_dept]->(:dept)-[g]->(h) RETURN a.n AS a, label(h) AS h;
+SET enable_graph_endpoint_elision = false;
+EXPLAIN (costs off) MATCH (a:emp)-[:in_dept]->(:dept)-[g]->(h) RETURN a.n AS a, label(h) AS h;
+SET enable_graph_endpoint_elision = true;
+MATCH (a:emp)-[:in_dept]->(:dept)-[g]->(h) RETURN a.n AS a, label(h) AS h ORDER BY a, h;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:emp)-[:in_dept]->(:dept)-[g]->(h) RETURN a.n AS a, label(h) AS h ORDER BY a, h;
+SET enable_graph_endpoint_elision = true;
+
+DROP GRAPH eek CASCADE;
+
+-- ============================================================
+-- NOT ELIDE: an endpoint reading only the root of the vertex hierarchy
+-- ============================================================
+-- An endpoint naming no label reads the whole vertex hierarchy, and its join is
+-- redundant because every relationship endpoint is some vertex.  Read with ONLY
+-- it is a different question -- it asks for the vertices held in the root table
+-- itself, which is where a pattern that names no label puts the vertices it
+-- creates -- and the join that answers it removes rows rather than none.  So
+-- that endpoint keeps its join: there is no label id to write a range for.
+CREATE GRAPH eeo;
+SET graph_path = eeo;
+
+CREATE VLABEL tagged;
+CREATE ELABEL points;
+
+CREATE (:tagged {n:'to_tagged'})-[:points]->(:tagged {n:'plain'});
+-- an unlabelled target: this one is stored in the root table
+CREATE (:tagged {n:'to_rootborn'})-[:points]->({n:'rootborn'});
+
+SELECT count(*) AS rootborn FROM ONLY eeo.ag_vertex;
+
+-- the root alone: the join is kept and answers for the one relationship whose
+-- far end is held there
+EXPLAIN (costs off) MATCH (a:tagged)-[r:points]->(x:ag_vertex ONLY) RETURN a.n AS a;
+MATCH (a:tagged)-[r:points]->(x:ag_vertex ONLY) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:tagged)-[r:points]->(x:ag_vertex ONLY) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- the whole hierarchy: the join is redundant and goes, and both relationships
+-- answer
+EXPLAIN (costs off) MATCH (a:tagged)-[r:points]->(x) RETURN a.n AS a;
+MATCH (a:tagged)-[r:points]->(x) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:tagged)-[r:points]->(x) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+-- a leaf label read with ONLY is one stretch and elides, root or not
+EXPLAIN (costs off) MATCH (a:tagged)-[r:points]->(x:tagged ONLY) RETURN a.n AS a;
+MATCH (a:tagged)-[r:points]->(x:tagged ONLY) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = false;
+MATCH (a:tagged)-[r:points]->(x:tagged ONLY) RETURN a.n AS a ORDER BY a;
+SET enable_graph_endpoint_elision = true;
+
+DROP GRAPH eeo CASCADE;

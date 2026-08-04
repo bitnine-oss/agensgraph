@@ -2860,11 +2860,14 @@ graph_endpoint_is_elidable(PlannerInfo *root, Index rti, List **cols_out)
 		return false;
 
 	/*
-	 * An endpoint matching any label at all reads the whole vertex hierarchy,
-	 * and has to: the root of that hierarchy holds no vertex of its own, so
-	 * reading only the root matches nothing and that join is the opposite of
-	 * redundant.  An endpoint naming a label may read a subtree or one table --
-	 * the label test written for it below says which -- and either is fine.
+	 * An endpoint matching any label is marked as carrying none, so no label id
+	 * reaches here to write a test from.  Reading the whole vertex hierarchy that
+	 * way needs no test -- every vertex qualifies -- but reading only the root of
+	 * it is a filter, and a real one: a vertex created under no label is stored
+	 * in that root, and holds the root's own label id.  Eliding there would drop
+	 * the filter and reach every vertex, so keep the join.  An endpoint naming a
+	 * label may read a subtree or one table, and the test written for it below
+	 * says which.
 	 */
 	if (rte->graphPruneLabid == InvalidLabid && !rte->inh)
 		return false;

@@ -1340,6 +1340,128 @@ RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
        ORDER BY s, r1, m, r2, x;
 
 --
+-- Uniqueness: which pairs are asked about
+--
+-- A pattern may not walk the same relationship twice, which is settled by asking
+-- of every pair of its relationships whether they are the same one.
+-- Relationships of different labels cannot be: a label id is part of a graph id,
+-- so no id belongs to two labels, and the answer is settled before the question
+-- is asked.  Those questions are not asked, which shows in a plan as the absence
+-- of the `<>' between the two relationships' ids.
+--
+-- Two things are asserted of every case: whether that `<>' is in the plan, and
+-- the rows.  Where the `<>' must be present the rows are the ones it leaves --
+-- dropping it would return more.  Where it must be absent the rows are reached
+-- without it.  Its own graph, created and dropped here.
+--
+CREATE GRAPH ru;
+SET graph_path = ru;
+
+CREATE VLABEL nd;
+CREATE ELABEL twin;
+CREATE ELABEL other;
+CREATE ELABEL kin;
+CREATE ELABEL kid INHERITS (kin);
+
+CREATE (:nd {id: 1}), (:nd {id: 2});
+MATCH (a:nd {id: 1}), (b:nd {id: 2}) CREATE (a)-[:twin  {p: 't1'}]->(b);
+MATCH (a:nd {id: 2}), (b:nd {id: 1}) CREATE (a)-[:twin  {p: 't2'}]->(b);
+MATCH (a:nd {id: 1}), (b:nd {id: 2}) CREATE (a)-[:other {p: 'o1'}]->(b);
+MATCH (a:nd {id: 1}), (b:nd {id: 2}) CREATE (a)-[:kin   {p: 'k1'}]->(b);
+MATCH (a:nd {id: 2}), (b:nd {id: 1}) CREATE (a)-[:kid   {p: 'd1'}]->(b);
+
+-- One label named twice: the pair can be the same relationship, so the question
+-- is asked.  Four rows, not the eight the pattern reaches without it -- the same
+-- guard as the two `:rel' relationships above, with the label named.
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2:twin]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x;
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2:twin]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
+       ORDER BY s, r1, m, r2, x;
+
+-- Two labels: the same pattern with one relationship retyped, where the question
+-- has no answer to give and is gone.  Every row it reaches is a row it keeps.
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2:other]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x;
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2:other]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
+       ORDER BY s, r1, m, r2, x;
+
+-- One side naming no label is every label, which meets everything: asked.
+-- Sixteen rows of the twenty the pattern reaches.
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2]-(x:nd) RETURN count(*);
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2]-(x:nd) RETURN count(*);
+
+-- A label and a label inheriting from it: the parent's set holds the child, so
+-- the two meet and the question is asked.  Two rows, not four: `:kin' reaches
+-- the child's relationship too, and the pair where both reach it is the pair the
+-- question refuses.
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:kin]-(m:nd)-[r2:kid]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x;
+MATCH (s:nd)-[r1:kin]-(m:nd)-[r2:kid]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
+       ORDER BY s, r1, m, r2, x;
+
+-- ONLY on the parent narrows its set to the one label, which the child's set no
+-- longer meets: the same pattern, and the question is gone.
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:kin ONLY]-(m:nd)-[r2:kid]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x;
+MATCH (s:nd)-[r1:kin ONLY]-(m:nd)-[r2:kid]-(x:nd)
+RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
+       ORDER BY s, r1, m, r2, x;
+
+-- A relationship carried in from an earlier clause arrives as an id and nothing
+-- else, so its label is every label and the question is asked -- even against a
+-- relationship whose label it cannot share.  Written as one clause, where the
+-- pattern still knows both labels, the same question is gone and the plan is
+-- otherwise the same plan.
+EXPLAIN (costs off)
+MATCH (a:nd)-[r:twin]->(b:nd) WITH a, r, b
+MATCH (a)-[r]->(b)-[r2:other]->(c:nd) RETURN r.p AS r, r2.p AS r2;
+MATCH (a:nd)-[r:twin]->(b:nd) WITH a, r, b
+MATCH (a)-[r]->(b)-[r2:other]->(c:nd) RETURN r.p AS r, r2.p AS r2
+       ORDER BY r, r2;
+EXPLAIN (costs off)
+MATCH (a:nd)-[r:twin]->(b:nd)-[r2:other]->(c:nd) RETURN r.p AS r, r2.p AS r2;
+MATCH (a:nd)-[r:twin]->(b:nd)-[r2:other]->(c:nd) RETURN r.p AS r, r2.p AS r2
+       ORDER BY r, r2;
+
+-- Three relationships whose labels meet nowhere: all three questions gone.
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2:other]-(x:nd)-[r3:kin ONLY]-(y:nd)
+RETURN count(*);
+MATCH (s:nd)-[r1:twin]-(m:nd)-[r2:other]-(x:nd)-[r3:kin ONLY]-(y:nd)
+RETURN count(*);
+
+-- Where a relationship label is named once in a pattern, the question that has
+-- gone was the only reader of that relationship's id, and the scan that fetched
+-- it stops reading the table: an index-only scan where it was an index scan and a
+-- heap fetch.  The two plans below differ in the label of one relationship, and
+-- so in that and in nothing else.  Sequential and bitmap scans are turned off so
+-- that both plans reach the relationships the same way and the difference left is
+-- whether the index answers alone.
+SET enable_seqscan = off;
+SET enable_bitmapscan = off;
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:twin]->(m:nd)-[r2:other]->(x:nd) RETURN s.id AS s, x.id AS x;
+EXPLAIN (costs off)
+MATCH (s:nd)-[r1:twin]->(m:nd)-[r2:twin]->(x:nd) RETURN s.id AS s, x.id AS x;
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+
+MATCH (s:nd)-[r1:twin]->(m:nd)-[r2:other]->(x:nd)
+RETURN s.id AS s, r1.p AS r1, r2.p AS r2, x.id AS x ORDER BY s, r1, r2, x;
+MATCH (s:nd)-[r1:twin]->(m:nd)-[r2:twin]->(x:nd)
+RETURN s.id AS s, r1.p AS r1, r2.p AS r2, x.id AS x ORDER BY s, r1, r2, x;
+
+DROP GRAPH ru CASCADE;
+
+--
 -- SET/REMOVE
 --
 
