@@ -520,26 +520,19 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 
 /*
  * unboxNativeJsonbSortKey
- *		If a sort key is cypher_to_jsonb(<native value>) whose native value can
- *		be ordered directly, return that native value, else NULL.  Two kinds of
- *		boxed value qualify:
+ *		A RETURN carries every value it projects into jsonb, and a sort key
+ *		pointing at one of those values then orders the jsonb form of it rather
+ *		than the value: a number is ordered as a jsonb number, and a value whose
+ *		type jsonb has no form for is ordered as the text it prints as.  An index
+ *		that could have supplied the order cannot be used either, since what is
+ *		ordered is a function call over the indexed value.
  *
- *		- a promoted property, projected as cypher_to_jsonb(<typed column Var>):
- *		  ordering by the native column gives the typed semantics that are the
- *		  point of promotion (numbers by value, text by collation) and lets the
- *		  column's btree/HNSW index bind.
- *		- an integer/numeric aggregate, e.g. cypher_to_jsonb(count(*)): ordering
- *		  the fixed-width number rather than a jsonb datum matters when a high-
- *		  cardinality GROUP BY feeds a top-N sort.  Restricted to integer/numeric
- *		  because jsonb number ordering matches those exactly, whereas jsonb has
- *		  no NaN/Infinity and its string ordering is not the collation ordering.
+ *		If a sort key is cypher_to_jsonb(<native value>), return that value to be
+ *		ordered instead, else NULL.  cypher_to_jsonb() is strict, so a NULL keeps
+ *		the position its nulls_first flag gives it.
  *
- * In both cases cypher_to_jsonb() is strict, so a NULL native value stays SQL
- * NULL and keeps the position its nulls_first flag already gives it.  Whether
- * re-pointing is actually SAFE depends on the surrounding query and is decided
- * by the caller (updateSortOperatorsForJsonb): a promoted column is a candidate
- * grouping key, so it may be unboxed only for a free ORDER BY; an aggregate is
- * evaluated after grouping, so it may be unboxed whenever there is no DISTINCT.
+ *		Whether re-pointing is safe depends on the surrounding query and is
+ *		decided by the caller (updateSortOperatorsForJsonb).
  */
 static Node *
 unboxNativeJsonbSortKey(Node *expr)
@@ -547,6 +540,8 @@ unboxNativeJsonbSortKey(Node *expr)
 	FuncExpr   *f;
 	Node	   *arg;
 	Oid			argtype;
+	Oid			ltopr;
+	Oid			gtopr;
 
 	if (!IsA(expr, FuncExpr))
 		return NULL;
@@ -556,20 +551,21 @@ unboxNativeJsonbSortKey(Node *expr)
 
 	arg = (Node *) linitial(f->args);
 
-	/* a promoted property's typed column */
-	if (IsA(arg, Var))
-		return arg;
-
-	/* an integer/numeric aggregate */
-	if (!IsA(arg, Aggref))
+	argtype = exprType(arg);
+	if (argtype == JSONBOID)
 		return NULL;
 
-	argtype = getBaseType(exprType(arg));
-	if (argtype == INT2OID || argtype == INT4OID || argtype == INT8OID ||
-		argtype == NUMERICOID)
-		return arg;
+	/*
+	 * The sort needs the type's own ordering operators, which a type is not
+	 * required to have.  Ask without demanding them, so that a type having none
+	 * leaves the key alone rather than failing the query.
+	 */
+	get_sort_group_operators(argtype, false, false, false,
+							 &ltopr, NULL, &gtopr, NULL);
+	if (!OidIsValid(ltopr) || !OidIsValid(gtopr))
+		return NULL;
 
-	return NULL;
+	return arg;
 }
 
 /*
@@ -580,18 +576,16 @@ unboxNativeJsonbSortKey(Node *expr)
  * type so ordering matches the values, leaving unchanged-type keys alone.
  *
  * Where it is safe (see unboxNativeJsonbSortKey and the per-key gate below), a
- * key that boxes a native value purely for the returned form -- an integer/
- * numeric aggregate, or a promoted column -- is instead sorted on that native
- * value: the boxed entry stays for the projection while a resjunk copy of the
- * native value becomes the sort key, so the sort compares fixed-width numbers
- * or binds the typed index rather than comparing jsonb datums.
+ * key that boxes a native value purely for the returned form is instead sorted
+ * on that value: the boxed entry stays for the projection while a resjunk copy
+ * of the native value becomes the sort key, so the sort compares the values and
+ * an index on them can supply the order.
  *
- * `allowUnbox' permits the aggregate case (no DISTINCT); `allowNativeUnbox'
- * permits the promoted-column case, which is stricter -- a free ORDER BY only
- * (no DISTINCT, no GROUP BY, no aggregates) -- because a column is a candidate
- * grouping key.  Runs for RETURN and for a transparent WITH/LET (whose
- * projection boxes a promoted property identically), so `WITH ... ORDER BY
- * n.prop' keeps the native index too.
+ * `allowUnbox' permits an aggregate (no DISTINCT); `allowNativeUnbox' permits
+ * every other value, and is stricter -- a free ORDER BY only (no DISTINCT, no
+ * GROUP BY, no aggregates) -- because such a value is a candidate grouping key.
+ * Runs for RETURN and for a transparent WITH/LET, so `WITH ... ORDER BY n.prop'
+ * keeps the native index too.
  */
 static void
 updateSortOperatorsForJsonb(List *sortClause, List **targetList,
@@ -623,15 +617,15 @@ updateSortOperatorsForJsonb(List *sortClause, List **targetList,
 			 * Re-pointing the sort at the unboxed native value is allowed only
 			 * where it introduces no GROUP BY / DISTINCT-list dependency:
 			 *
-			 *  - a native aggregate is evaluated after grouping, so it is safe
+			 *  - an aggregate is evaluated after grouping, so it is safe
 			 *    whenever there is no DISTINCT (allowUnbox);
-			 *  - a native promoted column IS a candidate grouping key, so it is
-			 *    safe only for a free ORDER BY -- no aggregation/implicit GROUP
-			 *    BY and no DISTINCT (allowNativeUnbox).  Under grouping/DISTINCT
-			 *    the sort must keep the projected cypher_to_jsonb(column), which
-			 *    is exactly the group/distinct key (correct, just not indexed).
+			 *  - anything else IS a candidate grouping key, so it is safe only
+			 *    for a free ORDER BY -- no aggregation/implicit GROUP BY and no
+			 *    DISTINCT (allowNativeUnbox).  Under grouping/DISTINCT the sort
+			 *    must keep the projected cypher_to_jsonb(...), which is exactly
+			 *    the group/distinct key (correct, just not indexed).
 			 */
-			if (IsA(unboxed, Var) ? !allowNativeUnbox : !allowUnbox)
+			if (IsA(unboxed, Aggref) ? !allowUnbox : !allowNativeUnbox)
 				unboxed = NULL;
 		}
 		if (unboxed != NULL)

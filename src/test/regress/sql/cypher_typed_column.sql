@@ -343,6 +343,27 @@ MATCH (n:doc) WITH n AS v ORDER BY v.age LIMIT 2 RETURN v.name;
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (n:doc) RETURN n.title AS title ORDER BY toUpper(title) LIMIT 2;
 
+-- 2q. A RETURN item computed from a promoted property is a native value that is
+--     carried into jsonb only to be returned, so a free ORDER BY on it orders
+--     the value and an index over that computation supplies the order.
+CREATE INDEX idx_agex ON tc.doc ((age + 1));
+CREATE INDEX idx_lowertitle ON tc.doc (lower(title));
+ANALYZE tc.doc;
+EXPLAIN (COSTS OFF)
+MATCH (n:doc) RETURN n.age + 1 AS a ORDER BY a LIMIT 2;
+EXPLAIN (COSTS OFF)
+MATCH (n:doc) RETURN lower(n.title) AS t ORDER BY t LIMIT 2;
+
+-- 2r. Under DISTINCT or grouping that key stays the returned jsonb, which is
+--     also the de-duplication / grouping key.
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (n:doc) RETURN DISTINCT n.age + 1 AS a ORDER BY a LIMIT 2;
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (n:doc) RETURN n.age + 1 AS a, count(*) AS c ORDER BY a LIMIT 2;
+DROP INDEX tc.idx_agex;
+DROP INDEX tc.idx_lowertitle;
+ANALYZE tc.doc;
+
 SET enable_seqscan = on;
 
 -- ============================================================================
@@ -538,6 +559,20 @@ SET enable_property_promotion = off;
 MATCH (n:doc) WITH n, n.name AS nm RETURN nm, n.age AS age ORDER BY age * -1, nm;
 MATCH (n:doc) WITH n AS v, n.age AS age ORDER BY age * -1, v.name
     RETURN v.name AS name, age;
+
+-- 5j. Ordering a RETURN item computed from a promoted property gives the same
+--     rows in the same order as ordering the jsonb it is returned as (on == off).
+SET enable_property_promotion = on;
+MATCH (n:doc) RETURN n.name AS name, n.age + 1 AS a ORDER BY a, name;
+MATCH (n:doc) RETURN n.name AS name, n.age * 2 AS a ORDER BY a DESC NULLS LAST, name;
+MATCH (n:doc) WHERE n.title IS NOT NULL
+    RETURN n.name AS name, lower(n.title) AS t ORDER BY t, name;
+SET enable_property_promotion = off;
+MATCH (n:doc) RETURN n.name AS name, n.age + 1 AS a ORDER BY a, name;
+MATCH (n:doc) RETURN n.name AS name, n.age * 2 AS a ORDER BY a DESC NULLS LAST, name;
+MATCH (n:doc) WHERE n.title IS NOT NULL
+    RETURN n.name AS name, lower(n.title) AS t ORDER BY t, name;
+SET enable_property_promotion = on;
 
 -- ============================================================================
 -- SECTION 6 -- GROUP BY / DISTINCT (the by-value grouping path)

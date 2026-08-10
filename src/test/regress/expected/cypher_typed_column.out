@@ -543,6 +543,66 @@ MATCH (n:doc) RETURN n.title AS title ORDER BY toUpper(title) LIMIT 2;
                Output: n.title, toupper(cypher_to_jsonb(n.title))
 (7 rows)
 
+-- 2q. A RETURN item computed from a promoted property is a native value that is
+--     carried into jsonb only to be returned, so a free ORDER BY on it orders
+--     the value and an index over that computation supplies the order.
+CREATE INDEX idx_agex ON tc.doc ((age + 1));
+CREATE INDEX idx_lowertitle ON tc.doc (lower(title));
+ANALYZE tc.doc;
+EXPLAIN (COSTS OFF)
+MATCH (n:doc) RETURN n.age + 1 AS a ORDER BY a LIMIT 2;
+                QUERY PLAN                
+------------------------------------------
+ Limit
+   ->  Index Scan using idx_agex on doc n
+(2 rows)
+
+EXPLAIN (COSTS OFF)
+MATCH (n:doc) RETURN lower(n.title) AS t ORDER BY t LIMIT 2;
+                   QUERY PLAN                   
+------------------------------------------------
+ Limit
+   ->  Index Scan using idx_lowertitle on doc n
+(2 rows)
+
+-- 2r. Under DISTINCT or grouping that key stays the returned jsonb, which is
+--     also the de-duplication / grouping key.
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (n:doc) RETURN DISTINCT n.age + 1 AS a ORDER BY a LIMIT 2;
+                           QUERY PLAN                            
+-----------------------------------------------------------------
+ Limit
+   Output: (cypher_to_jsonb((n.age + 1)))
+   ->  Unique
+         Output: (cypher_to_jsonb((n.age + 1)))
+         ->  Sort
+               Output: (cypher_to_jsonb((n.age + 1)))
+               Sort Key: (cypher_to_jsonb((n.age + 1)))
+               ->  Index Only Scan using doc_age_idx on tc.doc n
+                     Output: cypher_to_jsonb((n.age + 1))
+(9 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (n:doc) RETURN n.age + 1 AS a, count(*) AS c ORDER BY a LIMIT 2;
+                                QUERY PLAN                                 
+---------------------------------------------------------------------------
+ Limit
+   Output: (cypher_to_jsonb((n.age + 1))), (cypher_to_jsonb(count(*)))
+   ->  GroupAggregate
+         Output: (cypher_to_jsonb((n.age + 1))), cypher_to_jsonb(count(*))
+         Group Key: (cypher_to_jsonb((n.age + 1)))
+         ->  Sort
+               Output: (cypher_to_jsonb((n.age + 1)))
+               Sort Key: (cypher_to_jsonb((n.age + 1)))
+               ->  Index Only Scan using doc_age_idx on tc.doc n
+                     Output: cypher_to_jsonb((n.age + 1))
+(10 rows)
+
+DROP INDEX tc.idx_agex;
+ERROR:  "idx_agex" is property index
+DROP INDEX tc.idx_lowertitle;
+ERROR:  "idx_lowertitle" is property index
+ANALYZE tc.doc;
 SET enable_seqscan = on;
 -- ============================================================================
 -- SECTION 3 -- WHERE filters: results identical with promotion on and off
@@ -1376,6 +1436,77 @@ MATCH (n:doc) WITH n AS v, n.age AS age ORDER BY age * -1, v.name
  "n1" | 20
 (6 rows)
 
+-- 5j. Ordering a RETURN item computed from a promoted property gives the same
+--     rows in the same order as ordering the jsonb it is returned as (on == off).
+SET enable_property_promotion = on;
+MATCH (n:doc) RETURN n.name AS name, n.age + 1 AS a ORDER BY a, name;
+ name | a  
+------+----
+ "n1" | 21
+ "n4" | 31
+ "n2" | 41
+ "n5" | 41
+ "n6" | 51
+ "n3" | 61
+(6 rows)
+
+MATCH (n:doc) RETURN n.name AS name, n.age * 2 AS a ORDER BY a DESC NULLS LAST, name;
+ name |  a  
+------+-----
+ "n3" | 120
+ "n6" | 100
+ "n2" | 80
+ "n5" | 80
+ "n4" | 60
+ "n1" | 40
+(6 rows)
+
+MATCH (n:doc) WHERE n.title IS NOT NULL
+    RETURN n.name AS name, lower(n.title) AS t ORDER BY t, name;
+ name |     t     
+------+-----------
+ "n1" | "alpha"
+ "n3" | "alpha"
+ "n2" | "bravo"
+ "n4" | "charlie"
+ "n5" | "delta"
+(5 rows)
+
+SET enable_property_promotion = off;
+MATCH (n:doc) RETURN n.name AS name, n.age + 1 AS a ORDER BY a, name;
+ name | a  
+------+----
+ "n1" | 21
+ "n4" | 31
+ "n2" | 41
+ "n5" | 41
+ "n6" | 51
+ "n3" | 61
+(6 rows)
+
+MATCH (n:doc) RETURN n.name AS name, n.age * 2 AS a ORDER BY a DESC NULLS LAST, name;
+ name |  a  
+------+-----
+ "n3" | 120
+ "n6" | 100
+ "n2" | 80
+ "n5" | 80
+ "n4" | 60
+ "n1" | 40
+(6 rows)
+
+MATCH (n:doc) WHERE n.title IS NOT NULL
+    RETURN n.name AS name, lower(n.title) AS t ORDER BY t, name;
+ name |     t     
+------+-----------
+ "n1" | "alpha"
+ "n3" | "alpha"
+ "n2" | "bravo"
+ "n4" | "charlie"
+ "n5" | "delta"
+(5 rows)
+
+SET enable_property_promotion = on;
 -- ============================================================================
 -- SECTION 6 -- GROUP BY / DISTINCT (the by-value grouping path)
 --
