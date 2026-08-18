@@ -7815,6 +7815,38 @@ FOR id in [1,3] MATCH (p:Person {Id: id}) RETURN p.name AS name ORDER BY name;
  "Carol"
 (2 rows)
 
+-- == FOR over a null or scalar source ==
+-- a null source is an empty list: zero rows, with and without an offset,
+-- as a leading clause and joined with a working table
+FOR x in NULL RETURN x;
+ x 
+---
+(0 rows)
+
+FOR x in NULL WITH OFFSET AS o RETURN x, o;
+ x | o 
+---+---
+(0 rows)
+
+MATCH (p:Person) FOR x in NULL RETURN p.name, x;
+ name | x 
+------+---
+(0 rows)
+
+FOR x in (null) RETURN x;
+ x 
+---
+(0 rows)
+
+-- a null property answers the same way
+MATCH (p:Person {Id: 1}) FOR x in p.no_such_key RETURN x;
+ x 
+---
+(0 rows)
+
+-- a string literal is a scalar, like a stored string
+FOR x in 'abc' RETURN x;
+ERROR:  cannot extract elements from a scalar
 -- == FOR drives write clauses ==
 FOR x in [10,20,30] CREATE (:item {v: x});
 MATCH (n:item) RETURN n.v AS v ORDER BY v;
