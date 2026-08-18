@@ -1249,6 +1249,22 @@ preprocess_func_args(ParseState *pstate, FuncCall *fn)
 			argtype = exprType(arg);
 		}
 
+		/*
+		 * cardinality() likewise: it exists for jsonb, graphpath and
+		 * anyarray at once, and an unknown-typed literal picks none of them.
+		 * A literal is a Cypher value, so resolve it to jsonb -- through
+		 * coerce_expr(), which reads a string literal as a jsonb string, not
+		 * as jsonb syntax.  The function is strict, which answers
+		 * cardinality(NULL) with NULL the way GQL defines it.
+		 */
+		if (argtype == UNKNOWNOID &&
+			strcmp(strVal(llast(fn->funcname)), "cardinality") == 0)
+		{
+			arg = coerce_expr(pstate, arg, argtype, JSONBOID, -1,
+							  COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
+			argtype = exprType(arg);
+		}
+
 		Assert(!(IsA(arg, Param) && argtype == VOIDOID));
 
 		args = lappend(args, arg);
