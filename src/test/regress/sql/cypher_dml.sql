@@ -2694,6 +2694,18 @@ FOR x in [1,2] UNWIND [x, x + 100] AS u RETURN x, u ORDER BY x, u;
 -- FOR feeds the keys of a following MATCH
 FOR id in [1,3] MATCH (p:Person {Id: id}) RETURN p.name AS name ORDER BY name;
 
+-- == FOR over a null or scalar source ==
+-- a null source is an empty list: zero rows, with and without an offset,
+-- as a leading clause and joined with a working table
+FOR x in NULL RETURN x;
+FOR x in NULL WITH OFFSET AS o RETURN x, o;
+MATCH (p:Person) FOR x in NULL RETURN p.name, x;
+FOR x in (null) RETURN x;
+-- a null property answers the same way
+MATCH (p:Person {Id: 1}) FOR x in p.no_such_key RETURN x;
+-- a string literal is a scalar, like a stored string
+FOR x in 'abc' RETURN x;
+
 -- == FOR drives write clauses ==
 FOR x in [10,20,30] CREATE (:item {v: x});
 MATCH (n:item) RETURN n.v AS v ORDER BY v;

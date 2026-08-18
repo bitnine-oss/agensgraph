@@ -2036,6 +2036,7 @@ transformCypherForClause(ParseState *pstate, CypherClause *clause)
 	CypherForClause *detail = (CypherForClause *) clause->detail;
 	Query	   *qry;
 	Query	   *subqry;
+	Node	   *source;
 	CypherGenericExpr *cge;
 	RangeFunction *rf;
 	SelectStmt *subquery;
@@ -2066,8 +2067,34 @@ transformCypherForClause(ParseState *pstate, CypherClause *clause)
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
 				 errmsg("duplicate variable \"%s\"", strVal(detail->offset))));
 
+	source = detail->expr;
+
+	/*
+	 * A bare NULL or an unadorned string literal comes out of the Cypher
+	 * transform as a constant of unknown type, and unnest() has no unique
+	 * form for unknown, so resolving the sub-SELECT below would fail on
+	 * the one source the transform leaves untyped.  The literal is a
+	 * Cypher value: cast it to jsonb through the Cypher cast, which reads
+	 * a string literal as a jsonb string.  A null list then unnests to
+	 * zero rows, the way GQL defines FOR over a null source, and a string
+	 * answers as any other scalar does.
+	 */
+	if (IsA(source, A_Const) &&
+		(((A_Const *) source)->isnull ||
+		 IsA(&((A_Const *) source)->val, String)))
+	{
+		TypeCast   *cast = makeNode(TypeCast);
+
+		cast->arg = source;
+		cast->typeName = makeTypeNameFromNameList(
+			list_make2(makeString("pg_catalog"), makeString("jsonb")));
+		cast->location = exprLocation(source);
+
+		source = (Node *) cast;
+	}
+
 	cge = makeNode(CypherGenericExpr);
-	cge->expr = detail->expr;
+	cge->expr = source;
 
 	colnames = list_make1(detail->resname);
 	targetList = list_make1(makeResTarget(makeColumnRef(list_make1(detail->resname)),
