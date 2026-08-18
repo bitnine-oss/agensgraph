@@ -694,6 +694,13 @@ MATCH (a:sz {name: 'ab'}) RETURN size((a)-[]->()) AS matches;
 MATCH (a:sz {name: 'ab'}), (b:sz {name: 'b'})
     RETURN size(allshortestpaths((a)-[:szto*]->(b))) AS paths;
 
+-- A function whose only signature takes an array of some element type has no
+-- form a jsonb value can instantiate: the call is refused as unknown, on a
+-- list literal and on a stored list alike.
+RETURN array_ndims([1,2]) AS r;
+RETURN array_append([1,2], 3) AS r;
+MATCH (n:sz {name: 'ab'}) RETURN array_ndims(n.tags) AS r;
+
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;
