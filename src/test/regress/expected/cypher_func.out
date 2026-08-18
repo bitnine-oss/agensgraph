@@ -813,3 +813,77 @@ drop cascades to elabel ag_edge
 drop cascades to vlabel person
 drop cascades to vlabel movie
 drop cascades to elabel acted_in
+--
+-- Testing the cardinality() function
+--
+-- Creating sample graph
+CREATE GRAPH cardinality_graph;
+SET graph_path = cardinality_graph;
+CREATE (:P {name: 'a', age: 1})-[:R {w: 1}]->(:P {name: 'b'});
+-- a list's cardinality is its element count
+RETURN cardinality(['a','b']) AS r;
+ r 
+---
+ 2
+(1 row)
+
+RETURN cardinality([]) AS r;
+ r 
+---
+ 0
+(1 row)
+
+-- a map's cardinality is its entry count
+RETURN cardinality({a: 1, b: 2, c: 3}) AS r;
+ r 
+---
+ 3
+(1 row)
+
+-- and both agree with stored data
+MATCH (n:P {name: 'a'}) RETURN cardinality(keys(n)) AS r;
+ r 
+---
+ 2
+(1 row)
+
+MATCH (n:P {name: 'a'}) RETURN cardinality(properties(n)) AS r;
+ r 
+---
+ 2
+(1 row)
+
+-- a path's cardinality counts its vertices and edges both
+MATCH p = (:P {name: 'a'})-[:R]->(:P) RETURN cardinality(p) AS r;
+ r 
+---
+ 3
+(1 row)
+
+-- null in, null out
+RETURN cardinality(null) IS NULL AS r;
+ r 
+---
+ t
+(1 row)
+
+-- a scalar has no cardinality
+RETURN cardinality('abc') AS r;
+ERROR:  cardinality(): list or map is expected but "abc"
+RETURN cardinality(1) AS r;
+ERROR:  cardinality(): list or map is expected but 1
+-- the relational form is untouched
+SELECT cardinality(ARRAY[1,2,3]) AS r;
+ r 
+---
+ 3
+(1 row)
+
+-- Clean up
+DROP GRAPH cardinality_graph CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence cardinality_graph.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel p
+drop cascades to elabel r

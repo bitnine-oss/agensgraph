@@ -16,6 +16,7 @@
 extern Datum jsonb_head(PG_FUNCTION_ARGS);
 extern Datum jsonb_last(PG_FUNCTION_ARGS);
 extern Datum jsonb_length(PG_FUNCTION_ARGS);
+extern Datum jsonb_cardinality(PG_FUNCTION_ARGS);
 extern Datum jsonb_toboolean(PG_FUNCTION_ARGS);
 
 /* list */

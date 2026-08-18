@@ -142,6 +142,7 @@ extern Datum edge_cmp(PG_FUNCTION_ARGS);
 extern Datum graphpath_out(PG_FUNCTION_ARGS);
 extern Datum _graphpath_length(PG_FUNCTION_ARGS);
 extern Datum graphpath_length(PG_FUNCTION_ARGS);
+extern Datum graphpath_cardinality(PG_FUNCTION_ARGS);
 extern Datum graphpath_support(PG_FUNCTION_ARGS);
 extern Datum graphpath_vertices(PG_FUNCTION_ARGS);
 extern Datum graphpath_edges(PG_FUNCTION_ARGS);

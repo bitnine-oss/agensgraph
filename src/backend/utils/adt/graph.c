@@ -1057,6 +1057,30 @@ graphpath_length(PG_FUNCTION_ARGS)
 	PG_RETURN_JSONB_P(int_to_jsonb(nedges));
 }
 
+/*
+ * GQL's CARDINALITY() of a path counts the path's element list -- every
+ * vertex and every edge -- where length() counts the edges alone.
+ */
+Datum
+graphpath_cardinality(PG_FUNCTION_ARGS)
+{
+	Datum		vertices_datum;
+	Datum		edges_datum;
+	AnyArrayType *vertices;
+	AnyArrayType *edges;
+	int			nelems;
+
+	getGraphpathArrays(PG_GETARG_DATUM(0), &vertices_datum, &edges_datum);
+
+	vertices = DatumGetAnyArrayP(vertices_datum);
+	edges = DatumGetAnyArrayP(edges_datum);
+
+	nelems = ArrayGetNItems(AARR_NDIM(vertices), AARR_DIMS(vertices)) +
+		ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
+
+	PG_RETURN_JSONB_P(int_to_jsonb(nelems));
+}
+
 Datum
 graphpath_vertices(PG_FUNCTION_ARGS)
 {

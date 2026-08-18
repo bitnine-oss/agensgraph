@@ -383,3 +383,39 @@ MATCH (n1)-[e1]->(n2) return id(n1),id(e1),id(n2),start_id(e1),end_id(e1);
 
 -- Clean up
 DROP GRAPH edge_test_graph CASCADE;
+
+--
+-- Testing the cardinality() function
+--
+
+-- Creating sample graph
+CREATE GRAPH cardinality_graph;
+SET graph_path = cardinality_graph;
+CREATE (:P {name: 'a', age: 1})-[:R {w: 1}]->(:P {name: 'b'});
+
+-- a list's cardinality is its element count
+RETURN cardinality(['a','b']) AS r;
+RETURN cardinality([]) AS r;
+
+-- a map's cardinality is its entry count
+RETURN cardinality({a: 1, b: 2, c: 3}) AS r;
+
+-- and both agree with stored data
+MATCH (n:P {name: 'a'}) RETURN cardinality(keys(n)) AS r;
+MATCH (n:P {name: 'a'}) RETURN cardinality(properties(n)) AS r;
+
+-- a path's cardinality counts its vertices and edges both
+MATCH p = (:P {name: 'a'})-[:R]->(:P) RETURN cardinality(p) AS r;
+
+-- null in, null out
+RETURN cardinality(null) IS NULL AS r;
+
+-- a scalar has no cardinality
+RETURN cardinality('abc') AS r;
+RETURN cardinality(1) AS r;
+
+-- the relational form is untouched
+SELECT cardinality(ARRAY[1,2,3]) AS r;
+
+-- Clean up
+DROP GRAPH cardinality_graph CASCADE;

@@ -157,6 +157,41 @@ jsonb_length(PG_FUNCTION_ARGS)
 	PG_RETURN_JSONB_P(JsonbValueToJsonb(&jv));
 }
 
+/*
+ * jsonb_cardinality:
+ *		the number of members of a collection -- a list's elements or a
+ *		map's entries
+ *
+ * This is GQL's CARDINALITY(), which counts collections only.  It differs
+ * from length() on a string: a string's measure in GQL is CHAR_LENGTH(),
+ * so a string -- like any other scalar -- is refused here.
+ */
+Datum
+jsonb_cardinality(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
+	int			cnt = -1;
+	Datum		n;
+	JsonbValue	jv;
+
+	if (JB_ROOT_IS_ARRAY(j) && !JB_ROOT_IS_SCALAR(j))
+		cnt = (int) JB_ROOT_COUNT(j);
+	else if (JB_ROOT_IS_OBJECT(j))
+		cnt = (int) JB_ROOT_COUNT(j);
+
+	if (cnt < 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("cardinality(): list or map is expected but %s",
+						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
+
+	n = DirectFunctionCall1(int4_numeric, Int32GetDatum(cnt));
+	jv.type = jbvNumeric;
+	jv.val.numeric = DatumGetNumeric(n);
+
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(&jv));
+}
+
 Datum
 jsonb_toboolean(PG_FUNCTION_ARGS)
 {

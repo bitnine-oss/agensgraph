@@ -12995,6 +12995,13 @@
 { oid => '7305', descr => 'returns the total number of elements in an array',
   proname => 'array_size', prorettype => 'int4', proargtypes => 'anyarray',
   prosrc => 'array_size' },
+{ oid => '7306',
+  descr => 'the number of elements in a list or entries in a map',
+  proname => 'cardinality', prorettype => 'jsonb', proargtypes => 'jsonb',
+  prosrc => 'jsonb_cardinality' },
+{ oid => '7307', descr => 'the number of vertices and edges in a path',
+  proname => 'cardinality', prorettype => 'jsonb', proargtypes => 'graphpath',
+  prosrc => 'graphpath_cardinality' },
 
 # supports for agensgraph binary upgrade
 { oid => '8001', descr => 'for use by pg_upgrade',
