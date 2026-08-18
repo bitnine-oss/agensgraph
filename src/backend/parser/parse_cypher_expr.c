@@ -1396,8 +1396,19 @@ func_match_argtypes_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
 
 		for (i = 0; i < nargs; i++)
 		{
-			/* jsonb can be coerced to any type by calling coerce_expr() */
-			if (argtypes[i] == JSONBOID)
+			/*
+			 * jsonb can be coerced to any concrete type by calling
+			 * coerce_expr().  A polymorphic parameter is another matter: it
+			 * is not a cast target but a type family the argument has to
+			 * instantiate, and jsonb instantiates the element kinds only --
+			 * it has no array element type, no range subtype, no enum
+			 * members.  Claiming those matches anyway selects a candidate
+			 * whose argument coerce_expr() then cannot build.  Leave
+			 * polymorphic parameters to can_coerce_type() below, which knows
+			 * which of them jsonb satisfies.
+			 */
+			if (argtypes[i] == JSONBOID &&
+				!IsPolymorphicType(current_candidate->args[i]))
 				continue;
 
 			/* any type can be coerced to jsonb */
@@ -1620,7 +1631,13 @@ func_select_candidate_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
 
 				for (i = 0; i < nargs; i++)
 				{
-					if (known_type == JSONBOID)
+					/*
+					 * Same rule as func_match_argtypes_jsonb(): jsonb reaches
+					 * any concrete type, but whether it satisfies a
+					 * polymorphic one is can_coerce_type()'s call.
+					 */
+					if (known_type == JSONBOID &&
+						!IsPolymorphicType(current_typeids[i]))
 						continue;
 
 					if (current_typeids[i] == JSONBOID)
@@ -1795,8 +1812,25 @@ func_get_best_args(ParseState *pstate, List *args, Oid argtypes[FUNC_MAX_ARGS],
 		Node	   *arg = lfirst(la);
 
 		if (argtypes[i] == JSONBOID || candidate->args[i] == JSONBOID)
+		{
 			arg = coerce_expr(pstate, arg, argtypes[i], candidate->args[i], -1,
 							  COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
+
+			/*
+			 * coerce_expr() answers an impossible coercion with NULL, and a
+			 * NULL in an argument list crashes ParseFuncOrColumn().  A
+			 * candidate whose argument cannot be built has to be refused
+			 * here, whatever the matcher believed when it chose it.
+			 */
+			if (arg == NULL)
+				ereport(ERROR,
+						(errcode(ERRCODE_CANNOT_COERCE),
+						 errmsg("cannot cast type %s to %s",
+								format_type_be(argtypes[i]),
+								format_type_be(candidate->args[i])),
+						 parser_errposition(pstate,
+											exprLocation(lfirst(la)))));
+		}
 
 		newargs = lappend(newargs, arg);
 		i++;

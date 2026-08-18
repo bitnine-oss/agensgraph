@@ -1879,6 +1879,24 @@ MATCH (a:sz {name: 'ab'}), (b:sz {name: 'b'})
  1
 (1 row)
 
+-- A function whose only signature takes an array of some element type has no
+-- form a jsonb value can instantiate: the call is refused as unknown, on a
+-- list literal and on a stored list alike.
+RETURN array_ndims([1,2]) AS r;
+ERROR:  function array_ndims(jsonb) does not exist
+LINE 1: RETURN array_ndims([1,2]) AS r;
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+RETURN array_append([1,2], 3) AS r;
+ERROR:  function array_append(jsonb, integer) does not exist
+LINE 1: RETURN array_append([1,2], 3) AS r;
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+MATCH (n:sz {name: 'ab'}) RETURN array_ndims(n.tags) AS r;
+ERROR:  function array_ndims(jsonb) does not exist
+LINE 1: MATCH (n:sz {name: 'ab'}) RETURN array_ndims(n.tags) AS r;
+                                         ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
 -- Tear down
 DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;
