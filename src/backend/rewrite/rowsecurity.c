@@ -107,6 +107,7 @@ get_row_security_policies(Query *root, RangeTblEntry *rte, int rt_index,
 	List	   *restrictive_policies;
 	RTEPermissionInfo *perminfo;
 	int			resultRelation = 0;
+	bool		is_graphwrite_result = false;
 
 	/* Defaults for the return values */
 	*securityQuals = NIL;
@@ -201,6 +202,8 @@ get_row_security_policies(Query *root, RangeTblEntry *rte, int rt_index,
 			default:
 				break;
 		}
+
+		is_graphwrite_result = true;
 	}
 
 	/*
@@ -257,14 +260,75 @@ get_row_security_policies(Query *root, RangeTblEntry *rte, int rt_index,
 	get_policies_for_relation(rel, commandType, user_id, &permissive_policies,
 							  &restrictive_policies);
 
-	if (commandType == CMD_SELECT ||
-		commandType == CMD_UPDATE ||
-		commandType == CMD_DELETE)
+	if ((commandType == CMD_SELECT ||
+		 commandType == CMD_UPDATE ||
+		 commandType == CMD_DELETE) &&
+		!is_graphwrite_result)
 		add_security_quals(rt_index,
 						   permissive_policies,
 						   restrictive_policies,
 						   securityQuals,
 						   hasSubLinks);
+
+	/*
+	 * A graph write does not locate its rows by scanning the target label:
+	 * the reading clauses find them, and the write is applied to what they
+	 * found.  A security qual on the target's RTE therefore has nothing to
+	 * filter -- the RTE is never scanned -- so the USING policies are
+	 * enforced the way ON CONFLICT DO UPDATE and MERGE enforce theirs: as
+	 * WithCheckOptions the write checks against the existing row, raising
+	 * an error rather than silently leaving the row out of the write.
+	 */
+	if (is_graphwrite_result)
+	{
+		if (commandType == CMD_UPDATE)
+			add_with_check_options(rel, rt_index,
+								   WCO_RLS_MERGE_UPDATE_CHECK,
+								   permissive_policies,
+								   restrictive_policies,
+								   withCheckOptions,
+								   hasSubLinks,
+								   true);
+		else if (commandType == CMD_DELETE)
+			add_with_check_options(rel, rt_index,
+								   WCO_RLS_MERGE_DELETE_CHECK,
+								   permissive_policies,
+								   restrictive_policies,
+								   withCheckOptions,
+								   hasSubLinks,
+								   true);
+
+		/*
+		 * MERGE also updates the rows it matches when it carries ON MATCH
+		 * SET, so the UPDATE policies apply besides the INSERT ones: USING
+		 * against the matched row, WITH CHECK against the row it becomes.
+		 */
+		if (root->g_writeOp == GWROP_MERGE && root->g_sets != NIL)
+		{
+			List	   *merge_update_permissive_policies;
+			List	   *merge_update_restrictive_policies;
+
+			get_policies_for_relation(rel, CMD_UPDATE, user_id,
+									  &merge_update_permissive_policies,
+									  &merge_update_restrictive_policies);
+
+			add_with_check_options(rel, rt_index,
+								   WCO_RLS_MERGE_UPDATE_CHECK,
+								   merge_update_permissive_policies,
+								   merge_update_restrictive_policies,
+								   withCheckOptions,
+								   hasSubLinks,
+								   true);
+
+			add_with_check_options(rel, rt_index,
+								   WCO_RLS_UPDATE_CHECK,
+								   merge_update_permissive_policies,
+								   merge_update_restrictive_policies,
+								   withCheckOptions,
+								   hasSubLinks,
+								   false);
+		}
+	}
 
 	/*
 	 * Similar to above, during an UPDATE, DELETE, or MERGE, if SELECT rights
@@ -278,6 +342,7 @@ get_row_security_policies(Query *root, RangeTblEntry *rte, int rt_index,
 	 */
 	if ((commandType == CMD_UPDATE || commandType == CMD_DELETE ||
 		 commandType == CMD_MERGE) &&
+		!is_graphwrite_result &&
 		perminfo->requiredPerms & ACL_SELECT)
 	{
 		List	   *select_permissive_policies;

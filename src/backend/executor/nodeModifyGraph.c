@@ -12,6 +12,7 @@
 
 #include "ag_const.h"
 #include "access/htup_details.h"
+#include "access/tableam.h"
 #include "access/xact.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/namespace.h"
@@ -134,27 +135,47 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	}
 
 	/*
-	 * Initialize any WITH CHECK OPTION constraints if needed.
+	 * Initialize any WITH CHECK OPTION constraints, attaching each to the
+	 * result relation it speaks for.  The rewriter collects the options of
+	 * every target label into one list, and an option's relation name
+	 * identifies its label among the result relations: a graph write's
+	 * targets all live in one graph, where label names do not repeat.
 	 */
-	resultRelInfo = mgstate->resultRelInfo;
-	foreach(l, mgplan->withCheckOptionLists)
+	if (mgplan->withCheckOptionLists != NIL)
 	{
-		List	   *wcoList = (List *) lfirst(l);
-		List	   *wcoExprs = NIL;
-		ListCell   *ll;
+		int			i;
 
-		foreach(ll, wcoList)
+		resultRelInfo = mgstate->resultRelInfo;
+		for (i = 0; i < mgstate->numResultRelInfo; i++)
 		{
-			WithCheckOption *wco = (WithCheckOption *) lfirst(ll);
-			ExprState  *wcoExpr = ExecInitQual((List *) wco->qual,
-											   &mgstate->ps);
+			const char *relname =
+				RelationGetRelationName(resultRelInfo->ri_RelationDesc);
+			List	   *wcoList = NIL;
+			List	   *wcoExprs = NIL;
 
-			wcoExprs = lappend(wcoExprs, wcoExpr);
+			foreach(l, mgplan->withCheckOptionLists)
+			{
+				List	   *wcos = (List *) lfirst(l);
+				ListCell   *ll;
+
+				foreach(ll, wcos)
+				{
+					WithCheckOption *wco = (WithCheckOption *) lfirst(ll);
+					ExprState  *wcoExpr;
+
+					if (strcmp(wco->relname, relname) != 0)
+						continue;
+
+					wcoExpr = ExecInitQual((List *) wco->qual, &mgstate->ps);
+					wcoList = lappend(wcoList, wco);
+					wcoExprs = lappend(wcoExprs, wcoExpr);
+				}
+			}
+
+			resultRelInfo->ri_WithCheckOptions = wcoList;
+			resultRelInfo->ri_WithCheckOptionExprs = wcoExprs;
+			resultRelInfo++;
 		}
-
-		resultRelInfo->ri_WithCheckOptions = wcoList;
-		resultRelInfo->ri_WithCheckOptionExprs = wcoExprs;
-		resultRelInfo++;
 	}
 
 	openResultRelInfosIndices(mgstate);
@@ -983,6 +1004,37 @@ getResultRelInfo(ModifyGraphState *mgstate, Oid relid)
 	}
 
 	elog(ERROR, "invalid object ID %u for the target label", relid);
+}
+
+/*
+ * fetchGraphElementRow
+ *		Read the current row of the element a graph write is about to modify
+ *		into a slot of its label relation.
+ *
+ * A graph write carries an element as its graphid, ctid and property map,
+ * not as the label's row, and the label may hold more than those -- a
+ * promoted property has a column of its own.  Whatever has to be evaluated
+ * over the row itself, such as the USING clause of a row-security policy,
+ * needs the row read back from the table.
+ */
+TupleTableSlot *
+fetchGraphElementRow(EState *estate, ResultRelInfo *resultRelInfo,
+					 ItemPointer tupleid)
+{
+	Relation	rel = resultRelInfo->ri_RelationDesc;
+	TupleTableSlot *slot = resultRelInfo->ri_oldTupleSlot;
+
+	if (slot == NULL)
+	{
+		slot = table_slot_create(rel, &estate->es_tupleTable);
+		resultRelInfo->ri_oldTupleSlot = slot;
+	}
+
+	if (!table_tuple_fetch_row_version(rel, tupleid, estate->es_snapshot,
+									   slot))
+		elog(ERROR, "failed to fetch the row of the graph element being written");
+
+	return slot;
 }
 
 /*
