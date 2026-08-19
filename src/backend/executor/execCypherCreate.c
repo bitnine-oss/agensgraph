@@ -210,11 +210,15 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 								CMD_INSERT);
 
 	/*
-	 * ExecWithCheckOptions() will skip any WCOs which are not of the kind we
-	 * are looking for at this point.
+	 * Check the INSERT policies against the row being inserted -- the
+	 * label-shaped tuple, whose columns are what a policy names -- not
+	 * against the pattern row the subplan produced.  ExecWithCheckOptions()
+	 * will skip any WCOs which are not of the kind we are looking for at
+	 * this point.
 	 */
 	if (resultRelInfo->ri_WithCheckOptions != NIL)
-		ExecWithCheckOptions(WCO_RLS_INSERT_CHECK, resultRelInfo, slot, estate);
+		ExecWithCheckOptions(WCO_RLS_INSERT_CHECK, resultRelInfo,
+							 elemTupleSlot, estate);
 
 	/*
 	 * Check the constraints of the tuple
@@ -304,6 +308,11 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	/* Compute any promoted typed columns from the property bag (see createVertex). */
 	computeLabelStoredGenerated(resultRelInfo, estate, elemTupleSlot,
 								CMD_INSERT);
+
+	/* the INSERT policies read the row being inserted; see createVertex */
+	if (resultRelInfo->ri_WithCheckOptions != NIL)
+		ExecWithCheckOptions(WCO_RLS_INSERT_CHECK, resultRelInfo,
+							 elemTupleSlot, estate);
 
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, elemTupleSlot, estate);

@@ -218,6 +218,43 @@ RESET role;
 MATCH (n:rls2) OPTIONAL MATCH (n)-[e:rls2_e]-()
 	RETURN n.name, n.age, count(e) ORDER BY n.name;
 
+--
+-- INSERT policies: the WITH CHECK clause reads the row being inserted --
+-- its property map, not the pattern that created it -- and an edge label
+-- enforces its policies the same way a vertex label does
+--
+CREATE POLICY rls2_ins ON graph_priv_test.rls2 FOR INSERT
+	WITH CHECK (properties->>'name' <> 'forbidden');
+ALTER TABLE graph_priv_test."rls2_e" ENABLE ROW LEVEL SECURITY;
+GRANT USAGE ON graph_priv_test."rls2_id_seq" TO group1;
+GRANT USAGE ON graph_priv_test."rls2_e_id_seq" TO group1;
+
+SET role role2;
+
+-- the policy reads the new row's properties
+CREATE (:rls2 {name: 'carol'});
+CREATE (:rls2 {name: 'forbidden'});
+MERGE (n:rls2 {name: 'forbidden'});
+
+-- the edge label has row security and no INSERT policy: default deny
+MATCH (a:rls2 {name: 'alice'}), (b:rls2 {name: 'carol'})
+	CREATE (a)-[:rls2_e]->(b);
+
+RESET role;
+
+-- an INSERT policy on the edge label admits it again
+CREATE POLICY rls2_e_ins ON graph_priv_test.rls2_e FOR INSERT WITH CHECK (true);
+CREATE POLICY rls2_e_sel ON graph_priv_test.rls2_e FOR SELECT USING (true);
+
+SET role role2;
+MATCH (a:rls2 {name: 'alice'}), (b:rls2 {name: 'carol'})
+	CREATE (a)-[:rls2_e]->(b);
+RESET role;
+
+-- only the rows the INSERT policies admitted exist
+MATCH (n:rls2) OPTIONAL MATCH (n)-[e:rls2_e]-()
+	RETURN n.name, count(e) ORDER BY n.name;
+
 -- Clean up
 DROP GRAPH IF EXISTS graph_priv_test CASCADE;
 

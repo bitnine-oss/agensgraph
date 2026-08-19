@@ -230,11 +230,13 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	computeLabelStoredGenerated(resultRelInfo, estate, insertSlot, CMD_INSERT);
 
 	/*
-	 * ExecWithCheckOptions() will skip any WCOs which are not of the kind we
-	 * are looking for at this point.
+	 * Check the INSERT policies against the row being inserted; see
+	 * createVertex().  ExecWithCheckOptions() will skip any WCOs which are
+	 * not of the kind we are looking for at this point.
 	 */
 	if (resultRelInfo->ri_WithCheckOptions != NIL)
-		ExecWithCheckOptions(WCO_RLS_INSERT_CHECK, resultRelInfo, slot, estate);
+		ExecWithCheckOptions(WCO_RLS_INSERT_CHECK, resultRelInfo,
+							 insertSlot, estate);
 
 	/*
 	 * Check the constraints of the tuple.
@@ -326,11 +328,13 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	computeLabelStoredGenerated(resultRelInfo, estate, insertSlot, CMD_INSERT);
 
 	/*
-	 * ExecWithCheckOptions() will skip any WCOs which are not of the kind we
-	 * are looking for at this point.
+	 * Check the INSERT policies against the row being inserted; see
+	 * createVertex().  ExecWithCheckOptions() will skip any WCOs which are
+	 * not of the kind we are looking for at this point.
 	 */
 	if (resultRelInfo->ri_WithCheckOptions != NIL)
-		ExecWithCheckOptions(WCO_RLS_INSERT_CHECK, resultRelInfo, slot, estate);
+		ExecWithCheckOptions(WCO_RLS_INSERT_CHECK, resultRelInfo,
+							 insertSlot, estate);
 
 	/*
 	 * Check the constraints of the tuple
