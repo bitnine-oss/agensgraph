@@ -1418,13 +1418,18 @@ func_match_argtypes_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
 			 * is not a cast target but a type family the argument has to
 			 * instantiate, and jsonb instantiates the element kinds only --
 			 * it has no array element type, no range subtype, no enum
-			 * members.  Claiming those matches anyway selects a candidate
-			 * whose argument coerce_expr() then cannot build.  Leave
-			 * polymorphic parameters to can_coerce_type() below, which knows
-			 * which of them jsonb satisfies.
+			 * members.  Row and array types coerce_expr() refuses outright.
+			 * Claiming any of those matches anyway selects a candidate whose
+			 * argument cannot be built -- or crowds out the candidate that
+			 * could take the call.  Leave polymorphic parameters to
+			 * can_coerce_type() below, which knows which of them jsonb
+			 * satisfies, and skip the parameters coerce_expr() would refuse.
 			 */
 			if (argtypes[i] == JSONBOID &&
-				!IsPolymorphicType(current_candidate->args[i]))
+				!IsPolymorphicType(current_candidate->args[i]) &&
+				current_candidate->args[i] != RECORDARRAYOID &&
+				!OidIsValid(get_element_type(current_candidate->args[i])) &&
+				!type_is_rowtype(current_candidate->args[i]))
 				continue;
 
 			/* any type can be coerced to jsonb */
@@ -1649,11 +1654,15 @@ func_select_candidate_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
 				{
 					/*
 					 * Same rule as func_match_argtypes_jsonb(): jsonb reaches
-					 * any concrete type, but whether it satisfies a
+					 * any concrete type except the row and array types
+					 * coerce_expr() refuses, and whether it satisfies a
 					 * polymorphic one is can_coerce_type()'s call.
 					 */
 					if (known_type == JSONBOID &&
-						!IsPolymorphicType(current_typeids[i]))
+						!IsPolymorphicType(current_typeids[i]) &&
+						current_typeids[i] != RECORDARRAYOID &&
+						!OidIsValid(get_element_type(current_typeids[i])) &&
+						!type_is_rowtype(current_typeids[i]))
 						continue;
 
 					if (current_typeids[i] == JSONBOID)
@@ -2838,9 +2847,32 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 				break;
 			case T_CypherAccessExpr:
 			case T_Var:
-				result = (Node *) make_op(pstate, list_make1(makeString("@>")),
-										  rexpr, containmentLhs, pstate->p_last_srf,
-										  a->location);
+				{
+					Oid			rtype = exprType(rexpr);
+
+					/*
+					 * The right side may be a native list -- collected paths,
+					 * a path's element arrays -- and containment reads jsonb,
+					 * so serialize it the way the left side was serialized
+					 * above.  A graph value goes through to_jsonb(), since
+					 * coerce_to_jsonb() refuses graph types.
+					 */
+					if (rtype != JSONBOID)
+					{
+						if (is_graph_type(rtype))
+							rexpr = (Node *) makeFuncExpr(F_TO_JSONB, JSONBOID,
+														  list_make1(rexpr),
+														  InvalidOid, InvalidOid,
+														  COERCE_EXPLICIT_CALL);
+						else
+							rexpr = coerce_to_jsonb(pstate, rexpr, "list");
+					}
+
+					result = (Node *) make_op(pstate,
+											  list_make1(makeString("@>")),
+											  rexpr, containmentLhs,
+											  pstate->p_last_srf, a->location);
+				}
 				break;
 			default:
 				{

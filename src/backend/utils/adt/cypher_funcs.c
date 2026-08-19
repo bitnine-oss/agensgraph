@@ -3117,6 +3117,61 @@ collect_finalfn(PG_FUNCTION_ARGS)
 }
 
 /*
+ * collect over a vertex, an edge or a path accumulates the elements
+ * themselves, into an array of their own type, so that what is taken back
+ * out of the list is still the element -- with its label, its identity and
+ * its property shorthand -- rather than a jsonb picture of it.  The array
+ * machinery also costs a datum copy per element where building jsonb walks
+ * every property map twice, and it carries the combine and serial functions
+ * that let the aggregate run in parallel.
+ */
+Datum
+collect_array_transfn(PG_FUNCTION_ARGS)
+{
+	/* collect() leaves null elements out, the way its jsonb form does */
+	if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	}
+
+	return array_agg_transfn(fcinfo);
+}
+
+static Datum
+collect_array_final(FunctionCallInfo fcinfo)
+{
+	/* collecting nothing is an empty list, not an unknown one */
+	if (PG_ARGISNULL(0))
+	{
+		Oid			elemtype = get_fn_expr_argtype(fcinfo->flinfo, 1);
+
+		PG_RETURN_ARRAYTYPE_P(construct_empty_array(elemtype));
+	}
+
+	return array_agg_finalfn(fcinfo);
+}
+
+Datum
+collect_vertex_finalfn(PG_FUNCTION_ARGS)
+{
+	return collect_array_final(fcinfo);
+}
+
+Datum
+collect_edge_finalfn(PG_FUNCTION_ARGS)
+{
+	return collect_array_final(fcinfo);
+}
+
+Datum
+collect_graphpath_finalfn(PG_FUNCTION_ARGS)
+{
+	return collect_array_final(fcinfo);
+}
+
+/*
  * Construct an empty array jsonb.
  */
 static Jsonb *
