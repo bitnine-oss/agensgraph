@@ -419,3 +419,51 @@ SELECT cardinality(ARRAY[1,2,3]) AS r;
 
 -- Clean up
 DROP GRAPH cardinality_graph CASCADE;
+
+--
+-- Testing collect() over graph elements
+--
+
+-- Creating sample graph
+CREATE GRAPH collect_graph;
+SET graph_path = collect_graph;
+CREATE (:P {name: 'alice', age: 30})-[:R {since: 2020}]->(:P {name: 'bob', age: 25});
+
+-- a collected node is still a node: the list renders its elements, an
+-- element taken back out answers its properties, its label and its id
+MATCH (n:P) RETURN collect(n);
+MATCH (n:P) WITH collect(n) AS ns RETURN ns[0].name;
+MATCH (n:P) WITH collect(n) AS ns, count(*) AS c RETURN ns[c-1].name;
+MATCH (n:P) WITH collect(n) AS ns UNWIND ns AS x RETURN x.name ORDER BY x.name;
+MATCH (n:P) WITH collect(n) AS ns RETURN label(ns[0]), id(ns[0]) IS NULL;
+
+-- relationships and paths the same way
+MATCH ()-[r:R]->() WITH collect(r) AS rs RETURN rs[0].since;
+MATCH p = (:P)-[:R]->(:P) WITH collect(p) AS ps
+	RETURN length(ps[0]), [x IN nodes(ps[0]) | x.name];
+
+-- list functions and comprehensions read the collected list
+MATCH (n:P) WITH collect(n) AS ns
+	RETURN size(ns), [x IN ns WHERE x.age > 26 | x.name];
+
+-- collecting nothing is an empty list, and null elements are left out
+MATCH (n:nonexistent) RETURN collect(n), size(collect(n));
+MATCH (n:P) OPTIONAL MATCH (n)-[:R]->(m:P {name: 'nomatch'})
+	RETURN size(collect(m));
+
+-- DISTINCT de-duplicates by the element
+MATCH (n:P {name: 'alice'}), (m:P)
+	WITH collect(n) AS all_ns, collect(DISTINCT n) AS ns
+	RETURN size(all_ns), size(ns);
+
+-- a property collect stays a jsonb list
+MATCH (n:P) RETURN collect(n.name) ORDER BY 1;
+
+-- a collected list stored into a property map is boxed to jsonb, since a
+-- property holds values, not elements
+MATCH (n:P {name: 'alice'}) WITH collect(n) AS ns
+	MATCH (m:P {name: 'bob'}) SET m.keep = ns;
+MATCH (m:P {name: 'bob'}) RETURN m.keep;
+
+-- Clean up
+DROP GRAPH collect_graph CASCADE;
