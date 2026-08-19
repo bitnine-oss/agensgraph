@@ -36,6 +36,9 @@ typedef struct ModifiedElemEntry
 } ModifiedElemEntry;
 
 extern ResultRelInfo *getResultRelInfo(ModifyGraphState *mgstate, Oid relid);
+extern TupleTableSlot *fetchGraphElementRow(EState *estate,
+											ResultRelInfo *resultRelInfo,
+											ItemPointer tupleid);
 extern Datum findVertex(TupleTableSlot *slot, GraphVertex *gvertex, Graphid *vid);
 extern Datum findEdge(TupleTableSlot *slot, GraphEdge *gedge, Graphid *eid);
 extern AttrNumber findAttrInSlotByName(TupleTableSlot *slot, char *name);

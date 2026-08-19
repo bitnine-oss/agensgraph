@@ -567,6 +567,20 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 	resultRelationDesc = resultRelInfo->ri_RelationDesc;
 
 	/*
+	 * Enforce the USING clauses of the relation's UPDATE policies against
+	 * the row being written.  The reading clauses located it under the
+	 * SELECT policies, so the UPDATE policies have not seen it; a row they
+	 * do not pass is refused, the way MERGE refuses a matched row its
+	 * policies do not cover.  The WITH CHECK clauses are checked against
+	 * the new row further down, once it is complete.
+	 */
+	if (resultRelInfo->ri_WithCheckOptions != NIL)
+		ExecWithCheckOptions(WCO_RLS_MERGE_UPDATE_CHECK, resultRelInfo,
+							 fetchGraphElementRow(estate, resultRelInfo,
+												  ctid),
+							 estate);
+
+	/*
 	 * Create a tuple to store. Attributes of vertex/edge label are not the
 	 * same with those of vertex/edge.
 	 */
@@ -953,6 +967,13 @@ LegacyUpdateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 								Anum_table_vertex_prop_map :
 								Anum_table_edge_prop_map);
 	ExecStoreVirtualTuple(elemTupleSlot);
+
+	/* the USING clauses of the UPDATE policies read the old row; see above */
+	if (resultRelInfo->ri_WithCheckOptions != NIL)
+		ExecWithCheckOptions(WCO_RLS_MERGE_UPDATE_CHECK, resultRelInfo,
+							 fetchGraphElementRow(estate, resultRelInfo,
+												  ctid),
+							 estate);
 
 	/* BEFORE ROW UPDATE Triggers */
 	if (resultRelInfo->ri_TrigDesc &&

@@ -1311,6 +1311,9 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 				{
 					lfirst_int(l) += rtoffset;
 				}
+				splan->withCheckOptionLists =
+					fix_scan_list(root, splan->withCheckOptionLists,
+								  rtoffset, 1);
 				splan->subplan = set_plan_refs(root, splan->subplan, rtoffset);
 				splan->resultRelIndex = list_length(root->glob->resultRelations);
 				root->glob->resultRelations =

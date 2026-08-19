@@ -178,6 +178,72 @@ MATCH (a:v1 {name: 'A'}) DELETE a;
 MATCH (a:v1 {name: 'B'}) SET a.age=40;
 MATCH (a:v1 {name: 'B'}) DELETE a;
 RESET ROLE;
+--
+-- RLS: the USING clauses of UPDATE and DELETE policies decide which rows a
+-- graph write may touch.  Reading stays open here on purpose, so every row
+-- reaches the write and the write's own policies are what refuse it.
+--
+CREATE VLABEL rls2;
+CREATE ELABEL rls2_e;
+CREATE (:rls2 {name: 'alice'});
+CREATE (:rls2 {name: 'bob'});
+MATCH (a:rls2 {name: 'alice'}), (b:rls2 {name: 'bob'})
+	CREATE (a)-[:rls2_e]->(b);
+GRANT SELECT, INSERT, UPDATE, DELETE ON graph_priv_test."rls2" TO group1;
+GRANT SELECT, INSERT, UPDATE, DELETE ON graph_priv_test."rls2_e" TO group1;
+-- DETACH deletes through every edge label, so it needs the earlier one too
+GRANT SELECT, INSERT, UPDATE, DELETE ON graph_priv_test."e1" TO group1;
+ALTER TABLE graph_priv_test."rls2" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY rls2_sel ON graph_priv_test.rls2 FOR SELECT USING (true);
+SET role role2;
+-- every row is readable
+MATCH (n:rls2) RETURN n.name ORDER BY n.name;
+  name   
+---------
+ "alice"
+ "bob"
+(2 rows)
+
+-- but with no DELETE and no UPDATE policy, the default-deny policy refuses
+-- the rows the write asks for
+MATCH (n:rls2 {name: 'bob'}) DETACH DELETE n;
+ERROR:  target row violates row-level security policy (USING expression) for table "rls2"
+MATCH (n:rls2 {name: 'bob'}) SET n.age = 1;
+ERROR:  target row violates row-level security policy (USING expression) for table "rls2"
+RESET role;
+-- narrow policies: only alice may be updated, and nobody may be deleted
+CREATE POLICY rls2_upd ON graph_priv_test.rls2 FOR UPDATE
+	USING (properties->>'name' = 'alice') WITH CHECK (true);
+CREATE POLICY rls2_del ON graph_priv_test.rls2 FOR DELETE
+	USING (properties->>'name' = 'nobody');
+SET role role2;
+-- bob is outside the UPDATE policy's USING; alice is inside it
+MATCH (n:rls2 {name: 'bob'}) SET n.age = 99;
+ERROR:  target row violates row-level security policy (USING expression) for table "rls2"
+MATCH (n:rls2 {name: 'alice'}) SET n.age = 30 RETURN n.name, n.age;
+  name   | age 
+---------+-----
+ "alice" | 30
+(1 row)
+
+-- no row satisfies the DELETE policy
+MATCH (n:rls2 {name: 'bob'}) DETACH DELETE n;
+ERROR:  target row violates row-level security policy (USING expression) for table "rls2"
+-- MERGE updates the row it matches, so the UPDATE policies apply to it
+MERGE (n:rls2 {name: 'bob'}) ON MATCH SET n.age = 1;
+ERROR:  target row violates row-level security policy (USING expression) for table "rls2"
+MERGE (n:rls2 {name: 'alice'}) ON MATCH SET n.age = 31;
+RESET role;
+-- the rows the policies protected are untouched, and alice carries the two
+-- updates the policies allowed
+MATCH (n:rls2) OPTIONAL MATCH (n)-[e:rls2_e]-()
+	RETURN n.name, n.age, count(e) ORDER BY n.name;
+  name   | age | count 
+---------+-----+-------
+ "alice" | 31  | 1
+ "bob"   |     | 1
+(2 rows)
+
 -- Clean up
 DROP GRAPH IF EXISTS graph_priv_test CASCADE;
 -- Dropping the graph removes the schema-scoped default privileges, but the

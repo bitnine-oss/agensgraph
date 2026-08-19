@@ -160,6 +160,19 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 
 	resultRelationDesc = resultRelInfo->ri_RelationDesc;
 
+	/*
+	 * Enforce the USING clauses of the relation's DELETE policies against
+	 * the row being deleted.  The reading clauses located the row under the
+	 * SELECT policies, so the DELETE policies have not seen it; a row they
+	 * do not pass is refused, the way MERGE refuses a matched row its
+	 * policies do not cover.
+	 */
+	if (resultRelInfo->ri_WithCheckOptions != NIL)
+		ExecWithCheckOptions(WCO_RLS_MERGE_DELETE_CHECK, resultRelInfo,
+							 fetchGraphElementRow(estate, resultRelInfo,
+												  tupleid),
+							 estate);
+
 	/* BEFORE ROW DELETE Triggers */
 	if (resultRelInfo->ri_TrigDesc &&
 		resultRelInfo->ri_TrigDesc->trig_delete_before_row)
