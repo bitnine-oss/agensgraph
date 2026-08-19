@@ -255,6 +255,55 @@ RESET role;
 MATCH (n:rls2) OPTIONAL MATCH (n)-[e:rls2_e]-()
 	RETURN n.name, count(e) ORDER BY n.name;
 
+--
+-- RLS on an inherited label: a row answers to the policies of the label it
+-- belongs to, whichever label the query names to reach it
+--
+CREATE VLABEL rls_parent;
+CREATE VLABEL rls_child INHERITS (rls_parent);
+CREATE (:rls_parent {name: 'alice', age: 30});
+CREATE (:rls_child  {name: 'emp1',  age: 41});
+GRANT SELECT, INSERT, UPDATE, DELETE ON graph_priv_test."rls_parent" TO group1;
+GRANT SELECT, INSERT, UPDATE, DELETE ON graph_priv_test."rls_child" TO group1;
+ALTER TABLE graph_priv_test."rls_child" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY c_sel ON graph_priv_test.rls_child FOR SELECT USING (true);
+CREATE POLICY c_upd ON graph_priv_test.rls_child FOR UPDATE
+	USING (true) WITH CHECK (false);
+-- no DELETE policy on rls_child: default deny
+
+SET role role2;
+
+-- the child row is refused through either label, and with no DELETE policy
+-- the default-deny policy holds through the parent label too
+MATCH (n:rls_child  {name: 'emp1'}) SET n.age = 100;
+MATCH (n:rls_parent {name: 'emp1'}) SET n.age = 101;
+MATCH (n:rls_parent {name: 'emp1'}) DELETE n;
+
+-- a row of the parent label has no row security, whichever label reached it
+MATCH (n:rls_parent {name: 'alice'}) SET n.age = 32;
+
+RESET role;
+
+-- the child row is untouched, the parent row carries its update
+MATCH (n:rls_parent) RETURN n.name, n.age ORDER BY n.name;
+
+-- the named label's policies do not reach another label's rows: let the
+-- child's policy admit its row while the parent's refuses everything, and
+-- the child row still updates under its own label's policy
+ALTER POLICY c_upd ON graph_priv_test.rls_child
+	WITH CHECK (properties->>'name' = 'emp1');
+ALTER TABLE graph_priv_test."rls_parent" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY p_sel2 ON graph_priv_test.rls_parent FOR SELECT USING (true);
+CREATE POLICY p_upd2 ON graph_priv_test.rls_parent FOR UPDATE
+	USING (true) WITH CHECK (false);
+
+SET role role2;
+MATCH (n:rls_parent {name: 'emp1'}) SET n.age = 103 RETURN n.age;
+MATCH (n:rls_parent {name: 'alice'}) SET n.age = 33;
+RESET role;
+
+MATCH (n:rls_parent) RETURN n.name, n.age ORDER BY n.name;
+
 -- Clean up
 DROP GRAPH IF EXISTS graph_priv_test CASCADE;
 
