@@ -1307,45 +1307,90 @@ get_last_graph_write_stats(PG_FUNCTION_ARGS)
 	SRF_RETURN_DONE(funcctx);
 }
 
+/*
+ * listElemTypeInfo
+ *		The element type's length, by-value flag and alignment, kept across
+ *		calls.  No type cache flags are asked for; nothing here compares
+ *		elements.
+ */
+static void
+listElemTypeInfo(FunctionCallInfo fcinfo, Oid element_type,
+				 int *typlen, bool *typbyval, char *typalign)
+{
+	TypeCacheEntry *typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
+
+	if (typentry == NULL || typentry->type_id != element_type)
+	{
+		typentry = lookup_type_cache(element_type, 0);
+		fcinfo->flinfo->fn_extra = (void *) typentry;
+	}
+
+	*typlen = typentry->typlen;
+	*typbyval = typentry->typbyval;
+	*typalign = typentry->typalign;
+}
+
+/*
+ * listElemSource
+ *		The datum to read a list's elements from.
+ *
+ * array_get_element() and array_get_slice() recognize an expanded array only
+ * in the argument's own datum.  A flat one is passed on as already detoasted,
+ * so that it is not detoasted a second time.
+ */
+static Datum
+listElemSource(Datum arg, AnyArrayType *arr)
+{
+	if (VARATT_IS_EXTERNAL_EXPANDED(DatumGetPointer(arg)))
+		return arg;
+
+	return PointerGetDatum(arr);
+}
+
+/*
+ * checkListIsOneDim
+ *		Reject an array of more than one dimension.  A list is
+ *		one-dimensional; an empty array has no dimensions and is accepted.
+ */
+static void
+checkListIsOneDim(int ndims, const char *funcname)
+{
+	if (ndims > 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("%s(): argument must be empty or one-dimensional array",
+						funcname)));
+}
+
 Datum
 array_head(PG_FUNCTION_ARGS)
 {
 	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
+	int			ndims = AARR_NDIM(arr);
 	Oid			element_type = AARR_ELEMTYPE(arr);
-	TypeCacheEntry *typentry;
 	int			typlen;
 	bool		typbyval;
 	char		typalign;
+	int			subscript;
 	Datum		rtnelt;
-	const int	one = 1;
+	bool		isnull;
 
-	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
+	checkListIsOneDim(ndims, "head");
 
-	if (typentry == NULL ||
-		typentry->type_id != element_type)
-	{
-		typentry = lookup_type_cache(element_type,
-									 TYPECACHE_CMP_PROC_FINFO);
-		if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
-			ereport(ERROR,
-					(errcode(ERRCODE_UNDEFINED_FUNCTION),
-					 errmsg("could not identify a comparison function for type %s",
-							format_type_be(element_type))));
-		fcinfo->flinfo->fn_extra = (void *) typentry;
-	}
+	if (ArrayGetNItems(ndims, AARR_DIMS(arr)) == 0)
+		PG_RETURN_NULL();
 
-	typlen = typentry->typlen;
-	typbyval = typentry->typbyval;
-	typalign = typentry->typalign;
+	listElemTypeInfo(fcinfo, element_type, &typlen, &typbyval, &typalign);
 
-	rtnelt = array_get_element(PointerGetDatum(arr),
-							   1,
-							   (int *) &one,
-							   -1,
-							   typlen,
-							   typbyval,
-							   typalign,
-							   &typbyval);
+	/* a list's first element sits at its lower bound, not always at one */
+	subscript = AARR_LBOUND(arr)[0];
+
+	rtnelt = array_get_element(listElemSource(PG_GETARG_DATUM(0), arr),
+							   1, &subscript, -1,
+							   typlen, typbyval, typalign, &isnull);
+
+	if (isnull)
+		PG_RETURN_NULL();
 
 	PG_RETURN_DATUM(rtnelt);
 }
@@ -1353,45 +1398,34 @@ array_head(PG_FUNCTION_ARGS)
 Datum
 array_last(PG_FUNCTION_ARGS)
 {
-
 	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
 	int			ndims = AARR_NDIM(arr);
-	int		   *dims = AARR_DIMS(arr);
-	int			nitems = ArrayGetNItems(ndims, dims);
 	Oid			element_type = AARR_ELEMTYPE(arr);
-	TypeCacheEntry *typentry;
+	int			nitems;
 	int			typlen;
 	bool		typbyval;
 	char		typalign;
+	int			subscript;
 	Datum		rtnelt;
+	bool		isnull;
 
-	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
+	checkListIsOneDim(ndims, "last");
 
-	if (typentry == NULL ||
-		typentry->type_id != element_type)
-	{
-		typentry = lookup_type_cache(element_type,
-									 TYPECACHE_CMP_PROC_FINFO);
-		if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
-			ereport(ERROR,
-					(errcode(ERRCODE_UNDEFINED_FUNCTION),
-					 errmsg("could not identify a comparison function for type %s",
-							format_type_be(element_type))));
-		fcinfo->flinfo->fn_extra = (void *) typentry;
-	}
+	nitems = ArrayGetNItems(ndims, AARR_DIMS(arr));
 
-	typlen = typentry->typlen;
-	typbyval = typentry->typbyval;
-	typalign = typentry->typalign;
+	if (nitems == 0)
+		PG_RETURN_NULL();
 
-	rtnelt = array_get_element(PointerGetDatum(arr),
-							   1,
-							   &nitems,
-							   -1,
-							   typlen,
-							   typbyval,
-							   typalign,
-							   &typbyval);
+	listElemTypeInfo(fcinfo, element_type, &typlen, &typbyval, &typalign);
+
+	subscript = AARR_LBOUND(arr)[0] + nitems - 1;
+
+	rtnelt = array_get_element(listElemSource(PG_GETARG_DATUM(0), arr),
+							   1, &subscript, -1,
+							   typlen, typbyval, typalign, &isnull);
+
+	if (isnull)
+		PG_RETURN_NULL();
 
 	PG_RETURN_DATUM(rtnelt);
 }
@@ -1400,62 +1434,45 @@ array_last(PG_FUNCTION_ARGS)
 Datum
 array_tail(PG_FUNCTION_ARGS)
 {
-
 	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
 	int			ndims = AARR_NDIM(arr);
-	int		   *dims = AARR_DIMS(arr);
-	int			nitems = ArrayGetNItems(ndims, dims);
 	Oid			element_type = AARR_ELEMTYPE(arr);
-	TypeCacheEntry *typentry;
+	int			nitems;
 	int			typlen;
 	bool		typbyval;
 	char		typalign;
-	int			i;
-	Datum		rtnelt;
-	bool		isnull;
+	int			lower[MAXDIM];
+	int			upper[MAXDIM];
+	bool		lowerProvided[MAXDIM];
+	bool		upperProvided[MAXDIM];
 
-	ArrayBuildState *astate = NULL;
-	array_iter	it;
+	checkListIsOneDim(ndims, "tail");
 
-	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
+	nitems = ArrayGetNItems(ndims, AARR_DIMS(arr));
 
-	if (typentry == NULL ||
-		typentry->type_id != element_type)
-	{
-		typentry = lookup_type_cache(element_type,
-									 TYPECACHE_CMP_PROC_FINFO);
-		if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
-			ereport(ERROR,
-					(errcode(ERRCODE_UNDEFINED_FUNCTION),
-					 errmsg("could not identify a comparison function for type %s",
-							format_type_be(element_type))));
-		fcinfo->flinfo->fn_extra = (void *) typentry;
-	}
+	if (nitems <= 1)
+		PG_RETURN_ARRAYTYPE_P(construct_empty_array(element_type));
 
-	typlen = typentry->typlen;
-	typbyval = typentry->typbyval;
-	typalign = typentry->typalign;
+	listElemTypeInfo(fcinfo, element_type, &typlen, &typbyval, &typalign);
 
-	/* setup iterator for array and iterate once to ignore this element */
-	array_iter_setup(&it, arr);
-	array_iter_next(&it, &isnull, 0,
-					typlen, typbyval, typalign);
+	/*
+	 * Keep the slice from one past the lower bound to the end.  Both
+	 * subscript arrays must be MAXDIM-sized: array_get_slice() writes to them
+	 * and fills in the bounds left unprovided.  Its result has lower bound
+	 * one.
+	 */
+	memset(lower, 0, sizeof(lower));
+	memset(upper, 0, sizeof(upper));
+	memset(lowerProvided, false, sizeof(lowerProvided));
+	memset(upperProvided, false, sizeof(upperProvided));
 
-	astate = initArrayResult(element_type, CurrentMemoryContext, false);
+	lower[0] = AARR_LBOUND(arr)[0] + 1;
+	lowerProvided[0] = true;
 
-	/* iterate over the array */
-	for (i = 1; i < nitems; i++)
-	{
-		/* get datum at index i */
-		rtnelt = array_iter_next(&it, &isnull, i,
-								 typlen, typbyval, typalign);
-
-		astate =
-			accumArrayResult(astate, rtnelt, isnull,
-							 element_type, CurrentMemoryContext);
-	}
-
-	PG_RETURN_DATUM(makeArrayResult(astate, CurrentMemoryContext));
+	PG_RETURN_DATUM(array_get_slice(listElemSource(PG_GETARG_DATUM(0), arr),
+									1, upper, lower,
+									upperProvided, lowerProvided,
+									-1, typlen, typbyval, typalign));
 }
 
 
@@ -2008,7 +2025,6 @@ array_tostringlist(PG_FUNCTION_ARGS)
 	int		   *dims = AARR_DIMS(arr);
 	int			nitems = ArrayGetNItems(ndims, dims);
 	Oid			element_type = AARR_ELEMTYPE(arr);
-	TypeCacheEntry *typentry;
 	int			typlen;
 	bool		typbyval;
 	char		typalign;
@@ -2018,24 +2034,7 @@ array_tostringlist(PG_FUNCTION_ARGS)
 	bool		isnull;
 	int			i;
 
-	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
-
-	if (typentry == NULL ||
-		typentry->type_id != element_type)
-	{
-		typentry = lookup_type_cache(element_type,
-									 TYPECACHE_CMP_PROC_FINFO);
-		if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
-			ereport(ERROR,
-					(errcode(ERRCODE_UNDEFINED_FUNCTION),
-					 errmsg("could not identify a comparison function for type %s",
-							format_type_be(element_type))));
-		fcinfo->flinfo->fn_extra = (void *) typentry;
-	}
-
-	typlen = typentry->typlen;
-	typbyval = typentry->typbyval;
-	typalign = typentry->typalign;
+	listElemTypeInfo(fcinfo, element_type, &typlen, &typbyval, &typalign);
 
 	/* setup iterator for array */
 	array_iter_setup(&it, arr);
@@ -2612,7 +2611,6 @@ array_tointegerlist(PG_FUNCTION_ARGS)
 	int		   *dims = AARR_DIMS(arr);
 	int			nitems = ArrayGetNItems(ndims, dims);
 	Oid			element_type = AARR_ELEMTYPE(arr);
-	TypeCacheEntry *typentry;
 	int			typlen;
 	bool		typbyval;
 	char		typalign;
@@ -2622,24 +2620,7 @@ array_tointegerlist(PG_FUNCTION_ARGS)
 	bool		isnull;
 	int			i;
 
-	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
-
-	if (typentry == NULL ||
-		typentry->type_id != element_type)
-	{
-		typentry = lookup_type_cache(element_type,
-									 TYPECACHE_CMP_PROC_FINFO);
-		if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
-			ereport(ERROR,
-					(errcode(ERRCODE_UNDEFINED_FUNCTION),
-					 errmsg("could not identify a comparison function for type %s",
-							format_type_be(element_type))));
-		fcinfo->flinfo->fn_extra = (void *) typentry;
-	}
-
-	typlen = typentry->typlen;
-	typbyval = typentry->typbyval;
-	typalign = typentry->typalign;
+	listElemTypeInfo(fcinfo, element_type, &typlen, &typbyval, &typalign);
 
 	/* setup iterator for array */
 	array_iter_setup(&it, arr);
@@ -2871,7 +2852,6 @@ array_tofloatlist(PG_FUNCTION_ARGS)
 	int		   *dims = AARR_DIMS(arr);
 	int			nitems = ArrayGetNItems(ndims, dims);
 	Oid			element_type = AARR_ELEMTYPE(arr);
-	TypeCacheEntry *typentry;
 	int			typlen;
 	bool		typbyval;
 	char		typalign;
@@ -2881,24 +2861,7 @@ array_tofloatlist(PG_FUNCTION_ARGS)
 	bool		isnull;
 	int			i;
 
-	typentry = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
-
-	if (typentry == NULL ||
-		typentry->type_id != element_type)
-	{
-		typentry = lookup_type_cache(element_type,
-									 TYPECACHE_CMP_PROC_FINFO);
-		if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
-			ereport(ERROR,
-					(errcode(ERRCODE_UNDEFINED_FUNCTION),
-					 errmsg("could not identify a comparison function for type %s",
-							format_type_be(element_type))));
-		fcinfo->flinfo->fn_extra = (void *) typentry;
-	}
-
-	typlen = typentry->typlen;
-	typbyval = typentry->typbyval;
-	typalign = typentry->typalign;
+	listElemTypeInfo(fcinfo, element_type, &typlen, &typbyval, &typalign);
 
 	/* setup iterator for array */
 	array_iter_setup(&it, arr);

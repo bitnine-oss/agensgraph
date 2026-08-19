@@ -467,3 +467,78 @@ MATCH (m:P {name: 'bob'}) RETURN m.keep;
 
 -- Clean up
 DROP GRAPH collect_graph CASCADE;
+
+--
+-- Testing head(), last() and tail() over a list
+--
+
+-- a list of nothing has no first and no last element, and everything after
+-- its first element is a list of nothing.  A constant is folded at plan time,
+-- so both spellings are exercised.
+SELECT head('{}'::text[]) IS NULL, last('{}'::text[]) IS NULL, tail('{}'::text[]);
+SELECT head(a) IS NULL, last(a) IS NULL, tail(a)
+	FROM (VALUES('{}'::text[])) s(a);
+SELECT head(a) IS NULL, last(a) IS NULL, tail(a)
+	FROM (VALUES('{}'::int[])) s(a);
+
+-- an element that is null answers as null, rather than as a value
+SELECT head(a) IS NULL FROM (VALUES(ARRAY[NULL::text,'a'])) s(a);
+SELECT last(a) IS NULL FROM (VALUES(ARRAY['a',NULL::text])) s(a);
+SELECT head(a) IS NULL FROM (VALUES(ARRAY[NULL::int,1])) s(a);
+
+-- a list that arrives as a concatenation carries its elements in another
+-- form, and is read the same way
+CREATE TABLE list_src (t text[], i int[]);
+INSERT INTO list_src VALUES (ARRAY['a','b'], ARRAY[1,2]);
+SELECT head(t || 'c'::text), last(t || 'c'::text), tail(t || 'c'::text)
+	FROM list_src;
+SELECT head(i || 3), last(i || 3), tail(i || 3) FROM list_src;
+SELECT head('x'::text || t), last('x'::text || t) FROM list_src;
+
+-- a list is read from its own lower bound, which is not always one
+SELECT head(a), last(a), tail(a)
+	FROM (VALUES('[0:2]={10,20,30}'::int[])) s(a);
+SELECT head(a), last(a), tail(a)
+	FROM (VALUES('[5:7]={10,20,30}'::int[])) s(a);
+-- and what is taken from a list is itself read from one
+SELECT array_lower(tail(a), 1)
+	FROM (VALUES('[5:7]={10,20,30}'::int[])) s(a);
+
+-- an array that is not a list is refused rather than answered wrongly
+SELECT head(a) FROM (VALUES(ARRAY[[1,2],[3,4]])) s(a);
+SELECT last(a) FROM (VALUES(ARRAY[[1,2],[3,4]])) s(a);
+SELECT tail(a) FROM (VALUES(ARRAY[[1,2],[3,4]])) s(a);
+
+-- an element type that has no ordering of its own is still readable
+SELECT head(a) FROM (VALUES(ARRAY['{"a": 1}'::json])) s(a);
+SELECT last(a) FROM (VALUES(ARRAY['(1,2)'::point])) s(a);
+
+-- nulls are kept where they are
+SELECT tail(a) FROM (VALUES(ARRAY['hi',null,null,'bye'])) s(a);
+
+DROP TABLE list_src;
+
+-- over the lists a graph query produces
+CREATE GRAPH list_graph;
+SET graph_path = list_graph;
+CREATE (:P {name: 'alice'})-[:R {since: 2020}]->(:P {name: 'bob'});
+
+MATCH p = (:P)-[:R]->(:P) RETURN head(vertices(p)), last(vertices(p));
+MATCH p = (:P)-[:R]->(:P) RETURN head(nodes(p)), last(nodes(p));
+MATCH p = (:P)-[:R]->(:P) RETURN head(edges(p)), head(relationships(p));
+MATCH p = (:P)-[:R]->(:P) RETURN tail(vertices(p)), size(tail(vertices(p)));
+MATCH (n:P) WITH collect(n) AS ns
+	RETURN head(ns), last(ns), size(tail(ns)), tail(ns)[0];
+MATCH ()-[r:R]->() WITH collect(r) AS rs RETURN head(rs), last(rs);
+MATCH p = (:P)-[:R]->(:P) WITH collect(p) AS ps
+	RETURN size(head(ps)), size(tail(ps));
+-- a list of nothing, from a pattern that matches nothing
+MATCH (n:nonexistent) WITH collect(n) AS ns
+	RETURN head(ns) IS NULL, last(ns) IS NULL, size(tail(ns));
+
+-- the jsonb forms are unchanged
+RETURN head(['a','b']), last(['a','b']), tail(['a','b']);
+RETURN head([]) IS NULL, last([]) IS NULL, tail([]);
+RETURN head([null,'a']), tail([1]);
+
+DROP GRAPH list_graph CASCADE;
