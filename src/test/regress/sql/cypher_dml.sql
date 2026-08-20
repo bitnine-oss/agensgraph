@@ -4142,3 +4142,67 @@ MATCH (a:wv {n: 8})-[r:wk]->(b:wv) DELETE r, a, b;
 MATCH (n:wv) WHERE n.n IN [8, 9] RETURN count(*) AS both_removed;
 
 DROP GRAPH write_projection CASCADE;
+
+--
+-- A write clause after an aggregating projection
+--
+-- Inheritance makes the label a write resolves to observable: a write reached
+-- through the parent label touches the child's rows too, and one reached
+-- through the child does not touch the parent's.
+--
+CREATE GRAPH agg_write;
+SET graph_path = agg_write;
+CREATE VLABEL par;
+CREATE VLABEL chi INHERITS (par);
+CREATE ELABEL rel;
+CREATE (:par {name: 'p1'});
+CREATE (:par {name: 'p2'});
+CREATE (:chi {name: 'c1'});
+MATCH (a:par {name: 'p1'}), (b:chi {name: 'c1'}) CREATE (a)-[:rel {w: 1}]->(b);
+
+-- SET through the parent label reaches every row, the child's included
+MATCH (p:par) WITH p, count(p) AS n SET p.seen = n;
+MATCH (n:par) RETURN label(n), n.name, n.seen ORDER BY n.name;
+
+-- and through the child label, only the child's
+MATCH (p:chi) WITH p, count(p) AS n SET p.only = n;
+MATCH (n:par) RETURN label(n), n.name, n.only ORDER BY n.name;
+
+-- the other aggregates
+MATCH (p:par) WITH p, collect(p.name) AS c SET p.coll = size(c);
+MATCH (n:par) RETURN label(n), n.name, n.coll ORDER BY n.name;
+
+-- a relationship
+MATCH ()-[r:rel]->() WITH r, count(r) AS n SET r.ew = n;
+MATCH ()-[r:rel]->() RETURN r.w, r.ew;
+
+-- REMOVE
+MATCH (p:par) WITH p, count(p) AS n REMOVE p.seen;
+MATCH (n:par) RETURN label(n), n.name, n.seen ORDER BY n.name;
+
+-- the target need not be the element the aggregate counted
+MATCH (p:par), (q:chi) WITH p, q, count(p) AS n SET q.other = n;
+MATCH (n:par) RETURN label(n), n.name, n.other ORDER BY n.name;
+
+-- nested aggregating projections
+MATCH (p:par) WITH p, count(p) AS a WITH p, count(a) AS b SET p.two = b;
+MATCH (n:par) RETURN label(n), n.name, n.two ORDER BY n.name;
+
+-- a filter, an ordering and an unwind after the aggregate
+MATCH (p:par) WITH p, count(p) AS n WHERE n > 0 SET p.hav = n;
+MATCH (p:par) WITH p, count(p) AS n ORDER BY n SET p.ord = n;
+MATCH (p:par) WITH p, count(p) AS n UNWIND [7] AS u SET p.unw = u;
+MATCH (n:par) RETURN label(n), n.name, n.hav, n.ord, n.unw ORDER BY n.name;
+
+-- DELETE and DETACH DELETE
+MATCH ()-[r:rel]->() WITH r, count(r) AS n DELETE r;
+MATCH ()-[r:rel]->() RETURN count(*);
+MATCH (p:chi) WITH p, count(p) AS n DETACH DELETE p;
+MATCH (n:par) RETURN label(n), n.name ORDER BY n.name;
+
+-- CREATE and MERGE take their label from their own pattern
+MATCH (p:par) WITH p, count(p) AS n CREATE (:par {name: 'made', seq: n});
+MATCH (p:par) WITH p, count(p) AS n MERGE (:par {name: 'merged'});
+MATCH (n:par) RETURN count(*);
+
+DROP GRAPH agg_write CASCADE;
