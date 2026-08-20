@@ -5956,8 +5956,14 @@ figure_prop_index_colname_walker(Node *node, char **colname)
 
 				Assert(IsA(i, A_Indices));
 
+				/* a subscript is a property's name only where it is a string */
 				if (!ind->is_slice && IsA(ind->uidx, A_Const))
-					fname = strVal(&((A_Const *) ind->uidx)->val);
+				{
+					A_Const    *key = (A_Const *) ind->uidx;
+
+					if (!key->isnull && IsA(&key->val, String))
+						fname = strVal(&key->val);
+				}
 			}
 		}
 		if (fname != NULL)

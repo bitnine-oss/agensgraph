@@ -142,6 +142,70 @@ DROP PROPERTY INDEX piv9_index_key1;
 
 DROP VLABEL piv9;
 
+-- Subscripted property keys
+--
+-- A subscript is the name of the property being read only where it is a string.
+-- Every other constant a subscript may hold was read as one anyway, which took
+-- the backend down, so each of them is covered here.
+CREATE VLABEL piv10;
+
+-- a string subscript is the name, and the last one in the path wins
+CREATE PROPERTY INDEX ON piv10 (m['a']);
+CREATE PROPERTY INDEX ON piv10 (m['a'][0]);
+-- a number, a boolean and a null name nothing, so the property the path starts
+-- from names the index
+CREATE PROPERTY INDEX ON piv10 (tags[0]);
+CREATE PROPERTY INDEX ON piv10 (tags[-1]);
+CREATE PROPERTY INDEX ON piv10 (t1[1.5]);
+CREATE PROPERTY INDEX ON piv10 (t2[true]);
+CREATE PROPERTY INDEX ON piv10 (t3[NULL]);
+-- nor does a slice or a subscript that is not a constant at all
+CREATE PROPERTY INDEX ON piv10 (t4[1..3]);
+CREATE PROPERTY INDEX ON piv10 (t5[1 + 1]);
+-- one subscript of each kind in the one index
+CREATE PROPERTY INDEX ON piv10 (m['a'], tags[0]);
+
+\dGi piv10*
+
+-- With rows to build over, the subscript is evaluated, and it answers what a
+-- read of it answers: a position in a list and a key in a map resolve, a string
+-- into a list and a number into a map are refused.
+CREATE VLABEL piv11;
+CREATE (:piv11 {tags: ['x', 'y'], m: {a: 5}});
+
+CREATE PROPERTY INDEX ON piv11 (tags[0]);
+CREATE PROPERTY INDEX ON piv11 (m['a']);
+CREATE PROPERTY INDEX ON piv11 (tags['a']);
+CREATE PROPERTY INDEX ON piv11 (m[0]);
+
+-- and the index over a list position answers the read that matches it
+MATCH (n:piv11) WHERE n.tags[0] = 'x' RETURN count(*);
+
+\dGi piv11*
+
+-- A subscript is printed back as the value it is, in an index's key, in the
+-- predicate of a partial one and in a constraint's assertion.  Printed without
+-- its quotes it reads back as a different thing -- the property a rather than
+-- the key a of the property m -- so a dump would carry a different index, and
+-- for a unique one a different constraint.
+CREATE VLABEL piv12;
+
+CREATE UNIQUE PROPERTY INDEX piv12_uq ON piv12 (m['a']);
+CREATE PROPERTY INDEX piv12_part ON piv12 (name) WHERE (m['a'] IS NOT NULL);
+CREATE CONSTRAINT piv12_chk ON piv12 ASSERT m['b'] IS NOT NULL;
+
+\dGv+ piv12
+
+-- the unique index refuses a second row with the same m.a
+CREATE (:piv12 {m: {a: 1, b: 1}});
+CREATE (:piv12 {m: {a: 1, b: 1}});
+
+-- and rebuilt from exactly what is printed above, it refuses it still
+DROP PROPERTY INDEX piv12_uq;
+CREATE UNIQUE PROPERTY INDEX piv12_uq ON piv12 USING btree (m['a']);
+CREATE (:piv12 {m: {a: 1, b: 1}});
+MATCH (n:piv12) RETURN count(*);
+
 -- teardown
 
 RESET ROLE;
