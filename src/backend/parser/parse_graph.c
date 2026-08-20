@@ -8308,6 +8308,18 @@ find_target_label_walker(Node *node, find_target_label_context *ctx)
 			if (find_target_label_walker(joinvar, ctx))
 				return true;
 		}
+		else if (rte->rtekind == RTE_GROUP)
+		{
+			Node	   *groupexpr;
+
+			if (var->varattno <= 0 ||
+				var->varattno > list_length(rte->groupexprs))
+				elog(ERROR, "invalid varattno %hd", var->varattno);
+
+			groupexpr = list_nth(rte->groupexprs, var->varattno - 1);
+			if (find_target_label_walker(groupexpr, ctx))
+				return true;
+		}
 		else
 		{
 			elog(ERROR, "unexpected retkind(%d) in find_target_label_walker()",
