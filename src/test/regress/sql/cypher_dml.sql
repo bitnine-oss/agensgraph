@@ -4206,3 +4206,35 @@ MATCH (p:par) WITH p, count(p) AS n MERGE (:par {name: 'merged'});
 MATCH (n:par) RETURN count(*);
 
 DROP GRAPH agg_write CASCADE;
+
+--
+-- A write refused for being a write is refused by name
+--
+-- A read-only transaction and a function that promises not to write both name
+-- the statement they refuse.  A Cypher write had no name to be refused by, so
+-- both printed one it could not read and warned about the command type first.
+--
+CREATE GRAPH ro_name;
+SET graph_path = ro_name;
+CREATE VLABEL t;
+CREATE (:t {a: 1});
+
+BEGIN;
+SET TRANSACTION READ ONLY;
+-- a read is allowed
+MATCH (n:t) RETURN count(*);
+-- a write is not, and the refusal says what it refused
+CREATE (:t {a: 2});
+ROLLBACK;
+
+-- the same write inside a function that declared itself non-volatile
+CREATE FUNCTION ro_name.w() RETURNS void LANGUAGE sql STABLE AS $$ CREATE (:t {a: 3}) $$;
+SELECT ro_name.w();
+DROP FUNCTION ro_name.w();
+
+-- and outside either, the write reports what it wrote
+CREATE (:t {a: 4});
+MATCH (n:t) RETURN count(*);
+
+DROP GRAPH ro_name CASCADE;
+RESET graph_path;
