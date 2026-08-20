@@ -28,7 +28,8 @@ extern Node *coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp,
 
 /* clause functions */
 extern Node *transformCypherWhere(ParseState *pstate, Node *clause,
-								  ParseExprKind exprKind);
+								  ParseExprKind exprKind,
+								  const char *constructName);
 extern Node *transformCypherLimit(ParseState *pstate, Node *clause,
 								  ParseExprKind exprKind,
 								  const char *constructName);

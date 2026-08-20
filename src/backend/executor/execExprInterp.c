@@ -5848,6 +5848,17 @@ ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op)
 		if (typcategory == TYPCATEGORY_BOOLEAN)
 		{
 			Assert(JB_ROOT_IS_OBJECT(argjb) || JB_ROOT_IS_ARRAY(argjb));
+
+			/* object or array to boolean, only where it was asked for */
+			if (cctx != COERCION_EXPLICIT)
+				ereport(ERROR,
+						(errcode(ERRCODE_CANNOT_COERCE),
+						 errmsg("cannot cast %s (jsonb type %s) to %s",
+								JsonbToCString(NULL, &argjb->root,
+											   VARSIZE(argjb)),
+								JB_ROOT_IS_OBJECT(argjb) ? "object" : "array",
+								format_type_be(typeCastOid))));
+
 			*op->resvalue = BoolGetDatum(JB_ROOT_COUNT(argjb) > 0);
 			*op->resnull = false;
 			return;
@@ -5871,8 +5882,9 @@ ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op)
 				return;
 
 			case jbvString:
-				/* string to boolean cast */
-				if (typcategory == TYPCATEGORY_BOOLEAN)
+				/* string to boolean, only where it was asked for */
+				if (typcategory == TYPCATEGORY_BOOLEAN &&
+					cctx == COERCION_EXPLICIT)
 				{
 					*op->resvalue = BoolGetDatum(jv->val.string.len > 0);
 					*op->resnull = false;
@@ -5895,8 +5907,9 @@ ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op)
 				break;
 
 			case jbvNumeric:
-				/* numeric to boolean casts */
-				if (typcategory == TYPCATEGORY_BOOLEAN)
+				/* numeric to boolean, only where it was asked for */
+				if (typcategory == TYPCATEGORY_BOOLEAN &&
+					cctx == COERCION_EXPLICIT)
 				{
 					if (numeric_is_nan(jv->val.numeric))
 						*op->resvalue = BoolGetDatum(false);

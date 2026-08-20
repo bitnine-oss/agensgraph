@@ -231,6 +231,10 @@ RETURN '' IS NULL, '' IS NOT NULL, NULL IS NULL, NULL IS NOT NULL;
 MATCH (n:v0) RETURN n.o.z IS NULL, n.l[5] IS NOT NULL;
 
 -- Boolean
+--
+-- A condition takes a boolean and nothing else, so a property holding a number,
+-- a string, a list or a map is refused there rather than read for whether it is
+-- non-zero or non-empty.  Only the two booleans answer.
 MATCH (n:v0) WHERE n.t.i RETURN COUNT(*);
 MATCH (n:v0) WHERE n.t.s RETURN COUNT(*);
 MATCH (n:v0) WHERE n.t.b RETURN COUNT(*);
@@ -241,6 +245,27 @@ MATCH (n:v0) WHERE n.f.s RETURN COUNT(*);
 MATCH (n:v0) WHERE n.f.b RETURN COUNT(*);
 MATCH (n:v0) WHERE n.f.l RETURN COUNT(*);
 MATCH (n:v0) WHERE n.f.o RETURN COUNT(*);
+
+-- the refusal names the clause the condition was written in
+MATCH (n:v0) WHERE 0 RETURN COUNT(*);
+MATCH (n:v0) FILTER 0 RETURN COUNT(*);
+
+-- the same refusal in every other place a condition is taken
+MATCH (n:v0) FILTER n.t.i RETURN COUNT(*);
+MATCH (n:v0) WHERE n.t.i AND true RETURN COUNT(*);
+MATCH (n:v0) WHERE n.t.i OR n.t.i RETURN COUNT(*);
+MATCH (n:v0) WHERE NOT n.t.i RETURN COUNT(*);
+MATCH (n:v0) WHERE n.t.i XOR true RETURN COUNT(*);
+MATCH (n:v0) RETURN CASE WHEN n.t.i THEN 1 ELSE 0 END;
+
+-- what a condition still takes: a boolean, and a null that matches nothing
+MATCH (n:v0) WHERE n.t.b RETURN COUNT(*);
+MATCH (n:v0) WHERE n.nosuchkey RETURN COUNT(*);
+MATCH (n:v0) WHERE n.t.i > 0 RETURN COUNT(*);
+
+-- asked for, the conversion still answers whether a value is non-zero or
+-- non-empty
+MATCH (n:v0) RETURN n.t.i::bool, n.f.i::bool, n.t.s::bool, n.f.s::bool;
 
 -- Case expression
 

@@ -479,18 +479,14 @@ MATCH (n:v0) RETURN n.o.z IS NULL, n.l[5] IS NOT NULL;
 (1 row)
 
 -- Boolean
+--
+-- A condition takes a boolean and nothing else, so a property holding a number,
+-- a string, a list or a map is refused there rather than read for whether it is
+-- non-zero or non-empty.  Only the two booleans answer.
 MATCH (n:v0) WHERE n.t.i RETURN COUNT(*);
- count 
--------
- 1
-(1 row)
-
+ERROR:  cannot cast 1 (jsonb type numeric) to boolean
 MATCH (n:v0) WHERE n.t.s RETURN COUNT(*);
- count 
--------
- 1
-(1 row)
-
+ERROR:  cannot cast "s" (jsonb type string) to boolean
 MATCH (n:v0) WHERE n.t.b RETURN COUNT(*);
  count 
 -------
@@ -498,29 +494,13 @@ MATCH (n:v0) WHERE n.t.b RETURN COUNT(*);
 (1 row)
 
 MATCH (n:v0) WHERE n.t.l RETURN COUNT(*);
- count 
--------
- 1
-(1 row)
-
+ERROR:  cannot cast [0] (jsonb type array) to boolean
 MATCH (n:v0) WHERE n.t.o RETURN COUNT(*);
- count 
--------
- 1
-(1 row)
-
+ERROR:  cannot cast {"p": "p"} (jsonb type object) to boolean
 MATCH (n:v0) WHERE n.f.i RETURN COUNT(*);
- count 
--------
- 0
-(1 row)
-
+ERROR:  cannot cast 0 (jsonb type numeric) to boolean
 MATCH (n:v0) WHERE n.f.s RETURN COUNT(*);
- count 
--------
- 0
-(1 row)
-
+ERROR:  cannot cast "" (jsonb type string) to boolean
 MATCH (n:v0) WHERE n.f.b RETURN COUNT(*);
  count 
 -------
@@ -528,15 +508,56 @@ MATCH (n:v0) WHERE n.f.b RETURN COUNT(*);
 (1 row)
 
 MATCH (n:v0) WHERE n.f.l RETURN COUNT(*);
+ERROR:  cannot cast [] (jsonb type array) to boolean
+MATCH (n:v0) WHERE n.f.o RETURN COUNT(*);
+ERROR:  cannot cast {} (jsonb type object) to boolean
+-- the refusal names the clause the condition was written in
+MATCH (n:v0) WHERE 0 RETURN COUNT(*);
+ERROR:  argument of WHERE must be type boolean, not type integer
+LINE 1: MATCH (n:v0) WHERE 0 RETURN COUNT(*);
+                           ^
+MATCH (n:v0) FILTER 0 RETURN COUNT(*);
+ERROR:  argument of FILTER must be type boolean, not type integer
+LINE 1: MATCH (n:v0) FILTER 0 RETURN COUNT(*);
+                            ^
+-- the same refusal in every other place a condition is taken
+MATCH (n:v0) FILTER n.t.i RETURN COUNT(*);
+ERROR:  cannot cast 1 (jsonb type numeric) to boolean
+MATCH (n:v0) WHERE n.t.i AND true RETURN COUNT(*);
+ERROR:  cannot cast 1 (jsonb type numeric) to boolean
+MATCH (n:v0) WHERE n.t.i OR n.t.i RETURN COUNT(*);
+ERROR:  cannot cast 1 (jsonb type numeric) to boolean
+MATCH (n:v0) WHERE NOT n.t.i RETURN COUNT(*);
+ERROR:  cannot cast 1 (jsonb type numeric) to boolean
+MATCH (n:v0) WHERE n.t.i XOR true RETURN COUNT(*);
+ERROR:  cannot cast 1 (jsonb type numeric) to boolean
+MATCH (n:v0) RETURN CASE WHEN n.t.i THEN 1 ELSE 0 END;
+ERROR:  cannot cast 1 (jsonb type numeric) to boolean
+-- what a condition still takes: a boolean, and a null that matches nothing
+MATCH (n:v0) WHERE n.t.b RETURN COUNT(*);
+ count 
+-------
+ 1
+(1 row)
+
+MATCH (n:v0) WHERE n.nosuchkey RETURN COUNT(*);
  count 
 -------
  0
 (1 row)
 
-MATCH (n:v0) WHERE n.f.o RETURN COUNT(*);
+MATCH (n:v0) WHERE n.t.i > 0 RETURN COUNT(*);
  count 
 -------
- 0
+ 1
+(1 row)
+
+-- asked for, the conversion still answers whether a value is non-zero or
+-- non-empty
+MATCH (n:v0) RETURN n.t.i::bool, n.f.i::bool, n.t.s::bool, n.f.s::bool;
+ i | i | s | s 
+---+---+---+---
+ t | f | t | f
 (1 row)
 
 -- Case expression

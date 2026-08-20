@@ -1146,7 +1146,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 
 		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 
-		qual = transformCypherWhere(pstate, where, EXPR_KIND_WHERE);
+		qual = transformCypherWhere(pstate, where, EXPR_KIND_WHERE, "WHERE");
 		qual = resolve_future_vertex(pstate, qual, 0);
 
 		qry->limitOffset = transformCypherLimit(pstate, skip, EXPR_KIND_OFFSET,
@@ -1541,7 +1541,7 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 			qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 
 			qual = transformCypherWhere(pstate, detail->where,
-										EXPR_KIND_WHERE);
+										EXPR_KIND_WHERE, "WHERE");
 			qual = transformElemQuals(pstate, qual);
 			qual = resolve_future_vertex(pstate, qual, flags);
 		}
@@ -2921,7 +2921,8 @@ transformCypherFilterClause(ParseState *pstate, CypherClause *clause)
 		qry->targetList = makeTargetListFromNSItem(pstate, nsitem);
 	}
 
-	qual = transformCypherWhere(pstate, detail->expr, EXPR_KIND_WHERE);
+	qual = transformCypherWhere(pstate, detail->expr, EXPR_KIND_WHERE,
+								"FILTER");
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);

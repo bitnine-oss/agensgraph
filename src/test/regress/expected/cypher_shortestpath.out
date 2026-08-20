@@ -223,14 +223,11 @@ RETURN nodes(p);
  [v[5.1]{"id": 0},v[5.2]{"id": 1},v[5.4]{"id": 3}]
 (1 row)
 
+-- the third argument is a condition, so a number is refused there
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
       p=dijkstra((v1)-[e:e]->(v2), e.weight, e.weight)
 RETURN nodes(p);
-                                       nodes                                       
------------------------------------------------------------------------------------
- [v[5.1]{"id": 0},v[5.5]{"id": 4},v[5.2]{"id": 1},v[5.3]{"id": 2},v[5.4]{"id": 3}]
-(1 row)
-
+ERROR:  cannot cast 3 (jsonb type numeric) to boolean
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
       p=dijkstra((v1:v {id: 0})-[e:e]->(v2), e.weight)
 RETURN nodes(p);

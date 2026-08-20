@@ -5859,7 +5859,8 @@ transformCreatePropertyIndexStmt(Oid relid, IndexStmt *stmt,
 
 		stmt->whereClause = transformCypherWhere(pstate,
 												 stmt->whereClause,
-												 EXPR_KIND_INDEX_PREDICATE);
+												 EXPR_KIND_INDEX_PREDICATE,
+												 "WHERE");
 
 		/* we have to fix its collations too */
 		assign_expr_collations(pstate, stmt->whereClause);
