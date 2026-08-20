@@ -59,6 +59,7 @@
 #include "commands/vacuum.h"
 #include "commands/view.h"
 #include "miscadmin.h"
+#include "parser/parse_graph.h"
 #include "parser/parse_utilcmd.h"
 #include "postmaster/bgwriter.h"
 #include "rewrite/rewriteDefine.h"
@@ -111,6 +112,7 @@ CommandIsReadOnly(PlannedStmt *pstmt)
 		case CMD_INSERT:
 		case CMD_DELETE:
 		case CMD_MERGE:
+		case CMD_GRAPHWRITE:
 			return false;
 		case CMD_UTILITY:
 			/* For now, treat all utility commands as read/write */
@@ -3344,6 +3346,9 @@ CreateCommandTag(Node *parsetree)
 					case CMD_MERGE:
 						tag = CMDTAG_MERGE;
 						break;
+					case CMD_GRAPHWRITE:
+						tag = CMDTAG_CYPHER;
+						break;
 					case CMD_UTILITY:
 						tag = CreateCommandTag(stmt->utilityStmt);
 						break;
@@ -3406,6 +3411,9 @@ CreateCommandTag(Node *parsetree)
 						break;
 					case CMD_MERGE:
 						tag = CMDTAG_MERGE;
+						break;
+					case CMD_GRAPHWRITE:
+						tag = CMDTAG_CYPHER;
 						break;
 					case CMD_UTILITY:
 						tag = CreateCommandTag(stmt->utilityStmt);
@@ -3471,7 +3479,25 @@ GetCommandLogLevel(Node *parsetree)
 			break;
 
 		case T_CypherStmt:
-			lev = LOGSTMT_ALL;
+			{
+				Node	   *clause = ((CypherStmt *) parsetree)->last;
+
+				/*
+				 * A statement is written as a chain of clauses and any of them
+				 * may be the one that writes, so the whole chain decides
+				 * whether this is a statement that modifies data.
+				 */
+				lev = LOGSTMT_ALL;
+				for (; clause != NULL && IsA(clause, CypherClause);
+					 clause = ((CypherClause *) clause)->prev)
+				{
+					if (IsGraphWriteClause(clause))
+					{
+						lev = LOGSTMT_MOD;
+						break;
+					}
+				}
+			}
 			break;
 
 			/* utility statements --- same whether raw or cooked */
@@ -3920,6 +3946,7 @@ GetCommandLogLevel(Node *parsetree)
 					case CMD_INSERT:
 					case CMD_DELETE:
 					case CMD_MERGE:
+					case CMD_GRAPHWRITE:
 						lev = LOGSTMT_MOD;
 						break;
 
@@ -3951,6 +3978,7 @@ GetCommandLogLevel(Node *parsetree)
 					case CMD_INSERT:
 					case CMD_DELETE:
 					case CMD_MERGE:
+					case CMD_GRAPHWRITE:
 						lev = LOGSTMT_MOD;
 						break;
 
