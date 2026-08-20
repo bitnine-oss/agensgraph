@@ -2130,19 +2130,21 @@ expand_appendrel_subquery(PlannerInfo *root, RelOptInfo *rel,
  * expand_perrelation_property
  *		Read a property from the column this relation holds it in.
  *
- * A property read that a label below the one being queried holds in a column is
- * left for here, because one scan reads every label beneath and they need not
- * agree on which column holds it, or hold it at all.  This relation is known,
- * so the read can be bound to its column now; where there is no column the
- * access stays on the property map, which is the same answer.
+ * A property read the parser could not bind to a column is left for here.  It
+ * could not because the column was not in scope where the read was written -- a
+ * clause between the two collapsed the rows the element was read from -- or
+ * because one scan reads every label beneath the one being queried and they need
+ * not agree on which column holds the property, or hold it at all.  By here the
+ * read has reached the relation it reads, so it can be bound to that relation's
+ * column; where there is no column the access stays on the property map, which
+ * is the same answer.
  *
  * The rewrite keeps the access's own type, so the clause around it is untouched
  * and everything derived from that clause stays true of it.
  */
 typedef struct
 {
-	Oid			relid;
-	Index		varno;
+	List	   *rtable;
 } perrelation_context;
 
 /*
@@ -2168,6 +2170,75 @@ perrelation_access_key(Node *node)
 		return NULL;
 
 	return TextDatumGetCString(((Const *) key)->constvalue);
+}
+
+/*
+ * perrelation_column
+ *		The column a marked access reads its property from, as a Var on the
+ *		relation that holds it, or NULL where the read is not settled here.
+ *
+ * The access names the row it reads, so the relation is taken from the access
+ * rather than passed in.  A scan that reads the labels beneath this one as well
+ * settles nothing here, and is left to each relation the scan is expanded into.
+ */
+static Var *
+perrelation_column(Node *node, perrelation_context *ctx)
+{
+	char	   *key;
+	Node	   *arg;
+	Var		   *var;
+	RangeTblEntry *rte;
+	AttrNumber	attnum;
+	Oid			coltype;
+	int32		coltypmod;
+	Oid			colcoll;
+
+	key = perrelation_access_key(node);
+	if (key == NULL)
+		return NULL;
+
+	arg = (Node *) ((CypherAccessExpr *) node)->arg;
+	if (arg == NULL || !IsA(arg, Var))
+		return NULL;
+
+	var = (Var *) arg;
+	if (var->varlevelsup != 0 ||
+		var->varno < 1 || var->varno > list_length(ctx->rtable))
+		return NULL;
+
+	rte = rt_fetch(var->varno, ctx->rtable);
+	if (rte->rtekind != RTE_RELATION || !OidIsValid(rte->relid))
+		return NULL;
+	if (rte->inh && has_subclass(rte->relid))
+		return NULL;
+	if (var->varattno != get_attnum(rte->relid, AG_ELEM_PROP_MAP))
+		return NULL;
+
+	if (!get_label_property_column(rte->relid, key, &attnum, NULL))
+		return NULL;
+	get_atttypetypmodcoll(rte->relid, attnum, &coltype, &coltypmod, &colcoll);
+
+	return makeVar(var->varno, attnum, coltype, coltypmod, colcoll, 0);
+}
+
+/*
+ * perrelation_marked_walker
+ *		Is there an access here for the planner to settle?
+ *
+ * Asked before rewriting because the rewrite rebuilds the tree it walks, and
+ * every qual of every query is offered to it.
+ */
+static bool
+perrelation_marked_walker(Node *node, void *context)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, CypherAccessExpr) &&
+		((CypherAccessExpr *) node)->perrelation)
+		return true;
+
+	return expression_tree_walker(node, perrelation_marked_walker, context);
 }
 
 /*
@@ -2260,13 +2331,8 @@ static Node *
 perrelation_native_clause(OpExpr *op, perrelation_context *ctx)
 {
 	Node	   *args[2];
-	char	   *key;
 	int			accessat;
 	Const	   *cval;
-	AttrNumber	attnum;
-	Oid			coltype;
-	int32		coltypmod;
-	Oid			colcoll;
 	Oid			jsonbfam;
 	Oid			colfam;
 	int			strategy;
@@ -2283,9 +2349,9 @@ perrelation_native_clause(OpExpr *op, perrelation_context *ctx)
 	args[0] = (Node *) linitial(op->args);
 	args[1] = (Node *) lsecond(op->args);
 
-	if ((key = perrelation_access_key(args[0])) != NULL)
+	if ((col = perrelation_column(args[0], ctx)) != NULL)
 		accessat = 0;
-	else if ((key = perrelation_access_key(args[1])) != NULL)
+	else if ((col = perrelation_column(args[1], ctx)) != NULL)
 		accessat = 1;
 	else
 		return NULL;
@@ -2295,12 +2361,8 @@ perrelation_native_clause(OpExpr *op, perrelation_context *ctx)
 		cval->consttype != JSONBOID)
 		return NULL;
 
-	if (!get_label_property_column(ctx->relid, key, &attnum, NULL))
-		return NULL;
-	get_atttypetypmodcoll(ctx->relid, attnum, &coltype, &coltypmod, &colcoll);
-
 	jsonbfam = get_opclass_family(GetDefaultOpClass(JSONBOID, BTREE_AM_OID));
-	colfam = get_opclass_family(GetDefaultOpClass(coltype, BTREE_AM_OID));
+	colfam = get_opclass_family(GetDefaultOpClass(col->vartype, BTREE_AM_OID));
 	if (!OidIsValid(jsonbfam) || !OidIsValid(colfam))
 		return NULL;
 
@@ -2317,10 +2379,12 @@ perrelation_native_clause(OpExpr *op, perrelation_context *ctx)
 		negate = true;
 	}
 
-	if (!perrelation_native_const(cval, coltype, coltypmod, &nativeval))
+	if (!perrelation_native_const(cval, col->vartype, col->vartypmod,
+								  &nativeval))
 		return NULL;
 
-	nativeop = get_opfamily_member(colfam, coltype, coltype, strategy);
+	nativeop = get_opfamily_member(colfam, col->vartype, col->vartype,
+								   strategy);
 	if (!OidIsValid(nativeop))
 		return NULL;
 	if (negate)
@@ -2330,9 +2394,9 @@ perrelation_native_clause(OpExpr *op, perrelation_context *ctx)
 			return NULL;
 	}
 
-	col = makeVar(ctx->varno, attnum, coltype, coltypmod, colcoll, 0);
-	lit = makeConst(coltype, coltypmod, colcoll, get_typlen(coltype),
-					nativeval, false, get_typbyval(coltype));
+	lit = makeConst(col->vartype, col->vartypmod, col->varcollid,
+					get_typlen(col->vartype), nativeval, false,
+					get_typbyval(col->vartype));
 
 	rebuilt = makeNode(OpExpr);
 	rebuilt->opno = nativeop;
@@ -2340,7 +2404,7 @@ perrelation_native_clause(OpExpr *op, perrelation_context *ctx)
 	rebuilt->opresulttype = BOOLOID;
 	rebuilt->opretset = false;
 	rebuilt->opcollid = InvalidOid;
-	rebuilt->inputcollid = colcoll;
+	rebuilt->inputcollid = col->varcollid;
 	rebuilt->location = op->location;
 
 	/* the operands keep the side they were written on */
@@ -2372,58 +2436,28 @@ perrelation_mutator(Node *node, perrelation_context *ctx)
 
 	if (IsA(node, CypherAccessExpr))
 	{
-		CypherAccessExpr *a = (CypherAccessExpr *) node;
+		Var		   *col = perrelation_column(node, ctx);
 
-		if (a->perrelation && list_length(a->path) == 1)
-		{
-			Node	   *key = (Node *) linitial(a->path);
-
-			if (IsA(key, Const) && !((Const *) key)->constisnull &&
-				((Const *) key)->consttype == TEXTOID)
-			{
-				char	   *name = TextDatumGetCString(((Const *) key)->constvalue);
-				AttrNumber	attnum;
-
-				if (get_label_property_column(ctx->relid, name, &attnum, NULL))
-				{
-					Oid			coltype;
-					int32		coltypmod;
-					Oid			colcoll;
-					Var		   *col;
-
-					get_atttypetypmodcoll(ctx->relid, attnum,
-										  &coltype, &coltypmod, &colcoll);
-
-					col = makeVar(ctx->varno, attnum, coltype, coltypmod,
-								  colcoll, 0);
-
-					return (Node *) makeFuncExpr(F_CYPHER_TO_JSONB, JSONBOID,
-												 list_make1(col), InvalidOid,
-												 InvalidOid,
-												 COERCE_EXPLICIT_CALL);
-				}
-			}
-		}
+		if (col != NULL)
+			return (Node *) makeFuncExpr(F_CYPHER_TO_JSONB, JSONBOID,
+										 list_make1(col), InvalidOid,
+										 InvalidOid, COERCE_EXPLICIT_CALL);
 	}
 
 	return expression_tree_mutator(node, perrelation_mutator, ctx);
 }
 
 Node *
-expand_perrelation_property(PlannerInfo *root, Node *node, Index childvarno)
+expand_perrelation_property(PlannerInfo *root, Node *node)
 {
 	perrelation_context ctx;
-	RangeTblEntry *rte;
 
 	if (node == NULL || !enable_property_promotion)
 		return node;
-
-	rte = root->simple_rte_array[childvarno];
-	if (rte == NULL || rte->rtekind != RTE_RELATION || !OidIsValid(rte->relid))
+	if (!perrelation_marked_walker(node, NULL))
 		return node;
 
-	ctx.relid = rte->relid;
-	ctx.varno = childvarno;
+	ctx.rtable = root->parse->rtable;
 
 	return perrelation_mutator(node, &ctx);
 }
@@ -2468,8 +2502,7 @@ apply_child_basequals(PlannerInfo *root, RelOptInfo *parentrel,
 		childqual = adjust_appendrel_attrs(root,
 										   (Node *) rinfo->clause,
 										   1, &appinfo);
-		childqual = expand_perrelation_property(root, childqual,
-												appinfo->child_relid);
+		childqual = expand_perrelation_property(root, childqual);
 		childqual = eval_const_expressions(root, childqual);
 		/* check for flat-out constant */
 		if (childqual && IsA(childqual, Const))

@@ -2430,11 +2430,13 @@ typedef struct CypherAccessExpr
 	List	   *path;
 
 	/*
-	 * Set when a label below the one being read holds this property in a
-	 * column of its own.  Which column that is depends on the relation, and one
-	 * scan reads every label beneath it, so the planner settles it per relation
-	 * and rewrites the access to that column where there is one.  Reading the
-	 * property map is what happens otherwise, and is the same answer.
+	 * Set when this property is held in a column that the read could not be
+	 * bound to where it was written: the column was not in scope there, or one
+	 * scan reads every label beneath the one being read and they need not agree
+	 * on which column holds the property.  So the planner settles it per
+	 * relation and rewrites the access to that column where there is one.
+	 * Reading the property map is what happens otherwise, and is the same
+	 * answer.
 	 *
 	 * Ignored when comparing: an index defined on this access is stored without
 	 * it, and the two still have to match.
