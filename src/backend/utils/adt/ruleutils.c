@@ -10776,7 +10776,13 @@ get_rule_expr(Node *node, deparse_context *context,
 							get_rule_expr((Node *) cind->lidx, context, false);
 							appendBinaryStringInfo(buf, "..", 2);
 						}
-						get_pathelem_expr((Node *) cind->uidx, context, false);
+
+						/*
+						 * A subscript keeps the quotes a name after a dot
+						 * drops: read back without them it is a property's
+						 * name, not the string it was.
+						 */
+						get_rule_expr((Node *) cind->uidx, context, false);
 
 						appendStringInfoChar(buf, ']');
 					}
