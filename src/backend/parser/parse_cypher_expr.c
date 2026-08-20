@@ -888,7 +888,8 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 	pstate->p_hasAggs = false;
 	pstate->p_hasWindowFuncs = false;
 
-	cond = transformCypherWhere(pstate, clc->cond, pstate->p_expr_kind);
+	cond = transformCypherWhere(pstate, clc->cond, pstate->p_expr_kind,
+								"WHERE");
 	elem = transformCypherExprRecurse(pstate, clc->elem);
 
 	if (pstate->p_hasAggs)
@@ -3497,7 +3498,8 @@ coerce_cypher_arg_to_boolean(ParseState *pstate, Node *node,
  */
 
 Node *
-transformCypherWhere(ParseState *pstate, Node *clause, ParseExprKind exprKind)
+transformCypherWhere(ParseState *pstate, Node *clause, ParseExprKind exprKind,
+					 const char *constructName)
 {
 	Node	   *qual;
 
@@ -3506,7 +3508,7 @@ transformCypherWhere(ParseState *pstate, Node *clause, ParseExprKind exprKind)
 
 	qual = transformCypherExpr(pstate, clause, exprKind);
 
-	qual = coerce_cypher_arg_to_boolean(pstate, qual, "WHERE");
+	qual = coerce_cypher_arg_to_boolean(pstate, qual, constructName);
 
 	return qual;
 }
