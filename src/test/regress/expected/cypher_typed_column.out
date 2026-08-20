@@ -6411,6 +6411,488 @@ drop cascades to vlabel c_top
 drop cascades to vlabel c_has
 drop cascades to vlabel c_hasnt
 --
+-- Reading a promoted property across a clause that collapses the rows
+--
+-- A clause that aggregates or de-duplicates collapses the rows an element was
+-- read from, so a read written after one cannot be bound to the column where it
+-- is written.  Two things reach the column instead: an aggregating clause
+-- carries it across, so such a read is the column's on both sides of the clause;
+-- and a comparison left on the property map is settled per relation once it has
+-- reached the relation it reads, so the column's index answers it.
+--
+CREATE GRAPH coll_g;
+SET graph_path = coll_g;
+CREATE VLABEL co_doc (age int GENERATED, nm text GENERATED);
+CREATE ELABEL co_rel (w int GENERATED);
+CREATE VLABEL co_top;
+CREATE VLABEL co_has (age int GENERATED) INHERITS (co_top);
+CREATE VLABEL co_hasnt INHERITS (co_top);
+CREATE INDEX co_doc_age ON coll_g.co_doc (age);
+CREATE INDEX co_doc_nm ON coll_g.co_doc (nm);
+CREATE INDEX co_has_age ON coll_g.co_has (age);
+CREATE (:co_doc {age: 30, nm: 'bob', other: 1});
+CREATE (:co_doc {age: 41, nm: 'amy', other: 1});
+CREATE (:co_doc {age: 30, nm: 'cid', other: 2});
+CREATE (:co_doc {age: 55, nm: 'dot'})-[:co_rel {w: 7}]->(:co_doc {age: 66, nm: 'eve'});
+CREATE (:co_has {age: 30});
+CREATE (:co_hasnt {other: 1});
+CREATE (:co_top {age: 30});
+ANALYZE coll_g.co_doc;
+ANALYZE coll_g.co_has;
+SET enable_seqscan = off;
+-- the read before an aggregating clause and the read after it bind the same index
+EXPLAIN (COSTS OFF) MATCH (n:co_doc) WHERE n.age = 30 RETURN count(*);
+                     QUERY PLAN                     
+----------------------------------------------------
+ Aggregate
+   ->  Index Only Scan using co_doc_age on co_doc n
+         Index Cond: (age = 30)
+(3 rows)
+
+EXPLAIN (COSTS OFF) MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30 RETURN count(*);
+                        QUERY PLAN                         
+-----------------------------------------------------------
+ Aggregate
+   ->  GroupAggregate
+         Group Key: n.id
+         ->  Sort
+               Sort Key: n.id
+               ->  Index Scan using co_doc_age on co_doc n
+                     Index Cond: (age = 30)
+(7 rows)
+
+-- de-duplicating collapses the rows the same way
+EXPLAIN (COSTS OFF) MATCH (n:co_doc) WITH DISTINCT n WHERE n.age = 30 RETURN count(*);
+                            QUERY PLAN                             
+-------------------------------------------------------------------
+ Aggregate
+   ->  Unique
+         ->  Sort
+               Sort Key: (ROW(n.id, n.properties, n.ctid)::vertex)
+               ->  Index Scan using co_doc_age on co_doc n
+                     Index Cond: (age = 30)
+(6 rows)
+
+-- one aggregating clause after another
+EXPLAIN (COSTS OFF)
+MATCH (n:co_doc) WITH n, count(*) AS c WITH n, count(c) AS d WHERE n.age = 30 RETURN count(*);
+                                 QUERY PLAN                                  
+-----------------------------------------------------------------------------
+ Aggregate
+   ->  GroupAggregate
+         Group Key: ((_agens_default_s.n).id)
+         ->  Sort
+               Sort Key: ((_agens_default_s.n).id)
+               ->  Subquery Scan on _agens_default_s
+                     ->  GroupAggregate
+                           Group Key: n.id
+                           ->  Sort
+                                 Sort Key: n.id
+                                 ->  Index Scan using co_doc_age on co_doc n
+                                       Index Cond: (age = 30)
+(12 rows)
+
+-- text, and an ordering comparison
+EXPLAIN (COSTS OFF) MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.nm = 'bob' RETURN count(*);
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Aggregate
+   ->  GroupAggregate
+         Group Key: n.id
+         ->  Sort
+               Sort Key: n.id
+               ->  Index Scan using co_doc_nm on co_doc n
+                     Index Cond: (nm = 'bob'::text)
+(7 rows)
+
+EXPLAIN (COSTS OFF) MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age > 40 RETURN count(*);
+                        QUERY PLAN                         
+-----------------------------------------------------------
+ Aggregate
+   ->  GroupAggregate
+         Group Key: n.id
+         ->  Sort
+               Sort Key: n.id
+               ->  Index Scan using co_doc_age on co_doc n
+                     Index Cond: (age > 40)
+(7 rows)
+
+RESET enable_seqscan;
+-- "not equal" reads the column, which no index answers
+EXPLAIN (COSTS OFF) MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age <> 30 RETURN count(*);
+            QUERY PLAN             
+-----------------------------------
+ Aggregate
+   ->  HashAggregate
+         Group Key: n.id
+         ->  Seq Scan on co_doc n
+               Filter: (age <> 30)
+(5 rows)
+
+-- a relationship's property is settled the same way
+EXPLAIN (COSTS OFF) MATCH ()-[e:co_rel]->() WITH e, count(*) AS c WHERE e.w = 7 RETURN count(*);
+               QUERY PLAN               
+----------------------------------------
+ Aggregate
+   ->  GroupAggregate
+         Group Key: e.id
+         ->  Sort
+               Sort Key: e.id
+               ->  Seq Scan on co_rel e
+                     Filter: (w = 7)
+(7 rows)
+
+-- only the part of the qual that names the element is settled; the part naming
+-- the aggregate is answered where the aggregate is
+EXPLAIN (COSTS OFF)
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30 AND c = 1 RETURN count(*);
+            QUERY PLAN            
+----------------------------------
+ Aggregate
+   ->  HashAggregate
+         Group Key: n.id
+         Filter: (count(*) = 1)
+         ->  Seq Scan on co_doc n
+               Filter: (age = 30)
+(6 rows)
+
+-- reading from above the label that holds the column settles each relation on
+-- its own, after such a clause as before it
+EXPLAIN (COSTS OFF) MATCH (n:co_top) WHERE n.age = 30 RETURN 1;
+                          QUERY PLAN                          
+--------------------------------------------------------------
+ Result
+   ->  Append
+         ->  Seq Scan on co_top n_1
+               Filter: (properties.'age'::text = '30'::jsonb)
+         ->  Seq Scan on co_has n_2
+               Filter: (age = 30)
+         ->  Seq Scan on co_hasnt n_3
+               Filter: (properties.'age'::text = '30'::jsonb)
+(8 rows)
+
+EXPLAIN (COSTS OFF) MATCH (n:co_top) WITH n, count(*) AS c WHERE n.age = 30 RETURN 1;
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Subquery Scan on _agens_default_s
+   ->  GroupAggregate
+         Group Key: n.id
+         ->  Sort
+               Sort Key: n.id
+               ->  Append
+                     ->  Seq Scan on co_top n_1
+                           Filter: (properties.'age'::text = '30'::jsonb)
+                     ->  Seq Scan on co_has n_2
+                           Filter: (age = 30)
+                     ->  Seq Scan on co_hasnt n_3
+                           Filter: (properties.'age'::text = '30'::jsonb)
+(12 rows)
+
+-- a key no label holds in a column is left on the property map
+EXPLAIN (COSTS OFF) MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.other = 1 RETURN count(*);
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Aggregate
+   ->  HashAggregate
+         Group Key: n.id
+         ->  Seq Scan on co_doc n
+               Filter: (properties.'other'::text = '1'::jsonb)
+(5 rows)
+
+-- a LIMIT has already chosen the rows, so what follows it is not read from the
+-- relation again; the column crosses it, so the read is still the column's
+EXPLAIN (COSTS OFF)
+MATCH (n:co_doc) WITH n, count(*) AS c LIMIT 2 WITH n WHERE n.age = 30 RETURN count(*);
+                             QUERY PLAN                              
+---------------------------------------------------------------------
+ Aggregate
+   ->  Subquery Scan on _agens_default_s
+         Filter: (_agens_default_s."_agens_default_prop:n:age" = 30)
+         ->  Limit
+               ->  HashAggregate
+                     Group Key: n.id
+                     ->  Seq Scan on co_doc n
+(7 rows)
+
+-- the property projected rather than compared, on each side of the clause: the
+-- column is carried across, so both read it and both come back the same way
+MATCH (n:co_doc) WHERE n.age = 30 RETURN n.nm AS nm ORDER BY nm;
+ nm  
+-----
+ bob
+ cid
+(2 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30 RETURN n.nm AS nm ORDER BY nm;
+ nm  
+-----
+ bob
+ cid
+(2 rows)
+
+-- a column carried across the clause that nothing goes on to read is dropped
+-- rather than read to carry, so carrying it costs nothing where it is unused
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:co_doc) WITH n, count(*) AS c RETURN c;
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Subquery Scan on _agens_default_s
+   Output: cypher_to_jsonb(_agens_default_s.c)
+   ->  HashAggregate
+         Output: NULL::vertex, count(*), NULL::integer, NULL::text, n.id
+         Group Key: n.id
+         ->  Seq Scan on coll_g.co_doc n
+               Output: n.id, n.properties, n.age, n.nm
+(7 rows)
+
+-- a de-duplicating clause does not carry it: an output of a DISTINCT is never
+-- dropped for being unused, so a column crossing one would be read whether or
+-- not anything read it.  Such a read answers from the property map, which the
+-- WITH DISTINCT case below shows.
+--
+-- every one of them answers with the rows the property map answers with.  A
+-- promoted property comes back in the column's own type, after such a clause as
+-- before it, which is why a text property reads its characters where the map
+-- reads a quoted jsonb string.
+SET enable_property_promotion = on;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30 RETURN n.nm AS nm ORDER BY nm;
+ nm  
+-----
+ bob
+ cid
+(2 rows)
+
+MATCH (n:co_doc) WITH DISTINCT n WHERE n.age = 30 RETURN n.nm AS nm ORDER BY nm;
+  nm   
+-------
+ "bob"
+ "cid"
+(2 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WITH n, count(c) AS d WHERE n.age = 30
+  RETURN n.nm AS nm ORDER BY nm;
+ nm  
+-----
+ bob
+ cid
+(2 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.nm = 'bob' RETURN n.age AS age;
+ age 
+-----
+  30
+(1 row)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age > 40 RETURN n.nm AS nm ORDER BY nm;
+ nm  
+-----
+ amy
+ dot
+ eve
+(3 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age <> 30 RETURN n.nm AS nm ORDER BY nm;
+ nm  
+-----
+ amy
+ dot
+ eve
+(3 rows)
+
+MATCH ()-[e:co_rel]->() WITH e, count(*) AS c WHERE e.w = 7 RETURN e.w AS w;
+ w 
+---
+ 7
+(1 row)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30 AND c = 1 RETURN n.nm AS nm ORDER BY nm;
+ nm  
+-----
+ bob
+ cid
+(2 rows)
+
+MATCH (n:co_top) WITH n, count(*) AS c WHERE n.age = 30 RETURN count(*) AS above;
+ above 
+-------
+ 2
+(1 row)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.other = 1 RETURN n.nm AS nm ORDER BY nm;
+ nm  
+-----
+ amy
+ bob
+(2 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c LIMIT 2 WITH n WHERE n.age = 30 RETURN count(*) AS lim;
+ lim 
+-----
+ 1
+(1 row)
+
+-- a value the column cannot hold exactly, and one of another kind entirely
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30.5 RETURN n.nm AS nm;
+ nm 
+----
+(0 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = '30' RETURN n.nm AS nm;
+ nm 
+----
+(0 rows)
+
+-- a key the rows do not carry
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.nosuch = 1 RETURN n.nm AS nm;
+ nm 
+----
+(0 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age IS NULL RETURN n.nm AS nm;
+ nm 
+----
+(0 rows)
+
+-- a property this statement writes, read after aggregating over it
+CREATE (n:co_doc {age: 77, nm: 'new'}) WITH n, count(*) AS c WHERE n.age = 77 RETURN n.nm AS nm;
+  nm   
+-------
+ "new"
+(1 row)
+
+MATCH (n:co_doc) WHERE n.age = 77 DETACH DELETE n;
+-- a write clause after an aggregating one still reaches the label it writes
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 41 SET n.seen = 1;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 41 RETURN n.seen AS seen;
+ seen 
+------
+ 1
+(1 row)
+
+MATCH (n:co_doc) WHERE n.age = 41 REMOVE n.seen;
+SET enable_property_promotion = off;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30 RETURN n.nm AS nm ORDER BY nm;
+  nm   
+-------
+ "bob"
+ "cid"
+(2 rows)
+
+MATCH (n:co_doc) WITH DISTINCT n WHERE n.age = 30 RETURN n.nm AS nm ORDER BY nm;
+  nm   
+-------
+ "bob"
+ "cid"
+(2 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WITH n, count(c) AS d WHERE n.age = 30
+  RETURN n.nm AS nm ORDER BY nm;
+  nm   
+-------
+ "bob"
+ "cid"
+(2 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.nm = 'bob' RETURN n.age AS age;
+ age 
+-----
+ 30
+(1 row)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age > 40 RETURN n.nm AS nm ORDER BY nm;
+  nm   
+-------
+ "amy"
+ "dot"
+ "eve"
+(3 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age <> 30 RETURN n.nm AS nm ORDER BY nm;
+  nm   
+-------
+ "amy"
+ "dot"
+ "eve"
+(3 rows)
+
+MATCH ()-[e:co_rel]->() WITH e, count(*) AS c WHERE e.w = 7 RETURN e.w AS w;
+ w 
+---
+ 7
+(1 row)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30 AND c = 1 RETURN n.nm AS nm ORDER BY nm;
+  nm   
+-------
+ "bob"
+ "cid"
+(2 rows)
+
+MATCH (n:co_top) WITH n, count(*) AS c WHERE n.age = 30 RETURN count(*) AS above;
+ above 
+-------
+ 2
+(1 row)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.other = 1 RETURN n.nm AS nm ORDER BY nm;
+  nm   
+-------
+ "amy"
+ "bob"
+(2 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c LIMIT 2 WITH n WHERE n.age = 30 RETURN count(*) AS lim;
+ lim 
+-----
+ 1
+(1 row)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30.5 RETURN n.nm AS nm;
+ nm 
+----
+(0 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = '30' RETURN n.nm AS nm;
+ nm 
+----
+(0 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.nosuch = 1 RETURN n.nm AS nm;
+ nm 
+----
+(0 rows)
+
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age IS NULL RETURN n.nm AS nm;
+ nm 
+----
+(0 rows)
+
+CREATE (n:co_doc {age: 77, nm: 'new'}) WITH n, count(*) AS c WHERE n.age = 77 RETURN n.nm AS nm;
+  nm   
+-------
+ "new"
+(1 row)
+
+MATCH (n:co_doc) WHERE n.age = 77 DETACH DELETE n;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 41 SET n.seen = 1;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 41 RETURN n.seen AS seen;
+ seen 
+------
+ 1
+(1 row)
+
+MATCH (n:co_doc) WHERE n.age = 41 REMOVE n.seen;
+SET enable_property_promotion = on;
+DROP GRAPH coll_g CASCADE;
+NOTICE:  drop cascades to 8 other objects
+DETAIL:  drop cascades to sequence coll_g.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel co_doc
+drop cascades to elabel co_rel
+drop cascades to vlabel co_top
+drop cascades to vlabel co_has
+drop cascades to vlabel co_hasnt
+--
 -- Reading a promoted property as the weight of a weighted shortest path
 --
 -- A weighted shortest path assembles its own subquery over the relationship

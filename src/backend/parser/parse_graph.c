@@ -185,6 +185,7 @@ static void updateSortOperatorsForJsonb(List *sortClause, List **targetList,
 										bool allowUnbox, bool allowNativeUnbox);
 static void unboxPromotedGroupKeys(List *groupClause, List **targetList);
 static void groupElementsByIdentity(ParseState *pstate, Query *qry);
+static void releaseGroupedSentinels(Query *qry);
 static void dropElementsNotNamed(List *targetList, List *named);
 static bool sortgrouprefIsUsed(Index ref, List *clauses);
 static void setDefaultCollationOnKeys(List *clause, List *targetList);
@@ -863,6 +864,58 @@ sortgrouprefIsUsed(Index ref, List *clauses)
 }
 
 /*
+ * releaseGroupedSentinels
+ *		Give back the grouping keys a carried promoted column was given.
+ *
+ *		A column carried across an aggregating projection is grouped on so that
+ *		the projection is valid: a column of a row the aggregation collapses is
+ *		not something a query may project ungrouped.  The element it was read
+ *		beside is grouped on too and decides which row it comes from, so the
+ *		groups are the same with the column among the keys or without it.
+ *
+ *		Released, it is carried the way any column a key determines is carried,
+ *		and one that nothing goes on to read is dropped rather than read to key
+ *		on -- which is what makes carrying it cost nothing where it is unused.
+ *		Held as a key it would cost every such projection the width of the
+ *		column, and a type that cannot be hashed would cost the whole clause its
+ *		hashed aggregation.
+ *
+ *		This runs after the projection has been checked against the grouping, in
+ *		the same way and for the same reason groupElementsByIdentity() does.  The
+ *		grouping step the check built is left alone: it is read by position, and
+ *		what it holds is still what the projection was checked against.
+ */
+static void
+releaseGroupedSentinels(Query *qry)
+{
+	List	   *keys = NIL;
+	ListCell   *lc;
+
+	/* a key a grouping set names has to stay in the clause the set reads */
+	if (qry->groupingSets != NIL)
+		return;
+
+	foreach(lc, qry->groupClause)
+	{
+		SortGroupClause *grpcl = (SortGroupClause *) lfirst(lc);
+		TargetEntry *tle = get_sortgroupref_tle(grpcl->tleSortGroupRef,
+											   qry->targetList);
+
+		if (tle == NULL || !isPromotedSentinelName(tle->resname))
+		{
+			keys = lappend(keys, grpcl);
+			continue;
+		}
+
+		if (!sortgrouprefIsUsed(grpcl->tleSortGroupRef, qry->sortClause) &&
+			!sortgrouprefIsUsed(grpcl->tleSortGroupRef, qry->distinctClause))
+			tle->ressortgroupref = 0;
+	}
+
+	qry->groupClause = keys;
+}
+
+/*
  * unboxPromotedGroupKeys
  *		A promoted property is projected as cypher_to_jsonb(column), so the
  *		implicit GROUP BY built from the projection groups on that boxed jsonb
@@ -1137,19 +1190,24 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 			checkCypherLetItems(pstate, qry->targetList);
 
 		/*
-		 * Forward each carried element's promoted sentinels through
-		 * this transparent WITH/LET so a later clause's WHERE/ORDER BY still
-		 * resolves n.prop to the typed column.  Insert here, before ORDER BY
-		 * appends its resjunk sort keys, so the sentinels stay among the leading
-		 * non-junk outputs (a subquery RTE requires non-junk resnos to be
-		 * contiguous).  Only when the projection neither aggregates nor
-		 * de-duplicates: those collapse rows, so an ungrouped base-column
-		 * reference would be invalid or meaningless -- the element is no longer
-		 * a live single base row.  RETURN is terminal and intentionally
-		 * excluded, keeping its projection byte-identical.
+		 * Forward each carried element's promoted sentinels through this
+		 * WITH/LET so a later clause reads n.prop from the typed column.
+		 * Insert here, before ORDER BY appends its resjunk sort keys, so the
+		 * sentinels stay among the leading non-junk outputs (a subquery RTE
+		 * requires non-junk resnos to be contiguous).
+		 *
+		 * A projection that aggregates carries them too.  The element is
+		 * grouped on and decides which row a sentinel is read from, so the
+		 * implicit grouping below takes them as keys, which is what makes the
+		 * projection valid, and releaseGroupedSentinels() gives the keys back
+		 * once it has been checked.  A projection that de-duplicates does not
+		 * carry them: an output of a DISTINCT is never dropped for being
+		 * unused, so a column carried across one is read whether or not
+		 * anything reads it.  RETURN is terminal and intentionally excluded,
+		 * keeping its projection byte-identical.
 		 */
 		if ((detail->kind == CP_WITH || detail->kind == CP_LET) &&
-			!pstate->p_hasAggs && detail->distinct == NULL)
+			detail->distinct == NULL)
 		{
 			List	   *fwd = NIL;
 			ListCell   *lt;
@@ -1295,6 +1353,9 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 
 	/* the projection has been checked against it, so a key can narrow now */
 	groupElementsByIdentity(pstate, qry);
+
+	/* and a key that was only there to be checked can go */
+	releaseGroupedSentinels(qry);
 
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 
@@ -5715,19 +5776,36 @@ getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno,
 					varattno = var->varattno;
 				}
 				break;
+			case RTE_GROUP:
+				{
+					Node	   *expr;
+
+					if (varattno < 1 ||
+						varattno > list_length(rte->groupexprs))
+						return InvalidOid;
+					expr = list_nth(rte->groupexprs, varattno - 1);
+					if (expr == NULL || !IsA(expr, Var))
+						return InvalidOid;
+
+					var = (Var *) expr;
+
+					if (var->varlevelsup != 0)
+						return InvalidOid;
+
+					varno = var->varno;
+					varattno = var->varattno;
+				}
+				break;
 			case RTE_FUNCTION:
 			case RTE_VALUES:
 			case RTE_CTE:
-			case RTE_GROUP:
 			case RTE_RESULT:
 			case RTE_TABLEFUNC:
 			case RTE_NAMEDTUPLESTORE:
 
 				/*
 				 * These kinds have no reachable base label relation, so report
-				 * "not promoted" and let resolution fall back gracefully.  An
-				 * aggregating WITH, for instance, interposes an RTE_GROUP the
-				 * walk would otherwise trip on.
+				 * "not promoted" and let resolution fall back gracefully.
 				 */
 				return InvalidOid;
 			default:
@@ -6069,10 +6147,14 @@ resolvePromotedProperty(ParseState *pstate, Node *basenode, char *key,
  * propertyNeedsPerRelation - whether reading `key' off this element is worth
  * settling per relation.
  *
- * True when a label below the one being read holds the key in a column.  The
- * read cannot be bound to that column here, because one scan reads every label
- * beneath and they need not agree, so it is marked for the planner to settle
- * once it knows which relation it is reading.
+ * True when the label being read, or one below it, holds the key in a column
+ * that the read cannot be bound to here: the column is not in scope at this
+ * point in the query -- a clause between the two collapsed the rows the element
+ * was read from -- or one scan reads every label beneath and they need not agree
+ * on it.  The access is marked, and the planner settles it against whichever
+ * relation it turns out to be reading.
+ *
+ * A SET/REMOVE target names the property map and is never settled.
  */
 bool
 propertyNeedsPerRelation(ParseState *pstate, Node *basenode, char *key)
@@ -6083,6 +6165,8 @@ propertyNeedsPerRelation(ParseState *pstate, Node *basenode, char *key)
 	Oid			relid;
 
 	if (!enable_property_promotion)
+		return false;
+	if (pstate->p_expr_kind == EXPR_KIND_UPDATE_SOURCE)
 		return false;
 	if (basenode == NULL || !IsA(basenode, Var))
 		return false;
@@ -6103,7 +6187,8 @@ propertyNeedsPerRelation(ParseState *pstate, Node *basenode, char *key)
 
 	relid = getSourceRelid(relpstate, var->varno, var->varattno, NULL);
 
-	return subtree_has_promoted_property(relid, key);
+	return get_label_property_column(relid, key, NULL, NULL) ||
+		subtree_has_promoted_property(relid, key);
 }
 
 /* See get_relation_info() */

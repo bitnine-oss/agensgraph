@@ -42,6 +42,7 @@
 #include "optimizer/appendinfo.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
+#include "optimizer/inherit.h"
 #include "optimizer/optimizer.h"
 #include "optimizer/paramassign.h"
 #include "optimizer/pathnode.h"
@@ -1427,6 +1428,14 @@ preprocess_expression(PlannerInfo *root, Node *expr, int kind)
 	 */
 	if (kind != EXPRKIND_RTFUNC)
 		expr = eval_const_expressions(root, expr);
+
+	/*
+	 * Bind a property read left for the planner to settle to the column of the
+	 * relation it reads.  Here, because constant folding above is what reduces
+	 * the element the read was written against to that relation's own row.
+	 */
+	if (kind == EXPRKIND_QUAL)
+		expr = expand_perrelation_property(root, expr);
 
 	/*
 	 * If it's a qual or havingQual, canonicalize it.

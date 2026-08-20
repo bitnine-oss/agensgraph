@@ -2738,6 +2738,140 @@ MATCH (n:c_top) WHERE n.age = 'x' RETURN n.age;
 DROP GRAPH cmp_g CASCADE;
 
 --
+-- Reading a promoted property across a clause that collapses the rows
+--
+-- A clause that aggregates or de-duplicates collapses the rows an element was
+-- read from, so a read written after one cannot be bound to the column where it
+-- is written.  Two things reach the column instead: an aggregating clause
+-- carries it across, so such a read is the column's on both sides of the clause;
+-- and a comparison left on the property map is settled per relation once it has
+-- reached the relation it reads, so the column's index answers it.
+--
+CREATE GRAPH coll_g;
+SET graph_path = coll_g;
+CREATE VLABEL co_doc (age int GENERATED, nm text GENERATED);
+CREATE ELABEL co_rel (w int GENERATED);
+CREATE VLABEL co_top;
+CREATE VLABEL co_has (age int GENERATED) INHERITS (co_top);
+CREATE VLABEL co_hasnt INHERITS (co_top);
+CREATE INDEX co_doc_age ON coll_g.co_doc (age);
+CREATE INDEX co_doc_nm ON coll_g.co_doc (nm);
+CREATE INDEX co_has_age ON coll_g.co_has (age);
+CREATE (:co_doc {age: 30, nm: 'bob', other: 1});
+CREATE (:co_doc {age: 41, nm: 'amy', other: 1});
+CREATE (:co_doc {age: 30, nm: 'cid', other: 2});
+CREATE (:co_doc {age: 55, nm: 'dot'})-[:co_rel {w: 7}]->(:co_doc {age: 66, nm: 'eve'});
+CREATE (:co_has {age: 30});
+CREATE (:co_hasnt {other: 1});
+CREATE (:co_top {age: 30});
+ANALYZE coll_g.co_doc;
+ANALYZE coll_g.co_has;
+
+SET enable_seqscan = off;
+-- the read before an aggregating clause and the read after it bind the same index
+EXPLAIN (COSTS OFF) MATCH (n:co_doc) WHERE n.age = 30 RETURN count(*);
+EXPLAIN (COSTS OFF) MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30 RETURN count(*);
+-- de-duplicating collapses the rows the same way
+EXPLAIN (COSTS OFF) MATCH (n:co_doc) WITH DISTINCT n WHERE n.age = 30 RETURN count(*);
+-- one aggregating clause after another
+EXPLAIN (COSTS OFF)
+MATCH (n:co_doc) WITH n, count(*) AS c WITH n, count(c) AS d WHERE n.age = 30 RETURN count(*);
+-- text, and an ordering comparison
+EXPLAIN (COSTS OFF) MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.nm = 'bob' RETURN count(*);
+EXPLAIN (COSTS OFF) MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age > 40 RETURN count(*);
+RESET enable_seqscan;
+
+-- "not equal" reads the column, which no index answers
+EXPLAIN (COSTS OFF) MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age <> 30 RETURN count(*);
+-- a relationship's property is settled the same way
+EXPLAIN (COSTS OFF) MATCH ()-[e:co_rel]->() WITH e, count(*) AS c WHERE e.w = 7 RETURN count(*);
+-- only the part of the qual that names the element is settled; the part naming
+-- the aggregate is answered where the aggregate is
+EXPLAIN (COSTS OFF)
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30 AND c = 1 RETURN count(*);
+-- reading from above the label that holds the column settles each relation on
+-- its own, after such a clause as before it
+EXPLAIN (COSTS OFF) MATCH (n:co_top) WHERE n.age = 30 RETURN 1;
+EXPLAIN (COSTS OFF) MATCH (n:co_top) WITH n, count(*) AS c WHERE n.age = 30 RETURN 1;
+-- a key no label holds in a column is left on the property map
+EXPLAIN (COSTS OFF) MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.other = 1 RETURN count(*);
+-- a LIMIT has already chosen the rows, so what follows it is not read from the
+-- relation again; the column crosses it, so the read is still the column's
+EXPLAIN (COSTS OFF)
+MATCH (n:co_doc) WITH n, count(*) AS c LIMIT 2 WITH n WHERE n.age = 30 RETURN count(*);
+
+-- the property projected rather than compared, on each side of the clause: the
+-- column is carried across, so both read it and both come back the same way
+MATCH (n:co_doc) WHERE n.age = 30 RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30 RETURN n.nm AS nm ORDER BY nm;
+
+-- a column carried across the clause that nothing goes on to read is dropped
+-- rather than read to carry, so carrying it costs nothing where it is unused
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:co_doc) WITH n, count(*) AS c RETURN c;
+
+-- a de-duplicating clause does not carry it: an output of a DISTINCT is never
+-- dropped for being unused, so a column crossing one would be read whether or
+-- not anything read it.  Such a read answers from the property map, which the
+-- WITH DISTINCT case below shows.
+--
+-- every one of them answers with the rows the property map answers with.  A
+-- promoted property comes back in the column's own type, after such a clause as
+-- before it, which is why a text property reads its characters where the map
+-- reads a quoted jsonb string.
+SET enable_property_promotion = on;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30 RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:co_doc) WITH DISTINCT n WHERE n.age = 30 RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:co_doc) WITH n, count(*) AS c WITH n, count(c) AS d WHERE n.age = 30
+  RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.nm = 'bob' RETURN n.age AS age;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age > 40 RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age <> 30 RETURN n.nm AS nm ORDER BY nm;
+MATCH ()-[e:co_rel]->() WITH e, count(*) AS c WHERE e.w = 7 RETURN e.w AS w;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30 AND c = 1 RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:co_top) WITH n, count(*) AS c WHERE n.age = 30 RETURN count(*) AS above;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.other = 1 RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:co_doc) WITH n, count(*) AS c LIMIT 2 WITH n WHERE n.age = 30 RETURN count(*) AS lim;
+-- a value the column cannot hold exactly, and one of another kind entirely
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30.5 RETURN n.nm AS nm;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = '30' RETURN n.nm AS nm;
+-- a key the rows do not carry
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.nosuch = 1 RETURN n.nm AS nm;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age IS NULL RETURN n.nm AS nm;
+-- a property this statement writes, read after aggregating over it
+CREATE (n:co_doc {age: 77, nm: 'new'}) WITH n, count(*) AS c WHERE n.age = 77 RETURN n.nm AS nm;
+MATCH (n:co_doc) WHERE n.age = 77 DETACH DELETE n;
+-- a write clause after an aggregating one still reaches the label it writes
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 41 SET n.seen = 1;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 41 RETURN n.seen AS seen;
+MATCH (n:co_doc) WHERE n.age = 41 REMOVE n.seen;
+
+SET enable_property_promotion = off;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30 RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:co_doc) WITH DISTINCT n WHERE n.age = 30 RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:co_doc) WITH n, count(*) AS c WITH n, count(c) AS d WHERE n.age = 30
+  RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.nm = 'bob' RETURN n.age AS age;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age > 40 RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age <> 30 RETURN n.nm AS nm ORDER BY nm;
+MATCH ()-[e:co_rel]->() WITH e, count(*) AS c WHERE e.w = 7 RETURN e.w AS w;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30 AND c = 1 RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:co_top) WITH n, count(*) AS c WHERE n.age = 30 RETURN count(*) AS above;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.other = 1 RETURN n.nm AS nm ORDER BY nm;
+MATCH (n:co_doc) WITH n, count(*) AS c LIMIT 2 WITH n WHERE n.age = 30 RETURN count(*) AS lim;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30.5 RETURN n.nm AS nm;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = '30' RETURN n.nm AS nm;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.nosuch = 1 RETURN n.nm AS nm;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age IS NULL RETURN n.nm AS nm;
+CREATE (n:co_doc {age: 77, nm: 'new'}) WITH n, count(*) AS c WHERE n.age = 77 RETURN n.nm AS nm;
+MATCH (n:co_doc) WHERE n.age = 77 DETACH DELETE n;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 41 SET n.seen = 1;
+MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 41 RETURN n.seen AS seen;
+MATCH (n:co_doc) WHERE n.age = 41 REMOVE n.seen;
+SET enable_property_promotion = on;
+
+DROP GRAPH coll_g CASCADE;
+
+--
 -- Reading a promoted property as the weight of a weighted shortest path
 --
 -- A weighted shortest path assembles its own subquery over the relationship
