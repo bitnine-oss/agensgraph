@@ -3824,11 +3824,88 @@ MATCH (a) DETACH DELETE a;
 -- AG-163 : DELETE plan passes 'edge' variable to the next plan.
 CREATE ({name:'AG-163'});
 MATCH (a {name:'AG-163'}) DELETE a RETURN *;
- a 
----
- 
+                 a                 
+-----------------------------------
+ ag_vertex[1.11]{"name": "AG-163"}
 (1 row)
 
+--
+-- what a delete hands on
+--
+-- Removing an element from the graph does not unbind the variable that named
+-- it: the value it was read with is still the value it holds, so a clause after
+-- the delete can report what was removed.  Each case below gets its own row,
+-- because the case before it removed the one it used.
+CREATE VLABEL delret;
+CREATE ELABEL delrete;
+CREATE (:delret {no: 1, nm: 'a'}), (:delret {no: 2, nm: 'b'}),
+       (:delret {no: 3, nm: 'c'}), (:delret {no: 4, nm: 'd'}),
+       (:delret {no: 5, nm: 'e'}), (:delret {no: 6, nm: 'f'}),
+       (:delret {no: 7, nm: 'g'}), (:delret {no: 8, nm: 'h'});
+MATCH (a:delret {no: 1}), (b:delret {no: 2})
+	CREATE (a)-[:delrete {w: 9}]->(b);
+MATCH (n:delret {no: 3}) DELETE n RETURN n AS deleted;
+             deleted              
+----------------------------------
+ delret[15.3]{"nm": "c", "no": 3}
+(1 row)
+
+MATCH (n:delret {no: 4}) DELETE n
+	RETURN n.nm AS nm, label(n) AS label, properties(n) AS props;
+ nm  |  label   |        props         
+-----+----------+----------------------
+ "d" | "delret" | {"nm": "d", "no": 4}
+(1 row)
+
+-- an edge, and a vertex that still had one
+MATCH ()-[r:delrete]->() DELETE r RETURN r.w AS w, properties(r) AS props;
+ w |  props   
+---+----------
+ 9 | {"w": 9}
+(1 row)
+
+MATCH (n:delret {no: 1}) DETACH DELETE n RETURN n.nm AS nm;
+ nm  
+-----
+ "a"
+(1 row)
+
+-- every column bound to the removed element reads alike, whether or not it is
+-- the one the delete named
+MATCH (n:delret {no: 5}) WITH n, n AS copy DELETE n RETURN copy.nm AS d;
+  d  
+-----
+ "e"
+(1 row)
+
+MATCH (a:delret {no: 6}), (b:delret)
+	DELETE a
+	RETURN b.no AS b_no ORDER BY b_no;
+ b_no 
+------
+ 2
+ 6
+ 7
+ 8
+(4 rows)
+
+-- deleting the same element twice removes it once
+MATCH (n:delret {no: 2}) DELETE n DELETE n RETURN n.nm AS d;
+  d  
+-----
+ "b"
+(1 row)
+
+-- an element that has been removed has no row to write to
+MATCH (n:delret {no: 7}) DELETE n CREATE (n)-[:delrete]->(:delret);
+ERROR:  cannot create an edge on a deleted vertex
+MATCH (n:delret {no: 7}) DELETE n SET n.nm = 'z';
+ERROR:  cannot update a deleted vertex
+MATCH (n:delret {no: 8}) DELETE n REMOVE n.nm;
+ERROR:  cannot update a deleted vertex
+MATCH (n:delret) DETACH DELETE n;
+DROP ELABEL delrete;
+DROP VLABEL delret;
 -- AG-160
 CREATE ()-[:AG160]->();
 MATCH ()-[r:AG160]->() DETACH DELETE r;
@@ -5903,7 +5980,7 @@ SET r += {'weight': 1.0, 'description': 'CompanyA develops ProductX', 'keywords'
 RETURN r, source, target;
                                                                                                                 r                                                                                                                 |               source                |               target                
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------+-------------------------------------
- directed[22.1][23.1,23.2]{"weight": 1.0, "keywords": "develop, produce", "file_path": "custom_kg", "source_id": "chunk-eeec0036b909839e8ec4fa150c939eec", "created_at": 1751270491, "description": "CompanyA develops ProductX"} | base[23.1]{"entity_id": "CompanyA"} | base[23.2]{"entity_id": "ProductX"}
+ directed[24.1][25.1,25.2]{"weight": 1.0, "keywords": "develop, produce", "file_path": "custom_kg", "source_id": "chunk-eeec0036b909839e8ec4fa150c939eec", "created_at": 1751270491, "description": "CompanyA develops ProductX"} | base[25.1]{"entity_id": "CompanyA"} | base[25.2]{"entity_id": "ProductX"}
 (1 row)
 
 --
@@ -6127,7 +6204,7 @@ ORDER BY edge, start, "end";
     7 |     5 |   8
     7 |     6 |   8
     8 |     5 |   5
-   22 |    23 |  23
+   24 |    25 |  25
 (17 rows)
 
 -- Append node should not have relation e2, since n1 and n2 are not connected to e2 edge label.

@@ -1175,6 +1175,71 @@ graphElementIdIsNull(Datum elem, Oid elemtype)
 	return isnull;
 }
 
+/*
+ * makeInvalidatedGraphElement
+ *		Returns elem marked as no longer in the graph, keeping the id and the
+ *		properties it was read with and setting its tid invalid.  A deleted
+ *		element is in no table and so has no row to point at, which is what
+ *		distinguishes it from one that is still there.
+ */
+Datum
+makeInvalidatedGraphElement(Datum elem, Oid elemtype)
+{
+	HeapTupleHeader tuphdr = DatumGetHeapTupleHeader(elem);
+	TupleDesc	tupDesc;
+	HeapTupleData tuple;
+	Datum		values[Natts_ag_edge];
+	bool		isnull[Natts_ag_edge];
+	AttrNumber	tidattno;
+	ItemPointerData tid;
+	HeapTuple	result;
+
+	Assert(elemtype == VERTEXOID || elemtype == EDGEOID);
+
+	tidattno = (elemtype == EDGEOID) ? Anum_ag_edge_tid : Anum_ag_vertex_tid;
+
+	/*
+	 * Take the element apart and put it back together once.  Reading an
+	 * attribute on its own looks the row type up each time, and only the tid
+	 * changes here.
+	 */
+	tupDesc = lookup_rowtype_tupdesc(HeapTupleHeaderGetTypeId(tuphdr), -1);
+	Assert(tupDesc->natts == ((elemtype == EDGEOID) ? Natts_ag_edge
+							  : Natts_ag_vertex));
+
+	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
+	ItemPointerSetInvalid(&tuple.t_self);
+	tuple.t_tableOid = InvalidOid;
+	tuple.t_data = tuphdr;
+
+	heap_deform_tuple(&tuple, tupDesc, values, isnull);
+
+	ItemPointerSetInvalid(&tid);
+	values[tidattno - 1] = PointerGetDatum(&tid);
+	isnull[tidattno - 1] = false;
+
+	result = heap_form_tuple(tupDesc, values, isnull);
+	ReleaseTupleDesc(tupDesc);
+
+	return HeapTupleGetDatum(result);
+}
+
+/*
+ * graphElementIsInvalidated
+ *		Reports whether elem refers to an element that has been deleted.  The
+ *		argument must be a non-NULL VERTEX or EDGE datum.
+ */
+bool
+graphElementIsInvalidated(Datum elem, Oid elemtype)
+{
+	Datum		tid;
+
+	tid = (elemtype == EDGEOID) ? getEdgeTidDatum(elem)
+		: getVertexTidDatum(elem);
+
+	return !ItemPointerIsValid((ItemPointer) DatumGetPointer(tid));
+}
+
 Datum
 edge_start_vertex(PG_FUNCTION_ARGS)
 {

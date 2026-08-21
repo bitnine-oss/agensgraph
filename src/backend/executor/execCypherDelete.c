@@ -59,7 +59,7 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		Oid			type;
 		Datum		elem;
 		bool		isNull;
-		AttrNumber	attno = findAttrInSlotByName(slot, gde->variable);
+		AttrNumber	attno;
 
 		type = exprType((Node *) gde->elem);
 		if (!(type == VERTEXOID || type == EDGEOID ||
@@ -73,21 +73,37 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		if (isNull)
 			continue;
 
-		/*
-		 * NOTE: After all the graph elements to be removed are collected,
-		 * they will be removed.
-		 */
 		ExecDeleteGraphElement(mgstate, elem, type);
 
 		/*
-		 * The graphpath must be passed to the next plan for deleting vertex
-		 * array of the graphpath.
+		 * Nothing runs after this clause, so the row is not handed on and
+		 * there is nothing to say about the element in it.
 		 */
-		if (type == EDGEARRAYOID &&
-			TupleDescAttr(tupDesc, attno - 1)->atttypid == GRAPHPATHOID)
+		if (plan->last)
+			continue;
+
+		attno = findAttrInSlotByName(slot, gde->variable);
+
+		/*
+		 * Hand the element on as one that has been deleted, keeping the id
+		 * and the properties it was read with, so a clause after this one
+		 * still has the value the variable was bound to.
+		 */
+		if (type == VERTEXOID || type == EDGEOID)
 		{
+			setSlotValueByAttnum(slot,
+								 makeInvalidatedGraphElement(elem, type),
+								 attno);
 			continue;
 		}
+
+		/*
+		 * A graphpath is left as it is: its members are marked where the path
+		 * is rebuilt, and the next plan still reads it to delete the vertices
+		 * of the path whose edges this one removed.
+		 */
+		if (TupleDescAttr(tupDesc, attno - 1)->atttypid == GRAPHPATHOID)
+			continue;
 
 		setSlotValueByAttnum(slot, (Datum) 0, attno);
 	}
@@ -154,7 +170,7 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 	TM_FailureData tmfd;
 	bool		hash_found;
 
-	hash_search(mgstate->elemTable, &graphid, HASH_FIND, &hash_found);
+	hash_search(mgstate->modifiedElems, &graphid, HASH_FIND, &hash_found);
 	if (hash_found)
 		return false;
 
@@ -282,7 +298,7 @@ ExecDeleteEdgeOrVertex(ModifyGraphState *mgstate, ResultRelInfo *resultRelInfo,
 		graphWriteStats.deleteVertex++;
 	}
 
-	hash_search(mgstate->elemTable, &graphid, HASH_ENTER, &hash_found);
+	hash_search(mgstate->modifiedElems, &graphid, HASH_ENTER, &hash_found);
 
 	return true;
 }

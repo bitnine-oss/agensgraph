@@ -2968,7 +2968,7 @@ typedef struct ModifyGraphState
 	List	   *exprs;			/* expression state list for DELETE */
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
 	bool	   *update_cols;	/* array of columns to update */
-	HTAB	   *elemTable;
+	HTAB	   *modifiedElems;
 	Tuplestorestate *tuplestorestate;
 	TupleTableSlot *(*execProc) (struct ModifyGraphState *pstate,
 								 TupleTableSlot *slot);

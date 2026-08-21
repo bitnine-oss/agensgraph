@@ -104,6 +104,16 @@ LegacyExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot, GSPKind kind
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("updating NULL is not allowed")));
 
+		/*
+		 * An element an earlier clause removed is in no table, so it has no
+		 * row to write a property to.
+		 */
+		if (graphElementIsInvalidated(elem_datum, elemtype))
+			ereport(ERROR,
+					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					 errmsg("cannot update a deleted %s",
+							(elemtype == EDGEOID) ? "edge" : "vertex")));
+
 		/* evaluate SET expression */
 		if (elemtype == VERTEXOID)
 		{
@@ -198,6 +208,19 @@ ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 				graphElementIdIsNull(cur_datum, element_type))
 				continue;
 
+			/*
+			 * An element an earlier clause removed is in no table, so it
+			 * has no row to write a property to.  Unlike the cases above,
+			 * this is not something to pass over: the query named an
+			 * element to update and it is gone.
+			 */
+			if ((element_type == VERTEXOID || element_type == EDGEOID) &&
+				graphElementIsInvalidated(cur_datum, element_type))
+				ereport(ERROR,
+						(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+						 errmsg("cannot update a deleted %s",
+								(element_type == EDGEOID) ? "edge" : "vertex")));
+
 			affected_datum = GraphTableTupleUpdate(mgstate,
 												   element_type,
 												   cur_datum,
@@ -233,8 +256,9 @@ copyVirtualTupleTableSlot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
 /*
  * findAndReflectNewestValue
  *
- * If a tuple with already updated exists, the data is taken from the elemTable
- * in ModifyGraphState and reflecting in the tuple data currently working on.
+ * If a tuple with already updated exists, the data is taken from the
+ * modifiedElems in ModifyGraphState and reflecting in the tuple data
+ * currently working on.
  */
 static void
 findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot)
@@ -267,29 +291,30 @@ findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		switch (type_oid)
 		{
 			case VERTEXOID:
-				{
-					Datum		graphid = getVertexIdDatum(slot->tts_values[i]);
-
-					finalValue = getElementFromEleTable(mgstate, type_oid, 0,
-														graphid,
-														&found);
-					if (!found)
-					{
-						continue;
-					}
-				}
-				break;
 			case EDGEOID:
 				{
-					Datum		graphid = getEdgeIdDatum(slot->tts_values[i]);
+					Datum		graphid;
+					bool		deleted;
 
-					finalValue = getElementFromEleTable(mgstate, type_oid, 0,
-														graphid,
-														&found);
+					graphid = (type_oid == EDGEOID)
+						? getEdgeIdDatum(slot->tts_values[i])
+						: getVertexIdDatum(slot->tts_values[i]);
+
+					finalValue = getModifiedElement(mgstate, graphid, &found,
+													&deleted);
 					if (!found)
 					{
 						continue;
 					}
+
+					/*
+					 * A removed element keeps the value it was read with,
+					 * marked as deleted.
+					 */
+					if (deleted)
+						finalValue =
+							makeInvalidatedGraphElement(slot->tts_values[i],
+														type_oid);
 				}
 				break;
 			case GRAPHPATHOID:
@@ -545,7 +570,7 @@ GraphTableTupleUpdate(ModifyGraphState *mgstate, Oid tts_value_type,
 		gid = getEdgeIdDatum(tts_value);
 	}
 
-	hash_search(mgstate->elemTable, &gid, HASH_FIND,
+	hash_search(mgstate->modifiedElems, &gid, HASH_FIND,
 				&hash_found);
 	if (hash_found)
 	{
@@ -897,7 +922,7 @@ lconcurrent:
 
 	list_free(recheckIndexes);
 
-	entry = hash_search(mgstate->elemTable, &gid, HASH_ENTER, &hash_found);
+	entry = hash_search(mgstate->modifiedElems, &gid, HASH_ENTER, &hash_found);
 
 	if (tts_value_type == VERTEXOID)
 	{
@@ -1110,7 +1135,7 @@ updateElementTable(ModifyGraphState *mgstate, Datum gid, Datum newelem)
 	ModifiedElemEntry *entry;
 	bool		found;
 
-	entry = hash_search(mgstate->elemTable, &gid, HASH_ENTER, &found);
+	entry = hash_search(mgstate->modifiedElems, &gid, HASH_ENTER, &found);
 	if (found)
 	{
 		if (enable_multiple_update)
