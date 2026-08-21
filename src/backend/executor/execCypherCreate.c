@@ -91,9 +91,24 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 			Datum		vertex;
 
 			if (gvertex->create)
+			{
 				vertex = createVertex(mgstate, gvertex, &vid, slot);
+			}
 			else
+			{
 				vertex = findVertex(slot, gvertex, &vid);
+
+				/*
+				 * A vertex an earlier clause removed is in no table, so
+				 * there is no row for an edge to be attached to.  Refuse it
+				 * here rather than write an edge whose endpoint does not
+				 * exist.
+				 */
+				if (graphElementIsInvalidated(vertex, VERTEXOID))
+					ereport(ERROR,
+							(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+							 errmsg("cannot create an edge on a deleted vertex")));
+			}
 
 			Assert(vertex != (Datum) 0);
 

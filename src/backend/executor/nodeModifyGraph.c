@@ -220,14 +220,14 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 		ctl.entrysize = sizeof(ModifiedElemEntry);
 		ctl.hcxt = CurrentMemoryContext;
 
-		mgstate->elemTable =
+		mgstate->modifiedElems =
 			hash_create("modified object table", 128, &ctl,
 						HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 	}
 	else
 	{
 		/* We will not use eager action */
-		mgstate->elemTable = NULL;
+		mgstate->modifiedElems = NULL;
 	}
 	mgstate->tuplestorestate = tuplestore_begin_heap(false, false, eager_mem);
 
@@ -282,31 +282,27 @@ reflectTupleChanges(PlanState *pstate, TupleTableSlot *result)
 			graphElementIdIsNull(orig_elem, type))
 			continue;
 
-		if (type == VERTEXOID)
+		if (type == VERTEXOID || type == EDGEOID)
 		{
 			Datum		graphid;
 			bool		found;
+			bool		deleted;
 
-			graphid = getVertexIdDatum(orig_elem);
-			elem = getElementFromEleTable(mgstate, type, orig_elem, graphid,
-										  &found);
-			if (!found)
-			{
-				continue;
-			}
-		}
-		else if (type == EDGEOID)
-		{
-			Datum		graphid;
-			bool		found;
+			graphid = (type == EDGEOID) ? getEdgeIdDatum(orig_elem)
+				: getVertexIdDatum(orig_elem);
+			elem = getModifiedElement(mgstate, graphid, &found, &deleted);
 
-			graphid = getEdgeIdDatum(orig_elem);
-			elem = getElementFromEleTable(mgstate, type, orig_elem, graphid,
-										  &found);
 			if (!found)
-			{
 				continue;
-			}
+
+			/*
+			 * A removed element keeps the value it was read with, marked as
+			 * deleted.  Every column bound to that element reads alike,
+			 * whether or not it is the one the delete named, and none of them
+			 * can be written through by a later clause.
+			 */
+			if (deleted)
+				elem = makeInvalidatedGraphElement(orig_elem, type);
 		}
 		else if (type == GRAPHPATHOID)
 		{
@@ -468,7 +464,7 @@ execModifyGraphChild(ModifyGraphState *mgstate)
 
 	publishModifiedCid(mgstate);
 
-	if (mgstate->elemTable != NULL
+	if (mgstate->modifiedElems != NULL
 		&& plan->operation != GWROP_DELETE
 		&& plan->operation != GWROP_SET)
 		reflectModifiedProp(mgstate);
@@ -637,7 +633,7 @@ ExecModifyGraph(PlanState *pstate)
 
 			mgstate->child_done = true;
 
-			if (mgstate->elemTable != NULL
+			if (mgstate->modifiedElems != NULL
 				&& plan->operation != GWROP_DELETE
 				&& plan->operation != GWROP_SET)
 				reflectModifiedProp(mgstate);
@@ -657,8 +653,8 @@ ExecModifyGraph(PlanState *pstate)
 
 		slot_getallattrs(result);
 
-		if (mgstate->elemTable == NULL ||
-			hash_get_num_entries(mgstate->elemTable) < 1)
+		if (mgstate->modifiedElems == NULL ||
+			hash_get_num_entries(mgstate->modifiedElems) < 1)
 			return result;
 
 		reflectTupleChanges(pstate, result);
@@ -683,8 +679,8 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 
 	tuplestore_end(mgstate->tuplestorestate);
 
-	if (mgstate->elemTable != NULL)
-		hash_destroy(mgstate->elemTable);
+	if (mgstate->modifiedElems != NULL)
+		hash_destroy(mgstate->modifiedElems);
 
 	/*
 	 * clean out the tuple table
@@ -810,20 +806,29 @@ ExecInitGraphDelExprs(List *exprs, ModifyGraphState *mgstate)
 	return exprs;
 }
 
+/*
+ * getModifiedElement
+ *		Looks up what this clause did to the element with the given id.  Sets
+ *		found when the clause touched it at all and deleted when what it
+ *		did was remove it, and returns the new value only where there is
+ *		one: a removed element has none, and its caller keeps the value it
+ *		already holds.
+ */
 Datum
-getElementFromEleTable(ModifyGraphState *mgstate, Oid type_oid, Datum orig_elem,
-					   Datum gid, bool *found)
+getModifiedElement(ModifyGraphState *mgstate, Datum gid, bool *found,
+				   bool *deleted)
 {
 	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
 	ModifiedElemEntry *entry;
 
-	entry = hash_search(mgstate->elemTable, &gid, HASH_FIND, found);
+	entry = hash_search(mgstate->modifiedElems, &gid, HASH_FIND, found);
 
-	/* Unmodified or deleted */
-	if (!(*found) || plan->operation == GWROP_DELETE)
+	*deleted = (*found && plan->operation == GWROP_DELETE);
+
+	if (!(*found) || *deleted)
 		return (Datum) 0;
-	else
-		return entry->elem;
+
+	return entry->elem;
 }
 
 Datum
@@ -868,20 +873,20 @@ getPathFinal(ModifyGraphState *mgstate, Datum origin)
 		Datum		vertex;
 		Datum		graphid;
 		bool		found;
+		bool		deleted;
 
 		value = array_iter_next(&it, &isnull, i, typlen, typbyval, typalign);
 		Assert(!isnull);
 
 		graphid = getVertexIdDatum(value);
-		vertex = getElementFromEleTable(mgstate, VERTEXOID, value, graphid,
-										&found);
+		vertex = getModifiedElement(mgstate, graphid, &found, &deleted);
 
 		if (!found)
 		{
 			vertex = value;
 		}
 
-		if (vertex == (Datum) 0)
+		if (deleted)
 		{
 			if (i == 0)
 				isdeleted = true;
@@ -908,19 +913,20 @@ getPathFinal(ModifyGraphState *mgstate, Datum origin)
 		Datum		edge;
 		Datum		graphid;
 		bool		found;
+		bool		deleted;
 
 		value = array_iter_next(&it, &isnull, i, typlen, typbyval, typalign);
 		Assert(!isnull);
 
 		graphid = getEdgeIdDatum(value);
-		edge = getElementFromEleTable(mgstate, EDGEOID, value, graphid, &found);
+		edge = getModifiedElement(mgstate, graphid, &found, &deleted);
 
 		if (!found)
 		{
 			edge = value;
 		}
 
-		if (edge == (Datum) 0)
+		if (deleted)
 		{
 			if (isdeleted)
 				continue;
@@ -955,9 +961,9 @@ reflectModifiedProp(ModifyGraphState *mgstate)
 	HASH_SEQ_STATUS seq;
 	ModifiedElemEntry *entry;
 
-	Assert(mgstate->elemTable != NULL);
+	Assert(mgstate->modifiedElems != NULL);
 
-	hash_seq_init(&seq, mgstate->elemTable);
+	hash_seq_init(&seq, mgstate->modifiedElems);
 	while ((entry = hash_seq_search(&seq)) != NULL)
 	{
 		ItemPointer ctid;

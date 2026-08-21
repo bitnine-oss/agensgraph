@@ -156,6 +156,8 @@ extern Datum edge_end_vid(PG_FUNCTION_ARGS);
 
 /* support functions */
 extern bool graphElementIdIsNull(Datum elem, Oid elemtype);
+extern Datum makeInvalidatedGraphElement(Datum elem, Oid elemtype);
+extern bool graphElementIsInvalidated(Datum elem, Oid elemtype);
 extern Datum getVertexIdDatum(Datum datum);
 extern Datum getVertexPropDatum(Datum datum);
 extern Datum getVertexTidDatum(Datum datum);

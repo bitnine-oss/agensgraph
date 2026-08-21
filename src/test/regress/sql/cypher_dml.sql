@@ -1226,6 +1226,49 @@ CREATE ({name:'AG-163'});
 
 MATCH (a {name:'AG-163'}) DELETE a RETURN *;
 
+--
+-- what a delete hands on
+--
+-- Removing an element from the graph does not unbind the variable that named
+-- it: the value it was read with is still the value it holds, so a clause after
+-- the delete can report what was removed.  Each case below gets its own row,
+-- because the case before it removed the one it used.
+CREATE VLABEL delret;
+CREATE ELABEL delrete;
+CREATE (:delret {no: 1, nm: 'a'}), (:delret {no: 2, nm: 'b'}),
+       (:delret {no: 3, nm: 'c'}), (:delret {no: 4, nm: 'd'}),
+       (:delret {no: 5, nm: 'e'}), (:delret {no: 6, nm: 'f'}),
+       (:delret {no: 7, nm: 'g'}), (:delret {no: 8, nm: 'h'});
+MATCH (a:delret {no: 1}), (b:delret {no: 2})
+	CREATE (a)-[:delrete {w: 9}]->(b);
+
+MATCH (n:delret {no: 3}) DELETE n RETURN n AS deleted;
+MATCH (n:delret {no: 4}) DELETE n
+	RETURN n.nm AS nm, label(n) AS label, properties(n) AS props;
+
+-- an edge, and a vertex that still had one
+MATCH ()-[r:delrete]->() DELETE r RETURN r.w AS w, properties(r) AS props;
+MATCH (n:delret {no: 1}) DETACH DELETE n RETURN n.nm AS nm;
+
+-- every column bound to the removed element reads alike, whether or not it is
+-- the one the delete named
+MATCH (n:delret {no: 5}) WITH n, n AS copy DELETE n RETURN copy.nm AS d;
+MATCH (a:delret {no: 6}), (b:delret)
+	DELETE a
+	RETURN b.no AS b_no ORDER BY b_no;
+
+-- deleting the same element twice removes it once
+MATCH (n:delret {no: 2}) DELETE n DELETE n RETURN n.nm AS d;
+
+-- an element that has been removed has no row to write to
+MATCH (n:delret {no: 7}) DELETE n CREATE (n)-[:delrete]->(:delret);
+MATCH (n:delret {no: 7}) DELETE n SET n.nm = 'z';
+MATCH (n:delret {no: 8}) DELETE n REMOVE n.nm;
+
+MATCH (n:delret) DETACH DELETE n;
+DROP ELABEL delrete;
+DROP VLABEL delret;
+
 -- AG-160
 CREATE ()-[:AG160]->();
 

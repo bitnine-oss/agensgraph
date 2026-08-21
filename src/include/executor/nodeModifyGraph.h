@@ -52,8 +52,8 @@ extern void computeLabelStoredGenerated(ResultRelInfo *resultRelInfo,
 										EState *estate, TupleTableSlot *slot,
 										CmdType cmdtype);
 
-extern Datum getElementFromEleTable(ModifyGraphState *mgstate, Oid type_oid,
-									Datum orig_elem, Datum gid, bool *found);
+extern Datum getModifiedElement(ModifyGraphState *mgstate, Datum gid,
+								bool *found, bool *deleted);
 extern Datum getPathFinal(ModifyGraphState *mgstate, Datum origin);
 
 #endif
