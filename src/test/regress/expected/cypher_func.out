@@ -366,9 +366,9 @@ select toFloatList(ARRAY[true, true, null]);
 -- toFloatList (jsonb)
 -- test 1: text
 return toFloatList(['12.5','-14.788','-0.004']);
-         tofloatlist          
-------------------------------
- [12.5000, -14.7880, -0.0040]
+       tofloatlist       
+-------------------------
+ [12.5, -14.788, -0.004]
 (1 row)
 
 -- test 2: integer type
@@ -489,9 +489,9 @@ select reverse(toStringList(ARRAY[12,13.0,14.15,16,-17.0]));
 
 -- test Case-2 (Bool and null):
 select toStringList(ARRAY[true, null, null, false]);
-  tostringlist   
------------------
- {t,NULL,NULL,f}
+      tostringlist      
+------------------------
+ {true,NULL,NULL,false}
 (1 row)
 
 -- test Case-3 (Timestamp):
@@ -688,9 +688,9 @@ return toIntegerList([true, null, true]);
 -- Tests for toFloatList()
 -- test Case-1 (Text):
 return toFloatList(['12.5','-14.788','-0.004']);
-         tofloatlist          
-------------------------------
- [12.5000, -14.7880, -0.0040]
+       tofloatlist       
+-------------------------
+ [12.5, -14.788, -0.004]
 (1 row)
 
 -- test Case-2(Integer):
@@ -1192,6 +1192,116 @@ RETURN head([null,'a']), tail([1]);
  head | tail 
 ------+------
  null | []
+(1 row)
+
+--
+-- AGV2-552
+--
+-- Every width is read with its own accessor, so a value comes back as itself
+-- rather than as whatever another width makes of its bytes.  An element that
+-- names no such value comes back null, and the list keeps its length.
+SELECT toStringList(ARRAY[5000000000::int8]);
+ tostringlist 
+--------------
+ {5000000000}
+(1 row)
+
+SELECT toIntegerList(ARRAY[5000000000::int8]);
+ tointegerlist 
+---------------
+ {5000000000}
+(1 row)
+
+SELECT toStringList(ARRAY[1.5::float4]);
+ tostringlist 
+--------------
+ {1.5}
+(1 row)
+
+SELECT toFloatList(ARRAY[1.5::float4]);
+ tofloatlist 
+-------------
+ {1.5}
+(1 row)
+
+SELECT toStringList(ARRAY[42]), toFloatList(ARRAY[1.5::float8]);
+ tostringlist | tofloatlist 
+--------------+-------------
+ {42}         | {1.5}
+(1 row)
+
+-- a string naming a number reads as that number, at its own width
+SELECT toIntegerList(ARRAY['5000000000']);
+ tointegerlist 
+---------------
+ {5000000000}
+(1 row)
+
+SELECT toFloatList(ARRAY['3.14159265358979']);
+    tofloatlist     
+--------------------
+ {3.14159265358979}
+(1 row)
+
+-- a string naming a number with a fraction reads as its whole part
+SELECT toIntegerList(ARRAY['1.9', '-1.9']);
+ tointegerlist 
+---------------
+ {1,-1}
+(1 row)
+
+-- what names no number is null, not zero
+SELECT toIntegerList(ARRAY['--5', '1e400', '', 'abc']);
+     tointegerlist     
+-----------------------
+ {NULL,NULL,NULL,NULL}
+(1 row)
+
+SELECT toIntegerList(ARRAY[now()]);
+ tointegerlist 
+---------------
+ {NULL}
+(1 row)
+
+SELECT toFloatList(ARRAY['abc']);
+ tofloatlist 
+-------------
+ {NULL}
+(1 row)
+
+-- the result is a list of what was asked for, whatever was given
+SELECT pg_typeof(toIntegerList(ARRAY['1'])), pg_typeof(toFloatList(ARRAY[1::int2]));
+ pg_typeof |     pg_typeof      
+-----------+--------------------
+ bigint[]  | double precision[]
+(1 row)
+
+SELECT pg_typeof(toStringList(ARRAY[1,2])), (toStringList(ARRAY[1,2]))[1] || 'suffix';
+ pg_typeof | ?column? 
+-----------+----------
+ text[]    | 1suffix
+(1 row)
+
+-- a list of one element is a list of one element
+RETURN toIntegerList([7]), toStringList([7]), toFloatList([1.5]);
+ tointegerlist | tostringlist | tofloatlist 
+---------------+--------------+-------------
+ [7]           | ["7"]        | [1.5]
+(1 row)
+
+-- and a float keeps the precision it was given
+RETURN toFloatList([1.23456789012]);
+   tofloatlist   
+-----------------
+ [1.23456789012]
+(1 row)
+
+-- an element longer than any buffer is still just an element
+RETURN toIntegerList([
+	'11111111111111111111111111111111111111111111111111111111111111111111', 1]);
+ tointegerlist 
+---------------
+ [null, 1]
 (1 row)
 
 DROP GRAPH list_graph CASCADE;
