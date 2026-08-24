@@ -43,6 +43,43 @@ RETURN ''::jsonb::bool, 0::jsonb::bool, false::jsonb::bool,
 RETURN 's'::jsonb::bool, 1::jsonb::bool, true::jsonb::bool,
        [0]::bool, {p: 0}::bool;
 
+--
+-- AGV2-546
+--
+-- A cast names its type by the name the type is spelled with, whether that
+-- name is an identifier or a keyword.
+RETURN '123'::int + 1 AS n;
+RETURN '1'::int, '1'::integer, '1'::smallint, '1'::bigint;
+RETURN '1'::numeric, '1'::decimal, '1'::real, '1'::float;
+RETURN '1'::double precision, '1'::boolean;
+RETURN '1'::varchar, '1'::char, '1'::bit, '1 day'::interval;
+-- the identifier spellings still name the same types
+RETURN '1'::int4, '1'::int8, '1'::float8, '1'::text, '1'::bool;
+RETURN '{"a": 1}'::json, '{"a": 1}'::jsonb;
+-- a type that carries a modifier takes it here too
+RETURN '1.234'::numeric(10,2), 'abcdef'::varchar(3), '101'::bit(3);
+RETURN '1'::character varying(5);
+
+-- a cast reads the same in every place an expression is read
+RETURN [1, '2'::int] AS in_a_list;
+RETURN [x IN [1, 2] WHERE x = '2'::int | x] AS in_a_comprehension;
+RETURN 1 IN ['1'::int, 2] AS on_the_right_of_in;
+
+-- what a cast still does not name, because Cypher reads it as something else:
+-- a date or time type would take the WITH of a following clause, a qualified
+-- name the '.' of a property, and array bounds the '[' of a subscript
+RETURN '2020-01-01'::timestamp;
+RETURN '1'::pg_catalog.int4;
+RETURN '{1,2}'::int4[];
+-- so a subscript is still a subscript
+RETURN [1, 2, 3][0] AS subscript;
+
+-- a string names a string, so casting one to jsonb gives the string, not the
+-- object its text spells: reading a key of it finds none
+RETURN '{"a": 1, "b": [2,3]}'::jsonb AS j;
+RETURN ('{"a": 1, "b": [2,3]}'::jsonb -> 'b') IS NULL AS no_key;
+RETURN {a: 1, b: [2,3]}.b AS from_a_map;
+
 -- List and map literal
 RETURN [7, 7.0, '"list\nliteral\"', true, false, NULL, [0, 1, 2], {p: 'p'}];
 RETURN {i: 7, r: 7.0, s: '"map\nliteral\"', t: true, f: false, 'z': NULL,

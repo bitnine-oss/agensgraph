@@ -421,6 +421,52 @@ return str_size('agensgraph'), toBoolean('agensgraph');
 return toBoolean(1.0);
 ERROR:  Invalid input type for toBoolean()
 ---
+-- Tests for toInteger() and toFloat()  (AGV2-546)
+-- The integer or float a value names, or the null value where it names none.
+RETURN toInteger('123'), toInteger('123') + 1;
+ tointeger | ?column? 
+-----------+----------
+ 123       | 124
+(1 row)
+
+RETURN toInteger(1.9), toInteger(-1.9), toInteger('1.9');
+ tointeger | tointeger | tointeger 
+-----------+-----------+-----------
+ 1         | -1        | 1
+(1 row)
+
+RETURN toInteger('5000000000');
+ tointeger  
+------------
+ 5000000000
+(1 row)
+
+RETURN toInteger('abc'), toInteger(''), toInteger(null);
+ tointeger | tointeger | tointeger 
+-----------+-----------+-----------
+           |           | 
+(1 row)
+
+RETURN toFloat('1.5'), toFloat(2), toFloat('1.23456789012');
+ tofloat | tofloat |    tofloat    
+---------+---------+---------------
+ 1.5     | 2       | 1.23456789012
+(1 row)
+
+RETURN toFloat('abc'), toFloat(null);
+ tofloat | tofloat 
+---------+---------
+         | 
+(1 row)
+
+-- the widths a value can be given in are all read at their own width
+RETURN toInteger(5000000000::int8), toFloat(1.5::float4);
+ tointeger  | tofloat 
+------------+---------
+ 5000000000 | 1.5
+(1 row)
+
+---
 -- Tests for toBooleanOrNull()
 -- test Case-1 (Integer - Accepted Input(1 or 0) ):
 return toBooleanOrNull(1);

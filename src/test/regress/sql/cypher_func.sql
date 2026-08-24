@@ -228,6 +228,18 @@ return str_size('agensgraph'), toBoolean('agensgraph');
 return toBoolean(1.0);
 
 ---
+-- Tests for toInteger() and toFloat()  (AGV2-546)
+-- The integer or float a value names, or the null value where it names none.
+RETURN toInteger('123'), toInteger('123') + 1;
+RETURN toInteger(1.9), toInteger(-1.9), toInteger('1.9');
+RETURN toInteger('5000000000');
+RETURN toInteger('abc'), toInteger(''), toInteger(null);
+RETURN toFloat('1.5'), toFloat(2), toFloat('1.23456789012');
+RETURN toFloat('abc'), toFloat(null);
+-- the widths a value can be given in are all read at their own width
+RETURN toInteger(5000000000::int8), toFloat(1.5::float4);
+
+---
 -- Tests for toBooleanOrNull()
 -- test Case-1 (Integer - Accepted Input(1 or 0) ):
 return toBooleanOrNull(1);

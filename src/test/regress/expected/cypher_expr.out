@@ -99,6 +99,128 @@ RETURN 's'::jsonb::bool, 1::jsonb::bool, true::jsonb::bool,
  t    | t    | t    | t    | t
 (1 row)
 
+--
+-- AGV2-546
+--
+-- A cast names its type by the name the type is spelled with, whether that
+-- name is an identifier or a keyword.
+RETURN '123'::int + 1 AS n;
+  n  
+-----
+ 124
+(1 row)
+
+RETURN '1'::int, '1'::integer, '1'::smallint, '1'::bigint;
+ int4 | int4 | int2 | int8 
+------+------+------+------
+ 1    | 1    | 1    | 1
+(1 row)
+
+RETURN '1'::numeric, '1'::decimal, '1'::real, '1'::float;
+ numeric | numeric | float4 | float8 
+---------+---------+--------+--------
+ 1       | 1       | 1      | 1
+(1 row)
+
+RETURN '1'::double precision, '1'::boolean;
+ float8 | bool 
+--------+------
+ 1      | t
+(1 row)
+
+RETURN '1'::varchar, '1'::char, '1'::bit, '1 day'::interval;
+ varchar | bpchar | bit | interval  
+---------+--------+-----+-----------
+ "1"     | "1"    | "1" | "@ 1 day"
+(1 row)
+
+-- the identifier spellings still name the same types
+RETURN '1'::int4, '1'::int8, '1'::float8, '1'::text, '1'::bool;
+ int4 | int8 | float8 | text | bool 
+------+------+--------+------+------
+ 1    | 1    | 1      | "1"  | t
+(1 row)
+
+RETURN '{"a": 1}'::json, '{"a": 1}'::jsonb;
+   json   |    jsonb     
+----------+--------------
+ {"a": 1} | "{\"a\": 1}"
+(1 row)
+
+-- a type that carries a modifier takes it here too
+RETURN '1.234'::numeric(10,2), 'abcdef'::varchar(3), '101'::bit(3);
+ numeric | varchar |  bit  
+---------+---------+-------
+ 1.23    | "abc"   | "101"
+(1 row)
+
+RETURN '1'::character varying(5);
+ varchar 
+---------
+ "1"
+(1 row)
+
+-- a cast reads the same in every place an expression is read
+RETURN [1, '2'::int] AS in_a_list;
+ in_a_list 
+-----------
+ [1, 2]
+(1 row)
+
+RETURN [x IN [1, 2] WHERE x = '2'::int | x] AS in_a_comprehension;
+ in_a_comprehension 
+--------------------
+ [2]
+(1 row)
+
+RETURN 1 IN ['1'::int, 2] AS on_the_right_of_in;
+ on_the_right_of_in 
+--------------------
+ t
+(1 row)
+
+-- what a cast still does not name, because Cypher reads it as something else:
+-- a date or time type would take the WITH of a following clause, a qualified
+-- name the '.' of a property, and array bounds the '[' of a subscript
+RETURN '2020-01-01'::timestamp;
+ERROR:  syntax error at or near "timestamp"
+LINE 1: RETURN '2020-01-01'::timestamp;
+                             ^
+RETURN '1'::pg_catalog.int4;
+ERROR:  type "pg_catalog" does not exist
+LINE 1: RETURN '1'::pg_catalog.int4;
+                    ^
+RETURN '{1,2}'::int4[];
+ERROR:  syntax error at or near "]"
+LINE 1: RETURN '{1,2}'::int4[];
+                             ^
+-- so a subscript is still a subscript
+RETURN [1, 2, 3][0] AS subscript;
+ subscript 
+-----------
+ 1
+(1 row)
+
+-- a string names a string, so casting one to jsonb gives the string, not the
+-- object its text spells: reading a key of it finds none
+RETURN '{"a": 1, "b": [2,3]}'::jsonb AS j;
+             j              
+----------------------------
+ "{\"a\": 1, \"b\": [2,3]}"
+(1 row)
+
+RETURN ('{"a": 1, "b": [2,3]}'::jsonb -> 'b') IS NULL AS no_key;
+ no_key 
+--------
+ t
+(1 row)
+
+RETURN {a: 1, b: [2,3]}.b AS from_a_map;
+ from_a_map 
+------------
+ [2, 3]
+(1 row)
+
 -- List and map literal
 RETURN [7, 7.0, '"list\nliteral\"', true, false, NULL, [0, 1, 2], {p: 'p'}];
                                 ?column?                                 

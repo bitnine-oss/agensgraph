@@ -98,6 +98,8 @@ extern Datum split(PG_FUNCTION_ARGS);
 extern Datum datum_toboolean(PG_FUNCTION_ARGS);
 extern Datum string_tobooleanornull(PG_FUNCTION_ARGS);
 extern Datum datum_tobooleanornull(PG_FUNCTION_ARGS);
+extern Datum datum_tointeger(PG_FUNCTION_ARGS);
+extern Datum datum_tofloat(PG_FUNCTION_ARGS);
 
 /* math */
 extern Datum e(PG_FUNCTION_ARGS);

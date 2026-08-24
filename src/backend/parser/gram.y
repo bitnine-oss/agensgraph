@@ -582,6 +582,7 @@ static bool has_internal_default_prefix(char *str);
 				CharacterWithLength CharacterWithoutLength
 				ConstDatetime ConstInterval
 				Bit ConstBit BitWithLength BitWithoutLength
+				cypher_TypeName
 %type <str>		character
 %type <str>		extract_arg
 %type <boolean> opt_varying opt_timezone opt_no_inherit
@@ -20232,13 +20233,9 @@ cypher_expr:
 					n->location = @2;
 					$$ = (Node *) n;
 				}
-			| cypher_expr TYPECAST type_function_name
+			| cypher_expr TYPECAST cypher_TypeName
 				{
-					TypeName   *n;
-
-					n = (TypeName *) makeTypeName($3);
-					n->location = @3;
-					$$ = makeTypeCast($1, n, @2);
+					$$ = makeTypeCast($1, $3, @2);
 				}
 			| cypher_expr TYPECAST type_function_name '(' cypher_expr_comma_list ')'
 				{
@@ -20246,16 +20243,6 @@ cypher_expr:
 
 					n = (TypeName *) makeTypeName($3);
 					n->typmods = $5;
-					n->location = @3;
-					$$ = makeTypeCast($1, n, @2);
-				}
-			| cypher_expr TYPECAST JSON
-				{
-					/* JSON is a col_name_keyword as of PG17, so it is not
-					 * covered by type_function_name; handle it explicitly. */
-					TypeName   *n;
-
-					n = SystemTypeName("json");
 					n->location = @3;
 					$$ = makeTypeCast($1, n, @2);
 				}
@@ -20517,23 +20504,9 @@ cypher_i_expr:
 					n->location = @2;
 					$$ = (Node *) n;
 				}
-			| cypher_i_expr TYPECAST type_function_name
+			| cypher_i_expr TYPECAST cypher_TypeName
 				{
-					TypeName   *n;
-
-					n = (TypeName *) makeTypeName($3);
-					n->location = @3;
-					$$ = makeTypeCast($1, n, @2);
-				}
-			| cypher_i_expr TYPECAST JSON
-				{
-					/* JSON is a col_name_keyword as of PG17, so it is not
-					 * covered by type_function_name; handle it explicitly. */
-					TypeName   *n;
-
-					n = SystemTypeName("json");
-					n->location = @3;
-					$$ = makeTypeCast($1, n, @2);
+					$$ = makeTypeCast($1, $3, @2);
 				}
 			| cypher_i_expr '.' cypher_expr_escaped_name
 				{
@@ -20871,23 +20844,9 @@ cypher_w_expr:
 					n->location = @2;
 					$$ = (Node *) n;
 				}
-			| cypher_w_expr TYPECAST type_function_name
+			| cypher_w_expr TYPECAST cypher_TypeName
 				{
-					TypeName   *n;
-
-					n = (TypeName *) makeTypeName($3);
-					n->location = @3;
-					$$ = makeTypeCast($1, n, @2);
-				}
-			| cypher_w_expr TYPECAST JSON
-				{
-					/* JSON is a col_name_keyword as of PG17, so it is not
-					 * covered by type_function_name; handle it explicitly. */
-					TypeName   *n;
-
-					n = SystemTypeName("json");
-					n->location = @3;
-					$$ = makeTypeCast($1, n, @2);
+					$$ = makeTypeCast($1, $3, @2);
 				}
 			| cypher_w_expr '.' cypher_expr_escaped_name
 				{
@@ -21170,23 +21129,9 @@ cypher_in_expr:
 					n->location = @2;
 					$$ = (Node *) n;
 				}
-			| cypher_in_expr TYPECAST type_function_name
+			| cypher_in_expr TYPECAST cypher_TypeName
 				{
-					TypeName   *n;
-
-					n = (TypeName *) makeTypeName($3);
-					n->location = @3;
-					$$ = makeTypeCast($1, n, @2);
-				}
-			| cypher_in_expr TYPECAST JSON
-				{
-					/* JSON is a col_name_keyword as of PG17, so it is not
-					 * covered by type_function_name; handle it explicitly. */
-					TypeName   *n;
-
-					n = SystemTypeName("json");
-					n->location = @3;
-					$$ = makeTypeCast($1, n, @2);
+					$$ = makeTypeCast($1, $3, @2);
 				}
 			| cypher_in_expr '.' cypher_expr_escaped_name
 				{
@@ -21244,6 +21189,35 @@ cypher_expr_comma_list:
 					{ $$ = list_make1($1); }
 			| cypher_expr_comma_list ',' cypher_expr
 					{ $$ = lappend($1, $3); }
+		;
+
+/*
+ * The type a cast names.  A type whose name is an identifier arrives through
+ * type_function_name; one whose name is a keyword has a production of its own,
+ * and those are taken here too, so that a cast can name a type by the name the
+ * type is spelled with: int as well as int4, and numeric, which has no other
+ * spelling to be named by.
+ *
+ * What is left out is left out because Cypher already reads it as something
+ * else.  A date or time type would take the WITH of a following clause, a
+ * qualified name the '.' of a property, and array bounds the '[' of a
+ * subscript.
+ */
+cypher_TypeName:
+			type_function_name
+				{
+					$$ = makeTypeName($1);
+					$$->location = @1;
+				}
+			| Numeric							{ $$ = $1; }
+			| Character							{ $$ = $1; }
+			| Bit								{ $$ = $1; }
+			| JsonType							{ $$ = $1; }
+			| ConstInterval opt_interval
+				{
+					$$ = $1;
+					$$->typmods = $2;
+				}
 		;
 
 cypher_expr_name:
