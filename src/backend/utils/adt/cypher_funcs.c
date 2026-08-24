@@ -1744,6 +1744,44 @@ datum_tobooleanornull(PG_FUNCTION_ARGS)
 	PG_RETURN_NULL();
 }
 
+/*
+ * datum_tointeger:
+ *		returns the integer a datum names, or null where it names none
+ *		example: tointeger('123') = 123, tointeger(1.9) = 1
+ *				 tointeger('abc') = null
+ */
+Datum
+datum_tointeger(PG_FUNCTION_ARGS)
+{
+	Oid			typeid = get_fn_expr_argtype(fcinfo->flinfo, 0);
+	int64		result;
+
+	if (PG_ARGISNULL(0) ||
+		!datum_to_int64(PG_GETARG_DATUM(0), typeid, &result))
+		PG_RETURN_NULL();
+
+	PG_RETURN_INT64(result);
+}
+
+/*
+ * datum_tofloat:
+ *		returns the float a datum names, or null where it names none
+ *		example: tofloat('1.5') = 1.5, tofloat(2) = 2
+ *				 tofloat('abc') = null
+ */
+Datum
+datum_tofloat(PG_FUNCTION_ARGS)
+{
+	Oid			typeid = get_fn_expr_argtype(fcinfo->flinfo, 0);
+	float8		result;
+
+	if (PG_ARGISNULL(0) ||
+		!datum_to_float8(PG_GETARG_DATUM(0), typeid, &result))
+		PG_RETURN_NULL();
+
+	PG_RETURN_FLOAT8(result);
+}
+
 
 /*
  * range:

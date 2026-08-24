@@ -13064,6 +13064,12 @@
 { oid => '8007', descr => 'returns the boolean or null equivalent of a datum',
   proname => 'tobooleanornull', prorettype => 'bool', proargtypes => 'any',
   prosrc => 'datum_tobooleanornull' },
+{ oid => '8044', descr => 'returns the integer a datum names, or null',
+  proname => 'tointeger', prorettype => 'int8', proargtypes => 'any',
+  proisstrict => 'f', prosrc => 'datum_tointeger' },
+{ oid => '8045', descr => 'returns the float a datum names, or null',
+  proname => 'tofloat', prorettype => 'float8', proargtypes => 'any',
+  proisstrict => 'f', prosrc => 'datum_tofloat' },
 
 # array cypher functions
 { oid => '8008', descr => 'generates a range between limits',
