@@ -2307,6 +2307,58 @@ MATCH p=(n1)-[r*1..2]->(n2) WHERE any(x in r where x.since = 2021) RETURN count(
 MATCH p=(:person)-[r]->(:person) WHERE length([l in relationships(p) | type(l)]) > 0 RETURN count(p);
 
 --
+-- AGV2-547
+--
+-- A list written out holds what it is given.  A node, a relationship or a path
+-- in one stays that, the way it does in a list a function returns, because the
+-- jsonb such an element casts to keeps only its properties.
+CREATE GRAPH agv2_547;
+SET graph_path = agv2_547;
+
+CREATE (:person {name: 'Alice'})-[:knows {since: 2020}]->(:person {name: 'Bob'});
+CREATE (:person {name: 'Carol'})-[:likes]->(:person {name: 'Dave'});
+
+-- the quantifiers over a list holding a relationship
+MATCH (:person)-[r:knows]->(:person) RETURN all(x IN [r] WHERE x.since >= 2020) AS ok;
+MATCH (:person)-[r:knows]->(:person) RETURN any(x IN [r] WHERE x.since >= 2020) AS ok;
+MATCH (:person)-[r:knows]->(:person) RETURN none(x IN [r] WHERE x.since >= 2020) AS ok;
+MATCH (:person)-[r:knows]->(:person) RETURN single(x IN [r] WHERE x.since >= 2020) AS ok;
+-- a relationship with no such property leaves the condition unknown
+MATCH (:person)-[r:likes]->(:person) RETURN all(x IN [r] WHERE x.since >= 2020) IS NULL AS unknown;
+
+-- the elements themselves
+MATCH ()-[r:knows]->() RETURN [r] AS l;
+MATCH (n:person {name: 'Alice'}) RETURN [n] AS l;
+MATCH (n:person {name: 'Alice'}), (m:person {name: 'Bob'}) RETURN [n, m] AS l;
+MATCH p=(:person)-[:knows]->(:person) RETURN [p] AS l;
+
+-- and what can be done with such a list
+MATCH ()-[r:knows]->() RETURN [r][0].since AS since, size([r]) AS n;
+MATCH (n:person {name: 'Alice'}) UNWIND [n] AS x RETURN x.name AS name;
+MATCH (n:person {name: 'Alice'}), (m:person {name: 'Bob'}) RETURN n IN [n, m] AS found;
+
+-- a list of paths is iterated as paths, not as a picture of them
+MATCH p=(:person)-[]->(:person) RETURN [x IN collect(p) | length(x)] AS lens;
+MATCH p=(:person)-[]->(:person) WITH collect(p) AS ps RETURN ps[0] AS first;
+
+-- a list of anything else is unchanged
+MATCH ()-[r:knows]->() RETURN [r.since] AS l;
+RETURN [1, 2, 3] AS l, [] AS empty;
+RETURN all(x IN [1, 2, 3] WHERE x > 0) AS ok;
+-- a node and a number have no common list to share
+MATCH (n:person {name: 'Alice'}) RETURN [1, n] AS l;
+
+-- a property holds a value, so it takes neither an element nor a list of them
+MATCH (n:person {name: 'Alice'}) SET n.p = [n];
+MATCH p=(:person)-[]->(:person) WITH p LIMIT 1
+	MATCH (n:person {name: 'Alice'}) SET n.p = p;
+MATCH (n:person) WITH collect(n) AS ns
+	MATCH (m:person {name: 'Alice'}) SET m.p = ns;
+-- naming an element on its own still assigns the property map it carries
+MATCH (n:person {name: 'Alice'}), (m:person {name: 'Bob'}) SET n.copy = m
+	RETURN n.copy AS copy;
+
+--
 -- AGV2-308
 --
 CREATE GRAPH agv2_308;
@@ -4088,6 +4140,7 @@ DROP GRAPH t CASCADE;
 DROP GRAPH o CASCADE;
 DROP GRAPH delete_opt CASCADE;
 DROP GRAPH agv2_315 CASCADE;
+DROP GRAPH agv2_547 CASCADE;
 
 SET graph_path = agens;
 

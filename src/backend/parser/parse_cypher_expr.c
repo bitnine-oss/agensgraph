@@ -809,20 +809,75 @@ transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
 	return (Node *) newm;
 }
 
+/*
+ * graphElementArrayType
+ *		The array type that holds a node, a relationship or a path, or
+ *		InvalidOid for anything else.
+ */
+static Oid
+graphElementArrayType(Oid elemtype)
+{
+	switch (elemtype)
+	{
+		case VERTEXOID:
+			return VERTEXARRAYOID;
+		case EDGEOID:
+			return EDGEARRAYOID;
+		case GRAPHPATHOID:
+			return GRAPHPATHARRAYOID;
+		default:
+			return InvalidOid;
+	}
+}
+
 static Node *
 transformCypherListExpr(ParseState *pstate, CypherListExpr *cl)
 {
+	List	   *elems = NIL;
 	List	   *newelems = NIL;
 	ListCell   *le;
 	CypherListExpr *newcl;
+	Oid			elemtype = InvalidOid;
+	bool		uniform = (cl->elems != NIL);
 
+	/* transform the elements first, to see what the list is made of */
 	foreach(le, cl->elems)
 	{
-		Node	   *e = lfirst(le);
-		Node	   *newe;
+		Node	   *newe = transformCypherExprRecurse(pstate, lfirst(le));
+		Oid			type = exprType(newe);
 
-		newe = transformCypherExprRecurse(pstate, e);
-		newe = coerce_to_jsonb(pstate, newe, "list element");
+		if (elems == NIL)
+			elemtype = type;
+		else if (type != elemtype)
+			uniform = false;
+
+		elems = lappend(elems, newe);
+	}
+
+	/*
+	 * A list of nodes, of relationships or of paths is built as a list of
+	 * those.  The jsonb a graph element casts to keeps only its properties, so
+	 * writing one into a jsonb list would drop the identity and the label that
+	 * make it the element it is.
+	 */
+	if (uniform)
+	{
+		Oid			arraytype = graphElementArrayType(elemtype);
+
+		if (OidIsValid(arraytype))
+		{
+			ArrayExpr  *arr;
+
+			arr = (ArrayExpr *) makeArrayExpr(arraytype, elemtype, elems);
+			arr->location = cl->location;
+
+			return (Node *) arr;
+		}
+	}
+
+	foreach(le, elems)
+	{
+		Node	   *newe = coerce_to_jsonb(pstate, lfirst(le), "list element");
 
 		newelems = lappend(newelems, newe);
 	}
@@ -864,6 +919,9 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 			break;
 		case EDGEARRAYOID:
 			pstate->p_lc_elem_type = EDGEOID;
+			break;
+		case GRAPHPATHARRAYOID:
+			pstate->p_lc_elem_type = GRAPHPATHOID;
 			break;
 		default:
 			list = coerce_all_to_jsonb(pstate, list);
@@ -937,10 +995,11 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 		is_identity_elem = (cond == NULL) &&
 			(IsA(elem, CypherListCompVar));
 
-		/* Check if elem returns a graph object (vertex/edge) */
+		/* Check if elem returns a graph object (vertex/edge/graphpath) */
 		elem_result_type = exprType(elem);
 		is_graph_object_result = (elem_result_type == VERTEXOID ||
-								  elem_result_type == EDGEOID);
+								  elem_result_type == EDGEOID ||
+								  elem_result_type == GRAPHPATHOID);
 
 		if (!is_identity_elem && !is_graph_object_result)
 		{

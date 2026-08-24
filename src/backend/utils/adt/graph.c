@@ -575,6 +575,18 @@ _vertex_out(PG_FUNCTION_ARGS)
 }
 
 Datum
+_graphpath_out(PG_FUNCTION_ARGS)
+{
+	AnyArrayType *paths = PG_GETARG_ANY_ARRAY_P(0);
+	StringInfoData si;
+
+	initStringInfo(&si);
+	elems_out_si(&si, paths, fcinfo->flinfo);
+
+	PG_RETURN_CSTRING(si.data);
+}
+
+Datum
 vertex_label(PG_FUNCTION_ARGS)
 {
 	Graphid		id;
