@@ -983,10 +983,13 @@ MATCH (n:P) RETURN collect(n.name) ORDER BY 1;
 -- property holds values, not elements
 MATCH (n:P {name: 'alice'}) WITH collect(n) AS ns
 	MATCH (m:P {name: 'bob'}) SET m.keep = ns;
+ERROR:  property cannot hold vertex[]
+LINE 2:  MATCH (m:P {name: 'bob'}) SET m.keep = ns;
+                                                ^
 MATCH (m:P {name: 'bob'}) RETURN m.keep;
-                                    keep                                     
------------------------------------------------------------------------------
- [{"id": "3.1", "tid": "(0,1)", "properties": {"age": 30, "name": "alice"}}]
+ keep 
+------
+ 
 (1 row)
 
 -- Clean up

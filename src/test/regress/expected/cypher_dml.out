@@ -6432,6 +6432,152 @@ MATCH p=(:person)-[r]->(:person) WHERE length([l in relationships(p) | type(l)])
 (1 row)
 
 --
+-- AGV2-547
+--
+-- A list written out holds what it is given.  A node, a relationship or a path
+-- in one stays that, the way it does in a list a function returns, because the
+-- jsonb such an element casts to keeps only its properties.
+CREATE GRAPH agv2_547;
+SET graph_path = agv2_547;
+CREATE (:person {name: 'Alice'})-[:knows {since: 2020}]->(:person {name: 'Bob'});
+CREATE (:person {name: 'Carol'})-[:likes]->(:person {name: 'Dave'});
+-- the quantifiers over a list holding a relationship
+MATCH (:person)-[r:knows]->(:person) RETURN all(x IN [r] WHERE x.since >= 2020) AS ok;
+ ok 
+----
+ t
+(1 row)
+
+MATCH (:person)-[r:knows]->(:person) RETURN any(x IN [r] WHERE x.since >= 2020) AS ok;
+ ok 
+----
+ t
+(1 row)
+
+MATCH (:person)-[r:knows]->(:person) RETURN none(x IN [r] WHERE x.since >= 2020) AS ok;
+ ok 
+----
+ f
+(1 row)
+
+MATCH (:person)-[r:knows]->(:person) RETURN single(x IN [r] WHERE x.since >= 2020) AS ok;
+ ok 
+----
+ t
+(1 row)
+
+-- a relationship with no such property leaves the condition unknown
+MATCH (:person)-[r:likes]->(:person) RETURN all(x IN [r] WHERE x.since >= 2020) IS NULL AS unknown;
+ unknown 
+---------
+ t
+(1 row)
+
+-- the elements themselves
+MATCH ()-[r:knows]->() RETURN [r] AS l;
+                  l                   
+--------------------------------------
+ [knows[4.1][3.1,3.2]{"since": 2020}]
+(1 row)
+
+MATCH (n:person {name: 'Alice'}) RETURN [n] AS l;
+               l                
+--------------------------------
+ [person[3.1]{"name": "Alice"}]
+(1 row)
+
+MATCH (n:person {name: 'Alice'}), (m:person {name: 'Bob'}) RETURN [n, m] AS l;
+                             l                             
+-----------------------------------------------------------
+ [person[3.1]{"name": "Alice"},person[3.2]{"name": "Bob"}]
+(1 row)
+
+MATCH p=(:person)-[:knows]->(:person) RETURN [p] AS l;
+                                               l                                                
+------------------------------------------------------------------------------------------------
+ [[person[3.1]{"name": "Alice"},knows[4.1][3.1,3.2]{"since": 2020},person[3.2]{"name": "Bob"}]]
+(1 row)
+
+-- and what can be done with such a list
+MATCH ()-[r:knows]->() RETURN [r][0].since AS since, size([r]) AS n;
+ since | n 
+-------+---
+ 2020  | 1
+(1 row)
+
+MATCH (n:person {name: 'Alice'}) UNWIND [n] AS x RETURN x.name AS name;
+  name   
+---------
+ "Alice"
+(1 row)
+
+MATCH (n:person {name: 'Alice'}), (m:person {name: 'Bob'}) RETURN n IN [n, m] AS found;
+ found 
+-------
+ t
+(1 row)
+
+-- a list of paths is iterated as paths, not as a picture of them
+MATCH p=(:person)-[]->(:person) RETURN [x IN collect(p) | length(x)] AS lens;
+  lens  
+--------
+ [1, 1]
+(1 row)
+
+MATCH p=(:person)-[]->(:person) WITH collect(p) AS ps RETURN ps[0] AS first;
+                                      first                                       
+----------------------------------------------------------------------------------
+ [person[3.3]{"name": "Carol"},likes[5.1][3.3,3.4]{},person[3.4]{"name": "Dave"}]
+(1 row)
+
+-- a list of anything else is unchanged
+MATCH ()-[r:knows]->() RETURN [r.since] AS l;
+   l    
+--------
+ [2020]
+(1 row)
+
+RETURN [1, 2, 3] AS l, [] AS empty;
+     l     | empty 
+-----------+-------
+ [1, 2, 3] | []
+(1 row)
+
+RETURN all(x IN [1, 2, 3] WHERE x > 0) AS ok;
+ ok 
+----
+ t
+(1 row)
+
+-- a node and a number have no common list to share
+MATCH (n:person {name: 'Alice'}) RETURN [1, n] AS l;
+ERROR:  graph object cannot be list element
+LINE 1: MATCH (n:person {name: 'Alice'}) RETURN [1, n] AS l;
+                                                    ^
+-- a property holds a value, so it takes neither an element nor a list of them
+MATCH (n:person {name: 'Alice'}) SET n.p = [n];
+ERROR:  property cannot hold vertex[]
+LINE 1: MATCH (n:person {name: 'Alice'}) SET n.p = [n];
+                                                   ^
+MATCH p=(:person)-[]->(:person) WITH p LIMIT 1
+	MATCH (n:person {name: 'Alice'}) SET n.p = p;
+ERROR:  property cannot hold graphpath
+LINE 2:  MATCH (n:person {name: 'Alice'}) SET n.p = p;
+                                                    ^
+MATCH (n:person) WITH collect(n) AS ns
+	MATCH (m:person {name: 'Alice'}) SET m.p = ns;
+ERROR:  property cannot hold vertex[]
+LINE 2:  MATCH (m:person {name: 'Alice'}) SET m.p = ns;
+                                                    ^
+-- naming an element on its own still assigns the property map it carries
+MATCH (n:person {name: 'Alice'}), (m:person {name: 'Bob'}) SET n.copy = m
+	RETURN n.copy AS copy;
+      copy       
+-----------------
+ {"name": "Bob"}
+(1 row)
+
+--
 -- AGV2-308
 --
 CREATE GRAPH agv2_308;
@@ -10738,6 +10884,14 @@ drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel person
 drop cascades to elabel knows
+DROP GRAPH agv2_547 CASCADE;
+NOTICE:  drop cascades to 6 other objects
+DETAIL:  drop cascades to sequence agv2_547.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
+drop cascades to elabel knows
+drop cascades to elabel likes
 SET graph_path = agens;
 DROP VLABEL feature;
 DROP ELABEL supported;

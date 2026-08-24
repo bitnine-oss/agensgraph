@@ -325,6 +325,8 @@ exprType(const Node *expr)
 						type = VERTEXARRAYOID;
 					else if (elem_type == EDGEOID)
 						type = EDGEARRAYOID;
+					else if (elem_type == GRAPHPATHOID)
+						type = GRAPHPATHARRAYOID;
 					else
 						type = JSONBOID;
 				}

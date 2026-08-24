@@ -7001,6 +7001,28 @@ transformSetPropList(ParseState *pstate, bool is_remove, CSetKind kind,
 	return gsplist;
 }
 
+/*
+ * isGraphElementType
+ *		Tells whether type is a node, a relationship or a path, or a list of
+ *		them.
+ */
+static bool
+isGraphElementType(Oid type)
+{
+	switch (type)
+	{
+		case VERTEXOID:
+		case VERTEXARRAYOID:
+		case EDGEOID:
+		case EDGEARRAYOID:
+		case GRAPHPATHOID:
+		case GRAPHPATHARRAYOID:
+			return true;
+		default:
+			return false;
+	}
+}
+
 static GraphSetProp *
 transformSetProp(ParseState *pstate, CypherSetProp *sp, bool is_remove,
 				 CSetKind kind)
@@ -7058,6 +7080,20 @@ transformSetProp(ParseState *pstate, CypherSetProp *sp, bool is_remove,
 	}
 	else
 	{
+		/*
+		 * A property holds a value, and a node, a relationship or a path is
+		 * not one.  Written into a property map such an element keeps only a
+		 * picture of itself -- its properties, its id and the row it was read
+		 * from -- so the element it names could not be read back out.  Refuse
+		 * it rather than store that.
+		 */
+		if (isGraphElementType(exprtype))
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("property cannot hold %s",
+							format_type_be(exprtype)),
+					 parser_errposition(pstate, exprLocation(expr))));
+
 		expr = coerce_expr(pstate, expr, exprtype, JSONBOID, -1,
 						   COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
 	}
