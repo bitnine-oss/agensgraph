@@ -19,6 +19,7 @@
 #include "funcapi.h"
 #include "utils/arrayaccess.h"
 #include "utils/builtins.h"
+#include "utils/float.h"
 #include "utils/timestamp.h"
 #include "utils/cypher_funcs.h"
 #include "utils/jsonb.h"
@@ -52,6 +53,13 @@ typedef struct FunctionCallJsonbInfo
 	Oid			rettype;
 } FunctionCallJsonbInfo;
 
+/*
+ * ElemConvFn
+ *		Converts one element of a list, giving false where the element's type
+ *		names no such value.
+ */
+typedef bool (*ElemConvFn) (Datum d, Oid typeid, Datum *result);
+
 static Jsonb *FunctionCallJsonb(FunctionCallJsonbInfo *fcjinfo);
 static Datum jsonb_to_datum(Jsonb *j, Oid type);
 static bool is_numeric_integer(Numeric n);
@@ -61,12 +69,19 @@ static Jsonb *datum_to_jsonb(Datum d, Oid type);
 static bool int_to_bool(int32 num, bool *result);
 static bool string_to_bool(const char *str, bool *result);
 static Datum range(int start, int end, int step);
-static Datum datum_to_text(Datum d, Oid typeid);
-static Datum datum_to_integer(Datum d, Oid typeid);
-static Datum datum_to_float(Datum d, Oid typeid);
-static int32 string_to_int(char *s);
-static float4 string_to_float(char *s);
-static void get_cstring_substr(char *c, char *res, int32 start, int32 len);
+static bool datum_to_string(Datum d, Oid typeid, char **result);
+static bool datum_to_int64(Datum d, Oid typeid, int64 *result);
+static bool datum_to_float8(Datum d, Oid typeid, float8 *result);
+static bool string_to_int64(const char *s, int64 *result);
+static bool string_to_float8(const char *s, float8 *result);
+static bool float8_to_int64(float8 f, int64 *result);
+static bool conv_to_text(Datum d, Oid typeid, Datum *result);
+static bool conv_to_int8(Datum d, Oid typeid, Datum *result);
+static bool conv_to_float8(Datum d, Oid typeid, Datum *result);
+static Datum convert_array_list(FunctionCallInfo fcinfo, ElemConvFn conv,
+								Oid result_type);
+static Jsonb *convert_jsonb_list(Jsonb *j, ElemConvFn conv, Oid result_type,
+								 const char *fname);
 static Timestamp dt2local(Timestamp dt, int timezone);
 static Timestamp get_timestamp_for_timezone(text *zone, TimestampTz timestamp);
 static int	float8_cmp(const void *a, const void *b);
@@ -1812,124 +1827,272 @@ range_3_args(PG_FUNCTION_ARGS)
 }
 
 
-/* utility function for tostringornull */
-Datum
-datum_to_text(Datum d, Oid typeid)
+/*
+ * datum_to_string
+ *		Writes d, a value of type typeid, as the text it names.  Each width is
+ *		written with its own output function: written with another width's, a
+ *		value comes back a different number.  Returns false where the type has
+ *		no text to give.
+ */
+static bool
+datum_to_string(Datum d, Oid typeid, char **result)
 {
-
-	char	   *s;
+	PGFunction	outfn;
 
 	switch (typeid)
 	{
-
-			/* string types */
 		case VARCHAROID:
 		case BPCHAROID:
 		case TEXTOID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(textout, d));
-				PG_RETURN_TEXT_P(cstring_to_text(s));
-				break;
-			}
-
-		case CSTRINGOID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(cstring_out, d));
-				PG_RETURN_TEXT_P(cstring_to_text(s));
-				break;
-			}
-
-		case BOOLOID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(boolout, d));
-				PG_RETURN_TEXT_P(cstring_to_text(s));
-				break;
-			}
-
-			/* integer, float and numeric types */
-		case INT2OID:
-		case INT4OID:
-		case INT8OID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(int4out, d));
-				PG_RETURN_TEXT_P(cstring_to_text(s));
-				break;
-			}
-
-		case NUMERICOID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(numeric_out, d));
-				PG_RETURN_TEXT_P(cstring_to_text(s));
-				break;
-			}
-
-		case FLOAT4OID:
-		case FLOAT8OID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(float8out, d));
-				PG_RETURN_TEXT_P(cstring_to_text(s));
-				break;
-			}
-
-			/* date and time types */
-		case DATEOID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(date_out, d));
-				PG_RETURN_TEXT_P(cstring_to_text(s));
-				break;
-			}
-
-		case TIMEOID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(time_out, d));
-				PG_RETURN_TEXT_P(cstring_to_text(s));
-				break;
-			}
-
-		case TIMESTAMPOID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(timestamp_out, d));
-				PG_RETURN_TEXT_P(cstring_to_text(s));
-				break;
-			}
-
-		case TIMESTAMPTZOID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(timestamptz_out, d));
-				PG_RETURN_TEXT_P(cstring_to_text(s));
-				break;
-			}
-
-			/* unknown type */
-		case UNKNOWNOID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(unknownout, d));
-				PG_RETURN_TEXT_P(cstring_to_text(s));
-				break;
-
-			}
-
-
-		default:
+			outfn = textout;
 			break;
+		case CSTRINGOID:
+			*result = DatumGetCString(d);
+			return true;
+		case BOOLOID:
+			/*
+			 * A boolean is written the way it is written everywhere else in a
+			 * query, not with the single letter the wire format uses.
+			 */
+			*result = DatumGetBool(d) ? "true" : "false";
+			return true;
+		case INT2OID:
+			outfn = int2out;
+			break;
+		case INT4OID:
+			outfn = int4out;
+			break;
+		case INT8OID:
+			outfn = int8out;
+			break;
+		case NUMERICOID:
+			outfn = numeric_out;
+			break;
+		case FLOAT4OID:
+			outfn = float4out;
+			break;
+		case FLOAT8OID:
+			outfn = float8out;
+			break;
+		case DATEOID:
+			outfn = date_out;
+			break;
+		case TIMEOID:
+			outfn = time_out;
+			break;
+		case TIMESTAMPOID:
+			outfn = timestamp_out;
+			break;
+		case TIMESTAMPTZOID:
+			outfn = timestamptz_out;
+			break;
+		case UNKNOWNOID:
+			outfn = unknownout;
+			break;
+		default:
+			return false;
 	}
 
-	PG_RETURN_DATUM(0);
+	*result = DatumGetCString(DirectFunctionCall1(outfn, d));
+
+	return true;
 }
 
 /*
  * tostringornull:
  *		returns the string or null equivalent of a datum
  *		example: tostringornull(123) = '123', tostringornull(null) = null
- * 				 tostringornull(true) = 't'
+ * 				 tostringornull(true) = 'true'
  */
 Datum
 tostringornull(PG_FUNCTION_ARGS)
 {
 	Oid			typeid = get_fn_expr_argtype(fcinfo->flinfo, 0);
 	Datum		d = PG_GETARG_DATUM(0);
+	char	   *s;
 
-	PG_RETURN_DATUM(datum_to_text(d, typeid));
+	if (!datum_to_string(d, typeid, &s))
+		PG_RETURN_NULL();
+
+	PG_RETURN_TEXT_P(cstring_to_text(s));
+}
+
+/* the three element conversions, each giving its result as a Datum */
+
+static bool
+conv_to_text(Datum d, Oid typeid, Datum *result)
+{
+	char	   *s;
+
+	if (!datum_to_string(d, typeid, &s))
+		return false;
+
+	*result = PointerGetDatum(cstring_to_text(s));
+
+	return true;
+}
+
+static bool
+conv_to_int8(Datum d, Oid typeid, Datum *result)
+{
+	int64		i;
+
+	if (!datum_to_int64(d, typeid, &i))
+		return false;
+
+	*result = Int64GetDatum(i);
+
+	return true;
+}
+
+static bool
+conv_to_float8(Datum d, Oid typeid, Datum *result)
+{
+	float8		f;
+
+	if (!datum_to_float8(d, typeid, &f))
+		return false;
+
+	*result = Float8GetDatum(f);
+
+	return true;
+}
+
+/*
+ * convert_array_list
+ *		Walks an array and converts every element the way kind says, giving the
+ *		null value for an element that names no such value.  The result holds
+ *		what was asked for, whatever the array was given as.
+ */
+static Datum
+convert_array_list(FunctionCallInfo fcinfo, ElemConvFn conv, Oid result_type)
+{
+	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
+	Oid			element_type = AARR_ELEMTYPE(arr);
+	int			nitems = ArrayGetNItems(AARR_NDIM(arr), AARR_DIMS(arr));
+	int			typlen;
+	bool		typbyval;
+	char		typalign;
+	ArrayBuildState *astate;
+	array_iter	it;
+	int			i;
+
+	listElemTypeInfo(fcinfo, element_type, &typlen, &typbyval, &typalign);
+
+	array_iter_setup(&it, arr);
+	astate = initArrayResult(result_type, CurrentMemoryContext, false);
+
+	for (i = 0; i < nitems; i++)
+	{
+		Datum		elem;
+		bool		isnull;
+
+		elem = array_iter_next(&it, &isnull, i, typlen, typbyval, typalign);
+
+		/*
+		 * A null element stays null, and so does one whose type names no such
+		 * value: the list keeps its length either way.
+		 */
+		if (!isnull && !conv(elem, element_type, &elem))
+			isnull = true;
+
+		astate = accumArrayResult(astate, elem, isnull, result_type,
+								  CurrentMemoryContext);
+	}
+
+	return makeArrayResult(astate, CurrentMemoryContext);
+}
+
+/*
+ * convert_jsonb_list
+ *		Walks a jsonb list and converts every element the way kind says, giving
+ *		the null value for an element that names no such value.  The three list
+ *		conversions differ only in kind, so they share this walk rather than
+ *		each carrying its own copy of it.
+ */
+static Jsonb *
+convert_jsonb_list(Jsonb *j, ElemConvFn conv, Oid result_type,
+				   const char *fname)
+{
+	JsonbParseState *jpstate = NULL;
+	JsonbIterator *it;
+	JsonbValue	jv;
+	JsonbValue *ajv;
+	JsonbIteratorToken tok;
+
+	if (!JB_ROOT_IS_ARRAY(j) || JB_ROOT_IS_SCALAR(j))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("%s(): list is expected but %s", fname,
+						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
+
+	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
+
+	it = JsonbIteratorInit(&j->root);
+	tok = JsonbIteratorNext(&it, &jv, false);
+
+	while (tok != WJB_DONE)
+	{
+		if (tok == WJB_ELEM)
+		{
+			JsonbValue	ejv;
+			Datum		d = (Datum) 0;
+			Oid			typeid = InvalidOid;
+
+			switch (jv.type)
+			{
+				case jbvString:
+					/*
+					 * The element is copied to its own string: its length is
+					 * its own, not that of any buffer here.
+					 */
+					d = CStringGetDatum(pnstrdup(jv.val.string.val,
+												 jv.val.string.len));
+					typeid = CSTRINGOID;
+					break;
+				case jbvNumeric:
+					d = NumericGetDatum(jv.val.numeric);
+					typeid = NUMERICOID;
+					break;
+				case jbvBool:
+					d = BoolGetDatum(jv.val.boolean);
+					typeid = BOOLOID;
+					break;
+				default:
+					/* a null, a list or a map names no value to convert */
+					break;
+			}
+
+			ejv.type = jbvNull;
+
+			if (OidIsValid(typeid) && conv(d, typeid, &d))
+			{
+				if (result_type == TEXTOID)
+				{
+					ejv.type = jbvString;
+					ejv.val.string.val = TextDatumGetCString(d);
+					ejv.val.string.len = strlen(ejv.val.string.val);
+				}
+				else
+				{
+					PGFunction	tonumeric = (result_type == INT8OID)
+						? int8_numeric : float8_numeric;
+
+					ejv.type = jbvNumeric;
+					ejv.val.numeric =
+						DatumGetNumeric(DirectFunctionCall1(tonumeric, d));
+				}
+			}
+
+			pushJsonbValue(&jpstate, WJB_ELEM, &ejv);
+		}
+
+		tok = JsonbIteratorNext(&it, &jv, true);
+	}
+
+	ajv = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
+
+	return JsonbValueToJsonb(ajv);
 }
 
 /*
@@ -1941,126 +2104,17 @@ tostringornull(PG_FUNCTION_ARGS)
 Datum
 jsonb_tostringlist(PG_FUNCTION_ARGS)
 {
-
 	Jsonb	   *j = PG_GETARG_JSONB_P(0);
-	JsonbParseState *jpstate = NULL;
-	JsonbValue *ajv;
 
-	if (!JB_ROOT_IS_ARRAY(j) || JB_ROOT_IS_SCALAR(j))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("toStringList(): list is expected but %s",
-						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
-
-	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
-
-	if (JB_ROOT_COUNT(j) > 1)
-	{
-		JsonbIterator *it;
-		JsonbValue	jv;
-		JsonbValue *jv_new;
-		JsonbValue	sjv;
-		JsonbIteratorToken tok;
-		int32		counter = 0;
-
-		it = JsonbIteratorInit(&j->root);
-		tok = JsonbIteratorNext(&it, &jv, false);
-		while (tok != WJB_DONE)
-		{
-			if (tok == WJB_ELEM)
-			{
-				jv_new = getIthJsonbValueFromContainer(&j->root, counter++);
-				if (jv_new->type == jbvString)
-				{
-					jv = *jv_new;
-				}
-				else if (jv_new->type == jbvNumeric)
-				{
-					Datum		s;
-
-					s = DirectFunctionCall1(numeric_out,
-											NumericGetDatum(jv_new->val.numeric));
-
-					sjv.type = jbvString;
-					sjv.val.string.val = DatumGetCString(s);
-					sjv.val.string.len = strlen(sjv.val.string.val);
-					jv = sjv;
-				}
-				else if (jv_new->type == jbvBool)
-				{
-					sjv.type = jbvString;
-
-					if (jv_new->val.boolean)
-					{
-						sjv.val.string.len = 4;
-						sjv.val.string.val = "true";
-					}
-					else
-					{
-						sjv.val.string.len = 5;
-						sjv.val.string.val = "false";
-					}
-
-					jv = sjv;
-				}
-				pushJsonbValue(&jpstate, WJB_ELEM, &jv);
-			}
-
-			tok = JsonbIteratorNext(&it, &jv, true);
-		}
-	}
-
-	ajv = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
-
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(ajv));
+	PG_RETURN_JSONB_P(convert_jsonb_list(j, conv_to_text, TEXTOID,
+										 "toStringList"));
 }
 
 
 Datum
 array_tostringlist(PG_FUNCTION_ARGS)
 {
-
-	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
-	int			ndims = AARR_NDIM(arr);
-	int		   *dims = AARR_DIMS(arr);
-	int			nitems = ArrayGetNItems(ndims, dims);
-	Oid			element_type = AARR_ELEMTYPE(arr);
-	int			typlen;
-	bool		typbyval;
-	char		typalign;
-	ArrayBuildState *astate = NULL;
-	array_iter	it;
-	Datum		rtnelt;
-	bool		isnull;
-	int			i;
-
-	listElemTypeInfo(fcinfo, element_type, &typlen, &typbyval, &typalign);
-
-	/* setup iterator for array */
-	array_iter_setup(&it, arr);
-
-	astate = initArrayResult(TEXTOID, CurrentMemoryContext, false);
-
-	/* iterate over the array */
-	for (i = 0; i < nitems; i++)
-	{
-		/* get datum at index i */
-		rtnelt = array_iter_next(&it, &isnull, i,
-								 typlen, typbyval, typalign);
-
-		/*
-		 * handle special case where converting null values to numeric type
-		 * throws an error
-		 */
-		if (!isnull)
-			rtnelt = datum_to_text(rtnelt, element_type);
-
-		astate = accumArrayResult(astate, rtnelt, isnull,
-								  TEXTOID, CurrentMemoryContext);
-
-	}
-
-	PG_RETURN_DATUM(makeArrayResult(astate, CurrentMemoryContext));
+	PG_RETURN_DATUM(convert_array_list(fcinfo, conv_to_text, TEXTOID));
 }
 
 
@@ -2402,125 +2456,110 @@ get_time_for_timezone(PG_FUNCTION_ARGS)
 }
 
 
-/* utility function for tointegerornull */
-Datum
-datum_to_integer(Datum d, Oid typeid)
+/*
+ * datum_to_int64
+ *		Reads d, a value of type typeid, as an integer.  Each width is read
+ *		with its own accessor: read with another width's, a value comes back a
+ *		different number.  Returns false where the type names no integer, so a
+ *		caller can answer with the null value.
+ */
+static bool
+datum_to_int64(Datum d, Oid typeid, int64 *result)
 {
-
-	char	   *s;
-	bool		canConvert = true;	/* a flag variable that reflects whether
-									 * thee datum can be converted to cstring
-									 * or not */
-
 	switch (typeid)
 	{
+		case BOOLOID:
+			*result = DatumGetBool(d) ? 1 : 0;
+			return true;
 
-			/* string types */
+		case INT2OID:
+			*result = DatumGetInt16(d);
+			return true;
+
+		case INT4OID:
+			*result = DatumGetInt32(d);
+			return true;
+
+		case INT8OID:
+			*result = DatumGetInt64(d);
+			return true;
+
+		case FLOAT4OID:
+			return float8_to_int64(DatumGetFloat4(d), result);
+
+		case FLOAT8OID:
+			return float8_to_int64(DatumGetFloat8(d), result);
+
+		case NUMERICOID:
 		case VARCHAROID:
 		case BPCHAROID:
 		case TEXTOID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(textout, d));
-				break;
-			}
-
 		case CSTRINGOID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(cstring_out, d));
-				break;
-			}
-
-		case BOOLOID:
-			{
-				bool		res = DatumGetBool(DirectFunctionCall1(boolout, d));
-
-				PG_RETURN_INT32((int32) res);
-			}
-
-			/* integer, float and numeric types */
-		case INT2OID:
-		case INT4OID:
-		case INT8OID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(int4out, d));
-				break;
-
-			}
-
-		case NUMERICOID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(numeric_out, d));
-				break;
-			}
-
-		case FLOAT4OID:
-		case FLOAT8OID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(float8out, d));
-				break;
-			}
-
-			/* unknown type */
 		case UNKNOWNOID:
 			{
-				s = DatumGetCString(DirectFunctionCall1(unknownout, d));
-				break;
+				char	   *s;
 
+				/* the text these name is read for the number it spells */
+				if (!datum_to_string(d, typeid, &s))
+					return false;
+
+				return string_to_int64(s, result);
 			}
 
 		default:
-			{
-				canConvert = false;
-				break;
-			}
-
+			return false;
 	}
-
-	if (canConvert)
-		PG_RETURN_INT32(string_to_int(s));
-
-	PG_RETURN_DATUM(0);
 }
 
-/* utility function to covert cstring to integer */
-static int32
-string_to_int(char *s)
+/*
+ * float8_to_int64
+ *		Reads f as an integer, or reports that it names none.
+ */
+static bool
+float8_to_int64(float8 f, int64 *result)
 {
-	int64		res = 0,
-				len = strlen(s),
-				i = 0;
-	bool		flag = false;
+	/*
+	 * The fraction is cut away rather than rounded, so the whole part of the
+	 * number is what comes back.
+	 */
+	if (isnan(f) || !FLOAT8_FITS_IN_INT64(f))
+		return false;
 
-	/* iterate over the string and check for non numeric characters */
-	for (i = 0; i < len; ++i)
-	{
-		if (isalpha(s[i]))
-		{
-			flag = true;
-			break;
-		}
-	}
+	*result = (int64) f;
 
-	if (!flag)
-	{
-		res = atoll(s);
-		return res;
-	}
-	else
-		return 0;
+	return true;
 }
 
-/* get substring of lengthlen from pos start. Used to get string elements from jsonb array */
-static void
-get_cstring_substr(char *c, char *res, int32 start, int32 len)
+/*
+ * string_to_int64
+ *		Reads s as an integer.  A string naming a number with a fraction reads
+ *		as its whole part.  Returns false where s names no number at all, so
+ *		that a caller can answer with the null value rather than with a number
+ *		s does not name.
+ */
+static bool
+string_to_int64(const char *s, int64 *result)
 {
-	int32		i;
+	ErrorSaveContext escontext = {T_ErrorSaveContext};
+	int64		i;
+	float8		f;
 
-	for (i = 0; i < len; i++)
-		res[i] = *(c + i + start);
+	i = pg_strtoint64_safe(s, (Node *) &escontext);
+	if (!escontext.error_occurred)
+	{
+		*result = i;
+		return true;
+	}
 
-	res[len] = '\0';			/* null terminated c string */
+	escontext.error_occurred = false;
+	f = float8in_internal((char *) s, NULL, "double precision", s,
+						  (Node *) &escontext);
+	if (escontext.error_occurred)
+		return false;
+
+	return float8_to_int64(f, result);
 }
+
 
 /*
  * tointegerlist:
@@ -2531,231 +2570,94 @@ get_cstring_substr(char *c, char *res, int32 start, int32 len)
 Datum
 jsonb_tointegerlist(PG_FUNCTION_ARGS)
 {
-
 	Jsonb	   *j = PG_GETARG_JSONB_P(0);
-	JsonbParseState *jpstate = NULL;
-	JsonbValue *ajv;
 
-	if (!JB_ROOT_IS_ARRAY(j) || JB_ROOT_IS_SCALAR(j))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("toStringList(): list is expected but %s",
-						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
-
-	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
-
-	if (JB_ROOT_COUNT(j) > 1)
-	{
-		JsonbIterator *it;
-		JsonbValue	jv;
-		JsonbValue *jv_new;
-		JsonbValue	sjv;
-		JsonbIteratorToken tok;
-		int32		counter = 0;
-		Datum		s;
-
-		it = JsonbIteratorInit(&j->root);
-		tok = JsonbIteratorNext(&it, &jv, false);
-		sjv.type = jbvNumeric;
-
-		while (tok != WJB_DONE)
-		{
-			if (tok == WJB_ELEM)
-			{
-				jv_new = getIthJsonbValueFromContainer(&j->root, counter++);
-				if (jv_new->type == jbvString)
-				{
-
-					char		res[64];	/* long long can have 64 bits */
-
-					get_cstring_substr(jv_new->val.string.val, res, 0, jv_new->val.string.len);
-					sjv.val.numeric = int64_to_numeric(string_to_int(res));
-					jv = sjv;
-				}
-				else if (jv_new->type == jbvNumeric)
-				{
-					s = NumericGetDatum(jv_new->val.numeric);
-					sjv.val.numeric = int64_to_numeric(datum_to_integer(s, NUMERICOID));
-					jv = sjv;
-				}
-				else if (jv_new->type == jbvBool)
-				{
-
-					if (jv_new->val.boolean)
-						sjv.val.numeric = int64_to_numeric(1);
-
-					else
-						sjv.val.numeric = int64_to_numeric(0);
-
-					jv = sjv;
-				}
-				pushJsonbValue(&jpstate, WJB_ELEM, &jv);
-			}
-
-			tok = JsonbIteratorNext(&it, &jv, true);
-		}
-	}
-
-	ajv = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
-
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(ajv));
+	PG_RETURN_JSONB_P(convert_jsonb_list(j, conv_to_int8, INT8OID,
+										 "toIntegerList"));
 }
 
 
 Datum
 array_tointegerlist(PG_FUNCTION_ARGS)
 {
-
-	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
-	int			ndims = AARR_NDIM(arr);
-	int		   *dims = AARR_DIMS(arr);
-	int			nitems = ArrayGetNItems(ndims, dims);
-	Oid			element_type = AARR_ELEMTYPE(arr);
-	int			typlen;
-	bool		typbyval;
-	char		typalign;
-	ArrayBuildState *astate = NULL;
-	array_iter	it;
-	Datum		rtnelt;
-	bool		isnull;
-	int			i;
-
-	listElemTypeInfo(fcinfo, element_type, &typlen, &typbyval, &typalign);
-
-	/* setup iterator for array */
-	array_iter_setup(&it, arr);
-
-	astate = initArrayResult(INT4OID, CurrentMemoryContext, false);
-
-	/* iterate over the array */
-	for (i = 0; i < nitems; i++)
-	{
-		/* get datum at index i */
-		rtnelt = array_iter_next(&it, &isnull, i,
-								 typlen, typbyval, typalign);
-
-		/*
-		 * handle special case where converting null values to numeric type
-		 * throws an error
-		 */
-		if (!isnull)
-			rtnelt = datum_to_integer(rtnelt, element_type);
-
-		astate = accumArrayResult(astate, rtnelt, isnull,
-								  INT4OID, CurrentMemoryContext);
-
-	}
-
-	PG_RETURN_DATUM(makeArrayResult(astate, CurrentMemoryContext));
+	PG_RETURN_DATUM(convert_array_list(fcinfo, conv_to_int8, INT8OID));
 }
 
 
-/* utility function for float functions */
-Datum
-datum_to_float(Datum d, Oid typeid)
+/*
+ * datum_to_float8
+ *		Reads d, a value of type typeid, as a float.  Each width is read with
+ *		its own accessor: a single-precision value read as a double is a
+ *		different number.  Returns false where the type names no float.
+ */
+static bool
+datum_to_float8(Datum d, Oid typeid, float8 *result)
 {
-
-	char	   *s;
-	bool		canConvert = true;	/* a flag variable that reflects whether
-									 * thee datum can be converted to cstring
-									 * or not */
-
 	switch (typeid)
 	{
+		case BOOLOID:
+			*result = DatumGetBool(d) ? 1.0 : 0.0;
+			return true;
 
-			/* string types */
+		case INT2OID:
+			*result = DatumGetInt16(d);
+			return true;
+
+		case INT4OID:
+			*result = DatumGetInt32(d);
+			return true;
+
+		case INT8OID:
+			*result = DatumGetInt64(d);
+			return true;
+
+		case FLOAT4OID:
+			*result = DatumGetFloat4(d);
+			return true;
+
+		case FLOAT8OID:
+			*result = DatumGetFloat8(d);
+			return true;
+
+		case NUMERICOID:
 		case VARCHAROID:
 		case BPCHAROID:
 		case TEXTOID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(textout, d));
-				break;
-			}
-
 		case CSTRINGOID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(cstring_out, d));
-				break;
-			}
-
-		case BOOLOID:
-			{
-				bool		res = DatumGetBool(DirectFunctionCall1(boolout, d));
-
-				PG_RETURN_FLOAT4((float4) res);
-			}
-
-			/* integer, float and numeric types */
-		case INT2OID:
-		case INT4OID:
-		case INT8OID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(int4out, d));
-				break;
-
-			}
-
-		case NUMERICOID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(numeric_out, d));
-				break;
-			}
-
-		case FLOAT4OID:
-		case FLOAT8OID:
-			{
-				s = DatumGetCString(DirectFunctionCall1(float8out, d));
-				break;
-			}
-
-			/* unknown type */
 		case UNKNOWNOID:
 			{
-				s = DatumGetCString(DirectFunctionCall1(unknownout, d));
-				break;
+				char	   *s;
 
+				/* the text these name is read for the number it spells */
+				if (!datum_to_string(d, typeid, &s))
+					return false;
+
+				return string_to_float8(s, result);
 			}
 
 		default:
-			{
-				canConvert = false;
-				break;
-			}
-
+			return false;
 	}
-
-	if (canConvert)
-		PG_RETURN_FLOAT4(string_to_float(s));
-
-	PG_RETURN_DATUM(0);
 }
 
-/* utility function to covert cstring to float */
-static float4
-string_to_float(char *s)
+/*
+ * string_to_float8
+ *		Reads s as a float, or reports that it names none.
+ */
+static bool
+string_to_float8(const char *s, float8 *result)
 {
-	float		res = 0.0;
-	int64		len = strlen(s),
-				i = 0;
-	bool		flag = false;
+	ErrorSaveContext escontext = {T_ErrorSaveContext};
+	float8		f;
 
-	/* iterate over the string and check for non numeric characters */
-	for (i = 0; i < len; ++i)
-	{
-		if (isalpha(s[i]))
-		{
-			flag = true;
-			break;
-		}
-	}
+	f = float8in_internal((char *) s, NULL, "double precision", s,
+						  (Node *) &escontext);
+	if (escontext.error_occurred)
+		return false;
 
-	if (!flag)
-	{
-		res = atof(s);
-		return res;
-	}
-	else
-		return 0;
+	*result = f;
+
+	return true;
 }
 
 
@@ -2768,73 +2670,10 @@ string_to_float(char *s)
 Datum
 jsonb_tofloatlist(PG_FUNCTION_ARGS)
 {
-
 	Jsonb	   *j = PG_GETARG_JSONB_P(0);
-	JsonbParseState *jpstate = NULL;
-	JsonbValue *ajv;
 
-	if (!JB_ROOT_IS_ARRAY(j) || JB_ROOT_IS_SCALAR(j))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("toStringList(): list is expected but %s",
-						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
-
-	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
-
-	if (JB_ROOT_COUNT(j) > 1)
-	{
-		JsonbIterator *it;
-		JsonbValue	jv;
-		JsonbValue *jv_new;
-		JsonbValue	sjv;
-		JsonbIteratorToken tok;
-		int32		counter = 0;
-
-		/* Datum				s; */
-
-		it = JsonbIteratorInit(&j->root);
-		tok = JsonbIteratorNext(&it, &jv, false);
-		sjv.type = jbvNumeric;
-
-		while (tok != WJB_DONE)
-		{
-			if (tok == WJB_ELEM)
-			{
-				jv_new = getIthJsonbValueFromContainer(&j->root, counter++);
-				if (jv_new->type == jbvString)
-				{
-					char		res[64];
-
-					get_cstring_substr(jv_new->val.string.val, res, 0, jv_new->val.string.len);
-					sjv.val.numeric = DatumGetNumeric(DirectFunctionCall2(numeric_round, (DirectFunctionCall1(float8_numeric, Float8GetDatum((float8) string_to_float(res)))), 4));
-					jv = sjv;
-
-				}
-				else if (jv_new->type == jbvNumeric)
-				{
-					jv = *jv_new;
-
-				}
-				else if (jv_new->type == jbvBool)
-				{
-					if (jv_new->val.boolean)
-						sjv.val.numeric = int64_to_numeric(1);
-
-					else
-						sjv.val.numeric = int64_to_numeric(0);
-
-					jv = sjv;
-				}
-				pushJsonbValue(&jpstate, WJB_ELEM, &jv);
-			}
-
-			tok = JsonbIteratorNext(&it, &jv, true);
-		}
-	}
-
-	ajv = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
-
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(ajv));
+	PG_RETURN_JSONB_P(convert_jsonb_list(j, conv_to_float8, FLOAT8OID,
+										 "toFloatList"));
 }
 
 /*
@@ -2846,49 +2685,9 @@ jsonb_tofloatlist(PG_FUNCTION_ARGS)
 Datum
 array_tofloatlist(PG_FUNCTION_ARGS)
 {
-
-	AnyArrayType *arr = PG_GETARG_ANY_ARRAY_P(0);
-	int			ndims = AARR_NDIM(arr);
-	int		   *dims = AARR_DIMS(arr);
-	int			nitems = ArrayGetNItems(ndims, dims);
-	Oid			element_type = AARR_ELEMTYPE(arr);
-	int			typlen;
-	bool		typbyval;
-	char		typalign;
-	ArrayBuildState *astate = NULL;
-	array_iter	it;
-	Datum		rtnelt;
-	bool		isnull;
-	int			i;
-
-	listElemTypeInfo(fcinfo, element_type, &typlen, &typbyval, &typalign);
-
-	/* setup iterator for array */
-	array_iter_setup(&it, arr);
-
-	astate = initArrayResult(FLOAT4OID, CurrentMemoryContext, false);
-
-	/* iterate over the array */
-	for (i = 0; i < nitems; i++)
-	{
-		/* get datum at index i */
-		rtnelt = array_iter_next(&it, &isnull, i,
-								 typlen, typbyval, typalign);
-
-		/*
-		 * handle special case where converting null values to numeric type
-		 * throws an error
-		 */
-		if (!isnull)
-			rtnelt = datum_to_float(rtnelt, element_type);
-
-		astate = accumArrayResult(astate, rtnelt, isnull,
-								  FLOAT4OID, CurrentMemoryContext);
-
-	}
-
-	PG_RETURN_DATUM(makeArrayResult(astate, CurrentMemoryContext));
+	PG_RETURN_DATUM(convert_array_list(fcinfo, conv_to_float8, FLOAT8OID));
 }
+
 
 Datum
 e(PG_FUNCTION_ARGS)

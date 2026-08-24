@@ -541,4 +541,40 @@ RETURN head(['a','b']), last(['a','b']), tail(['a','b']);
 RETURN head([]) IS NULL, last([]) IS NULL, tail([]);
 RETURN head([null,'a']), tail([1]);
 
+--
+-- AGV2-552
+--
+-- Every width is read with its own accessor, so a value comes back as itself
+-- rather than as whatever another width makes of its bytes.  An element that
+-- names no such value comes back null, and the list keeps its length.
+SELECT toStringList(ARRAY[5000000000::int8]);
+SELECT toIntegerList(ARRAY[5000000000::int8]);
+SELECT toStringList(ARRAY[1.5::float4]);
+SELECT toFloatList(ARRAY[1.5::float4]);
+SELECT toStringList(ARRAY[42]), toFloatList(ARRAY[1.5::float8]);
+
+-- a string naming a number reads as that number, at its own width
+SELECT toIntegerList(ARRAY['5000000000']);
+SELECT toFloatList(ARRAY['3.14159265358979']);
+-- a string naming a number with a fraction reads as its whole part
+SELECT toIntegerList(ARRAY['1.9', '-1.9']);
+
+-- what names no number is null, not zero
+SELECT toIntegerList(ARRAY['--5', '1e400', '', 'abc']);
+SELECT toIntegerList(ARRAY[now()]);
+SELECT toFloatList(ARRAY['abc']);
+
+-- the result is a list of what was asked for, whatever was given
+SELECT pg_typeof(toIntegerList(ARRAY['1'])), pg_typeof(toFloatList(ARRAY[1::int2]));
+SELECT pg_typeof(toStringList(ARRAY[1,2])), (toStringList(ARRAY[1,2]))[1] || 'suffix';
+
+-- a list of one element is a list of one element
+RETURN toIntegerList([7]), toStringList([7]), toFloatList([1.5]);
+-- and a float keeps the precision it was given
+RETURN toFloatList([1.23456789012]);
+
+-- an element longer than any buffer is still just an element
+RETURN toIntegerList([
+	'11111111111111111111111111111111111111111111111111111111111111111111', 1]);
+
 DROP GRAPH list_graph CASCADE;
