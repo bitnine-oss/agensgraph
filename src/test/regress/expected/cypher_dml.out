@@ -3739,6 +3739,70 @@ MATCH (a:repo) RETURN a.name AS name, exists(a.year) AS has_year, exists(a.stars
  "agens-graph-odbc" | t        | f
 (4 rows)
 
+-- A pattern used as an existence test compares against the outside variable in
+-- the qualification of the query the test is answered from, so the two sides are
+-- joined once instead of the pattern being matched again for every row.  The
+-- endpoints name a label to keep the plan to the tables being asserted about.
+MATCH (a:repo) WHERE exists((a)-[:lib]->(:repo)) RETURN a.name AS name ORDER BY name;
+     name      
+---------------
+ "agens-graph"
+(1 row)
+
+EXPLAIN (costs off) MATCH (a:repo) WHERE exists((a)-[:lib]->(:repo)) RETURN a.name AS name;
+                                QUERY PLAN                                 
+---------------------------------------------------------------------------
+ Hash Join
+   Hash Cond: (a.id = "<0000000224>".start)
+   ->  Seq Scan on repo a
+   ->  Hash
+         ->  HashAggregate
+               Group Key: "<0000000224>".start
+               ->  Hash Join
+                     Hash Cond: ("<0000000224>"."end" = "<0000000225>".id)
+                     ->  Seq Scan on lib "<0000000224>"
+                     ->  Hash
+                           ->  Seq Scan on repo "<0000000225>"
+(11 rows)
+
+MATCH (a:repo) WHERE NOT exists((a)-[:lib]->(:repo)) RETURN a.name AS name ORDER BY name;
+        name        
+--------------------
+ "agens-graph-docs"
+ "agens-graph-jdbc"
+ "agens-graph-odbc"
+(3 rows)
+
+EXPLAIN (costs off) MATCH (a:repo) WHERE NOT exists((a)-[:lib]->(:repo)) RETURN a.name AS name;
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Hash Right Anti Join
+   Hash Cond: ("<0000000228>".start = a.id)
+   ->  Hash Join
+         Hash Cond: ("<0000000228>"."end" = "<0000000229>".id)
+         ->  Seq Scan on lib "<0000000228>"
+         ->  Hash
+               ->  Seq Scan on repo "<0000000229>"
+   ->  Hash
+         ->  Seq Scan on repo a
+(9 rows)
+
+MATCH (a:repo) WHERE EXISTS { (a)-[:lib]->(:repo) } RETURN a.name AS name ORDER BY name;
+     name      
+---------------
+ "agens-graph"
+(1 row)
+
+-- reached through OR, so no join can answer it; the rows must still be right
+MATCH (a:repo) WHERE exists((a)-[:doc]->(:repo)) OR a.year = 2016 RETURN a.name AS name ORDER BY name;
+        name        
+--------------------
+ "agens-graph"
+ "agens-graph-docs"
+ "agens-graph-jdbc"
+ "agens-graph-odbc"
+(4 rows)
+
 --
 -- SIZE
 --

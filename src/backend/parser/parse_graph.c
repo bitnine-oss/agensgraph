@@ -493,6 +493,18 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 	clause->detail = (Node *) match;
 	clause->prev = NULL;
 
+	/*
+	 * An existence test asks only whether the pattern matches anything, so the
+	 * pattern becomes this query rather than a subquery this query selects
+	 * from.  A pattern that reads a variable from outside compares against it
+	 * in the qualification of the query the pattern becomes, and an EXISTS
+	 * whose own qualification holds that comparison is answered by joining the
+	 * two sides once; one level further in, the comparison is out of reach and
+	 * the pattern is matched again for every row.
+	 */
+	if (subpat->kind == CSP_EXISTS)
+		return transformCypherMatchClause(pstate, clause);
+
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
