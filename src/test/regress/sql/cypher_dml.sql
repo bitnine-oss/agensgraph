@@ -1168,6 +1168,17 @@ MATCH (a:repo) RETURN a, exists(a.name) AS b;
 -- exists() is false for an absent property
 MATCH (a:repo) WHERE NOT exists(a.stars) RETURN a.name AS name ORDER BY name;
 MATCH (a:repo) RETURN a.name AS name, exists(a.year) AS has_year, exists(a.stars) AS has_stars ORDER BY name;
+-- A pattern used as an existence test compares against the outside variable in
+-- the qualification of the query the test is answered from, so the two sides are
+-- joined once instead of the pattern being matched again for every row.  The
+-- endpoints name a label to keep the plan to the tables being asserted about.
+MATCH (a:repo) WHERE exists((a)-[:lib]->(:repo)) RETURN a.name AS name ORDER BY name;
+EXPLAIN (costs off) MATCH (a:repo) WHERE exists((a)-[:lib]->(:repo)) RETURN a.name AS name;
+MATCH (a:repo) WHERE NOT exists((a)-[:lib]->(:repo)) RETURN a.name AS name ORDER BY name;
+EXPLAIN (costs off) MATCH (a:repo) WHERE NOT exists((a)-[:lib]->(:repo)) RETURN a.name AS name;
+MATCH (a:repo) WHERE EXISTS { (a)-[:lib]->(:repo) } RETURN a.name AS name ORDER BY name;
+-- reached through OR, so no join can answer it; the rows must still be right
+MATCH (a:repo) WHERE exists((a)-[:doc]->(:repo)) OR a.year = 2016 RETURN a.name AS name ORDER BY name;
 
 --
 -- SIZE
