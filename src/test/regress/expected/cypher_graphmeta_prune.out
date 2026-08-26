@@ -2241,7 +2241,7 @@ EXPLAIN (costs off) MATCH (p:person) WHERE p.name = 'p1' DETACH DELETE p;
  Graph Delete
    ->  Nested Loop CypherDelete Join
          ->  Seq Scan on person p
-               Filter: (properties.'name'::text = '"p1"'::jsonb)
+               Filter: (properties.'name' = '"p1"'::jsonb)
          ->  Aggregate
                ->  Nested Loop
                      ->  Function Scan on unnest v
@@ -2597,7 +2597,7 @@ EXPLAIN (costs off) MATCH (x:v) WHERE x.n = 'a' DETACH DELETE x;
  Graph Delete
    ->  Nested Loop CypherDelete Join
          ->  Seq Scan on v x
-               Filter: (properties.'n'::text = '"a"'::jsonb)
+               Filter: (properties.'n' = '"a"'::jsonb)
          ->  Aggregate
                ->  Nested Loop
                      ->  Function Scan on unnest v_1
@@ -2814,10 +2814,10 @@ EXPLAIN (costs off)
    ->  Nested Loop CypherDelete Join
          ->  Nested Loop
                ->  Seq Scan on person a
-                     Filter: (properties.'n'::text = '"p1"'::jsonb)
+                     Filter: (properties.'n' = '"p1"'::jsonb)
                ->  Materialize
                      ->  Seq Scan on person b
-                           Filter: (properties.'n'::text = '"p2"'::jsonb)
+                           Filter: (properties.'n' = '"p2"'::jsonb)
          ->  Aggregate
                ->  Nested Loop
                      ->  Function Scan on unnest v
@@ -2930,7 +2930,7 @@ EXPLAIN (costs off) MATCH p = (:person {n: 'a'})-[:knows*1..2]->(:person) DETACH
                      ->  Nested Loop
                            ->  Nested Loop
                                  ->  Seq Scan on person "<0000000080>"
-                                       Filter: (properties.'n'::text = '"a"'::jsonb)
+                                       Filter: (properties.'n' = '"a"'::jsonb)
                                  ->  Subquery Scan on "<0000000081>"
                                        ->  Graph VLE on knows [1..2]
                                              ->  Result

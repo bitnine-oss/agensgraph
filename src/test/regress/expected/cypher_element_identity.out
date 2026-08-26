@@ -33,13 +33,13 @@ ANALYZE ei.k;
 -- projected through the sort at all
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (x:p) RETURN x.n ORDER BY x;
-                  QUERY PLAN                  
-----------------------------------------------
+               QUERY PLAN               
+----------------------------------------
  Sort
-   Output: (x.properties.'n'::text), x.id
+   Output: (x.properties.'n'), x.id
    Sort Key: x.id
    ->  Seq Scan on ei.p x
-         Output: x.properties.'n'::text, x.id
+         Output: x.properties.'n', x.id
 (5 rows)
 
 -- and because the key is the identity, the label's primary key can supply the
@@ -47,10 +47,10 @@ MATCH (x:p) RETURN x.n ORDER BY x;
 SET enable_seqscan = off;
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (x:p) RETURN x.n ORDER BY x;
-               QUERY PLAN               
-----------------------------------------
+            QUERY PLAN             
+-----------------------------------
  Index Scan using p_pkey on ei.p x
-   Output: x.properties.'n'::text, x.id
+   Output: x.properties.'n', x.id
 (2 rows)
 
 RESET enable_seqscan;
@@ -388,7 +388,7 @@ MATCH (x:p)-[:k]->() WITH x, count(*) AS c RETURN x.n, c;
                                                       QUERY PLAN                                                      
 ----------------------------------------------------------------------------------------------------------------------
  Subquery Scan on _agens_default_s
-   Output: (_agens_default_s.x).properties.'n'::text, cypher_to_jsonb(_agens_default_s.c)
+   Output: (_agens_default_s.x).properties.'n', cypher_to_jsonb(_agens_default_s.c)
    ->  HashAggregate
          Output: ROW(x.id, x.properties, x.ctid)::vertex, count(*), x.id
          Group Key: x.id

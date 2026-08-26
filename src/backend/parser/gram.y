@@ -17273,6 +17273,11 @@ indirection_el:
 				{
 					$$ = (Node *) makeString($2);
 				}
+			| '.' Sconst
+				{
+					/* a quoted name reads a property of a map */
+					$$ = makeStringConst($2, @2);
+				}
 			| '.' '*'
 				{
 					$$ = (Node *) makeNode(A_Star);
@@ -23149,9 +23154,9 @@ makeColumnRef(char *colname, List *indirection,
 {
 	/*
 	 * Generate a ColumnRef node, with an A_Indirection node added if there
-	 * is any subscripting in the specified indirection list.  However,
-	 * any field selection at the start of the indirection list must be
-	 * transposed into the "fields" part of the ColumnRef node.
+	 * is any subscripting or property key in the specified indirection
+	 * list.  However, any field selection at the start of the indirection
+	 * list must be transposed into the "fields" part of the ColumnRef node.
 	 */
 	ColumnRef  *c = makeNode(ColumnRef);
 	int			nfields = 0;
@@ -23160,7 +23165,7 @@ makeColumnRef(char *colname, List *indirection,
 	c->location = location;
 	foreach(l, indirection)
 	{
-		if (IsA(lfirst(l), A_Indices))
+		if (IsA(lfirst(l), A_Indices) || IsA(lfirst(l), A_Const))
 		{
 			A_Indirection *i = makeNode(A_Indirection);
 

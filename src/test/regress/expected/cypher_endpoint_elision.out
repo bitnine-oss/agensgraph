@@ -528,11 +528,11 @@ SET enable_graph_endpoint_elision = true;
 -- ============================================================
 EXPLAIN (costs off)
   MATCH (a:person)-[e:knows]->() WITH a.name AS n ORDER BY n LIMIT 1 RETURN n;
-                  QUERY PLAN                   
------------------------------------------------
+                  QUERY PLAN                  
+----------------------------------------------
  Limit
    ->  Sort
-         Sort Key: (a.properties.'name'::text)
+         Sort Key: (a.properties.'name')
          ->  Hash Join
                Hash Cond: (e.start = a.id)
                ->  Seq Scan on knows e
@@ -817,15 +817,15 @@ EXPLAIN (costs off) MATCH (a:person)-[:knows]->(c) RETURN label(c) AS c;
 
 -- referenced in WHERE (single-relation baserestrictinfo)
 EXPLAIN (costs off) MATCH (a:person)-[:knows]->(x) WHERE x.name = 'bob' RETURN a.name AS a;
-                               QUERY PLAN                               
-------------------------------------------------------------------------
+                            QUERY PLAN                            
+------------------------------------------------------------------
  Nested Loop
    ->  Hash Join
          Hash Cond: ("<0000000108>"."end" = x.id)
          ->  Seq Scan on knows "<0000000108>"
          ->  Hash
                ->  Seq Scan on person x
-                     Filter: (properties.'name'::text = '"bob"'::jsonb)
+                     Filter: (properties.'name' = '"bob"'::jsonb)
    ->  Index Scan using person_pkey on person a
          Index Cond: (id = "<0000000108>".start)
 (9 rows)
@@ -892,15 +892,15 @@ EXPLAIN (costs off) MATCH (a:person)-[:knows]->(x) RETURN a.name AS a ORDER BY i
 -- ============================================================
 -- inline property filter on the endpoint must run
 EXPLAIN (costs off) MATCH (a:person)-[:knows]->({name:'bob'}) RETURN a.name AS a;
-                               QUERY PLAN                               
-------------------------------------------------------------------------
+                            QUERY PLAN                            
+------------------------------------------------------------------
  Nested Loop
    ->  Hash Join
          Hash Cond: ("<0000000114>"."end" = "<0000000115>".id)
          ->  Seq Scan on knows "<0000000114>"
          ->  Hash
                ->  Seq Scan on person "<0000000115>"
-                     Filter: (properties.'name'::text = '"bob"'::jsonb)
+                     Filter: (properties.'name' = '"bob"'::jsonb)
    ->  Index Scan using person_pkey on person a
          Index Cond: (id = "<0000000114>".start)
 (9 rows)
@@ -925,11 +925,11 @@ SET enable_graph_endpoint_elision = true;
 -- A two-relation <> that is not equivalence-absorbed lives in joininfo, not an EC;
 -- dropping the endpoint would drop the filter, so it must be kept.
 EXPLAIN (costs off) MATCH (a:person)-[:knows]->(x) WHERE x.name <> a.name RETURN a.name AS a;
-                               QUERY PLAN                                
--------------------------------------------------------------------------
+                         QUERY PLAN                          
+-------------------------------------------------------------
  Hash Join
    Hash Cond: ("<0000000120>"."end" = x.id)
-   Join Filter: (x.properties.'name'::text <> a.properties.'name'::text)
+   Join Filter: (x.properties.'name' <> a.properties.'name')
    ->  Hash Join
          Hash Cond: ("<0000000120>".start = a.id)
          ->  Seq Scan on knows "<0000000120>"
@@ -2609,15 +2609,15 @@ EXPLAIN (costs off) MATCH (a:emp)-[:in_dept]->(d:dept) RETURN d.n AS d;
 
 -- read in WHERE
 EXPLAIN (costs off) MATCH (a:emp)-[:in_dept]->(d:dept) WHERE d.n = 'd1' RETURN a.n AS a;
-                             QUERY PLAN                             
---------------------------------------------------------------------
+                          QUERY PLAN                          
+--------------------------------------------------------------
  Nested Loop
    ->  Hash Join
          Hash Cond: ("<0000000324>"."end" = d.id)
          ->  Seq Scan on in_dept "<0000000324>"
          ->  Hash
                ->  Seq Scan on dept d
-                     Filter: (properties.'n'::text = '"d1"'::jsonb)
+                     Filter: (properties.'n' = '"d1"'::jsonb)
    ->  Index Scan using emp_pkey on emp a
          Index Cond: (id = "<0000000324>".start)
 (9 rows)
@@ -2671,15 +2671,15 @@ MATCH (a:emp)-[:in_dept]->(d:dept) RETURN a.n AS a ORDER BY id(d);
 SET enable_graph_endpoint_elision = true;
 -- an inline property constraint on the labelled endpoint has to run
 EXPLAIN (costs off) MATCH (a:emp)-[:in_dept]->(:dept {n:'d1'}) RETURN a.n AS a;
-                             QUERY PLAN                             
---------------------------------------------------------------------
+                          QUERY PLAN                           
+---------------------------------------------------------------
  Nested Loop
    ->  Hash Join
          Hash Cond: ("<0000000330>"."end" = "<0000000331>".id)
          ->  Seq Scan on in_dept "<0000000330>"
          ->  Hash
                ->  Seq Scan on dept "<0000000331>"
-                     Filter: (properties.'n'::text = '"d1"'::jsonb)
+                     Filter: (properties.'n' = '"d1"'::jsonb)
    ->  Index Scan using emp_pkey on emp a
          Index Cond: (id = "<0000000330>".start)
 (9 rows)
@@ -2701,11 +2701,11 @@ SET enable_graph_endpoint_elision = true;
 -- a two-relation qual that no equivalence absorbs lives in joininfo, and goes
 -- with the endpoint if the endpoint goes
 EXPLAIN (costs off) MATCH (a:emp)-[:in_dept]->(d:dept) WHERE d.n <> a.n RETURN a.n AS a;
-                            QUERY PLAN                             
--------------------------------------------------------------------
+                      QUERY PLAN                       
+-------------------------------------------------------
  Hash Join
    Hash Cond: ("<0000000336>"."end" = d.id)
-   Join Filter: (d.properties.'n'::text <> a.properties.'n'::text)
+   Join Filter: (d.properties.'n' <> a.properties.'n')
    ->  Hash Join
          Hash Cond: ("<0000000336>".start = a.id)
          ->  Seq Scan on in_dept "<0000000336>"

@@ -35,11 +35,11 @@ CREATE PROPERTY INDEX ON piv1 ((body.weight / body.height));
  properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "piv1_pkey" PRIMARY KEY, btree (id)
-    "piv1_age_idx" btree ((properties.'age'::text))
-    "piv1_first_idx" btree (((properties.'name'::text.'first'::text) `+` (properties.'name'::text.'last'::text)))
-    "piv1_first_last_idx" btree ((properties.'name'::text.'first'::text), (properties.'name'::text.'last'::text))
-    "piv1_name_idx" btree ((properties.'name'::text))
-    "piv1_weight_idx" btree (((properties.'body'::text.'weight'::text) `/` (properties.'body'::text.'height'::text)))
+    "piv1_age_idx" btree ((properties.'age'))
+    "piv1_first_idx" btree (((properties.'name'.'first') `+` (properties.'name'.'last')))
+    "piv1_first_last_idx" btree ((properties.'name'.'first'), (properties.'name'.'last'))
+    "piv1_name_idx" btree ((properties.'name'))
+    "piv1_weight_idx" btree (((properties.'body'.'weight') `/` (properties.'body'.'height')))
 Inherits: propidx.ag_vertex
 
 \dGi piv1*
@@ -75,10 +75,10 @@ HINT:  You must specify an operator class for the index or define a default oper
  properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "piv2_pkey" PRIMARY KEY, btree (id)
-    "piv2_first_idx" btree ((properties.'name'::text.'first'::text))
-    "piv2_first_idx1" hash ((properties.'name'::text.'first'::text))
-    "piv2_name_idx" btree ((properties.'name'::text))
-    "piv2_name_idx1" gin ((properties.'name'::text))
+    "piv2_first_idx" btree ((properties.'name'.'first'))
+    "piv2_first_idx1" hash ((properties.'name'.'first'))
+    "piv2_name_idx" btree ((properties.'name'))
+    "piv2_name_idx1" gin ((properties.'name'))
 Inherits: propidx.ag_vertex
 
 \dGv+ piv2
@@ -127,10 +127,10 @@ CREATE PROPERTY INDEX ON piv3 (name.first) WHERE (name IS NOT NULL);
  properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "piv3_pkey" PRIMARY KEY, btree (id)
-    "piv3_first_idx" btree ((properties.'name'::text.'first'::text))
-    "piv3_first_idx1" btree ((properties.'name'::text.'first'::text)) WITH (fillfactor='80')
-    "piv3_first_idx2" btree ((properties.'name'::text.'first'::text)) WHERE (properties.'name'::text) IS NOT NULL
-    "piv3_name_idx" btree ((properties.'name'::text))
+    "piv3_first_idx" btree ((properties.'name'.'first'))
+    "piv3_first_idx1" btree ((properties.'name'.'first')) WITH (fillfactor='80')
+    "piv3_first_idx2" btree ((properties.'name'.'first')) WHERE (properties.'name') IS NOT NULL
+    "piv3_name_idx" btree ((properties.'name'))
 Inherits: propidx.ag_vertex
 
 \dGv+ piv3
@@ -165,7 +165,7 @@ CREATE UNIQUE PROPERTY INDEX ON piv4 (id);
 CREATE (:piv4 {id: 100});
 CREATE (:piv4 {id: 100});
 ERROR:  duplicate key value violates unique constraint "piv4_id_idx"
-DETAIL:  Key ((properties.'id'::text))=(100) already exists.
+DETAIL:  Key ((properties.'id'))=(100) already exists.
 \d propidx.piv4
                                                          Table "propidx.piv4"
    Column   |  Type   | Collation | Nullable |                                         Default                                         
@@ -174,7 +174,7 @@ DETAIL:  Key ((properties.'id'::text))=(100) already exists.
  properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "piv4_pkey" PRIMARY KEY, btree (id)
-    "piv4_id_idx" UNIQUE, btree ((properties.'id'::text))
+    "piv4_id_idx" UNIQUE, btree ((properties.'id'))
 Inherits: propidx.ag_vertex
 
 \dGv+ piv4
@@ -205,7 +205,7 @@ CREATE (:piv5 {name: {first: 'agens'}});
 CREATE (:piv5 {name: {first: 'agens', last: 'graph'}});
 CREATE (:piv5 {name: {first: 'agens', last: 'graph'}});
 ERROR:  duplicate key value violates unique constraint "piv5_first_last_idx"
-DETAIL:  Key ((properties.'name'::text.'first'::text), (properties.'name'::text.'last'::text))=("agens", "graph") already exists.
+DETAIL:  Key ((properties.'name'.'first'), (properties.'name'.'last'))=("agens", "graph") already exists.
 \d propidx.piv5
                                                          Table "propidx.piv5"
    Column   |  Type   | Collation | Nullable |                                         Default                                         
@@ -214,7 +214,7 @@ DETAIL:  Key ((properties.'name'::text.'first'::text), (properties.'name'::text.
  properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "piv5_pkey" PRIMARY KEY, btree (id)
-    "piv5_first_last_idx" UNIQUE, btree ((properties.'name'::text.'first'::text), (properties.'name'::text.'last'::text))
+    "piv5_first_last_idx" UNIQUE, btree ((properties.'name'.'first'), (properties.'name'.'last'))
 Inherits: propidx.ag_vertex
 
 \dGv+ piv5
@@ -412,13 +412,13 @@ Inherits: propidx.ag_vertex
 CREATE (:piv12 {m: {a: 1, b: 1}});
 CREATE (:piv12 {m: {a: 1, b: 1}});
 ERROR:  duplicate key value violates unique constraint "piv12_uq"
-DETAIL:  Key ((properties.'m'::text['"a"'::jsonb]))=(1) already exists.
+DETAIL:  Key ((properties.'m'['"a"'::jsonb]))=(1) already exists.
 -- and rebuilt from exactly what is printed above, it refuses it still
 DROP PROPERTY INDEX piv12_uq;
 CREATE UNIQUE PROPERTY INDEX piv12_uq ON piv12 USING btree (m['a']);
 CREATE (:piv12 {m: {a: 1, b: 1}});
 ERROR:  duplicate key value violates unique constraint "piv12_uq"
-DETAIL:  Key ((properties.'m'::text['"a"'::jsonb]))=(1) already exists.
+DETAIL:  Key ((properties.'m'['"a"'::jsonb]))=(1) already exists.
 MATCH (n:piv12) RETURN count(*);
  count 
 -------

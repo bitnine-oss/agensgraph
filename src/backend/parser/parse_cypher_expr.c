@@ -60,8 +60,6 @@ static Node *scanNSItemForVar(ParseState *pstate, ParseNamespaceItem *nsitem,
 							  char *colname, int location);
 static Node *transformFields(ParseState *pstate, Node *basenode, List *fields,
 							 int location);
-static Node *filterAccessArg(ParseState *pstate, Node *expr, int location,
-							 const char *types);
 static Node *transformParamRef(ParseState *pstate, ParamRef *pref);
 static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
 static Node *transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m);
@@ -673,7 +671,7 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 	return res;
 }
 
-static Node *
+Node *
 filterAccessArg(ParseState *pstate, Node *expr, int location,
 				const char *types)
 {
