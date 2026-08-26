@@ -3803,6 +3803,44 @@ MATCH (a:repo) WHERE exists((a)-[:doc]->(:repo)) OR a.year = 2016 RETURN a.name 
  "agens-graph-odbc"
 (4 rows)
 
+-- A property constraint on an anonymous element is applied beside the pattern,
+-- so it asks nothing of an enclosing clause and the pattern is still joined
+-- once.  A constraint on an element that has a variable is applied by the
+-- enclosing clause, which is the one that keeps the clause.
+MATCH (a:repo) WHERE exists((a)-[:lib]->(:repo {year: 2016})) RETURN a.name AS name ORDER BY name;
+     name      
+---------------
+ "agens-graph"
+(1 row)
+
+EXPLAIN (costs off) MATCH (a:repo) WHERE exists((a)-[:lib]->(:repo {year: 2016})) RETURN a.name AS name;
+                                 QUERY PLAN                                  
+-----------------------------------------------------------------------------
+ Nested Loop
+   ->  HashAggregate
+         Group Key: "<0000000236>".start
+         ->  Hash Join
+               Hash Cond: ("<0000000236>"."end" = "<0000000237>".id)
+               ->  Seq Scan on lib "<0000000236>"
+               ->  Hash
+                     ->  Seq Scan on repo "<0000000237>"
+                           Filter: (properties.'year'::text = '2016'::jsonb)
+   ->  Index Scan using repo_pkey on repo a
+         Index Cond: (id = "<0000000236>".start)
+(11 rows)
+
+MATCH (a:repo) WHERE exists((a)-[:lib {lang: 'java'}]->(:repo)) RETURN a.name AS name ORDER BY name;
+     name      
+---------------
+ "agens-graph"
+(1 row)
+
+MATCH (a:repo) WHERE exists((a)-[:lib]->(b:repo {year: 2016})) RETURN a.name AS name ORDER BY name;
+     name      
+---------------
+ "agens-graph"
+(1 row)
+
 --
 -- SIZE
 --

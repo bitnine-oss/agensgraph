@@ -196,7 +196,7 @@ static ParseNamespaceItem *transformMatchOptional(ParseState *pstate,
 												  CypherClause *clause);
 
 /* MATCH - preprocessing */
-static bool hasPropConstr(List *pattern);
+static bool hasDeferredPropConstr(List *pattern);
 static List *getFindPaths(List *pattern);
 static void appendFindPathsResult(ParseState *pstate, List *fplist,
 								  List **targetList);
@@ -1543,7 +1543,7 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 		}
 
 		if (!pstate->p_is_match_quals &&
-			(detail->where != NULL || hasPropConstr(detail->pattern)))
+			(detail->where != NULL || hasDeferredPropConstr(detail->pattern)))
 		{
 			int			flags = (pstate->p_is_optional_match ? FVR_IGNORE_NULLABLE : 0);
 
@@ -3200,8 +3200,19 @@ transformMatchOptional(ParseState *pstate, CypherClause *clause)
 							   alias);
 }
 
+/*
+ * hasDeferredPropConstr
+ *		Does the pattern hold a property constraint that the enclosing clause
+ *		has to apply, rather than the pattern itself?
+ *
+ *		A constraint on an element that has a variable is deferred:
+ *		addElemQual() stashes it and transformElemQuals() applies it one level
+ *		up, so the enclosing SELECT is what carries it.  A constraint on an
+ *		anonymous element is applied beside the pattern it constrains, and asks
+ *		nothing of the enclosing clause.
+ */
 static bool
-hasPropConstr(List *pattern)
+hasDeferredPropConstr(List *pattern)
 {
 	ListCell   *lp;
 
@@ -3218,7 +3229,7 @@ hasPropConstr(List *pattern)
 			{
 				CypherNode *cnode = (CypherNode *) elem;
 
-				if (cnode->prop_map != NULL)
+				if (cnode->prop_map != NULL && cnode->variable != NULL)
 					return true;
 			}
 			else
@@ -3227,7 +3238,7 @@ hasPropConstr(List *pattern)
 
 				Assert(IsA(elem, CypherRel));
 
-				if (crel->prop_map != NULL)
+				if (crel->prop_map != NULL && crel->variable != NULL)
 					return true;
 			}
 		}
