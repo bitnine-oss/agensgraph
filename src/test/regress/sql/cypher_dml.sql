@@ -4352,4 +4352,36 @@ CREATE (:t {a: 4});
 MATCH (n:t) RETURN count(*);
 
 DROP GRAPH ro_name CASCADE;
+
+--
+-- a name in an element's property map means the element, not the table the
+-- element is matched from
+--
+
+CREATE GRAPH elem_value;
+SET graph_path = elem_value;
+
+CREATE VLABEL t;
+CREATE ELABEL e;
+
+-- x carries a property named id, which is not the same as its graph id
+CREATE (:t {name: 'x', id: 'p1'});
+CREATE (:t {name: 'y'});
+CREATE (:t {name: 'z'});
+MATCH (a:t {name: 'x'}), (b:t {name: 'y'}) CREATE (a)-[:e]->(b);
+MATCH (a:t {name: 'x'}), (b:t {name: 'z'}) CREATE (a)-[:e]->(b);
+-- y.k holds x's id property; z.k holds x's graph id
+MATCH (n:t {name: 'y'}) SET n.k = 'p1';
+MATCH (a:t {name: 'x'}), (n:t {name: 'z'}) SET n.k = id(a)::text;
+
+-- the property, so y, whether or not the element carrying the map has a name
+MATCH (a:t {name: 'x'})-[:e]->(:t {k: a.id, name: 'y'}) RETURN count(*) AS reads_property;
+MATCH (a:t {name: 'x'})-[:e]->(:t {k: a.id, name: 'z'}) RETURN count(*) AS reads_graph_id;
+MATCH (a:t {name: 'x'})-[:e]->(b:t {k: a.id, name: 'y'}) RETURN count(*) AS named;
+
+-- a variable is readable there, and names the element itself
+MATCH (a:t)-[:e]->(:t {k: a.name}) RETURN count(*) AS by_name;
+MATCH (a:t)-[:e]->(:t {k: a}) RETURN count(*) AS by_element;
+
+DROP GRAPH elem_value CASCADE;
 RESET graph_path;

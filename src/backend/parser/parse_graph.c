@@ -3708,6 +3708,62 @@ recordGraphmetaEdge(Node *edge, bool edge_is_nsitem, CypherRel *crel,
 		rte->graphPruneRole = GRAPHPRUNE_ROLE_DIR_EDGE;
 }
 
+/*
+ * hideElemRels
+ *		In a property map a name means the element it names, not the table that
+ *		element is matched from.
+ *
+ *		While the pattern is being read its elements are range table entries,
+ *		and a qualified name resolves against those before anything else, so
+ *		"{k: a.id}" reads the label table's id column -- the graph id -- where
+ *		the same text one clause further out reads the property named id.  Which
+ *		of the two a map got depended on whether some other element of the
+ *		pattern happened to carry a variable, since that is what decides whether
+ *		there is a clause further out at all.
+ *
+ *		So take the pattern's relations out of the reach of a qualified name for
+ *		as long as the map is being read, and offer the elements read so far by
+ *		name instead: a name then resolves to the element, and a field after it
+ *		reads a property of it.  An element of an earlier clause is reached
+ *		through that clause's own entry, which is not a relation and is left
+ *		alone.  Returns the entries hidden, to be given back by unhideElemRels().
+ */
+static List *
+hideElemRels(ParseState *pstate, List *targetList, List **save_items)
+{
+	List	   *hidden = NIL;
+	ListCell   *lni;
+
+	foreach(lni, pstate->p_namespace)
+	{
+		ParseNamespaceItem *nsitem = lfirst(lni);
+
+		if (nsitem->p_rte->rtekind == RTE_RELATION && nsitem->p_rel_visible)
+		{
+			nsitem->p_rel_visible = false;
+			hidden = lappend(hidden, nsitem);
+		}
+	}
+
+	*save_items = pstate->p_order_items;
+	pstate->p_order_items = targetList;
+
+	return hidden;
+}
+
+static void
+unhideElemRels(ParseState *pstate, List *hidden, List *save_items)
+{
+	ListCell   *lni;
+
+	pstate->p_order_items = save_items;
+
+	foreach(lni, hidden)
+		((ParseNamespaceItem *) lfirst(lni))->p_rel_visible = true;
+
+	list_free(hidden);
+}
+
 static Node *
 transformComponents(ParseState *pstate, List *components, List **targetList)
 {
@@ -3986,6 +4042,10 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			bool		is_cyphermap;
 			bool		on_bag = true;
 			bool		unexpressed = false;
+			List	   *hidden;
+			List	   *save_items;
+
+			hidden = hideElemRels(pstate, *targetList, &save_items);
 
 			prop_map = getExprField((Expr *) te->expr, AG_ELEM_PROP_MAP);
 			is_cyphermap = IsA(eqo->prop_map, CypherMapExpr);
@@ -4019,6 +4079,8 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 							   prop_map, prop_constr, pstate->p_last_srf, -1);
 				qual = qualAndExpr(qual, (Node *) expr);
 			}
+
+			unhideElemRels(pstate, hidden, save_items);
 		}
 	}
 

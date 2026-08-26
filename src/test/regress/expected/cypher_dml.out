@@ -11436,4 +11436,60 @@ DETAIL:  drop cascades to sequence ro_name.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel t
+--
+-- a name in an element's property map means the element, not the table the
+-- element is matched from
+--
+CREATE GRAPH elem_value;
+SET graph_path = elem_value;
+CREATE VLABEL t;
+CREATE ELABEL e;
+-- x carries a property named id, which is not the same as its graph id
+CREATE (:t {name: 'x', id: 'p1'});
+CREATE (:t {name: 'y'});
+CREATE (:t {name: 'z'});
+MATCH (a:t {name: 'x'}), (b:t {name: 'y'}) CREATE (a)-[:e]->(b);
+MATCH (a:t {name: 'x'}), (b:t {name: 'z'}) CREATE (a)-[:e]->(b);
+-- y.k holds x's id property; z.k holds x's graph id
+MATCH (n:t {name: 'y'}) SET n.k = 'p1';
+MATCH (a:t {name: 'x'}), (n:t {name: 'z'}) SET n.k = id(a)::text;
+-- the property, so y, whether or not the element carrying the map has a name
+MATCH (a:t {name: 'x'})-[:e]->(:t {k: a.id, name: 'y'}) RETURN count(*) AS reads_property;
+ reads_property 
+----------------
+ 1
+(1 row)
+
+MATCH (a:t {name: 'x'})-[:e]->(:t {k: a.id, name: 'z'}) RETURN count(*) AS reads_graph_id;
+ reads_graph_id 
+----------------
+ 0
+(1 row)
+
+MATCH (a:t {name: 'x'})-[:e]->(b:t {k: a.id, name: 'y'}) RETURN count(*) AS named;
+ named 
+-------
+ 1
+(1 row)
+
+-- a variable is readable there, and names the element itself
+MATCH (a:t)-[:e]->(:t {k: a.name}) RETURN count(*) AS by_name;
+ by_name 
+---------
+ 0
+(1 row)
+
+MATCH (a:t)-[:e]->(:t {k: a}) RETURN count(*) AS by_element;
+ by_element 
+------------
+ 0
+(1 row)
+
+DROP GRAPH elem_value CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence elem_value.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel t
+drop cascades to elabel e
 RESET graph_path;
