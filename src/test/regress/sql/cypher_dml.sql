@@ -1179,6 +1179,14 @@ EXPLAIN (costs off) MATCH (a:repo) WHERE NOT exists((a)-[:lib]->(:repo)) RETURN 
 MATCH (a:repo) WHERE EXISTS { (a)-[:lib]->(:repo) } RETURN a.name AS name ORDER BY name;
 -- reached through OR, so no join can answer it; the rows must still be right
 MATCH (a:repo) WHERE exists((a)-[:doc]->(:repo)) OR a.year = 2016 RETURN a.name AS name ORDER BY name;
+-- A property constraint on an anonymous element is applied beside the pattern,
+-- so it asks nothing of an enclosing clause and the pattern is still joined
+-- once.  A constraint on an element that has a variable is applied by the
+-- enclosing clause, which is the one that keeps the clause.
+MATCH (a:repo) WHERE exists((a)-[:lib]->(:repo {year: 2016})) RETURN a.name AS name ORDER BY name;
+EXPLAIN (costs off) MATCH (a:repo) WHERE exists((a)-[:lib]->(:repo {year: 2016})) RETURN a.name AS name;
+MATCH (a:repo) WHERE exists((a)-[:lib {lang: 'java'}]->(:repo)) RETURN a.name AS name ORDER BY name;
+MATCH (a:repo) WHERE exists((a)-[:lib]->(b:repo {year: 2016})) RETURN a.name AS name ORDER BY name;
 
 --
 -- SIZE
