@@ -610,8 +610,8 @@ CALL (p) {
   RETURN d.name AS dog, toy
 }
 RETURN p.name AS name, dog, toy;
-                                      QUERY PLAN                                      
---------------------------------------------------------------------------------------
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
  Nested Loop
    ->  Nested Loop
          ->  Nested Loop
@@ -620,7 +620,7 @@ RETURN p.name AS name, dog, toy;
                      ->  Seq Scan on has_dog "<0000000052>"
                      ->  Hash
                            ->  Seq Scan on person p
-                                 Filter: (properties.'name'::text = '"Peter"'::jsonb)
+                                 Filter: (properties.'name' = '"Peter"'::jsonb)
                ->  Index Scan using dog_pkey on dog d
                      Index Cond: (id = "<0000000052>"."end")
          ->  Index Only Scan using has_toy_start_idx on has_toy "<0000000053>"
@@ -1028,7 +1028,7 @@ RETURN p.name AS name, dog, ndogs;
    ->  Nested Loop
          ->  Nested Loop
                ->  Index Scan using person_pkey on person p
-                     Filter: (properties.'name'::text = '"Peter"'::jsonb)
+                     Filter: (properties.'name' = '"Peter"'::jsonb)
                ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000106>"
                      Index Cond: (start = p.id)
          ->  Index Scan using dog_pkey on dog d

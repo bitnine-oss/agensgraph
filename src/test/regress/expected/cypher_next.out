@@ -386,10 +386,10 @@ EXPLAIN (COSTS OFF)
 MATCH (n:person) RETURN n.name AS name, n.age AS age
 NEXT
 RETURN name ORDER BY name;
-               QUERY PLAN                
------------------------------------------
+            QUERY PLAN             
+-----------------------------------
  Sort
-   Sort Key: (n.properties.'name'::text)
+   Sort Key: (n.properties.'name')
    ->  Seq Scan on person n
 (3 rows)
 
@@ -397,10 +397,10 @@ EXPLAIN (COSTS OFF)
 MATCH (n:person)
 WITH n.name AS name, n.age AS age
 RETURN name ORDER BY name;
-               QUERY PLAN                
------------------------------------------
+            QUERY PLAN             
+-----------------------------------
  Sort
-   Sort Key: (n.properties.'name'::text)
+   Sort Key: (n.properties.'name')
    ->  Seq Scan on person n
 (3 rows)
 
@@ -958,13 +958,13 @@ EXPLAIN (COSTS OFF)
 MATCH (p:person) RETURN p.name AS nm
 NEXT
 RETURN nm AS x UNION RETURN 'z' AS x;
-                     QUERY PLAN                      
------------------------------------------------------
+                  QUERY PLAN                   
+-----------------------------------------------
  Nested Loop
    ->  Seq Scan on person p
    ->  Unique
          ->  Sort
-               Sort Key: (p.properties.'name'::text)
+               Sort Key: (p.properties.'name')
                ->  Append
                      ->  Result
                      ->  Result

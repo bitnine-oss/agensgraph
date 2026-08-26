@@ -1030,10 +1030,10 @@ SELECT currval('nullif_eval_seq') AS seq_value;
 DROP SEQUENCE nullif_eval_seq;
 -- structurally the plan carries a genuine NULLIF node (single-eval by design)
 EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:v1) RETURN nullIf(n.i, 0);
-                      QUERY PLAN                      
-------------------------------------------------------
+                   QUERY PLAN                   
+------------------------------------------------
  Seq Scan on test_cypher_expr.v1 n
-   Output: NULLIF(n.properties.'i'::text, '0'::jsonb)
+   Output: NULLIF(n.properties.'i', '0'::jsonb)
 (2 rows)
 
 -- self-check: for non-null operands, NULLIF(a, b) IS NULL exactly when a = b
@@ -1126,28 +1126,28 @@ SET enable_seqscan = off;
 EXPLAIN (costs off)
   MATCH (n:v2) WHERE n.i IN [1, 2, 3]
   RETURN n;
-                           QUERY PLAN                            
------------------------------------------------------------------
+                        QUERY PLAN                         
+-----------------------------------------------------------
  Index Scan using v2_i_idx on v2 n
-   Index Cond: (properties.'i'::text = ANY ('{1,2,3}'::jsonb[]))
+   Index Cond: (properties.'i' = ANY ('{1,2,3}'::jsonb[]))
 (2 rows)
 
 EXPLAIN (costs off)
   MATCH (n1:v2 {name: 'seven'}), (n2:v2 {name: 'nine'})
   MATCH (n:v2) WHERE n.i IN [n1.i, 8, n2.i]
   RETURN n;
-                                                       QUERY PLAN                                                       
-------------------------------------------------------------------------------------------------------------------------
+                                              QUERY PLAN                                              
+------------------------------------------------------------------------------------------------------
  Nested Loop
    ->  Nested Loop
          ->  Seq Scan on v2 n1
                Disabled: true
-               Filter: (properties.'name'::text = '"seven"'::jsonb)
+               Filter: (properties.'name' = '"seven"'::jsonb)
          ->  Seq Scan on v2 n2
                Disabled: true
-               Filter: (properties.'name'::text = '"nine"'::jsonb)
+               Filter: (properties.'name' = '"nine"'::jsonb)
    ->  Index Scan using v2_i_idx on v2 n
-         Index Cond: (properties.'i'::text = ANY (ARRAY[n1.properties.'i'::text, '8'::jsonb, n2.properties.'i'::text]))
+         Index Cond: (properties.'i' = ANY (ARRAY[n1.properties.'i', '8'::jsonb, n2.properties.'i']))
 (10 rows)
 
 SET enable_seqscan = on;
@@ -1156,10 +1156,10 @@ CREATE (:v3 {a: [1, 2, 3, 4, 5, 6, 7, 8, 9]});
 EXPLAIN (costs off)
   MATCH (n1:v2), (n2:v3) WHERE n1.i IN n2.a
   RETURN n1;
-                             QUERY PLAN                              
----------------------------------------------------------------------
+                       QUERY PLAN                        
+---------------------------------------------------------
  Nested Loop
-   Join Filter: (n2.properties.'a'::text @> n1.properties.'i'::text)
+   Join Filter: (n2.properties.'a' @> n1.properties.'i')
    ->  Seq Scan on v3 n2
    ->  Materialize
          ->  Seq Scan on v2 n1
@@ -1169,10 +1169,10 @@ EXPLAIN (costs off)
   MATCH (n2:v3) WITH n2.a AS a
   MATCH (n1:v2) WHERE n1.i IN a
   RETURN n1;
-                             QUERY PLAN                              
----------------------------------------------------------------------
+                       QUERY PLAN                        
+---------------------------------------------------------
  Nested Loop
-   Join Filter: (n2.properties.'a'::text @> n1.properties.'i'::text)
+   Join Filter: (n2.properties.'a' @> n1.properties.'i')
    ->  Seq Scan on v3 n2
    ->  Materialize
          ->  Seq Scan on v2 n1
@@ -1594,7 +1594,7 @@ EXPLAIN VERBOSE MATCH (n:tc) return n.s::tsvector as n;
                                 QUERY PLAN                                
 --------------------------------------------------------------------------
  Seq Scan on test_cypher_expr.tc n  (cost=0.00..22.00 rows=1200 width=32)
-   Output: (n.properties.'s'::text)::tsvector
+   Output: (n.properties.'s')::tsvector
 (2 rows)
 
 -- AGV2-437

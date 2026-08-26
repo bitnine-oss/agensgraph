@@ -2436,7 +2436,7 @@ WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
                      Output: x.edges, x."end"
                      ->  Seq Scan on t.person a
                            Output: a.id, a.properties
-                           Filter: (a.properties.'id'::text = '1'::jsonb)
+                           Filter: (a.properties.'id' = '1'::jsonb)
                      ->  Subquery Scan on x
                            Output: x.start, x."end", x.ids, x.edges
                            ->  Graph VLE on knows [1..2]
@@ -2464,7 +2464,7 @@ WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
  Subquery Scan on _agens_default_s
    Output: cypher_to_jsonb(_agens_default_s.id), _agens_default_s.x
    ->  GroupAggregate
-         Output: max((b.properties.'id'::text)::numeric), (x.edges[1])
+         Output: max((b.properties.'id')::numeric), (x.edges[1])
          Group Key: (x.edges[1])
          ->  Sort
                Output: (x.edges[1]), b.properties
@@ -2476,7 +2476,7 @@ WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
                            Output: x.edges, x."end"
                            ->  Seq Scan on t.person a
                                  Output: a.id, a.properties
-                                 Filter: (a.properties.'id'::text = '1'::jsonb)
+                                 Filter: (a.properties.'id' = '1'::jsonb)
                            ->  Subquery Scan on x
                                  Output: x.start, x."end", x.ids, x.edges
                                  ->  Graph VLE on knows [1..2]
@@ -2502,7 +2502,7 @@ WITH max(b.id) AS id, x[0] AS x RETURN *;
                                        QUERY PLAN                                        
 -----------------------------------------------------------------------------------------
  GroupAggregate
-   Output: max(b.properties.'id'::text), (x.edges[1])
+   Output: max(b.properties.'id'), (x.edges[1])
    Group Key: (x.edges[1])
    ->  Sort
          Output: (x.edges[1]), b.properties
@@ -2514,7 +2514,7 @@ WITH max(b.id) AS id, x[0] AS x RETURN *;
                      Output: x.edges, x."end"
                      ->  Seq Scan on t.person a
                            Output: a.id, a.properties
-                           Filter: (a.properties.'id'::text = '1'::jsonb)
+                           Filter: (a.properties.'id' = '1'::jsonb)
                      ->  Subquery Scan on x
                            Output: x.start, x."end", x.ids, x.edges
                            ->  Graph VLE on knows [1..2]
@@ -2551,7 +2551,7 @@ WITH DISTINCT x AS path RETURN *;
                      Output: x.edges, x."end"
                      ->  Seq Scan on t.person a
                            Output: a.id, a.properties
-                           Filter: (a.properties.'id'::text = '1'::jsonb)
+                           Filter: (a.properties.'id' = '1'::jsonb)
                      ->  Subquery Scan on x
                            Output: x.start, x."end", x.ids, x.edges
                            ->  Graph VLE on knows [1..2]
@@ -2579,7 +2579,7 @@ WITH max(b.id::"numeric") AS id, x AS x RETURN *;
  Subquery Scan on _agens_default_s
    Output: cypher_to_jsonb(_agens_default_s.id), _agens_default_s.x
    ->  GroupAggregate
-         Output: max((b.properties.'id'::text)::numeric), x.edges
+         Output: max((b.properties.'id')::numeric), x.edges
          Group Key: x.edges
          ->  Sort
                Output: x.edges, b.properties
@@ -2591,7 +2591,7 @@ WITH max(b.id::"numeric") AS id, x AS x RETURN *;
                            Output: x.edges, x."end"
                            ->  Seq Scan on t.person a
                                  Output: a.id, a.properties
-                                 Filter: (a.properties.'id'::text = '1'::jsonb)
+                                 Filter: (a.properties.'id' = '1'::jsonb)
                            ->  Subquery Scan on x
                                  Output: x.start, x."end", x.ids, x.edges
                                  ->  Graph VLE on knows [1..2]
@@ -2617,7 +2617,7 @@ WITH max(b.id) AS id, x AS x RETURN *;
                                        QUERY PLAN                                        
 -----------------------------------------------------------------------------------------
  GroupAggregate
-   Output: max(b.properties.'id'::text), x.edges
+   Output: max(b.properties.'id'), x.edges
    Group Key: x.edges
    ->  Sort
          Output: x.edges, b.properties
@@ -2629,7 +2629,7 @@ WITH max(b.id) AS id, x AS x RETURN *;
                      Output: x.edges, x."end"
                      ->  Seq Scan on t.person a
                            Output: a.id, a.properties
-                           Filter: (a.properties.'id'::text = '1'::jsonb)
+                           Filter: (a.properties.'id' = '1'::jsonb)
                      ->  Subquery Scan on x
                            Output: x.start, x."end", x.ids, x.edges
                            ->  Graph VLE on knows [1..2]
@@ -2657,19 +2657,19 @@ WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
  Subquery Scan on _agens_default_s
    Output: cypher_to_jsonb(_agens_default_s.x), _agens_default_s.id
    ->  GroupAggregate
-         Output: max((length(x.edges))::numeric), (b.properties.'id'::text)
-         Group Key: (b.properties.'id'::text)
+         Output: max((length(x.edges))::numeric), (b.properties.'id')
+         Group Key: (b.properties.'id')
          ->  Sort
-               Output: (b.properties.'id'::text), x.edges
-               Sort Key: (b.properties.'id'::text)
+               Output: (b.properties.'id'), x.edges
+               Sort Key: (b.properties.'id')
                ->  Nested Loop
-                     Output: b.properties.'id'::text, x.edges
+                     Output: b.properties.'id', x.edges
                      Inner Unique: true
                      ->  Nested Loop
                            Output: x.edges, x."end"
                            ->  Seq Scan on t.person a
                                  Output: a.id, a.properties
-                                 Filter: (a.properties.'id'::text = '1'::jsonb)
+                                 Filter: (a.properties.'id' = '1'::jsonb)
                            ->  Subquery Scan on x
                                  Output: x.start, x."end", x.ids, x.edges
                                  ->  Graph VLE on knows [1..2]
@@ -2695,19 +2695,19 @@ WITH max(length(x)) AS x, b.id AS id RETURN *;
                                        QUERY PLAN                                        
 -----------------------------------------------------------------------------------------
  GroupAggregate
-   Output: max(length(x.edges)), (b.properties.'id'::text)
-   Group Key: (b.properties.'id'::text)
+   Output: max(length(x.edges)), (b.properties.'id')
+   Group Key: (b.properties.'id')
    ->  Sort
-         Output: (b.properties.'id'::text), x.edges
-         Sort Key: (b.properties.'id'::text)
+         Output: (b.properties.'id'), x.edges
+         Sort Key: (b.properties.'id')
          ->  Nested Loop
-               Output: b.properties.'id'::text, x.edges
+               Output: b.properties.'id', x.edges
                Inner Unique: true
                ->  Nested Loop
                      Output: x.edges, x."end"
                      ->  Seq Scan on t.person a
                            Output: a.id, a.properties
-                           Filter: (a.properties.'id'::text = '1'::jsonb)
+                           Filter: (a.properties.'id' = '1'::jsonb)
                      ->  Subquery Scan on x
                            Output: x.start, x."end", x.ids, x.edges
                            ->  Graph VLE on knows [1..2]
@@ -2739,7 +2739,7 @@ RETURN x, x IS NOT NULL, x[0] IS NULL;
          Output: x.edges, x."end"
          ->  Seq Scan on t.person a
                Output: a.id, a.properties
-               Filter: (a.properties.'id'::text = '1'::jsonb)
+               Filter: (a.properties.'id' = '1'::jsonb)
          ->  Subquery Scan on x
                Output: x.start, x."end", x.ids, x.edges
                ->  Graph VLE on knows [1..2]
@@ -2771,7 +2771,7 @@ WHERE x[0] IS NOT NULL RETURN x[0];
          Output: x.edges, x."end"
          ->  Seq Scan on t.person a
                Output: a.id, a.properties
-               Filter: (a.properties.'id'::text = '1'::jsonb)
+               Filter: (a.properties.'id' = '1'::jsonb)
          ->  Subquery Scan on x
                Output: x.start, x."end", x.ids, x.edges
                Filter: (x.edges[1] IS DISTINCT FROM NULL)
@@ -2810,7 +2810,7 @@ SELECT * FROM (
                Output: x.edges, x."end"
                ->  Seq Scan on t.person a
                      Output: a.id, a.properties
-                     Filter: (a.properties.'id'::text = '1'::jsonb)
+                     Filter: (a.properties.'id' = '1'::jsonb)
                ->  Subquery Scan on x
                      Output: x.start, x."end", x.ids, x.edges
                      Filter: (x.edges[1] IS DISTINCT FROM NULL)
@@ -2836,7 +2836,7 @@ SELECT * FROM (
                Output: x_1.edges, x_1."end"
                ->  Seq Scan on t.person a_1
                      Output: a_1.id, a_1.properties
-                     Filter: (a_1.properties.'id'::text = '1'::jsonb)
+                     Filter: (a_1.properties.'id' = '1'::jsonb)
                ->  Subquery Scan on x_1
                      Output: x_1.start, x_1."end", x_1.ids, x_1.edges
                      ->  Graph VLE on knows [1..2]
@@ -2873,7 +2873,7 @@ MATCH (a:person {id: 1})-[:knows*1..2]->(b:person) RETURN count(*);
                Output: "<0000000098>"."end"
                ->  Seq Scan on t.person a
                      Output: a.id, a.properties
-                     Filter: (a.properties.'id'::text = '1'::jsonb)
+                     Filter: (a.properties.'id' = '1'::jsonb)
                ->  Subquery Scan on "<0000000098>"
                      Output: "<0000000098>".start, "<0000000098>"."end", "<0000000098>".ids
                      ->  Graph VLE on knows [1..2]
@@ -2906,7 +2906,7 @@ MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person) RETURN count(x);
                Output: x.edges, x."end"
                ->  Seq Scan on t.person a
                      Output: a.id, a.properties
-                     Filter: (a.properties.'id'::text = '1'::jsonb)
+                     Filter: (a.properties.'id' = '1'::jsonb)
                ->  Subquery Scan on x
                      Output: x.start, x."end", x.ids, x.edges
                      ->  Graph VLE on knows [1..2]
@@ -2939,7 +2939,7 @@ MATCH p = (a:person {id: 1})-[:knows*1..2]->(b:person) RETURN count(p);
                Output: "<0000000099>".vertices, "<0000000099>".edges, "<0000000099>"."end"
                ->  Seq Scan on t.person a
                      Output: a.id, a.properties
-                     Filter: (a.properties.'id'::text = '1'::jsonb)
+                     Filter: (a.properties.'id' = '1'::jsonb)
                ->  Subquery Scan on "<0000000099>"
                      Output: "<0000000099>".start, "<0000000099>"."end", "<0000000099>".ids, "<0000000099>".edges, "<0000000099>".vertices
                      ->  Graph VLE on knows [1..2]
@@ -3814,8 +3814,8 @@ MATCH (a:repo) WHERE exists((a)-[:lib]->(:repo {year: 2016})) RETURN a.name AS n
 (1 row)
 
 EXPLAIN (costs off) MATCH (a:repo) WHERE exists((a)-[:lib]->(:repo {year: 2016})) RETURN a.name AS name;
-                                 QUERY PLAN                                  
------------------------------------------------------------------------------
+                              QUERY PLAN                               
+-----------------------------------------------------------------------
  Nested Loop
    ->  HashAggregate
          Group Key: "<0000000236>".start
@@ -3824,7 +3824,7 @@ EXPLAIN (costs off) MATCH (a:repo) WHERE exists((a)-[:lib]->(:repo {year: 2016})
                ->  Seq Scan on lib "<0000000236>"
                ->  Hash
                      ->  Seq Scan on repo "<0000000237>"
-                           Filter: (properties.'year'::text = '2016'::jsonb)
+                           Filter: (properties.'year' = '2016'::jsonb)
    ->  Index Scan using repo_pkey on repo a
          Index Cond: (id = "<0000000236>".start)
 (11 rows)
@@ -5077,7 +5077,7 @@ CREATE CONSTRAINT ON city ASSERT name IS UNIQUE;
 MATCH (a:person)
 MERGE (a)-[:hometown]->(b:city {name: a.bornin});
 ERROR:  conflicting key value violates exclusion constraint "city_unique_constraint"
-DETAIL:  Key ((properties.'name'::text))=("san jose") conflicts with existing key ((properties.'name'::text))=("san jose").
+DETAIL:  Key ((properties.'name'))=("san jose") conflicts with existing key ((properties.'name'))=("san jose").
 MATCH (a:city) DETACH DELETE a;
 -- unspecified direction
 CREATE (a {id: 2}), (b {id: 1});
@@ -5645,12 +5645,12 @@ CREATE (:p {g:'a', v:10}); CREATE (:p {g:'a', v:20});
 CREATE (:p {g:'b', v:5}); CREATE (:p {g:'c'});
 -- the sort key is the native count(*), not cypher_to_jsonb(count(*))
 EXPLAIN (COSTS OFF) MATCH (n:p) RETURN n.g AS g, count(*) AS c ORDER BY c DESC;
-                QUERY PLAN                 
--------------------------------------------
+             QUERY PLAN              
+-------------------------------------
  Sort
    Sort Key: (count(*)) DESC
    ->  HashAggregate
-         Group Key: n.properties.'g'::text
+         Group Key: n.properties.'g'
          ->  Seq Scan on p n
 (5 rows)
 
@@ -7749,19 +7749,19 @@ RETURN generate_series(1, 4) AS s ORDER BY generate_series(1, 4) * -1;
 -- the plan is the one the qualified spelling gives.
 EXPLAIN (COSTS OFF)
 MATCH (p:person) RETURN p.id AS x, p.name AS name ORDER BY x * -1, name;
-                                      QUERY PLAN                                      
---------------------------------------------------------------------------------------
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
  Sort
-   Sort Key: ((p.properties.'id'::text `*` '-1'::jsonb)), (p.properties.'name'::text)
+   Sort Key: ((p.properties.'id' `*` '-1'::jsonb)), (p.properties.'name')
    ->  Seq Scan on person p
 (3 rows)
 
 EXPLAIN (COSTS OFF)
 MATCH (p:person) RETURN p.id AS x, p.name AS name ORDER BY p.id * -1, p.name;
-                                      QUERY PLAN                                      
---------------------------------------------------------------------------------------
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
  Sort
-   Sort Key: ((p.properties.'id'::text `*` '-1'::jsonb)), (p.properties.'name'::text)
+   Sort Key: ((p.properties.'id' `*` '-1'::jsonb)), (p.properties.'name')
    ->  Seq Scan on person p
 (3 rows)
 
@@ -7769,24 +7769,24 @@ MATCH (p:person) RETURN p.id AS x, p.name AS name ORDER BY p.id * -1, p.name;
 -- key that is an expression over it adds one resjunk column and no more.
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (p:person) RETURN p.id AS x ORDER BY x DESC;
-                 QUERY PLAN                 
---------------------------------------------
+              QUERY PLAN              
+--------------------------------------
  Sort
-   Output: (p.properties.'id'::text)
-   Sort Key: (p.properties.'id'::text) DESC
+   Output: (p.properties.'id')
+   Sort Key: (p.properties.'id') DESC
    ->  Seq Scan on sortkeys.person p
-         Output: p.properties.'id'::text
+         Output: p.properties.'id'
 (5 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (p:person) RETURN p.id AS x ORDER BY x * -1;
-                                     QUERY PLAN                                     
-------------------------------------------------------------------------------------
+                               QUERY PLAN                               
+------------------------------------------------------------------------
  Sort
-   Output: (p.properties.'id'::text), ((p.properties.'id'::text `*` '-1'::jsonb))
-   Sort Key: ((p.properties.'id'::text `*` '-1'::jsonb))
+   Output: (p.properties.'id'), ((p.properties.'id' `*` '-1'::jsonb))
+   Sort Key: ((p.properties.'id' `*` '-1'::jsonb))
    ->  Seq Scan on sortkeys.person p
-         Output: p.properties.'id'::text, (p.properties.'id'::text `*` '-1'::jsonb)
+         Output: p.properties.'id', (p.properties.'id' `*` '-1'::jsonb)
 (5 rows)
 
 -- A promoted property reached through an item name keeps its typed column and
@@ -11192,7 +11192,7 @@ MATCH (a:wv)-[r:wk]->(b:wv) DELETE r RETURN b.n;
                                                             QUERY PLAN                                                            
 ----------------------------------------------------------------------------------------------------------------------------------
  Subquery Scan on _agens_default_s
-   Output: (_agens_default_s.b).properties.'n'::text
+   Output: (_agens_default_s.b).properties.'n'
    ->  Graph Delete
          ->  Subquery Scan on _agens_default_s
                Output: NULL::vertex, NULL::edge, b
@@ -11492,4 +11492,96 @@ drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel t
 drop cascades to elabel e
+--
+-- what a definition holding a graph expression prints can be read back
+--
+CREATE GRAPH viewdef;
+SET graph_path = viewdef;
+CREATE VLABEL person;
+CREATE (:person {name: 'Alice', addr: {city: 'Seoul'}});
+CREATE (:person {name: 'Bob', addr: {city: 'Busan'}});
+-- a view over a property read, and the same view built from what it prints
+CREATE VIEW v AS SELECT * FROM (MATCH (n:person) RETURN n.name AS name) q;
+SELECT pg_get_viewdef('v'::regclass, true);
+                            pg_get_viewdef                             
+-----------------------------------------------------------------------
+  SELECT name                                                         +
+    FROM ( SELECT (_agens_default_s.n).properties.'name' AS name      +
+            FROM ( SELECT ROW(n.id, n.properties, n.ctid)::vertex AS n+
+                    FROM viewdef.person n) _agens_default_s) q;
+(1 row)
+
+CREATE VIEW v_reloaded AS
+ SELECT name
+   FROM ( SELECT (_agens_default_s.n).properties.'name' AS name
+           FROM ( SELECT ROW(n.id, n.properties, n.ctid)::vertex AS n
+                   FROM viewdef.person n) _agens_default_s) q;
+SELECT name FROM v ORDER BY name;
+  name   
+---------
+ "Alice"
+ "Bob"
+(2 rows)
+
+SELECT name FROM v_reloaded ORDER BY name;
+  name   
+---------
+ "Alice"
+ "Bob"
+(2 rows)
+
+-- the same column type on both sides, so the reload is the view it printed
+SELECT c.relname, format_type(a.atttypid, a.atttypmod) AS type
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname IN ('v', 'v_reloaded') AND a.attnum > 0
+ORDER BY c.relname;
+  relname   | type  
+------------+-------
+ v          | jsonb
+ v_reloaded | jsonb
+(2 rows)
+
+-- a path of more than one key
+CREATE VIEW vn AS SELECT * FROM (MATCH (n:person) RETURN n.addr.city AS city) q;
+SELECT pg_get_viewdef('vn'::regclass, true);
+                             pg_get_viewdef                             
+------------------------------------------------------------------------
+  SELECT city                                                          +
+    FROM ( SELECT (_agens_default_s.n).properties.'addr'.'city' AS city+
+            FROM ( SELECT ROW(n.id, n.properties, n.ctid)::vertex AS n +
+                    FROM viewdef.person n) _agens_default_s) q;
+(1 row)
+
+-- a key read from a map that a column holds, rather than from an element
+CREATE VIEW vb AS
+SELECT * FROM (MATCH (n:person) WITH properties(n) AS p RETURN p.name AS r) q;
+SELECT pg_get_viewdef('vb'::regclass, true);
+                                       pg_get_viewdef                                       
+--------------------------------------------------------------------------------------------
+  SELECT r                                                                                 +
+    FROM ( SELECT _agens_default_s.p.'name' AS r                                           +
+            FROM ( SELECT (_agens_default_s_1.n).properties AS p                           +
+                    FROM ( SELECT ROW(n.id, n.properties, n.ctid)::vertex AS n             +
+                            FROM viewdef.person n) _agens_default_s_1) _agens_default_s) q;
+(1 row)
+
+-- a quoted key reads a map, and says so when what it is given is not one
+SELECT (42).'k';
+ERROR:  map is expected but integer
+LINE 1: SELECT (42).'k';
+                ^
+SELECT ('abc'::text).'k';
+ERROR:  map is expected but text
+LINE 1: SELECT ('abc'::text).'k';
+                ^
+DROP VIEW v_reloaded;
+DROP VIEW vb;
+DROP VIEW vn;
+DROP VIEW v;
+DROP GRAPH viewdef CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence viewdef.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
 RESET graph_path;

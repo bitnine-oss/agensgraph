@@ -4384,4 +4384,50 @@ MATCH (a:t)-[:e]->(:t {k: a.name}) RETURN count(*) AS by_name;
 MATCH (a:t)-[:e]->(:t {k: a}) RETURN count(*) AS by_element;
 
 DROP GRAPH elem_value CASCADE;
+
+--
+-- what a definition holding a graph expression prints can be read back
+--
+
+CREATE GRAPH viewdef;
+SET graph_path = viewdef;
+
+CREATE VLABEL person;
+CREATE (:person {name: 'Alice', addr: {city: 'Seoul'}});
+CREATE (:person {name: 'Bob', addr: {city: 'Busan'}});
+
+-- a view over a property read, and the same view built from what it prints
+CREATE VIEW v AS SELECT * FROM (MATCH (n:person) RETURN n.name AS name) q;
+SELECT pg_get_viewdef('v'::regclass, true);
+CREATE VIEW v_reloaded AS
+ SELECT name
+   FROM ( SELECT (_agens_default_s.n).properties.'name' AS name
+           FROM ( SELECT ROW(n.id, n.properties, n.ctid)::vertex AS n
+                   FROM viewdef.person n) _agens_default_s) q;
+SELECT name FROM v ORDER BY name;
+SELECT name FROM v_reloaded ORDER BY name;
+-- the same column type on both sides, so the reload is the view it printed
+SELECT c.relname, format_type(a.atttypid, a.atttypmod) AS type
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname IN ('v', 'v_reloaded') AND a.attnum > 0
+ORDER BY c.relname;
+
+-- a path of more than one key
+CREATE VIEW vn AS SELECT * FROM (MATCH (n:person) RETURN n.addr.city AS city) q;
+SELECT pg_get_viewdef('vn'::regclass, true);
+
+-- a key read from a map that a column holds, rather than from an element
+CREATE VIEW vb AS
+SELECT * FROM (MATCH (n:person) WITH properties(n) AS p RETURN p.name AS r) q;
+SELECT pg_get_viewdef('vb'::regclass, true);
+
+-- a quoted key reads a map, and says so when what it is given is not one
+SELECT (42).'k';
+SELECT ('abc'::text).'k';
+
+DROP VIEW v_reloaded;
+DROP VIEW vb;
+DROP VIEW vn;
+DROP VIEW v;
+DROP GRAPH viewdef CASCADE;
 RESET graph_path;

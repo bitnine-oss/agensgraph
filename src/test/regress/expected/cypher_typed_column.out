@@ -182,10 +182,10 @@ CREATE PROPERTY INDEX ON rel (weight);     -- promoted edge column
 SELECT indexname, indexdef FROM pg_indexes
  WHERE schemaname = 'tc' AND indexname IN ('doc_age_idx','doc_city_idx','mixed_mixedkey_idx')
  ORDER BY indexname;
-     indexname      |                                  indexdef                                   
---------------------+-----------------------------------------------------------------------------
+     indexname      |                               indexdef                                
+--------------------+-----------------------------------------------------------------------
  doc_age_idx        | CREATE INDEX doc_age_idx ON tc.doc USING btree (age)
- doc_city_idx       | CREATE INDEX doc_city_idx ON tc.doc USING btree ((properties.'city'::text))
+ doc_city_idx       | CREATE INDEX doc_city_idx ON tc.doc USING btree ((properties.'city'))
  mixed_mixedkey_idx | CREATE INDEX mixed_mixedkey_idx ON tc.mixed USING btree (v)
 (3 rows)
 
@@ -208,7 +208,7 @@ Indexes:
     "doc_active_idx" btree (active)
     "doc_age_idx" btree (age)
     "doc_big_idx" btree (big)
-    "doc_city_idx" btree ((properties.'city'::text))
+    "doc_city_idx" btree ((properties.'city'))
     "doc_ratio_idx" btree (ratio)
     "doc_score_idx" btree (score)
     "doc_title_idx" btree (title)
@@ -390,10 +390,10 @@ MATCH (a:doc)-[e:rel]->(b:doc) RETURN e.weight;
 SET enable_seqscan = on;
 EXPLAIN (COSTS OFF)
 MATCH (n:plain) WHERE n.age > 25 RETURN n.age;
-                    QUERY PLAN                    
---------------------------------------------------
+                 QUERY PLAN                 
+--------------------------------------------
  Seq Scan on plain n
-   Filter: (properties.'age'::text > '25'::jsonb)
+   Filter: (properties.'age' > '25'::jsonb)
 (2 rows)
 
 SET enable_seqscan = off;
@@ -401,23 +401,23 @@ SET enable_seqscan = off;
 --     n.id is the property "id", not the relation's graphid id column.
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (n:doc) WHERE n.id = 5 RETURN n.age;
-                    QUERY PLAN                    
---------------------------------------------------
+                 QUERY PLAN                 
+--------------------------------------------
  Seq Scan on tc.doc n
    Disabled: true
    Output: n.age
-   Filter: (n.properties.'id'::text = '5'::jsonb)
+   Filter: (n.properties.'id' = '5'::jsonb)
 (4 rows)
 
 -- 2j. Baseline: with promotion off, a promoted key falls back to the jsonb bag.
 SET enable_property_promotion = off;
 EXPLAIN (COSTS OFF)
 MATCH (n:doc) WHERE n.age = 40 RETURN n.title;
-                    QUERY PLAN                    
---------------------------------------------------
+                 QUERY PLAN                 
+--------------------------------------------
  Seq Scan on doc n
    Disabled: true
-   Filter: (properties.'age'::text = '40'::jsonb)
+   Filter: (properties.'age' = '40'::jsonb)
 (3 rows)
 
 SET enable_property_promotion = on;
@@ -467,12 +467,12 @@ MATCH (n:mixed) WHERE n.mixedkey > 6 RETURN n.name;
 --     expression and does not bind the generated column.
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (n:derived) WHERE n.net > 5 RETURN n.name;
-                    QUERY PLAN                     
----------------------------------------------------
+                 QUERY PLAN                  
+---------------------------------------------
  Seq Scan on tc.derived n
    Disabled: true
-   Output: n.properties.'name'::text
-   Filter: (n.properties.'net'::text > '5'::jsonb)
+   Output: n.properties.'name'
+   Filter: (n.properties.'net' > '5'::jsonb)
 (4 rows)
 
 -- 2o. An ORDER BY key that names a RETURN item costs no more than spelling the
@@ -1722,10 +1722,10 @@ MATCH (n:idp) WHERE n.id = 5 RETURN n.name AS name ORDER BY name;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (n:idp) WHERE n.id = 5 RETURN n.name AS name;
-             QUERY PLAN              
--------------------------------------
+          QUERY PLAN           
+-------------------------------
  Seq Scan on tc.idp n
-   Output: n.properties.'name'::text
+   Output: n.properties.'name'
    Filter: (n.uid = 5)
 (3 rows)
 
@@ -2404,11 +2404,11 @@ MATCH (n:gintc {age: 5}) RETURN count(*) AS c;
 
 -- a key that is not promoted keeps the containment test
 EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:gintc {city: 'x'}) RETURN id(n);
-                                             QUERY PLAN                                              
------------------------------------------------------------------------------------------------------
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
  Seq Scan on tc.gintc n
    Output: n.id
-   Filter: ((n.properties @> '{"city": "x"}'::jsonb) AND (n.properties.'city'::text = '"x"'::jsonb))
+   Filter: ((n.properties @> '{"city": "x"}'::jsonb) AND (n.properties.'city' = '"x"'::jsonb))
 (3 rows)
 
 MATCH (n:gintc {city: 'x'}) RETURN count(*) AS c;
@@ -2483,27 +2483,27 @@ CREATE (:ginrow {nm: 'r6', age: 5});
 -- because its bag key can still be served by an index.
 SET enable_property_promotion = on;
 EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {age: 5}) RETURN n.nm;
-            QUERY PLAN             
------------------------------------
+         QUERY PLAN          
+-----------------------------
  Seq Scan on tc.ginrow n
-   Output: n.properties.'nm'::text
+   Output: n.properties.'nm'
    Filter: (n.age = 5)
 (3 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {city: 'x'}) RETURN n.nm;
-                      QUERY PLAN                      
-------------------------------------------------------
+                   QUERY PLAN                   
+------------------------------------------------
  Seq Scan on tc.ginrow n
-   Output: n.properties.'nm'::text
-   Filter: (n.properties.'city'::text = '"x"'::jsonb)
+   Output: n.properties.'nm'
+   Filter: (n.properties.'city' = '"x"'::jsonb)
 (3 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm;
-                               QUERY PLAN                               
-------------------------------------------------------------------------
+                            QUERY PLAN                            
+------------------------------------------------------------------
  Seq Scan on tc.ginrow n
-   Output: n.properties.'nm'::text
-   Filter: ((n.age = 5) AND (n.properties.'city'::text = '"x"'::jsonb))
+   Output: n.properties.'nm'
+   Filter: ((n.age = 5) AND (n.properties.'city' = '"x"'::jsonb))
 (3 rows)
 
 MATCH (n:ginrow {age: 5}) RETURN n.nm AS nm ORDER BY nm;
@@ -2557,27 +2557,27 @@ MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm AS nm ORDER BY nm;
 CREATE INDEX ginrow_gin ON tc.ginrow USING gin (properties);
 SET enable_property_promotion = on;
 EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {age: 5}) RETURN n.nm;
-            QUERY PLAN             
------------------------------------
+         QUERY PLAN          
+-----------------------------
  Seq Scan on tc.ginrow n
-   Output: n.properties.'nm'::text
+   Output: n.properties.'nm'
    Filter: (n.age = 5)
 (3 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {city: 'x'}) RETURN n.nm;
-                                             QUERY PLAN                                              
------------------------------------------------------------------------------------------------------
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
  Seq Scan on tc.ginrow n
-   Output: n.properties.'nm'::text
-   Filter: ((n.properties @> '{"city": "x"}'::jsonb) AND (n.properties.'city'::text = '"x"'::jsonb))
+   Output: n.properties.'nm'
+   Filter: ((n.properties @> '{"city": "x"}'::jsonb) AND (n.properties.'city' = '"x"'::jsonb))
 (3 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm;
-                                                          QUERY PLAN                                                           
--------------------------------------------------------------------------------------------------------------------------------
+                                                       QUERY PLAN                                                        
+-------------------------------------------------------------------------------------------------------------------------
  Seq Scan on tc.ginrow n
-   Output: n.properties.'nm'::text
-   Filter: ((n.properties @> '{"age": 5, "city": "x"}'::jsonb) AND (n.age = 5) AND (n.properties.'city'::text = '"x"'::jsonb))
+   Output: n.properties.'nm'
+   Filter: ((n.properties @> '{"age": 5, "city": "x"}'::jsonb) AND (n.age = 5) AND (n.properties.'city' = '"x"'::jsonb))
 (3 rows)
 
 MATCH (n:ginrow {age: 5}) RETURN n.nm AS nm ORDER BY nm;
@@ -2633,9 +2633,9 @@ EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {city: 'x'}) RETURN n.nm;
                           QUERY PLAN                          
 --------------------------------------------------------------
  Bitmap Heap Scan on tc.ginrow n
-   Output: n.properties.'nm'::text
+   Output: n.properties.'nm'
    Recheck Cond: (n.properties @> '{"city": "x"}'::jsonb)
-   Filter: (n.properties.'city'::text = '"x"'::jsonb)
+   Filter: (n.properties.'city' = '"x"'::jsonb)
    ->  Bitmap Index Scan on ginrow_gin
          Index Cond: (n.properties @> '{"city": "x"}'::jsonb)
 (6 rows)
@@ -2656,19 +2656,19 @@ DROP INDEX tc.ginrow_gin;
 CREATE INDEX ginrow_other_gin ON tc.ginother USING gin (properties);
 SET enable_property_promotion = on;
 EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {age: 5}) RETURN n.nm;
-            QUERY PLAN             
------------------------------------
+         QUERY PLAN          
+-----------------------------
  Seq Scan on tc.ginrow n
-   Output: n.properties.'nm'::text
+   Output: n.properties.'nm'
    Filter: (n.age = 5)
 (3 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF) MATCH (n:ginrow {age: 5, city: 'x'}) RETURN n.nm;
-                               QUERY PLAN                               
-------------------------------------------------------------------------
+                            QUERY PLAN                            
+------------------------------------------------------------------
  Seq Scan on tc.ginrow n
-   Output: n.properties.'nm'::text
-   Filter: ((n.age = 5) AND (n.properties.'city'::text = '"x"'::jsonb))
+   Output: n.properties.'nm'
+   Filter: ((n.age = 5) AND (n.properties.'city' = '"x"'::jsonb))
 (3 rows)
 
 MATCH (n:ginrow {age: 5}) RETURN n.nm AS nm ORDER BY nm;
@@ -2751,11 +2751,11 @@ MATCH ()-[r:gine {weight: 3}]->() RETURN count(*) AS c;
 
 -- a key the edge reads from the bag: kept
 EXPLAIN (VERBOSE, COSTS OFF) MATCH ()-[r:gine {kind: 'k'}]->() RETURN id(r);
-                      QUERY PLAN                      
-------------------------------------------------------
+                   QUERY PLAN                   
+------------------------------------------------
  Seq Scan on tc.gine r
    Output: r.id
-   Filter: (r.properties.'kind'::text = '"k"'::jsonb)
+   Filter: (r.properties.'kind' = '"k"'::jsonb)
 (3 rows)
 
 MATCH ()-[r:gine {kind: 'k'}]->() RETURN count(*) AS c;
@@ -4000,10 +4000,10 @@ SELECT count(*) AS idx_rows FROM pg_indexes
 
 EXPLAIN (COSTS OFF)
 MATCH (n:altlbl) WHERE n.age > 25 RETURN n.name;
-                    QUERY PLAN                    
---------------------------------------------------
+                 QUERY PLAN                 
+--------------------------------------------
  Seq Scan on altlbl n
-   Filter: (properties.'age'::text > '25'::jsonb)
+   Filter: (properties.'age' > '25'::jsonb)
 (2 rows)
 
 MATCH (n:altlbl) RETURN n.name AS name, n.age AS age ORDER BY name;
@@ -5955,10 +5955,10 @@ MATCH (n:doc) WHERE exists(n.age) RETURN count(*);
 -- a key the label does not promote still reads the property map
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (n:doc) RETURN n['name'];
-             QUERY PLAN              
--------------------------------------
+          QUERY PLAN           
+-------------------------------
  Seq Scan on tc.doc n
-   Output: n.properties.'name'::text
+   Output: n.properties.'name'
 (2 rows)
 
 -- a subscript that is not a literal string names no property
@@ -6170,16 +6170,16 @@ EXPLAIN (COSTS OFF) MATCH (n:pr_has) WHERE n.age = 30 RETURN n.age;
 
 -- reading from above it, only the label with the column is rewritten
 EXPLAIN (COSTS OFF) MATCH (n:pr_top) WHERE n.age = 30 RETURN 1;
-                          QUERY PLAN                          
---------------------------------------------------------------
+                       QUERY PLAN                       
+--------------------------------------------------------
  Result
    ->  Append
          ->  Seq Scan on pr_top n_1
-               Filter: (properties.'age'::text = '30'::jsonb)
+               Filter: (properties.'age' = '30'::jsonb)
          ->  Seq Scan on pr_has n_2
                Filter: (age = 30)
          ->  Seq Scan on pr_hasnt n_3
-               Filter: (properties.'age'::text = '30'::jsonb)
+               Filter: (properties.'age' = '30'::jsonb)
 (8 rows)
 
 -- and the answers are what reading the property map gives
@@ -6207,16 +6207,16 @@ MATCH (n:pr_top) WHERE n.age > 30 RETURN n.age;
 
 -- a key no label holds in a column is left alone everywhere
 EXPLAIN (COSTS OFF) MATCH (n:pr_top) WHERE n.other = 1 RETURN 1;
-                          QUERY PLAN                           
----------------------------------------------------------------
+                       QUERY PLAN                        
+---------------------------------------------------------
  Result
    ->  Append
          ->  Seq Scan on pr_top n_1
-               Filter: (properties.'other'::text = '1'::jsonb)
+               Filter: (properties.'other' = '1'::jsonb)
          ->  Seq Scan on pr_has n_2
-               Filter: (properties.'other'::text = '1'::jsonb)
+               Filter: (properties.'other' = '1'::jsonb)
          ->  Seq Scan on pr_hasnt n_3
-               Filter: (properties.'other'::text = '1'::jsonb)
+               Filter: (properties.'other' = '1'::jsonb)
 (8 rows)
 
 DROP GRAPH perrel_g CASCADE;
@@ -6250,77 +6250,77 @@ ANALYZE cmp_g.c_has;
 SET enable_seqscan = off;
 -- equality reaches the column's index
 EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.age = 30 RETURN 1;
-                          QUERY PLAN                          
---------------------------------------------------------------
+                        QUERY PLAN                        
+----------------------------------------------------------
  Result
    ->  Append
          ->  Seq Scan on c_top n_1
                Disabled: true
-               Filter: (properties.'age'::text = '30'::jsonb)
+               Filter: (properties.'age' = '30'::jsonb)
          ->  Index Only Scan using c_has_age on c_has n_2
                Index Cond: (age = 30)
          ->  Seq Scan on c_hasnt n_3
                Disabled: true
-               Filter: (properties.'age'::text = '30'::jsonb)
+               Filter: (properties.'age' = '30'::jsonb)
 (10 rows)
 
 RESET enable_seqscan;
 -- an ordering comparison on a column with no collation is taken over too
 EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.age > 25 RETURN 1;
-                          QUERY PLAN                          
---------------------------------------------------------------
+                       QUERY PLAN                       
+--------------------------------------------------------
  Result
    ->  Append
          ->  Seq Scan on c_top n_1
-               Filter: (properties.'age'::text > '25'::jsonb)
+               Filter: (properties.'age' > '25'::jsonb)
          ->  Seq Scan on c_has n_2
                Filter: (age > 25)
          ->  Seq Scan on c_hasnt n_3
-               Filter: (properties.'age'::text > '25'::jsonb)
+               Filter: (properties.'age' > '25'::jsonb)
 (8 rows)
 
 -- as is "not equal", through the operator equality negates to
 EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.age <> 30 RETURN 1;
-                          QUERY PLAN                           
----------------------------------------------------------------
+                       QUERY PLAN                        
+---------------------------------------------------------
  Result
    ->  Append
          ->  Seq Scan on c_top n_1
-               Filter: (properties.'age'::text <> '30'::jsonb)
+               Filter: (properties.'age' <> '30'::jsonb)
          ->  Seq Scan on c_has n_2
                Filter: (age <> 30)
          ->  Seq Scan on c_hasnt n_3
-               Filter: (properties.'age'::text <> '30'::jsonb)
+               Filter: (properties.'age' <> '30'::jsonb)
 (8 rows)
 
 -- text compares equal in the column's terms
 EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.nm = 'bob' RETURN 1;
-                           QUERY PLAN                           
-----------------------------------------------------------------
+                        QUERY PLAN                        
+----------------------------------------------------------
  Result
    ->  Append
          ->  Seq Scan on c_top n_1
-               Filter: (properties.'nm'::text = '"bob"'::jsonb)
+               Filter: (properties.'nm' = '"bob"'::jsonb)
          ->  Seq Scan on c_has n_2
                Filter: (nm = 'bob'::text)
          ->  Seq Scan on c_hasnt n_3
-               Filter: (properties.'nm'::text = '"bob"'::jsonb)
+               Filter: (properties.'nm' = '"bob"'::jsonb)
 (8 rows)
 
 -- ordering text is taken over as well.  A promoted property compares as the
 -- column holds it, which is what reading it directly off the label already
 -- does, so an ancestor has to answer the same way a descendant does.
 EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.nm > 'amy' RETURN 1;
-                           QUERY PLAN                           
-----------------------------------------------------------------
+                        QUERY PLAN                        
+----------------------------------------------------------
  Result
    ->  Append
          ->  Seq Scan on c_top n_1
-               Filter: (properties.'nm'::text > '"amy"'::jsonb)
+               Filter: (properties.'nm' > '"amy"'::jsonb)
          ->  Seq Scan on c_has n_2
                Filter: (nm > 'amy'::text)
          ->  Seq Scan on c_hasnt n_3
-               Filter: (properties.'nm'::text > '"amy"'::jsonb)
+               Filter: (properties.'nm' > '"amy"'::jsonb)
 (8 rows)
 
 EXPLAIN (COSTS OFF) MATCH (n:c_has) WHERE n.nm > 'amy' RETURN 1;
@@ -6332,30 +6332,30 @@ EXPLAIN (COSTS OFF) MATCH (n:c_has) WHERE n.nm > 'amy' RETURN 1;
 
 -- a value the column cannot hold exactly is left alone
 EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.age = 30.5 RETURN 1;
-                           QUERY PLAN                           
-----------------------------------------------------------------
+                          QUERY PLAN                          
+--------------------------------------------------------------
  Result
    ->  Append
          ->  Seq Scan on c_top n_1
-               Filter: (properties.'age'::text = '30.5'::jsonb)
+               Filter: (properties.'age' = '30.5'::jsonb)
          ->  Seq Scan on c_has n_2
                Filter: (cypher_to_jsonb(age) = '30.5'::jsonb)
          ->  Seq Scan on c_hasnt n_3
-               Filter: (properties.'age'::text = '30.5'::jsonb)
+               Filter: (properties.'age' = '30.5'::jsonb)
 (8 rows)
 
 -- as is one of another kind entirely
 EXPLAIN (COSTS OFF) MATCH (n:c_top) WHERE n.age = 'x' RETURN 1;
-                          QUERY PLAN                           
----------------------------------------------------------------
+                         QUERY PLAN                          
+-------------------------------------------------------------
  Result
    ->  Append
          ->  Seq Scan on c_top n_1
-               Filter: (properties.'age'::text = '"x"'::jsonb)
+               Filter: (properties.'age' = '"x"'::jsonb)
          ->  Seq Scan on c_has n_2
                Filter: (cypher_to_jsonb(age) = '"x"'::jsonb)
          ->  Seq Scan on c_hasnt n_3
-               Filter: (properties.'age'::text = '"x"'::jsonb)
+               Filter: (properties.'age' = '"x"'::jsonb)
 (8 rows)
 
 -- every one of them answers what reading the property map answers
@@ -6559,21 +6559,21 @@ MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.age = 30 AND c = 1 RETURN count(*
 -- reading from above the label that holds the column settles each relation on
 -- its own, after such a clause as before it
 EXPLAIN (COSTS OFF) MATCH (n:co_top) WHERE n.age = 30 RETURN 1;
-                          QUERY PLAN                          
---------------------------------------------------------------
+                       QUERY PLAN                       
+--------------------------------------------------------
  Result
    ->  Append
          ->  Seq Scan on co_top n_1
-               Filter: (properties.'age'::text = '30'::jsonb)
+               Filter: (properties.'age' = '30'::jsonb)
          ->  Seq Scan on co_has n_2
                Filter: (age = 30)
          ->  Seq Scan on co_hasnt n_3
-               Filter: (properties.'age'::text = '30'::jsonb)
+               Filter: (properties.'age' = '30'::jsonb)
 (8 rows)
 
 EXPLAIN (COSTS OFF) MATCH (n:co_top) WITH n, count(*) AS c WHERE n.age = 30 RETURN 1;
-                                QUERY PLAN                                
---------------------------------------------------------------------------
+                             QUERY PLAN                             
+--------------------------------------------------------------------
  Subquery Scan on _agens_default_s
    ->  GroupAggregate
          Group Key: n.id
@@ -6581,22 +6581,22 @@ EXPLAIN (COSTS OFF) MATCH (n:co_top) WITH n, count(*) AS c WHERE n.age = 30 RETU
                Sort Key: n.id
                ->  Append
                      ->  Seq Scan on co_top n_1
-                           Filter: (properties.'age'::text = '30'::jsonb)
+                           Filter: (properties.'age' = '30'::jsonb)
                      ->  Seq Scan on co_has n_2
                            Filter: (age = 30)
                      ->  Seq Scan on co_hasnt n_3
-                           Filter: (properties.'age'::text = '30'::jsonb)
+                           Filter: (properties.'age' = '30'::jsonb)
 (12 rows)
 
 -- a key no label holds in a column is left on the property map
 EXPLAIN (COSTS OFF) MATCH (n:co_doc) WITH n, count(*) AS c WHERE n.other = 1 RETURN count(*);
-                          QUERY PLAN                           
----------------------------------------------------------------
+                       QUERY PLAN                        
+---------------------------------------------------------
  Aggregate
    ->  HashAggregate
          Group Key: n.id
          ->  Seq Scan on co_doc n
-               Filter: (properties.'other'::text = '1'::jsonb)
+               Filter: (properties.'other' = '1'::jsonb)
 (5 rows)
 
 -- a LIMIT has already chosen the rows, so what follows it is not read from the
@@ -7057,8 +7057,8 @@ EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (s:town {nm: 'a'}), (t:town {nm: 'e'}),
       p = dijkstra((s)-[e:road]->(t), e.toll)
 RETURN 1;
-                                                 QUERY PLAN                                                 
-------------------------------------------------------------------------------------------------------------
+                                              QUERY PLAN                                              
+------------------------------------------------------------------------------------------------------
  Nested Loop
    Output: '1'::jsonb
    ->  Index Scan using town_nm_idx on dij_g.town t
@@ -7069,9 +7069,9 @@ RETURN 1;
                Output: s.id, s.properties, s.ctid
                Index Cond: (s.nm = 'a'::text)
          ->  Dijkstra
-               Output: dijkstra_vids(), dijkstra_eids(), ((road.properties.'toll'::text)::double precision)
+               Output: dijkstra_vids(), dijkstra_eids(), ((road.properties.'toll')::double precision)
                ->  Result
-                     Output: (road.properties.'toll'::text)::double precision, road."end", road.id
+                     Output: (road.properties.'toll')::double precision, road."end", road.id
                      ->  Append
                            ->  Index Scan using road_start_idx on dij_g.road road_1
                                  Output: road_1.properties, road_1."end", road_1.id

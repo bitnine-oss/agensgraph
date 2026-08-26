@@ -25,6 +25,8 @@ extern Node *transformCypherMapForSet(ParseState *pstate, Node *expr,
 extern Node *coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp,
 						 int32 otypmod, CoercionContext cctx,
 						 CoercionForm cform, int loc);
+extern Node *filterAccessArg(ParseState *pstate, Node *expr, int location,
+							 const char *types);
 
 /* clause functions */
 extern Node *transformCypherWhere(ParseState *pstate, Node *clause,
