@@ -4430,4 +4430,33 @@ DROP VIEW vb;
 DROP VIEW vn;
 DROP VIEW v;
 DROP GRAPH viewdef CASCADE;
+
+--
+-- a word that also names a clause, used as a name
+--
+
+CREATE GRAPH kwname;
+SET graph_path = kwname;
+
+CREATE VLABEL person;
+CREATE (:person {name: 'Alice'});
+CREATE (:person {name: 'Bob'});
+
+-- "insert" names a variable, and the same name reads it back
+MATCH (insert:person) RETURN insert.name AS name ORDER BY name;
+MATCH (p:person) RETURN p.name AS insert ORDER BY insert;
+
+-- and names a label, as does "finish"
+MATCH (n:insert) RETURN count(*) AS c;
+MATCH (n:finish) RETURN count(*) AS c;
+
+-- the clauses these words name are unaffected
+INSERT (:person {name: 'Ada'});
+MATCH (n:person) FINISH;
+
+-- a word whose clause can begin where the name would stand stays reserved
+MATCH (finish:person) RETURN 1;
+MATCH (let:person) RETURN 1;
+
+DROP GRAPH kwname CASCADE;
 RESET graph_path;

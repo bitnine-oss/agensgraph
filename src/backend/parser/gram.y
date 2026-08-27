@@ -21704,6 +21704,8 @@ cypher_expr_varname:
 							 parser_errposition(@1)));
 				}
 			}
+			/* a clause this word also names cannot begin here */
+			| INSERT						{ $$ = pstrdup($1); }
 		;
 
 cypher_expr_propref_strict:
@@ -22093,6 +22095,9 @@ cypher_label_opt:
 
 cypher_labelname:
 			ColId
+			/* a clause these words also name cannot begin here */
+			| FINISH						{ $$ = pstrdup($1); }
+			| INSERT						{ $$ = pstrdup($1); }
 		;
 
 cypher_rel_left:

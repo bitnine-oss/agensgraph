@@ -11584,4 +11584,61 @@ DETAIL:  drop cascades to sequence viewdef.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel person
+--
+-- a word that also names a clause, used as a name
+--
+CREATE GRAPH kwname;
+SET graph_path = kwname;
+CREATE VLABEL person;
+CREATE (:person {name: 'Alice'});
+CREATE (:person {name: 'Bob'});
+-- "insert" names a variable, and the same name reads it back
+MATCH (insert:person) RETURN insert.name AS name ORDER BY name;
+  name   
+---------
+ "Alice"
+ "Bob"
+(2 rows)
+
+MATCH (p:person) RETURN p.name AS insert ORDER BY insert;
+ insert  
+---------
+ "Alice"
+ "Bob"
+(2 rows)
+
+-- and names a label, as does "finish"
+MATCH (n:insert) RETURN count(*) AS c;
+ c 
+---
+ 0
+(1 row)
+
+MATCH (n:finish) RETURN count(*) AS c;
+ c 
+---
+ 0
+(1 row)
+
+-- the clauses these words name are unaffected
+INSERT (:person {name: 'Ada'});
+MATCH (n:person) FINISH;
+--
+(0 rows)
+
+-- a word whose clause can begin where the name would stand stays reserved
+MATCH (finish:person) RETURN 1;
+ERROR:  syntax error at or near "finish"
+LINE 1: MATCH (finish:person) RETURN 1;
+               ^
+MATCH (let:person) RETURN 1;
+ERROR:  syntax error at or near "let"
+LINE 1: MATCH (let:person) RETURN 1;
+               ^
+DROP GRAPH kwname CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence kwname.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
 RESET graph_path;
