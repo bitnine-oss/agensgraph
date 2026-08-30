@@ -38,6 +38,7 @@
 #include "rewrite/rewriteManip.h"
 #include "utils/graph.h"
 #include "utils/lsyscache.h"
+#include "utils/syscache.h"
 
 /*
  * One element of the list passed to query_is_distinct_for_with_collations().
@@ -2796,8 +2797,48 @@ make_graph_labid_clauses(Expr *col, Bitmapset *labids)
 }
 
 /*
- * Restrict every column that held the elided endpoint's id to the endpoint's
- * label, so that the label the endpoint's scan used to test is still tested.
+ * Whether the planner has statistics for the column an expression names, so
+ * that a range on it can be estimated from its histogram.
+ */
+static bool
+graph_column_has_stats(PlannerInfo *root, Expr *col)
+{
+	Var		   *var;
+	RangeTblEntry *rte;
+	HeapTuple	tup;
+
+	if (col && IsA(col, RelabelType))
+		col = ((RelabelType *) col)->arg;
+	if (col == NULL || !IsA(col, Var))
+		return false;
+	var = (Var *) col;
+	if (var->varno <= 0 || var->varno >= root->simple_rel_array_size)
+		return false;
+	rte = root->simple_rte_array[var->varno];
+	if (rte == NULL || rte->rtekind != RTE_RELATION)
+		return false;
+
+	tup = SearchSysCache3(STATRELATTINH,
+						  ObjectIdGetDatum(rte->relid),
+						  Int16GetDatum(var->varattno),
+						  BoolGetDatum(rte->inh));
+	if (!HeapTupleIsValid(tup))
+		return false;
+	ReleaseSysCache(tup);
+	return true;
+}
+
+/*
+ * Restrict every column that holds the endpoint's id to the endpoint's label.
+ * For an endpoint removed as unused this keeps the label test its scan would
+ * have made; for one that stays, it lets an index on the column seek to the
+ * label's stretch of the id order.
+ *
+ * A range on a column without statistics is estimated at a small default,
+ * which would make an edge label look almost empty and everything above it
+ * cheap.  Such a range keeps its use for an index to seek to, but is taken to
+ * keep every row, which is what it does for an edge whose every end has the
+ * label; the histogram decides where there is one.
  */
 static void
 add_graph_endpoint_label_quals(PlannerInfo *root, List *cols, Bitmapset *labids)
@@ -2806,6 +2847,7 @@ add_graph_endpoint_label_quals(PlannerInfo *root, List *cols, Bitmapset *labids)
 
 	foreach(lc, cols)
 	{
+		bool		has_stats = graph_column_has_stats(root, (Expr *) lfirst(lc));
 		ListCell   *lc2;
 
 		foreach(lc2, make_graph_labid_clauses((Expr *) lfirst(lc), labids))
@@ -2819,6 +2861,11 @@ add_graph_endpoint_label_quals(PlannerInfo *root, List *cols, Bitmapset *labids)
 									  false,	/* pseudoconstant */
 									  0,		/* security_level */
 									  NULL, NULL, NULL);
+			if (!has_stats)
+			{
+				rinfo->norm_selec = 1.0;
+				rinfo->outer_selec = 1.0;
+			}
 			distribute_restrictinfo_to_rels(root, rinfo);
 		}
 	}
@@ -3215,4 +3262,119 @@ remove_useless_graph_endpoints(PlannerInfo *root, List *joinlist)
 	}
 
 	return joinlist;
+}
+
+/*
+ * add_graph_endpoint_label_ranges
+ *		Test a labelled endpoint's label on the edge columns that hold its id.
+ *
+ * A node written with a label is joined to its edges on the edge column that
+ * holds the node's id, so every edge row the join keeps has in that column an
+ * id of the node's label -- one stretch of the graph id order.  The join says
+ * so only of the rows it produces: the equality it is built on cannot carry
+ * the fact to the edge's own scan, since an equivalence class propagates
+ * equalities and not the range an equal value lies in.  So the range is added
+ * to the edge's restrictions here.  An index on the column seeks to it, and
+ * what a scan by the column's other key is estimated to find is cut to the
+ * label's share of the edges.  An edge label whose ends span several vertex
+ * labels is otherwise read, and estimated, as if every one of them were
+ * wanted.
+ *
+ * Runs after unused endpoints have been removed, which writes the same tests
+ * for the endpoints it removes; this writes them for the ones that stay.  The
+ * same care applies: the node must be a plain scan of a pattern node joined at
+ * the top level, since a test moved onto an edge under an outer join would
+ * also drop the edge rows the join should have kept without a node.
+ */
+void
+add_graph_endpoint_label_ranges(PlannerInfo *root)
+{
+	int			rti;
+
+	for (rti = 1; rti < root->simple_rel_array_size; rti++)
+	{
+		RelOptInfo *rel = root->simple_rel_array[rti];
+		RangeTblEntry *rte = root->simple_rte_array[rti];
+		Bitmapset  *labids;
+		List	   *cols = NIL;
+		ListCell   *lc;
+		bool		under_join = false;
+
+		if (rel == NULL || rte == NULL || rel->reloptkind != RELOPT_BASEREL)
+			continue;
+		if (rte->rtekind != RTE_RELATION || !OidIsValid(rte->relid))
+			continue;
+		if (!OidIsValid(rte->graphPruneGraph) ||
+			rte->graphPruneRole != GRAPHPRUNE_ROLE_NODE ||
+			rte->graphPruneLabid == InvalidLabid)
+			continue;
+
+		foreach(lc, root->join_info_list)
+		{
+			SpecialJoinInfo *sj = (SpecialJoinInfo *) lfirst(lc);
+
+			if (bms_is_member(rti, sj->syn_lefthand) ||
+				bms_is_member(rti, sj->syn_righthand))
+			{
+				under_join = true;
+				break;
+			}
+		}
+		if (under_join)
+			continue;
+
+		/*
+		 * The edge columns equal to the node's id, by the classes the id is
+		 * in.  A class the node is in by some other column is not about its
+		 * id and says nothing here.
+		 */
+		foreach(lc, root->eq_classes)
+		{
+			EquivalenceClass *ec = (EquivalenceClass *) lfirst(lc);
+			ListCell   *lc2;
+			bool		is_id_class = false;
+			List	   *found = NIL;
+
+			if (ec->ec_has_const || !bms_is_member(rti, ec->ec_relids))
+				continue;
+
+			foreach(lc2, ec->ec_members)
+			{
+				EquivalenceMember *em = (EquivalenceMember *) lfirst(lc2);
+				RangeTblEntry *ert;
+
+				if (bms_is_member(rti, em->em_relids))
+				{
+					is_id_class = em_is_endpoint_id(em, rti);
+					if (!is_id_class)
+						break;
+					continue;
+				}
+				if (bms_membership(em->em_relids) != BMS_SINGLETON)
+					continue;
+				ert = root->simple_rte_array[bms_singleton_member(em->em_relids)];
+				if (ert == NULL || ert->rtekind != RTE_RELATION ||
+					!OidIsValid(ert->graphPruneGraph) ||
+					(ert->graphPruneRole != GRAPHPRUNE_ROLE_DIR_EDGE &&
+					 ert->graphPruneRole != GRAPHPRUNE_ROLE_UNDIR_EDGE))
+					continue;
+				found = lappend(found, em->em_expr);
+			}
+
+			if (is_id_class)
+				cols = list_concat(cols, found);
+			else
+				list_free(found);
+		}
+		if (cols == NIL)
+			continue;
+
+		labids = graph_endpoint_labid_set(rte);
+		if (labids != NULL)
+		{
+			add_graph_endpoint_label_quals(root, cols, labids);
+			bms_free(labids);
+		}
+		list_free(cols);
+	}
 }

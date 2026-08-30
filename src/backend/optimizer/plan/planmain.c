@@ -290,6 +290,14 @@ query_planner(PlannerInfo *root,
 	joinlist = remove_useless_graph_endpoints(root, joinlist);
 
 	/*
+	 * Agensgraph: the endpoints that stay are labelled, and an edge column
+	 * that holds such an endpoint's id can only hold ids of its label.  Say so
+	 * on the edge, where an index can seek to it and the estimate of a scan
+	 * by the edge's other end is cut to the label's share.
+	 */
+	add_graph_endpoint_label_ranges(root);
+
+	/*
 	 * Now expand appendrels by adding "otherrels" for their children.  We
 	 * delay this to the end so that we have as much information as possible
 	 * available for each baserel, including all restriction clauses.  That

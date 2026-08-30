@@ -424,11 +424,11 @@ SET enable_property_promotion = on;
 -- 2k. A promoted EDGE property binds its btree on a directed pattern.
 EXPLAIN (COSTS OFF)
 MATCH (a:doc)-[e:rel]->(b:doc) WHERE e.weight > 5 RETURN a.name;
-                                         QUERY PLAN                                          
----------------------------------------------------------------------------------------------
+                                                                              QUERY PLAN                                                                               
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Nested Loop
    ->  Index Scan using rel_start_idx on rel e
-         Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+         Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
          Filter: (weight > 5)
    ->  Index Scan using doc_pkey on doc a
          Index Cond: (id = e.start)

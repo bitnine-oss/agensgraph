@@ -322,22 +322,26 @@ MATCH (x:p), (y:p) WHERE x.n = 'a' AND y.n = 'b'
 -- element and its whole property map
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (x:p)-[:k]->() RETURN x, count(*);
-                                                   QUERY PLAN                                                   
-----------------------------------------------------------------------------------------------------------------
- HashAggregate
+                                                            QUERY PLAN                                                             
+-----------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate
    Output: ROW(x.id, x.properties, x.ctid)::vertex, cypher_to_jsonb(count(*)), x.id
    Group Key: x.id
-   ->  Hash Join
+   ->  Merge Join
          Output: x.id, x.properties, x.ctid
-         Inner Unique: true
-         Hash Cond: ("<0000000015>".start = x.id)
-         ->  Seq Scan on ei.k "<0000000015>"
-               Output: "<0000000015>".id, "<0000000015>".start, "<0000000015>"."end", "<0000000015>".properties
-         ->  Hash
+         Merge Cond: (x.id = "<0000000015>".start)
+         ->  Sort
                Output: x.id, x.properties, x.ctid
+               Sort Key: x.id
                ->  Seq Scan on ei.p x
                      Output: x.id, x.properties, x.ctid
-(13 rows)
+         ->  Sort
+               Output: "<0000000015>".start, "<0000000015>"."end"
+               Sort Key: "<0000000015>".start
+               ->  Seq Scan on ei.k "<0000000015>"
+                     Output: "<0000000015>".start, "<0000000015>"."end"
+                     Filter: (("<0000000015>".start >= '3.0'::graphid) AND ("<0000000015>".start <= '3.281474976710655'::graphid))
+(17 rows)
 
 MATCH (x:p)-[:k]->() RETURN x.n, count(*) ORDER BY x.n;
   n  | count 
@@ -357,24 +361,28 @@ MATCH (x:p)-[:k]->() WITH id(x) AS i, count(*) AS c RETURN c ORDER BY c;
 -- no longer a key, so the projection carrying it can be dropped outright
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (x:p)-[:k]->() WITH x, count(*) AS c RETURN max(c);
-                                                      QUERY PLAN                                                      
-----------------------------------------------------------------------------------------------------------------------
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
  Aggregate
    Output: cypher_to_jsonb(max((count(*))))
-   ->  HashAggregate
+   ->  GroupAggregate
          Output: NULL::vertex, count(*), x.id
          Group Key: x.id
-         ->  Hash Join
+         ->  Merge Join
                Output: x.id
-               Inner Unique: true
-               Hash Cond: ("<0000000021>".start = x.id)
-               ->  Seq Scan on ei.k "<0000000021>"
-                     Output: "<0000000021>".id, "<0000000021>".start, "<0000000021>"."end", "<0000000021>".properties
-               ->  Hash
+               Merge Cond: (x.id = "<0000000021>".start)
+               ->  Sort
                      Output: x.id
+                     Sort Key: x.id
                      ->  Seq Scan on ei.p x
                            Output: x.id
-(15 rows)
+               ->  Sort
+                     Output: "<0000000021>".start, "<0000000021>"."end"
+                     Sort Key: "<0000000021>".start
+                     ->  Seq Scan on ei.k "<0000000021>"
+                           Output: "<0000000021>".start, "<0000000021>"."end"
+                           Filter: (("<0000000021>".start >= '3.0'::graphid) AND ("<0000000021>".start <= '3.281474976710655'::graphid))
+(19 rows)
 
 MATCH (x:p)-[:k]->() WITH x, count(*) AS c RETURN max(c);
  max 
@@ -385,24 +393,28 @@ MATCH (x:p)-[:k]->() WITH x, count(*) AS c RETURN max(c);
 -- an element the query does go on to read is still projected
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (x:p)-[:k]->() WITH x, count(*) AS c RETURN x.n, c;
-                                                      QUERY PLAN                                                      
-----------------------------------------------------------------------------------------------------------------------
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
  Subquery Scan on _agens_default_s
    Output: (_agens_default_s.x).properties.'n', cypher_to_jsonb(_agens_default_s.c)
-   ->  HashAggregate
+   ->  GroupAggregate
          Output: ROW(x.id, x.properties, x.ctid)::vertex, count(*), x.id
          Group Key: x.id
-         ->  Hash Join
+         ->  Merge Join
                Output: x.id, x.properties, x.ctid
-               Inner Unique: true
-               Hash Cond: ("<0000000025>".start = x.id)
-               ->  Seq Scan on ei.k "<0000000025>"
-                     Output: "<0000000025>".id, "<0000000025>".start, "<0000000025>"."end", "<0000000025>".properties
-               ->  Hash
+               Merge Cond: (x.id = "<0000000025>".start)
+               ->  Sort
                      Output: x.id, x.properties, x.ctid
+                     Sort Key: x.id
                      ->  Seq Scan on ei.p x
                            Output: x.id, x.properties, x.ctid
-(15 rows)
+               ->  Sort
+                     Output: "<0000000025>".start, "<0000000025>"."end"
+                     Sort Key: "<0000000025>".start
+                     ->  Seq Scan on ei.k "<0000000025>"
+                           Output: "<0000000025>".start, "<0000000025>"."end"
+                           Filter: (("<0000000025>".start >= '3.0'::graphid) AND ("<0000000025>".start <= '3.281474976710655'::graphid))
+(19 rows)
 
 MATCH (x:p)-[:k]->() WITH x, count(*) AS c RETURN x.n, c ORDER BY x.n;
   n  | c 

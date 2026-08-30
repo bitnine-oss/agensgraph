@@ -134,6 +134,7 @@ extern bool innerrel_is_unique_ext(PlannerInfo *root, Relids joinrelids,
 								   bool force_cache, List **extra_clauses);
 extern List *remove_useless_self_joins(PlannerInfo *root, List *joinlist);
 extern List *remove_useless_graph_endpoints(PlannerInfo *root, List *joinlist);
+extern void add_graph_endpoint_label_ranges(PlannerInfo *root);
 
 /*
  * prototypes for plan/setrefs.c
