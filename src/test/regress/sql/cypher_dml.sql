@@ -4497,6 +4497,9 @@ SELECT vle_est_rows($$MATCH (a:v {k: 7})-[:e*2..2]->(b:v) RETURN b$$) AS two_hop
 SELECT vle_est_rows($$MATCH (a:v {k: 7})-[:e*2..2]-(b:v) RETURN b$$) AS two_hops_undirected;
 -- a traversal of no edges is the vertex itself
 SELECT vle_est_rows($$MATCH (a:v {k: 7})-[:e*0..0]->(b:v) RETURN b$$) AS no_hop;
+-- a traversal with no upper bound stops where the trails could have reached
+-- every vertex the label touches
+SELECT vle_est_rows($$MATCH (a:v {k: 7})-[:e*]->(b:v) RETURN b$$) AS unbounded;
 
 -- which is what the traversals find
 MATCH (a:v {k: 7})-[:e*1..1]->(b:v) RETURN count(*) AS one_hop;
@@ -4507,6 +4510,40 @@ EXPLAIN (COSTS OFF) MATCH (a:v {k: 7})-[:e*2..2]-(b:v) RETURN count(*);
 
 DROP FUNCTION vle_est_rows(text);
 DROP GRAPH vle_est CASCADE;
+RESET graph_path;
+
+--
+-- a traversal's vertex columns carry the edge label's statistics
+--
+-- 60 vertices, each pointing at the three after it: a join of the vertex the
+-- traversal reaches is estimated by the label's distinct ends, not a default
+CREATE GRAPH vle_stats;
+SET graph_path = vle_stats;
+CREATE VLABEL v;
+CREATE ELABEL e;
+UNWIND range(1, 60) AS i CREATE (:v {k: i});
+MATCH (a:v), (b:v) WHERE b.k > a.k AND b.k <= a.k + 3 CREATE (a)-[:e]->(b);
+ANALYZE vle_stats.v;
+ANALYZE vle_stats.e;
+
+-- the join's row estimate, read off its plan
+CREATE FUNCTION vle_join_rows(q text) RETURNS int LANGUAGE plpgsql AS $$
+DECLARE
+	l text;
+BEGIN
+	FOR l IN EXECUTE 'EXPLAIN ' || q LOOP
+		IF l LIKE '%Join%' THEN
+			RETURN substring(l FROM 'rows=(\d+)')::int;
+		END IF;
+	END LOOP;
+	RETURN NULL;
+END $$;
+
+-- the reached vertex joins one row in sixty, so three trails keep three rows
+SELECT vle_join_rows($$MATCH (s:v)-[:e*1..1]->(b:v) RETURN count(*)$$) AS joined;
+
+DROP FUNCTION vle_join_rows(text);
+DROP GRAPH vle_stats CASCADE;
 RESET graph_path;
 
 --
@@ -4551,4 +4588,31 @@ MATCH (h:v {k: 7})<-[:e]-(x) RETURN count(*) AS other;
 
 DROP FUNCTION anchor_est_rows(text);
 DROP GRAPH anchor_est CASCADE;
+RESET graph_path;
+
+--
+-- a cached plan is built again when a traversal's edge label changes
+--
+-- the shared-relationship test between two traversals is written, or left
+-- out, by whether their label sets can overlap; a label created under both
+-- labels later must bring it back
+CREATE GRAPH vle_inval;
+SET graph_path = vle_inval;
+CREATE VLABEL v;
+CREATE ELABEL x;
+CREATE ELABEL y;
+CREATE (:v {k: 1})-[:x]->(:v {k: 2});
+MATCH (a:v {k: 1}), (b:v {k: 2}) CREATE (a)-[:y]->(b);
+SET plan_cache_mode = force_generic_plan;
+PREPARE vle_inval_p AS
+	MATCH (a:v)-[:x*1..1]->()<-[:y*1..1]-(c:v) RETURN count(*);
+EXECUTE vle_inval_p;
+-- an edge of this label is walked by both traversals, and a trail must not
+-- use it twice
+CREATE ELABEL z INHERITS (x, y);
+MATCH (a:v {k: 1}), (b:v {k: 2}) CREATE (a)-[:z]->(b);
+EXECUTE vle_inval_p;
+DEALLOCATE vle_inval_p;
+RESET plan_cache_mode;
+DROP GRAPH vle_inval CASCADE;
 RESET graph_path;
