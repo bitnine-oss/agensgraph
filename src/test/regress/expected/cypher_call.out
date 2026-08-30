@@ -52,33 +52,35 @@ RETURN p.name AS name, dog ORDER BY name, dog;
 EXPLAIN (COSTS OFF)
 MATCH (p:Person) CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
 RETURN p.name AS name, dog;
-                    QUERY PLAN                    
---------------------------------------------------
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
  Hash Join
    Hash Cond: ("<0000000001>"."end" = d.id)
    ->  Hash Join
          Hash Cond: ("<0000000001>".start = p.id)
          ->  Seq Scan on has_dog "<0000000001>"
+               Filter: (("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
          ->  Hash
                ->  Seq Scan on person p
    ->  Hash
          ->  Seq Scan on dog d
-(9 rows)
+(10 rows)
 
 EXPLAIN (COSTS OFF)
 MATCH (p:Person)-[:HAS_DOG]->(d:Dog) RETURN p.name AS name, d.name AS dog;
-                    QUERY PLAN                    
---------------------------------------------------
+                                                                               QUERY PLAN                                                                                
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Hash Join
    Hash Cond: ("<0000000002>"."end" = d.id)
    ->  Hash Join
          Hash Cond: ("<0000000002>".start = p.id)
          ->  Seq Scan on has_dog "<0000000002>"
+               Filter: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
          ->  Hash
                ->  Seq Scan on person p
    ->  Hash
          ->  Seq Scan on dog d
-(9 rows)
+(10 rows)
 
 -- (b) empty scope clause, uncorrelated (runs once, cross-joined)
 MATCH (p:Person {name: 'Andy'})
@@ -171,18 +173,19 @@ RETURN p.name AS name, dog ORDER BY name, dog;
 EXPLAIN (COSTS OFF)
 MATCH (p:Person) CALL (*) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
 RETURN p.name AS name, dog;
-                    QUERY PLAN                    
---------------------------------------------------
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
  Hash Join
    Hash Cond: ("<0000000011>"."end" = d.id)
    ->  Hash Join
          Hash Cond: ("<0000000011>".start = p.id)
          ->  Seq Scan on has_dog "<0000000011>"
+               Filter: (("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
          ->  Hash
                ->  Seq Scan on person p
    ->  Hash
          ->  Seq Scan on dog d
-(9 rows)
+(10 rows)
 
 -- with several outer variables, CALL (*) makes all of them visible in the body
 MATCH (p:Person {name: 'Andy'}), (f:Person {name: 'Peter'})
@@ -261,15 +264,15 @@ SET enable_bitmapscan = off;
 EXPLAIN (COSTS OFF)
 MATCH (p:Person) CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) AS ndogs }
 RETURN p.name AS name, ndogs;
-                                     QUERY PLAN                                      
--------------------------------------------------------------------------------------
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
  Nested Loop
    ->  Seq Scan on person p
          Disabled: true
    ->  Aggregate
          ->  Nested Loop
                ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000017>"
-                     Index Cond: (start = p.id)
+                     Index Cond: ((start = p.id) AND ("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
                ->  Index Only Scan using dog_pkey on dog d
                      Index Cond: (id = "<0000000017>"."end")
 (9 rows)
@@ -610,24 +613,25 @@ CALL (p) {
   RETURN d.name AS dog, toy
 }
 RETURN p.name AS name, dog, toy;
-                                   QUERY PLAN                                   
---------------------------------------------------------------------------------
+                                                                                           QUERY PLAN                                                                                           
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Nested Loop
    ->  Nested Loop
          ->  Nested Loop
                ->  Hash Join
                      Hash Cond: ("<0000000052>".start = p.id)
                      ->  Seq Scan on has_dog "<0000000052>"
+                           Filter: (("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
                      ->  Hash
                            ->  Seq Scan on person p
                                  Filter: (properties.'name' = '"Peter"'::jsonb)
                ->  Index Scan using dog_pkey on dog d
                      Index Cond: (id = "<0000000052>"."end")
          ->  Index Only Scan using has_toy_start_idx on has_toy "<0000000053>"
-               Index Cond: (start = d.id)
+               Index Cond: ((start = d.id) AND (start >= '5.0'::graphid) AND (start <= '5.281474976710655'::graphid) AND ("end" >= '9.0'::graphid) AND ("end" <= '9.281474976710655'::graphid))
    ->  Index Scan using toy_pkey on toy t
          Index Cond: (id = "<0000000053>"."end")
-(15 rows)
+(16 rows)
 
 -- importing-WITH inner CALL
 MATCH (p:Person {name: 'Peter'})
@@ -754,8 +758,8 @@ RETURN p.name AS name;
  Seq Scan on person p
    Filter: EXISTS(SubPlan 1)
    SubPlan 1
-     ->  Nested Loop
-           Join Filter: ("<0000000071>"."end" = "<0000000072>".start)
+     ->  Merge Join
+           Merge Cond: ("<0000000071>"."end" = "<0000000072>".start)
            ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000071>"
                  Index Cond: ((start = p.id) AND ("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
            ->  Index Only Scan using has_toy_start_idx on has_toy "<0000000072>"
@@ -897,18 +901,19 @@ SELECT t.name, t.dog FROM (
   MATCH (p:Person) CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
   RETURN p.name AS name, dog
 ) t;
-                    QUERY PLAN                    
---------------------------------------------------
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
  Hash Join
    Hash Cond: ("<0000000094>"."end" = d.id)
    ->  Hash Join
          Hash Cond: ("<0000000094>".start = p.id)
          ->  Seq Scan on has_dog "<0000000094>"
+               Filter: (("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
          ->  Hash
                ->  Seq Scan on person p
    ->  Hash
          ->  Seq Scan on dog d
-(9 rows)
+(10 rows)
 
 -- importing-WITH form
 SELECT t.name, t.n FROM (
@@ -1022,21 +1027,21 @@ MATCH (p:Person {name: 'Peter'})
 CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog }
 CALL (p) { MATCH (p)-[:HAS_DOG]->(d2:Dog) RETURN count(d2) AS ndogs }
 RETURN p.name AS name, dog, ndogs;
-                                     QUERY PLAN                                      
--------------------------------------------------------------------------------------
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
  Nested Loop
    ->  Nested Loop
          ->  Nested Loop
                ->  Index Scan using person_pkey on person p
                      Filter: (properties.'name' = '"Peter"'::jsonb)
                ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000106>"
-                     Index Cond: (start = p.id)
+                     Index Cond: ((start = p.id) AND ("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
          ->  Index Scan using dog_pkey on dog d
                Index Cond: (id = "<0000000106>"."end")
    ->  Aggregate
          ->  Nested Loop
                ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000107>"
-                     Index Cond: (start = p.id)
+                     Index Cond: ((start = p.id) AND ("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
                ->  Index Only Scan using dog_pkey on dog d2
                      Index Cond: (id = "<0000000107>"."end")
 (15 rows)
@@ -2775,14 +2780,14 @@ EXPLAIN (COSTS OFF)
 MATCH (p:Person)
 OPTIONAL CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN d.name AS dog LIMIT 1 }
 RETURN p.name AS name, dog;
-                                     QUERY PLAN                                      
--------------------------------------------------------------------------------------
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
  Nested Loop Left Join
    ->  Seq Scan on person p
    ->  Limit
          ->  Nested Loop
                ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000265>"
-                     Index Cond: (start = p.id)
+                     Index Cond: ((start = p.id) AND ("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
                ->  Index Scan using dog_pkey on dog d
                      Index Cond: (id = "<0000000265>"."end")
 (8 rows)
@@ -2796,15 +2801,15 @@ EXPLAIN (COSTS OFF)
 MATCH (p:Person)
 OPTIONAL CALL (p) { MATCH (p)-[:HAS_DOG]->(d:Dog) RETURN count(d) AS ndogs }
 RETURN p.name AS name, ndogs;
-                                     QUERY PLAN                                      
--------------------------------------------------------------------------------------
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
  Nested Loop Left Join
    ->  Seq Scan on person p
          Disabled: true
    ->  Aggregate
          ->  Nested Loop
                ->  Index Only Scan using has_dog_start_idx on has_dog "<0000000266>"
-                     Index Cond: (start = p.id)
+                     Index Cond: ((start = p.id) AND ("end" >= '5.0'::graphid) AND ("end" <= '5.281474976710655'::graphid))
                ->  Index Only Scan using dog_pkey on dog d
                      Index Cond: (id = "<0000000266>"."end")
 (9 rows)

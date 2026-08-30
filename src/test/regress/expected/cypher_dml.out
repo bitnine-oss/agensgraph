@@ -4424,15 +4424,17 @@ RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
 EXPLAIN (costs off)
 MATCH (a:nd)-[r:twin]->(b:nd) WITH a, r, b
 MATCH (a)-[r]->(b)-[r2:other]->(c:nd) RETURN r.p AS r, r2.p AS r2;
-                                                                              QUERY PLAN                                                                               
------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Nested Loop
-   Join Filter: ((r.id <> r2.id) AND (r2.start = r."end"))
+                                                                                 QUERY PLAN                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Merge Join
+   Merge Cond: (r."end" = r2.start)
+   Join Filter: (r.id <> r2.id)
    ->  Index Scan using twin_end_idx on twin r
          Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
-   ->  Index Scan using other_start_idx on other r2
-         Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
-(6 rows)
+   ->  Materialize
+         ->  Index Scan using other_start_idx on other r2
+               Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+(8 rows)
 
 MATCH (a:nd)-[r:twin]->(b:nd) WITH a, r, b
 MATCH (a)-[r]->(b)-[r2:other]->(c:nd) RETURN r.p AS r, r2.p AS r2
@@ -4444,15 +4446,16 @@ MATCH (a)-[r]->(b)-[r2:other]->(c:nd) RETURN r.p AS r, r2.p AS r2
 
 EXPLAIN (costs off)
 MATCH (a:nd)-[r:twin]->(b:nd)-[r2:other]->(c:nd) RETURN r.p AS r, r2.p AS r2;
-                                                                              QUERY PLAN                                                                               
------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Nested Loop
-   Join Filter: (r."end" = r2.start)
+                                                                                 QUERY PLAN                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Merge Join
+   Merge Cond: (r."end" = r2.start)
    ->  Index Scan using twin_end_idx on twin r
          Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
-   ->  Index Scan using other_start_idx on other r2
-         Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
-(6 rows)
+   ->  Materialize
+         ->  Index Scan using other_start_idx on other r2
+               Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+(7 rows)
 
 MATCH (a:nd)-[r:twin]->(b:nd)-[r2:other]->(c:nd) RETURN r.p AS r, r2.p AS r2
        ORDER BY r, r2;
@@ -4508,40 +4511,46 @@ SET enable_seqscan = off;
 SET enable_bitmapscan = off;
 EXPLAIN (costs off)
 MATCH (s:nd)-[r1:twin]->(m:nd)-[r2:other]->(x:nd) RETURN s.id AS s, x.id AS x;
-                                               QUERY PLAN                                                
----------------------------------------------------------------------------------------------------------
- Nested Loop
-   ->  Nested Loop
+                                                                                       QUERY PLAN                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Hash Join
+   Hash Cond: (r2."end" = x.id)
+   ->  Hash Join
+         Hash Cond: (r1.start = s.id)
          ->  Merge Join
                Merge Cond: (r1."end" = r2.start)
                ->  Index Only Scan using twin_end_idx on twin r1
-                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
-               ->  Index Only Scan using other_start_idx on other r2
-                     Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
-         ->  Index Scan using nd_pkey on nd s
-               Index Cond: (id = r1.start)
-   ->  Index Scan using nd_pkey on nd x
-         Index Cond: (id = r2."end")
-(12 rows)
+                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+               ->  Materialize
+                     ->  Index Only Scan using other_start_idx on other r2
+                           Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+         ->  Hash
+               ->  Index Scan using nd_pkey on nd s
+   ->  Hash
+         ->  Index Scan using nd_pkey on nd x
+(15 rows)
 
 EXPLAIN (costs off)
 MATCH (s:nd)-[r1:twin]->(m:nd)-[r2:twin]->(x:nd) RETURN s.id AS s, x.id AS x;
-                                               QUERY PLAN                                                
----------------------------------------------------------------------------------------------------------
- Nested Loop
-   ->  Nested Loop
+                                                                                       QUERY PLAN                                                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Hash Join
+   Hash Cond: (r2."end" = x.id)
+   ->  Hash Join
+         Hash Cond: (r1.start = s.id)
          ->  Merge Join
                Merge Cond: (r1."end" = r2.start)
                Join Filter: (r1.id <> r2.id)
                ->  Index Scan using twin_end_idx on twin r1
-                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
-               ->  Index Scan using twin_start_idx on twin r2
-                     Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
-         ->  Index Scan using nd_pkey on nd s
-               Index Cond: (id = r1.start)
-   ->  Index Scan using nd_pkey on nd x
-         Index Cond: (id = r2."end")
-(13 rows)
+                     Index Cond: (("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid) AND (start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+               ->  Materialize
+                     ->  Index Scan using twin_start_idx on twin r2
+                           Index Cond: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
+         ->  Hash
+               ->  Index Scan using nd_pkey on nd s
+   ->  Hash
+         ->  Index Scan using nd_pkey on nd x
+(16 rows)
 
 RESET enable_seqscan;
 RESET enable_bitmapscan;
@@ -11154,8 +11163,8 @@ MATCH (a:wv)-[r:wk]->(b:wv) DELETE r;
 -- an endpoint the clause does remove is carried
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:wv)-[r:wk]->(b:wv) DELETE r, a;
-                                                                    QUERY PLAN                                                                    
---------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                               QUERY PLAN                                                                                                
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Graph Delete
    ->  Nested Loop CypherDelete Join
          Output: _agens_default_s_1.a, _agens_default_s_1.r, NULL::vertex
@@ -11171,7 +11180,7 @@ MATCH (a:wv)-[r:wk]->(b:wv) DELETE r, a;
                                  Output: r.id, r.start, r."end", r.properties, r.ctid
                                  ->  Seq Scan on write_projection.wk r
                                        Output: r.id, r.start, r."end", r.properties, r.ctid
-                                       Filter: ((r."end" >= '3.0'::graphid) AND (r."end" <= '3.281474976710655'::graphid))
+                                       Filter: ((r."end" >= '3.0'::graphid) AND (r."end" <= '3.281474976710655'::graphid) AND (r.start >= '3.0'::graphid) AND (r.start <= '3.281474976710655'::graphid))
          ->  Nested Loop
                Output: NULL::edge
                Join Filter: ((e.start = v.id) OR (e."end" = v.id))
@@ -11189,8 +11198,8 @@ MATCH (a:wv)-[r:wk]->(b:wv) DELETE r, a;
 -- still are not, since a delete no longer hides its inputs from the planner
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:wv)-[r:wk]->(b:wv) DELETE r RETURN b.n;
-                                                            QUERY PLAN                                                            
-----------------------------------------------------------------------------------------------------------------------------------
+                                                                                           QUERY PLAN                                                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Subquery Scan on _agens_default_s
    Output: (_agens_default_s.b).properties.'n'
    ->  Graph Delete
@@ -11206,7 +11215,7 @@ MATCH (a:wv)-[r:wk]->(b:wv) DELETE r RETURN b.n;
                                  Output: id, start, "end", properties, ctid
                                  ->  Seq Scan on write_projection.wk r
                                        Output: id, start, "end", properties, ctid
-                                       Filter: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid))
+                                       Filter: ((start >= '3.0'::graphid) AND (start <= '3.281474976710655'::graphid) AND ("end" >= '3.0'::graphid) AND ("end" <= '3.281474976710655'::graphid))
 (16 rows)
 
 -- and the answers are the same either way

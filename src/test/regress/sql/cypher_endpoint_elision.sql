@@ -998,3 +998,29 @@ MATCH (a:tagged)-[r:points]->(x:tagged ONLY) RETURN a.n AS a ORDER BY a;
 SET enable_graph_endpoint_elision = true;
 
 DROP GRAPH eeo CASCADE;
+
+--
+-- a labelled endpoint's label is tested on the edge columns that hold its id
+--
+-- located_in starts at people and at companies alike; a scan of it by the
+-- country it ends at is confined to the starts of the label the pattern names
+CREATE GRAPH eel;
+SET graph_path = eel;
+CREATE VLABEL person;
+CREATE VLABEL company;
+CREATE VLABEL country;
+CREATE ELABEL located_in;
+CREATE (:country {name: 'a'}), (:country {name: 'b'});
+MATCH (c:country) UNWIND range(1, 20) AS i CREATE (:person {n: i})-[:located_in]->(c);
+MATCH (c:country) UNWIND range(1, 3) AS i CREATE (:company {n: i})-[:located_in]->(c);
+ANALYZE eel.located_in;
+
+-- the company label is tested on the edge's start
+EXPLAIN (costs off) MATCH (x:company)-[:located_in]->(c:country {name: 'a'}) RETURN x.n AS n;
+MATCH (x:company)-[:located_in]->(c:country {name: 'a'}) RETURN x.n AS n ORDER BY n;
+
+-- an endpoint under an optional pattern keeps its label to itself
+EXPLAIN (costs off) MATCH (c:country) OPTIONAL MATCH (x:company)-[:located_in]->(c) RETURN c.name AS c, x.n AS n;
+MATCH (c:country) OPTIONAL MATCH (x:company)-[:located_in]->(c) RETURN c.name AS c, x.n AS n ORDER BY c, n;
+
+DROP GRAPH eel CASCADE;
