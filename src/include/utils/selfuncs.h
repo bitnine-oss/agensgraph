@@ -241,6 +241,7 @@ extern void genericcostestimate(PlannerInfo *root, IndexPath *path,
 								double loop_count,
 								GenericCosts *costs);
 
+extern List *graph_anchor_ids(PlannerInfo *root, Var *idvar);
 extern bool graph_edge_column_moment(Oid relid, AttrNumber attno1,
 									 AttrNumber attno2, double ntuples,
 									 Selectivity *selec,

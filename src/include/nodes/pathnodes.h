@@ -1094,6 +1094,14 @@ typedef struct RelOptInfo
 	List	  **partexprs pg_node_attr(read_write_ignore);
 	/* Nullable partition key expressions */
 	List	  **nullable_partexprs pg_node_attr(read_write_ignore);
+
+	/*
+	 * A graph pattern node that a constant picks out through an index is
+	 * estimated by the rows it names.  Their graph ids, as Consts, once looked
+	 * up; NIL when the node is not picked out that way.
+	 */
+	bool		graph_anchor_probed;
+	List	   *graph_anchor_ids pg_node_attr(read_write_ignore);
 } RelOptInfo;
 
 /*
