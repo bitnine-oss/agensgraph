@@ -100,7 +100,7 @@ typedef struct
  */
 typedef struct
 {
-	Node	   *eid;			/* the relationship's id */
+	Node	   *eid;			/* the relationship's id, or a traversal's ids */
 	Bitmapset  *labids;			/* labels it may belong to, NULL for any */
 }			EdgeUniqueInfo;
 
@@ -3943,7 +3943,8 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 
 					eidarr = getColumnVar(pstate, (ParseNamespaceItem *) edge,
 										  VLE_COLNAME_IDS);
-					ueidarrs = list_append_unique(ueidarrs, eidarr);
+					ueidarrs = appendUniqueEdge(ueidarrs, eidarr,
+												edgeUniqueLabids(pstate, crel));
 				}
 
 				if (out)
@@ -5061,6 +5062,47 @@ transformVLEtoNSItem(ParseState *pstate, CypherRel *crel, SelectStmt *vle, Alias
 
 	qry->g_vle_rel = (Node *) crel;
 
+	/*
+	 * The traversal reads its edge label at run time without the label ever
+	 * entering a range table, so nothing would record that the query depends
+	 * on it: a label created under it later -- which can put one relationship
+	 * in the walks of two patterns -- would leave a cached plan analyzed
+	 * against the old label tree.  Enter the label into the traversal's own
+	 * range table, joined to nothing, as that record; reading it asks the
+	 * same permission any other match of the label asks.
+	 */
+	if (pstate->p_valid_labels)
+	{
+		char	   *typname;
+		Oid			graphoid;
+		uint16		typlabid;
+		Oid			typrelid = InvalidOid;
+
+		getCypherRelType(crel, &typname, NULL);
+		graphoid = get_graph_path_oid();
+		typlabid = get_labname_labid(typname, graphoid);
+		if (typlabid != InvalidLabid)
+			typrelid = get_labid_relid(graphoid, typlabid);
+		if (OidIsValid(typrelid))
+		{
+			Relation	labrel = table_open(typrelid, AccessShareLock);
+			RangeTblEntry *labrte = makeNode(RangeTblEntry);
+			RTEPermissionInfo *perminfo;
+
+			labrte->rtekind = RTE_RELATION;
+			labrte->relid = typrelid;
+			labrte->relkind = labrel->rd_rel->relkind;
+			labrte->rellockmode = AccessShareLock;
+			labrte->inh = !crel->only;
+			labrte->eref = makeAlias(RelationGetRelationName(labrel), NIL);
+			labrte->inFromCl = false;
+			perminfo = addRTEPermissionInfo(&qry->rteperminfos, labrte);
+			perminfo->requiredPerms = ACL_SELECT;
+			qry->rtable = lappend(qry->rtable, labrte);
+			table_close(labrel, NoLock);
+		}
+	}
+
 	pstate->p_lateral_active = false;
 	pstate->p_expr_kind = EXPR_KIND_NONE;
 
@@ -5420,47 +5462,66 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *uedges, List *ueidarrs)
 
 		foreach(lea1, ueidarrs)
 		{
-			Node	   *eidarr = lfirst(lea1);
-			FuncExpr   *arg;
-			NullTest   *dupcond;
+			EdgeUniqueInfo *uarr = lfirst(lea1);
+			ScalarArrayOpExpr *among;
+			Node	   *dupcond;
 
-			arg = makeFuncExpr(F_ARRAY_POSITION_ANYCOMPATIBLEARRAY_ANYCOMPATIBLE,
-							   INT4OID,
-							   list_make2(eidarr, eid1),
-							   InvalidOid,
-							   InvalidOid,
-							   COERCE_EXPLICIT_CALL);
+			if (uedge1->labids != NULL && uarr->labids != NULL &&
+				!bms_overlap(uedge1->labids, uarr->labids))
+				continue;
 
-			dupcond = makeNode(NullTest);
-			dupcond->arg = (Expr *) arg;
-			dupcond->nulltesttype = IS_NULL;
-			dupcond->argisrow = false;
-			dupcond->location = -1;
+			/*
+			 * The relationship is none of those the traversal walked: its id
+			 * is not among the traversal's ids.  Written as a comparison with
+			 * the array, which the planner estimates as one id against a few
+			 * values -- almost never true, so its negation almost always.
+			 */
+			among = makeNode(ScalarArrayOpExpr);
+			among->opno = OID_GRAPHID_EQ_OP;
+			among->opfuncid = F_GRAPHID_EQ;
+			among->hashfuncid = InvalidOid;
+			among->negfuncid = InvalidOid;
+			among->useOr = true;
+			among->inputcollid = InvalidOid;
+			among->args = list_make2(eid1, uarr->eid);
+			among->location = -1;
 
-			qual = qualAndExpr(qual, (Node *) dupcond);
+			dupcond = (Node *) makeBoolExpr(NOT_EXPR, list_make1(among), -1);
+			qual = qualAndExpr(qual, dupcond);
 		}
 	}
 
 	foreach(lea1, ueidarrs)
 	{
-		Node	   *eidarr1 = lfirst(lea1);
+		EdgeUniqueInfo *uarr1 = lfirst(lea1);
 		ListCell   *lea2;
 
 		for_each_cell(lea2, ueidarrs, lnext(ueidarrs, lea1))
 		{
-			Node	   *eidarr2 = lfirst(lea2);
-			Node	   *funcexpr;
+			EdgeUniqueInfo *uarr2 = lfirst(lea2);
+			OpExpr	   *overlap;
 			Node	   *dupcond;
 
-			funcexpr = (Node *) makeFuncExpr(F_ARRAYOVERLAP,
-											 BOOLOID,
-											 list_make2(eidarr1, eidarr2),
-											 InvalidOid,
-											 InvalidOid,
-											 COERCE_EXPLICIT_CALL);
+			if (uarr1->labids != NULL && uarr2->labids != NULL &&
+				!bms_overlap(uarr1->labids, uarr2->labids))
+				continue;
 
-			dupcond = (Node *) makeBoolExpr(NOT_EXPR, list_make1(funcexpr), -1);
+			/*
+			 * Two traversals walked no relationship in common: their ids do
+			 * not overlap.  Written with the overlap operator, which has an
+			 * estimate, rather than as a call of its function, which has none.
+			 */
+			overlap = makeNode(OpExpr);
+			overlap->opno = OID_ARRAY_OVERLAP_OP;
+			overlap->opfuncid = F_ARRAYOVERLAP;
+			overlap->opresulttype = BOOLOID;
+			overlap->opretset = false;
+			overlap->opcollid = InvalidOid;
+			overlap->inputcollid = InvalidOid;
+			overlap->args = list_make2(uarr1->eid, uarr2->eid);
+			overlap->location = -1;
 
+			dupcond = (Node *) makeBoolExpr(NOT_EXPR, list_make1(overlap), -1);
 			qual = qualAndExpr(qual, dupcond);
 		}
 	}

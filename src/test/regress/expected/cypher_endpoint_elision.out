@@ -997,10 +997,11 @@ SET enable_graph_endpoint_elision = true;
 EXPLAIN (costs off) MATCH (a:person)-[:knows*1..2]->()-[d]->(e) RETURN a.name AS a, label(e) AS e;
                                 QUERY PLAN                                 
 ---------------------------------------------------------------------------
- Nested Loop
+ Hash Join
+   Hash Cond: (d."end" = e.id)
    ->  Hash Join
          Hash Cond: (d.start = "<0000000130>".id)
-         Join Filter: (array_position("<0000000129>".ids, d.id) IS NULL)
+         Join Filter: (d.id <> ALL ("<0000000129>".ids))
          ->  Append
                ->  Seq Scan on knows d_1
                ->  Seq Scan on lives_in d_2
@@ -1015,37 +1016,37 @@ EXPLAIN (costs off) MATCH (a:person)-[:knows*1..2]->()-[d]->(e) RETURN a.name AS
                                        ->  Result
                      ->  Hash
                            ->  Seq Scan on person "<0000000130>"
-   ->  Append
-         ->  Index Scan using person_pkey on person e_1
-               Index Cond: (id = d."end")
-         ->  Index Scan using city_pkey on city e_2
-               Index Cond: (id = d."end")
-         ->  Index Scan using company_pkey on company e_3
-               Index Cond: (id = d."end")
-(25 rows)
+   ->  Hash
+         ->  Append
+               ->  Seq Scan on person e_1
+               ->  Seq Scan on city e_2
+               ->  Seq Scan on company e_3
+(24 rows)
 
 -- and a plain-edge middle whose other side is a VLE
 EXPLAIN (costs off) MATCH (a:person)-[b]->()-[:knows*1..2]->(c) RETURN a.name AS a;
-                                  QUERY PLAN                                   
--------------------------------------------------------------------------------
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
  Nested Loop
    ->  Nested Loop
          ->  Nested Loop
-               Join Filter: (array_position("<0000000132>".ids, b.id) IS NULL)
-               ->  Hash Join
-                     Hash Cond: (b."end" = "<0000000131>".id)
-                     ->  Seq Scan on knows b
-                     ->  Hash
-                           ->  Seq Scan on person "<0000000131>"
-               ->  Subquery Scan on "<0000000132>"
-                     Filter: ("<0000000131>".id = "<0000000132>".start)
-                     ->  Graph VLE on knows [1..2]
-                           ->  Result
+               Join Filter: (b.id <> ALL ("<0000000132>".ids))
+               ->  Nested Loop
+                     ->  Seq Scan on person "<0000000131>"
+                     ->  Subquery Scan on "<0000000132>"
+                           Filter: ("<0000000131>".id = "<0000000132>".start)
+                           ->  Graph VLE on knows [1..2]
+                                 ->  Result
+               ->  Index Scan using knows_end_idx on knows b
+                     Index Cond: ("end" = "<0000000131>".id)
          ->  Index Scan using person_pkey on person a
                Index Cond: (id = b.start)
-   ->  Index Only Scan using person_pkey on person c
-         Index Cond: (id = "<0000000132>"."end")
-(17 rows)
+   ->  Memoize
+         Cache Key: "<0000000132>"."end"
+         Cache Mode: logical
+         ->  Index Only Scan using person_pkey on person c
+               Index Cond: (id = "<0000000132>"."end")
+(19 rows)
 
 -- ============================================================
 -- NOT ELIDE: OPTIONAL MATCH endpoint (outer join)
