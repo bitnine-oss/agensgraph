@@ -286,6 +286,8 @@ build_simple_rel(PlannerInfo *root, int relid, RelOptInfo *parent)
 	rel->all_partrels = NULL;
 	rel->partexprs = NULL;
 	rel->nullable_partexprs = NULL;
+	rel->graph_anchor_probed = false;
+	rel->graph_anchor_ids = NIL;
 
 	/*
 	 * Pass assorted information down the inheritance hierarchy.

@@ -240,6 +240,444 @@ eqsel(PG_FUNCTION_ARGS)
 }
 
 /*
+ * A graph pattern node picked out by a constant
+ *
+ * A pattern is anchored on a node named by a property -- `(:tag {name: 'x'})'
+ * -- and walks its edges.  The edges are found by `edge.end = node.id', and
+ * how many there are is what an equality with an unknown value is estimated
+ * at: the label's edges divided by its distinct nodes, the same for every
+ * node.  The node named is rarely an average one, and its edges often are the
+ * query.  The node is not unknown, though: the constant picks it out through
+ * the index its scan will use, and reading its id there while planning costs
+ * one probe.  With the id in hand the edges are estimated as they are for any
+ * constant, from the edge column's statistics, which know the well-connected
+ * nodes by name.
+ *
+ * The lookup is made when a node's restrictions equate an index key with a
+ * constant (or one of a few constants), and gives up past a few rows.  A
+ * value that is not a constant when planning -- a parameter of a generic plan
+ * -- and a node without such an index or restriction are estimated as before.
+ */
+
+/* the most rows a constant may pick out for the lookup to be made */
+#define GRAPH_ANCHOR_MAX_IDS	8
+
+static Var *graph_anchor_id_var(Node *node);
+
+/*
+ * graph_anchor_pinning_clause
+ *		Find, among a relation's restrictions, one that equates a btree index's
+ *		leading key with a constant or a list of constants.  Returns the index,
+ *		the equality to probe with, and the constants.
+ */
+static bool
+graph_anchor_pinning_clause(RelOptInfo *rel, IndexOptInfo **index_out,
+							Oid *opno_out, List **consts_out)
+{
+	ListCell   *lc;
+
+	foreach(lc, rel->baserestrictinfo)
+	{
+		RestrictInfo *rinfo = lfirst_node(RestrictInfo, lc);
+		Node	   *clause = (Node *) rinfo->clause;
+		Node	   *keyexpr;
+		Oid			opno;
+		List	   *consts = NIL;
+		ListCell   *ic;
+
+		if (rinfo->pseudoconstant)
+			continue;
+
+		if (IsA(clause, OpExpr) && list_length(((OpExpr *) clause)->args) == 2)
+		{
+			OpExpr	   *op = (OpExpr *) clause;
+			Node	   *left = linitial(op->args);
+			Node	   *right = lsecond(op->args);
+
+			opno = op->opno;
+			if (IsA(right, Const))
+				keyexpr = left;
+			else if (IsA(left, Const))
+			{
+				/* the constant on the left: the operator read the other way */
+				keyexpr = right;
+				right = left;
+				opno = get_commutator(opno);
+				if (!OidIsValid(opno))
+					continue;
+			}
+			else
+				continue;
+			if (((Const *) right)->constisnull)
+				continue;
+			consts = list_make1(right);
+		}
+		else if (IsA(clause, ScalarArrayOpExpr) &&
+				 ((ScalarArrayOpExpr *) clause)->useOr &&
+				 IsA(lsecond(((ScalarArrayOpExpr *) clause)->args), Const))
+		{
+			ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *) clause;
+			Const	   *arr = lsecond_node(Const, saop->args);
+			ArrayType  *array;
+			Oid			elemtype;
+			int16		elemlen;
+			bool		elembyval;
+			char		elemalign;
+			Datum	   *elems;
+			bool	   *nulls;
+			int			nelems;
+			int			i;
+
+			if (arr->constisnull)
+				continue;
+			array = DatumGetArrayTypeP(arr->constvalue);
+			elemtype = ARR_ELEMTYPE(array);
+			get_typlenbyvalalign(elemtype, &elemlen, &elembyval, &elemalign);
+			deconstruct_array(array, elemtype, elemlen, elembyval, elemalign,
+							  &elems, &nulls, &nelems);
+			if (nelems == 0 || nelems > GRAPH_ANCHOR_MAX_IDS)
+				continue;
+			for (i = 0; i < nelems; i++)
+			{
+				if (nulls[i])
+					continue;
+				consts = lappend(consts,
+								 makeConst(elemtype, -1, arr->constcollid,
+										   elemlen, elems[i], false, elembyval));
+			}
+			if (consts == NIL)
+				continue;
+			opno = saop->opno;
+			keyexpr = linitial(saop->args);
+		}
+		else
+			continue;
+
+		/* a btree whose leading key this is, and whose equality this is */
+		foreach(ic, rel->indexlist)
+		{
+			IndexOptInfo *index = lfirst_node(IndexOptInfo, ic);
+
+			if (index->relam != BTREE_AM_OID || index->nkeycolumns < 1 ||
+				index->hypothetical)
+				continue;
+			if (index->indpred != NIL && !index->predOK)
+				continue;
+			if (!match_index_to_operand(keyexpr, 0, index))
+				continue;
+			if (get_op_opfamily_strategy(opno, index->opfamily[0]) !=
+				BTEqualStrategyNumber)
+				continue;
+
+			*index_out = index;
+			*opno_out = opno;
+			*consts_out = consts;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/*
+ * graph_anchor_ids
+ *		The graph ids of the rows a pattern node's relation is picked out to
+ *		by a constant, read through the index that picks them out.  NIL when
+ *		the node is not picked out that way, or the constant names more than a
+ *		few rows.  The answer is kept on the relation for the rest of planning.
+ */
+List *
+graph_anchor_ids(PlannerInfo *root, Var *idvar)
+{
+	RelOptInfo *rel;
+	RangeTblEntry *rte;
+	IndexOptInfo *index;
+	Oid			opno;
+	Oid			lefttype;
+	Oid			righttype;
+	List	   *consts;
+	List	   *ids = NIL;
+	Relation	heapRel;
+	Relation	indexRel;
+	TupleTableSlot *slot;
+	ListCell   *lc;
+	MemoryContext oldcxt;
+	bool		too_many = false;
+
+	if (idvar->vartype != GRAPHIDOID || idvar->varlevelsup != 0)
+		return NIL;
+	if (idvar->varno <= 0 || idvar->varno >= root->simple_rel_array_size)
+		return NIL;
+	rel = root->simple_rel_array[idvar->varno];
+	rte = root->simple_rte_array[idvar->varno];
+	if (rel == NULL || rte == NULL || rel->reloptkind != RELOPT_BASEREL)
+		return NIL;
+
+	/*
+	 * A pattern clause is a subquery of the clauses after it, which see the
+	 * node as one of its output columns.  Follow the column into the planned
+	 * subquery to the node it reads, as long as the subquery hands the node's
+	 * rows through unchanged.
+	 */
+	if (rte->rtekind == RTE_SUBQUERY)
+	{
+		PlannerInfo *subroot = rel->subroot;
+		Query	   *subquery;
+		TargetEntry *ste;
+		Var		   *subvar;
+
+		if (subroot == NULL)
+			return NIL;
+		subquery = subroot->parse;
+		if (subquery->setOperations || subquery->hasAggs ||
+			subquery->groupClause || subquery->groupingSets ||
+			subquery->hasWindowFuncs || subquery->limitCount ||
+			subquery->limitOffset)
+			return NIL;
+		if (idvar->varattno <= 0)
+			return NIL;
+		ste = get_tle_by_resno(subquery->targetList, idvar->varattno);
+		if (ste == NULL || ste->resjunk)
+			return NIL;
+		subvar = graph_anchor_id_var((Node *) ste->expr);
+		if (subvar == NULL)
+			return NIL;
+		return graph_anchor_ids(subroot, subvar);
+	}
+
+	/* the id column of a label's table: that is what a pattern node scans */
+	if (idvar->varattno != Anum_table_vertex_id)
+		return NIL;
+	if (rte->rtekind != RTE_RELATION || !OidIsValid(get_relid_laboid(rte->relid)))
+		return NIL;
+
+	if (rel->graph_anchor_probed)
+		return rel->graph_anchor_ids;
+	if (!ActiveSnapshotSet())
+		return NIL;
+	rel->graph_anchor_probed = true;
+
+	/*
+	 * A label with labels under it holds rows the parent's own index does not
+	 * cover, so the probe would miss them; such a node is estimated as before.
+	 */
+	if (rte->inh && has_subclass(rte->relid))
+		return NIL;
+
+	/*
+	 * The probe reads live rows, so it is made only where the user could read
+	 * them anyway: an estimate shaped by rows a policy hides would say they
+	 * are there.  The same gate guards a table's statistics.
+	 */
+	if (pg_class_aclcheck(rte->relid, GetUserId(), ACL_SELECT) != ACLCHECK_OK ||
+		check_enable_rls(rte->relid, InvalidOid, false) == RLS_ENABLED)
+		return NIL;
+
+	if (!graph_anchor_pinning_clause(rel, &index, &opno, &consts))
+		return NIL;
+
+	/* the relation and its index are open under the planner's locks already */
+	heapRel = table_open(rte->relid, NoLock);
+	indexRel = index_open(index->indexoid, NoLock);
+	slot = table_slot_create(heapRel, NULL);
+	op_input_types(opno, &lefttype, &righttype);
+
+	foreach(lc, consts)
+	{
+		Const	   *c = lfirst_node(Const, lc);
+		ScanKeyData key;
+		IndexScanDesc scan;
+
+		ScanKeyEntryInitialize(&key, 0, 1, BTEqualStrategyNumber,
+							   righttype, index->indexcollations[0],
+							   get_opcode(opno), c->constvalue);
+		scan = index_beginscan(heapRel, indexRel, GetActiveSnapshot(), NULL,
+							   1, 0);
+		index_rescan(scan, &key, 1, NULL, 0);
+		while (index_getnext_slot(scan, ForwardScanDirection, slot))
+		{
+			bool		isnull;
+			Datum		id = slot_getattr(slot, Anum_table_vertex_id, &isnull);
+
+			if (isnull)
+				continue;
+			if (list_length(ids) >= GRAPH_ANCHOR_MAX_IDS)
+			{
+				too_many = true;
+				break;
+			}
+
+			/*
+			 * The ids live on the relation for the rest of planning, so they
+			 * are kept in the planner's own context: a join-order search may
+			 * run each candidate order in a context it then throws away.
+			 */
+			oldcxt = MemoryContextSwitchTo(root->planner_cxt);
+			ids = lappend(ids, makeConst(GRAPHIDOID, -1, InvalidOid,
+										 sizeof(Graphid),
+										 datumCopy(id, FLOAT8PASSBYVAL,
+												   sizeof(Graphid)),
+										 false, FLOAT8PASSBYVAL));
+			MemoryContextSwitchTo(oldcxt);
+		}
+		index_endscan(scan);
+		if (too_many)
+			break;
+	}
+
+	ExecDropSingleTupleTableSlot(slot);
+	index_close(indexRel, NoLock);
+	table_close(heapRel, NoLock);
+
+	if (too_many)
+	{
+		list_free_deep(ids);
+		ids = NIL;
+	}
+	rel->graph_anchor_ids = ids;
+	return ids;
+}
+
+/*
+ * The anchor's id column, if an expression is one: the bare Var, possibly
+ * relabeled.
+ */
+static Var *
+graph_anchor_id_var(Node *node)
+{
+	if (node && IsA(node, RelabelType))
+		node = (Node *) ((RelabelType *) node)->arg;
+	if (node && IsA(node, Var))
+		return (Var *) node;
+	return NULL;
+}
+
+/*
+ * The share of the column's rows that label ranges on the column keep, from
+ * the clauses add_graph_endpoint_label_ranges left on its relation.  The
+ * anchor's ids all lie inside such a range -- they are ids of the node the
+ * range describes -- so an estimate made from the whole column's statistics
+ * counts only rows the range keeps, and multiplying the range in again would
+ * count its share twice; the estimate is divided by this share instead.  One
+ * when no such range confines the column, or the ids do not all lie in it.
+ */
+static Selectivity
+graph_anchor_range_share(VariableStatData *other, List *ids)
+{
+	Var		   *var = graph_anchor_id_var(other->var);
+	RelOptInfo *rel = other->rel;
+	Selectivity share = 1.0;
+	ListCell   *lc;
+
+	if (var == NULL || rel == NULL || rel->reloptkind != RELOPT_BASEREL)
+		return 1.0;
+
+	foreach(lc, rel->baserestrictinfo)
+	{
+		RestrictInfo *rinfo = lfirst_node(RestrictInfo, lc);
+		OpExpr	   *op;
+		Var		   *colvar;
+		Const	   *bound;
+		bool		is_lower;
+		ListCell   *idlc;
+
+		if (!IsA(rinfo->clause, OpExpr))
+			continue;
+		op = (OpExpr *) rinfo->clause;
+		if (op->opno == OID_GRAPHID_GE_OP)
+			is_lower = true;
+		else if (op->opno == OID_GRAPHID_LE_OP)
+			is_lower = false;
+		else
+			continue;
+		if (list_length(op->args) != 2 || !IsA(lsecond(op->args), Const))
+			continue;
+		colvar = graph_anchor_id_var(linitial(op->args));
+		if (colvar == NULL || colvar->varno != var->varno ||
+			colvar->varattno != var->varattno)
+			continue;
+		bound = lsecond_node(Const, op->args);
+		if (bound->constisnull || bound->consttype != GRAPHIDOID)
+			continue;
+
+		foreach(idlc, ids)
+		{
+			Graphid		id = DatumGetGraphid(lfirst_node(Const, idlc)->constvalue);
+			Graphid		b = DatumGetGraphid(bound->constvalue);
+
+			if (is_lower ? (id < b) : (id > b))
+				return 1.0;		/* an id outside the range: leave it be */
+		}
+
+		if (rinfo->norm_selec >= 0)
+			share *= rinfo->norm_selec;
+	}
+
+	if (share <= 0)
+		return 1.0;
+	return share;
+}
+
+/*
+ * The selectivity of `var = <id>' for each of the anchor's ids, averaged.
+ */
+static double
+graph_anchor_eq_selectivity(VariableStatData *vardata, Oid oproid,
+							Oid collation, List *ids, bool varonleft,
+							bool negate)
+{
+	double		sum = 0.0;
+	ListCell   *lc;
+
+	foreach(lc, ids)
+	{
+		Const	   *c = lfirst_node(Const, lc);
+
+		sum += var_eq_const(vardata, oproid, collation, c->constvalue, false,
+							varonleft, negate);
+	}
+	return sum / list_length(ids);
+}
+
+/*
+ * The join selectivity of `left = right' when one side is an anchor's id.
+ * The join's rows are the other side's rows that equal one of the ids, so
+ * the selectivity is that share divided by the rows the anchor is estimated
+ * at, which the join multiplies back in.
+ */
+static bool
+graph_anchor_join_selectivity(PlannerInfo *root, Oid opno, Oid collation,
+							  VariableStatData *vardata1,
+							  VariableStatData *vardata2, double *selec)
+{
+	int			side;
+
+	for (side = 1; side <= 2; side++)
+	{
+		VariableStatData *anchor = (side == 1) ? vardata1 : vardata2;
+		VariableStatData *other = (side == 1) ? vardata2 : vardata1;
+		Var		   *idvar = graph_anchor_id_var(anchor->var);
+		List	   *ids;
+		double		rows;
+
+		if (idvar == NULL)
+			continue;
+		ids = graph_anchor_ids(root, idvar);
+		if (ids == NIL)
+			continue;
+
+		rows = (anchor->rel != NULL) ? clamp_row_est(anchor->rel->rows) : 1.0;
+		*selec = graph_anchor_eq_selectivity(other, opno, collation, ids,
+											 side == 1 ? false : true,
+											 false) * list_length(ids) / rows;
+		*selec /= graph_anchor_range_share(other, ids);
+		return true;
+	}
+
+	return false;
+}
+
+/*
  * Common code for eqsel() and neqsel()
  */
 static double
@@ -288,8 +726,28 @@ eqsel_internal(PG_FUNCTION_ARGS, bool negate)
 							 ((Const *) other)->constisnull,
 							 varonleft, negate);
 	else
-		selec = var_eq_non_const(&vardata, operator, collation, other,
-								 varonleft, negate);
+	{
+		/*
+		 * The something may be the id of a pattern node a constant picks
+		 * out, and then is as good as the constants it stands for.
+		 */
+		Var		   *idvar = graph_anchor_id_var(other);
+		List	   *ids = idvar ? graph_anchor_ids(root, idvar) : NIL;
+
+		if (ids != NIL)
+		{
+			selec = graph_anchor_eq_selectivity(&vardata, operator, collation,
+												ids, varonleft, negate);
+			if (!negate)
+			{
+				selec /= graph_anchor_range_share(&vardata, ids);
+				CLAMP_PROBABILITY(selec);
+			}
+		}
+		else
+			selec = var_eq_non_const(&vardata, operator, collation, other,
+									 varonleft, negate);
+	}
 
 	ReleaseVariableStats(vardata);
 
@@ -2311,6 +2769,20 @@ eqjoinsel(PG_FUNCTION_ARGS)
 
 	get_join_variables(root, args, sjinfo,
 					   &vardata1, &vardata2, &join_is_reversed);
+
+	/*
+	 * One side may be the id of a pattern node a constant picks out; the
+	 * join then keeps the other side's rows for those ids, and no more.
+	 */
+	if (sjinfo->jointype != JOIN_SEMI && sjinfo->jointype != JOIN_ANTI &&
+		graph_anchor_join_selectivity(root, operator, collation,
+									  &vardata1, &vardata2, &selec))
+	{
+		ReleaseVariableStats(vardata1);
+		ReleaseVariableStats(vardata2);
+		CLAMP_PROBABILITY(selec);
+		PG_RETURN_FLOAT8((float8) selec);
+	}
 
 	nd1 = get_variable_numdistinct(&vardata1, &isdefault1);
 	nd2 = get_variable_numdistinct(&vardata2, &isdefault2);

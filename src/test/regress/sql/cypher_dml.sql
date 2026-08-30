@@ -4508,3 +4508,47 @@ EXPLAIN (COSTS OFF) MATCH (a:v {k: 7})-[:e*2..2]-(b:v) RETURN count(*);
 DROP FUNCTION vle_est_rows(text);
 DROP GRAPH vle_est CASCADE;
 RESET graph_path;
+
+--
+-- a node a constant picks out through an index is estimated by its own edges
+--
+-- 200 vertices in a chain; every one of them also points at the first, which
+-- so has 199 incoming edges where the others have one
+CREATE GRAPH anchor_est;
+SET graph_path = anchor_est;
+CREATE VLABEL v;
+CREATE ELABEL e;
+UNWIND range(1, 200) AS i CREATE (:v {k: i, m: i});
+MATCH (a:v), (h:v {k: 1}) WHERE a.k <> 1 CREATE (a)-[:e]->(h);
+MATCH (a:v), (b:v) WHERE b.k = a.k + 1 CREATE (a)-[:e]->(b);
+CREATE PROPERTY INDEX ON v (k);
+ANALYZE anchor_est.v;
+ANALYZE anchor_est.e;
+
+-- the row estimate of the plan's top node, read off the plan
+CREATE FUNCTION anchor_est_rows(q text) RETURNS int LANGUAGE plpgsql AS $$
+DECLARE
+	l text;
+BEGIN
+	FOR l IN EXECUTE 'EXPLAIN ' || q LOOP
+		RETURN substring(l FROM 'rows=(\d+)')::int;
+	END LOOP;
+	RETURN NULL;
+END $$;
+
+-- picked out by the indexed property, the first vertex is estimated at its
+-- own edges, and another vertex at its
+SELECT anchor_est_rows($$MATCH (h:v {k: 1})<-[:e]-(x) RETURN x$$) AS hub;
+SELECT anchor_est_rows($$MATCH (h:v {k: 7})<-[:e]-(x) RETURN x$$) AS other;
+-- so are two vertices named together
+SELECT anchor_est_rows($$MATCH (h:v) WHERE h.k IN [1, 7] MATCH (h)<-[:e]-(x) RETURN x$$) AS both;
+-- picked out by a property without an index, a vertex is an average one
+SELECT anchor_est_rows($$MATCH (h:v {m: 1})<-[:e]-(x) RETURN x$$) AS hub_by_unindexed_property;
+
+-- which is what the edges are
+MATCH (h:v {k: 1})<-[:e]-(x) RETURN count(*) AS hub;
+MATCH (h:v {k: 7})<-[:e]-(x) RETURN count(*) AS other;
+
+DROP FUNCTION anchor_est_rows(text);
+DROP GRAPH anchor_est CASCADE;
+RESET graph_path;
