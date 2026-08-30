@@ -141,6 +141,11 @@
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
+#include "ag_const.h"
+#include "catalog/ag_graph_fn.h"
+#include "catalog/pg_inherits.h"
+#include "utils/graph.h"
+#include "utils/rls.h"
 
 #define DEFAULT_PAGE_CPU_MULTIPLIER 50.0
 
@@ -5690,6 +5695,117 @@ strip_all_phvs_mutator(Node *node, void *context)
 }
 
 /*
+ * graph_vle_column_stats
+ *		Statistics for a column of a variable-length traversal's subquery.
+ *
+ * The traversal's first two columns are the vertex it started from and the
+ * vertex it reached, both read from the edge label's start and end columns --
+ * which of the two, by the direction walked; the columns after them are arrays
+ * no statistics describe.  A distinct count the statistics keep as a fraction
+ * of the label's rows is turned into a count, since it would otherwise be
+ * scaled by the traversal's rows.
+ */
+static void
+graph_vle_column_stats(CypherRel *crel, AttrNumber attno,
+					   VariableStatData *vardata)
+{
+	char	   *labname;
+	Oid			laboid;
+	Oid			relid;
+	AttrNumber	edgeattno;
+	bool		inh;
+	HeapTuple	tup;
+	Form_pg_statistic stats;
+
+	if (attno != 1 && attno != 2)
+		return;
+
+	labname = (crel->types == NIL) ? AG_EDGE : getCypherName(linitial(crel->types));
+	laboid = get_labname_laboid(labname, get_graph_path_oid());
+	if (!OidIsValid(laboid))
+		return;
+	relid = get_laboid_relid(laboid);
+	if (!OidIsValid(relid))
+		return;
+
+	/* the walk leaves an edge by one column and arrives by the other */
+	if (crel->direction == CYPHER_REL_DIR_LEFT)
+		edgeattno = (attno == 1) ? Anum_table_edge_end : Anum_table_edge_start;
+	else
+		edgeattno = (attno == 1) ? Anum_table_edge_start : Anum_table_edge_end;
+
+	/* a label with labels under it is described with them, when it has been */
+	inh = !crel->only && has_subclass(relid);
+	tup = SearchSysCache3(STATRELATTINH,
+						  ObjectIdGetDatum(relid),
+						  Int16GetDatum(edgeattno),
+						  BoolGetDatum(inh));
+	if (!HeapTupleIsValid(tup) && inh)
+		tup = SearchSysCache3(STATRELATTINH,
+							  ObjectIdGetDatum(relid),
+							  Int16GetDatum(edgeattno),
+							  BoolGetDatum(false));
+	if (!HeapTupleIsValid(tup))
+		return;
+
+	stats = (Form_pg_statistic) GETSTRUCT(tup);
+	if (stats->stadistinct < 0)
+	{
+		HeapTuple	copy = heap_copytuple(tup);
+		HeapTuple	cls = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+		double		ntuples = -1;
+
+		if (HeapTupleIsValid(cls))
+		{
+			ntuples = ((Form_pg_class) GETSTRUCT(cls))->reltuples;
+			ReleaseSysCache(cls);
+		}
+		if (inh)
+		{
+			List	   *children = find_all_inheritors(relid, NoLock, NULL);
+			ListCell   *lc;
+
+			foreach(lc, children)
+			{
+				if (lfirst_oid(lc) == relid)
+					continue;
+				cls = SearchSysCache1(RELOID, ObjectIdGetDatum(lfirst_oid(lc)));
+				if (HeapTupleIsValid(cls))
+				{
+					float4		t = ((Form_pg_class) GETSTRUCT(cls))->reltuples;
+
+					if (t > 0)
+						ntuples = Max(ntuples, 0) + t;
+					ReleaseSysCache(cls);
+				}
+			}
+			list_free(children);
+		}
+		ReleaseSysCache(tup);
+
+		/* a count, or nothing known, never a share of the wrong rows */
+		((Form_pg_statistic) GETSTRUCT(copy))->stadistinct =
+			(ntuples > 0) ? clamp_row_est(-stats->stadistinct * ntuples) : 0;
+		vardata->statsTuple = copy;
+		vardata->freefunc = heap_freetuple;
+	}
+	else
+	{
+		vardata->statsTuple = tup;
+		vardata->freefunc = ReleaseSysCache;
+	}
+
+	/*
+	 * The label is not in the query's range table, so whether every row of
+	 * it may be read is asked of the label itself; if not, only leakproof
+	 * estimators may see the statistics, as for any table.
+	 */
+	vardata->acl_ok =
+		pg_class_aclcheck(relid, GetUserId(), ACL_SELECT) == ACLCHECK_OK &&
+		check_enable_rls(relid, InvalidOid, false) != RLS_ENABLED;
+}
+
+/*
  * examine_simple_variable
  *		Handle a simple Var for examine_variable
  *
@@ -5851,6 +5967,18 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 		 */
 		subquery = subroot->parse;
 		Assert(IsA(subquery, Query));
+
+		/*
+		 * A variable-length traversal's columns are vertex ids read from the
+		 * edge label it walks, which is not in its subquery at all; they are
+		 * described by that label's statistics.
+		 */
+		if (subquery->g_vle_rel != NULL)
+		{
+			graph_vle_column_stats((CypherRel *) subquery->g_vle_rel,
+								   var->varattno, vardata);
+			return;
+		}
 
 		/*
 		 * Punt if subquery uses set operations or grouping sets, as these
