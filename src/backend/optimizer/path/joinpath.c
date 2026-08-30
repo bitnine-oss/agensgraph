@@ -27,6 +27,7 @@
 #include "optimizer/planmain.h"
 #include "optimizer/restrictinfo.h"
 #include "utils/lsyscache.h"
+#include "utils/selfuncs.h"
 #include "utils/typcache.h"
 
 /* Hook for plugins to get control in add_paths_to_joinrel() */
@@ -750,6 +751,48 @@ extract_lateral_vars_from_PHVs(PlannerInfo *root, Relids innerrelids)
 }
 
 /*
+ * graph_pinned_traversal
+ *		Is this inner relation a variable-length traversal whose every lateral
+ *		parameter is the id of a node a constant picks out?
+ *
+ * Such a traversal has a handful of parameter values in the whole query --
+ * one per pinned node -- however many rows the outer side turns out to have.
+ * Running it once per value and answering the rest from a cache is then right
+ * whatever the outer's estimate says, and repeating it is the most expensive
+ * mistake a plan around it can make.
+ */
+static bool
+graph_pinned_traversal(PlannerInfo *root, RelOptInfo *innerrel)
+{
+	RangeTblEntry *rte;
+	ListCell   *lc;
+
+	if (innerrel->reloptkind != RELOPT_BASEREL ||
+		innerrel->relid <= 0 ||
+		innerrel->relid >= root->simple_rel_array_size)
+		return false;
+	rte = root->simple_rte_array[innerrel->relid];
+	if (rte == NULL || !rte->isVLE)
+		return false;
+	if (innerrel->lateral_vars == NIL)
+		return false;
+
+	foreach(lc, innerrel->lateral_vars)
+	{
+		Node	   *node = (Node *) lfirst(lc);
+
+		if (node && IsA(node, RelabelType))
+			node = (Node *) ((RelabelType *) node)->arg;
+		if (node == NULL || !IsA(node, Var))
+			return false;
+		if (graph_anchor_ids(root, (Var *) node) == NIL)
+			return false;
+	}
+
+	return true;
+}
+
+/*
  * get_memoize_path
  *		If possible, make and return a Memoize path atop of 'inner_path'.
  *		Otherwise return NULL.
@@ -781,8 +824,13 @@ get_memoize_path(PlannerInfo *root, RelOptInfo *innerrel,
 	 * than one inner scan.  The first scan is always going to be a cache
 	 * miss.  This would likely fail later anyway based on costs, so this is
 	 * really just to save some wasted effort.
+	 *
+	 * A pinned traversal is the exception: its parameter has one value per
+	 * pinned node however many rows the outer turns out to have, so the cache
+	 * is kept even where the outer is estimated at a single row.
 	 */
-	if (outer_path->parent->rows < 2)
+	if (outer_path->parent->rows < 2 &&
+		!graph_pinned_traversal(root, innerrel))
 		return NULL;
 
 	/*
@@ -2074,14 +2122,6 @@ match_unsorted_outer(PlannerInfo *root,
 				Path	   *innerpath = (Path *) lfirst(lc2);
 				Path	   *mpath;
 
-				try_nestloop_path(root,
-								  joinrel,
-								  outerpath,
-								  innerpath,
-								  merge_pathkeys,
-								  jointype,
-								  extra);
-
 				/*
 				 * Try generating a memoize path and see if that makes the
 				 * nested loop any cheaper.
@@ -2089,6 +2129,23 @@ match_unsorted_outer(PlannerInfo *root,
 				mpath = get_memoize_path(root, innerrel, outerrel,
 										 innerpath, outerpath, jointype,
 										 extra);
+
+				/*
+				 * A pinned traversal is joined through its cache, never bare:
+				 * bare, every extra outer row beyond the estimate repeats the
+				 * traversal, and the cache costs one pass over rows the
+				 * traversal was paying to produce anyway.
+				 */
+				if (mpath == NULL ||
+					!graph_pinned_traversal(root, innerrel))
+					try_nestloop_path(root,
+									  joinrel,
+									  outerpath,
+									  innerpath,
+									  merge_pathkeys,
+									  jointype,
+									  extra);
+
 				if (mpath != NULL)
 					try_nestloop_path(root,
 									  joinrel,
