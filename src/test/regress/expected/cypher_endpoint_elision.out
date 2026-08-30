@@ -1032,19 +1032,20 @@ EXPLAIN (costs off) MATCH (a:person)-[b]->()-[:knows*1..2]->(c) RETURN a.name AS
    ->  Nested Loop
          ->  Nested Loop
                Join Filter: (array_position("<0000000132>".ids, b.id) IS NULL)
-               ->  Nested Loop
-                     ->  Seq Scan on person "<0000000131>"
-                     ->  Subquery Scan on "<0000000132>"
-                           Filter: ("<0000000131>".id = "<0000000132>".start)
-                           ->  Graph VLE on knows [1..2]
-                                 ->  Result
-               ->  Index Scan using knows_end_idx on knows b
-                     Index Cond: ("end" = "<0000000131>".id)
+               ->  Hash Join
+                     Hash Cond: (b."end" = "<0000000131>".id)
+                     ->  Seq Scan on knows b
+                     ->  Hash
+                           ->  Seq Scan on person "<0000000131>"
+               ->  Subquery Scan on "<0000000132>"
+                     Filter: ("<0000000131>".id = "<0000000132>".start)
+                     ->  Graph VLE on knows [1..2]
+                           ->  Result
          ->  Index Scan using person_pkey on person a
                Index Cond: (id = b.start)
    ->  Index Only Scan using person_pkey on person c
          Index Cond: (id = "<0000000132>"."end")
-(16 rows)
+(17 rows)
 
 -- ============================================================
 -- NOT ELIDE: OPTIONAL MATCH endpoint (outer join)

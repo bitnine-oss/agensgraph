@@ -108,6 +108,20 @@
 #include "utils/selfuncs.h"
 #include "utils/spccache.h"
 #include "utils/tuplesort.h"
+#include "ag_const.h"
+#include "catalog/ag_graph_fn.h"
+#include "catalog/ag_graphmeta.h"
+#include "catalog/ag_label.h"
+#include "catalog/ag_label_fn.h"
+#include "catalog/pg_class.h"
+#include "catalog/pg_inherits.h"
+#include "catalog/pg_statistic.h"
+#include "optimizer/plancat.h"
+#include "pgstat.h"
+#include "utils/catcache.h"
+#include "utils/graph.h"
+#include "utils/jsonb.h"
+#include "utils/syscache.h"
 
 
 #define LOG2(x)  (log(x) / 0.693147180559945)
@@ -1856,6 +1870,591 @@ cost_recursive_union(Path *runion, Path *nrterm, Path *rterm)
 	runion->rows = total_rows;
 	runion->pathtarget->width = Max(nrterm->pathtarget->width,
 									rterm->pathtarget->width);
+}
+
+/*
+ * Estimating a variable-length traversal
+ *
+ * A traversal `-[:e*lo..hi]-' is a subquery whose planned part is only the
+ * vertex it starts from; the executor then walks the edges itself, one index
+ * probe per vertex reached, and returns one row per trail of lo to hi edges
+ * that does not repeat an edge.  So the rows it returns, and the work of
+ * finding them, are not in any relation the planner scanned, and have to be
+ * worked out here from the statistics of the edge label.
+ *
+ * The number of trails grows geometrically with the hops.  The first hop from
+ * a vertex finds the vertex's edges: on average, the edges of the label
+ * divided by the vertices that can start one.  Every later hop starts from a
+ * vertex that was reached by an edge, and an edge reaches a vertex in
+ * proportion to that vertex's degree, so the vertices reached are the
+ * well-connected ones: the fan-out from the second hop on is the mean of the
+ * out-degree weighted by the in-degree, sum(in(v) * out(v)) / E, which on a
+ * social graph is three to four times the plain mean degree.  That sum is
+ * exactly the size of the self-join of the label on end = start, which the
+ * planner's join estimator already computes from the column statistics; an
+ * undirected hop adds the two same-column self-joins and drops the edge it
+ * arrived on.
+ *
+ * A traversal written without an upper bound keeps going until no unused
+ * edge is left.  For the estimate it is taken to stop where the trails could
+ * have reached every vertex the label touches, and never to run more than
+ * VLE_UNBOUNDED_MAX_HOPS hops, which is also what a recursive query is
+ * assumed to iterate.
+ */
+
+/* the hops assumed for a traversal with no upper bound, at most */
+#define VLE_UNBOUNDED_MAX_HOPS	10
+
+/*
+ * What a btree page visited on the way down costs, as an index scan charges
+ * it (DEFAULT_PAGE_CPU_MULTIPLIER in selfuncs.c).
+ */
+#define VLE_PAGE_CPU_MULTIPLIER	50.0
+
+/* what one hop over an edge label costs and finds */
+typedef struct VLEHopInfo
+{
+	double		edges;			/* edges of the label, all relations */
+	double		nd_start;		/* distinct vertices that start one */
+	double		nd_end;			/* distinct vertices that end one */
+	double		s_start_start;	/* sum over vertices of out(v)^2 */
+	double		s_end_end;		/* sum over vertices of in(v)^2 */
+	double		s_end_start;	/* sum over vertices of in(v) * out(v) */
+	bool		have_moments;	/* the three sums are from statistics */
+	BlockNumber pages;			/* heap pages, all relations */
+	BlockNumber idx_pages;		/* pages of the indexes probed */
+	Cost		probe_start;	/* one probe of every relation by start */
+	Cost		probe_end;		/* one probe of every relation by end */
+} VLEHopInfo;
+
+/*
+ * Rows of a label and every label under it.  A relation that was never
+ * analyzed counts for nothing; if none was, the answer is -1.
+ */
+static double
+graph_label_tuples(Oid relid)
+{
+	List	   *rels = find_all_inheritors(relid, NoLock, NULL);
+	ListCell   *lc;
+	double		tuples = 0;
+	bool		known = false;
+
+	foreach(lc, rels)
+	{
+		HeapTuple	tp = SearchSysCache1(RELOID, ObjectIdGetDatum(lfirst_oid(lc)));
+
+		if (HeapTupleIsValid(tp))
+		{
+			float4		t = ((Form_pg_class) GETSTRUCT(tp))->reltuples;
+
+			ReleaseSysCache(tp);
+			if (t >= 0)
+			{
+				tuples += t;
+				known = true;
+			}
+		}
+	}
+	list_free(rels);
+
+	return known ? tuples : -1;
+}
+
+/* the label id of a label relation, or 0 */
+static int
+graph_relid_labid(Oid relid)
+{
+	HeapTuple	tup = SearchSysCache1(LABELRELID, ObjectIdGetDatum(relid));
+	int			labid = 0;
+
+	if (HeapTupleIsValid(tup))
+	{
+		labid = (int) ((Form_ag_label) GETSTRUCT(tup))->labid;
+		ReleaseSysCache(tup);
+	}
+	return labid;
+}
+
+/*
+ * Edges of the given edge relations that have a vertex of the given label
+ * hierarchy at their start (or end), by ag_graphmeta.  -1 when the counts
+ * cannot be used: gathering is off, this transaction has written edges, or
+ * the graph's baseline is stale -- the same conditions scan pruning applies.
+ */
+static double
+graphmeta_edge_count(Oid graph, List *edge_relids, Oid vertex_relid,
+					 bool at_start)
+{
+	List	   *vrels;
+	Bitmapset  *vlabids = NULL;
+	ListCell   *lc;
+	double		count = 0;
+
+	if (!auto_gather_graphmeta || has_pending_graphmeta_writes() ||
+		!graphmeta_baseline_valid(graph))
+		return -1;
+
+	vrels = find_all_inheritors(vertex_relid, NoLock, NULL);
+	foreach(lc, vrels)
+	{
+		int			l = graph_relid_labid(lfirst_oid(lc));
+
+		if (l != 0)
+			vlabids = bms_add_member(vlabids, l);
+	}
+	list_free(vrels);
+
+	foreach(lc, edge_relids)
+	{
+		int			e = graph_relid_labid(lfirst_oid(lc));
+		CatCList   *cl;
+		int			i;
+
+		if (e == 0)
+			continue;
+		cl = SearchSysCacheList2(GRAPHMETAFULL, ObjectIdGetDatum(graph),
+								 Int16GetDatum((int16) e));
+		for (i = 0; i < cl->n_members; i++)
+		{
+			Form_ag_graphmeta m =
+				(Form_ag_graphmeta) GETSTRUCT(&cl->members[i]->tuple);
+			int			side = (int) (uint16) (at_start ? m->start : m->end);
+
+			if (bms_is_member(side, vlabids))
+				count += (double) m->edgecount;
+		}
+		ReleaseCatCacheList(cl);
+	}
+	bms_free(vlabids);
+
+	return count;
+}
+
+/*
+ * The relations of the vertex the traversal starts from and of the vertex it
+ * ends at, from the pattern in the query that reads the traversal.  Either is
+ * InvalidOid when the pattern does not say.
+ */
+static void
+vle_pattern_endpoints(PlannerInfo *root, Oid *seed_relid, Oid *far_relid)
+{
+	PlannerInfo *outer = root->parent_root;
+	Index		rti = root->glob->g_vle_outer_rti;
+	RangeTblEntry *rte;
+	int			shift;
+	int			ends[2];
+	int			elemids[2];
+	Oid		   *out[2];
+	int			i;
+
+	*seed_relid = InvalidOid;
+	*far_relid = InvalidOid;
+
+	if (outer == NULL || rti == 0 || rti >= outer->simple_rel_array_size)
+		return;
+	rte = outer->simple_rte_array[rti];
+	if (rte == NULL || rte->graphPruneRole != GRAPHPRUNE_ROLE_VLE)
+		return;
+
+	/*
+	 * The pattern numbered its elements from 1 and they were pulled up
+	 * together, so the same offset takes every element to its range table
+	 * entry; the recorded element id confirms the entry reached is the one
+	 * meant.
+	 */
+	shift = (int) rti - rte->graphPruneElemId;
+	ends[0] = rte->graphPruneSrcElemId + shift;
+	elemids[0] = rte->graphPruneSrcElemId;
+	out[0] = seed_relid;
+	ends[1] = rte->graphPruneDstElemId + shift;
+	elemids[1] = rte->graphPruneDstElemId;
+	out[1] = far_relid;
+
+	for (i = 0; i < 2; i++)
+	{
+		RangeTblEntry *e;
+
+		if (ends[i] <= 0 || ends[i] >= outer->simple_rel_array_size)
+			continue;
+		e = outer->simple_rte_array[ends[i]];
+		if (e != NULL && e->rtekind == RTE_RELATION &&
+			e->graphPruneRole == GRAPHPRUNE_ROLE_NODE &&
+			e->graphPruneElemId == elemids[i])
+			*out[i] = e->relid;
+	}
+}
+
+/*
+ * How much of the label's edges a property constraint on the traversal keeps.
+ * A key held in a column of the label is answered from that column's
+ * statistics; any other key is taken to keep the fraction an equality with
+ * no statistics is.
+ */
+static Selectivity
+vle_property_selectivity(CypherRel *crel, Oid relid)
+{
+	Const	   *c;
+	Jsonb	   *jb;
+	JsonbIterator *it;
+	JsonbValue	v;
+	JsonbIteratorToken r;
+	Oid			laboid;
+	Selectivity selec = 1.0;
+	int			nkeys = 0;
+
+	if (crel->prop_map == NULL)
+		return 1.0;
+	if (!IsA(crel->prop_map, Const))
+		return DEFAULT_EQ_SEL;
+	c = (Const *) crel->prop_map;
+	if (c->constisnull || c->consttype != JSONBOID)
+		return DEFAULT_EQ_SEL;
+
+	jb = DatumGetJsonbP(c->constvalue);
+	if (!JB_ROOT_IS_OBJECT(jb))
+		return DEFAULT_EQ_SEL;
+
+	laboid = get_relid_laboid(relid);
+	it = JsonbIteratorInit(&jb->root);
+	while ((r = JsonbIteratorNext(&it, &v, true)) != WJB_DONE)
+	{
+		char	   *key;
+		AttrNumber	attno;
+		Selectivity keysel = DEFAULT_EQ_SEL;
+
+		if (r != WJB_KEY)
+			continue;
+		nkeys++;
+		key = pnstrdup(v.val.string.val, v.val.string.len);
+		attno = OidIsValid(laboid) ?
+			get_label_property_attnum(laboid, key) : InvalidAttrNumber;
+		if (attno != InvalidAttrNumber)
+		{
+			HeapTuple	st = SearchSysCache3(STATRELATTINH,
+											 ObjectIdGetDatum(relid),
+											 Int16GetDatum(attno),
+											 BoolGetDatum(false));
+
+			if (HeapTupleIsValid(st))
+			{
+				Form_pg_statistic stats = (Form_pg_statistic) GETSTRUCT(st);
+				double		nd = stats->stadistinct;
+
+				if (nd < 0)
+					nd = -nd * graph_label_tuples(relid);
+				if (nd > 0)
+					keysel = (1.0 - stats->stanullfrac) / nd;
+				ReleaseSysCache(st);
+			}
+		}
+		pfree(key);
+		selec *= keysel;
+	}
+
+	if (nkeys == 0)
+		return 1.0;
+	CLAMP_PROBABILITY(selec);
+	return selec;
+}
+
+/*
+ * Gather what one hop over the traversal's edge label costs and finds, over
+ * the label and every label under it.
+ */
+static void
+vle_hop_info(PlannerInfo *root, List *edge_relids, VLEHopInfo *hop)
+{
+	ListCell   *lc;
+
+	memset(hop, 0, sizeof(VLEHopInfo));
+	hop->have_moments = true;
+
+	foreach(lc, edge_relids)
+	{
+		Oid			relid = lfirst_oid(lc);
+		GraphEdgeRelInfo info;
+		Selectivity sel;
+		double		nd1,
+					nd2,
+					ndsame1,
+					ndsame2;
+
+		get_graph_edge_rel_info(relid, &info);
+		hop->edges += info.tuples;
+		hop->pages += info.pages;
+
+		/*
+		 * A probe descends the btree and reads the matching leaf entries,
+		 * costed as an index scan costs its descent; a relation without the
+		 * index is read whole, as the executor then does.
+		 */
+		if (info.start_idx_height >= 0)
+		{
+			hop->idx_pages += info.start_idx_pages;
+			hop->probe_start += ceil(log(Max(info.tuples, 1.0)) / log(2.0)) *
+				cpu_operator_cost +
+				(info.start_idx_height + 1) * VLE_PAGE_CPU_MULTIPLIER *
+				cpu_operator_cost;
+		}
+		else
+			hop->probe_start += info.pages * seq_page_cost +
+				info.tuples * cpu_tuple_cost;
+
+		if (info.end_idx_height >= 0)
+		{
+			hop->idx_pages += info.end_idx_pages;
+			hop->probe_end += ceil(log(Max(info.tuples, 1.0)) / log(2.0)) *
+				cpu_operator_cost +
+				(info.end_idx_height + 1) * VLE_PAGE_CPU_MULTIPLIER *
+				cpu_operator_cost;
+		}
+		else
+			hop->probe_end += info.pages * seq_page_cost +
+				info.tuples * cpu_tuple_cost;
+
+		if (info.tuples <= 0)
+			continue;
+
+		/*
+		 * The degree moments, as the size of the label's self-joins.  A
+		 * relation without statistics leaves them unknown.
+		 */
+		if (graph_edge_column_moment(relid, Anum_table_edge_end,
+									 Anum_table_edge_start, info.tuples,
+									 &sel, &nd2, &nd1))
+		{
+			hop->s_end_start += info.tuples * info.tuples * sel;
+			hop->nd_start += nd1;
+			hop->nd_end += nd2;
+		}
+		else
+			hop->have_moments = false;
+
+		if (graph_edge_column_moment(relid, Anum_table_edge_start,
+									 Anum_table_edge_start, info.tuples,
+									 &sel, &ndsame1, &ndsame2))
+			hop->s_start_start += info.tuples * info.tuples * sel;
+		else
+			hop->have_moments = false;
+
+		if (graph_edge_column_moment(relid, Anum_table_edge_end,
+									 Anum_table_edge_end, info.tuples,
+									 &sel, &ndsame1, &ndsame2))
+			hop->s_end_end += info.tuples * info.tuples * sel;
+		else
+			hop->have_moments = false;
+	}
+}
+
+/*
+ * cost_graph_vle
+ *	  Determines and returns the cost and row count of a variable-length
+ *	  traversal, given the path that produces the vertex it starts from.
+ */
+void
+cost_graph_vle(GraphVLEPath *path, PlannerInfo *root)
+{
+	Path	   *subpath = path->subpath;
+	CypherRel  *crel = path->vle_rel;
+	A_Indices  *varlen = (A_Indices *) crel->varlen;
+	int			lo;
+	int			hi;
+	int			depth;
+	char	   *labname;
+	Oid			graph;
+	Oid			laboid;
+	Oid			relid;
+	List	   *edge_relids;
+	Oid			seed_relid;
+	Oid			far_relid;
+	VLEHopInfo	hop;
+	Selectivity propsel;
+	double		seed_vertices;
+	double		far_vertices;
+	double		fanout1;		/* trails per seed after one hop */
+	double		fanout;			/* trails per trail, every later hop */
+	double		fanout1_raw;	/* edges read for those, before the filter */
+	double		fanout_raw;
+	Cost		probe;			/* one hop's probes from one vertex */
+	double		rows;
+	double		trails;
+	double		edges_read;
+	Cost		startup_cost;
+	Cost		run_cost;
+	int			k;
+
+	lo = intVal(&((A_Const *) varlen->lidx)->val);
+	hi = varlen->uidx ? intVal(&((A_Const *) varlen->uidx)->val) : -1;
+
+	/*
+	 * The edge relations, resolved the way the executor resolves them: the
+	 * named label, or every edge, and the labels under it unless ONLY.
+	 */
+	labname = (crel->types == NIL) ? AG_EDGE : getCypherName(linitial(crel->types));
+	graph = get_graph_path_oid();
+	laboid = get_labname_laboid(labname, graph);
+	relid = OidIsValid(laboid) ? get_laboid_relid(laboid) : InvalidOid;
+	if (!OidIsValid(relid))
+		edge_relids = NIL;		/* no such label: the traversal finds nothing */
+	else if (crel->only)
+		edge_relids = list_make1_oid(relid);
+	else
+		edge_relids = find_all_inheritors(relid, NoLock, NULL);
+
+	vle_hop_info(root, edge_relids, &hop);
+	propsel = OidIsValid(relid) ? vle_property_selectivity(crel, relid) : 1.0;
+	vle_pattern_endpoints(root, &seed_relid, &far_relid);
+	seed_vertices = OidIsValid(seed_relid) ? graph_label_tuples(seed_relid) : -1;
+	far_vertices = OidIsValid(far_relid) ? graph_label_tuples(far_relid) : -1;
+
+	/*
+	 * The first hop.  The edges the seed's label can start (or end, against
+	 * the direction) are counted by ag_graphmeta when that can be read;
+	 * otherwise every edge of the label is taken to be startable from a
+	 * vertex of the seed's label.  Without the seed's label, the distinct
+	 * start (or end) values of the edge column stand in for the vertices.
+	 */
+	if (crel->direction == CYPHER_REL_DIR_NONE)
+	{
+		double		out_edges = -1;
+		double		in_edges = -1;
+
+		if (OidIsValid(seed_relid))
+		{
+			out_edges = graphmeta_edge_count(graph, edge_relids, seed_relid, true);
+			in_edges = graphmeta_edge_count(graph, edge_relids, seed_relid, false);
+		}
+		if (out_edges < 0)
+			out_edges = hop.edges;
+		if (in_edges < 0)
+			in_edges = hop.edges;
+		if (seed_vertices > 0)
+			fanout1_raw = (out_edges + in_edges) / seed_vertices;
+		else
+			fanout1_raw = (hop.nd_start > 0 ? out_edges / hop.nd_start : 0) +
+				(hop.nd_end > 0 ? in_edges / hop.nd_end : 0);
+		probe = hop.probe_start + hop.probe_end;
+	}
+	else
+	{
+		bool		from_start = (crel->direction == CYPHER_REL_DIR_RIGHT);
+		double		edges = -1;
+		double		nd = from_start ? hop.nd_start : hop.nd_end;
+
+		if (OidIsValid(seed_relid))
+			edges = graphmeta_edge_count(graph, edge_relids, seed_relid, from_start);
+		if (edges < 0)
+			edges = hop.edges;
+		if (seed_vertices > 0)
+			fanout1_raw = edges / seed_vertices;
+		else
+			fanout1_raw = (nd > 0) ? edges / nd : 0;
+		probe = from_start ? hop.probe_start : hop.probe_end;
+	}
+
+	/*
+	 * Every later hop.  Without the degree moments, the vertices reached are
+	 * taken to be no better connected than the seed.
+	 */
+	if (hop.have_moments && hop.edges > 0)
+	{
+		if (crel->direction == CYPHER_REL_DIR_NONE)
+			fanout_raw = (hop.s_start_start + 2 * hop.s_end_start +
+						  hop.s_end_end) / (2 * hop.edges) - 1;
+		else
+			fanout_raw = hop.s_end_start / hop.edges;
+		fanout_raw = Max(fanout_raw, 0);
+	}
+	else
+		fanout_raw = fanout1_raw;
+
+	fanout1 = fanout1_raw * propsel;
+	fanout = fanout_raw * propsel;
+
+	/*
+	 * A traversal with no upper bound is taken to stop once the trails could
+	 * have reached every vertex the label touches.  A fan-out of one or less
+	 * never gets there, and adds less with each hop; it is simply run to the
+	 * limit.
+	 */
+	if (hi >= 0)
+		depth = hi;
+	else
+	{
+		depth = VLE_UNBOUNDED_MAX_HOPS;
+		if (fanout > 1.0 && fanout1 > 0)
+		{
+			int			first = Max(lo, 1);
+			double		reach = far_vertices > 0 ? far_vertices :
+				Max(hop.nd_start, hop.nd_end);
+			double		at_first = fanout1 * pow(fanout, first - 1);
+
+			double		d = first;
+
+			if (reach > at_first)
+				d += ceil(log(reach / at_first) / log(fanout));
+			d = Min(Max(d, (double) lo), (double) VLE_UNBOUNDED_MAX_HOPS);
+			depth = (int) d;
+		}
+	}
+
+	/*
+	 * Walk the hops, adding up the trails found and the work of finding them.
+	 * At each hop every trail of the previous length is extended: its last
+	 * vertex is probed once per direction, and each edge read costs the index
+	 * entry, the check that the trail has not used it (a scan of the trail so
+	 * far), and the constraint if there is one.  A trail of a length the
+	 * query asked for is a row: its edge ids are copied out.
+	 */
+	rows = (lo == 0) ? 1 : 0;
+	trails = 1;					/* the seed, a trail of no edges */
+	edges_read = 0;
+	startup_cost = subpath->startup_cost;
+	run_cost = 0;
+	for (k = 1; k <= depth; k++)
+	{
+		double		vertices = trails;
+		double		this_fanout_raw = (k == 1) ? fanout1_raw : fanout_raw;
+		double		this_fanout = (k == 1) ? fanout1 : fanout;
+		double		read = vertices * this_fanout_raw;
+		Cost		per_edge;
+
+		run_cost += vertices * probe;
+
+		per_edge = cpu_index_tuple_cost + cpu_operator_cost * k;
+		if (crel->prop_map != NULL)
+			per_edge += cpu_operator_cost;
+		run_cost += read * per_edge;
+		edges_read += read;
+
+		trails = vertices * this_fanout;
+		if (k >= lo)
+		{
+			rows += trails;
+			run_cost += trails * (cpu_tuple_cost + cpu_operator_cost * k);
+		}
+
+		/* the first row is found after one branch of lo hops */
+		if (k <= lo)
+			startup_cost += probe;
+	}
+
+	/*
+	 * The heap pages the edges read come from, fetched by index probes of
+	 * the label, as an index scan repeated that many times would fetch them.
+	 * The label is not among the tables this query scans, so its pages and
+	 * its indexes' are added to the space taken to compete for the cache.
+	 */
+	if (edges_read > 0 && hop.pages > 0)
+		run_cost += index_pages_fetched(clamp_row_est(edges_read), hop.pages,
+										(double) hop.pages + hop.idx_pages,
+										root) * random_page_cost;
+
+	path->path.rows = clamp_row_est(rows);
+	path->path.startup_cost = startup_cost;
+	path->path.total_cost = subpath->total_cost + run_cost;
+
+	list_free(edge_relids);
 }
 
 /*

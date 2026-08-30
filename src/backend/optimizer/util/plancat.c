@@ -47,6 +47,7 @@
 #include "storage/bufmgr.h"
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
+#include "utils/graph.h"
 #include "utils/lsyscache.h"
 #include "utils/partcache.h"
 #include "utils/rel.h"
@@ -2611,4 +2612,64 @@ set_baserel_partition_constraint(Relation relation, RelOptInfo *rel)
 			ChangeVarNodes((Node *) partconstr, 1, rel->relid, 0);
 		rel->partition_qual = partconstr;
 	}
+}
+
+/*
+ * get_graph_edge_rel_info
+ *		Size an edge relation and the two indexes a traversal hops through.
+ *
+ * A variable-length traversal expands each hop by probing the btree that
+ * leads with the edge's start column (or its end column, against the
+ * direction), the same way the executor chooses them: a valid, ready, whole
+ * btree whose first key is that column.  The relation is not in the query's
+ * range table, so nothing has opened it yet; it is opened here under the lock
+ * the executor will take anyway, and the lock is kept to the end of the
+ * transaction like every other relation the planner looks at.
+ */
+void
+get_graph_edge_rel_info(Oid relid, GraphEdgeRelInfo *info)
+{
+	Relation	rel;
+	List	   *indexoids;
+	ListCell   *lc;
+	double		allvisfrac;
+
+	memset(info, 0, sizeof(GraphEdgeRelInfo));
+	info->relid = relid;
+	info->start_idx_height = -1;
+	info->end_idx_height = -1;
+
+	rel = table_open(relid, AccessShareLock);
+	estimate_rel_size(rel, NULL, &info->pages, &info->tuples, &allvisfrac);
+
+	indexoids = RelationGetIndexList(rel);
+	foreach(lc, indexoids)
+	{
+		Relation	idx = index_open(lfirst_oid(lc), AccessShareLock);
+		AttrNumber	leadattr = idx->rd_index->indkey.values[0];
+		bool		usable;
+
+		usable = idx->rd_rel->relam == BTREE_AM_OID &&
+			idx->rd_index->indisvalid &&
+			idx->rd_index->indisready &&
+			RelationGetIndexPredicate(idx) == NIL;
+
+		if (usable && leadattr == Anum_table_edge_start &&
+			info->start_idx_height < 0)
+		{
+			info->start_idx_pages = RelationGetNumberOfBlocks(idx);
+			info->start_idx_height = _bt_getrootheight(idx);
+		}
+		else if (usable && leadattr == Anum_table_edge_end &&
+				 info->end_idx_height < 0)
+		{
+			info->end_idx_pages = RelationGetNumberOfBlocks(idx);
+			info->end_idx_height = _bt_getrootheight(idx);
+		}
+
+		index_close(idx, NoLock);
+	}
+	list_free(indexoids);
+
+	table_close(rel, NoLock);
 }

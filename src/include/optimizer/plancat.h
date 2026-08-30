@@ -77,4 +77,23 @@ extern bool has_stored_generated_columns(PlannerInfo *root, Index rti);
 extern Bitmapset *get_dependent_generated_columns(PlannerInfo *root, Index rti,
 												  Bitmapset *target_cols);
 
+/*
+ * What the planner knows about one edge relation a variable-length traversal
+ * expands over: its size, and the btree indexes on start and on end that a
+ * hop is probed through, when they exist.  A height of -1 means no usable
+ * index on that column, so that hop scans the heap.
+ */
+typedef struct GraphEdgeRelInfo
+{
+	Oid			relid;
+	double		tuples;
+	BlockNumber pages;
+	BlockNumber start_idx_pages;
+	int			start_idx_height;
+	BlockNumber end_idx_pages;
+	int			end_idx_height;
+} GraphEdgeRelInfo;
+
+extern void get_graph_edge_rel_info(Oid relid, GraphEdgeRelInfo *info);
+
 #endif							/* PLANCAT_H */

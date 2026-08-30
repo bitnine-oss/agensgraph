@@ -181,6 +181,14 @@ typedef struct PlannerGlobal
 
 	/* partition descriptors */
 	PartitionDirectory partition_directory pg_node_attr(read_write_ignore);
+
+	/*
+	 * A variable-length traversal is a subquery of its own, planned apart
+	 * from the query that reads it.  While that subquery is planned, this is
+	 * its range table index in the query it belongs to, so the traversal can
+	 * be estimated from its pattern; zero at any other time.
+	 */
+	Index		g_vle_outer_rti pg_node_attr(read_write_ignore);
 } PlannerGlobal;
 
 /* macro for fetching the Plan associated with a SubPlan node */
