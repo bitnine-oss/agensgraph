@@ -8878,3 +8878,106 @@ brincostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 
 	*indexPages = index->pages;
 }
+
+
+/*-------------------------------------------------------------------------
+ *
+ * Graph traversal support
+ *
+ *-------------------------------------------------------------------------
+ */
+
+/*
+ * graph_edge_column_moment
+ *		The size of a relation's self-join on two of its columns, as a
+ *		selectivity, from the columns' statistics.
+ *
+ * The sum over values v of count1(v) * count2(v) is ntuples squared times the
+ * selectivity returned, which is what the join estimator gives an equality of
+ * the two columns.  A variable-length traversal reads its fan-out from it:
+ * over an edge label, joined on end = start, the sum is the out-degree of the
+ * vertex each edge arrives at, added up over the edges.  Each column's
+ * distinct count is returned as well.  Returns false, setting nothing, when
+ * either column has no statistics to answer from.
+ */
+bool
+graph_edge_column_moment(Oid relid, AttrNumber attno1, AttrNumber attno2,
+						 double ntuples, Selectivity *selec,
+						 double *nd1, double *nd2)
+{
+	HeapTuple	tup1;
+	HeapTuple	tup2;
+	Form_pg_statistic stats1;
+	Form_pg_statistic stats2;
+	AttStatsSlot sslot1;
+	AttStatsSlot sslot2;
+	bool		have_mcvs1;
+	bool		have_mcvs2;
+	VariableStatData vardata1;
+	VariableStatData vardata2;
+	double		d1;
+	double		d2;
+
+	tup1 = SearchSysCache3(STATRELATTINH,
+						   ObjectIdGetDatum(relid),
+						   Int16GetDatum(attno1),
+						   BoolGetDatum(false));
+	if (!HeapTupleIsValid(tup1))
+		return false;
+	tup2 = SearchSysCache3(STATRELATTINH,
+						   ObjectIdGetDatum(relid),
+						   Int16GetDatum(attno2),
+						   BoolGetDatum(false));
+	if (!HeapTupleIsValid(tup2))
+	{
+		ReleaseSysCache(tup1);
+		return false;
+	}
+	stats1 = (Form_pg_statistic) GETSTRUCT(tup1);
+	stats2 = (Form_pg_statistic) GETSTRUCT(tup2);
+
+	/*
+	 * The distinct count as the statistics store it: a count, or below zero a
+	 * fraction of the rows.  Zero means it was never found out.
+	 */
+	d1 = stats1->stadistinct;
+	if (d1 < 0)
+		d1 = -d1 * ntuples;
+	d2 = stats2->stadistinct;
+	if (d2 < 0)
+		d2 = -d2 * ntuples;
+	if (d1 <= 0 || d2 <= 0)
+	{
+		ReleaseSysCache(tup1);
+		ReleaseSysCache(tup2);
+		return false;
+	}
+
+	have_mcvs1 = get_attstatsslot(&sslot1, tup1, STATISTIC_KIND_MCV,
+								  InvalidOid,
+								  ATTSTATSSLOT_VALUES | ATTSTATSSLOT_NUMBERS);
+	have_mcvs2 = get_attstatsslot(&sslot2, tup2, STATISTIC_KIND_MCV,
+								  InvalidOid,
+								  ATTSTATSSLOT_VALUES | ATTSTATSSLOT_NUMBERS);
+
+	/* the estimator reads nothing of these beyond what is passed alongside */
+	memset(&vardata1, 0, sizeof(vardata1));
+	memset(&vardata2, 0, sizeof(vardata2));
+
+	*selec = eqjoinsel_inner(F_GRAPHID_EQ, InvalidOid,
+							 &vardata1, &vardata2,
+							 d1, d2, false, false,
+							 &sslot1, &sslot2, stats1, stats2,
+							 have_mcvs1, have_mcvs2);
+	*nd1 = clamp_row_est(d1);
+	*nd2 = clamp_row_est(d2);
+
+	if (have_mcvs1)
+		free_attstatsslot(&sslot1);
+	if (have_mcvs2)
+		free_attstatsslot(&sslot2);
+	ReleaseSysCache(tup1);
+	ReleaseSysCache(tup2);
+
+	return true;
+}

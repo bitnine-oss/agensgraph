@@ -4275,13 +4275,12 @@ create_graph_vle_path(PlannerInfo *root,
 	pathnode->path.parallel_aware = false;
 	pathnode->path.parallel_safe = false;
 	pathnode->path.parallel_workers = 0;
-	pathnode->path.rows = subpath->rows;
-	pathnode->path.startup_cost = subpath->startup_cost;
-	pathnode->path.total_cost = subpath->total_cost;
 	pathnode->path.pathkeys = NIL;
 
 	pathnode->subpath = subpath;
 	pathnode->vle_rel = vle_rel;
+
+	cost_graph_vle(pathnode, root);
 
 	return pathnode;
 }

@@ -2551,6 +2551,15 @@ set_subquery_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	subquery = copyObject(subquery);
 
 	/*
+	 * A variable-length traversal is estimated from the pattern it belongs
+	 * to, which lives at this query level.  Say where that is while the
+	 * traversal's subquery is planned; it holds nothing that could plan
+	 * another subquery inside it.
+	 */
+	if (rte->isVLE)
+		root->glob->g_vle_outer_rti = rti;
+
+	/*
 	 * If it's a LATERAL subquery, it might contain some Vars of the current
 	 * query level, requiring it to be treated as parameterized, even though
 	 * we don't support pushing down join quals into subqueries.
@@ -2693,6 +2702,9 @@ set_subquery_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	/* Generate a subroot and Paths for the subquery */
 	rel->subroot = subquery_planner(root->glob, subquery, root, false,
 									tuple_fraction, NULL);
+
+	if (rte->isVLE)
+		root->glob->g_vle_outer_rti = 0;
 
 	/* Isolate the params needed by this specific subplan */
 	rel->subplan_params = root->plan_params;

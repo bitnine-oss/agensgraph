@@ -4460,3 +4460,51 @@ MATCH (let:person) RETURN 1;
 
 DROP GRAPH kwname CASCADE;
 RESET graph_path;
+
+--
+-- a variable-length traversal is estimated from its edge label's statistics
+--
+-- 200 vertices; each points at the five after it and at five hubs, so a hop
+-- from a vertex an edge led to fans out more than a hop from an average one.
+CREATE GRAPH vle_est;
+SET graph_path = vle_est;
+CREATE VLABEL v;
+CREATE ELABEL e;
+UNWIND range(1, 200) AS i CREATE (:v {k: i});
+MATCH (a:v), (b:v) WHERE b.k > a.k AND b.k <= a.k + 5 CREATE (a)-[:e]->(b);
+MATCH (a:v), (h:v) WHERE h.k <= 5 AND a.k <> h.k CREATE (a)-[:e]->(h);
+ANALYZE vle_est.v;
+ANALYZE vle_est.e;
+
+-- the traversal's row estimate, read off its plan
+CREATE FUNCTION vle_est_rows(q text) RETURNS int LANGUAGE plpgsql AS $$
+DECLARE
+	l text;
+BEGIN
+	FOR l IN EXECUTE 'EXPLAIN ' || q LOOP
+		IF l LIKE '%Graph VLE%' THEN
+			RETURN substring(l FROM 'rows=(\d+)')::int;
+		END IF;
+	END LOOP;
+	RETURN NULL;
+END $$;
+
+-- one hop finds the vertex's own edges
+SELECT vle_est_rows($$MATCH (a:v {k: 7})-[:e*1..1]->(b:v) RETURN b$$) AS one_hop;
+-- the next multiplies by the degree of the vertices reached, not the average degree
+SELECT vle_est_rows($$MATCH (a:v {k: 7})-[:e*2..2]->(b:v) RETURN b$$) AS two_hops;
+-- an undirected hop follows edges both ways
+SELECT vle_est_rows($$MATCH (a:v {k: 7})-[:e*2..2]-(b:v) RETURN b$$) AS two_hops_undirected;
+-- a traversal of no edges is the vertex itself
+SELECT vle_est_rows($$MATCH (a:v {k: 7})-[:e*0..0]->(b:v) RETURN b$$) AS no_hop;
+
+-- which is what the traversals find
+MATCH (a:v {k: 7})-[:e*1..1]->(b:v) RETURN count(*) AS one_hop;
+MATCH (a:v {k: 7})-[:e*2..2]->(b:v) RETURN count(*) AS two_hops;
+
+-- so a join over the traversal is planned for that many rows
+EXPLAIN (COSTS OFF) MATCH (a:v {k: 7})-[:e*2..2]-(b:v) RETURN count(*);
+
+DROP FUNCTION vle_est_rows(text);
+DROP GRAPH vle_est CASCADE;
+RESET graph_path;

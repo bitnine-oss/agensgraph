@@ -241,6 +241,11 @@ extern void genericcostestimate(PlannerInfo *root, IndexPath *path,
 								double loop_count,
 								GenericCosts *costs);
 
+extern bool graph_edge_column_moment(Oid relid, AttrNumber attno1,
+									 AttrNumber attno2, double ntuples,
+									 Selectivity *selec,
+									 double *nd1, double *nd2);
+
 /* Functions in array_selfuncs.c */
 
 extern Selectivity scalararraysel_containment(PlannerInfo *root,
