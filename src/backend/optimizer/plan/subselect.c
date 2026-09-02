@@ -3013,6 +3013,21 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 			break;
 
 		case T_GraphVLE:
+
+			/*
+			 * The traversal's seed is a child plan of its own, held apart
+			 * from the left and right trees, and it is what reads the vertex
+			 * the traversal starts from.  The parameters it uses are this
+			 * node's: without them, nothing above the traversal knows that a
+			 * change of that vertex changes what the traversal returns.
+			 */
+			context.paramids =
+				bms_add_members(context.paramids,
+								finalize_plan(root,
+											  ((GraphVLE *) plan)->subplan,
+											  gather_param,
+											  valid_params,
+											  scan_params));
 			break;
 
 		default:

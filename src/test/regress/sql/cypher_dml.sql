@@ -4616,3 +4616,44 @@ DEALLOCATE vle_inval_p;
 RESET plan_cache_mode;
 DROP GRAPH vle_inval CASCADE;
 RESET graph_path;
+
+--
+-- a traversal run again for another start vertex answers for that vertex
+--
+-- each vertex reaches a different one, so a result kept from the vertex
+-- before shows as its endpoint
+CREATE GRAPH vle_rescan;
+SET graph_path = vle_rescan;
+CREATE (:L0 {id: 0});
+CREATE (:L5 {id: 1});
+CREATE (:L1 {id: 5});
+CREATE (:L5 {id: 7});
+CREATE (:L4 {id: 14});
+CREATE (:L3 {id: 15});
+CREATE (:L2 {id: 16});
+MATCH (a {id: 0}), (b {id: 0}) CREATE (a)-[:T0]->(b);
+MATCH (a {id: 7}), (b {id: 14}) CREATE (a)-[:T3]->(b);
+MATCH (a {id: 14}), (b {id: 5}) CREATE (a)-[:T1]->(b);
+MATCH (a {id: 1}), (b {id: 16}) CREATE (a)-[:T4 {rb0: false}]->(b);
+
+-- a step that keeps its rows between runs -- here a distinct over the
+-- traversal -- must build them again for the next start vertex
+MATCH (a) WHERE a.id IN [0, 7, 14, 1]
+CALL { WITH a MATCH (a)-[*1..1]->(b) RETURN DISTINCT b.id AS bid }
+RETURN a.id AS aid, bid ORDER BY aid, bid;
+MATCH (a) WHERE a.id IN [0, 7, 14, 1]
+CALL { WITH a MATCH (a)-[*1..1]->(b) RETURN b.id AS bid, count(*) AS n }
+RETURN a.id AS aid, bid, n ORDER BY aid, bid;
+-- and the endpoint of each traversal is its own
+MATCH (a)-[*1..1]->(b)
+OPTIONAL MATCH (b)-[r]->(c:L2)
+RETURN a.id AS aid, b.id AS bid, count(c) AS n ORDER BY aid, bid;
+
+-- a traversal stopped part way -- an existence test takes its first row --
+-- starts over for the next vertex instead of walking on from where it was
+CREATE (:P {k: 1})-[:E]->(:P {k: 2}), (:P {k: 1})-[:E]->(:P {k: 3});
+MATCH (s:P {k: 1}), (t:P) WHERE t.k IN [2, 3] CREATE (s)-[:E]->(t);
+MATCH (s:P) WHERE EXISTS { MATCH (s)-[:E*1..2]->() } RETURN s.k ORDER BY s.k;
+
+DROP GRAPH vle_rescan CASCADE;
+RESET graph_path;
