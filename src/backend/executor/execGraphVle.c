@@ -1021,6 +1021,24 @@ is_over_max_depth(GraphVLEState *vle_state, int depth)
 void
 ExecReScanGraphVLE(GraphVLEState *vle_state)
 {
+	ListCell   *lc;
+
+	/*
+	 * A rescan can arrive with a walk half done: a semi join stops asking
+	 * once it has a row.  What the walk still has open belongs to the vertex
+	 * being left behind -- kept, the next vertex's walk would carry on from
+	 * there and return the old vertex's trails as its own.
+	 */
+	foreach(lc, vle_state->table_scan_desc_list)
+		free_scan_desc((VLEDepthCtx *) lfirst(lc));
+	list_free(vle_state->table_scan_desc_list);
+	vle_state->table_scan_desc_list = NIL;
+
+	/*
+	 * The seed is a child of this node's own, so the changed-parameter set
+	 * is not handed down to it the way it is to left and right children; it
+	 * is rescanned outright.
+	 */
 	vle_state->need_new_sp_tuple = true;
 	ExecReScan(vle_state->subplan);
 }

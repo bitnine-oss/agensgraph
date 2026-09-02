@@ -11912,3 +11912,86 @@ drop cascades to elabel x
 drop cascades to elabel y
 drop cascades to elabel z
 RESET graph_path;
+--
+-- a traversal run again for another start vertex answers for that vertex
+--
+-- each vertex reaches a different one, so a result kept from the vertex
+-- before shows as its endpoint
+CREATE GRAPH vle_rescan;
+SET graph_path = vle_rescan;
+CREATE (:L0 {id: 0});
+CREATE (:L5 {id: 1});
+CREATE (:L1 {id: 5});
+CREATE (:L5 {id: 7});
+CREATE (:L4 {id: 14});
+CREATE (:L3 {id: 15});
+CREATE (:L2 {id: 16});
+MATCH (a {id: 0}), (b {id: 0}) CREATE (a)-[:T0]->(b);
+MATCH (a {id: 7}), (b {id: 14}) CREATE (a)-[:T3]->(b);
+MATCH (a {id: 14}), (b {id: 5}) CREATE (a)-[:T1]->(b);
+MATCH (a {id: 1}), (b {id: 16}) CREATE (a)-[:T4 {rb0: false}]->(b);
+-- a step that keeps its rows between runs -- here a distinct over the
+-- traversal -- must build them again for the next start vertex
+MATCH (a) WHERE a.id IN [0, 7, 14, 1]
+CALL { WITH a MATCH (a)-[*1..1]->(b) RETURN DISTINCT b.id AS bid }
+RETURN a.id AS aid, bid ORDER BY aid, bid;
+ aid | bid 
+-----+-----
+ 0   | 0
+ 1   | 16
+ 7   | 14
+ 14  | 5
+(4 rows)
+
+MATCH (a) WHERE a.id IN [0, 7, 14, 1]
+CALL { WITH a MATCH (a)-[*1..1]->(b) RETURN b.id AS bid, count(*) AS n }
+RETURN a.id AS aid, bid, n ORDER BY aid, bid;
+ aid | bid | n 
+-----+-----+---
+ 0   | 0   | 1
+ 1   | 16  | 1
+ 7   | 14  | 1
+ 14  | 5   | 1
+(4 rows)
+
+-- and the endpoint of each traversal is its own
+MATCH (a)-[*1..1]->(b)
+OPTIONAL MATCH (b)-[r]->(c:L2)
+RETURN a.id AS aid, b.id AS bid, count(c) AS n ORDER BY aid, bid;
+ aid | bid | n 
+-----+-----+---
+ 0   | 0   | 0
+ 1   | 16  | 0
+ 7   | 14  | 0
+ 14  | 5   | 0
+(4 rows)
+
+-- a traversal stopped part way -- an existence test takes its first row --
+-- starts over for the next vertex instead of walking on from where it was
+CREATE (:P {k: 1})-[:E]->(:P {k: 2}), (:P {k: 1})-[:E]->(:P {k: 3});
+MATCH (s:P {k: 1}), (t:P) WHERE t.k IN [2, 3] CREATE (s)-[:E]->(t);
+MATCH (s:P) WHERE EXISTS { MATCH (s)-[:E*1..2]->() } RETURN s.k ORDER BY s.k;
+ k 
+---
+ 1
+ 1
+(2 rows)
+
+DROP GRAPH vle_rescan CASCADE;
+NOTICE:  drop cascades to 15 other objects
+DETAIL:  drop cascades to sequence vle_rescan.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel l0
+drop cascades to vlabel l5
+drop cascades to vlabel l1
+drop cascades to vlabel l4
+drop cascades to vlabel l3
+drop cascades to vlabel l2
+drop cascades to elabel t0
+drop cascades to elabel t3
+drop cascades to elabel t1
+drop cascades to elabel t4
+drop cascades to vlabel p
+drop cascades to elabel e
+RESET graph_path;
